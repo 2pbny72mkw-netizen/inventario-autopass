@@ -1122,18 +1122,7 @@ with app.app_context():
     db.create_all()
     seed_data()
 
-@app.route("/corrigir-banco-temporario")
-@manager_required
-def corrigir_banco_temporario():
-    try:
-        with db.engine.begin() as conn:
-            conn.execute(db.text(
-                "ALTER TABLE inventory "
-                "ALTER COLUMN exact_position TYPE TEXT"
-            ))
-        return "BANCO CORRIGIDO COM SUCESSO"
-    except Exception as e:
-        return f"ERRO: {str(e)}", 500
+
         
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "5000")), debug=False)
