@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Usuários | Inventário SP{% endblock %}
+{% block content %}
+<section class="dashHero">
+  <div>
+    <span class="eyebrow">ADMINISTRAÇÃO</span>
+    <h1>Usuários do Inventário</h1>
+    <p>Cadastre técnicos e gestores que poderão acessar o sistema.</p>
+  </div>
+</section>
+
+<section class="dashboardGrid">
+  <article class="card">
+    <h2>Novo usuário</h2>
+    <form method="post" action="/usuarios/novo">
+      <div class="grid3">
+        <div><label>Nome completo *</label><input name="name" required placeholder="Ex.: João da Silva"></div>
+        <div><label>Usuário de acesso *</label><input name="username" required placeholder="Ex.: joao.silva" autocomplete="off"></div>
+        <div><label>Perfil *</label><select name="role"><option value="technician">Técnico de Campo</option><option value="manager">Gestor</option></select></div>
+        <div class="full"><label>Senha inicial *</label><input name="password" type="password" required minlength="8" placeholder="Mínimo de 8 caracteres" autocomplete="new-password"></div>
+      </div>
+      <div class="actions"><button class="primary" type="submit">Criar usuário</button></div>
+    </form>
+  </article>
+
+  <article class="card">
+    <h2>Perfis de acesso</h2>
+    <p><b>Técnico de Campo:</b> acessa o formulário de inventário, vê o que já foi realizado na localidade, registra equipamentos e encerra a estação.</p>
+    <p><b>Gestor:</b> acessa dashboard, lançamento de campo e administração de usuários.</p>
+  </article>
+</section>
+
+<section class="card">
+  <div class="sectionHead">
+    <div><h2>Usuários cadastrados</h2><p class="muted">Desative acessos sem apagar o histórico dos levantamentos.</p></div>
+    <span class="tag">{{ users|length }} usuário(s)</span>
+  </div>
+  <div class="tableWrap">
+    <table>
+      <thead><tr><th>Nome</th><th>Login</th><th>Perfil</th><th>Status</th><th>Nova senha</th><th>Ação</th></tr></thead>
+      <tbody>
+      {% for u in users %}
+        <tr>
+          <td><b>{{ u.name }}</b></td>
+          <td>{{ u.username }}</td>
+          <td>{{ "Gestor" if u.role == "manager" else "Técnico de Campo" }}</td>
+          <td>{% if u.active %}<span class="status sCONCLUIDA">ATIVO</span>{% else %}<span class="status sPENDENTE">INATIVO</span>{% endif %}</td>
+          <td>
+            <form method="post" action="/usuarios/{{u.id}}/senha" style="display:flex;gap:6px;min-width:250px">
+              <input name="password" type="password" minlength="8" required placeholder="Nova senha">
+              <button class="secondary" type="submit">Alterar</button>
+            </form>
+          </td>
+          <td>
+            {% if u.id != session.get('user_id') %}
+            <form method="post" action="/usuarios/{{u.id}}/toggle">
+              <button class="{{ 'danger' if u.active else 'secondary' }}" type="submit">{{ "Desativar" if u.active else "Ativar" }}</button>
+            </form>
+            {% else %}<small>Usuário atual</small>{% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}
