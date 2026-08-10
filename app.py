@@ -109,7 +109,7 @@ class Inventory(db.Model):
     serial = db.Column(db.String(220))
     supplier = db.Column(db.String(180))
     model = db.Column(db.String(180))
-    exact_position = db.Column(db.String(300))
+    exact_position = db.Column(db.Text)
     mount = db.Column(db.String(100))
     operational_status = db.Column(db.String(120), nullable=False)
     connectivity = db.Column(db.String(120))
