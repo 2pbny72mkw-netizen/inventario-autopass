@@ -1,1 +1,1865 @@
-
+[
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "01 - AZUL",
+    "location": "TUC - TUCURUVI",
+    "expected_atm": 7,
+    "expected_validator": 4,
+    "expected_pos": 4
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "01 - AZUL",
+    "location": "PIG - PARADA INGLESA",
+    "expected_atm": 4,
+    "expected_validator": 3,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "01 - AZUL",
+    "location": "JPA - JARDIM SAO PAULO",
+    "expected_atm": 4,
+    "expected_validator": 3,
+    "expected_pos": 2
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "01 - AZUL",
+    "location": "SAN - SANTANA",
+    "expected_atm": 5,
+    "expected_validator": 7,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "01 - AZUL",
+    "location": "CDU - CARANDIRU",
+    "expected_atm": 4,
+    "expected_validator": 4,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "01 - AZUL",
+    "location": "TTE - PORTUGUESA TIETE",
+    "expected_atm": 9,
+    "expected_validator": 3,
+    "expected_pos": 7
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "01 - AZUL",
+    "location": "PPQ - ARMENIA",
+    "expected_atm": 6,
+    "expected_validator": 4,
+    "expected_pos": 4
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "01 - AZUL",
+    "location": "TRD - TIRADENTES",
+    "expected_atm": 3,
+    "expected_validator": 4,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "01 - AZUL",
+    "location": "LUZ - LUZ",
+    "expected_atm": 6,
+    "expected_validator": 5,
+    "expected_pos": 9
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "01 - AZUL",
+    "location": "BTO - SAO BENTO",
+    "expected_atm": 9,
+    "expected_validator": 10,
+    "expected_pos": 8
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "01 - AZUL",
+    "location": "LIB - LIBERDADE",
+    "expected_atm": 7,
+    "expected_validator": 3,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "01 - AZUL",
+    "location": "JQM - SAO JOAQUIM",
+    "expected_atm": 6,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "01 - AZUL",
+    "location": "VGO - VERGUEIRO",
+    "expected_atm": 6,
+    "expected_validator": 4,
+    "expected_pos": 2
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "01 - AZUL",
+    "location": "VMN - VILA MARIANA",
+    "expected_atm": 5,
+    "expected_validator": 3,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "01 - AZUL",
+    "location": "SCZ - SANTA CRUZ",
+    "expected_atm": 6,
+    "expected_validator": 6,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "01 - AZUL",
+    "location": "ARV - PRACA DA ARVORE",
+    "expected_atm": 4,
+    "expected_validator": 3,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "01 - AZUL",
+    "location": "SAU - SAUDE",
+    "expected_atm": 6,
+    "expected_validator": 3,
+    "expected_pos": 4
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "01 - AZUL",
+    "location": "JUD - SAO JUDAS",
+    "expected_atm": 4,
+    "expected_validator": 3,
+    "expected_pos": 4
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "01 - AZUL",
+    "location": "CON - CONCEICAO",
+    "expected_atm": 5,
+    "expected_validator": 5,
+    "expected_pos": 5
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "01 - AZUL",
+    "location": "JAB - JABAQUARA",
+    "expected_atm": 9,
+    "expected_validator": 6,
+    "expected_pos": 6
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "02 - VERDE",
+    "location": "AIP - ALTO DO IPIRANGA",
+    "expected_atm": 3,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "02 - VERDE",
+    "location": "ANR - ANA ROSA",
+    "expected_atm": 5,
+    "expected_validator": 5,
+    "expected_pos": 4
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "02 - VERDE",
+    "location": "BGD - BRIGADEIRO",
+    "expected_atm": 4,
+    "expected_validator": 6,
+    "expected_pos": 4
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "02 - VERDE",
+    "location": "CKB - CHACARA KLABIN",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 2
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "02 - VERDE",
+    "location": "CLI - CLINICAS",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 2
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "02 - VERDE",
+    "location": "CNS - CONSOLACAO",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 2
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "02 - VERDE",
+    "location": "IMG - SANTOS IMIGRANTES",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 2
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "02 - VERDE",
+    "location": "PSO - PARAISO",
+    "expected_atm": 3,
+    "expected_validator": 5,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "02 - VERDE",
+    "location": "SAC - SACOMA",
+    "expected_atm": 5,
+    "expected_validator": 6,
+    "expected_pos": 5
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "02 - VERDE",
+    "location": "SUM - SUMARE",
+    "expected_atm": 3,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "02 - VERDE",
+    "location": "TRI - TRIANON MASP",
+    "expected_atm": 3,
+    "expected_validator": 6,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "02 - VERDE",
+    "location": "TTI - TAMANDUATEI",
+    "expected_atm": 3,
+    "expected_validator": 6,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "02 - VERDE",
+    "location": "VMD - VILA MADALENA",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 2
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "02 - VERDE",
+    "location": "VPT - VILA PRUDENTE",
+    "expected_atm": 3,
+    "expected_validator": 8,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "03 - VERMELHA",
+    "location": "ART - ARTUR ALVIM",
+    "expected_atm": 5,
+    "expected_validator": 4,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "03 - VERMELHA",
+    "location": "BAS - BRAS",
+    "expected_atm": 5,
+    "expected_validator": 7,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "03 - VERMELHA",
+    "location": "BEL - BELEM",
+    "expected_atm": 4,
+    "expected_validator": 5,
+    "expected_pos": 0
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "03 - VERMELHA",
+    "location": "BFU - PALMEIRAS BARRA FUNDA",
+    "expected_atm": 5,
+    "expected_validator": 2,
+    "expected_pos": 5
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "03 - VERMELHA",
+    "location": "BRE - BRESSER  MOOCA",
+    "expected_atm": 4,
+    "expected_validator": 4,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "03 - VERMELHA",
+    "location": "CAR - CARRAO",
+    "expected_atm": 4,
+    "expected_validator": 3,
+    "expected_pos": 4
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "03 - VERMELHA",
+    "location": "CEC - SANTA CECILIA",
+    "expected_atm": 4,
+    "expected_validator": 3,
+    "expected_pos": 2
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "03 - VERMELHA",
+    "location": "DEO - MARECHAL DEODORO",
+    "expected_atm": 4,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "03 - VERMELHA",
+    "location": "GBU - ANHANGABAU",
+    "expected_atm": 4,
+    "expected_validator": 2,
+    "expected_pos": 5
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "03 - VERMELHA",
+    "location": "ITQ - CORINTHIANS ITAQUERA",
+    "expected_atm": 8,
+    "expected_validator": 9,
+    "expected_pos": 4
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "03 - VERMELHA",
+    "location": "SÉ",
+    "expected_atm": 5,
+    "expected_validator": 6,
+    "expected_pos": 4
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "03 - VERMELHA",
+    "location": "PCA - PATRIARCA",
+    "expected_atm": 4,
+    "expected_validator": 4,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "03 - VERMELHA",
+    "location": "PDS - PEDRO II",
+    "expected_atm": 3,
+    "expected_validator": 4,
+    "expected_pos": 4
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "03 - VERMELHA",
+    "location": "PEN - PENHA",
+    "expected_atm": 4,
+    "expected_validator": 3,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "03 - VERMELHA",
+    "location": "REP - REPUBLICA",
+    "expected_atm": 4,
+    "expected_validator": 2,
+    "expected_pos": 5
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "03 - VERMELHA",
+    "location": "TAT - TATUAPE",
+    "expected_atm": 5,
+    "expected_validator": 5,
+    "expected_pos": 4
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "03 - VERMELHA",
+    "location": "VPA - GUILHERMINA ESPERANCA",
+    "expected_atm": 4,
+    "expected_validator": 3,
+    "expected_pos": 4
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "03 - VERMELHA",
+    "location": "VTD - VILA MATILDE",
+    "expected_atm": 4,
+    "expected_validator": 4,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA QUATRO",
+    "line": "04 - AMARELA",
+    "location": "FAL - FARIA LIMA",
+    "expected_atm": 4,
+    "expected_validator": 2,
+    "expected_pos": 5
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA QUATRO",
+    "line": "04 - AMARELA",
+    "location": "FRA - FRADIQUE COUTINHO",
+    "expected_atm": 4,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA QUATRO",
+    "line": "04 - AMARELA",
+    "location": "FRE - OSCAR FREIRE",
+    "expected_atm": 3,
+    "expected_validator": 2,
+    "expected_pos": 2
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA QUATRO",
+    "line": "04 - AMARELA",
+    "location": "VLM - VILA SONIA",
+    "expected_atm": 5,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA QUATRO",
+    "line": "04 - AMARELA",
+    "location": "HIG - HIGIENOPOLIS MACKENZIE",
+    "expected_atm": 4,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA QUATRO",
+    "line": "04 - AMARELA",
+    "location": "LUZ - LUZ",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA QUATRO",
+    "line": "04 - AMARELA",
+    "location": "MBI - SAO PAULO MORUMBI",
+    "expected_atm": 5,
+    "expected_validator": 2,
+    "expected_pos": 4
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA QUATRO",
+    "line": "04 - AMARELA",
+    "location": "PIN - PINHEIROS",
+    "expected_atm": 2,
+    "expected_validator": 0,
+    "expected_pos": 2
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA QUATRO",
+    "line": "04 - AMARELA",
+    "location": "PTA - PAULISTA",
+    "expected_atm": 3,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA QUATRO",
+    "line": "04 - AMARELA",
+    "location": "BTN - BUTANTÃ",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 2
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "05 - LILÁS",
+    "location": "ABV - ALTO DA BOA VISTA",
+    "expected_atm": 2,
+    "expected_validator": 4,
+    "expected_pos": 2
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "05 - LILÁS",
+    "location": "APN - ADOLFO PINHEIRO",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 2
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "05 - LILÁS",
+    "location": "BGA - BORBA GATO",
+    "expected_atm": 2,
+    "expected_validator": 3,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "05 - LILÁS",
+    "location": "BRK - BROOKLIN",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "05 - LILÁS",
+    "location": "CPB - CAMPO BELO",
+    "expected_atm": 3,
+    "expected_validator": 3,
+    "expected_pos": 2
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "05 - LILÁS",
+    "location": "CPL - CAMPO LIMPO",
+    "expected_atm": 4,
+    "expected_validator": 2,
+    "expected_pos": 4
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "05 - LILÁS",
+    "location": "CPR - CAPAO REDONDO",
+    "expected_atm": 3,
+    "expected_validator": 3,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "05 - LILÁS",
+    "location": "ECT - EUCALIPTOS",
+    "expected_atm": 4,
+    "expected_validator": 2,
+    "expected_pos": 2
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "05 - LILÁS",
+    "location": "GGR - GIOVANNI GRONCHI",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 2
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "05 - LILÁS",
+    "location": "HSP - HOSPITAL SAO PAULO",
+    "expected_atm": 6,
+    "expected_validator": 5,
+    "expected_pos": 5
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "05 - LILÁS",
+    "location": "LTR - LARGO TREZE",
+    "expected_atm": 4,
+    "expected_validator": 3,
+    "expected_pos": 2
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "05 - LILÁS",
+    "location": "MOE - MOEMA",
+    "expected_atm": 2,
+    "expected_validator": 3,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "05 - LILÁS",
+    "location": "SER - AACD-SERVIDOR",
+    "expected_atm": 2,
+    "expected_validator": 4,
+    "expected_pos": 2
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "05 - LILÁS",
+    "location": "STA - SANTO AMARO",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "05 - LILÁS",
+    "location": "VBE - VILA DAS BELEZAS",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "07 - RUBI",
+    "location": "ABR - AGUA BRANCA",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 2
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "07 - RUBI",
+    "location": "BFI - BALTAZAR FIDELIS",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 2
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "07 - RUBI",
+    "location": "BTJ - BOTUJURU",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "07 - RUBI",
+    "location": "CAI - CAIEIRAS",
+    "expected_atm": 3,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "07 - RUBI",
+    "location": "CLP - CAMPO LIMPO PAULISTA",
+    "expected_atm": 3,
+    "expected_validator": 2,
+    "expected_pos": 4
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "07 - RUBI",
+    "location": "FDR - FRANCO DA ROCHA",
+    "expected_atm": 4,
+    "expected_validator": 4,
+    "expected_pos": 5
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "07 - RUBI",
+    "location": "FMO - FRANCISCO MORATO",
+    "expected_atm": 5,
+    "expected_validator": 4,
+    "expected_pos": 7
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "07 - RUBI",
+    "location": "JRG - JARAGUA",
+    "expected_atm": 3,
+    "expected_validator": 2,
+    "expected_pos": 5
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "07 - RUBI",
+    "location": "JUN - JUNDIAI",
+    "expected_atm": 4,
+    "expected_validator": 2,
+    "expected_pos": 4
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "07 - RUBI",
+    "location": "LPA - LAPA A",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 2
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "07 - RUBI",
+    "location": "PQR - PIQUERI",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 5
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "07 - RUBI",
+    "location": "PRT - PIRITUBA",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "07 - RUBI",
+    "location": "PRU - PERUS",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 2
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "07 - RUBI",
+    "location": "VAU - VILA AURORA",
+    "expected_atm": 3,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "07 - RUBI",
+    "location": "VCL - VILA CLARICE",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 4
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "07 - RUBI",
+    "location": "BFA - BARRA FUNDA",
+    "expected_atm": 4,
+    "expected_validator": 4,
+    "expected_pos": 5
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "07 - RUBI",
+    "location": "VPL - VARZEA PAULISTA",
+    "expected_atm": 5,
+    "expected_validator": 4,
+    "expected_pos": 7
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "08 - DIAMANTE",
+    "location": "AJO - ANTONIO JOAO",
+    "expected_atm": 3,
+    "expected_validator": 2,
+    "expected_pos": 5
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "08 - DIAMANTE",
+    "location": "BRU - BARUERI",
+    "expected_atm": 4,
+    "expected_validator": 2,
+    "expected_pos": 4
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "08 - DIAMANTE",
+    "location": "CPB - CARAPICUIBA",
+    "expected_atm": 5,
+    "expected_validator": 2,
+    "expected_pos": 5
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "08 - DIAMANTE",
+    "location": "CSA - COMANDANTE SAMPAIO",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 2
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "08 - DIAMANTE",
+    "location": "DMO - DOMINGOS DE MORAIS",
+    "expected_atm": 3,
+    "expected_validator": 2,
+    "expected_pos": 4
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "08 - DIAMANTE",
+    "location": "ECD - ENGENHEIRO CARDOSO",
+    "expected_atm": 3,
+    "expected_validator": 2,
+    "expected_pos": 4
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "08 - DIAMANTE",
+    "location": "GMC - GENERAL MIGUEL COSTA",
+    "expected_atm": 3,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "08 - DIAMANTE",
+    "location": "ILE - IMPERATRIZ LEOPOLDINA",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "08 - DIAMANTE",
+    "location": "IPV - ITAPEVI",
+    "expected_atm": 4,
+    "expected_validator": 4,
+    "expected_pos": 6
+  },
+  {
+    "base_status": "OPERACIONAL ",
+    "company": "VIA MOBILIDADE",
+    "line": "08 - DIAMANTE",
+    "location": "JBE - JARDIM BELVAL",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "08 - DIAMANTE",
+    "location": "JDI - JANDIRA",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "08 - DIAMANTE",
+    "location": "JPR - JULIO PRESTES",
+    "expected_atm": 3,
+    "expected_validator": 4,
+    "expected_pos": 4
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "08 - DIAMANTE",
+    "location": "JSI - JARDIM SILVEIRA",
+    "expected_atm": 4,
+    "expected_validator": 4,
+    "expected_pos": 7
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "08 - DIAMANTE",
+    "location": "LAB - LAPA B",
+    "expected_atm": 3,
+    "expected_validator": 3,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "08 - DIAMANTE",
+    "location": "QTU - QUITAUNA",
+    "expected_atm": 3,
+    "expected_validator": 3,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "08 - DIAMANTE",
+    "location": "SCO - SAGRADO CORACAO",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "08 - DIAMANTE",
+    "location": "STE - SANTA TEREZINHA",
+    "expected_atm": 2,
+    "expected_validator": 3,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "09 - ESMERALDA",
+    "location": "AUT - AUTODROMO",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "09 - ESMERALDA",
+    "location": "JOD- JOAO DIAS",
+    "expected_atm": 5,
+    "expected_validator": 4,
+    "expected_pos": 6
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "09 - ESMERALDA",
+    "location": "MDS - MENDES",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "09 - ESMERALDA",
+    "location": "BRR - BERRINI",
+    "expected_atm": 3,
+    "expected_validator": 4,
+    "expected_pos": 4
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "09 - ESMERALDA",
+    "location": "CEA - CEASA",
+    "expected_atm": 3,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "09 - ESMERALDA",
+    "location": "CJD - CIDADE JARDIM",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "09 - ESMERALDA",
+    "location": "GJT - GRANJA JULIETA",
+    "expected_atm": 2,
+    "expected_validator": 4,
+    "expected_pos": 4
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "09 - ESMERALDA",
+    "location": "GRA - GRAJAU",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 2
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "09 - ESMERALDA",
+    "location": "HBR - HEBRAICA REBOUCAS",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 2
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "09 - ESMERALDA",
+    "location": "INT - INTERLAGOS",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "09 - ESMERALDA",
+    "location": "JAG - VILLA LOBOS JAGUARE",
+    "expected_atm": 3,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "09 - ESMERALDA",
+    "location": "JUR - JURUBATUBA",
+    "expected_atm": 3,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "09 - ESMERALDA",
+    "location": "MRB - MORUMBI",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "09 - ESMERALDA",
+    "location": "OSA - OSASCO",
+    "expected_atm": 3,
+    "expected_validator": 3,
+    "expected_pos": 4
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "09 - ESMERALDA",
+    "location": "PAL - PRESIDENTE ALTINO",
+    "expected_atm": 3,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "09 - ESMERALDA",
+    "location": "PIN - PINHEIROS",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 4
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "09 - ESMERALDA",
+    "location": "SAM - SANTO AMARO",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 2
+  },
+  {
+    "base_status": "COLETADO",
+    "company": "VIA MOBILIDADE",
+    "line": "09 - ESMERALDA",
+    "location": "SOC - SOCORRO",
+    "expected_atm": 4,
+    "expected_validator": 3,
+    "expected_pos": 4
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "09 - ESMERALDA",
+    "location": "USP - CIDADE UNIVERSITARIA",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 4
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIA MOBILIDADE",
+    "line": "09 - ESMERALDA",
+    "location": "VOL - VILA OLIMPIA",
+    "expected_atm": 3,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "10 - TURQUESA",
+    "location": "CPV - CAPUAVA",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 4
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "10 - TURQUESA",
+    "location": "GPT - GUAPITUBA",
+    "expected_atm": 3,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "10 - TURQUESA",
+    "location": "IPG - IPIRANGA",
+    "expected_atm": 3,
+    "expected_validator": 4,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "10 - TURQUESA",
+    "location": "LUZ - LUZ",
+    "expected_atm": 7,
+    "expected_validator": 5,
+    "expected_pos": 6
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "10 - TURQUESA",
+    "location": "MAU - MAUA",
+    "expected_atm": 3,
+    "expected_validator": 2,
+    "expected_pos": 5
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "10 - TURQUESA",
+    "location": "MOC - MOOCA",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "PENDENTE",
+    "company": "CPTM",
+    "line": "10 - TURQUESA",
+    "location": "PSA - PREFEITO SALADINO",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 2
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "10 - TURQUESA",
+    "location": "RGS - RIO GRANDE DA SERRA",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 2
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "10 - TURQUESA",
+    "location": "RPI - RIBEIRAO PIRES",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 2
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "10 - TURQUESA",
+    "location": "SAN - SANTO ANDRE",
+    "expected_atm": 3,
+    "expected_validator": 2,
+    "expected_pos": 4
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "10 - TURQUESA",
+    "location": "SCT - SAO CAETANO",
+    "expected_atm": 3,
+    "expected_validator": 2,
+    "expected_pos": 4
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "10 - TURQUESA",
+    "location": "TMD - TAMANDUATEI",
+    "expected_atm": 3,
+    "expected_validator": 2,
+    "expected_pos": 2
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "10 - TURQUESA",
+    "location": "UTG - UTINGA",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 4
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "11 - CORAL",
+    "location": "AGN - ANTONIO GIANETTI",
+    "expected_atm": 4,
+    "expected_validator": 5,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "11 - CORAL",
+    "location": "BCB - BRAS CUBAS",
+    "expected_atm": 8,
+    "expected_validator": 4,
+    "expected_pos": 7
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "11 - CORAL",
+    "location": "DOB - DOM BOSCO",
+    "expected_atm": 3,
+    "expected_validator": 2,
+    "expected_pos": 4
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "11 - CORAL",
+    "location": "EST - ESTUDANTES",
+    "expected_atm": 3,
+    "expected_validator": 2,
+    "expected_pos": 2
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "11 - CORAL",
+    "location": "FVC - FERRAZ DE VASCONCELOS",
+    "expected_atm": 3,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "11 - CORAL",
+    "location": "GUA - GUAIANAZES",
+    "expected_atm": 3,
+    "expected_validator": 4,
+    "expected_pos": 4
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "11 - CORAL",
+    "location": "ITQ - CORINTHIANS ITAQUERA",
+    "expected_atm": 6,
+    "expected_validator": 5,
+    "expected_pos": 7
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "11 - CORAL",
+    "location": "JBO - JOSE BONIFACIO",
+    "expected_atm": 4,
+    "expected_validator": 2,
+    "expected_pos": 4
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "11 - CORAL",
+    "location": "JPB - JUNDIAPEBA",
+    "expected_atm": 3,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "11 - CORAL",
+    "location": "MDC - MOGI DAS CRUZES",
+    "expected_atm": 3,
+    "expected_validator": 4,
+    "expected_pos": 5
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "11 - CORAL",
+    "location": "POA - POA",
+    "expected_atm": 3,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "11 - CORAL",
+    "location": "SUZ - SUZANO",
+    "expected_atm": 3,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "12 - SAFIRA",
+    "location": "ARC - ARACARE",
+    "expected_atm": 3,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "12 - SAFIRA",
+    "location": "BAS - BRAS",
+    "expected_atm": 4,
+    "expected_validator": 2,
+    "expected_pos": 7
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "12 - SAFIRA",
+    "location": "CVN - CALMON VIANA",
+    "expected_atm": 4,
+    "expected_validator": 4,
+    "expected_pos": 4
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "12 - SAFIRA",
+    "location": "EMF - MANOEL FEIO",
+    "expected_atm": 4,
+    "expected_validator": 2,
+    "expected_pos": 4
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "12 - SAFIRA",
+    "location": "ERM - COMENDADOR ERMELINO",
+    "expected_atm": 3,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "12 - SAFIRA",
+    "location": "IQC - ITAQUAQUECETUBA",
+    "expected_atm": 3,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "12 - SAFIRA",
+    "location": "ITI - ITAIM PAULISTA",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "12 - SAFIRA",
+    "location": "JHE - JARDIM HELENA",
+    "expected_atm": 4,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "12 - SAFIRA",
+    "location": "JRO - JARDIM ROMANO",
+    "expected_atm": 2,
+    "expected_validator": 4,
+    "expected_pos": 4
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "12 - SAFIRA",
+    "location": "SMP - SAO MIGUEL PAULISTA",
+    "expected_atm": 6,
+    "expected_validator": 4,
+    "expected_pos": 5
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "12 - SAFIRA",
+    "location": "TAT - TATUAPE",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "12 - SAFIRA",
+    "location": "USL - USP - LESTE",
+    "expected_atm": 8,
+    "expected_validator": 3,
+    "expected_pos": 8
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "13 - JADE",
+    "location": "EGO - ENGENHEIRO GOULART",
+    "expected_atm": 3,
+    "expected_validator": 2,
+    "expected_pos": 5
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "13 - JADE",
+    "location": "GCE - GUARULHOS - CECAP",
+    "expected_atm": 3,
+    "expected_validator": 2,
+    "expected_pos": 4
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CPTM",
+    "line": "13 - JADE",
+    "location": "GRU - AEROPORTO GUARULHOS",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "15 - PRATA",
+    "location": "CAD - CAMILO HADDAD",
+    "expected_atm": 3,
+    "expected_validator": 2,
+    "expected_pos": 5
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "15 - PRATA",
+    "location": "FJT - FAZENDA DA JUTA",
+    "expected_atm": 3,
+    "expected_validator": 4,
+    "expected_pos": 5
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "15 - PRATA",
+    "location": "JPL -  JARDIM PLANALTO",
+    "expected_atm": 3,
+    "expected_validator": 2,
+    "expected_pos": 5
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "15 - PRATA",
+    "location": "MAT - SAO MATEUS",
+    "expected_atm": 3,
+    "expected_validator": 2,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "15 - PRATA",
+    "location": "ORT - ORATORIO",
+    "expected_atm": 3,
+    "expected_validator": 4,
+    "expected_pos": 5
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "15 - PRATA",
+    "location": "JARDIM COLONIAL",
+    "expected_atm": 2,
+    "expected_validator": 4,
+    "expected_pos": 4
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "15 - PRATA",
+    "location": "SAP - SAPOPEMBA",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 4
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "15 - PRATA",
+    "location": "SLU - SAO LUCAS",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 4
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "15 - PRATA",
+    "location": "VPM - VILA PRUDENTE",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 4
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "15 - PRATA",
+    "location": "VTL - VILA TOLSTOI",
+    "expected_atm": 5,
+    "expected_validator": 3,
+    "expected_pos": 3
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRO",
+    "line": "15 - PRATA",
+    "location": "VUN - VILA UNIAO",
+    "expected_atm": 3,
+    "expected_validator": 2,
+    "expected_pos": 4
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "MERCADO",
+    "line": "_",
+    "location": "ASSAI",
+    "expected_atm": 0,
+    "expected_validator": 1,
+    "expected_pos": 0
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "ATENDE",
+    "line": "_",
+    "location": "ATENDE TABOAO",
+    "expected_atm": 1,
+    "expected_validator": 1,
+    "expected_pos": 0
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "AUTOPASS",
+    "line": "_",
+    "location": "AUTOPASS",
+    "expected_atm": 0,
+    "expected_validator": 4,
+    "expected_pos": 0
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "EMPRESA",
+    "line": "_",
+    "location": "BEM CAIEIRAS",
+    "expected_atm": 0,
+    "expected_validator": 1,
+    "expected_pos": 0
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "EMPRESA",
+    "line": "_",
+    "location": "BEM FRANCO DA ROCHA",
+    "expected_atm": 0,
+    "expected_validator": 1,
+    "expected_pos": 0
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "TERMINAL",
+    "line": "_",
+    "location": "BEM OSASCO",
+    "expected_atm": 0,
+    "expected_validator": 1,
+    "expected_pos": 0
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "TERMINAL",
+    "line": "_",
+    "location": "BEM SANTANA DO PARNAIBA",
+    "expected_atm": 0,
+    "expected_validator": 1,
+    "expected_pos": 0
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "EMPRESA",
+    "line": "_",
+    "location": "CARDNET",
+    "expected_atm": 0,
+    "expected_validator": 1,
+    "expected_pos": 0
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CONDOMINIO",
+    "line": "_",
+    "location": "CON EMPR AÇO",
+    "expected_atm": 0,
+    "expected_validator": 1,
+    "expected_pos": 0
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "TERMINAL",
+    "line": "_",
+    "location": "COTIA",
+    "expected_atm": 0,
+    "expected_validator": 1,
+    "expected_pos": 0
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRA",
+    "line": "_",
+    "location": "DIADEMA",
+    "expected_atm": 7,
+    "expected_validator": 3,
+    "expected_pos": 0
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "DROGARIA",
+    "line": "_",
+    "location": "DROGARIA DPSP",
+    "expected_atm": 0,
+    "expected_validator": 1,
+    "expected_pos": 0
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRA",
+    "line": "_",
+    "location": "FERRAZOPOLIS",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 0
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "EMPRESA",
+    "line": "_",
+    "location": "HOTEL HOLLI DAY INN",
+    "expected_atm": 0,
+    "expected_validator": 1,
+    "expected_pos": 0
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "HOSPITAL",
+    "line": "_",
+    "location": "IRMANDADE SANTA CASA SUZANO",
+    "expected_atm": 0,
+    "expected_validator": 1,
+    "expected_pos": 0
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "EDIFICIO",
+    "line": "_",
+    "location": "JK",
+    "expected_atm": 0,
+    "expected_validator": 1,
+    "expected_pos": 0
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "CENTRO TEXTIL",
+    "line": "_",
+    "location": "MASH",
+    "expected_atm": 0,
+    "expected_validator": 1,
+    "expected_pos": 0
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "EMPRESA",
+    "line": "_",
+    "location": "PASSARO MARROM",
+    "expected_atm": 0,
+    "expected_validator": 1,
+    "expected_pos": 0
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRA",
+    "line": "_",
+    "location": "PIRAPORINHA",
+    "expected_atm": 3,
+    "expected_validator": 4,
+    "expected_pos": 0
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "PREFEITURA",
+    "line": "_",
+    "location": "PREFEITURA GUARULHOS",
+    "expected_atm": 0,
+    "expected_validator": 1,
+    "expected_pos": 0
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRA",
+    "line": "_",
+    "location": "SANTO ANDRE",
+    "expected_atm": 3,
+    "expected_validator": 1,
+    "expected_pos": 0
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRA",
+    "line": "_",
+    "location": "SAO BERNARDO",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 0
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "METRA",
+    "line": "_",
+    "location": "SÃO MATEUS",
+    "expected_atm": 2,
+    "expected_validator": 2,
+    "expected_pos": 0
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "TERMINAL",
+    "line": "_",
+    "location": "TERMINAL EMTU SBC",
+    "expected_atm": 0,
+    "expected_validator": 1,
+    "expected_pos": 0
+  },
+  {
+    "base_status": "OPERACIONAL",
+    "company": "VIAÇÃO",
+    "line": "_",
+    "location": "VIACAO ARUJA",
+    "expected_atm": 0,
+    "expected_validator": 1,
+    "expected_pos": 0
+  }
+]
