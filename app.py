@@ -15,7 +15,7 @@ from functools import wraps
 
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify, flash, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import UniqueConstraint, Index, func, case
+from sqlalchemy import UniqueConstraint, Index, func, case, text
 from sqlalchemy.exc import IntegrityError
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -1122,6 +1122,18 @@ with app.app_context():
     db.create_all()
     seed_data()
 
-
+@app.route("/corrigir-banco-temporario")
+@manager_required
+def corrigir_banco_temporario():
+    try:
+        with db.engine.begin() as conn:
+            conn.execute(db.text(
+                "ALTER TABLE inventory "
+                "ALTER COLUMN exact_position TYPE TEXT"
+            ))
+        return "BANCO CORRIGIDO COM SUCESSO"
+    except Exception as e:
+        return f"ERRO: {str(e)}", 500
+        
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "5000")), debug=False)
