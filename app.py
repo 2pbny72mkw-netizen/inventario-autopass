@@ -1521,6 +1521,27 @@ def import_whatsapp():
         import_result=import_result
     )
 
+def migrate_location_reference_columns():
+    with db.engine.begin() as conn:
+        conn.execute(db.text("""
+            ALTER TABLE locations
+            ADD COLUMN IF NOT EXISTS reference_latitude DOUBLE PRECISION
+        """))
+
+        conn.execute(db.text("""
+            ALTER TABLE locations
+            ADD COLUMN IF NOT EXISTS reference_longitude DOUBLE PRECISION
+        """))
+
+        conn.execute(db.text("""
+            ALTER TABLE locations
+            ADD COLUMN IF NOT EXISTS reference_source VARCHAR(120)
+        """))
+
+        conn.execute(db.text("""
+            ALTER TABLE locations
+            ADD COLUMN IF NOT EXISTS reference_updated_at TIMESTAMP
+        """))
 
 with app.app_context():
     db.create_all()
