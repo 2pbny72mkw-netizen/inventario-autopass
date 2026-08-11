@@ -1790,6 +1790,16 @@ def debug_conciliar_estacoes():
     except Exception as e:
         return jsonify({"ok": False, "erro": str(e)}), 500
 
+@app.route("/admin/coordenadas-geosampa", methods=["GET"])
+@manager_required
+def coordenadas_geosampa():
+        return jsonify({
+            "ok": True,
+            "modo": "dry-run",
+            "gravou_no_banco": False,
+            "mensagem": "Rota de dry-run ativa."
+        })
+
 with app.app_context():
     migrate_location_reference_columns()
     db.create_all()
