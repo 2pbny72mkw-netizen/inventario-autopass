@@ -1,0 +1,198 @@
+{% extends "base.html" %}
+{% block title %}Usuários | Inventário SP{% endblock %}
+{% block content %}
+<section class="dashHero">
+  <div>
+    <span class="eyebrow">ADMINISTRAÇÃO</span>
+    <h1>Usuários do Inventário</h1>
+    <p>Cadastre acessos de forma simples e controle o que cada perfil pode fazer.</p>
+  </div>
+</section>
+
+<section class="dashboardGrid">
+  <article class="card">
+    <div class="sectionHead">
+      <div>
+        <h2>Novo usuário</h2>
+        <p class="muted">O código é gerado automaticamente e não pode se repetir.</p>
+      </div>
+    </div>
+
+    <form method="post" action="/usuarios/novo" enctype="multipart/form-data" id="userForm">
+      <div class="grid3">
+        <div>
+          <label>Nome completo *</label>
+          <input name="name" required placeholder="Ex.: João da Silva" autocomplete="name">
+        </div>
+
+        <div>
+          <label>Usuário de acesso *</label>
+          <input name="username" required placeholder="Ex.: joao.silva" autocomplete="off">
+          <small>Não pode se repetir.</small>
+        </div>
+
+        <div>
+          <label>Perfil *</label>
+          <select name="role" id="roleSelect" required>
+            <option value="technician">Técnico de Campo</option>
+            <option value="manager">Gestor</option>
+            <option value="consultation">Consulta</option>
+          </select>
+        </div>
+
+        <div>
+          <label>E-mail corporativo</label>
+          <input name="email" type="email" placeholder="nome@empresa.com.br" autocomplete="email">
+          <small>Opcional. Se informado, deve ser único.</small>
+        </div>
+
+        <div class="fieldExtended">
+          <label>Celular</label>
+          <input name="phone" type="tel" placeholder="(11) 99999-9999" autocomplete="tel">
+          <small>Opcional. Não solicitamos CPF.</small>
+        </div>
+
+        <div class="fieldExtended">
+          <label>Foto</label>
+          <input name="photo" type="file" accept="image/*">
+          <small>Opcional • até 3 MB.</small>
+        </div>
+
+        <div class="full">
+          <label>Senha inicial *</label>
+          <input name="password" type="password" required minlength="8"
+                 placeholder="Mínimo de 8 caracteres" autocomplete="new-password">
+        </div>
+      </div>
+
+      <div id="consultHint" class="notice" style="display:none;margin-top:12px">
+        <b>Perfil Consulta:</b> cadastro simplificado. Nome, login e senha são suficientes.
+        Esse usuário poderá consultar informações, mas não alterar o inventário.
+      </div>
+
+      <div class="actions">
+        <button class="primary" type="submit">Criar usuário</button>
+      </div>
+    </form>
+  </article>
+
+  <article class="card">
+    <h2>Perfis de acesso</h2>
+    <p><b>Gestor</b><br><span class="muted">Dashboard, consultas, usuários, edição, conclusão/reabertura e funções administrativas.</span></p>
+    <p><b>Técnico de Campo</b><br><span class="muted">Coleta de campo, equipamentos, evidências e conclusão conforme o fluxo operacional.</span></p>
+    <p><b>Consulta</b><br><span class="muted">Somente leitura de dashboard e informações. Não cadastra, edita, conclui ou reabre registros.</span></p>
+    <div class="notice">
+      <b>Privacidade:</b> coletamos apenas os dados necessários para o acesso e a operação. CPF não faz parte deste cadastro.
+    </div>
+  </article>
+</section>
+
+<section class="card">
+  <div class="sectionHead">
+    <div>
+      <h2>Usuários cadastrados</h2>
+      <p class="muted">Desative acessos sem apagar o histórico dos levantamentos.</p>
+    </div>
+    <span class="tag">{{ users|length }} usuário(s)</span>
+  </div>
+
+  <div class="tableWrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Usuário</th>
+          <th>Código</th>
+          <th>Login</th>
+          <th>Perfil</th>
+          <th>Contato</th>
+          <th>Status</th>
+          <th>Nova senha</th>
+          <th>Ação</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for u in users %}
+        <tr>
+          <td>
+            <div style="display:flex;align-items:center;gap:10px;min-width:180px">
+              {% if u.photo_url %}
+                <img src="/usuarios/{{ u.id }}/foto"
+                     alt="Foto de {{ u.name }}"
+                     style="width:38px;height:38px;border-radius:50%;object-fit:cover">
+              {% else %}
+                <div style="width:38px;height:38px;border-radius:50%;display:grid;place-items:center;background:#eef2f7;font-weight:700">
+                  {{ (u.name or "?")[0]|upper }}
+                </div>
+              {% endif %}
+              <b>{{ u.name }}</b>
+            </div>
+          </td>
+          <td><b>{{ u.user_code or "—" }}</b></td>
+          <td>{{ u.username }}</td>
+          <td>
+            {% if u.role == "manager" %}
+              Gestor
+            {% elif u.role == "consultation" %}
+              Consulta
+            {% else %}
+              Técnico de Campo
+            {% endif %}
+          </td>
+          <td>
+            {% if u.email %}<div>{{ u.email }}</div>{% endif %}
+            {% if u.phone %}<small>{{ u.phone }}</small>{% endif %}
+            {% if not u.email and not u.phone %}—{% endif %}
+          </td>
+          <td>
+            {% if u.active %}
+              <span class="status sCONCLUIDA">ATIVO</span>
+            {% else %}
+              <span class="status sPENDENTE">INATIVO</span>
+            {% endif %}
+          </td>
+          <td>
+            <form method="post" action="/usuarios/{{u.id}}/senha" style="display:flex;gap:6px;min-width:240px">
+              <input name="password" type="password" minlength="8" required placeholder="Nova senha">
+              <button class="secondary" type="submit">Alterar</button>
+            </form>
+          </td>
+          <td>
+            {% if u.id != session.get('user_id') %}
+              <form method="post" action="/usuarios/{{u.id}}/toggle">
+                <button class="{{ 'danger' if u.active else 'secondary' }}" type="submit">
+                  {{ "Desativar" if u.active else "Ativar" }}
+                </button>
+              </form>
+            {% else %}
+              <small>Usuário atual</small>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<script>
+(() => {
+  const role = document.getElementById("roleSelect");
+  const extended = document.querySelectorAll(".fieldExtended");
+  const hint = document.getElementById("consultHint");
+
+  function updateProfileFields() {
+    const consultation = role.value === "consultation";
+    extended.forEach(el => {
+      el.style.display = consultation ? "none" : "";
+      if (consultation) {
+        el.querySelectorAll("input").forEach(input => input.value = "");
+      }
+    });
+    hint.style.display = consultation ? "block" : "none";
+  }
+
+  role.addEventListener("change", updateProfileFields);
+  updateProfileFields();
+})();
+</script>
+{% endblock %}
