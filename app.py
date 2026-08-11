@@ -1583,26 +1583,6 @@ def debug_conciliar_estacoes():
         texto = "".join(c for c in texto if not unicodedata.combining(c))
         texto = texto.upper().strip()
 
-        # Remove código interno antes do hífen:
-        # "LUZ - LUZ" -> "LUZ"
-        # "BTO - SAO BENTO" -> "SAO BENTO"
-        if " - " in texto:
-            partes = texto.split(" - ", 1)
-            if len(partes[0].strip()) <= 4:
-                texto = partes[1].strip()
-
-        texto = texto.replace("–", "-")
-        texto = texto.replace("—", "-")
-        texto = texto.replace("-", " ")
-        texto = re.sub(r"[^A-Z0-9 ]", " ", texto)
-        texto = re.sub(r"\s+", " ", texto).strip()
-
-    def normalizar(texto):
-        texto = texto or ""
-        texto = unicodedata.normalize("NFKD", texto)
-        texto = "".join(c for c in texto if not unicodedata.combining(c))
-        texto = texto.upper().strip()
-
         if " - " in texto:
             partes = texto.split(" - ", 1)
             if len(partes[0].strip()) <= 4:
