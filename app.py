@@ -1653,6 +1653,10 @@ def debug_conciliar_estacoes():
             "4 AMARELA": "AMARELA",
             "05 LILAS": "LILAS",
             "5 LILAS": "LILAS",
+
+            "06 LARANJA": "LARANJA",
+            "6 LARANJA": "LARANJA",
+            
             "07 RUBI": "RUBI",
             "7 RUBI": "RUBI",
             "08 DIAMANTE": "DIAMANTE",
@@ -1664,6 +1668,8 @@ def debug_conciliar_estacoes():
             "12 SAFIRA": "SAFIRA",
             "13 JADE": "JADE",
             "15 PRATA": "PRATA",
+
+             "17 OURO": "OURO",
         }
 
         return cores.get(texto, texto)
@@ -1723,23 +1729,36 @@ def debug_conciliar_estacoes():
         linha = estacao["linha_norm"]
 
         if company == "METRO":
-            # Metrô e linhas concedidas podem aparecer na camada metro.
+          # Rede metroviária e linhas concedidas presentes na camada metro.
             return linha in {
-                "AZUL", "VERDE", "VERMELHA",
-                "AMARELA", "LILAS", "PRATA"
+                "AZUL",
+                "VERDE",
+                "VERMELHA",
+                "AMARELA",
+                "LILAS",
+                "LARANJA",
+                "PRATA",
+                "OURO",
             }
 
         if company == "CPTM":
             return linha in {
-                "RUBI", "TURQUESA", "CORAL",
-                "SAFIRA", "JADE"
+                "RUBI", 
+                "TURQUESA", 
+                "CORAL",
+                "SAFIRA", 
+                "JADE",
             }
 
         if company == "VIA MOBILIDADE":
             return linha in {
-                "LILAS", "DIAMANTE", "ESMERALDA"
+                "LILAS", 
+                "DIAMANTE", 
+                "ESMERALDA",
+                "OURO",
             }
 
+        
         return False
 
     def melhor_match(loc, estacoes):
