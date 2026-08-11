@@ -26,8 +26,9 @@ function hasReference(loc){
     return false;
   }
 
-  // 0,0 não é uma referência válida para nossas localidades.
-  if(lat === 0 && lon === 0){
+  // Inventário atual é da região de São Paulo.
+  // Ignora referências incorretas ou antigas fora desta área.
+  if(lat < -25 || lat > -22 || lon < -49 || lon > -45){
     return false;
   }
 
