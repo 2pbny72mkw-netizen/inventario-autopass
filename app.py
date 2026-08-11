@@ -1389,6 +1389,35 @@ def import_whatsapp():
         import_result=import_result
     )
 
+@app.route("/migrar-gps-temporario")
+@manager_required
+def migrar_gps_temporario():
+    try:
+        with db.engine.begin() as conn:
+            conn.execute(db.text("""
+                ALTER TABLE inventory
+                ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION
+            """))
+
+            conn.execute(db.text("""
+                ALTER TABLE inventory
+                ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION
+            """))
+
+            conn.execute(db.text("""
+                ALTER TABLE inventory
+                ADD COLUMN IF NOT EXISTS gps_accuracy DOUBLE PRECISION
+            """))
+
+            conn.execute(db.text("""
+                ALTER TABLE inventory
+                ADD COLUMN IF NOT EXISTS gps_captured_at TIMESTAMP
+            """))
+
+        return "GPS MIGRADO COM SUCESSO"
+
+    except Exception as e:
+        return f"ERRO: {str(e)}", 500
 
 with app.app_context():
     db.create_all()
