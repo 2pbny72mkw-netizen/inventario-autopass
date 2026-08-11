@@ -1597,21 +1597,50 @@ def debug_conciliar_estacoes():
         texto = re.sub(r"[^A-Z0-9 ]", " ", texto)
         texto = re.sub(r"\s+", " ", texto).strip()
 
-        aliases = {
-            "PALMEIRAS BARRA FUNDA": "PALMEIRAS BARRA FUNDA",
-            "BARRA FUNDA": "PALMEIRAS BARRA FUNDA",
-            "PORTUGUESA TIETE": "PORTUGUESA TIETE",
-            "JARDIM SAO PAULO": "JARDIM SAO PAULO AYRTON SENNA",
-            "LIBERDADE": "JAPAO LIBERDADE",
-            "BRESSER MOOCA": "BRESSER MOOCA",
-            "CORINTHIANS ITAQUERA": "CORINTHIANS ITAQUERA",
-            "GUILHERMINA ESPERANCA": "GUILHERMINA ESPERANCA",
-            "SANTOS IMIGRANTES": "SANTOS IMIGRANTES",
-            "USP LESTE": "USP LESTE",
-            "GUARULHOS CECAP": "GUARULHOS CECAP",
-            "AEROPORTO GUARULHOS": "AEROPORTO GUARULHOS",
-        }
+aliases = {
+    # Integrações / nomes históricos / nomes oficiais diferentes
 
+    "BARRA FUNDA": "PALMEIRAS BARRA FUNDA",
+    "PALMEIRAS BARRA FUNDA": "PALMEIRAS BARRA FUNDA",
+
+    "LAPA A": "LAPA LINHA 7",
+    "LAPA B": "LAPA LINHA 8",
+
+    "MANOEL FEIO": "ENGENHEIRO MANOEL FEIO",
+
+    "JARDIM HELENA": "JARDIM HELENA VILA MARA",
+
+    "JARDIM SAO PAULO": "AYRTON SENNA JARDIM SAO PAULO",
+
+    "LIBERDADE": "JAPAO LIBERDADE",
+
+    "PORTUGUESA TIETE": "PORTUGUESA TIETE",
+
+    "BRESSER MOOCA": "BRESSER MOOCA",
+
+    "CORINTHIANS ITAQUERA": "CORINTHIANS ITAQUERA",
+
+    "GUILHERMINA ESPERANCA": "GUILHERMINA ESPERANCA",
+
+    "SANTOS IMIGRANTES": "SANTOS IMIGRANTES",
+
+    "USP LESTE": "USP LESTE",
+
+    "GUARULHOS CECAP": "GUARULHOS CECAP",
+
+    "AEROPORTO GUARULHOS": "AEROPORTO GUARULHOS",
+
+    "JOAO DIAS": "JOAO DIAS",
+
+    "INTERLAGOS": "PRIMAVERA INTERLAGOS",
+
+    "MENDES": "MENDES BRUNO COVAS",
+
+    "SANTO AMARO": "SANTO AMARO LINHA 9",
+}
+
+
+        
         return aliases.get(texto, texto)
 
     def normalizar_linha(texto):
