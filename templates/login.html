@@ -1,4 +1,20 @@
 
-{% extends "base.html" %}{% block title %}Login{% endblock %}
-{% block content %}<div class="loginbox card"><h1>Inventário de Campo</h1><p>Metrô • CPTM • Motiva / ViaQuatro / ViaMobilidade</p>
-<form method="post"><label>Usuário</label><input name="username" required autocomplete="username"><label>Senha</label><input name="password" type="password" required autocomplete="current-password"><button class="primary">Entrar</button></form>
+{% extends "base.html" %}
+{% block title %}Login{% endblock %}
+
+{% block content %}
+<div class="loginbox card">
+    <h1>Inventário de Campo</h1>
+    <p>Metrô • CPTM • Motiva / ViaQuatro / ViaMobilidade</p>
+
+    <form method="post">
+        <label>Usuário</label>
+        <input name="username" required autocomplete="username">
+
+        <label>Senha</label>
+        <input name="password" type="password" required autocomplete="current-password">
+
+        <button class="primary">Entrar</button>
+    </form>
+</div>
+{% endblock %}
