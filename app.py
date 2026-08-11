@@ -1126,7 +1126,52 @@ with app.app_context():
     db.create_all()
     seed_data()
 
+@app.route("/migrar-usuarios-temporario")
+def migrar_usuarios_temporario():
+    if request.args.get("key") != os.environ.get("INVENTARIO_SECRET_KEY"):
+        return "NAO AUTORIZADO", 403
 
+    try:
+        with db.engine.begin() as conn:
+            conn.execute(db.text("""
+                ALTER TABLE users
+                ADD COLUMN IF NOT EXISTS user_code VARCHAR(30)
+            """))
+
+            conn.execute(db.text("""
+                ALTER TABLE users
+                ADD COLUMN IF NOT EXISTS email VARCHAR(180)
+            """))
+
+            conn.execute(db.text("""
+                ALTER TABLE users
+                ADD COLUMN IF NOT EXISTS phone VARCHAR(30)
+            """))
+
+            conn.execute(db.text("""
+                ALTER TABLE users
+                ADD COLUMN IF NOT EXISTS photo_url VARCHAR(500)
+            """))
+
+            conn.execute(db.text("""
+                CREATE UNIQUE INDEX IF NOT EXISTS ix_users_user_code
+                ON users (user_code)
+            """))
+
+            conn.execute(db.text("""
+                CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email
+                ON users (email)
+            """))
+
+            conn.execute(db.text("""
+                CREATE UNIQUE INDEX IF NOT EXISTS ix_users_phone
+                ON users (phone)
+            """))
+
+        return "USUARIOS MIGRADOS COM SUCESSO"
+
+    except Exception as e:
+        return f"ERRO: {str(e)}", 500
         
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "5000")), debug=False)
