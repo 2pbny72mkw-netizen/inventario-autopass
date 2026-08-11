@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% block title %}Dashboard Gerencial | Inventário SP{% endblock %}
+{% block content %}
+<link rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin="">
+
+<section class="dashHero">
+  <div>
+    <span class="eyebrow">CONTROLE DE INVENTÁRIO EM CAMPO</span>
+    <h1>Dashboard Gerencial</h1>
+    <p>Visão centralizada do parque previsto, localidades pendentes, execução em campo e divergências encontradas.</p>
+  </div>
+  <div class="heroActions">
+    <span id="lastUpdate" class="lastUpdate">Atualizando...</span>
+    <button class="secondary" onclick="loadAll()">Atualizar agora</button>
+  </div>
+</section>
+
+<section class="kpis dashboardKpis">
+  <article class="kpi primaryKpi"><span>Localidades totais</span><b id="total">0</b><small>Base planejada</small></article>
+  <article class="kpi dangerKpi"><span>Pendentes</span><b id="pending">0</b><small>Ainda não iniciadas</small></article>
+  <article class="kpi warningKpi"><span>Em andamento</span><b id="progress">0</b><small>Com levantamento parcial</small></article>
+  <article class="kpi successKpi"><span>Concluídas</span><b id="completed">0</b><small>Encerradas pela equipe</small></article>
+  <article class="kpi"><span>Equipamentos levantados</span><b id="inventoried">0</b><small>Registros de campo</small></article>
+  <article class="kpi"><span>Parque esperado</span><b id="expected">0</b><small>ATM + Validador + POS</small></article>
+</section>
+
+<section class="dashboardGrid">
+  <article class="card chartCard">
+    <div class="cardHead">
+      <div><h2>Andamento geral</h2><p>Percentual de localidades encerradas.</p></div>
+      <strong id="overallPct" class="bigPercent">0%</strong>
+    </div>
+    <div class="donutWrap">
+      <div id="donut" class="donut"><span id="donutText">0%</span></div>
+      <div class="legend">
+        <div><i class="dot doneDot"></i><span>Concluídas</span><b id="legendDone">0</b></div>
+        <div><i class="dot progressDot"></i><span>Em andamento</span><b id="legendProgress">0</b></div>
+        <div><i class="dot pendingDot"></i><span>Pendentes</span><b id="legendPending">0</b></div>
+      </div>
+    </div>
+  </article>
+
+  <article class="card chartCard">
+    <div class="cardHead"><div><h2>Qualidade do levantamento</h2><p>Pontos que exigem atenção do gestor.</p></div></div>
+    <div class="qualityGrid">
+      <div class="qualityItem"><span>Inoperantes encontrados</span><b id="inoperative">0</b></div>
+      <div class="qualityItem"><span>Divergências com a base</span><b id="divergences">0</b></div>
+      <div class="qualityItem"><span>Locais ainda abertos</span><b id="openLocations">0</b></div>
+      <div class="qualityItem"><span>Cobertura do parque</span><b id="assetCoverage">0%</b></div>
+    </div>
+  </article>
+</section>
+
+<section class="card">
+  <div class="cardHead">
+    <div>
+      <h2>Geolocalização das coletas</h2>
+      <p>Últimos registros com GPS capturado no momento da coleta.</p>
+    </div>
+    <span id="gpsCoverageTag" class="tag">GPS 0%</span>
+  </div>
+
+  <div class="qualityGrid" style="margin-bottom:16px">
+    <div class="qualityItem"><span>Registros com GPS</span><b id="gpsWith">0</b></div>
+    <div class="qualityItem"><span>Sem GPS</span><b id="gpsWithout">0</b></div>
+    <div class="qualityItem"><span>Cobertura GPS</span><b id="gpsCoverage">0%</b></div>
+    <div class="qualityItem"><span>Última coleta localizada</span><b id="gpsLast">—</b></div>
+  </div>
+
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 12px">
+    <span class="tag">🟢 até 30 m</span>
+    <span class="tag">🟠 31–80 m</span>
+    <span class="tag">🔴 acima de 80 m</span>
+    <span class="tag">O círculo indica a precisão informada pelo aparelho</span>
+  </div>
+
+  <div id="gpsMap"
+       style="height:460px;border:1px solid #dfe5ec;border-radius:14px;overflow:hidden;margin-bottom:18px">
+  </div>
+
+  <div class="tableWrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Data/hora</th>
+          <th>Técnico</th>
+          <th>Localidade</th>
+          <th>Equipamento</th>
+          <th>Precisão</th>
+          <th>Coordenadas</th>
+        </tr>
+      </thead>
+      <tbody id="gpsRows">
+        <tr><td colspan="6">Carregando...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="card">
+  <div class="cardHead filterHeader">
+    <div><h2>Controle por localidade</h2><p>Use esta tabela para saber exatamente o que falta fazer e evitar visitas repetidas.</p></div>
+    <span id="visibleCount" class="tag"></span>
+  </div>
+  <div class="grid4">
+    <div><label>Status</label><select id="fs"><option value="">Todos</option><option>PENDENTE</option><option>EM ANDAMENTO</option><option>CONCLUIDA</option></select></div>
+    <div><label>Empresa</label><select id="fc"><option value="">Todas</option></select></div>
+    <div><label>Linha</label><select id="fl"><option value="">Todas</option></select></div>
+    <div><label>Buscar localidade</label><input id="fq" placeholder="Ex.: Tatuapé, Linha 1..."></div>
+  </div>
+
+  <div class="quickFilters">
+    <button class="filterChip active" data-status="">Todas</button>
+    <button class="filterChip" data-status="PENDENTE">Só pendentes</button>
+    <button class="filterChip" data-status="EM ANDAMENTO">Em andamento</button>
+    <button class="filterChip" data-status="CONCLUIDA">Concluídas</button>
+  </div>
+
+  <div class="tableWrap tall">
+    <table>
+      <thead>
+        <tr>
+          <th>Status</th><th>Empresa</th><th>Linha</th><th>Estação / Localidade</th>
+          <th>Esperado</th><th>Levantado</th><th>Progresso</th><th>Inoperantes</th><th>Ação</th>
+        </tr>
+      </thead>
+      <tbody id="locRows"></tbody>
+    </table>
+  </div>
+</section>
+
+<section class="dashboardGrid">
+  <article class="card">
+    <div class="cardHead"><div><h2>Execução por empresa</h2><p>Comparativo de localidades concluídas.</p></div></div>
+    <div id="companyBars" class="companyBars"></div>
+  </article>
+
+  <article class="card">
+    <div class="cardHead"><div><h2>Resumo por empresa</h2><p>Pendentes, andamento e concluídas.</p></div></div>
+    <div class="tableWrap">
+      <table><thead><tr><th>Empresa</th><th>Total</th><th>Pend.</th><th>And.</th><th>Concl.</th><th>%</th></tr></thead><tbody id="companyRows"></tbody></table>
+    </div>
+  </article>
+</section>
+
+{% endblock %}
+{% block scripts %}
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+        crossorigin=""></script>
+<script src="{{url_for('static',filename='manager.js')}}"></script>
+{% endblock %}
