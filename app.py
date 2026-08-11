@@ -1597,51 +1597,47 @@ def debug_conciliar_estacoes():
         texto = re.sub(r"[^A-Z0-9 ]", " ", texto)
         texto = re.sub(r"\s+", " ", texto).strip()
 
-aliases = {
-    # Integrações / nomes históricos / nomes oficiais diferentes
+    def normalizar(texto):
+    texto = texto or ""
+    texto = unicodedata.normalize("NFKD", texto)
+    texto = "".join(c for c in texto if not unicodedata.combining(c))
+    texto = texto.upper().strip()
 
-    "BARRA FUNDA": "PALMEIRAS BARRA FUNDA",
-    "PALMEIRAS BARRA FUNDA": "PALMEIRAS BARRA FUNDA",
+    if " - " in texto:
+        partes = texto.split(" - ", 1)
+        if len(partes[0].strip()) <= 4:
+            texto = partes[1].strip()
 
-    "LAPA A": "LAPA LINHA 7",
-    "LAPA B": "LAPA LINHA 8",
+    texto = texto.replace("–", "-")
+    texto = texto.replace("—", "-")
+    texto = texto.replace("-", " ")
+    texto = re.sub(r"[^A-Z0-9 ]", " ", texto)
+    texto = re.sub(r"\s+", " ", texto).strip()
 
-    "MANOEL FEIO": "ENGENHEIRO MANOEL FEIO",
+    aliases = {
+        "BARRA FUNDA": "PALMEIRAS BARRA FUNDA",
+        "PALMEIRAS BARRA FUNDA": "PALMEIRAS BARRA FUNDA",
+        "LAPA A": "LAPA LINHA 7",
+        "LAPA B": "LAPA LINHA 8",
+        "MANOEL FEIO": "ENGENHEIRO MANOEL FEIO",
+        "JARDIM HELENA": "JARDIM HELENA VILA MARA",
+        "JARDIM SAO PAULO": "AYRTON SENNA JARDIM SAO PAULO",
+        "LIBERDADE": "JAPAO LIBERDADE",
+        "PORTUGUESA TIETE": "PORTUGUESA TIETE",
+        "BRESSER MOOCA": "BRESSER MOOCA",
+        "CORINTHIANS ITAQUERA": "CORINTHIANS ITAQUERA",
+        "GUILHERMINA ESPERANCA": "GUILHERMINA ESPERANCA",
+        "SANTOS IMIGRANTES": "SANTOS IMIGRANTES",
+        "USP LESTE": "USP LESTE",
+        "GUARULHOS CECAP": "GUARULHOS CECAP",
+        "AEROPORTO GUARULHOS": "AEROPORTO GUARULHOS",
+        "JOAO DIAS": "JOAO DIAS",
+        "INTERLAGOS": "PRIMAVERA INTERLAGOS",
+        "MENDES": "MENDES BRUNO COVAS",
+        "SANTO AMARO": "SANTO AMARO LINHA 9",
+    }
 
-    "JARDIM HELENA": "JARDIM HELENA VILA MARA",
-
-    "JARDIM SAO PAULO": "AYRTON SENNA JARDIM SAO PAULO",
-
-    "LIBERDADE": "JAPAO LIBERDADE",
-
-    "PORTUGUESA TIETE": "PORTUGUESA TIETE",
-
-    "BRESSER MOOCA": "BRESSER MOOCA",
-
-    "CORINTHIANS ITAQUERA": "CORINTHIANS ITAQUERA",
-
-    "GUILHERMINA ESPERANCA": "GUILHERMINA ESPERANCA",
-
-    "SANTOS IMIGRANTES": "SANTOS IMIGRANTES",
-
-    "USP LESTE": "USP LESTE",
-
-    "GUARULHOS CECAP": "GUARULHOS CECAP",
-
-    "AEROPORTO GUARULHOS": "AEROPORTO GUARULHOS",
-
-    "JOAO DIAS": "JOAO DIAS",
-
-    "INTERLAGOS": "PRIMAVERA INTERLAGOS",
-
-    "MENDES": "MENDES BRUNO COVAS",
-
-    "SANTO AMARO": "SANTO AMARO LINHA 9",
-}
-
-
-        
-        return aliases.get(texto, texto)
+    return aliases.get(texto, texto)
 
     def normalizar_linha(texto):
         texto = normalizar(texto)
