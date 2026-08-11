@@ -1,0 +1,206 @@
+{% extends "base.html" %}
+{% block title %}Inventário de Campo{% endblock %}
+{% block content %}
+
+<div id="connectionBar" class="notice" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+  <div>
+    <b id="connectionStatus">Verificando conexão...</b>
+    <div class="muted" id="syncSummary">Nenhum registro pendente.</div>
+  </div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    <label style="display:flex;gap:8px;align-items:center;margin:0">
+      <input id="localMode" type="checkbox" style="width:auto">
+      <span>Modo coleta local</span>
+    </label>
+    <button class="secondary" type="button" id="syncBtn">Sincronizar agora</button>
+  </div>
+</div>
+
+<div id="localModeHint" class="notice" style="display:none">
+  <b>Modo coleta local ativo.</b> Você pode cadastrar vários equipamentos em sequência.
+  Nada será enviado ao servidor até clicar em <b>Sincronizar agora</b>.
+</div>
+
+<div class="notice">
+  <b>Regra de campo:</b> antes de lançar, selecione a localidade e confira a lista “já realizados”.
+  Se ficar sem sinal, o levantamento será guardado neste aparelho e enviado quando a conexão retornar.
+</div>
+
+<div class="card">
+  <h2>Selecionar estação / localidade</h2>
+  <div class="grid3">
+    <div>
+      <label>Empresa</label>
+      <select id="company"><option value="">Selecione</option></select>
+    </div>
+    <div>
+      <label>Linha</label>
+      <select id="line" disabled><option value="">Selecione</option></select>
+    </div>
+    <div>
+      <label>Estação / Localidade</label>
+      <select id="location" disabled><option value="">Selecione</option></select>
+    </div>
+  </div>
+  <div id="locInfo" class="hidden summary"></div>
+</div>
+
+<div class="card">
+  <div class="sectionHead">
+    <h2>O que já foi feito neste local</h2>
+    <span id="doneCount" class="tag">0 registros</span>
+  </div>
+  <div class="tableWrap">
+    <table>
+      <thead>
+        <tr><th>Tipo</th><th>ID/Série</th><th>Modelo</th><th>Status</th><th>Técnico</th><th>Data</th></tr>
+      </thead>
+      <tbody id="already">
+        <tr><td colspan="6">Selecione um local.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Novo equipamento</h2>
+  <form id="invForm" enctype="multipart/form-data">
+    <input type="hidden" id="location_id" name="location_id">
+    <input type="hidden" id="latitude" name="latitude">
+    <input type="hidden" id="longitude" name="longitude">
+    <input type="hidden" id="gps_accuracy" name="gps_accuracy">
+    <input type="hidden" id="gps_captured_at" name="gps_captured_at">
+
+    <div class="grid3">
+      <div>
+        <label>Tipo *</label>
+        <select name="equipment_type" id="equipment_type" required>
+          <option value="">Selecione</option>
+          <option>ATM</option>
+          <option>Validador de Recarga</option>
+          <option>POS de Bilheteria</option>
+          <option>Rack de Comunicação</option>
+          <option>Outro</option>
+        </select>
+      </div>
+
+      <div>
+        <label>Ativo ATM da base</label>
+        <select name="base_asset_id" id="base_asset_id">
+          <option value="">Novo / não selecionar</option>
+        </select>
+        <small id="assetHint"></small>
+      </div>
+
+      <div>
+        <label>Identificação única *</label>
+        <input name="asset_identifier" id="asset_identifier" required
+               placeholder="ID TOP, QRCode, patrimônio ou série">
+      </div>
+
+      <div><label>Número de série</label><input name="serial" id="serial"></div>
+      <div><label>Fabricante / fornecedor</label><input name="supplier" id="supplier"></div>
+      <div><label>Modelo</label><input name="model" id="model"></div>
+
+      <div>
+        <label>Posição exata</label>
+        <input name="exact_position" placeholder="Mezanino, bilheteria, acesso...">
+      </div>
+
+      <div>
+        <label>Fixação</label>
+        <select name="mount" id="mount">
+          <option></option><option>PISO</option><option>PAREDE</option>
+          <option>BANCADA</option><option>RACK</option><option>OUTRO</option>
+        </select>
+      </div>
+
+      <div>
+        <label>Status operacional *</label>
+        <select name="operational_status" required>
+          <option value="">Selecione</option>
+          <option>Operacional</option>
+          <option>Operacional com ressalva</option>
+          <option>Inoperante</option>
+          <option>Desligado</option>
+          <option>Não foi possível testar</option>
+          <option>Não encontrado</option>
+        </select>
+      </div>
+
+      <div>
+        <label>Conectividade</label>
+        <select name="connectivity">
+          <option></option><option>Rede cabeada</option><option>4G</option>
+          <option>Fibra</option><option>Wi-Fi</option><option>Rede + 4G</option>
+          <option>Sem conectividade</option><option>Não identificado</option>
+        </select>
+      </div>
+
+      <div><label>IP / rede / SIM</label><input name="network_id"></div>
+
+      <div>
+        <label>Etiqueta legível?</label>
+        <select name="label_status">
+          <option></option><option>Sim</option><option>Parcial</option><option>Não</option>
+        </select>
+      </div>
+
+      <div>
+        <label>Consta na base?</label>
+        <select name="in_base">
+          <option>Sim</option><option>Não</option><option>A confirmar</option>
+        </select>
+      </div>
+
+      <div>
+        <label>Divergência?</label>
+        <select name="divergence">
+          <option>Não</option>
+          <option>Sim - modelo</option>
+          <option>Sim - identificação</option>
+          <option>Sim - local</option>
+          <option>Sim - quantidade</option>
+          <option>Sim - outra</option>
+        </select>
+      </div>
+
+      <div>
+        <label>Fotos / vídeos</label>
+        <input name="attachments" type="file" accept="image/*,video/*" multiple capture="environment">
+        <small>Sem sinal, os arquivos ficam guardados neste aparelho até a sincronização.</small>
+      </div>
+
+      <div class="full">
+        <label>Observações</label>
+        <textarea name="notes"></textarea>
+      </div>
+    </div>
+
+    <div id="gpsStatus" class="notice" style="margin-top:12px">
+      <b>📍 GPS:</b> <span id="gpsText">Será capturado ao salvar o equipamento.</span>
+    </div>
+
+    <div class="actions">
+      <button class="primary" type="submit" id="saveBtn">Salvar equipamento</button>
+      <button class="secondary" type="button" id="completeBtn">Concluir levantamento desta localidade</button>
+    </div>
+    <div id="msg"></div>
+  </form>
+</div>
+
+<div class="card">
+  <div class="sectionHead">
+    <div>
+      <h2>Pendências deste aparelho</h2>
+      <p class="muted">Registros salvos sem confirmação do servidor.</p>
+    </div>
+    <span id="pendingCount" class="tag">0 pendente(s)</span>
+  </div>
+  <div id="pendingList" class="muted">Nenhuma pendência.</div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script src="{{url_for('static',filename='technician.js')}}"></script>
+{% endblock %}
