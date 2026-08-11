@@ -57,7 +57,10 @@ class User(db.Model):
     role = db.Column(db.String(30), nullable=False)
     active = db.Column(db.Boolean, nullable=False, default=True)
     
-    
+    user_code = db.Column(db.String(30), unique=True, index=True)
+    email = db.Column(db.String(180), unique=True, index=True)
+    phone = db.Column(db.String(30), unique=True, index=True)
+    photo_url = db.Column(db.String(500))
 
 class Location(db.Model):
     __tablename__ = "locations"
