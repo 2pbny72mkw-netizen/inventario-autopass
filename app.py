@@ -1543,13 +1543,32 @@ def migrate_location_reference_columns():
             ADD COLUMN IF NOT EXISTS reference_updated_at TIMESTAMP
         """))
 
+def migrate_location_reference_columns():
+    with db.engine.begin() as conn:
+        conn.execute(db.text("""
+            ALTER TABLE locations
+            ADD COLUMN IF NOT EXISTS reference_latitude DOUBLE PRECISION
+        """))
+
+        conn.execute(db.text("""
+            ALTER TABLE locations
+            ADD COLUMN IF NOT EXISTS reference_longitude DOUBLE PRECISION
+        """))
+
+        conn.execute(db.text("""
+            ALTER TABLE locations
+            ADD COLUMN IF NOT EXISTS reference_source VARCHAR(120)
+        """))
+
+        conn.execute(db.text("""
+            ALTER TABLE locations
+            ADD COLUMN IF NOT EXISTS reference_updated_at TIMESTAMP
+        """))
+
 with app.app_context():
+    migrate_location_reference_columns()
     db.create_all()
     seed_data()
-
-
-
-
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "5000")), debug=False)
