@@ -1565,14 +1565,83 @@ def migrate_location_reference_columns():
             ADD COLUMN IF NOT EXISTS reference_updated_at TIMESTAMP
         """))
 
-@app.route("/debug-geosampa-estacoes")
+@app.route("/debug-conciliar-estacoes")
 @manager_required
-def debug_geosampa_estacoes():
+def debug_conciliar_estacoes():
     import json
+    import re
+    import unicodedata
     import urllib.parse
     import urllib.request
+    from difflib import SequenceMatcher
 
     base_url = "https://wfs.geosampa.prefeitura.sp.gov.br/geoserver/ows"
+
+    def normalizar(texto):
+        texto = texto or ""
+        texto = unicodedata.normalize("NFKD", texto)
+        texto = "".join(c for c in texto if not unicodedata.combining(c))
+        texto = texto.upper().strip()
+
+        # Remove código interno antes do hífen:
+        # "LUZ - LUZ" -> "LUZ"
+        # "BTO - SAO BENTO" -> "SAO BENTO"
+        if " - " in texto:
+            partes = texto.split(" - ", 1)
+            if len(partes[0].strip()) <= 4:
+                texto = partes[1].strip()
+
+        texto = texto.replace("–", "-")
+        texto = texto.replace("—", "-")
+        texto = texto.replace("-", " ")
+        texto = re.sub(r"[^A-Z0-9 ]", " ", texto)
+        texto = re.sub(r"\s+", " ", texto).strip()
+
+        aliases = {
+            "PALMEIRAS BARRA FUNDA": "PALMEIRAS BARRA FUNDA",
+            "BARRA FUNDA": "PALMEIRAS BARRA FUNDA",
+            "PORTUGUESA TIETE": "PORTUGUESA TIETE",
+            "JARDIM SAO PAULO": "JARDIM SAO PAULO AYRTON SENNA",
+            "LIBERDADE": "JAPAO LIBERDADE",
+            "BRESSER MOOCA": "BRESSER MOOCA",
+            "CORINTHIANS ITAQUERA": "CORINTHIANS ITAQUERA",
+            "GUILHERMINA ESPERANCA": "GUILHERMINA ESPERANCA",
+            "SANTOS IMIGRANTES": "SANTOS IMIGRANTES",
+            "USP LESTE": "USP LESTE",
+            "GUARULHOS CECAP": "GUARULHOS CECAP",
+            "AEROPORTO GUARULHOS": "AEROPORTO GUARULHOS",
+        }
+
+        return aliases.get(texto, texto)
+
+    def normalizar_linha(texto):
+        texto = normalizar(texto)
+
+        cores = {
+            "01 AZUL": "AZUL",
+            "1 AZUL": "AZUL",
+            "02 VERDE": "VERDE",
+            "2 VERDE": "VERDE",
+            "03 VERMELHA": "VERMELHA",
+            "3 VERMELHA": "VERMELHA",
+            "04 AMARELA": "AMARELA",
+            "4 AMARELA": "AMARELA",
+            "05 LILAS": "LILAS",
+            "5 LILAS": "LILAS",
+            "07 RUBI": "RUBI",
+            "7 RUBI": "RUBI",
+            "08 DIAMANTE": "DIAMANTE",
+            "8 DIAMANTE": "DIAMANTE",
+            "09 ESMERALDA": "ESMERALDA",
+            "9 ESMERALDA": "ESMERALDA",
+            "10 TURQUESA": "TURQUESA",
+            "11 CORAL": "CORAL",
+            "12 SAFIRA": "SAFIRA",
+            "13 JADE": "JADE",
+            "15 PRATA": "PRATA",
+        }
+
+        return cores.get(texto, texto)
 
     def carregar_camada(nome):
         params = {
@@ -1592,30 +1661,184 @@ def debug_geosampa_estacoes():
         )
 
         with urllib.request.urlopen(req, timeout=30) as response:
-            data = json.loads(response.read().decode("utf-8"))
+            return json.loads(response.read().decode("utf-8")).get("features", [])
 
-        features = data.get("features", [])
+    def preparar_estacoes():
+        features = (
+            carregar_camada("estacao_metro") +
+            carregar_camada("estacao_trem")
+        )
+
+        saida = []
+
+        for f in features:
+            p = f.get("properties", {})
+            g = f.get("geometry", {})
+
+            coords = g.get("coordinates", [])
+            if len(coords) < 2:
+                continue
+
+            saida.append({
+                "nome": p.get("nm_estacao_metro_trem"),
+                "nome_norm": normalizar(p.get("nm_estacao_metro_trem")),
+                "linha": p.get("nm_linha_metro_trem"),
+                "linha_norm": normalizar_linha(p.get("nm_linha_metro_trem")),
+                "empresa": p.get("nm_empresa_metro_trem"),
+                "situacao": p.get("tx_situacao_metro_trem"),
+                "longitude": coords[0],
+                "latitude": coords[1],
+            })
+
+        return saida
+
+    def empresa_compativel(company, estacao):
+        company = normalizar(company)
+        empresa_geo = normalizar(estacao["empresa"])
+        linha = estacao["linha_norm"]
+
+        if company == "METRO":
+            # Metrô e linhas concedidas podem aparecer na camada metro.
+            return linha in {
+                "AZUL", "VERDE", "VERMELHA",
+                "AMARELA", "LILAS", "PRATA"
+            }
+
+        if company == "CPTM":
+            return linha in {
+                "RUBI", "TURQUESA", "CORAL",
+                "SAFIRA", "JADE"
+            }
+
+        if company == "VIA MOBILIDADE":
+            return linha in {
+                "LILAS", "DIAMANTE", "ESMERALDA"
+            }
+
+        return False
+
+    def melhor_match(loc, estacoes):
+        nome_loc = normalizar(loc.location)
+        linha_loc = normalizar_linha(loc.line)
+
+        candidatos = [
+            e for e in estacoes
+            if e["situacao"] == "OPERANDO"
+            and empresa_compativel(loc.company, e)
+        ]
+
+        # Primeiro prioriza mesma linha.
+        mesma_linha = [
+            e for e in candidatos
+            if e["linha_norm"] == linha_loc
+        ]
+
+        if mesma_linha:
+            candidatos = mesma_linha
+
+        melhor = None
+        melhor_score = 0
+
+        for e in candidatos:
+            if nome_loc == e["nome_norm"]:
+                score = 1.0
+            else:
+                score = SequenceMatcher(
+                    None,
+                    nome_loc,
+                    e["nome_norm"]
+                ).ratio()
+
+            if e["linha_norm"] == linha_loc:
+                score += 0.08
+
+            if score > melhor_score:
+                melhor_score = score
+                melhor = e
+
+        if not melhor:
+            return None
+
+        if melhor_score >= 0.93:
+            confianca = "ALTA"
+        elif melhor_score >= 0.78:
+            confianca = "REVISAR"
+        else:
+            confianca = "BAIXA"
 
         return {
-            "camada": nome,
-            "quantidade": len(features),
-            "amostra": [
-                {
-                    "properties": f.get("properties", {}),
-                    "geometry": f.get("geometry", {})
-                }
-                for f in features[:5]
-            ]
+            "location_id": loc.id,
+            "company": loc.company,
+            "line": loc.line,
+            "location": loc.location,
+
+            "estacao_encontrada": melhor["nome"],
+            "linha_geosampa": melhor["linha"],
+            "empresa_geosampa": melhor["empresa"],
+
+            "latitude": melhor["latitude"],
+            "longitude": melhor["longitude"],
+
+            "score": round(min(melhor_score, 1.0), 3),
+            "confianca": confianca,
         }
 
     try:
-        metro = carregar_camada("estacao_metro")
-        trem = carregar_camada("estacao_trem")
+        estacoes = preparar_estacoes()
+
+        # Apenas rede metroferroviária nesta etapa.
+        localidades = (
+            Location.query
+            .filter(
+                Location.company.in_([
+                    "METRO",
+                    "CPTM",
+                    "VIA MOBILIDADE"
+                ])
+            )
+            .order_by(
+                Location.company,
+                Location.line,
+                Location.location
+            )
+            .all()
+        )
+
+        resultados = []
+
+        for loc in localidades:
+            match = melhor_match(loc, estacoes)
+
+            if match:
+                resultados.append(match)
+            else:
+                resultados.append({
+                    "location_id": loc.id,
+                    "company": loc.company,
+                    "line": loc.line,
+                    "location": loc.location,
+                    "estacao_encontrada": None,
+                    "latitude": None,
+                    "longitude": None,
+                    "score": 0,
+                    "confianca": "NAO ENCONTRADA",
+                })
+
+        resumo = {
+            "total_localidades": len(resultados),
+            "alta": sum(1 for x in resultados if x["confianca"] == "ALTA"),
+            "revisar": sum(1 for x in resultados if x["confianca"] == "REVISAR"),
+            "baixa": sum(1 for x in resultados if x["confianca"] == "BAIXA"),
+            "nao_encontrada": sum(
+                1 for x in resultados
+                if x["confianca"] == "NAO ENCONTRADA"
+            ),
+        }
 
         return jsonify({
             "ok": True,
-            "metro": metro,
-            "trem": trem
+            "resumo": resumo,
+            "resultados": resultados
         })
 
     except Exception as e:
