@@ -127,6 +127,11 @@ class Inventory(db.Model):
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime)
 
+    latitude = db.Column(db.Float)
+    longitude = db.Column(db.Float)
+    gps_accuracy = db.Column(db.Float)
+    gps_captured_at = db.Column(db.DateTime)
+
     __table_args__ = (
         UniqueConstraint(
             "location_id", "equipment_type", "asset_identifier",
