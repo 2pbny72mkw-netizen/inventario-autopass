@@ -291,8 +291,16 @@ function updateReferenceStatus(){
 
 if($('mapLocationSelect')) $('mapLocationSelect').addEventListener('change',()=>{
   updateReferenceStatus();
-  const id=Number($('mapLocationSelect').value||0); const loc=locations.find(x=>Number(x.id)===id);
-  if(loc && Number.isFinite(Number(loc.reference_latitude)) && Number.isFinite(Number(loc.reference_longitude))) ensureGpsMap()?.setView([Number(loc.reference_latitude),Number(loc.reference_longitude)],16);
+
+  const id = Number($('mapLocationSelect').value || 0);
+  const loc = locations.find(x => Number(x.id) === id);
+
+  if(hasReference(loc)){
+    ensureGpsMap()?.setView(
+      [Number(loc.reference_latitude), Number(loc.reference_longitude)],
+      16
+    );
+  }
 });
 
 if($('setReferenceBtn')) $('setReferenceBtn').addEventListener('click',()=>{
