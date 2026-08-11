@@ -1793,12 +1793,126 @@ def debug_conciliar_estacoes():
 @app.route("/admin/coordenadas-geosampa", methods=["GET"])
 @manager_required
 def coordenadas_geosampa():
+    try:
+        # Reutiliza a conciliação já validada em produção.
+        resposta = debug_conciliar_estacoes()
+
+        # Caso a função retorne (response, status_code)
+        if isinstance(resposta, tuple):
+            response_obj = resposta[0]
+            status_code = resposta[1]
+
+            if status_code != 200:
+                return resposta
+        else:
+            response_obj = resposta
+
+        dados = response_obj.get_json()
+
+        if not dados or not dados.get("ok"):
+            return jsonify({
+                "ok": False,
+                "modo": "dry-run",
+                "gravou_no_banco": False,
+                "erro": "Não foi possível executar a conciliação."
+            }), 500
+
+        resultados = dados.get("resultados", [])
+
+        alta = 0
+        atualizaveis = 0
+        preservadas = 0
+        ignoradas = 0
+        ja_geosampa = 0
+
+        ignoradas_detalhes = []
+
+        for item in resultados:
+            confianca = item.get("confianca")
+
+            # Somente ALTA pode entrar na futura carga.
+            if confianca != "ALTA":
+                ignoradas += 1
+
+                ignoradas_detalhes.append({
+                    "location_id": item.get("location_id"),
+                    "company": item.get("company"),
+                    "line": item.get("line"),
+                    "location": item.get("location"),
+                    "confianca": confianca,
+                    "estacao_encontrada": item.get("estacao_encontrada"),
+                    "score": item.get("score"),
+                })
+
+                continue
+
+            alta += 1
+
+            loc = db.session.get(
+                Location,
+                item.get("location_id")
+            )
+
+            if not loc:
+                ignoradas += 1
+                continue
+
+            tem_referencia = (
+                loc.reference_latitude is not None
+                and loc.reference_longitude is not None
+            )
+
+            fonte_atual = (
+                (loc.reference_source or "")
+                .strip()
+                .upper()
+            )
+
+            # Coordenada existente de outra fonte:
+            # será preservada.
+            if tem_referencia and fonte_atual not in {
+                "",
+                "GEOSAMPA"
+            }:
+                preservadas += 1
+                continue
+
+            # Já possui referência GeoSampa.
+            if tem_referencia and fonte_atual == "GEOSAMPA":
+                ja_geosampa += 1
+                continue
+
+            # Registro seguro que poderá ser gravado
+            # na próxima etapa.
+            atualizaveis += 1
+
         return jsonify({
             "ok": True,
             "modo": "dry-run",
             "gravou_no_banco": False,
-            "mensagem": "Rota de dry-run ativa."
+
+            "total_localidades": len(resultados),
+            "alta": alta,
+            "atualizaveis": atualizaveis,
+            "ja_geosampa": ja_geosampa,
+            "preservadas": preservadas,
+            "ignoradas": ignoradas,
+
+            "ignoradas_detalhes": ignoradas_detalhes,
+
+            "mensagem": (
+                "Dry-run concluído. "
+                "Nenhuma alteração foi gravada no banco."
+            )
         })
+
+    except Exception as e:
+        return jsonify({
+            "ok": False,
+            "modo": "dry-run",
+            "gravou_no_banco": False,
+            "erro": str(e)
+        }), 500
 
 with app.app_context():
     migrate_location_reference_columns()
