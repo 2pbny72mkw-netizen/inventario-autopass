@@ -6,15 +6,32 @@ function fmt(n){return new Intl.NumberFormat('pt-BR').format(Number(n||0))}
 function esc(v){return String(v??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'","&#039;")}
 
 function hasReference(loc){
-  return !!loc &&
-    loc.reference_latitude !== null &&
-    loc.reference_latitude !== undefined &&
-    loc.reference_latitude !== '' &&
-    loc.reference_longitude !== null &&
-    loc.reference_longitude !== undefined &&
-    loc.reference_longitude !== '' &&
-    Number.isFinite(Number(loc.reference_latitude)) &&
-    Number.isFinite(Number(loc.reference_longitude));
+  if(!loc) return false;
+
+  const lat = Number(loc.reference_latitude);
+  const lon = Number(loc.reference_longitude);
+
+  if(
+    loc.reference_latitude === null ||
+    loc.reference_latitude === undefined ||
+    loc.reference_latitude === '' ||
+    loc.reference_longitude === null ||
+    loc.reference_longitude === undefined ||
+    loc.reference_longitude === ''
+  ){
+    return false;
+  }
+
+  if(!Number.isFinite(lat) || !Number.isFinite(lon)){
+    return false;
+  }
+
+  // 0,0 não é uma referência válida para nossas localidades.
+  if(lat === 0 && lon === 0){
+    return false;
+  }
+
+  return true;
 }
 
 let gpsMap=null;
