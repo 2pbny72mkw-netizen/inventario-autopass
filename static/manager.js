@@ -5,6 +5,18 @@ function st(s){return `<span class="status s${s.replaceAll(' ','')}">${s}</span>
 function fmt(n){return new Intl.NumberFormat('pt-BR').format(Number(n||0))}
 function esc(v){return String(v??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'","&#039;")}
 
+function hasReference(loc){
+  return !!loc &&
+    loc.reference_latitude !== null &&
+    loc.reference_latitude !== undefined &&
+    loc.reference_latitude !== '' &&
+    loc.reference_longitude !== null &&
+    loc.reference_longitude !== undefined &&
+    loc.reference_longitude !== '' &&
+    Number.isFinite(Number(loc.reference_latitude)) &&
+    Number.isFinite(Number(loc.reference_longitude));
+}
+
 let gpsMap=null;
 let gpsPointLayer=null;
 let gpsAccuracyLayer=null;
@@ -81,10 +93,8 @@ function renderGpsMap(items){
   gpsAccuracyLayer.clearLayers();
   referenceLayer.clearLayers();
 
-  locations.filter(x=>
-    Number.isFinite(Number(x.reference_latitude)) &&
-    Number.isFinite(Number(x.reference_longitude))
-  ).forEach(x=>{
+locations.filter(x=>hasReference(x)).forEach(x=>{
+    
     const lat=Number(x.reference_latitude), lon=Number(x.reference_longitude);
     const ref=L.marker([lat,lon],{title:`Referência: ${x.location}`}).addTo(referenceLayer);
     ref.bindPopup(`<div style="min-width:210px"><b>◆ Referência da localidade</b><br><b>${esc(x.location)}</b><br><small>${esc(x.company)} · ${esc(x.line)}</small><br><small>Fonte: ${esc(x.reference_source||'não informada')}</small></div>`);
@@ -110,7 +120,7 @@ function renderGpsMap(items){
     const accuracyText=Number.isFinite(accuracy)?`${Math.round(accuracy)} m`:'não informada';
     const loc=locations.find(l=>Number(l.id)===Number(x.location_id));
     let distanceText='Referência da localidade ainda não cadastrada';
-    if(loc && Number.isFinite(Number(loc.reference_latitude)) && Number.isFinite(Number(loc.reference_longitude))){
+    if(hasReference(loc)){
       const d=haversineMeters(lat,lon,Number(loc.reference_latitude),Number(loc.reference_longitude));
       distanceText=`Distância até referência: ${Math.round(d)} m`;
     }
@@ -256,7 +266,7 @@ function renderMapLocationSelect(){
 function updateReferenceStatus(){
   const id=Number($('mapLocationSelect')?.value||0); const loc=locations.find(x=>Number(x.id)===id);
   if(!loc){ $('referenceStatus').textContent='Nenhuma localidade selecionada.'; return; }
-  if(Number.isFinite(Number(loc.reference_latitude)) && Number.isFinite(Number(loc.reference_longitude))){
+  if(hasReference(loc)){
     $('referenceStatus').textContent=`Referência: ${Number(loc.reference_latitude).toFixed(5)}, ${Number(loc.reference_longitude).toFixed(5)}`;
   }else $('referenceStatus').textContent='Sem referência cadastrada.';
 }
