@@ -1565,6 +1565,65 @@ def migrate_location_reference_columns():
             ADD COLUMN IF NOT EXISTS reference_updated_at TIMESTAMP
         """))
 
+@app.route("/debug-geosampa-estacoes")
+@manager_required
+def debug_geosampa_estacoes():
+    import json
+    import urllib.parse
+    import urllib.request
+
+    base_url = "https://wfs.geosampa.prefeitura.sp.gov.br/geoserver/ows"
+
+    def carregar_camada(nome):
+        params = {
+            "service": "WFS",
+            "version": "1.0.0",
+            "request": "GetFeature",
+            "typeName": nome,
+            "outputFormat": "application/json",
+            "srsName": "EPSG:4326",
+        }
+
+        url = base_url + "?" + urllib.parse.urlencode(params)
+
+        req = urllib.request.Request(
+            url,
+            headers={"User-Agent": "InventarioAutopass/1.0"}
+        )
+
+        with urllib.request.urlopen(req, timeout=30) as response:
+            data = json.loads(response.read().decode("utf-8"))
+
+        features = data.get("features", [])
+
+        return {
+            "camada": nome,
+            "quantidade": len(features),
+            "amostra": [
+                {
+                    "properties": f.get("properties", {}),
+                    "geometry": f.get("geometry", {})
+                }
+                for f in features[:5]
+            ]
+        }
+
+    try:
+        metro = carregar_camada("estacao_metro")
+        trem = carregar_camada("estacao_trem")
+
+        return jsonify({
+            "ok": True,
+            "metro": metro,
+            "trem": trem
+        })
+
+    except Exception as e:
+        return jsonify({
+            "ok": False,
+            "erro": str(e)
+        }), 500
+
 with app.app_context():
     migrate_location_reference_columns()
     db.create_all()
