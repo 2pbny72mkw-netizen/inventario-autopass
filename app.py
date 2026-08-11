@@ -1914,6 +1914,115 @@ def coordenadas_geosampa():
             "erro": str(e)
         }), 500
 
+@app.route("/admin/coordenadas-geosampa/gravar", methods=["POST"])
+@manager_required
+def gravar_coordenadas_geosampa():
+    try:
+        resposta = debug_conciliar_estacoes()
+
+        if isinstance(resposta, tuple):
+            response_obj = resposta[0]
+            status_code = resposta[1]
+
+            if status_code != 200:
+                return resposta
+        else:
+            response_obj = resposta
+
+        dados = response_obj.get_json()
+
+        if not dados or not dados.get("ok"):
+            return jsonify({
+                "ok": False,
+                "gravou_no_banco": False,
+                "erro": "Não foi possível executar a conciliação."
+            }), 500
+
+        resultados = dados.get("resultados", [])
+
+        atualizadas = 0
+        preservadas = 0
+        ignoradas = 0
+        erros = []
+
+        for item in resultados:
+
+            # Segurança principal:
+            # somente ALTA pode ser gravada.
+            if item.get("confianca") != "ALTA":
+                ignoradas += 1
+                continue
+
+            location_id = item.get("location_id")
+            latitude = item.get("latitude")
+            longitude = item.get("longitude")
+
+            if (
+                not location_id
+                or latitude is None
+                or longitude is None
+            ):
+                ignoradas += 1
+                continue
+
+            loc = db.session.get(Location, location_id)
+
+            if not loc:
+                erros.append({
+                    "location_id": location_id,
+                    "erro": "Localidade não encontrada no banco."
+                })
+                continue
+
+            tem_referencia = (
+                loc.reference_latitude is not None
+                and loc.reference_longitude is not None
+            )
+
+            fonte_atual = (
+                (loc.reference_source or "")
+                .strip()
+                .upper()
+            )
+
+            # Nunca sobrescreve referência de outra fonte.
+            if tem_referencia and fonte_atual not in {
+                "",
+                "GEOSAMPA"
+            }:
+                preservadas += 1
+                continue
+
+            loc.reference_latitude = float(latitude)
+            loc.reference_longitude = float(longitude)
+            loc.reference_source = "GEOSAMPA"
+            loc.reference_updated_at = datetime.utcnow()
+
+            atualizadas += 1
+
+        # Commit único: ou a operação termina corretamente,
+        # ou fazemos rollback.
+        db.session.commit()
+
+        return jsonify({
+            "ok": True,
+            "gravou_no_banco": True,
+            "atualizadas": atualizadas,
+            "preservadas": preservadas,
+            "ignoradas": ignoradas,
+            "erros": erros,
+            "mensagem": "Coordenadas GeoSampa gravadas com sucesso."
+        })
+
+    except Exception as e:
+        db.session.rollback()
+
+        return jsonify({
+            "ok": False,
+            "gravou_no_banco": False,
+            "erro": str(e)
+        }), 500
+
 with app.app_context():
     migrate_location_reference_columns()
     db.create_all()
