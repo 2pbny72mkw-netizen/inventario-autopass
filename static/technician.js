@@ -915,9 +915,88 @@ async function loadAlready() {
           </td>
         </tr>
       `;
+  document
+  .querySelectorAll('.deleteInventoryBtn')
+  .forEach(btn => {
 
-  renderLocationPending();
+    btn.onclick = async () => {
+
+      const inventoryId =
+        Number(btn.dataset.id);
+
+      if (!inventoryId) {
+        return;
+      }
+
+      const confirmou = confirm(
+        'Confirma a exclusão deste cadastro? Esta ação removerá o registro do inventário.'
+      );
+
+      if (!confirmou) {
+        return;
+      }
+
+      try {
+
+        btn.disabled = true;
+        btn.textContent = 'Excluindo...';
+
+        const r = await fetch(
+          `/api/inventory/${inventoryId}`,
+          {
+            method: 'DELETE'
+          }
+        );
+
+        const j = await r.json()
+          .catch(() => ({
+            ok: false,
+            error: 'Resposta inválida do servidor.'
+          }));
+
+        if (!r.ok) {
+
+          showMsg(
+            j.error || 'Não foi possível excluir o cadastro.',
+            false
+          );
+
+          btn.disabled = false;
+          btn.textContent = 'Excluir';
+
+          return;
+        }
+
+        showMsg(
+          'Cadastro excluído com sucesso.',
+          true
+        );
+
+        await loadAlready();
+        await loadAssets();
+
+      } catch (err) {
+
+        console.error(
+          'Erro ao excluir cadastro:',
+          err
+        );
+
+        showMsg(
+          'Erro ao excluir o cadastro.',
+          false
+        );
+
+        btn.disabled = false;
+        btn.textContent = 'Excluir';
+      }
+    };
+  });
+
+
+renderLocationPending();
 }
+
 
 
 /* =========================================================
