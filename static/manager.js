@@ -41,6 +41,7 @@ let gpsAccuracyLayer=null;
 let referenceLayer=null;
 let referenceMode=false;
 let referenceTempMarker=null;
+let railLineLayer = null;
 
 function haversineMeters(lat1,lon1,lat2,lon2){
   const R=6371000;
@@ -72,6 +73,7 @@ function ensureGpsMap(){
   gpsAccuracyLayer=L.layerGroup().addTo(gpsMap);
   referenceLayer=L.layerGroup().addTo(gpsMap);
   gpsPointLayer=L.layerGroup().addTo(gpsMap);
+  railLineLayer=L.layerGroup().addTo(gpsMap);  
 
   gpsMap.on('click', async e=>{
     if(!referenceMode) return;
@@ -103,6 +105,208 @@ function ensureGpsMap(){
   return gpsMap;
 }
 
+const railColors = {
+  '01 - AZUL': '#005CA9',
+  '02 - VERDE': '#008061',
+  '03 - VERMELHA': '#EE3124',
+  '04 - AMARELA': '#FFD600',
+  '05 - LILÁS': '#9B3894',
+  '06 - LARANJA': '#F7941D',
+
+  '07 - RUBI': '#A8034F',
+  '08 - DIAMANTE': '#8F8F8C',
+  '09 - ESMERALDA': '#00A88E',
+  '10 - TURQUESA': '#00A6B2',
+  '11 - CORAL': '#F15A22',
+  '12 - SAFIRA': '#1C3F94',
+  '13 - JADE': '#00A651',
+
+  '15 - PRATA': '#8A8D8F',
+  '17 - OURO': '#B6922E'
+};
+
+
+function normalizeRailLine(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .trim();
+}
+
+
+function railColor(line) {
+
+  const normalized =
+    normalizeRailLine(line);
+
+  const match =
+    Object.entries(railColors)
+      .find(([key]) =>
+        normalizeRailLine(key) === normalized
+      );
+
+  if (match) {
+    return match[1];
+  }
+
+  const colorName = normalized
+    .replace(/^\d+\s*-\s*/, '');
+
+  const fallback =
+    Object.entries(railColors)
+      .find(([key]) =>
+        normalizeRailLine(key)
+          .endsWith(colorName)
+      );
+
+  return fallback
+    ? fallback[1]
+    : '#64748b';
+}
+
+
+function renderRailLines() {
+
+  if (!railLineLayer) {
+    return;
+  }
+
+  railLineLayer.clearLayers();
+
+  const groups = {};
+
+  locations
+    .filter(x => hasReference(x))
+    .forEach(loc => {
+
+      const key =
+        String(loc.line || '')
+          .trim();
+
+      if (!key) {
+        return;
+      }
+
+      if (!groups[key]) {
+        groups[key] = [];
+      }
+
+      groups[key].push(loc);
+    });
+
+  Object.entries(groups)
+    .forEach(([line, stations]) => {
+
+      if (stations.length < 2) {
+        return;
+      }
+
+      /*
+        Ordenação provisória:
+        cria uma sequência geográfica aproximada.
+
+        Depois substituiremos pela geometria
+        oficial dos trilhos, quando carregarmos
+        a camada WFS.
+      */
+
+      const ordered = [...stations];
+
+      const start = ordered.shift();
+
+      const sequence = [start];
+
+      while (ordered.length) {
+
+        const last =
+          sequence[
+            sequence.length - 1
+          ];
+
+        let bestIndex = 0;
+        let bestDistance = Infinity;
+
+        ordered.forEach(
+          (candidate, index) => {
+
+            const distance =
+              haversineMeters(
+                Number(
+                  last.reference_latitude
+                ),
+                Number(
+                  last.reference_longitude
+                ),
+                Number(
+                  candidate.reference_latitude
+                ),
+                Number(
+                  candidate.reference_longitude
+                )
+              );
+
+            if (
+              distance <
+              bestDistance
+            ) {
+
+              bestDistance =
+                distance;
+
+              bestIndex =
+                index;
+            }
+          }
+        );
+
+        sequence.push(
+          ordered.splice(
+            bestIndex,
+            1
+          )[0]
+        );
+      }
+
+      const coordinates =
+        sequence.map(x => [
+          Number(
+            x.reference_latitude
+          ),
+          Number(
+            x.reference_longitude
+          )
+        ]);
+
+      const polyline =
+        L.polyline(
+          coordinates,
+          {
+            color:
+              railColor(line),
+
+            weight: 5,
+
+            opacity: 0.82,
+
+            lineCap: 'round',
+
+            lineJoin: 'round'
+          }
+        )
+        .addTo(
+          railLineLayer
+        );
+
+      polyline.bindPopup(
+        `<b>${esc(line)}</b><br>
+         ${stations.length} estação(ões)
+         com referência geográfica`
+      );
+    });
+}
+
+
 function renderGpsMap(items){
   const map=ensureGpsMap();
   if(!map) return;
@@ -110,9 +314,12 @@ function renderGpsMap(items){
   gpsPointLayer.clearLayers();
   gpsAccuracyLayer.clearLayers();
   referenceLayer.clearLayers();
+  railLineLayer.clearLayers();
 
 locations.filter(x=>hasReference(x)).forEach(x=>{
-    
+
+    renderRailLines();
+  
     const lat=Number(x.reference_latitude), lon=Number(x.reference_longitude);
     const ref=L.marker([lat,lon],{title:`Referência: ${x.location}`}).addTo(referenceLayer);
     ref.bindPopup(`<div style="min-width:210px"><b>◆ Referência da localidade</b><br><b>${esc(x.location)}</b><br><small>${esc(x.company)} · ${esc(x.line)}</small><br><small>Fonte: ${esc(x.reference_source||'não informada')}</small></div>`);
