@@ -124,7 +124,15 @@ class BaseAsset(db.Model):
     software_version = db.Column(db.String(120))
     quantity = db.Column(db.Integer)
     base_notes = db.Column(db.Text)
-
+    equipment_type = db.Column(db.String(50), index=True)
+    location_code = db.Column(db.String(80))
+    terminal_number = db.Column(db.String(120))
+    application = db.Column(db.String(180))
+    bom_id = db.Column(db.String(120))
+    bu_id = db.Column(db.String(120))
+    software_version = db.Column(db.String(120))
+    quantity = db.Column(db.Integer)
+    base_notes = db.Column(db.Text)
 
 class Inventory(db.Model):
     __tablename__ = "inventory"
@@ -330,7 +338,83 @@ def field_required(fn):
         return fn(*args, **kwargs)
     return inner
 
+@app.route("/admin/migrar-base-assets")
+@manager_required
+def migrar_base_assets():
+    try:
+        comandos = [
+            """
+            ALTER TABLE base_assets
+            ADD COLUMN IF NOT EXISTS equipment_type VARCHAR(50)
+            """,
+            """
+            ALTER TABLE base_assets
+            ADD COLUMN IF NOT EXISTS location_code VARCHAR(80)
+            """,
+            """
+            ALTER TABLE base_assets
+            ADD COLUMN IF NOT EXISTS terminal_number VARCHAR(120)
+            """,
+            """
+            ALTER TABLE base_assets
+            ADD COLUMN IF NOT EXISTS application VARCHAR(180)
+            """,
+            """
+            ALTER TABLE base_assets
+            ADD COLUMN IF NOT EXISTS bom_id VARCHAR(120)
+            """,
+            """
+            ALTER TABLE base_assets
+            ADD COLUMN IF NOT EXISTS bu_id VARCHAR(120)
+            """,
+            """
+            ALTER TABLE base_assets
+            ADD COLUMN IF NOT EXISTS software_version VARCHAR(120)
+            """,
+            """
+            ALTER TABLE base_assets
+            ADD COLUMN IF NOT EXISTS quantity INTEGER
+            """,
+            """
+            ALTER TABLE base_assets
+            ADD COLUMN IF NOT EXISTS base_notes TEXT
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS
+            ix_base_assets_equipment_type
+            ON base_assets (equipment_type)
+            """
+        ]
 
+        for comando in comandos:
+            db.session.execute(db.text(comando))
+
+        # Todos os ativos já existentes eram da estrutura ATM.
+        db.session.execute(
+            db.text("""
+                UPDATE base_assets
+                SET equipment_type = 'ATM'
+                WHERE equipment_type IS NULL
+                   OR TRIM(equipment_type) = ''
+            """)
+        )
+
+        db.session.commit()
+
+        return jsonify({
+            "ok": True,
+            "mensagem": "Estrutura base_assets atualizada com sucesso.",
+            "dados_preservados": True
+        })
+
+    except Exception as e:
+        db.session.rollback()
+
+        return jsonify({
+            "ok": False,
+            "erro": str(e)
+        }), 500
+        
 @app.route("/")
 def index():
     if not session.get("user_id"):
@@ -467,58 +551,144 @@ def api_location_inventory(location_id):
         })
     return jsonify(out)
 
-
 @app.get("/api/location/<int:location_id>/assets")
 @login_required
 def api_assets(location_id):
     loc = db.session.get(Location, location_id)
+
     if not loc:
         return jsonify([])
+
+    requested_type = normalize(
+        request.args.get("equipment_type", "")
+    )
+
+    type_aliases = {
+        "ATM": "ATM",
+        "VALIDADOR": "VALIDADOR",
+        "VALIDADOR DE RECARGA": "VALIDADOR",
+        "POS": "POS",
+        "POS DE BILHETERIA": "POS",
+    }
+
+    requested_type = type_aliases.get(
+        requested_type,
+        requested_type
+    )
 
     line = normalize(loc.line)
     company = normalize(loc.company)
     station_text = normalize(loc.location)
+
     already = {
-        x[0] for x in db.session.query(Inventory.base_asset_id)
-        .filter(Inventory.location_id == location_id, Inventory.base_asset_id.isnot(None))
+        x[0]
+        for x in db.session.query(
+            Inventory.base_asset_id
+        )
+        .filter(
+            Inventory.location_id == location_id,
+            Inventory.base_asset_id.isnot(None)
+        )
         .all()
     }
 
     out = []
+
     for a in BaseAsset.query.all():
+
+        # Se foi informado um tipo,
+        # retorna somente ativos daquele tipo.
+        if requested_type:
+            asset_type = normalize(
+                a.equipment_type or "ATM"
+            )
+
+            if asset_type != requested_type:
+                continue
+
         asset_company = normalize(a.company)
+
         if normalize(a.line) != line:
             continue
-        if company not in asset_company and asset_company not in company:
+
+        if (
+            company not in asset_company
+            and asset_company not in company
+        ):
             continue
 
         station_name = normalize(a.locality)
         code = normalize(a.station_code)
+
         station_match = (
-            (station_name and (station_name in station_text or station_text.endswith(station_name)))
-            or (code and station_text.startswith(code + " "))
+            (
+                station_name
+                and (
+                    station_name in station_text
+                    or station_text.endswith(station_name)
+                )
+            )
+            or (
+                code
+                and station_text.startswith(
+                    code + " "
+                )
+            )
         )
-        if station_match:
-            out.append({
-                "id": a.id,
-                "asset_key": a.asset_key,
-                "description": a.description,
-                "company": a.company,
-                "station_code": a.station_code,
-                "line": a.line,
-                "locality": a.locality,
-                "serial": a.serial,
-                "qrcode_id": a.qrcode_id,
-                "top_id": a.top_id,
-                "products": a.products,
-                "model": a.model,
-                "supplier": a.supplier,
-                "transactions": a.transactions,
-                "pix": a.pix,
-                "mount": a.mount,
-                "base_status": a.base_status,
-                "already_inventoried": a.id in already,
-            })
+
+        if not station_match:
+            continue
+
+        out.append({
+            "id": a.id,
+
+            "equipment_type":
+                a.equipment_type or "ATM",
+
+            "asset_key": a.asset_key,
+            "description": a.description,
+
+            "company": a.company,
+
+            "station_code": a.station_code,
+            "location_code": a.location_code,
+
+            "line": a.line,
+            "locality": a.locality,
+
+            "terminal_number":
+                a.terminal_number,
+
+            "serial": a.serial,
+            "qrcode_id": a.qrcode_id,
+            "top_id": a.top_id,
+
+            "products": a.products,
+
+            "model": a.model,
+            "supplier": a.supplier,
+
+            "transactions": a.transactions,
+            "pix": a.pix,
+            "mount": a.mount,
+
+            "base_status": a.base_status,
+
+            # Validador
+            "application": a.application,
+            "bom_id": a.bom_id,
+            "bu_id": a.bu_id,
+            "software_version":
+                a.software_version,
+
+            "quantity": a.quantity,
+
+            "base_notes": a.base_notes,
+
+            "already_inventoried":
+                a.id in already,
+        })
+
     return jsonify(out)
 
 
