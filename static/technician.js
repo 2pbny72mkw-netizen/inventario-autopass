@@ -863,13 +863,54 @@ async function loadAlready() {
 
           </td>
 
+        <td>
+
+            ${
+              x._pending
+                ? `
+                  <span class="muted">
+                    Aguardando sincronização
+                  </span>
+                `
+                : `
+                  <div style="
+                    display:flex;
+                    gap:6px;
+                    flex-wrap:wrap;
+                  ">
+                    <button
+                      type="button"
+                      class="secondary editInventoryBtn"
+                      data-id="${x.id}"
+                    >
+                      Editar
+                    </button>
+
+                    <button
+                      type="button"
+                      class="secondary deleteInventoryBtn"
+                      data-id="${x.id}"
+                      style="
+                        color:#b42318;
+                        border-color:#f0b4b4;
+                      "
+                    >
+                      Excluir
+                    </button>
+                  </div>
+                `
+        }
+
+        </td>
+
+
         </tr>
 
       `).join('')
 
       : `
         <tr>
-          <td colspan="6">
+          <td colspan="7">
             Nenhum equipamento registrado ainda.
           </td>
         </tr>
