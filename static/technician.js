@@ -1400,18 +1400,72 @@ $('showPendingBtn')
    FORMULÁRIO DO EQUIPAMENTO
 ========================================================= */
 
-$('equipment_type').onchange =
-  () => {
+$('equipment_type').onchange = async () => {
+  const type = $('equipment_type').value;
 
-    if (
-      $('equipment_type').value !==
-      'ATM'
-    ) {
+  const label = $('assetBaseLabel');
 
-      $('base_asset_id').value =
-        '';
+  if (label) {
+    if (type === 'ATM') {
+      label.textContent = 'Ativo da base — ATM';
+    } else if (type === 'Validador de Recarga') {
+      label.textContent = 'Ativo da base — Validador';
+    } else if (type === 'POS de Bilheteria') {
+      label.textContent = 'Ativo da base — POS';
+    } else {
+      label.textContent = 'Ativo da base';
     }
+  }
+
+  $('base_asset_id').value = '';
+
+  if (!current || !type) {
+    assets = [];
+    renderAssets();
+    return;
+  }
+
+  const typeMap = {
+    'ATM': 'ATM',
+    'Validador de Recarga': 'VALIDADOR',
+    'POS de Bilheteria': 'POS'
   };
+
+  const apiType = typeMap[type] || '';
+
+  if (!apiType) {
+    assets = [];
+    renderAssets();
+    return;
+  }
+
+  try {
+    const r = await fetch(
+      `/api/location/${current.id}/assets?equipment_type=${encodeURIComponent(apiType)}`,
+      { cache: 'no-store' }
+    );
+
+    if (!r.ok) {
+      throw new Error('Falha ao carregar ativos da base.');
+    }
+
+    assets = await r.json();
+
+    renderAssets();
+
+  } catch (err) {
+    console.error(err);
+
+    assets = [];
+
+    renderAssets();
+
+    showMsg(
+      'Não foi possível carregar os ativos deste tipo.',
+      false
+    );
+  }
+};
 
 
 $('base_asset_id').onchange =
