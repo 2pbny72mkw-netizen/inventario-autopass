@@ -35,11 +35,17 @@ function clearGpsFields() {
   });
 }
 
-
 function setGpsMessage(text, ok = null) {
-  $('gpsText').textContent = text;
-
+  const gpsText = $('gpsText');
   const box = $('gpsStatus');
+
+  if (gpsText) {
+    gpsText.textContent = text;
+  }
+
+  if (!box) {
+    return;
+  }
 
   if (ok === true) {
     box.style.borderColor = '#b7dfc4';
@@ -49,7 +55,6 @@ function setGpsMessage(text, ok = null) {
     box.style.borderColor = '';
   }
 }
-
 
 function applyGpsPosition(position) {
   const c = position.coords;
