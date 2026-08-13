@@ -365,15 +365,56 @@ function renderGpsMap(items){
   referenceLayer.clearLayers();
   railLineLayer.clearLayers();
 
-locations.filter(x=>hasReference(x)).forEach(x=>{
+locations
+  .filter(x => hasReference(x))
+  .forEach(x => {
 
-    renderRailLines();
-  
-    const lat=Number(x.reference_latitude), lon=Number(x.reference_longitude);
-    const ref=L.marker([lat,lon],{title:`Referência: ${x.location}`}).addTo(referenceLayer);
-    ref.bindPopup(`<div style="min-width:210px"><b>◆ Referência da localidade</b><br><b>${esc(x.location)}</b><br><small>${esc(x.company)} · ${esc(x.line)}</small><br><small>Fonte: ${esc(x.reference_source||'não informada')}</small></div>`);
+    const lat =
+      Number(x.reference_latitude);
+
+    const lon =
+      Number(x.reference_longitude);
+
+    const color =
+      railColor(x.line);
+
+    const ref =
+      L.circleMarker(
+        [lat, lon],
+        {
+          radius: 4,
+          color: color,
+          weight: 2,
+          fillColor: '#ffffff',
+          fillOpacity: 1,
+          opacity: 1
+        }
+      )
+      .addTo(referenceLayer);
+
+    ref.bindPopup(`
+      <div style="min-width:210px">
+
+        <b>${esc(x.location)}</b>
+
+        <br>
+
+        <small>
+          ${esc(x.company)}
+          ·
+          ${esc(x.line)}
+        </small>
+
+        <br>
+
+        <small>
+          Referência geográfica
+        </small>
+
+      </div>
+    `);
+
   });
-
   const valid=(items||[]).filter(x=>
     Number.isFinite(Number(x.latitude)) &&
     Number.isFinite(Number(x.longitude))
