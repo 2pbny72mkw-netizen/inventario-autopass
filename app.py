@@ -842,6 +842,277 @@ def create_inventory():
 
     return jsonify({"ok": True, "id": inv.id})
 
+@app.route("/api/inventory/<int:inventory_id>", methods=["PUT", "PATCH"])
+@manager_required
+def update_inventory(inventory_id):
+    inv = db.session.get(Inventory, inventory_id)
+
+    if not inv:
+        return jsonify({
+            "ok": False,
+            "error": "Registro não encontrado."
+        }), 404
+
+    location_id = request.form.get(
+        "location_id",
+        type=int
+    ) or inv.location_id
+
+    equipment_type = request.form.get(
+        "equipment_type",
+        inv.equipment_type or ""
+    ).strip()
+
+    base_asset_id = request.form.get(
+        "base_asset_id",
+        type=int
+    )
+
+    serial = request.form.get(
+        "serial",
+        inv.serial or ""
+    ).strip()
+
+    asset_identifier = request.form.get(
+        "asset_identifier",
+        inv.asset_identifier or ""
+    ).strip() or serial
+
+    if (
+        not location_id
+        or not equipment_type
+        or not asset_identifier
+    ):
+        return jsonify({
+            "ok": False,
+            "error": "Local, tipo e identificação/série são obrigatórios."
+        }), 400
+
+    loc = db.session.get(
+        Location,
+        location_id
+    )
+
+    if not loc:
+        return jsonify({
+            "ok": False,
+            "error": "Local inválido."
+        }), 400
+
+    # Evita que a edição crie uma duplicidade.
+    duplicate = (
+        Inventory.query
+        .filter(
+            Inventory.id != inventory_id,
+            Inventory.location_id == location_id,
+            Inventory.equipment_type == equipment_type,
+            func.upper(
+                Inventory.asset_identifier
+            ) == asset_identifier.upper()
+        )
+        .first()
+    )
+
+    if duplicate:
+        return jsonify({
+            "ok": False,
+            "duplicate": True,
+            "error": "Já existe outro equipamento com esta identificação neste local."
+        }), 409
+
+    inv.location_id = location_id
+    inv.equipment_type = equipment_type
+    inv.base_asset_id = base_asset_id
+    inv.asset_identifier = asset_identifier
+    inv.serial = serial
+
+    inv.supplier = request.form.get(
+        "supplier",
+        inv.supplier or ""
+    )
+
+    inv.model = request.form.get(
+        "model",
+        inv.model or ""
+    )
+
+    inv.exact_position = request.form.get(
+        "exact_position",
+        inv.exact_position or ""
+    )
+
+    inv.mount = request.form.get(
+        "mount",
+        inv.mount or ""
+    )
+
+    inv.operational_status = request.form.get(
+        "operational_status",
+        inv.operational_status or ""
+    )
+
+    inv.connectivity = request.form.get(
+        "connectivity",
+        inv.connectivity or ""
+    )
+
+    inv.network_id = request.form.get(
+        "network_id",
+        inv.network_id or ""
+    )
+
+    inv.label_status = request.form.get(
+        "label_status",
+        inv.label_status or ""
+    )
+
+    inv.in_base = request.form.get(
+        "in_base",
+        inv.in_base or ""
+    )
+
+    inv.divergence = request.form.get(
+        "divergence",
+        inv.divergence or ""
+    )
+
+    inv.notes = request.form.get(
+        "notes",
+        inv.notes or ""
+    )
+
+    # Só altera GPS se novos valores forem enviados.
+    if request.form.get("latitude") not in (None, ""):
+        inv.latitude = _optional_float(
+            request.form.get("latitude")
+        )
+
+    if request.form.get("longitude") not in (None, ""):
+        inv.longitude = _optional_float(
+            request.form.get("longitude")
+        )
+
+    if request.form.get("gps_accuracy") not in (None, ""):
+        inv.gps_accuracy = _optional_float(
+            request.form.get("gps_accuracy")
+        )
+
+    if request.form.get("gps_captured_at") not in (None, ""):
+        inv.gps_captured_at = _optional_iso_datetime(
+            request.form.get("gps_captured_at")
+        )
+
+    inv.updated_at = datetime.utcnow()
+
+    try:
+        db.session.commit()
+
+        return jsonify({
+            "ok": True,
+            "id": inv.id,
+            "message": "Cadastro atualizado com sucesso."
+        })
+
+    except IntegrityError:
+        db.session.rollback()
+
+        return jsonify({
+            "ok": False,
+            "duplicate": True,
+            "error": "A alteração geraria um registro duplicado."
+        }), 409
+
+    except Exception as exc:
+        db.session.rollback()
+
+        return jsonify({
+            "ok": False,
+            "error": str(exc)
+        }), 500
+
+@app.delete("/api/inventory/<int:inventory_id>")
+@manager_required
+def delete_inventory(inventory_id):
+    inv = db.session.get(
+        Inventory,
+        inventory_id
+    )
+
+    if not inv:
+        return jsonify({
+            "ok": False,
+            "error": "Registro não encontrado."
+        }), 404
+
+    location_id = inv.location_id
+
+    try:
+        attachments = Attachment.query.filter_by(
+            inventory_id=inventory_id
+        ).all()
+
+        # Remove os arquivos locais associados,
+        # quando ainda estiverem no storage local.
+        for attachment in attachments:
+            try:
+                if attachment.stored_name:
+                    file_path = (
+                        UPLOAD_DIR /
+                        attachment.stored_name
+                    )
+
+                    if file_path.exists():
+                        file_path.unlink()
+            except Exception:
+                # Falha ao apagar um arquivo físico
+                # não deve corromper a transação do banco.
+                pass
+
+            db.session.delete(
+                attachment
+            )
+
+        db.session.delete(inv)
+        db.session.flush()
+
+        # Se a localidade ficar sem nenhum inventário,
+        # volta para PENDENTE.
+        remaining = (
+            Inventory.query
+            .filter_by(
+                location_id=location_id
+            )
+            .count()
+        )
+
+        if remaining == 0:
+            loc = db.session.get(
+                Location,
+                location_id
+            )
+
+            if loc:
+                loc.survey_status = "PENDENTE"
+                loc.started_at = None
+                loc.completed_at = None
+                loc.completed_by = None
+
+        db.session.commit()
+
+        return jsonify({
+            "ok": True,
+            "id": inventory_id,
+            "message": "Cadastro excluído com sucesso."
+        })
+
+    except Exception as exc:
+        db.session.rollback()
+
+        return jsonify({
+            "ok": False,
+            "error": str(exc)
+        }), 500
+
 
 @app.post("/api/location/<int:location_id>/complete")
 @field_required
