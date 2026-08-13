@@ -1440,10 +1440,24 @@ $('equipment_type').onchange = async () => {
   }
 
   try {
-    const r = await fetch(
-      `/api/location/${current.id}/assets?equipment_type=${encodeURIComponent(apiType)}`,
-      { cache: 'no-store' }
-    );
+    const selectedType = $('equipment_type').value;
+
+    const typeMap = {
+      'ATM': 'ATM',
+      'Validador de Recarga': 'VALIDADOR',
+      'POS de Bilheteria': 'POS'
+  };
+
+const apiType = typeMap[selectedType] || '';
+
+const url = apiType
+  ? `/api/location/${current.id}/assets?equipment_type=${encodeURIComponent(apiType)}`
+  : `/api/location/${current.id}/assets`;
+
+const r = await fetch(
+  url,
+  { cache: 'no-store' }
+);
 
     if (!r.ok) {
       throw new Error('Falha ao carregar ativos da base.');
