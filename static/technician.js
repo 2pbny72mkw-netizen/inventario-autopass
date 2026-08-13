@@ -1560,87 +1560,100 @@ async function hasLocalDuplicate(
   );
 }
 
-
-async function enqueueCurrentForm(
-  form
-) {
-
-  const record =
-    await formToOfflineRecord(
-      form
+async function enqueueCurrentForm(form) {
+  try {
+    showMsg(
+      'Preparando salvamento local...',
+      true
     );
 
-  if (
-    await hasLocalDuplicate(
-      record
-    )
-  ) {
+    const record =
+      await formToOfflineRecord(form);
+
+    if (
+      await hasLocalDuplicate(record)
+    ) {
+      showMsg(
+        'Este equipamento já está na fila de sincronização deste aparelho.',
+        false
+      );
+
+      return false;
+    }
 
     showMsg(
-      'Este equipamento já está na fila de sincronização deste aparelho.',
+      'Gravando equipamento neste aparelho...',
+      true
+    );
+
+    await idbPut(
+      STORE_QUEUE,
+      record
+    );
+
+    const savedGps =
+      lastGps
+        ? { ...lastGps }
+        : null;
+
+    form.reset();
+
+    $('location_id').value =
+      current.id;
+
+    clearGpsFields();
+
+    if (savedGps) {
+      const a =
+        Number.isFinite(
+          savedGps.accuracy
+        )
+          ? Math.round(
+              savedGps.accuracy
+            )
+          : null;
+
+      setGpsMessage(
+        a !== null
+          ? `Último registro salvo com GPS • precisão aproximada ${a} m`
+          : 'Último registro salvo com GPS.',
+        true
+      );
+    } else {
+      setGpsMessage(
+        'Último registro salvo sem GPS disponível.',
+        false
+      );
+    }
+
+    await refreshConnectionUI();
+
+    await loadAlready();
+
+    await loadAssets();
+
+    renderLocationPending();
+
+    showMsg(
+      'Equipamento salvo neste aparelho com sucesso. O formulário foi limpo e as pendências foram atualizadas.',
+      true
+    );
+
+    return true;
+
+  } catch (err) {
+    console.error(
+      'Erro ao salvar localmente:',
+      err
+    );
+
+    showMsg(
+      `Erro ao salvar neste aparelho: ${err?.message || String(err)}`,
       false
     );
 
     return false;
   }
-
-  await idbPut(
-    STORE_QUEUE,
-    record
-  );
-
-  showMsg(
-    'Equipamento salvo neste aparelho. Você pode continuar cadastrando outros antes de sincronizar.',
-    true
-  );
-
-  const savedGps =
-    lastGps
-      ? { ...lastGps }
-      : null;
-
-  form.reset();
-
-  $('location_id').value =
-    current.id;
-
-  clearGpsFields();
-
-  if (savedGps) {
-
-    const a =
-      Number.isFinite(
-        savedGps.accuracy
-      )
-        ? Math.round(
-            savedGps.accuracy
-          )
-        : null;
-
-    setGpsMessage(
-
-      a !== null
-
-        ? `Último registro salvo com GPS • precisão aproximada ${a} m`
-
-        : 'Último registro salvo com GPS.',
-
-      true
-    );
-
-  } else {
-
-    setGpsMessage(
-      'Último registro salvo sem GPS disponível.',
-      false
-    );
-  }
-
-  await refreshConnectionUI();
-
-  await loadAlready();
-
-  return true;
 }
 
 
