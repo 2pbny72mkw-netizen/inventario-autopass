@@ -20,10 +20,19 @@ let lastGps = null;
 ========================================================= */
 
 function clearGpsFields() {
-  $('latitude').value = '';
-  $('longitude').value = '';
-  $('gps_accuracy').value = '';
-  $('gps_captured_at').value = '';
+  const ids = [
+    'latitude',
+    'longitude',
+    'gps_accuracy',
+    'gps_captured_at'
+  ];
+
+  ids.forEach(id => {
+    const el = $(id);
+    if (el) {
+      el.value = '';
+    }
+  });
 }
 
 
@@ -55,10 +64,21 @@ function applyGpsPosition(position) {
     captured_at: capturedAt
   };
 
+if ($('latitude')) {
   $('latitude').value = String(c.latitude);
+}
+
+if ($('longitude')) {
   $('longitude').value = String(c.longitude);
+}
+
+if ($('gps_accuracy')) {
   $('gps_accuracy').value = String(c.accuracy);
+}
+
+if ($('gps_captured_at')) {
   $('gps_captured_at').value = capturedAt;
+}
 
   const accuracy =
     Number.isFinite(c.accuracy)
