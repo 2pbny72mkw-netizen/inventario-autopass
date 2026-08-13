@@ -278,25 +278,74 @@ function renderRailLines() {
           )
         ]);
 
-      const polyline =
-        L.polyline(
-          coordinates,
-          {
-            color:
-              railColor(line),
+     const lineColor = railColor(line);
 
-            weight: 5,
+/*
+  Contorno branco para destacar a linha
+  sobre o mapa geográfico.
+*/
+L.polyline(
+  coordinates,
+  {
+    color: '#ffffff',
+    weight: 8,
+    opacity: 0.95,
+    lineCap: 'round',
+    lineJoin: 'round'
+  }
+).addTo(railLineLayer);
 
-            opacity: 0.82,
 
-            lineCap: 'round',
+/*
+  Linha metroferroviária colorida.
+*/
+const polyline = L.polyline(
+  coordinates,
+  {
+    color: lineColor,
+    weight: 5,
+    opacity: 1,
+    lineCap: 'round',
+    lineJoin: 'round'
+  }
+).addTo(railLineLayer);
 
-            lineJoin: 'round'
-          }
-        )
-        .addTo(
-          railLineLayer
-        );
+
+/*
+  Estações desenhadas sobre a linha.
+*/
+sequence.forEach(station => {
+
+  const lat =
+    Number(station.reference_latitude);
+
+  const lon =
+    Number(station.reference_longitude);
+
+  const stationMarker =
+    L.circleMarker(
+      [lat, lon],
+      {
+        radius: 5,
+        color: lineColor,
+        weight: 3,
+        fillColor: '#ffffff',
+        fillOpacity: 1
+      }
+    )
+    .addTo(railLineLayer);
+
+  stationMarker.bindPopup(`
+    <div style="min-width:190px">
+      <b>${esc(station.location)}</b><br>
+      <small>
+        ${esc(station.company)}
+        ·
+        ${esc(station.line)}
+      </small>
+    </div>
+  `);
+});
 
       polyline.bindPopup(
         `<b>${esc(line)}</b><br>
