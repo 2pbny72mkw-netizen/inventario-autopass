@@ -541,10 +541,12 @@ def api_assets(location_id):
     if not loc:
         return jsonify([])
 
+    # Tipo solicitado pelo formulário técnico
     requested_type = normalize(
         request.args.get("equipment_type", "")
     )
 
+    # Padroniza os nomes utilizados pela tela
     type_aliases = {
         "ATM": "ATM",
         "VALIDADOR": "VALIDADOR",
@@ -578,15 +580,20 @@ def api_assets(location_id):
 
     for a in BaseAsset.query.all():
 
-        # Se foi informado um tipo,
-        # retorna somente ativos daquele tipo.
-        if requested_type:
-            asset_type = normalize(
-                a.equipment_type or "ATM"
-            )
+        # =====================================================
+        # FILTRO POR TIPO
+        # =====================================================
 
-            if asset_type != requested_type:
-                continue
+        asset_type = normalize(
+            a.equipment_type or "ATM"
+        )
+
+        if requested_type and asset_type != requested_type:
+            continue
+
+        # =====================================================
+        # EMPRESA / LINHA
+        # =====================================================
 
         asset_company = normalize(a.company)
 
@@ -599,8 +606,16 @@ def api_assets(location_id):
         ):
             continue
 
+        # =====================================================
+        # ESTAÇÃO / LOCALIDADE
+        # =====================================================
+
         station_name = normalize(a.locality)
-        code = normalize(a.station_code)
+
+        code = normalize(
+            a.location_code
+            or a.station_code
+        )
 
         station_match = (
             (
@@ -621,58 +636,95 @@ def api_assets(location_id):
         if not station_match:
             continue
 
+        # =====================================================
+        # RETORNO PADRONIZADO
+        # =====================================================
+
         out.append({
             "id": a.id,
 
             "equipment_type":
                 a.equipment_type or "ATM",
 
-            "asset_key": a.asset_key,
-            "description": a.description,
+            "asset_key":
+                a.asset_key,
 
-            "company": a.company,
+            "description":
+                a.description,
 
-            "station_code": a.station_code,
-            "location_code": a.location_code,
+            "company":
+                a.company,
 
-            "line": a.line,
-            "locality": a.locality,
+            "station_code":
+                a.station_code,
+
+            "location_code":
+                a.location_code,
+
+            "line":
+                a.line,
+
+            "locality":
+                a.locality,
 
             "terminal_number":
                 a.terminal_number,
 
-            "serial": a.serial,
-            "qrcode_id": a.qrcode_id,
-            "top_id": a.top_id,
+            "serial":
+                a.serial,
 
-            "products": a.products,
+            "qrcode_id":
+                a.qrcode_id,
 
-            "model": a.model,
-            "supplier": a.supplier,
+            "top_id":
+                a.top_id,
 
-            "transactions": a.transactions,
-            "pix": a.pix,
-            "mount": a.mount,
+            "products":
+                a.products,
 
-            "base_status": a.base_status,
+            "model":
+                a.model,
 
-            # Validador
-            "application": a.application,
-            "bom_id": a.bom_id,
-            "bu_id": a.bu_id,
+            "supplier":
+                a.supplier,
+
+            "transactions":
+                a.transactions,
+
+            "pix":
+                a.pix,
+
+            "mount":
+                a.mount,
+
+            "base_status":
+                a.base_status,
+
+            # Campos específicos de Validador
+            "application":
+                a.application,
+
+            "bom_id":
+                a.bom_id,
+
+            "bu_id":
+                a.bu_id,
+
             "software_version":
                 a.software_version,
 
-            "quantity": a.quantity,
+            # Informações complementares
+            "quantity":
+                a.quantity,
 
-            "base_notes": a.base_notes,
+            "base_notes":
+                a.base_notes,
 
             "already_inventoried":
                 a.id in already,
         })
 
     return jsonify(out)
-
 
 def _optional_float(value):
     value = (value or "").strip()
