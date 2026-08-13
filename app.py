@@ -89,25 +89,12 @@ class BaseAsset(db.Model):
     __tablename__ = "base_assets"
 
     id = db.Column(db.Integer, primary_key=True)
-
-    asset_key = db.Column(
-        db.String(255),
-        unique=True,
-        index=True
-    )
-
-    equipment_type = db.Column(
-        db.String(50),
-        index=True
-    )
-
+    asset_key = db.Column(db.String(255), unique=True, index=True)
     description = db.Column(db.String(500))
     company = db.Column(db.String(180))
     station_code = db.Column(db.String(80))
-    location_code = db.Column(db.String(80))
     line = db.Column(db.String(180))
     locality = db.Column(db.String(220))
-    terminal_number = db.Column(db.String(120))
     serial = db.Column(db.String(180))
     qrcode_id = db.Column(db.String(180))
     top_id = db.Column(db.String(180))
@@ -118,13 +105,6 @@ class BaseAsset(db.Model):
     pix = db.Column(db.String(80))
     mount = db.Column(db.String(80))
     base_status = db.Column(db.String(80))
-    application = db.Column(db.String(180))
-    bom_id = db.Column(db.String(120))
-    bu_id = db.Column(db.String(120))
-    software_version = db.Column(db.String(120))
-    quantity = db.Column(db.Integer)
-    base_notes = db.Column(db.Text)
-    
 
 class Inventory(db.Model):
     __tablename__ = "inventory"
