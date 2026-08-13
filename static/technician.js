@@ -2,6 +2,7 @@ let locations = [], current = null, assets = [];
 let currentInventoryRows = [];
 let editingInventoryId = null;
 
+
 const $ = id => document.getElementById(id);
 
 const uniq = a =>
@@ -1155,6 +1156,132 @@ async function loadAlready() {
         btn.disabled = false;
         btn.textContent = 'Excluir';
       }
+    };
+  });
+
+  document
+  .querySelectorAll('.editInventoryBtn')
+  .forEach(btn => {
+
+    btn.onclick = async () => {
+
+      const inventoryId =
+        Number(btn.dataset.id);
+
+      const row =
+        currentInventoryRows.find(
+          x => Number(x.id) === inventoryId
+        );
+
+      if (!row) {
+        showMsg(
+          'Não foi possível localizar este cadastro.',
+          false
+        );
+        return;
+      }
+
+      editingInventoryId = inventoryId;
+
+      $('equipment_type').value =
+        row.equipment_type || '';
+
+      await loadAssets();
+
+      $('base_asset_id').value =
+        row.base_asset_id || '';
+
+      $('asset_identifier').value =
+        row.asset_identifier || '';
+
+      $('serial').value =
+        row.serial || '';
+
+      $('supplier').value =
+        row.supplier || '';
+
+      $('model').value =
+        row.model || '';
+
+      const exactPosition =
+        document.querySelector('[name="exact_position"]');
+
+      if (exactPosition) {
+        exactPosition.value =
+          row.exact_position || '';
+      }
+
+      $('mount').value =
+        row.mount || '';
+
+      const operationalStatus =
+        document.querySelector('[name="operational_status"]');
+
+      if (operationalStatus) {
+        operationalStatus.value =
+          row.operational_status || '';
+      }
+
+      const connectivity =
+        document.querySelector('[name="connectivity"]');
+
+      if (connectivity) {
+        connectivity.value =
+          row.connectivity || '';
+      }
+
+      const networkId =
+        document.querySelector('[name="network_id"]');
+
+      if (networkId) {
+        networkId.value =
+          row.network_id || '';
+      }
+
+      const labelStatus =
+        document.querySelector('[name="label_status"]');
+
+      if (labelStatus) {
+        labelStatus.value =
+          row.label_status || '';
+      }
+
+      const inBase =
+        document.querySelector('[name="in_base"]');
+
+      if (inBase) {
+        inBase.value =
+          row.in_base || '';
+      }
+
+      const divergence =
+        document.querySelector('[name="divergence"]');
+
+      if (divergence) {
+        divergence.value =
+          row.divergence || '';
+      }
+
+      const notes =
+        document.querySelector('[name="notes"]');
+
+      if (notes) {
+        notes.value =
+          row.notes || '';
+      }
+
+      $('saveBtn').textContent =
+        'Salvar alterações';
+
+      showMsg(
+        'Modo edição ativo. Faça as alterações e clique em Salvar alterações.',
+        true
+      );
+
+      $('invForm').scrollIntoView({
+        behavior: 'smooth',
+        block: 'start'
+      });
     };
   });
 
