@@ -1,5 +1,6 @@
 let locations = [], current = null, assets = [];
 let currentInventoryRows = [];
+let editingInventoryId = null;
 
 const $ = id => document.getElementById(id);
 
@@ -631,6 +632,170 @@ function hideInfo() {
 
   currentInventoryRows = [];
 
+document
+  .querySelectorAll('.editInventoryBtn')
+  .forEach(btn => {
+
+    btn.onclick = async () => {
+
+      const inventoryId =
+        Number(btn.dataset.id);
+
+      const row =
+        currentInventoryRows.find(
+          x => Number(x.id) === inventoryId
+        );
+
+      if (!row) {
+        showMsg(
+          'Não foi possível localizar este cadastro.',
+          false
+        );
+        return;
+      }
+
+      editingInventoryId = inventoryId;
+
+      $('equipment_type').value =
+        row.equipment_type || '';
+
+      // Carrega os ativos corretos do tipo selecionado
+      await loadAssets();
+
+      $('base_asset_id').value =
+        row.base_asset_id || '';
+
+      $('asset_identifier').value =
+        row.asset_identifier || '';
+
+      $('serial').value =
+        row.serial || '';
+
+      $('supplier').value =
+        row.supplier || '';
+
+      $('model').value =
+        row.model || '';
+
+      const exactPosition =
+        document.querySelector(
+          '[name="exact_position"]'
+        );
+
+      if (exactPosition) {
+        exactPosition.value =
+          row.exact_position || '';
+      }
+
+      $('mount').value =
+        row.mount || '';
+
+      const operationalStatus =
+        document.querySelector(
+          '[name="operational_status"]'
+        );
+
+      if (operationalStatus) {
+        operationalStatus.value =
+          row.operational_status || '';
+      }
+
+      const connectivity =
+        document.querySelector(
+          '[name="connectivity"]'
+        );
+
+      if (connectivity) {
+        connectivity.value =
+          row.connectivity || '';
+      }
+
+      const networkId =
+        document.querySelector(
+          '[name="network_id"]'
+        );
+
+      if (networkId) {
+        networkId.value =
+          row.network_id || '';
+      }
+
+      const labelStatus =
+        document.querySelector(
+          '[name="label_status"]'
+        );
+
+      if (labelStatus) {
+        labelStatus.value =
+          row.label_status || '';
+      }
+
+      const inBase =
+        document.querySelector(
+          '[name="in_base"]'
+        );
+
+      if (inBase) {
+        inBase.value =
+          row.in_base || '';
+      }
+
+      const divergence =
+        document.querySelector(
+          '[name="divergence"]'
+        );
+
+      if (divergence) {
+        divergence.value =
+          row.divergence || '';
+      }
+
+      const notes =
+        document.querySelector(
+          '[name="notes"]'
+        );
+
+      if (notes) {
+        notes.value =
+          row.notes || '';
+      }
+
+      // Mantém o GPS já gravado
+      if ($('latitude')) {
+        $('latitude').value =
+          row.latitude ?? '';
+      }
+
+      if ($('longitude')) {
+        $('longitude').value =
+          row.longitude ?? '';
+      }
+
+      if ($('gps_accuracy')) {
+        $('gps_accuracy').value =
+          row.gps_accuracy ?? '';
+      }
+
+      if ($('gps_captured_at')) {
+        $('gps_captured_at').value =
+          row.gps_captured_at || '';
+      }
+
+      $('saveBtn').textContent =
+        'Salvar alterações';
+
+      showMsg(
+        'Modo edição ativo. Altere os campos necessários e clique em Salvar alterações.',
+        true
+      );
+
+      $('invForm').scrollIntoView({
+        behavior: 'smooth',
+        block: 'start'
+      });
+    };
+  });
+  
   renderLocationPending();
 }
 
@@ -2186,6 +2351,82 @@ $('invForm').onsubmit =
 
     e.preventDefault();
 
+if (editingInventoryId) {
+
+  try {
+
+    const fd =
+      new FormData(e.target);
+
+    const r =
+      await fetch(
+        `/api/inventory/${editingInventoryId}`,
+        {
+          method: 'PATCH',
+          body: fd
+        }
+      );
+
+    const j =
+      await r.json()
+        .catch(() => ({
+          ok: false,
+          error: 'Resposta inválida do servidor.'
+        }));
+
+    if (!r.ok) {
+
+      showMsg(
+        j.error ||
+        'Não foi possível atualizar o cadastro.',
+        false
+      );
+
+      return;
+    }
+
+    showMsg(
+      'Cadastro atualizado com sucesso.',
+      true
+    );
+
+    editingInventoryId = null;
+
+    e.target.reset();
+
+    $('location_id').value =
+      current.id;
+
+    $('saveBtn').textContent =
+      isLocalMode()
+        ? 'Salvar no aparelho'
+        : 'Salvar equipamento';
+
+    clearGpsFields();
+
+    await loadAlready();
+    await loadAssets();
+
+    renderLocationPending();
+
+    return;
+
+  } catch (err) {
+
+    console.error(
+      'Erro ao editar cadastro:',
+      err
+    );
+
+    showMsg(
+      'Erro ao atualizar o cadastro.',
+      false
+    );
+
+    return;
+  }
+}
+    
     if (!current) {
 
       showMsg(
