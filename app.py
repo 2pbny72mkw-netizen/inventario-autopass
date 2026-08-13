@@ -124,15 +124,7 @@ class BaseAsset(db.Model):
     software_version = db.Column(db.String(120))
     quantity = db.Column(db.Integer)
     base_notes = db.Column(db.Text)
-    equipment_type = db.Column(db.String(50), index=True)
-    location_code = db.Column(db.String(80))
-    terminal_number = db.Column(db.String(120))
-    application = db.Column(db.String(180))
-    bom_id = db.Column(db.String(120))
-    bu_id = db.Column(db.String(120))
-    software_version = db.Column(db.String(120))
-    quantity = db.Column(db.Integer)
-    base_notes = db.Column(db.Text)
+    
 
 class Inventory(db.Model):
     __tablename__ = "inventory"
