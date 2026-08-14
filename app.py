@@ -373,7 +373,7 @@ def manager():
 def health():
     try:
         db.session.execute(db.text("SELECT 1"))
-        return jsonify({"ok": True, "database": "connected", "release": "campo-1408-v1"})
+        return jsonify({"ok": True, "database": "connected", "release": "campo-1408-v2"})
     except Exception as exc:
         return jsonify({"ok": False, "database": "error", "detail": str(exc)}), 500
 
