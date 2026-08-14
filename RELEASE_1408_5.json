@@ -1,0 +1,18 @@
+{
+  "release": "campo-1408-5",
+  "arquivos": [
+    "app.py",
+    "requirements.txt",
+    "static/technician.js",
+    "templates/technician.html",
+    "data/base_assets_1408.json"
+  ],
+  "base": {
+    "ATM": 591,
+    "VALIDADOR": 609,
+    "POS": 587,
+    "TDI": 42,
+    "BLOQUEIO": 1609,
+    "total_identificavel_campo": 3438
+  }
+}
