@@ -1,4 +1,4 @@
-window.AUTOPASS_TECHNICIAN_VERSION = '1408-3';
+console.log('AUTOPASS technician.js 1408-4 carregado');
 let locations = [], current = null, assets = [];
 let currentInventoryRows = [];
 let allLocationAssets = [];
