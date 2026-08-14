@@ -625,6 +625,11 @@ def create_inventory():
         bom_id=request.form.get("bom_id", ""),
         bu_id=request.form.get("bu_id", ""),
         validator_top_id=request.form.get("validator_top_id", ""),
+        software_version=request.form.get("software_version", ""),        
+        application=request.form.get("application", ""),
+        bom_id=request.form.get("bom_id", ""),
+        bu_id=request.form.get("bu_id", ""),
+        validator_top_id=request.form.get("validator_top_id", ""),
         software_version=request.form.get("software_version", ""),
         exact_position=request.form.get("exact_position", ""),
         mount=request.form.get("mount", ""),
@@ -714,6 +719,13 @@ def update_inventory(inventory_id):
     inv.serial = serial
     inv.supplier = request.form.get("supplier", inv.supplier or "")
     inv.model = request.form.get("model", inv.model or "")
+    
+    inv.application = request.form.get("application", inv.application or "")
+    inv.bom_id = request.form.get("bom_id", inv.bom_id or "")
+    inv.bu_id = request.form.get("bu_id", inv.bu_id or "")
+    inv.validator_top_id = request.form.get("validator_top_id", inv.validator_top_id or "")
+    inv.software_version = request.form.get("software_version", inv.software_version or "")
+    
     inv.application = request.form.get("application", inv.application or "")
     inv.bom_id = request.form.get("bom_id", inv.bom_id or "")
     inv.bu_id = request.form.get("bu_id", inv.bu_id or "")
