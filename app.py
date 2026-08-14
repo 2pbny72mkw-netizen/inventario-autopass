@@ -112,8 +112,11 @@ class BaseAsset(db.Model):
     bom_id = db.Column(db.String(120))
     bu_id = db.Column(db.String(120))
     software_version = db.Column(db.String(120))
+    model = db.Column(db.String(180))
+    
     quantity = db.Column(db.Integer)
     base_notes = db.Column(db.Text)
+    exact_position = db.Column(db.Text)
 
 
 class Inventory(db.Model):
@@ -319,6 +322,54 @@ def field_required(fn):
             return redirect(url_for("manager"))
         return fn(*args, **kwargs)
     return inner
+
+@app.route("/admin/migrar-inventory-validator")
+@manager_required
+def migrar_inventory_validator():
+    try:
+        comandos = [
+            """
+            ALTER TABLE inventory
+            ADD COLUMN IF NOT EXISTS application VARCHAR(180)
+            """,
+            """
+            ALTER TABLE inventory
+            ADD COLUMN IF NOT EXISTS bom_id VARCHAR(120)
+            """,
+            """
+            ALTER TABLE inventory
+            ADD COLUMN IF NOT EXISTS bu_id VARCHAR(120)
+            """,
+            """
+            ALTER TABLE inventory
+            ADD COLUMN IF NOT EXISTS validator_top_id VARCHAR(120)
+            """,
+            """
+            ALTER TABLE inventory
+            ADD COLUMN IF NOT EXISTS software_version VARCHAR(120)
+            """
+        ]
+
+        for comando in comandos:
+            db.session.execute(db.text(comando))
+
+        db.session.commit()
+
+        return jsonify({
+            "ok": True,
+            "mensagem": "Estrutura Inventory atualizada para Validador.",
+            "dados_preservados": True
+        })
+
+    except Exception as e:
+        db.session.rollback()
+
+        return jsonify({
+            "ok": False,
+            "erro": str(e)
+        }), 500
+
+
 
 @app.route("/admin/migrar-base-assets")
 @manager_required
