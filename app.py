@@ -373,18 +373,10 @@ def manager():
 def health():
     try:
         db.session.execute(db.text("SELECT 1"))
-        return jsonify({
-            "ok": True,
-            "database": "connected",
-            "release": "campo-1408-v2"
-        })
+        return jsonify({"ok": True, "database": "connected", "release": "campo-1408-v2"})
     except Exception as exc:
-        return jsonify({
-            "ok": False,
-            "database": "error",
-            "release": "campo-1408-v2",
-            "detail": str(exc)
-        }), 500
+        return jsonify({"ok": False, "database": "error", "detail": str(exc)}), 500
+
 
 @app.get("/api/locations")
 @login_required
