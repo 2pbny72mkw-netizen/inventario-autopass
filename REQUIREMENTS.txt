@@ -1,0 +1,7 @@
+Flask
+Flask-SQLAlchemy
+gunicorn
+psycopg2-binary
+boto3
+botocore
+Werkzeug
