@@ -315,7 +315,6 @@ async function loadAlready() {
   const all=[...pendingRows,...serverRows];
   currentInventoryRows=all;
   $('doneCount').textContent=`${all.length} registro(s)`;
-  const canManage = (window.CURRENT_USER_ROLE === 'manager') || serverRows.some(x => x.can_manage === true);
   $('already').innerHTML = all.length ? all.map(x=>`
     <tr>
       <td>${escapeHtml(x.equipment_type)}</td>
@@ -324,11 +323,11 @@ async function loadAlready() {
       <td>${x._pending?'<span class="tag">PENDENTE</span>':escapeHtml(x.operational_status)}</td>
       <td>${escapeHtml(x.technician)}</td>
       <td>${escapeHtml(String(x.created_at||'').replace('T',' ').slice(0,19))}</td>
-      <td>${x._pending?'<span class="muted">Aguardando sincronização</span>':canManage?`
+      <td>${x._pending?'<span class="muted">Aguardando sincronização</span>':`
         <div style="display:flex;gap:6px;flex-wrap:wrap">
           <button type="button" class="secondary editInventoryBtn" data-id="${x.id}">Editar</button>
           <button type="button" class="secondary deleteInventoryBtn" data-id="${x.id}" style="color:#b42318;border-color:#f0b4b4">Excluir</button>
-        </div>`:'—'}</td>
+        </div>`}</td>
     </tr>`).join('') : '<tr><td colspan="7">Nenhum equipamento registrado ainda.</td></tr>';
 
   document.querySelectorAll('.deleteInventoryBtn').forEach(btn=>btn.onclick=async()=>{
