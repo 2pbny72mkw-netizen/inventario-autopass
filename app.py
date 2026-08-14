@@ -323,52 +323,6 @@ def field_required(fn):
         return fn(*args, **kwargs)
     return inner
 
-@app.route("/admin/migrar-inventory-validator")
-@manager_required
-def migrar_inventory_validator():
-    try:
-        comandos = [
-            """
-            ALTER TABLE inventory
-            ADD COLUMN IF NOT EXISTS application VARCHAR(180)
-            """,
-            """
-            ALTER TABLE inventory
-            ADD COLUMN IF NOT EXISTS bom_id VARCHAR(120)
-            """,
-            """
-            ALTER TABLE inventory
-            ADD COLUMN IF NOT EXISTS bu_id VARCHAR(120)
-            """,
-            """
-            ALTER TABLE inventory
-            ADD COLUMN IF NOT EXISTS validator_top_id VARCHAR(120)
-            """,
-            """
-            ALTER TABLE inventory
-            ADD COLUMN IF NOT EXISTS software_version VARCHAR(120)
-            """
-        ]
-
-        for comando in comandos:
-            db.session.execute(db.text(comando))
-
-        db.session.commit()
-
-        return jsonify({
-            "ok": True,
-            "mensagem": "Estrutura Inventory atualizada para Validador.",
-            "dados_preservados": True
-        })
-
-    except Exception as e:
-        db.session.rollback()
-
-        return jsonify({
-            "ok": False,
-            "erro": str(e)
-        }), 500
-
 
 
 @app.route("/admin/migrar-base-assets")
@@ -2573,6 +2527,54 @@ with app.app_context():
     migrate_location_reference_columns()
     db.create_all()
     seed_data()
+
+@app.route("/admin/migrar-inventory-validator")
+@manager_required
+def migrar_inventory_validator():
+    try:
+        comandos = [
+            """
+            ALTER TABLE inventory
+            ADD COLUMN IF NOT EXISTS application VARCHAR(180)
+            """,
+            """
+            ALTER TABLE inventory
+            ADD COLUMN IF NOT EXISTS bom_id VARCHAR(120)
+            """,
+            """
+            ALTER TABLE inventory
+            ADD COLUMN IF NOT EXISTS bu_id VARCHAR(120)
+            """,
+            """
+            ALTER TABLE inventory
+            ADD COLUMN IF NOT EXISTS validator_top_id VARCHAR(120)
+            """,
+            """
+            ALTER TABLE inventory
+            ADD COLUMN IF NOT EXISTS software_version VARCHAR(120)
+            """
+        ]
+
+        for comando in comandos:
+            db.session.execute(db.text(comando))
+
+        db.session.commit()
+
+        return jsonify({
+            "ok": True,
+            "mensagem": "Estrutura Inventory atualizada para Validador.",
+            "dados_preservados": True
+        })
+
+    except Exception as e:
+        db.session.rollback()
+
+        return jsonify({
+            "ok": False,
+            "erro": str(e)
+        }), 500
+
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "5000")), debug=False)
