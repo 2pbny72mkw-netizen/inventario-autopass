@@ -499,7 +499,7 @@ async function loadAssets() {
   }else{allLocationAssets=(await cacheGet(cacheKey))||[];}
   const selected=normalizedEquipmentType($('equipment_type').value||'');
   assets=selected ? allLocationAssets.filter(a=>normalizedEquipmentType(a.equipment_type||'ATM')===selected) : [];
-  renderAssets(); renderLocationPending();
+  renderAssets(); renderLocationPending(); refreshAvailableEquipmentTypes();
 }
 
 function renderAssets(){
@@ -518,6 +518,32 @@ function renderAssets(){
     : navigator.onLine ? `Nenhum ativo detalhado de ${typeLabel} encontrado para este local.` : 'Nenhum ativo armazenado offline para este local.';
 }
 
+
+function resetEquipmentFieldsForTypeChange(){
+  const keep=new Set(['equipment_type','location_id','latitude','longitude','gps_accuracy','gps_captured_at','gps_override_reason']);
+  const form=$('invForm'); if(!form) return;
+  form.querySelectorAll('input,select,textarea').forEach(el=>{
+    if(!el.name || keep.has(el.name) || el.type==='hidden' || el.type==='button' || el.type==='submit') return;
+    if(el.type==='file'){ el.value=''; return; }
+    if(el.type==='checkbox'||el.type==='radio'){ el.checked=false; return; }
+    el.value='';
+  });
+  renderSelectedBaseInfo(null);
+}
+function refreshAvailableEquipmentTypes(){
+  const sel=$('equipment_type'); if(!sel || !current) return;
+  const available=new Set(allLocationAssets.map(a=>normalizedEquipmentType(a.equipment_type||'ATM')));
+  if(Number(current.expected_atm||0)>0) available.add('ATM');
+  if(Number(current.expected_validator||0)>0) available.add('Validador de Recarga');
+  if(Number(current.expected_pos||0)>0) available.add('POS de Bilheteria');
+  [...sel.options].forEach(o=>{
+    if(!o.value) return;
+    // Outro permanece como exceção controlada para ativo encontrado fora da base.
+    const show=o.value==='Outro' || available.has(normalizedEquipmentType(o.value));
+    o.hidden=!show; o.disabled=!show; o.classList.toggle('fieldTypeUnavailable',!show);
+  });
+  if(sel.value && sel.selectedOptions[0]?.disabled) sel.value='';
+}
 function normalizedEquipmentType(value) {
   const v = String(value || '').trim().toUpperCase();
   if (v === 'ATM') return 'ATM';
@@ -698,6 +724,7 @@ function renderSelectedBaseInfo(a){
 }
 
 $('equipment_type').onchange = async () => {
+  resetEquipmentFieldsForTypeChange();
   updateEquipmentTypeUI();
   renderSelectedBaseInfo(null);
   $('base_asset_id').value='';
@@ -975,43 +1002,29 @@ $('invForm').onsubmit = async e => {
 
 $('completeBtn').onclick = async () => {
   if (!current) return showMsg('Selecione uma localidade.', false);
-
   const localPending = await queuedForLocation(current.id);
-  if (localPending.length) {
-    return showMsg(
-      `Esta localidade ainda tem ${localPending.length} registro(s) pendente(s) neste aparelho. Sincronize antes de concluir.`,
-      false
-    );
+  if (localPending.length) return showMsg(`Há ${localPending.length} registro(s) pendente(s) neste aparelho. Sincronize antes de concluir.`, false);
+  if (!navigator.onLine) return showMsg('A conclusão exige conexão para validar base, evidências e sincronização.', false);
+
+  const check = await fetch(`/api/location/${current.id}/completion-check`, {cache:'no-store'});
+  const result = await check.json().catch(()=>({ok:false,errors:['Não foi possível validar a localidade.']}));
+  if (!check.ok || !result.ok) {
+    const details=[];
+    (result.pending||[]).forEach(x=>details.push(`${x.type}: faltam ${x.remaining} de ${x.expected}`));
+    if ((result.missing_evidence||[]).length) details.push(`${result.missing_evidence.length} registro(s) sem foto/vídeo`);
+    if ((result.missing_justification||[]).length) details.push(`${result.missing_justification.length} item(ns) não encontrado(s) sem justificativa`);
+    const msg=[...(result.errors||[]),...details].join(' • ');
+    return showMsg(`Não é possível concluir. ${msg}`, false);
   }
 
-  if (!navigator.onLine) {
-    return showMsg('A conclusão da localidade exige conexão para evitar encerramento sem sincronizar os registros.', false);
-  }
-
-  const operationalPending = pendingDefinitions().reduce((s, x) => s + x.remaining, 0);
-  if (operationalPending > 0) {
-    const proceed = confirm(`A base ainda indica ${operationalPending} equipamento(s) pendente(s) nesta localidade. Deseja mesmo assim continuar para a confirmação final?`);
-    if (!proceed) return;
-  }
-
-  if (!confirm('Confirma que o levantamento desta localidade foi finalizado? Ela aparecerá como CONCLUÍDA no painel gerencial.')) {
-    return;
-  }
-
+  if (!confirm(`Validação concluída: ${result.registered} registro(s), evidências conferidas e previsão conciliada. Confirmar encerramento desta localidade?`)) return;
   const r = await fetch(`/api/location/${current.id}/complete`, { method: 'POST' });
-
-  if (r.ok) {
-    showMsg('Localidade marcada como CONCLUÍDA.', true);
+  const j = await r.json().catch(()=>({ok:false}));
+  if (r.ok && j.ok) {
+    showMsg('Localidade marcada como CONCLUÍDA após validação completa.', true);
     const rr = await fetch('/api/locations', { cache: 'no-store' });
-    if (rr.ok) {
-      locations = await rr.json();
-      await cacheSet('locations', locations);
-      current = locations.find(x => x.id === current.id);
-      showInfo();
-    }
-  } else {
-    showMsg('Não foi possível concluir a localidade.', false);
-  }
+    if (rr.ok) { locations = await rr.json(); await cacheSet('locations', locations); current = locations.find(x => x.id === current.id); showInfo(); }
+  } else showMsg(j.error || 'Não foi possível concluir a localidade.', false);
 };
 
 $('syncBtn').onclick = () => syncQueue({ silent: false });

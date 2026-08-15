@@ -682,6 +682,23 @@ function executiveFilteredLocations(){
     (!type||Number((x.expected_by_type||{})[type]||0)>0||Number((x.inventoried_by_type||{})[type]||0)>0)
   );
 }
+
+function renderExecutiveAnalytics(rows,type){
+  if(!$('executiveAnalytics')) return;
+  const m=filteredLocationMetrics(rows,type);
+  const pct=m.expected?Math.min(100,Math.round(m.inventoried/m.expected*100)):0;
+  $('analyticsCoverage').textContent=pct+'%';
+  $('analyticsCoverageBar').style.width=pct+'%';
+  $('analyticsCoverageText').textContent=`${fmt(m.inventoried)} de ${fmt(m.expected)} inventariados`;
+  $('analyticsDivergences').textContent=fmt(m.divergences);
+  $('analyticsInoperative').textContent=fmt(m.inoperative);
+  const c=$('execCompany')?.value||'',l=$('execLine')?.value||'';
+  $('analyticsContext').textContent=[c||'Todas empresas',l||'Todas linhas',type?typeLabel(type):'Todos os tipos'].join(' · ');
+  const types=type?[type]:OFFICIAL_EXEC_TYPES;
+  $('analyticsTypes').innerHTML=types.map(t=>{const z=m.byType[t]||{e:0,i:0};const p=z.e?Math.min(100,Math.round(z.i/z.e*100)):0;return `<div class="analyticsTypeRow"><b>${esc(typeLabel(t))}</b><div class="track"><i style="width:${p}%"></i></div><span>${p}%</span></div>`}).join('');
+  const dynamicRows=OFFICIAL_EXEC_TYPES.map(t=>{const z=m.byType[t]||{e:0,i:0};return {type:t,expected:z.e,inventoried:z.i,missing:Math.max(0,z.e-z.i),coverage_pct:z.e?Math.round(z.i/z.e*1000)/10:0}});
+  renderTypeProgress(type?dynamicRows.filter(x=>x.type===type):dynamicRows);
+}
 function updateExecutiveView(){
   if(!dashboardData) return;
   const c=$('execCompany')?.value||'', line=$('execLine')?.value||'', type=$('execType')?.value||'';
@@ -742,6 +759,7 @@ function updateExecutiveView(){
     const parts=[c||'Todas empresas',line||'Todas linhas',type?typeLabel(type):'Todos os tipos'];
     $('filterContext').textContent=parts.join(' · ');
   }
+  renderExecutiveAnalytics(rows,type);
   renderCriticalLocations();
   renderLocations();
 }
