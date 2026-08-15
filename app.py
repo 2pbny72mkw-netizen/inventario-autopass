@@ -12,6 +12,7 @@ import hashlib
 from difflib import SequenceMatcher
 from pathlib import Path
 from datetime import datetime
+from zoneinfo import ZoneInfo
 import time
 from functools import wraps
 
@@ -487,7 +488,7 @@ def technician_position_update():
 @dashboard_required
 def teams_status_api():
     schedule = _load_technician_schedule()
-    today = datetime.now().date().isoformat()
+    today = datetime.now(ZoneInfo("America/Sao_Paulo")).date().isoformat()
     scheduled = _schedule_today(schedule, today)
     users = User.query.filter(User.active.is_(True)).all()
     users_by_name = {normalize(u.name): u for u in users}
@@ -504,10 +505,26 @@ def teams_status_api():
         elif minutes <= 5: freshness="ATUAL"
         elif minutes <= 15: freshness="ATENÇÃO"
         else: freshness="ATRASADO"
-        rows.append({**tech,"user_id": user.id if user else None,"photo_url": user.photo_url if user else None,
-                     "latitude": pos.latitude if pos else None,"longitude": pos.longitude if pos else None,
-                     "accuracy": pos.accuracy if pos else None,"minutes_since": minutes,"freshness": freshness})
-    return jsonify({"ok":True,"date":today,"scheduled":len(rows),"technicians":rows,"support":schedule.get("support",[])})
+        rows.append({
+            **tech,
+            "user_id": user.id if user else None,
+            "photo_url": (f"/usuarios/{user.id}/foto" if user and user.photo_url else None),
+            "latitude": pos.latitude if pos else None,
+            "longitude": pos.longitude if pos else None,
+            "accuracy": pos.accuracy if pos else None,
+            "captured_at": (pos.captured_at.isoformat() + "Z") if pos else None,
+            "minutes_since": minutes,
+            "freshness": freshness,
+        })
+    local_now = datetime.now(ZoneInfo("America/Sao_Paulo"))
+    return jsonify({
+        "ok": True,
+        "date": today,
+        "time": local_now.strftime("%H:%M"),
+        "scheduled": len(rows),
+        "technicians": rows,
+        "support": schedule.get("support", [])
+    })
 
 
 @app.get("/equipes")
@@ -520,7 +537,7 @@ def teams_page():
 def health():
     try:
         db.session.execute(db.text("SELECT 1"))
-        return jsonify({"ok": True, "database": "connected", "release": "v1-operacional-dashboard-v2"})
+        return jsonify({"ok": True, "database": "connected", "release": "v5.1-central-operacional"})
     except Exception as exc:
         return jsonify({"ok": False, "database": "error", "detail": str(exc)}), 500
 
