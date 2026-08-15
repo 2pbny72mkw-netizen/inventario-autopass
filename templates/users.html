@@ -85,7 +85,7 @@
   <div class="sectionHead">
     <div>
       <h2>Usuários cadastrados</h2>
-      <p class="muted">Edite dados, redefina senhas e desative acessos sem apagar o histórico.</p>
+      <p class="muted">Edite dados, redefina senhas e desative acessos. Exclusão definitiva ocorre apenas sem histórico; com histórico, o usuário é arquivado.</p>
     </div>
     <span class="tag">{{ users|length }} usuário(s)</span>
   </div>
@@ -136,7 +136,8 @@
             {% if not u.email and not u.phone %}—{% endif %}
           </td>
           <td>
-            {% if u.active %}<span class="status sCONCLUIDA">ATIVO</span>
+            {% if u.archived_at %}<span class="status sPENDENTE">ARQUIVADO</span>
+            {% elif u.active %}<span class="status sCONCLUIDA">ATIVO</span>
             {% else %}<span class="status sPENDENTE">INATIVO</span>{% endif %}
           </td>
           <td>
@@ -144,11 +145,19 @@
               <button type="button" class="secondary editUserBtn" data-target="edit-user-{{ u.id }}">Editar</button>
 
               {% if u.id != session.get('user_id') %}
+                {% if not u.archived_at %}
                 <form method="post" action="/usuarios/{{u.id}}/toggle">
                   <button class="{{ 'danger' if u.active else 'secondary' }}" type="submit">
                     {{ "Desativar" if u.active else "Ativar" }}
                   </button>
                 </form>
+                {% endif %}
+                {% if not u.archived_at %}
+                <form method="post" action="/usuarios/{{u.id}}/excluir"
+                      onsubmit="return confirm('Excluir este usuário? Sem histórico ele será apagado. Com histórico, o acesso, foto e contatos serão removidos e o nome será preservado para auditoria.')">
+                  <button class="dangerGhost" type="submit">Excluir</button>
+                </form>
+                {% endif %}
               {% endif %}
             </div>
           </td>
