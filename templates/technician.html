@@ -2,6 +2,19 @@
 {% block title %}Inventário de Campo{% endblock %}
 {% block content %}
 
+<section class="fieldAppHero">
+  <div>
+    <span class="eyebrow">V15 · APP DE CAMPO</span>
+    <h1>Inventário assistido</h1>
+    <p>Escolha a estação próxima, confira o que falta e registre o equipamento em poucos passos.</p>
+  </div>
+  <div class="fieldHeroState"><span id="fieldOnlineDot"></span><b id="fieldHeroConnection">Verificando...</b></div>
+</section>
+
+<div class="fieldSteps" aria-label="Etapas do inventário">
+  <span class="active" id="fieldStep1"><b>1</b> Local</span><span id="fieldStep2"><b>2</b> Equipamento</span><span id="fieldStep3"><b>3</b> Evidência</span><span id="fieldStep4"><b>4</b> Salvar</span>
+</div>
+
 <div id="connectionBar" class="notice" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
   <div>
     <b id="connectionStatus">Verificando conexão...</b>
@@ -42,8 +55,8 @@
 <div class="card">
   <div class="sectionHead">
     <div>
-      <h2>Estação / localidade</h2>
-      <p class="muted">V14 mantém o Campo Inteligente: prioriza os pontos próximos da sua posição e registra o check-in operacional da estação selecionada. Estações integradas podem conter várias linhas no mesmo ponto físico.</p>
+      <h2>1. Onde você está?</h2>
+      <p class="muted">Mostramos primeiro as estações próximas. Em estações integradas, escolha a linha em que está trabalhando.</p>
     </div>
     <button type="button" class="secondary" id="refreshNearbyBtn">Atualizar próximos</button>
   </div>
@@ -90,10 +103,10 @@
   </div>
 </div>
 
-<div class="card" id="locationPendingCard">
+<div class="card fieldProgressCard" id="locationPendingCard">
   <div class="sectionHead">
     <div>
-      <h2>Pendências da localidade</h2>
+      <h2>Progresso desta localidade</h2>
       <p class="muted">Compara a previsão da base com os equipamentos já levantados nesta estação.</p>
     </div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -106,7 +119,8 @@
 </div>
 
 <div class="card">
-  <h2>Novo equipamento</h2>
+  <h2>2. Registrar equipamento</h2>
+  <p class="muted fieldFormIntro">Selecione o tipo e, quando existir, escolha o ativo esperado na base. QR Code é apenas um atalho: patrimônio, série ou identificação manual continuam válidos.</p>
   <form id="invForm" enctype="multipart/form-data">
     <input type="hidden" id="location_id" name="location_id">
     <input type="hidden" id="latitude" name="latitude">
@@ -144,9 +158,9 @@
       </div>
 
       <div>
-        <label>Identificação única *</label>
+        <label>Identificação / patrimônio / QR Code *</label>
         <input name="asset_identifier" id="asset_identifier" required
-               placeholder="ID TOP, QRCode, patrimônio ou série">
+               placeholder="Digite, leia QR Code ou informe patrimônio/série">
       </div>
 
       <div><label>Número de série</label><input name="serial" id="serial"></div>
@@ -236,7 +250,7 @@
       </div>
 
       <div>
-        <label>Fotos / vídeos</label>
+        <label>3. Evidência — fotos / vídeos</label>
         <input name="attachments" type="file" accept="image/*,video/*" multiple capture="environment">
         <small>Sem sinal, os arquivos ficam guardados neste aparelho até a sincronização.</small>
       </div>
@@ -252,7 +266,7 @@
     </div>
 
     <div class="actions">
-      <button class="primary" type="submit" id="saveBtn">Salvar equipamento</button>
+      <button class="primary fieldSaveBtn" type="submit" id="saveBtn">4. Salvar equipamento</button>
       <button class="secondary" type="button" id="completeBtn">Concluir levantamento desta localidade</button>
     </div>
     <div id="msg"></div>
@@ -273,5 +287,5 @@
 {% endblock %}
 {% block scripts %}
 <script>window.CURRENT_USER_ROLE = {{ session.get("role")|tojson }};</script>
-<script src="{{ url_for('static', filename='technician.js') }}?v=v10"></script>
+<script src="{{ url_for('static', filename='technician.js') }}?v=v15"></script>
 {% endblock %}

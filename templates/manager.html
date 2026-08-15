@@ -105,8 +105,8 @@
 <section class="card">
   <div class="cardHead">
     <div>
-      <h2>Geolocalização das coletas</h2>
-      <p>Últimos registros com GPS capturado no momento da coleta.</p>
+      <h2>Mapa operacional e auditoria GPS</h2>
+      <p>O mapa mostra uma posição atual por técnico. A tabela preserva as últimas coletas para auditoria.</p>
     </div>
     <span id="gpsCoverageTag" class="tag">GPS 0%</span>
   </div>
@@ -225,5 +225,5 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
         integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
         crossorigin=""></script>
-<script src="{{url_for('static',filename='manager.js')}}?v=dashboard-v10"></script>
+<script src="{{url_for('static',filename='manager.js')}}?v=dashboard-v15"></script>
 {% endblock %}
