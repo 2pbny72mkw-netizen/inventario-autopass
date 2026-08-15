@@ -1,4 +1,4 @@
-window.AUTOPASS_PWA_VERSION='pwa-v8-0-1';
+window.AUTOPASS_PWA_VERSION='pwa-v8-0-2';
 window.AUTOPASS_TECHNICIAN_VERSION = '1408-5';
 console.log('AUTOPASS technician.js 1408-5 carregado');
 
@@ -1006,25 +1006,89 @@ function showMsg(t, ok) {
   }
 })();
 
-function startTechnicianPositionSharing(){
-  if(!navigator.geolocation) return;
-  let lastSent=0;
-  navigator.geolocation.watchPosition(async pos=>{
-    const now=Date.now();
-    if(now-lastSent<120000) return;
-    lastSent=now;
-    try{
-      await fetch('/api/tecnico/position',{
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({
-          latitude:pos.coords.latitude,
-          longitude:pos.coords.longitude,
-          accuracy:pos.coords.accuracy
-        })
-      });
-    }catch(_e){}
-  },()=>{}, {enableHighAccuracy:true,maximumAge:60000,timeout:15000});
+
+const TEAM_LOCATION_KEY='autopass-team-location-enabled';
+let teamLocationWatchId=null;
+let teamLocationLastSent=0;
+
+function setTeamLocationStatus(text, ok=false){
+  const el=$('teamLocationStatus');
+  if(!el) return;
+  el.textContent=text;
+  el.style.borderColor=ok?'#89d3ae':'';
 }
 
-startTechnicianPositionSharing();
+async function sendTeamLocation(position){
+  const now=Date.now();
+  if(now-teamLocationLastSent<90000) return;
+  teamLocationLastSent=now;
+  try{
+    const r=await fetch('/api/tecnico/position',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        latitude:position.coords.latitude,
+        longitude:position.coords.longitude,
+        accuracy:position.coords.accuracy
+      })
+    });
+    const j=await r.json().catch(()=>({ok:false}));
+    if(!r.ok||!j.ok) throw new Error(j.error||'Falha ao enviar posição.');
+    const acc=Number.isFinite(position.coords.accuracy)?Math.round(position.coords.accuracy):null;
+    setTeamLocationStatus(`Localização ativa${acc!==null?` · precisão aproximada ${acc} m`:''} · posição enviada agora.`,true);
+  }catch(err){
+    setTeamLocationStatus(`Localização ativa, mas o envio falhou: ${err.message}`,false);
+  }
+}
+
+function stopTeamLocation(){
+  if(teamLocationWatchId!==null && navigator.geolocation){
+    navigator.geolocation.clearWatch(teamLocationWatchId);
+  }
+  teamLocationWatchId=null;
+  localStorage.removeItem(TEAM_LOCATION_KEY);
+  if($('teamLocationToggle')) $('teamLocationToggle').textContent='Ativar localização';
+  setTeamLocationStatus('Localização da equipe desativada neste aparelho.');
+}
+
+function startTeamLocation(){
+  if(!navigator.geolocation){
+    setTeamLocationStatus('Geolocalização não disponível neste navegador/aparelho.',false);
+    return;
+  }
+  if(teamLocationWatchId!==null) return;
+
+  setTeamLocationStatus('Solicitando autorização de localização...');
+  teamLocationWatchId=navigator.geolocation.watchPosition(
+    position=>sendTeamLocation(position),
+    error=>{
+      const msg={
+        1:'Permissão de localização negada.',
+        2:'Localização indisponível neste momento.',
+        3:'Tempo esgotado ao obter localização.'
+      }[error.code]||'Não foi possível obter a localização.';
+      setTeamLocationStatus(msg,false);
+      if(error.code===1){
+        if(teamLocationWatchId!==null) navigator.geolocation.clearWatch(teamLocationWatchId);
+        teamLocationWatchId=null;
+        localStorage.removeItem(TEAM_LOCATION_KEY);
+        if($('teamLocationToggle')) $('teamLocationToggle').textContent='Ativar localização';
+      }
+    },
+    {enableHighAccuracy:true,maximumAge:30000,timeout:15000}
+  );
+  localStorage.setItem(TEAM_LOCATION_KEY,'1');
+  if($('teamLocationToggle')) $('teamLocationToggle').textContent='Desativar localização';
+}
+
+if($('teamLocationToggle')){
+  $('teamLocationToggle').addEventListener('click',()=>{
+    if(teamLocationWatchId!==null) stopTeamLocation();
+    else startTeamLocation();
+  });
+
+  if(localStorage.getItem(TEAM_LOCATION_KEY)==='1'){
+    startTeamLocation();
+  }
+}
+
