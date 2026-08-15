@@ -24,40 +24,35 @@
           <label>Nome completo *</label>
           <input name="name" required placeholder="Ex.: João da Silva" autocomplete="name">
         </div>
-
         <div>
           <label>Usuário de acesso *</label>
           <input name="username" required placeholder="Ex.: joao.silva" autocomplete="off">
           <small>Não pode se repetir.</small>
         </div>
-
         <div>
           <label>Perfil *</label>
           <select name="role" id="roleSelect" required>
             <option value="technician">Técnico de Campo</option>
             <option value="manager">Gestor</option>
             <option value="consultation">Consulta</option>
+            <option value="hr">RH</option>
           </select>
         </div>
-
         <div>
           <label>E-mail corporativo</label>
           <input name="email" type="email" placeholder="nome@empresa.com.br" autocomplete="email">
           <small>Opcional. Se informado, deve ser único.</small>
         </div>
-
         <div class="fieldExtended">
           <label>Celular</label>
           <input name="phone" type="tel" placeholder="(11) 99999-9999" autocomplete="tel">
           <small>Opcional. Não solicitamos CPF.</small>
         </div>
-
         <div class="fieldExtended">
           <label>Foto</label>
           <input name="photo" type="file" accept="image/*">
           <small>Opcional • até 3 MB.</small>
         </div>
-
         <div class="full">
           <label>Senha inicial *</label>
           <input name="password" type="password" required minlength="8"
@@ -81,6 +76,7 @@
     <p><b>Gestor</b><br><span class="muted">Dashboard, consultas, usuários, edição, conclusão/reabertura e funções administrativas.</span></p>
     <p><b>Técnico de Campo</b><br><span class="muted">Coleta de campo, equipamentos, evidências e conclusão conforme o fluxo operacional.</span></p>
     <p><b>Consulta</b><br><span class="muted">Somente leitura de dashboard e informações. Não cadastra, edita, conclui ou reabre registros.</span></p>
+    <p><b>RH</b><br><span class="muted">Visualiza equipes e administra usuários. Não acessa lançamentos de campo nem funções gerenciais do inventário.</span></p>
     <div class="notice">
       <b>Privacidade:</b> coletamos apenas os dados necessários para o acesso e a operação. CPF não faz parte deste cadastro.
     </div>
@@ -91,7 +87,7 @@
   <div class="sectionHead">
     <div>
       <h2>Usuários cadastrados</h2>
-      <p class="muted">Desative acessos sem apagar o histórico dos levantamentos.</p>
+      <p class="muted">Edite dados, redefina senhas e desative acessos. Exclusão definitiva ocorre apenas sem histórico; com histórico, o usuário é arquivado.</p>
     </div>
     <span class="tag">{{ users|length }} usuário(s)</span>
   </div>
@@ -106,8 +102,7 @@
           <th>Perfil</th>
           <th>Contato</th>
           <th>Status</th>
-          <th>Nova senha</th>
-          <th>Ação</th>
+          <th>Ações</th>
         </tr>
       </thead>
       <tbody>
@@ -124,19 +119,19 @@
                   {{ (u.name or "?")[0]|upper }}
                 </div>
               {% endif %}
-              <b>{{ u.name }}</b>
+              <div>
+                <b>{{ u.name }}</b>
+                {% if u.id == session.get('user_id') %}<div><small>Você</small></div>{% endif %}
+              </div>
             </div>
           </td>
           <td><b>{{ u.user_code or "—" }}</b></td>
           <td>{{ u.username }}</td>
           <td>
-            {% if u.role == "manager" %}
-              Gestor
-            {% elif u.role == "consultation" %}
-              Consulta
-            {% else %}
-              Técnico de Campo
-            {% endif %}
+            {% if u.role == "manager" %}Gestor
+            {% elif u.role == "consultation" %}Consulta
+            {% elif u.role == "hr" %}RH
+            {% else %}Técnico de Campo{% endif %}
           </td>
           <td>
             {% if u.email %}<div>{{ u.email }}</div>{% endif %}
@@ -144,28 +139,112 @@
             {% if not u.email and not u.phone %}—{% endif %}
           </td>
           <td>
-            {% if u.active %}
-              <span class="status sCONCLUIDA">ATIVO</span>
-            {% else %}
-              <span class="status sPENDENTE">INATIVO</span>
-            {% endif %}
+            {% if u.archived_at %}<span class="status sPENDENTE">ARQUIVADO</span>
+            {% elif u.active %}<span class="status sCONCLUIDA">ATIVO</span>
+            {% else %}<span class="status sPENDENTE">INATIVO</span>{% endif %}
           </td>
           <td>
-            <form method="post" action="/usuarios/{{u.id}}/senha" style="display:flex;gap:6px;min-width:240px">
-              <input name="password" type="password" minlength="8" required placeholder="Nova senha">
-              <button class="secondary" type="submit">Alterar</button>
-            </form>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;min-width:230px">
+              <button type="button" class="secondary editUserBtn" data-target="edit-user-{{ u.id }}">Editar</button>
+
+              {% if u.id != session.get('user_id') %}
+                {% if not u.archived_at %}
+                <form method="post" action="/usuarios/{{u.id}}/toggle">
+                  <button class="{{ 'danger' if u.active else 'secondary' }}" type="submit">
+                    {{ "Desativar" if u.active else "Ativar" }}
+                  </button>
+                </form>
+                {% endif %}
+                {% if not u.archived_at %}
+                <form method="post" action="/usuarios/{{u.id}}/excluir"
+                      onsubmit="return confirm('Excluir este usuário? Sem histórico ele será apagado. Com histórico, o acesso, foto e contatos serão removidos e o nome será preservado para auditoria.')">
+                  <button class="dangerGhost" type="submit">Excluir</button>
+                </form>
+                {% endif %}
+              {% endif %}
+            </div>
           </td>
-          <td>
-            {% if u.id != session.get('user_id') %}
-              <form method="post" action="/usuarios/{{u.id}}/toggle">
-                <button class="{{ 'danger' if u.active else 'secondary' }}" type="submit">
-                  {{ "Desativar" if u.active else "Ativar" }}
-                </button>
+        </tr>
+
+        <tr id="edit-user-{{ u.id }}" class="editUserRow" style="display:none">
+          <td colspan="7">
+            <div class="card" style="margin:8px 0;background:#fafbfc">
+              <div class="sectionHead">
+                <div>
+                  <h2 style="margin-bottom:4px">Editar {{ u.name }}</h2>
+                  <p class="muted">Código, login, e-mail e celular não podem se repetir.</p>
+                </div>
+                <button type="button" class="secondary closeEditBtn" data-target="edit-user-{{ u.id }}">Fechar</button>
+              </div>
+
+              <form method="post" action="/usuarios/{{ u.id }}/editar" enctype="multipart/form-data" class="editUserForm">
+                <div class="grid3">
+                  <div>
+                    <label>Nome completo *</label>
+                    <input name="name" value="{{ u.name }}" required>
+                  </div>
+                  <div>
+                    <label>Login *</label>
+                    <input name="username" value="{{ u.username }}" required autocomplete="off">
+                  </div>
+                  <div>
+                    <label>Perfil *</label>
+                    <select name="role" class="editRoleSelect" required>
+                      <option value="technician" {% if u.role == "technician" %}selected{% endif %}>Técnico de Campo</option>
+                      <option value="manager" {% if u.role == "manager" %}selected{% endif %}>Gestor</option>
+                      <option value="consultation" {% if u.role == "consultation" %}selected{% endif %}>Consulta</option>
+                      <option value="hr" {% if u.role == "hr" %}selected{% endif %}>RH</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label>Código *</label>
+                    <input name="user_code" value="{{ u.user_code or '' }}" required maxlength="30">
+                    <small>Identificador interno permanente do usuário.</small>
+                  </div>
+                  <div>
+                    <label>E-mail corporativo</label>
+                    <input name="email" type="email" value="{{ u.email or '' }}">
+                  </div>
+                  <div class="editExtended">
+                    <label>Celular</label>
+                    <input name="phone" type="tel" value="{{ u.phone or '' }}">
+                  </div>
+                  <div class="editExtended">
+                    <label>Nova foto</label>
+                    <input name="photo" type="file" accept="image/*">
+                    <small>Opcional • até 3 MB.</small>
+                  </div>
+                  {% if u.photo_url %}
+                  <div>
+                    <label style="display:flex;gap:8px;align-items:center;margin-top:28px">
+                      <input type="checkbox" name="remove_photo" value="1" style="width:auto">
+                      Remover foto atual
+                    </label>
+                  </div>
+                  {% endif %}
+                </div>
+
+                {% if u.id == session.get('user_id') %}
+                <div class="notice" style="margin-top:12px">
+                  Seu próprio acesso não pode ser desativado, e o perfil de Gestor não pode ser removido enquanto você estiver conectado.
+                </div>
+                {% endif %}
+
+                <div class="actions">
+                  <button class="primary" type="submit">Salvar alterações</button>
+                </div>
               </form>
-            {% else %}
-              <small>Usuário atual</small>
-            {% endif %}
+
+              <hr style="border:0;border-top:1px solid #e5e7eb;margin:18px 0">
+
+              <form method="post" action="/usuarios/{{u.id}}/senha" style="display:flex;gap:8px;align-items:end;flex-wrap:wrap">
+                <div style="min-width:260px;flex:1">
+                  <label>Redefinir senha</label>
+                  <input name="password" type="password" minlength="8" required placeholder="Nova senha • mínimo 8 caracteres">
+                </div>
+                <button class="secondary" type="submit">Alterar senha</button>
+              </form>
+            </div>
           </td>
         </tr>
       {% endfor %}
@@ -180,7 +259,7 @@
   const extended = document.querySelectorAll(".fieldExtended");
   const hint = document.getElementById("consultHint");
 
-  function updateProfileFields() {
+  function updateCreateProfileFields() {
     const consultation = role.value === "consultation";
     extended.forEach(el => {
       el.style.display = consultation ? "none" : "";
@@ -191,8 +270,39 @@
     hint.style.display = consultation ? "block" : "none";
   }
 
-  role.addEventListener("change", updateProfileFields);
-  updateProfileFields();
+  role.addEventListener("change", updateCreateProfileFields);
+  updateCreateProfileFields();
+
+  document.querySelectorAll(".editUserBtn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const row = document.getElementById(btn.dataset.target);
+      document.querySelectorAll(".editUserRow").forEach(other => {
+        if (other !== row) other.style.display = "none";
+      });
+      row.style.display = row.style.display === "none" ? "table-row" : "none";
+    });
+  });
+
+  document.querySelectorAll(".closeEditBtn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.getElementById(btn.dataset.target).style.display = "none";
+    });
+  });
+
+  document.querySelectorAll(".editUserForm").forEach(form => {
+    const roleSelect = form.querySelector(".editRoleSelect");
+    const editExtended = form.querySelectorAll(".editExtended");
+
+    function updateEditFields() {
+      const consultation = roleSelect.value === "consultation";
+      editExtended.forEach(el => {
+        el.style.display = consultation ? "none" : "";
+      });
+    }
+
+    roleSelect.addEventListener("change", updateEditFields);
+    updateEditFields();
+  });
 })();
 </script>
 {% endblock %}

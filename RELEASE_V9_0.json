@@ -1,0 +1,6 @@
+{
+  "release": "V9.0",
+  "date": "2026-08-15",
+  "pwa_cache": "autopass-v9-0",
+  "features": ["nearby-locations", "integrated-stations", "gps-validation", "observed-reference", "technician-photo-map", "hr-role"]
+}

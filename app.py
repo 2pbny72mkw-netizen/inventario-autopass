@@ -413,6 +413,8 @@ def manager_required(fn):
         if not session.get("user_id"):
             return redirect(url_for("login"))
         if session.get("role") != "manager":
+            if session.get("role") == "hr":
+                return redirect(url_for("teams_page"))
             return redirect(url_for("manager" if session.get("role") == "consultation" else "technician"))
         return fn(*args, **kwargs)
     return inner
@@ -425,7 +427,33 @@ def dashboard_required(fn):
         if not session.get("user_id"):
             return redirect(url_for("login"))
         if session.get("role") not in ("manager", "consultation"):
+            if session.get("role") == "hr":
+                return redirect(url_for("teams_page"))
             return redirect(url_for("technician"))
+        return fn(*args, **kwargs)
+    return inner
+
+
+def teams_view_required(fn):
+    """Visualização de equipes: Gestor, Consulta e RH."""
+    @wraps(fn)
+    def inner(*args, **kwargs):
+        if not session.get("user_id"):
+            return redirect(url_for("login"))
+        if session.get("role") not in ("manager", "consultation", "hr"):
+            return redirect(url_for("technician"))
+        return fn(*args, **kwargs)
+    return inner
+
+
+def user_admin_required(fn):
+    """Administração de usuários: Gestor e RH."""
+    @wraps(fn)
+    def inner(*args, **kwargs):
+        if not session.get("user_id"):
+            return redirect(url_for("login"))
+        if session.get("role") not in ("manager", "hr"):
+            return redirect(url_for("manager" if session.get("role") == "consultation" else "technician"))
         return fn(*args, **kwargs)
     return inner
 
@@ -448,7 +476,10 @@ def field_required(fn):
 def index():
     if not session.get("user_id"):
         return redirect(url_for("login"))
-    return redirect(url_for("manager" if session.get("role") in ("manager", "consultation") else "technician"))
+    role = session.get("role")
+    if role == "hr":
+        return redirect(url_for("teams_page"))
+    return redirect(url_for("manager" if role in ("manager", "consultation") else "technician"))
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -460,6 +491,8 @@ def login():
         if user and check_password_hash(user.password_hash, password):
             session.clear()
             session.update(user_id=user.id, name=user.name, role=user.role)
+            if user.role == "hr":
+                return redirect(url_for("teams_page"))
             return redirect(url_for("manager" if user.role in ("manager", "consultation") else "technician"))
         flash("Usuário ou senha inválidos.")
     return render_template("login.html")
@@ -741,7 +774,7 @@ def technician_position_update():
 
 
 @app.get("/api/equipes/status")
-@dashboard_required
+@teams_view_required
 def teams_status_api():
     _ensure_team_schedule_profiles()
     local_now = datetime.now(ZoneInfo("America/Sao_Paulo"))
@@ -793,7 +826,7 @@ def teams_status_api():
 
 
 @app.get("/api/equipes/calendario")
-@dashboard_required
+@teams_view_required
 def teams_calendar_api():
     _ensure_team_schedule_profiles()
     start_raw = request.args.get("start", "").strip()
@@ -1343,22 +1376,22 @@ def v8_operation_api():
 
 
 @app.get("/equipes")
-@dashboard_required
+@teams_view_required
 def teams_page():
     return render_template("teams.html")
 
 
 
 @app.get("/sobre")
-@dashboard_required
+@login_required
 def about_page():
     return render_template(
         "about.html",
-        app_release="V8.0.1",
+        app_release="V9.0",
         dashboard_release=DASHBOARD_RELEASE,
         base_version=BASE_DATA_VERSION,
-        manager_version="dashboard-v6-0",
-        teams_version="teams-v6-0",
+        manager_version="dashboard-v9-0",
+        teams_version="teams-v9-0",
     )
 
 
@@ -1487,6 +1520,45 @@ def _expected_assets_by_location(force=False):
     return result
 
 
+def _haversine_m(lat1, lon1, lat2, lon2):
+    from math import radians, sin, cos, sqrt, atan2
+    r = 6371000.0
+    p1, p2 = radians(lat1), radians(lat2)
+    dphi = radians(lat2-lat1)
+    dlambda = radians(lon2-lon1)
+    a = sin(dphi/2)**2 + cos(p1)*cos(p2)*sin(dlambda/2)**2
+    return 2*r*atan2(sqrt(a), sqrt(max(0.0, 1-a)))
+
+
+def _observed_reference_stats(location_id):
+    """V9: referência observada a partir de coletas GPS confiáveis.
+    Não substitui automaticamente a referência oficial.
+    """
+    rows = (
+        db.session.query(Inventory.latitude, Inventory.longitude, Inventory.gps_accuracy)
+        .filter(
+            Inventory.location_id == location_id,
+            Inventory.latitude.isnot(None),
+            Inventory.longitude.isnot(None),
+            db.or_(Inventory.gps_accuracy.is_(None), Inventory.gps_accuracy <= 80),
+        )
+        .order_by(Inventory.created_at.desc())
+        .limit(200)
+        .all()
+    )
+    pts=[(float(a),float(b)) for a,b,_ in rows if a is not None and b is not None]
+    if not pts:
+        return {"count":0,"latitude":None,"longitude":None,"spread_m":None}
+    # Mediana robusta primeiro; remove outliers acima de 400 m do centro observado.
+    import statistics
+    med_lat=statistics.median([x[0] for x in pts]); med_lon=statistics.median([x[1] for x in pts])
+    clean=[x for x in pts if _haversine_m(x[0],x[1],med_lat,med_lon) <= 400]
+    if not clean: clean=pts
+    lat=sum(x[0] for x in clean)/len(clean); lon=sum(x[1] for x in clean)/len(clean)
+    spread=max((_haversine_m(x[0],x[1],lat,lon) for x in clean), default=0)
+    return {"count":len(clean),"latitude":lat,"longitude":lon,"spread_m":round(spread,1)}
+
+
 @app.get("/api/locations")
 @login_required
 def api_locations():
@@ -1553,6 +1625,7 @@ def api_locations():
             "reference_longitude": loc.reference_longitude,
             "reference_source": loc.reference_source,
             "reference_updated_at": loc.reference_updated_at.isoformat(timespec="seconds") if loc.reference_updated_at else None,
+            "observed_reference": _observed_reference_stats(loc.id),
             "inventoried": int(inv["total"]),
             "inoperative": int(inv["inoperative"]),
             "divergences": int(inv["divergences"]),
@@ -1754,6 +1827,23 @@ def create_inventory():
     if not loc:
         return jsonify({"ok": False, "error": "Local inválido."}), 400
 
+    # V9: confronto geográfico entre o local declarado e o GPS capturado.
+    gps_distance_m = None
+    gps_warn_m = float(os.getenv("FIELD_GPS_WARN_DISTANCE_M", "250"))
+    gps_max_m = float(os.getenv("FIELD_GPS_MAX_DISTANCE_M", "600"))
+    gps_override_reason = (request.form.get("gps_override_reason") or "").strip()
+    if latitude is not None and longitude is not None and loc.reference_latitude is not None and loc.reference_longitude is not None:
+        gps_distance_m = _haversine_m(latitude, longitude, loc.reference_latitude, loc.reference_longitude)
+        if gps_distance_m > gps_max_m and len(gps_override_reason) < 10:
+            return jsonify({
+                "ok": False,
+                "error": f"GPS incompatível com {loc.location}: distância aproximada de {round(gps_distance_m)} m da referência. Confirme a localidade ou informe uma justificativa para exceção.",
+                "code": "GPS_OUTSIDE_LOCATION",
+                "distance_m": round(gps_distance_m),
+                "warn_m": gps_warn_m,
+                "max_m": gps_max_m
+            }), 409
+
     duplicate = (
         db.session.query(Inventory, User.name.label("technician"))
         .join(User, User.id == Inventory.technician_id)
@@ -1795,7 +1885,7 @@ def create_inventory():
         label_status=request.form.get("label_status", ""),
         in_base=request.form.get("in_base", ""),
         divergence=request.form.get("divergence", ""),
-        notes=request.form.get("notes", ""),
+        notes=((request.form.get("notes", "") or "") + (("\n[Exceção GPS: " + gps_override_reason + "]") if gps_override_reason else "")).strip(),
         latitude=latitude,
         longitude=longitude,
         gps_accuracy=gps_accuracy,
@@ -2022,6 +2112,7 @@ def api_recent_gps():
     rows = (
         db.session.query(
             Inventory,
+            User.id.label("technician_user_id"),
             User.name.label("technician_name"),
             User.user_code.label("technician_code"),
             Location.location.label("location_name"),
@@ -2064,12 +2155,14 @@ def api_recent_gps():
             "asset_identifier": inv.asset_identifier,
             "technician": technician_name,
             "technician_code": technician_code,
+            "technician_user_id": technician_user_id,
+            "technician_photo_url": f"/usuarios/{technician_user_id}/foto" if technician_user_id else None,
             "latitude": inv.latitude,
             "longitude": inv.longitude,
             "gps_accuracy": inv.gps_accuracy,
             "gps_captured_at": inv.gps_captured_at.isoformat(timespec="seconds") if inv.gps_captured_at else None,
             "created_at": inv.created_at.isoformat(timespec="seconds") if inv.created_at else None
-        } for inv, technician_name, technician_code, location_name, company, line in rows]
+        } for inv, technician_user_id, technician_name, technician_code, location_name, company, line in rows]
     })
 
 
@@ -2398,7 +2491,7 @@ def attachments(inventory_id):
 
 
 @app.route("/usuarios")
-@manager_required
+@user_admin_required
 def users_page():
     users = User.query.order_by(User.active.desc(), User.name).all()
     return render_template("users.html", users=users)
@@ -2419,6 +2512,7 @@ def _next_user_code(role):
         "technician": "T",
         "manager": "G",
         "consultation": "C",
+        "hr": "RH",
     }
     prefix = prefixes.get(role, "U")
     existing = (
@@ -2435,7 +2529,7 @@ def _next_user_code(role):
 
 
 @app.post("/usuarios/novo")
-@manager_required
+@user_admin_required
 def create_user():
     name = request.form.get("name", "").strip()
     username = request.form.get("username", "").strip().lower()
@@ -2448,7 +2542,7 @@ def create_user():
         flash("Nome, usuário e senha são obrigatórios.")
         return redirect(url_for("users_page"))
 
-    if role not in ("manager", "technician", "consultation"):
+    if role not in ("manager", "technician", "consultation", "hr"):
         flash("Perfil de acesso inválido.")
         return redirect(url_for("users_page"))
 
@@ -2481,7 +2575,7 @@ def create_user():
     )
 
     photo = request.files.get("photo")
-    if photo and photo.filename and role in ("manager", "technician"):
+    if photo and photo.filename and role in ("manager", "technician", "hr"):
         if not (photo.mimetype or "").startswith("image/"):
             flash("A foto do usuário deve ser uma imagem.")
             return redirect(url_for("users_page"))
@@ -2507,7 +2601,7 @@ def create_user():
 
 
 @app.get("/usuarios/<int:user_id>/foto")
-@manager_required
+@login_required
 def user_photo(user_id):
     user = db.session.get(User, user_id)
     if not user or not user.photo_url:
@@ -2535,7 +2629,7 @@ def _active_manager_count(exclude_user_id=None):
 
 
 @app.post("/usuarios/<int:user_id>/toggle")
-@manager_required
+@user_admin_required
 def toggle_user(user_id):
     user = db.session.get(User, user_id)
     if not user:
@@ -2557,7 +2651,7 @@ def toggle_user(user_id):
 
 
 @app.post("/usuarios/<int:user_id>/editar")
-@manager_required
+@user_admin_required
 def edit_user(user_id):
     user = db.session.get(User, user_id)
     if not user:
@@ -2575,7 +2669,7 @@ def edit_user(user_id):
         flash("Nome e usuário são obrigatórios.")
         return redirect(url_for("users_page"))
 
-    if role not in ("manager", "technician", "consultation"):
+    if role not in ("manager", "technician", "consultation", "hr"):
         flash("Perfil de acesso inválido.")
         return redirect(url_for("users_page"))
 
