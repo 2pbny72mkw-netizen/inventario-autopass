@@ -5,7 +5,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{% block title %}Inventário SP{% endblock %}</title>
-<link rel="stylesheet" href="{{url_for('static',filename='app.css')}}?v=v10">
+<link rel="stylesheet" href="{{url_for('static',filename='app.css')}}?v=v12">
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#17345d">
 </head>
@@ -28,6 +28,7 @@
       {% if session.get('role') in ('manager','hr') %}<a href="/usuarios">Usuários</a>{% endif %}
       {% if session.get('role') in ('manager','consultation') %}<a href="/patrimonio">Patrimônio 360</a>{% endif %}
       <a href="/sobre">Sobre</a>
+      <a href="/meu-perfil" class="navProfile">Meu perfil</a>
       <a href="/logout">Sair</a>
     </nav>
   </div>
