@@ -80,6 +80,7 @@ class User(db.Model):
     email = db.Column(db.String(180), unique=True, index=True)
     phone = db.Column(db.String(30), unique=True, index=True)
     photo_url = db.Column(db.String(500))
+    archived_at = db.Column(db.DateTime)
 
 
 
@@ -484,6 +485,19 @@ def manager():
 
 
 
+
+
+
+def migrate_user_archive_column():
+    try:
+        inspector = db.inspect(db.engine)
+        existing = {c["name"] for c in inspector.get_columns("users")}
+        if "archived_at" not in existing:
+            db.session.execute(db.text('ALTER TABLE users ADD COLUMN archived_at TIMESTAMP'))
+            db.session.commit()
+    except Exception:
+        db.session.rollback()
+        raise
 
 
 def migrate_inventory_sync_uuid():
@@ -1340,7 +1354,7 @@ def teams_page():
 def about_page():
     return render_template(
         "about.html",
-        app_release="V8.0",
+        app_release="V8.0.1",
         dashboard_release=DASHBOARD_RELEASE,
         base_version=BASE_DATA_VERSION,
         manager_version="dashboard-v6-0",
@@ -2676,6 +2690,78 @@ def edit_user(user_id):
         session["role"] = user.role
 
     flash(f"Usuário {user.name} atualizado com sucesso.")
+    return redirect(url_for("users_page"))
+
+
+
+def _user_operational_history_counts(user_id):
+    return {
+        "inventory": Inventory.query.filter_by(technician_id=user_id).count(),
+        "gps": TechnicianPosition.query.filter_by(user_id=user_id).count(),
+        "completed_locations": Location.query.filter_by(completed_by=user_id).count(),
+    }
+
+
+@app.post("/usuarios/<int:user_id>/excluir")
+@manager_required
+def delete_or_archive_user(user_id):
+    user = db.session.get(User, user_id)
+    if not user:
+        flash("Usuário não encontrado.")
+        return redirect(url_for("users_page"))
+
+    if user.id == session.get("user_id"):
+        flash("Você não pode excluir ou arquivar o próprio usuário enquanto está conectado.")
+        return redirect(url_for("users_page"))
+
+    if user.role == "manager" and user.active and _active_manager_count(exclude_user_id=user.id) == 0:
+        flash("Não é possível excluir ou arquivar o último Gestor ativo.")
+        return redirect(url_for("users_page"))
+
+    history = _user_operational_history_counts(user.id)
+    has_history = any(history.values())
+    old_photo_key = user.photo_url
+    schedule_profiles = TeamScheduleProfile.query.filter_by(user_id=user.id).all()
+
+    if has_history:
+        for profile in schedule_profiles:
+            profile.active = False
+            profile.user_id = None
+            profile.updated_at = datetime.utcnow()
+
+        user.active = False
+        user.archived_at = datetime.utcnow()
+        user.username = f"arquivado-{user.id}-{uuid.uuid4().hex[:10]}"
+        user.password_hash = generate_password_hash(uuid.uuid4().hex + uuid.uuid4().hex)
+        user.email = None
+        user.phone = None
+        user.photo_url = None
+        db.session.commit()
+
+        if old_photo_key:
+            try:
+                r2_client().delete_object(Bucket=os.environ["R2_BUCKET_NAME"], Key=old_photo_key)
+            except Exception:
+                pass
+
+        flash(
+            f"Usuário {user.name} arquivado. O acesso, foto e contatos foram removidos; "
+            f"o nome permanece para rastreabilidade histórica."
+        )
+        return redirect(url_for("users_page"))
+
+    for profile in schedule_profiles:
+        db.session.delete(profile)
+    db.session.delete(user)
+    db.session.commit()
+
+    if old_photo_key:
+        try:
+            r2_client().delete_object(Bucket=os.environ["R2_BUCKET_NAME"], Key=old_photo_key)
+        except Exception:
+            pass
+
+    flash("Usuário sem histórico excluído definitivamente.")
     return redirect(url_for("users_page"))
 
 
@@ -4056,6 +4142,7 @@ with app.app_context():
     db.create_all()
     migrate_team_schedule_columns()
     migrate_inventory_sync_uuid()
+    migrate_user_archive_column()
     migrate_base_asset_columns()
     migrate_inventory_validator_columns()
     seed_data()
