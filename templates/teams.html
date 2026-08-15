@@ -94,6 +94,9 @@
     <span class="tag" id="teamClock">—</span>
   </div>
   <div id="teamCards" class="teamCards"></div>
+  <div class="scaleTableWrap" style="margin-top:18px">
+    <table class="scaleTable"><thead><tr><th>Nome</th><th>Cargo</th><th>Escala</th><th>Horário</th><th>Entrada</th><th>Linhas</th><th>Situação</th><th>Última posição</th></tr></thead><tbody id="todayTeamTable"></tbody></table>
+  </div>
 </section>
 
 {% if session.get('role') == 'manager' %}

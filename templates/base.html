@@ -27,8 +27,8 @@
       {% if session.get('role') in ('manager','technician') %}<a href="/tecnico">Lançamento</a>{% endif %}
       {% if session.get('role') in ('manager','hr') %}<a href="/usuarios">Usuários</a>{% endif %}
       {% if session.get('role') in ('manager','consultation') %}<a href="/patrimonio">Patrimônio 360</a>{% endif %}
-      <a href="/sobre">Sobre</a>
       <a href="/meu-perfil" class="navProfile">Meu perfil</a>
+      <a href="/sobre">Sobre</a>
       <a href="/logout">Sair</a>
     </nav>
   </div>
