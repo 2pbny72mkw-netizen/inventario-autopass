@@ -30,7 +30,7 @@ from openpyxl.utils import get_column_letter
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 BASE_DATA_VERSION = "1408-5"
-DASHBOARD_RELEASE = "v1.4-operacional-dashboard-v5"
+DASHBOARD_RELEASE = "v1.5-operacional-dashboard-v5.2"
 # Denominadores executivos oficiais informados para o parque contratado.
 OFFICIAL_PARK = {
     "ATM": 590,
@@ -79,6 +79,29 @@ class User(db.Model):
     email = db.Column(db.String(180), unique=True, index=True)
     phone = db.Column(db.String(30), unique=True, index=True)
     photo_url = db.Column(db.String(500))
+
+
+
+class TeamScheduleProfile(db.Model):
+    __tablename__ = "team_schedule_profiles"
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
+    name = db.Column(db.String(180), nullable=False, unique=True, index=True)
+    active = db.Column(db.Boolean, nullable=False, default=True, index=True)
+    shift = db.Column(db.String(30), nullable=False)
+    supervision = db.Column(db.String(180))
+    entry = db.Column(db.String(180))
+    lines_json = db.Column(db.Text)
+    anchor_date = db.Column(db.Date, nullable=False, index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime)
+
+    @property
+    def lines(self):
+        try:
+            return json.loads(self.lines_json or "[]")
+        except Exception:
+            return []
 
 
 class TechnicianPosition(db.Model):
@@ -456,6 +479,7 @@ def manager():
 
 
 
+
 def _load_technician_schedule():
     path = DATA_DIR / "technician_schedule_v5.json"
     if not path.exists():
@@ -463,9 +487,77 @@ def _load_technician_schedule():
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _schedule_today(schedule, today=None):
-    today = today or datetime.now().date().isoformat()
-    return [x for x in schedule.get("technicians", []) if today in x.get("days", [])]
+def _ensure_team_schedule_profiles():
+    """Seed the editable 12x36 roster once from the imported Excel-derived JSON."""
+    if TeamScheduleProfile.query.count():
+        return
+
+    schedule = _load_technician_schedule()
+    users = User.query.filter(User.active.is_(True)).all()
+    users_by_name = {normalize(u.name): u for u in users}
+
+    for item in schedule.get("technicians", []):
+        days = item.get("days") or []
+        if not days:
+            continue
+        try:
+            anchor = datetime.strptime(days[0], "%Y-%m-%d").date()
+        except Exception:
+            continue
+        user = users_by_name.get(normalize(item.get("name")))
+        db.session.add(TeamScheduleProfile(
+            user_id=user.id if user else None,
+            name=item.get("name") or "Técnico",
+            active=True,
+            shift=item.get("shift") or "05:00-17:00",
+            supervision=item.get("supervision") or "",
+            entry=item.get("entry") or "",
+            lines_json=json.dumps(item.get("lines") or [], ensure_ascii=False),
+            anchor_date=anchor,
+        ))
+    db.session.commit()
+
+
+def _team_profile_is_scheduled(profile, target_date):
+    if not profile.active or not profile.anchor_date:
+        return False
+    delta = (target_date - profile.anchor_date).days
+    return delta >= 0 and delta % 2 == 0
+
+
+def _profile_to_dict(profile):
+    return {
+        "profile_id": profile.id,
+        "user_id": profile.user_id,
+        "name": profile.name,
+        "shift": profile.shift,
+        "supervision": profile.supervision or "",
+        "entry": profile.entry or "",
+        "lines": profile.lines,
+        "anchor_date": profile.anchor_date.isoformat() if profile.anchor_date else None,
+        "active": bool(profile.active),
+    }
+
+
+def _schedule_today_db(target_date=None):
+    _ensure_team_schedule_profiles()
+    target_date = target_date or datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+    return [
+        _profile_to_dict(p)
+        for p in TeamScheduleProfile.query.filter_by(active=True).order_by(TeamScheduleProfile.name).all()
+        if _team_profile_is_scheduled(p, target_date)
+    ]
+
+
+def _team_latest_position(user_id):
+    if not user_id:
+        return None
+    return (
+        TechnicianPosition.query
+        .filter_by(user_id=user_id)
+        .order_by(TechnicianPosition.captured_at.desc())
+        .first()
+    )
 
 
 @app.post("/api/tecnico/position")
@@ -473,41 +565,60 @@ def _schedule_today(schedule, today=None):
 def technician_position_update():
     data = request.get_json(silent=True) or {}
     try:
-        lat = float(data.get("latitude")); lon = float(data.get("longitude"))
+        lat = float(data.get("latitude"))
+        lon = float(data.get("longitude"))
         acc = float(data.get("accuracy")) if data.get("accuracy") is not None else None
     except (TypeError, ValueError):
         return jsonify({"ok": False, "error": "Coordenadas inválidas"}), 400
     if not (-90 <= lat <= 90 and -180 <= lon <= 180):
         return jsonify({"ok": False, "error": "Coordenadas fora do intervalo"}), 400
-    row = TechnicianPosition(user_id=session["user_id"], latitude=lat, longitude=lon, accuracy=acc, captured_at=datetime.utcnow())
-    db.session.add(row); db.session.commit()
+    row = TechnicianPosition(
+        user_id=session["user_id"],
+        latitude=lat,
+        longitude=lon,
+        accuracy=acc,
+        captured_at=datetime.utcnow()
+    )
+    db.session.add(row)
+    db.session.commit()
     return jsonify({"ok": True, "captured_at": row.captured_at.isoformat() + "Z"})
 
 
 @app.get("/api/equipes/status")
 @dashboard_required
 def teams_status_api():
-    schedule = _load_technician_schedule()
-    today = datetime.now(ZoneInfo("America/Sao_Paulo")).date().isoformat()
-    scheduled = _schedule_today(schedule, today)
+    _ensure_team_schedule_profiles()
+    local_now = datetime.now(ZoneInfo("America/Sao_Paulo"))
+    target_date = local_now.date()
+    scheduled = _schedule_today_db(target_date)
+
     users = User.query.filter(User.active.is_(True)).all()
     users_by_name = {normalize(u.name): u for u in users}
-    rows=[]
-    now=datetime.utcnow()
+    rows = []
+    now_utc = datetime.utcnow()
+
     for tech in scheduled:
-        user=users_by_name.get(normalize(tech.get("name")))
-        pos=None
-        if user:
-            pos=TechnicianPosition.query.filter_by(user_id=user.id).order_by(TechnicianPosition.captured_at.desc()).first()
-        minutes=None
-        if pos: minutes=max(0,int((now-pos.captured_at).total_seconds()//60))
-        if minutes is None: freshness="SEM SINAL"
-        elif minutes <= 5: freshness="ATUAL"
-        elif minutes <= 15: freshness="ATENÇÃO"
-        else: freshness="ATRASADO"
+        user = db.session.get(User, tech.get("user_id")) if tech.get("user_id") else None
+        if not user:
+            user = users_by_name.get(normalize(tech.get("name")))
+
+        pos = _team_latest_position(user.id if user else None)
+        minutes = None
+        if pos:
+            minutes = max(0, int((now_utc - pos.captured_at).total_seconds() // 60))
+
+        if minutes is None:
+            freshness = "SEM SINAL"
+        elif minutes <= 5:
+            freshness = "ATUAL"
+        elif minutes <= 15:
+            freshness = "ATENÇÃO"
+        else:
+            freshness = "ATRASADO"
+
         rows.append({
             **tech,
-            "user_id": user.id if user else None,
+            "user_id": user.id if user else tech.get("user_id"),
             "photo_url": (f"/usuarios/{user.id}/foto" if user and user.photo_url else None),
             "latitude": pos.latitude if pos else None,
             "longitude": pos.longitude if pos else None,
@@ -516,15 +627,171 @@ def teams_status_api():
             "minutes_since": minutes,
             "freshness": freshness,
         })
-    local_now = datetime.now(ZoneInfo("America/Sao_Paulo"))
+
+    source_schedule = _load_technician_schedule()
     return jsonify({
         "ok": True,
-        "date": today,
+        "date": target_date.isoformat(),
         "time": local_now.strftime("%H:%M"),
         "scheduled": len(rows),
         "technicians": rows,
-        "support": schedule.get("support", [])
+        "support": source_schedule.get("support", []),
     })
+
+
+@app.get("/api/equipes/calendario")
+@dashboard_required
+def teams_calendar_api():
+    _ensure_team_schedule_profiles()
+    start_raw = request.args.get("start", "").strip()
+    days = max(1, min(31, request.args.get("days", type=int) or 14))
+
+    try:
+        start_date = datetime.strptime(start_raw, "%Y-%m-%d").date() if start_raw else datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+    except ValueError:
+        return jsonify({"ok": False, "error": "Data inicial inválida."}), 400
+
+    profiles = TeamScheduleProfile.query.filter_by(active=True).order_by(TeamScheduleProfile.name).all()
+    date_list = []
+    for i in range(days):
+        d = start_date.fromordinal(start_date.toordinal() + i)
+        date_list.append(d)
+
+    rows = []
+    for p in profiles:
+        rows.append({
+            **_profile_to_dict(p),
+            "days": [
+                {
+                    "date": d.isoformat(),
+                    "scheduled": _team_profile_is_scheduled(p, d),
+                    "shift": p.shift if _team_profile_is_scheduled(p, d) else "FOLGA",
+                }
+                for d in date_list
+            ],
+        })
+
+    return jsonify({
+        "ok": True,
+        "start": start_date.isoformat(),
+        "dates": [d.isoformat() for d in date_list],
+        "technicians": rows,
+    })
+
+
+@app.get("/api/equipes/perfis")
+@manager_required
+def teams_profiles_api():
+    _ensure_team_schedule_profiles()
+    profiles = TeamScheduleProfile.query.order_by(TeamScheduleProfile.active.desc(), TeamScheduleProfile.name).all()
+    users = User.query.filter(User.active.is_(True)).order_by(User.name).all()
+    return jsonify({
+        "ok": True,
+        "profiles": [_profile_to_dict(p) for p in profiles],
+        "users": [{"id": u.id, "name": u.name, "role": u.role} for u in users],
+    })
+
+
+@app.post("/api/equipes/perfis")
+@manager_required
+def teams_profile_create_api():
+    _ensure_team_schedule_profiles()
+    data = request.get_json(silent=True) or {}
+
+    name = (data.get("name") or "").strip()
+    user_id = data.get("user_id")
+    if user_id:
+        user = db.session.get(User, int(user_id))
+        if user:
+            name = user.name
+        else:
+            user_id = None
+    if not name:
+        return jsonify({"ok": False, "error": "Informe o técnico."}), 400
+
+    if TeamScheduleProfile.query.filter(func.upper(TeamScheduleProfile.name) == normalize(name)).first():
+        return jsonify({"ok": False, "error": "Este técnico já possui uma escala."}), 409
+
+    shift = (data.get("shift") or "05:00-17:00").strip()
+    if shift not in ("05:00-17:00", "11:00-23:00"):
+        return jsonify({"ok": False, "error": "Turno inválido."}), 400
+
+    try:
+        anchor = datetime.strptime(data.get("anchor_date") or "", "%Y-%m-%d").date()
+    except ValueError:
+        return jsonify({"ok": False, "error": "Informe o primeiro dia de trabalho da escala 12x36."}), 400
+
+    lines = data.get("lines") or []
+    if isinstance(lines, str):
+        lines = [x.strip() for x in re.split(r"[,;/]+", lines) if x.strip()]
+
+    row = TeamScheduleProfile(
+        user_id=int(user_id) if user_id else None,
+        name=name,
+        active=True,
+        shift=shift,
+        supervision=(data.get("supervision") or "").strip(),
+        entry=(data.get("entry") or "").strip(),
+        lines_json=json.dumps(lines, ensure_ascii=False),
+        anchor_date=anchor,
+    )
+    db.session.add(row)
+    db.session.commit()
+    return jsonify({"ok": True, "profile": _profile_to_dict(row)})
+
+
+@app.put("/api/equipes/perfis/<int:profile_id>")
+@manager_required
+def teams_profile_update_api(profile_id):
+    _ensure_team_schedule_profiles()
+    row = db.session.get(TeamScheduleProfile, profile_id)
+    if not row:
+        return jsonify({"ok": False, "error": "Técnico não encontrado na escala."}), 404
+
+    data = request.get_json(silent=True) or {}
+
+    if "shift" in data:
+        shift = (data.get("shift") or "").strip()
+        if shift not in ("05:00-17:00", "11:00-23:00"):
+            return jsonify({"ok": False, "error": "Turno inválido."}), 400
+        row.shift = shift
+
+    if "anchor_date" in data:
+        try:
+            row.anchor_date = datetime.strptime(data.get("anchor_date") or "", "%Y-%m-%d").date()
+        except ValueError:
+            return jsonify({"ok": False, "error": "Primeiro dia da escala inválido."}), 400
+
+    if "entry" in data:
+        row.entry = (data.get("entry") or "").strip()
+    if "supervision" in data:
+        row.supervision = (data.get("supervision") or "").strip()
+    if "lines" in data:
+        lines = data.get("lines") or []
+        if isinstance(lines, str):
+            lines = [x.strip() for x in re.split(r"[,;/]+", lines) if x.strip()]
+        row.lines_json = json.dumps(lines, ensure_ascii=False)
+    if "active" in data:
+        row.active = bool(data.get("active"))
+
+    row.updated_at = datetime.utcnow()
+    db.session.commit()
+    return jsonify({"ok": True, "profile": _profile_to_dict(row)})
+
+
+@app.delete("/api/equipes/perfis/<int:profile_id>")
+@manager_required
+def teams_profile_remove_api(profile_id):
+    _ensure_team_schedule_profiles()
+    row = db.session.get(TeamScheduleProfile, profile_id)
+    if not row:
+        return jsonify({"ok": False, "error": "Técnico não encontrado na escala."}), 404
+
+    # Excluir da escala significa desativar o perfil, não excluir o usuário do sistema.
+    row.active = False
+    row.updated_at = datetime.utcnow()
+    db.session.commit()
+    return jsonify({"ok": True})
 
 
 @app.get("/equipes")
@@ -533,11 +800,25 @@ def teams_page():
     return render_template("teams.html")
 
 
+
+@app.get("/sobre")
+@dashboard_required
+def about_page():
+    return render_template(
+        "about.html",
+        app_release="V5.2",
+        dashboard_release=DASHBOARD_RELEASE,
+        base_version=BASE_DATA_VERSION,
+        manager_version="dashboard-v5-2",
+        teams_version="teams-v5-2",
+    )
+
+
 @app.get("/health")
 def health():
     try:
         db.session.execute(db.text("SELECT 1"))
-        return jsonify({"ok": True, "database": "connected", "release": "v5.1-central-operacional"})
+        return jsonify({"ok": True, "database": "connected", "release": "v5.2-central-operacional"})
     except Exception as exc:
         return jsonify({"ok": False, "database": "error", "detail": str(exc)}), 500
 
