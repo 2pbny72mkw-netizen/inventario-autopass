@@ -66,3 +66,42 @@ textarea{min-height:100px;resize:vertical}small,.muted{color:var(--muted)}
 @media(max-width:900px){
   .executiveKpis,.equipmentBigNumbers{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
+
+
+/* ===== V4 · Evidências de Campo ===== */
+.buttonLink{display:inline-flex;align-items:center;justify-content:center;text-decoration:none}
+.heroActions{display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap}
+.evidenceTypeStrip,.evidenceMiniKpis{display:flex;gap:10px;flex-wrap:wrap;margin:12px 0}
+.evidenceTypeStrip span,.evidenceMiniKpis span{background:#f4f7fb;border:1px solid #dfe6ef;border-radius:12px;padding:9px 12px}
+.evidenceMiniKpis span{min-width:100px;display:flex;flex-direction:column}
+.evidenceMiniKpis b{font-size:22px;color:#11294d;margin-top:3px}
+.evidenceExecutiveStrip{margin-top:14px}
+.evidenceFilters{display:grid;grid-template-columns:2fr 2fr auto;gap:12px;align-items:end}
+.filterActions{display:flex;gap:8px;align-items:center}
+.evidenceVisitGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(245px,1fr));gap:12px}
+.evidenceVisitCard{display:block;text-decoration:none;color:inherit;border:1px solid #dfe6ef;border-radius:14px;padding:14px;background:#fff;transition:.15s}
+.evidenceVisitCard:hover{transform:translateY(-1px);box-shadow:0 8px 24px rgba(20,44,76,.08)}
+.evidenceVisitCard.needsReview{border-left:4px solid #c47a12}
+.evTop{display:flex;justify-content:space-between;gap:8px}
+.evTop span{font-size:12px;color:#66758a}
+.evLocation{margin-top:8px;font-size:13px;color:#34465f}
+.evCounts{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px;font-size:12px}
+.evCounts span{background:#eef3f8;border-radius:999px;padding:4px 8px}
+.evCounts .reviewCount{background:#fff2d9;color:#8a5400}
+.evidenceGrid{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(280px,1fr);gap:18px}
+.fieldReport{white-space:pre-wrap;word-break:break-word;background:#f7f9fc;border:1px solid #e1e7ef;border-radius:12px;padding:12px;max-height:360px;overflow:auto;font-family:inherit;font-size:13px}
+.competitionReport{border-left:4px solid #ef8354}
+.mediaGallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-top:10px}
+.mediaTile{display:flex;flex-direction:column;gap:5px;text-decoration:none;color:#24364f;border:1px solid #dfe6ef;border-radius:12px;overflow:hidden;background:#fff}
+.mediaTile img{width:100%;height:140px;object-fit:cover;background:#eef2f6}
+.mediaTile video{width:100%;height:140px;background:#111}
+.mediaTile small,.fileTile{padding:7px;font-size:11px;overflow:hidden;text-overflow:ellipsis}
+.auditLine{padding:4px 0;border-bottom:1px solid #edf1f5}
+.auditLine small{display:block;color:#66758a}
+.auditBadge{font-size:11px;font-weight:700}
+.associateForm{display:flex;gap:8px;align-items:end;flex-wrap:wrap;margin:12px 0}
+.associateForm input{max-width:180px}
+@media(max-width:800px){
+  .evidenceGrid,.evidenceFilters{grid-template-columns:1fr}
+  .mediaGallery{grid-template-columns:repeat(2,minmax(0,1fr))}
+}

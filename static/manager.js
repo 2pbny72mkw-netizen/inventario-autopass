@@ -1,5 +1,5 @@
-window.AUTOPASS_MANAGER_VERSION='dashboard-v3-1';
-console.log('AUTOPASS Dashboard Executivo V3.1 carregado');
+window.AUTOPASS_MANAGER_VERSION='dashboard-v4-1';
+console.log('AUTOPASS Dashboard Executivo V4.1 carregado');
 let locations=[];
 let dashboardData=null;
 const $=id=>document.getElementById(id);
@@ -288,6 +288,7 @@ function ensureGpsMap(){
     $('referenceStatus').textContent='Referência salva.';
     if(referenceTempMarker){referenceTempMarker.remove();referenceTempMarker=null;}
     await loadAll();
+loadFieldEvidenceSummary();
   });
 
   setTimeout(()=>gpsMap.invalidateSize(),100);
@@ -810,6 +811,20 @@ function exportExecutiveExcel(){
   window.location.href='/api/export/excel'+(params.toString()?'?'+params.toString():'');
 }
 if($('exportExecutive')) $('exportExecutive').onclick=exportExecutiveExcel;
+
+
+async function loadFieldEvidenceSummary(){
+  try{
+    const r=await fetch('/api/evidencias-campo/resumo',{cache:'no-store'});
+    if(!r.ok) return;
+    const d=await r.json();
+    if($('evVisits')) $('evVisits').textContent=fmt(d.visits||0);
+    if($('evItems')) $('evItems').textContent=fmt(d.items||0);
+    if($('evMatched')) $('evMatched').textContent=fmt(d.matched||0);
+    if($('evReview')) $('evReview').textContent=fmt(d.review||0);
+    if($('evMedia')) $('evMedia').textContent=fmt(d.media||0);
+  }catch(_err){}
+}
 
 loadAll();
 setInterval(loadAll,120000);
