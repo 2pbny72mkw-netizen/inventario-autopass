@@ -1,4 +1,7 @@
+window.AUTOPASS_MANAGER_VERSION='dashboard-v2-1';
+console.log('AUTOPASS Dashboard Executivo V2 carregado');
 let locations=[];
+let dashboardData=null;
 const $=id=>document.getElementById(id);
 const uniq=a=>[...new Set(a)].sort((x,y)=>x.localeCompare(y,'pt-BR'));
 function st(s){return `<span class="status s${s.replaceAll(' ','')}">${s}</span>`}
@@ -403,7 +406,9 @@ async function loadAll(){
     fetch('/api/gps/recent?limit=100').then(r=>r.json())
   ]);
   locations=l;
+  dashboardData=d;
   renderMapLocationSelect();
+  renderExecutiveFilters();
 
   $('total').textContent=fmt(d.totals.total);
   $('pending').textContent=fmt(d.totals.pending);
@@ -411,6 +416,7 @@ async function loadAll(){
   $('completed').textContent=fmt(d.totals.completed);
   $('expected').textContent=fmt(d.totals.expected);
   $('inventoried').textContent=fmt(d.inventory.inventoried);
+  if($('missing')) $('missing').textContent=fmt(d.totals.missing||0);
   $('inoperative').textContent=fmt(d.inventory.inoperative);
   $('divergences').textContent=fmt(d.inventory.divergences);
 
@@ -427,6 +433,10 @@ async function loadAll(){
   $('legendPending').textContent=pend;
   $('openLocations').textContent=pend+prog;
   $('assetCoverage').textContent=coverage+'%';
+  if($('assetCoverageTop')) $('assetCoverageTop').textContent=coverage+'%';
+  if($('inventoryCoverageSmall')) $('inventoryCoverageSmall').textContent=coverage+'% do parque';
+  renderTypeBigNumbers(d.by_type||[]);
+  renderTypeProgress(d.by_type||[]);
 
   const dDone=total?(done/total*360):0;
   const dProg=total?(prog/total*360):0;
@@ -445,6 +455,7 @@ async function loadAll(){
   renderCompany(d.by_company);
   renderCompanyBars(d.by_company);
   renderLocations();
+  renderCriticalLocations();
   $('lastUpdate').textContent='Atualizado em '+new Date().toLocaleString('pt-BR');
 }
 
@@ -539,6 +550,18 @@ function renderCompanyBars(a){
   }).join('');
 }
 
+function expectedBreakdown(x){
+  const e=x.expected_by_type||{};
+  if(Object.keys(e).length) return `ATM ${e.ATM||0} · VAL ${e.VALIDADOR||0} · POS ${e.POS||0} · TDI ${e.TDI||0} · BLOQ ${e.BLOQUEIO||0}`;
+  return `ATM ${x.expected_atm||0} · VAL ${x.expected_validator||0} · POS ${x.expected_pos||0}`;
+}
+function renderTypeBigNumbers(rows){ rows.forEach(x=>{ const id=x.type; if($('type'+id)) $('type'+id).textContent=fmt(x.expected); if($('type'+id+'Detail')) $('type'+id+'Detail').textContent=`${fmt(x.inventoried)} levantados · ${fmt(x.missing)} faltam · ${x.coverage_pct}%`; }); }
+function renderTypeProgress(rows){ const box=$('typeProgressList'); if(!box)return; box.innerHTML=rows.map(x=>`<div class="typeProgressRow"><b>${esc(x.type==='VALIDADOR'?'Validador':x.type==='BLOQUEIO'?'Bloqueio':x.type)}</b><div class="companyTrack"><i style="width:${Math.min(100,Number(x.coverage_pct||0))}%"></i></div><small>${x.coverage_pct}%</small></div>`).join(''); }
+function renderExecutiveFilters(){ const c=$('execCompany'),line=$('execLine'); if(!c||!line)return; const oldC=c.value,oldL=line.value; c.innerHTML='<option value="">Todas</option>'+uniq(locations.map(x=>x.company)).map(x=>`<option>${esc(x)}</option>`).join(''); if([...c.options].some(o=>o.value===oldC))c.value=oldC; const avail=locations.filter(x=>!c.value||x.company===c.value); line.innerHTML='<option value="">Todas</option>'+uniq(avail.map(x=>x.line)).map(x=>`<option>${esc(x)}</option>`).join(''); if([...line.options].some(o=>o.value===oldL))line.value=oldL; }
+function executiveFilteredLocations(){ const c=$('execCompany')?.value||'',line=$('execLine')?.value||'',type=$('execType')?.value||''; return locations.filter(x=>(!c||x.company===c)&&(!line||x.line===line)&&(!type||Number((x.expected_by_type||{})[type]||0)>0)); }
+function renderCriticalLocations(){ const box=$('criticalLocations');if(!box)return; const rows=executiveFilteredLocations().map(x=>{const exp=Number(x.expected_total||0)||(x.expected_atm+x.expected_validator+x.expected_pos);return {...x,_missing:Math.max(0,exp-Number(x.inventoried||0))}}).filter(x=>x._missing>0).sort((a,b)=>b._missing-a._missing).slice(0,6); box.innerHTML=rows.length?rows.map(x=>`<div class="criticalItem"><div><b>${esc(x.location)}</b><small>${esc(x.company)} · ${esc(x.line)}</small></div><strong>${fmt(x._missing)} faltam</strong></div>`).join(''):'<div class="muted">Nenhuma pendência para os filtros atuais.</div>'; }
+function applyExecutiveFilterToTable(){ const c=$('execCompany')?.value||'',line=$('execLine')?.value||''; if($('fc'))$('fc').value=c; if($('fl')){$('fl').innerHTML='<option value="">Todas</option>'+uniq(locations.filter(x=>!c||x.company===c).map(x=>x.line)).map(x=>`<option>${esc(x)}</option>`).join('');$('fl').value=line;} renderLocations();renderCriticalLocations(); }
+
 function renderLocations(){
   let fs=$('fs').value,fc=$('fc').value,fl=$('fl').value,q=$('fq').value.toUpperCase();
   let a=locations.filter(x=>
@@ -550,7 +573,7 @@ function renderLocations(){
   $('visibleCount').textContent=`${a.length} localidade(s)`;
 
   $('locRows').innerHTML=a.length?a.map(x=>{
-    let exp=x.expected_atm+x.expected_validator+x.expected_pos,
+    let exp=Number(x.expected_total||0) || (x.expected_atm+x.expected_validator+x.expected_pos),
         inv=x.inventoried||0,
         p=exp?Math.min(100,Math.round(inv/exp*100)):0;
     return `<tr>
@@ -558,7 +581,7 @@ function renderLocations(){
       <td>${x.company}</td>
       <td>${x.line}</td>
       <td><b>${x.location}</b></td>
-      <td>${exp}<br><small>ATM ${x.expected_atm} · VAL ${x.expected_validator} · POS ${x.expected_pos}</small></td>
+      <td>${exp}<br><small>${expectedBreakdown(x)}</small></td>
       <td><b>${inv}</b></td>
       <td><div class="bar"><i style="width:${p}%"></i></div><small>${p}% do parque-base</small></td>
       <td>${x.inoperative||0}</td>
@@ -588,6 +611,12 @@ async function reopen(id){
   await fetch(`/api/location/${id}/reopen`,{method:'POST'});
   await loadAll();
 }
+
+if($('execCompany')) $('execCompany').onchange=()=>{renderExecutiveFilters();applyExecutiveFilterToTable();};
+if($('execLine')) $('execLine').onchange=applyExecutiveFilterToTable;
+if($('execType')) $('execType').onchange=()=>{document.querySelectorAll('.equipmentBig').forEach(x=>x.classList.toggle('active',x.dataset.type===$('execType').value));renderCriticalLocations();};
+if($('execReset')) $('execReset').onclick=()=>{$('execCompany').value='';renderExecutiveFilters();$('execLine').value='';$('execType').value='';document.querySelectorAll('.equipmentBig').forEach(x=>x.classList.remove('active'));applyExecutiveFilterToTable();};
+document.querySelectorAll('.equipmentBig').forEach(card=>card.onclick=()=>{const type=card.dataset.type;$('execType').value=$('execType').value===type?'':type;document.querySelectorAll('.equipmentBig').forEach(x=>x.classList.toggle('active',x.dataset.type===$('execType').value));renderCriticalLocations();});
 
 loadAll();
 setInterval(loadAll,60000);
