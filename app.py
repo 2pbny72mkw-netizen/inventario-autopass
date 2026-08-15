@@ -31,9 +31,9 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V10.0"
-DASHBOARD_RELEASE = "dashboard-v10"
-TEAMS_RELEASE = "teams-v10"
+APP_RELEASE = "V12.0"
+DASHBOARD_RELEASE = "dashboard-v12"
+TEAMS_RELEASE = "teams-v12"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
 FIELD_GPS_GOOD_ACCURACY_M = float(os.getenv("FIELD_GPS_GOOD_ACCURACY_M", "30"))
 FIELD_GPS_MAX_ACCURACY_M = float(os.getenv("FIELD_GPS_MAX_ACCURACY_M", "80"))
@@ -233,6 +233,19 @@ class Inventory(db.Model):
             name="uq_inventory_location_type_identifier"
         ),
     )
+
+
+class AssetLifecycleEvent(db.Model):
+    __tablename__ = "asset_lifecycle_events"
+    id = db.Column(db.Integer, primary_key=True)
+    inventory_id = db.Column(db.Integer, db.ForeignKey("inventory.id", ondelete="CASCADE"), nullable=False, index=True)
+    event_type = db.Column(db.String(50), nullable=False, index=True)
+    from_location_id = db.Column(db.Integer, db.ForeignKey("locations.id"), index=True)
+    to_location_id = db.Column(db.Integer, db.ForeignKey("locations.id"), index=True)
+    status = db.Column(db.String(80))
+    notes = db.Column(db.Text)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
 
 
 class Attachment(db.Model):
@@ -1394,6 +1407,98 @@ def v7_global_search_api():
                       "serial":x.serial,"location_id":x.location_id,"status":x.operational_status} for x in inventory]
     })
 
+
+def _v12_location_intelligence(loc):
+    inventories = Inventory.query.filter_by(location_id=loc.id).order_by(Inventory.created_at.desc()).all()
+    expected = int(loc.expected_atm or 0) + int(loc.expected_validator or 0) + int(loc.expected_pos or 0)
+    found = len(inventories)
+    missing = max(0, expected - found)
+    divergences = sum(1 for x in inventories if (x.divergence or "").strip())
+    outside_base = sum(1 for x in inventories if normalize(x.in_base or "") in ("NAO", "NÃO", "FORA DA BASE"))
+    bad_gps = sum(1 for x in inventories if x.gps_accuracy is not None and x.gps_accuracy > FIELD_GPS_MAX_ACCURACY_M)
+    no_gps = sum(1 for x in inventories if x.latitude is None or x.longitude is None)
+    media = Attachment.query.join(Inventory, Attachment.inventory_id == Inventory.id).filter(Inventory.location_id == loc.id).count()
+    coverage = min(100.0, (found / expected * 100.0)) if expected else (100.0 if found else 0.0)
+    # Score explicável: cobertura 60%, integridade 20%, GPS 10%, evidência 10%.
+    integrity = max(0.0, 100.0 - (divergences + outside_base) * 12.5)
+    gps_quality = 100.0 if found == 0 else max(0.0, 100.0 - ((bad_gps + no_gps) / max(found,1) * 100.0))
+    evidence_quality = 100.0 if found and media >= found else (media / max(found,1) * 100.0 if found else 0.0)
+    score = round(coverage * .60 + integrity * .20 + gps_quality * .10 + evidence_quality * .10, 1)
+    if score >= 85: level = "CONFIAVEL"
+    elif score >= 65: level = "ATENCAO"
+    else: level = "CRITICO"
+    return {"id":loc.id,"company":loc.company,"line":loc.line,"location":loc.location,
+            "expected":expected,"found":found,"missing":missing,"coverage":round(coverage,1),
+            "divergences":divergences,"outside_base":outside_base,"bad_gps":bad_gps,"media":media,
+            "score":score,"level":level,"survey_status":loc.survey_status}
+
+@app.get("/api/v12/resumo")
+@dashboard_required
+def v12_summary_api():
+    rows=[_v12_location_intelligence(x) for x in Location.query.order_by(Location.company,Location.line,Location.location).all()]
+    return jsonify({"ok":True,"release":APP_RELEASE,"locations":len(rows),
+        "reliable":sum(1 for x in rows if x["level"]=="CONFIAVEL"),
+        "attention":sum(1 for x in rows if x["level"]=="ATENCAO"),
+        "critical":sum(1 for x in rows if x["level"]=="CRITICO"),
+        "missing":sum(x["missing"] for x in rows),"divergences":sum(x["divergences"] for x in rows),
+        "outside_base":sum(x["outside_base"] for x in rows),
+        "average_score":round(sum(x["score"] for x in rows)/len(rows),1) if rows else 0})
+
+@app.get("/api/v12/localidades")
+@dashboard_required
+def v12_locations_api():
+    rows=[_v12_location_intelligence(x) for x in Location.query.order_by(Location.company,Location.line,Location.location).all()]
+    rows.sort(key=lambda x:(x["score"],-x["missing"],x["location"]))
+    return jsonify({"ok":True,"locations":rows})
+
+@app.get("/api/v12/inventario/<int:inventory_id>/ciclo")
+@dashboard_required
+def v12_lifecycle_api(inventory_id):
+    inv=db.session.get(Inventory,inventory_id)
+    if not inv: return jsonify({"ok":False,"error":"Equipamento não encontrado."}),404
+    events=AssetLifecycleEvent.query.filter_by(inventory_id=inventory_id).order_by(AssetLifecycleEvent.created_at.desc()).all()
+    return jsonify({"ok":True,"inventory_id":inventory_id,"events":[{"id":e.id,"type":e.event_type,"status":e.status,
+        "from_location_id":e.from_location_id,"to_location_id":e.to_location_id,"notes":e.notes,
+        "user_id":e.user_id,"created_at":e.created_at.isoformat()+"Z" if e.created_at else None} for e in events]})
+
+@app.post("/api/v12/inventario/<int:inventory_id>/ciclo")
+@manager_required
+def v12_lifecycle_create_api(inventory_id):
+    inv=db.session.get(Inventory,inventory_id)
+    if not inv: return jsonify({"ok":False,"error":"Equipamento não encontrado."}),404
+    data=request.get_json(silent=True) or {}
+    event_type=normalize(data.get("event_type") or "")
+    allowed={"ENCONTRADO","INSTALADO","MOVIMENTADO","SUBSTITUIDO","RETIRADO","MANUTENCAO","AUDITORIA"}
+    if event_type not in allowed: return jsonify({"ok":False,"error":"Tipo de evento inválido."}),400
+    row=AssetLifecycleEvent(inventory_id=inventory_id,event_type=event_type,
+        from_location_id=data.get("from_location_id"),to_location_id=data.get("to_location_id") or inv.location_id,
+        status=(data.get("status") or "REGISTRADO")[:80],notes=(data.get("notes") or "")[:4000],user_id=session["user_id"])
+    db.session.add(row); db.session.commit()
+    return jsonify({"ok":True,"id":row.id})
+
+@app.route("/meu-perfil", methods=["GET","POST"])
+@login_required
+def my_profile_page():
+    user=db.session.get(User,session["user_id"])
+    if request.method=="POST":
+        photo=request.files.get("photo")
+        if not photo or not photo.filename:
+            flash("Selecione uma imagem."); return redirect(url_for("my_profile_page"))
+        if not (photo.mimetype or "").startswith("image/"):
+            flash("A foto deve ser uma imagem."); return redirect(url_for("my_profile_page"))
+        data=photo.read()
+        if len(data)>3*1024*1024:
+            flash("A foto deve ter no máximo 3 MB."); return redirect(url_for("my_profile_page"))
+        old=user.photo_url
+        safe_name=secure_filename(photo.filename) or "foto.jpg"
+        key=f"usuarios/{user.user_code or user.id}/{uuid.uuid4().hex}-{safe_name}"
+        _r2_put_bytes(key,data,photo.mimetype or "image/jpeg")
+        user.photo_url=key; db.session.commit()
+        if old and old!=key:
+            try: r2_client().delete_object(Bucket=os.environ["R2_BUCKET_NAME"],Key=old)
+            except Exception: pass
+        flash("Foto atualizada com sucesso."); return redirect(url_for("my_profile_page"))
+    return render_template("profile.html",user=user)
 
 @app.get("/patrimonio")
 @dashboard_required
