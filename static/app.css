@@ -673,6 +673,52 @@ input:focus,select:focus,textarea:focus{
 .nearbyStationBtn .distance{font-weight:700;color:#17345d;margin-top:6px}.nearbyStationBtn.integrated{border-left:4px solid #17345d}
 .stationLineChoices{display:flex;gap:8px;flex-wrap:wrap;margin-top:9px}.stationLineChoices button{padding:9px 11px}
 .gps-ok{border-color:#b7dfc4!important;background:#f3fbf6!important}.gps-warn{border-color:#efd88c!important;background:#fff9e9!important}.gps-block{border-color:#f0b4b4!important;background:#fff4f4!important}
-.teamMapAvatar img{width:100%;height:100%;object-fit:cover;border-radius:50%}
 .gpsTechAvatar{width:40px;height:40px;border-radius:50%;overflow:hidden;border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.3);background:#17345d;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800}
 .gpsTechAvatar img{width:100%;height:100%;object-fit:cover}
+
+/* V9.1 · Avatar compacto e popup operacional no mapa */
+.leaflet-container .teamAvatarMarker{
+  width:52px !important;
+  height:52px !important;
+  margin:0 !important;
+  padding:0 !important;
+  background:transparent !important;
+  border:0 !important;
+}
+.leaflet-container .teamMapAvatar{
+  width:48px !important;
+  height:48px !important;
+  min-width:48px !important;
+  min-height:48px !important;
+  max-width:48px !important;
+  max-height:48px !important;
+  border-radius:50% !important;
+  overflow:hidden !important;
+  border:3px solid #fff;
+  box-shadow:0 2px 10px rgba(0,0,0,.32);
+  background:#17345d;
+  color:#fff;
+  display:flex !important;
+  align-items:center;
+  justify-content:center;
+  font-size:13px;
+  font-weight:800;
+  box-sizing:border-box !important;
+}
+.leaflet-container .teamMapAvatar img{
+  width:100% !important;
+  height:100% !important;
+  min-width:0 !important;
+  min-height:0 !important;
+  max-width:100% !important;
+  max-height:100% !important;
+  object-fit:cover !important;
+  border-radius:50% !important;
+  display:block !important;
+}
+.leaflet-container .teamMapAvatar.current{border-color:#2e9d61}
+.leaflet-container .teamMapAvatar.attention{border-color:#e0a629}
+.leaflet-container .teamMapAvatar.late{border-color:#d55252}
+.leaflet-container .teamMapAvatar.noSignal{border-color:#9aa5b1}
+.teamMapPopup{min-width:160px;line-height:1.45;font-size:12px}
+.teamMapPopup b{font-size:13px;color:#17345d}
