@@ -1,0 +1,6 @@
+{
+  "release": "v1.1-operacional-dashboard-v2.5",
+  "manager_version": "dashboard-v2-5",
+  "changed_files": ["app.py", "static/manager.js", "static/app.css", "templates/manager.html"],
+  "preserved": ["technician.js", "technician.html", "base_assets_1408.json", "mapa atual"]
+}

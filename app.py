@@ -999,6 +999,8 @@ def dashboard():
 
     expected = sum(expected_by_type.values())
     inventoried = Inventory.query.count()
+    classified_inventoried = sum(inventoried_by_type.values())
+    unclassified = max(0, inventoried - classified_inventoried)
     inoperative = Inventory.query.filter_by(operational_status="Inoperante").count()
     divergences = Inventory.query.filter(Inventory.divergence.isnot(None), Inventory.divergence.notin_(["", "Não", "Nao"])).count()
 
@@ -1014,9 +1016,9 @@ def dashboard():
         .group_by(Location.company).order_by(Location.company).all())
 
     return jsonify({
-        "release":"v1-operacional-dashboard-v2",
+        "release":"v1.1-operacional-dashboard-v2.5",
         "totals":{"total":total,"pending":pending,"progress":progress,"completed":completed,"expected":int(expected),"missing":max(0,int(expected)-inventoried)},
-        "inventory":{"inventoried":inventoried,"inoperative":inoperative,"divergences":divergences},
+        "inventory":{"inventoried":inventoried,"classified":classified_inventoried,"unclassified":unclassified,"inoperative":inoperative,"divergences":divergences},
         "by_type":by_type,
         "by_company":[{"company":x.company,"total":int(x.total or 0),"pending":int(x.pending or 0),"progress":int(x.progress or 0),"completed":int(x.completed or 0)} for x in companies]
     })
