@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Equipes | Inventário SP{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIINfQ3ynNE44SmMZClcJBJ9KQx7Qdctc=" crossorigin="">
+
+<section class="dashHero">
+  <div>
+    <span class="eyebrow">V5.1 · CENTRAL OPERACIONAL</span>
+    <h1>Equipes em Campo</h1>
+    <p>Escala 12x36, turnos, ponto de entrada e última localização autorizada pelos técnicos.</p>
+  </div>
+  <div class="heroActions">
+    <button class="secondary" id="refreshTeams" type="button">Atualizar</button>
+    <button class="secondary" id="teamMapFull" type="button">Expandir mapa</button>
+  </div>
+</section>
+
+<section class="kpis">
+  <article class="kpi"><span>Escalados hoje</span><b id="kScheduled">0</b><small id="teamDate">—</small></article>
+  <article class="kpi successKpi"><span>Localização atual</span><b id="kCurrent">0</b><small>até 5 min</small></article>
+  <article class="kpi warningKpi"><span>Atenção / atrasado</span><b id="kAttention">0</b><small>acima de 5 min</small></article>
+  <article class="kpi"><span>Sem sinal</span><b id="kNoSignal">0</b><small>sem posição recebida</small></article>
+</section>
+
+<section class="card">
+  <div class="sectionHead">
+    <div>
+      <h2>Mapa operacional</h2>
+      <p class="muted">A cor ao redor do técnico indica o tempo desde a última localização.</p>
+    </div>
+    <div class="teamLegend">
+      <span class="legendFresh current">≤ 5 min</span>
+      <span class="legendFresh attention">6–15 min</span>
+      <span class="legendFresh late">&gt; 15 min</span>
+      <span class="legendFresh noSignal">Sem sinal</span>
+    </div>
+  </div>
+  <div id="teamMap" class="teamMap"></div>
+</section>
+
+<section class="card">
+  <div class="sectionHead">
+    <div>
+      <h2>Técnicos previstos na escala</h2>
+      <p class="muted">Turnos 05h–17h e 11h–23h conforme a planilha de escala importada.</p>
+    </div>
+    <span class="tag" id="teamClock">—</span>
+  </div>
+  <div id="teamCards" class="teamCards"></div>
+</section>
+
+<section class="card">
+  <h2>Supervisão / apoio</h2>
+  <div id="supportCards" class="supportCards"></div>
+</section>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script src="{{ url_for('static', filename='teams.js') }}?v=v5-1"></script>
+{% endblock %}

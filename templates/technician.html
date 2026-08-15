@@ -26,6 +26,19 @@
   Se ficar sem sinal, o levantamento será guardado neste aparelho e enviado quando a conexão retornar.
 </div>
 
+<div class="card" id="teamLocationPanel">
+  <div class="sectionHead">
+    <div>
+      <h2>Localização da equipe</h2>
+      <p class="muted">Compartilhe sua posição durante a jornada para aparecer na Central de Equipes.</p>
+    </div>
+    <button type="button" class="secondary" id="teamLocationToggle">Ativar localização</button>
+  </div>
+  <div id="teamLocationStatus" class="notice">
+    Localização da equipe desativada neste aparelho.
+  </div>
+</div>
+
 <div class="card">
   <h2>Selecionar estação / localidade</h2>
   <div class="grid3">
@@ -239,5 +252,5 @@
 {% endblock %}
 {% block scripts %}
 <script>window.CURRENT_USER_ROLE = {{ session.get("role")|tojson }};</script>
-<script src="{{ url_for('static', filename='technician.js') }}?v=1408-5"></script>
+<script src="{{ url_for('static', filename='technician.js') }}?v=v5-1"></script>
 {% endblock %}
