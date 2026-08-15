@@ -1,0 +1,12 @@
+{
+  "release": "V9.1",
+  "name": "Consolidação V9 + UX de Campo",
+  "changes": [
+    "avatar compacto no mapa",
+    "popup operacional ao clicar no técnico",
+    "versões visuais unificadas",
+    "histórico Sobre atualizado",
+    "cache bust V9.1"
+  ],
+  "media_reimport": "aguardar teste de nova mídia no storage atual"
+}

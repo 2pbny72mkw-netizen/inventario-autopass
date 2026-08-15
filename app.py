@@ -1387,11 +1387,11 @@ def teams_page():
 def about_page():
     return render_template(
         "about.html",
-        app_release="V9.0",
+        app_release="V9.1",
         dashboard_release=DASHBOARD_RELEASE,
         base_version=BASE_DATA_VERSION,
-        manager_version="dashboard-v9-0",
-        teams_version="teams-v9-0",
+        manager_version="dashboard-v9-1",
+        teams_version="teams-v9-1",
     )
 
 
