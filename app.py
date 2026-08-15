@@ -9,6 +9,7 @@ import boto3
 import uuid
 import mimetypes
 import hashlib
+from difflib import SequenceMatcher
 from pathlib import Path
 from datetime import datetime
 import time
@@ -28,7 +29,7 @@ from openpyxl.utils import get_column_letter
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 BASE_DATA_VERSION = "1408-5"
-DASHBOARD_RELEASE = "v1.3-operacional-dashboard-v4"
+DASHBOARD_RELEASE = "v1.3-operacional-dashboard-v4.1.1"
 # Denominadores executivos oficiais informados para o parque contratado.
 OFFICIAL_PARK = {
     "ATM": 590,
