@@ -1,0 +1,25 @@
+{
+  "release": "v1.2-operacional-dashboard-v3",
+  "manager_version": "dashboard-v3-1",
+  "official_park": {
+    "ATM": 590,
+    "POS": 972,
+    "Recarga": 629,
+    "Bloqueio": 1610,
+    "total": 3801
+  },
+  "tdi": "controle técnico separado do total oficial",
+  "changed_files": [
+    "app.py",
+    "requirements.txt",
+    "static/manager.js",
+    "static/app.css",
+    "templates/manager.html"
+  ],
+  "preserved": [
+    "static/technician.js",
+    "templates/technician.html",
+    "data/base_assets_1408.json",
+    "mapa atual"
+  ]
+}

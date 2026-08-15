@@ -10,19 +10,34 @@ import uuid
 import mimetypes
 from pathlib import Path
 from datetime import datetime
+import time
 from functools import wraps
 
-from flask import Flask, render_template, request, redirect, url_for, session, jsonify, flash, send_from_directory, Response
+from flask import Flask, render_template, request, redirect, url_for, session, jsonify, flash, send_from_directory, Response, send_file
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import UniqueConstraint, Index, func, case, text
 from sqlalchemy.exc import IntegrityError
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from botocore.exceptions import ClientError, BotoCoreError
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.utils import get_column_letter
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 BASE_DATA_VERSION = "1408-5"
+DASHBOARD_RELEASE = "v1.2-operacional-dashboard-v3"
+# Denominadores executivos oficiais informados para o parque contratado.
+OFFICIAL_PARK = {
+    "ATM": 590,
+    "POS": 972,
+    "VALIDADOR": 629,  # Recarga
+    "BLOQUEIO": 1610,
+}
+OFFICIAL_PARK_TOTAL = sum(OFFICIAL_PARK.values())  # 3.801
+EXPECTED_CACHE_TTL_SECONDS = 600
+_expected_cache = {"at": 0.0, "data": None}
 UPLOAD_DIR = BASE_DIR / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 
@@ -405,19 +420,72 @@ def _base_asset_matches_location(asset, loc):
                 (code and station_text.startswith(code + " ")))
 
 
-def _expected_assets_by_location():
+def _normalize_line_key(value):
+    return re.sub(r"^L(?=\d{2}\s*-)", "", normalize(value))
+
+
+def _invalidate_expected_cache():
+    _expected_cache["at"] = 0.0
+    _expected_cache["data"] = None
+
+
+def _expected_assets_by_location(force=False):
+    """Associa a base detalhada às localidades com índice por linha e cache em memória.
+
+    A versão anterior comparava cada ativo com todas as localidades em toda chamada.
+    Esta versão limita candidatos pela linha e reutiliza o resultado por 10 minutos.
+    """
+    now = time.monotonic()
+    if (
+        not force
+        and _expected_cache.get("data") is not None
+        and now - float(_expected_cache.get("at") or 0) < EXPECTED_CACHE_TTL_SECONDS
+    ):
+        return _expected_cache["data"]
+
     locations = Location.query.all()
-    result = {loc.id: {"ATM":0,"VALIDADOR":0,"POS":0,"TDI":0,"BLOQUEIO":0} for loc in locations}
+    result = {
+        loc.id: {"ATM": 0, "VALIDADOR": 0, "POS": 0, "TDI": 0, "BLOQUEIO": 0}
+        for loc in locations
+    }
+
+    by_line = {}
+    for loc in locations:
+        by_line.setdefault(_normalize_line_key(loc.line), []).append(loc)
+
     assets = BaseAsset.query.all()
+    valid_types = {"ATM", "VALIDADOR", "POS", "TDI", "BLOQUEIO"}
     for asset in assets:
-        qty = max(1, int(asset.quantity or 1))
-        typ = _canonical_equipment_type(asset.equipment_type)
-        if typ not in {"ATM","VALIDADOR","POS","TDI","BLOQUEIO"}:
+        if "INATIVO" in normalize(asset.base_status):
             continue
-        for loc in locations:
-            if _base_asset_matches_location(asset, loc):
+        typ = _canonical_equipment_type(asset.equipment_type)
+        if typ not in valid_types:
+            continue
+
+        candidates = by_line.get(_normalize_line_key(asset.line), ())
+        if not candidates:
+            continue
+
+        qty = max(1, int(asset.quantity or 1))
+        ac = normalize(asset.company)
+        station_name = normalize(asset.locality)
+        code = normalize(asset.location_code or asset.station_code)
+
+        for loc in candidates:
+            lc = normalize(loc.company)
+            if ac and lc and lc not in ac and ac not in lc:
+                continue
+            station_text = normalize(loc.location)
+            matched = bool(
+                (station_name and (station_name in station_text or station_text.endswith(station_name)))
+                or (code and station_text.startswith(code + " "))
+            )
+            if matched:
                 result[loc.id][typ] += qty
                 break
+
+    _expected_cache["at"] = now
+    _expected_cache["data"] = result
     return result
 
 
@@ -425,25 +493,48 @@ def _expected_assets_by_location():
 @login_required
 def api_locations():
     expected_map = _expected_assets_by_location()
-    inventoried = func.count(Inventory.id)
-    operational = func.coalesce(func.sum(case((Inventory.operational_status == "Operacional", 1), else_=0)), 0)
-    inoperative = func.coalesce(func.sum(case((Inventory.operational_status == "Inoperante", 1), else_=0)), 0)
 
-    rows = (
+    # Inventário agregado em consultas pequenas, sem outer join pesado em todas as colunas.
+    inv_rows = (
         db.session.query(
-            Location,
-            inventoried.label("inventoried"),
-            operational.label("operational"),
-            inoperative.label("inoperative")
+            Inventory.location_id,
+            Inventory.equipment_type,
+            func.count(Inventory.id),
+            func.coalesce(func.sum(case((Inventory.operational_status == "Inoperante", 1), else_=0)), 0),
+            func.coalesce(func.sum(case((
+                Inventory.divergence.isnot(None)
+                & (~Inventory.divergence.in_(["", "Não", "Nao"]))
+            , 1), else_=0)), 0),
         )
-        .outerjoin(Inventory, Inventory.location_id == Location.id)
-        .group_by(Location.id)
-        .order_by(Location.company, Location.line, Location.location)
+        .group_by(Inventory.location_id, Inventory.equipment_type)
         .all()
     )
 
+    inv_by_loc = {}
+    for location_id, equipment_type, count, inop, divergence_count in inv_rows:
+        bucket = inv_by_loc.setdefault(location_id, {
+            "total": 0,
+            "inoperative": 0,
+            "divergences": 0,
+            "by_type": {"ATM":0,"VALIDADOR":0,"POS":0,"TDI":0,"BLOQUEIO":0,"OUTRO":0},
+        })
+        canonical = _canonical_equipment_type(equipment_type)
+        if canonical not in bucket["by_type"]:
+            canonical = "OUTRO"
+        bucket["by_type"][canonical] += int(count or 0)
+        bucket["total"] += int(count or 0)
+        bucket["inoperative"] += int(inop or 0)
+        bucket["divergences"] += int(divergence_count or 0)
+
+    rows = Location.query.order_by(Location.company, Location.line, Location.location).all()
+
     out = []
-    for loc, inv_count, op_count, inop_count in rows:
+    for loc in rows:
+        inv = inv_by_loc.get(loc.id, {
+            "total":0, "inoperative":0, "divergences":0,
+            "by_type":{"ATM":0,"VALIDADOR":0,"POS":0,"TDI":0,"BLOQUEIO":0,"OUTRO":0}
+        })
+        exp_by_type = expected_map.get(loc.id, {})
         out.append({
             "id": loc.id,
             "company": loc.company,
@@ -453,8 +544,9 @@ def api_locations():
             "expected_atm": loc.expected_atm,
             "expected_validator": loc.expected_validator,
             "expected_pos": loc.expected_pos,
-            "expected_by_type": expected_map.get(loc.id, {}),
-            "expected_total": sum(expected_map.get(loc.id, {}).values()),
+            "expected_by_type": exp_by_type,
+            "expected_total": sum(exp_by_type.values()),
+            "inventoried_by_type": inv["by_type"],
             "survey_status": loc.survey_status,
             "started_at": loc.started_at.isoformat(timespec="seconds") if loc.started_at else None,
             "completed_at": loc.completed_at.isoformat(timespec="seconds") if loc.completed_at else None,
@@ -463,9 +555,9 @@ def api_locations():
             "reference_longitude": loc.reference_longitude,
             "reference_source": loc.reference_source,
             "reference_updated_at": loc.reference_updated_at.isoformat(timespec="seconds") if loc.reference_updated_at else None,
-            "inventoried": int(inv_count or 0),
-            "operational": int(op_count or 0),
-            "inoperative": int(inop_count or 0),
+            "inventoried": int(inv["total"]),
+            "inoperative": int(inv["inoperative"]),
+            "divergences": int(inv["divergences"]),
         })
     return jsonify(out)
 
@@ -984,44 +1076,269 @@ def dashboard():
     progress = Location.query.filter_by(survey_status="EM ANDAMENTO").count()
     completed = Location.query.filter_by(survey_status="CONCLUIDA").count()
 
-    expected_map = _expected_assets_by_location()
-    expected_by_type = {"ATM":0,"VALIDADOR":0,"POS":0,"TDI":0,"BLOQUEIO":0}
-    for counts in expected_map.values():
-        for typ in expected_by_type:
-            expected_by_type[typ] += int(counts.get(typ,0) or 0)
-
-    inv_rows = db.session.query(Inventory.equipment_type, func.count(Inventory.id)).group_by(Inventory.equipment_type).all()
+    inv_rows = (
+        db.session.query(Inventory.equipment_type, func.count(Inventory.id))
+        .group_by(Inventory.equipment_type)
+        .all()
+    )
     inventoried_by_type = {"ATM":0,"VALIDADOR":0,"POS":0,"TDI":0,"BLOQUEIO":0}
+    inventoried_total = 0
     for typ, count in inv_rows:
+        count = int(count or 0)
+        inventoried_total += count
         canonical = _canonical_equipment_type(typ)
         if canonical in inventoried_by_type:
-            inventoried_by_type[canonical] += int(count or 0)
+            inventoried_by_type[canonical] += count
 
-    expected = sum(expected_by_type.values())
-    inventoried = Inventory.query.count()
     classified_inventoried = sum(inventoried_by_type.values())
-    unclassified = max(0, inventoried - classified_inventoried)
+    unclassified = max(0, inventoried_total - classified_inventoried)
     inoperative = Inventory.query.filter_by(operational_status="Inoperante").count()
-    divergences = Inventory.query.filter(Inventory.divergence.isnot(None), Inventory.divergence.notin_(["", "Não", "Nao"])).count()
+    divergences = Inventory.query.filter(
+        Inventory.divergence.isnot(None),
+        Inventory.divergence.notin_(["", "Não", "Nao"])
+    ).count()
 
-    by_type=[]
-    for typ in ["ATM","VALIDADOR","POS","TDI","BLOQUEIO"]:
-        exp=expected_by_type[typ]; inv=inventoried_by_type[typ]
-        by_type.append({"type":typ,"expected":exp,"inventoried":inv,"missing":max(0,exp-inv),"coverage_pct":round(min(100,(inv/exp*100)),1) if exp else 0})
+    technical_tdi_expected = int(
+        db.session.query(func.coalesce(func.sum(func.coalesce(BaseAsset.quantity, 1)), 0))
+        .filter(
+            func.upper(func.coalesce(BaseAsset.equipment_type, "")) == "TDI",
+            ~func.upper(func.coalesce(BaseAsset.base_status, "")).like("%INATIVO%")
+        )
+        .scalar() or 0
+    )
 
-    companies = (db.session.query(Location.company.label("company"), func.count(Location.id).label("total"),
-        func.sum(case((Location.survey_status == "PENDENTE", 1), else_=0)).label("pending"),
-        func.sum(case((Location.survey_status == "EM ANDAMENTO", 1), else_=0)).label("progress"),
-        func.sum(case((Location.survey_status == "CONCLUIDA", 1), else_=0)).label("completed"))
-        .group_by(Location.company).order_by(Location.company).all())
+    by_type = []
+    for typ in ["ATM", "VALIDADOR", "POS", "TDI", "BLOQUEIO"]:
+        # TDI continua como controle técnico separado do parque executivo oficial.
+        exp = technical_tdi_expected if typ == "TDI" else int(OFFICIAL_PARK.get(typ, 0))
+        inv = int(inventoried_by_type.get(typ, 0))
+        by_type.append({
+            "type": typ,
+            "expected": exp,
+            "inventoried": inv,
+            "missing": max(0, exp - inv) if exp else 0,
+            "coverage_pct": round(min(100, inv / exp * 100), 1) if exp else 0,
+            "official": typ in OFFICIAL_PARK,
+        })
+
+    companies = (
+        db.session.query(
+            Location.company.label("company"),
+            func.count(Location.id).label("total"),
+            func.sum(case((Location.survey_status == "PENDENTE", 1), else_=0)).label("pending"),
+            func.sum(case((Location.survey_status == "EM ANDAMENTO", 1), else_=0)).label("progress"),
+            func.sum(case((Location.survey_status == "CONCLUIDA", 1), else_=0)).label("completed"),
+        )
+        .group_by(Location.company)
+        .order_by(Location.company)
+        .all()
+    )
+
+    official_inventoried = sum(
+        min(int(inventoried_by_type.get(typ, 0)), int(exp))
+        for typ, exp in OFFICIAL_PARK.items()
+    )
 
     return jsonify({
-        "release":"v1.1-operacional-dashboard-v2.5",
-        "totals":{"total":total,"pending":pending,"progress":progress,"completed":completed,"expected":int(expected),"missing":max(0,int(expected)-inventoried)},
-        "inventory":{"inventoried":inventoried,"classified":classified_inventoried,"unclassified":unclassified,"inoperative":inoperative,"divergences":divergences},
-        "by_type":by_type,
-        "by_company":[{"company":x.company,"total":int(x.total or 0),"pending":int(x.pending or 0),"progress":int(x.progress or 0),"completed":int(x.completed or 0)} for x in companies]
+        "release": DASHBOARD_RELEASE,
+        "official_park": {
+            "total": OFFICIAL_PARK_TOTAL,
+            "by_type": OFFICIAL_PARK,
+            "note": "TDI é acompanhado separadamente e não compõe o total oficial de 3.801."
+        },
+        "totals": {
+            "total": total,
+            "pending": pending,
+            "progress": progress,
+            "completed": completed,
+            "expected": OFFICIAL_PARK_TOTAL,
+            "missing": max(0, OFFICIAL_PARK_TOTAL - official_inventoried),
+        },
+        "inventory": {
+            "inventoried": inventoried_total,
+            "official_inventoried": official_inventoried,
+            "classified": classified_inventoried,
+            "unclassified": unclassified,
+            "inoperative": inoperative,
+            "divergences": divergences,
+        },
+        "by_type": by_type,
+        "by_company": [{
+            "company": x.company,
+            "total": int(x.total or 0),
+            "pending": int(x.pending or 0),
+            "progress": int(x.progress or 0),
+            "completed": int(x.completed or 0),
+        } for x in companies],
     })
+
+
+
+@app.get("/api/export/excel")
+@dashboard_required
+def export_dashboard_excel():
+    company = (request.args.get("company") or "").strip()
+    line = (request.args.get("line") or "").strip()
+    equipment_type = _canonical_equipment_type(request.args.get("type") or "")
+    if equipment_type == "OUTRO":
+        equipment_type = ""
+
+    expected_map = _expected_assets_by_location()
+    locations = Location.query.order_by(Location.company, Location.line, Location.location).all()
+
+    inv_rows = (
+        db.session.query(
+            Inventory.location_id,
+            Inventory.equipment_type,
+            func.count(Inventory.id),
+            func.coalesce(func.sum(case((Inventory.operational_status == "Inoperante", 1), else_=0)), 0),
+            func.coalesce(func.sum(case((
+                Inventory.divergence.isnot(None)
+                & (~Inventory.divergence.in_(["", "Não", "Nao"]))
+            , 1), else_=0)), 0),
+        )
+        .group_by(Inventory.location_id, Inventory.equipment_type)
+        .all()
+    )
+
+    inv_map = {}
+    for loc_id, typ, count, inop, divs in inv_rows:
+        b = inv_map.setdefault(loc_id, {
+            "total":0, "inoperative":0, "divergences":0,
+            "by_type":{"ATM":0,"VALIDADOR":0,"POS":0,"TDI":0,"BLOQUEIO":0,"OUTRO":0}
+        })
+        canonical = _canonical_equipment_type(typ)
+        if canonical not in b["by_type"]:
+            canonical = "OUTRO"
+        b["by_type"][canonical] += int(count or 0)
+        b["total"] += int(count or 0)
+        b["inoperative"] += int(inop or 0)
+        b["divergences"] += int(divs or 0)
+
+    selected = []
+    for loc in locations:
+        if company and loc.company != company:
+            continue
+        if line and loc.line != line:
+            continue
+        exp = expected_map.get(loc.id, {})
+        inv = inv_map.get(loc.id, {
+            "total":0,"inoperative":0,"divergences":0,
+            "by_type":{"ATM":0,"VALIDADOR":0,"POS":0,"TDI":0,"BLOQUEIO":0,"OUTRO":0}
+        })
+        if equipment_type and int(exp.get(equipment_type, 0) or 0) <= 0 and int(inv["by_type"].get(equipment_type,0) or 0) <= 0:
+            continue
+        selected.append((loc, exp, inv))
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Resumo Executivo"
+
+    title_fill = PatternFill("solid", fgColor="17365D")
+    header_fill = PatternFill("solid", fgColor="D9EAF7")
+    white_font = Font(color="FFFFFF", bold=True)
+    bold = Font(bold=True)
+
+    ws["A1"] = "Inventário Autopass — Resumo Executivo"
+    ws["A1"].font = Font(size=16, bold=True, color="FFFFFF")
+    ws["A1"].fill = title_fill
+    ws.merge_cells("A1:F1")
+    ws["A2"] = f"Gerado em {datetime.now().strftime('%d/%m/%Y %H:%M')}"
+    ws["A3"] = f"Filtros: Empresa={company or 'Todas'} | Linha={line or 'Todas'} | Tipo={equipment_type or 'Todos'}"
+
+    official_rows = [
+        ("ATM", OFFICIAL_PARK["ATM"]),
+        ("POS", OFFICIAL_PARK["POS"]),
+        ("Recarga", OFFICIAL_PARK["VALIDADOR"]),
+        ("Bloqueio", OFFICIAL_PARK["BLOQUEIO"]),
+        ("TOTAL OFICIAL", OFFICIAL_PARK_TOTAL),
+    ]
+    ws.append([])
+    ws.append(["Produto", "Parque oficial"])
+    for cell in ws[5]:
+        cell.fill = header_fill
+        cell.font = bold
+    for row in official_rows:
+        ws.append(list(row))
+
+    wsl = wb.create_sheet("Localidades")
+    headers = [
+        "Empresa","Linha","Localidade","Status","Tipo filtrado",
+        "Previsto","Inventariado","Faltante","Cobertura %",
+        "Divergências","Inoperantes"
+    ]
+    wsl.append(headers)
+    for cell in wsl[1]:
+        cell.fill = title_fill
+        cell.font = white_font
+        cell.alignment = Alignment(horizontal="center")
+
+    for loc, exp, inv in selected:
+        if equipment_type:
+            expected = int(exp.get(equipment_type, 0) or 0)
+            inventoried = int(inv["by_type"].get(equipment_type, 0) or 0)
+        else:
+            expected = int(sum(exp.values()))
+            inventoried = int(inv["total"])
+        missing = max(0, expected - inventoried)
+        coverage = round(min(100, inventoried / expected * 100), 1) if expected else 0
+        wsl.append([
+            loc.company, loc.line, loc.location, loc.survey_status,
+            equipment_type or "Todos", expected, inventoried, missing, coverage,
+            int(inv["divergences"]), int(inv["inoperative"])
+        ])
+
+    wsi = wb.create_sheet("Inventário Realizado")
+    inv_headers = [
+        "ID","Empresa","Linha","Localidade","Tipo","Identificação","Série",
+        "Modelo","Status","Divergência","Data","Latitude","Longitude"
+    ]
+    wsi.append(inv_headers)
+    for cell in wsi[1]:
+        cell.fill = title_fill
+        cell.font = white_font
+
+    query = (
+        db.session.query(Inventory, Location)
+        .join(Location, Location.id == Inventory.location_id)
+        .order_by(Inventory.created_at.desc())
+    )
+    if company:
+        query = query.filter(Location.company == company)
+    if line:
+        query = query.filter(Location.line == line)
+    for inv, loc in query.all():
+        canonical = _canonical_equipment_type(inv.equipment_type)
+        if equipment_type and canonical != equipment_type:
+            continue
+        wsi.append([
+            inv.id, loc.company, loc.line, loc.location, canonical,
+            inv.asset_identifier, inv.serial, inv.model, inv.operational_status,
+            inv.divergence, inv.created_at.strftime("%d/%m/%Y %H:%M") if inv.created_at else "",
+            inv.latitude, inv.longitude
+        ])
+
+    for sheet in wb.worksheets:
+        for col in range(1, sheet.max_column + 1):
+            letter = get_column_letter(col)
+            width = 10
+            for row in range(1, min(sheet.max_row, 300) + 1):
+                value = sheet.cell(row=row, column=col).value
+                if value is not None:
+                    width = max(width, min(42, len(str(value)) + 2))
+            sheet.column_dimensions[letter].width = width
+        sheet.freeze_panes = "A2" if sheet.title != "Resumo Executivo" else "A5"
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    filename = f"autopass_dashboard_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+    return send_file(
+        output,
+        as_attachment=True,
+        download_name=filename,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
 
 
 @app.route("/uploads/<path:name>")
@@ -1872,6 +2189,7 @@ def sync_base_assets_1408(force=False):
                 setattr(obj, field, row.get(field))
 
     db.session.commit()
+    _invalidate_expected_cache()
     return {"ok": True, "reason": "sincronizada", "inserted": inserted, "updated": updated, "total": len(rows)}
 
 
