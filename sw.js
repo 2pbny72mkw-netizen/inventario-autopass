@@ -1,13 +1,6 @@
-const VERSION='autopass-v14';
-const SHELL=`${VERSION}-shell`;
-const DATA=`${VERSION}-data`;
-const APP_SHELL=['/offline','/static/app.css?v=v14','/static/autopass-logo.png','/static/technician.js?v=v14'];
-self.addEventListener('install',event=>{event.waitUntil(caches.open(SHELL).then(c=>c.addAll(APP_SHELL)).then(()=>self.skipWaiting()));});
-self.addEventListener('activate',event=>{event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>!k.startsWith(VERSION)).map(k=>caches.delete(k)))).then(()=>self.clients.claim()));});
-self.addEventListener('fetch',event=>{
- const req=event.request,url=new URL(req.url); if(req.method!=='GET'||url.origin!==self.location.origin)return;
- if(url.pathname.startsWith('/static/')){event.respondWith(fetch(req).then(resp=>{if(resp.ok){const copy=resp.clone();caches.open(SHELL).then(c=>c.put(req,copy));}return resp;}).catch(()=>caches.match(req)));return;}
- if(url.pathname.startsWith('/api/locations')||url.pathname.includes('/assets')||url.pathname.includes('/inventory')){event.respondWith(fetch(req).then(resp=>{const copy=resp.clone();caches.open(DATA).then(c=>c.put(req,copy));return resp;}).catch(()=>caches.match(req)));return;}
- if(url.pathname==='/tecnico'){event.respondWith(fetch(req).then(resp=>{const copy=resp.clone();caches.open(SHELL).then(c=>c.put(req,copy));return resp;}).catch(()=>caches.match(req).then(r=>r||caches.match('/offline'))));return;}
- event.respondWith(fetch(req).catch(()=>caches.match(req)));
-});
+const VERSION='autopass-v15';
+const SHELL=`${VERSION}-shell`; const DATA=`${VERSION}-data`;
+const APP_SHELL=['/offline','/static/app.css?v=v15','/static/autopass-logo.png','/static/technician.js?v=v15'];
+self.addEventListener('install',e=>e.waitUntil(caches.open(SHELL).then(c=>c.addAll(APP_SHELL)).then(()=>self.skipWaiting())));
+self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>!k.startsWith(VERSION)).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
+self.addEventListener('fetch',e=>{const r=e.request,u=new URL(r.url);if(r.method!=='GET'||u.origin!==self.location.origin)return;if(u.pathname.startsWith('/static/')){e.respondWith(fetch(r).then(x=>{if(x.ok)caches.open(SHELL).then(c=>c.put(r,x.clone()));return x}).catch(()=>caches.match(r)));return}if(u.pathname.startsWith('/api/locations')||u.pathname.includes('/assets')||u.pathname.includes('/inventory')){e.respondWith(fetch(r).then(x=>{caches.open(DATA).then(c=>c.put(r,x.clone()));return x}).catch(()=>caches.match(r)));return}if(u.pathname==='/tecnico'){e.respondWith(fetch(r).then(x=>{caches.open(SHELL).then(c=>c.put(r,x.clone()));return x}).catch(()=>caches.match(r).then(x=>x||caches.match('/offline'))));return}e.respondWith(fetch(r).catch(()=>caches.match(r))) });

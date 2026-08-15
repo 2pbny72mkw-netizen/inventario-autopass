@@ -8,7 +8,7 @@
   "orientation": "any",
   "background_color": "#f3f7fb",
   "theme_color": "#17345d",
-  "description": "Inventário Autopass V9 com operação offline e localização inteligente.",
+  "description": "Inventário Autopass V15 — App de Campo assistido, operação offline e inteligência operacional.",
   "icons": [
     {
       "src": "/static/autopass-logo.png",
