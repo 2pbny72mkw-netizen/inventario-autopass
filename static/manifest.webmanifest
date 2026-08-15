@@ -8,7 +8,7 @@
   "orientation": "any",
   "background_color": "#f3f7fb",
   "theme_color": "#17345d",
-  "description": "Inventário e operação de campo Autopass com coleta offline.",
+  "description": "Inventário Autopass V9 com operação offline e localização inteligente.",
   "icons": [
     {
       "src": "/static/autopass-logo.png",

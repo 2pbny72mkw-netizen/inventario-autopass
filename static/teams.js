@@ -1,5 +1,5 @@
-window.AUTOPASS_TEAMS_VERSION='teams-v6-0';
-console.log('AUTOPASS Central Operacional V6 carregada');
+window.AUTOPASS_TEAMS_VERSION='teams-v9-0';
+console.log('AUTOPASS Central Operacional V9 carregada');
 
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));

@@ -1,6 +1,6 @@
-window.AUTOPASS_PWA_VERSION='pwa-v8-0-2';
-window.AUTOPASS_TECHNICIAN_VERSION = '1408-5';
-console.log('AUTOPASS technician.js 1408-5 carregado');
+window.AUTOPASS_PWA_VERSION='pwa-v9-0';
+window.AUTOPASS_TECHNICIAN_VERSION = 'v9-0-location-intelligence';
+console.log('AUTOPASS technician.js V9 carregado');
 
 let locations = [], current = null, assets = [];
 let currentInventoryRows = [];
@@ -11,6 +11,83 @@ const uniq = a => [...new Set(a)].sort((x, y) => x.localeCompare(y, 'pt-BR'));
 const fill = (el, a, label = 'Selecione') =>
   el.innerHTML = `<option value="">${label}</option>` + a.map(x => `<option>${x}</option>`).join('');
 
+const NEARBY_RADIUS_M = 6000;
+const GPS_WARN_M = 250;
+const GPS_MAX_M = 600;
+let lastNearbyGps = null;
+
+function haversineMeters(lat1,lon1,lat2,lon2){
+  const R=6371000, toRad=x=>x*Math.PI/180;
+  const p1=toRad(lat1),p2=toRad(lat2),dp=toRad(lat2-lat1),dl=toRad(lon2-lon1);
+  const a=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;
+  return 2*R*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+function locReference(loc){
+  const lat=Number(loc?.reference_latitude),lon=Number(loc?.reference_longitude);
+  if(Number.isFinite(lat)&&Number.isFinite(lon)) return {lat,lon,source:'oficial'};
+  const o=loc?.observed_reference||{};
+  const olat=Number(o.latitude),olon=Number(o.longitude);
+  if(Number(o.count)>=3&&Number.isFinite(olat)&&Number.isFinite(olon)) return {lat:olat,lon:olon,source:'observada'};
+  return null;
+}
+function stationKey(loc){ return String(loc?.location||'').trim().toLocaleUpperCase('pt-BR'); }
+function groupNearbyStations(position){
+  if(!position||!locations.length) return [];
+  const groups=new Map();
+  for(const loc of locations){
+    const ref=locReference(loc); if(!ref) continue;
+    const distance=haversineMeters(position.latitude,position.longitude,ref.lat,ref.lon);
+    if(distance>NEARBY_RADIUS_M) continue;
+    const key=stationKey(loc);
+    if(!groups.has(key)) groups.set(key,{name:loc.location,distance,entries:[]});
+    const g=groups.get(key); g.distance=Math.min(g.distance,distance); g.entries.push({...loc,_distance:distance});
+  }
+  return [...groups.values()].sort((a,b)=>a.distance-b.distance);
+}
+function renderNearbyStations(position=lastNearbyGps||lastGps){
+  const box=$('nearbyStations'),status=$('nearbyStatus'); if(!box||!status) return;
+  if(!position){ box.innerHTML=''; status.textContent='Ative ou atualize a localização para ver as estações próximas.'; return; }
+  const groups=groupNearbyStations(position);
+  status.textContent=groups.length?`${groups.length} estação(ões) próxima(s) em até ${(NEARBY_RADIUS_M/1000).toFixed(0)} km. Toque na estação correta.`:'Nenhuma estação referenciada encontrada próxima. Use “Outra localidade / ponto externo”.';
+  box.innerHTML=groups.slice(0,12).map((g,i)=>{
+    const lines=[...new Set(g.entries.map(x=>`${x.company} · ${x.line}`))];
+    return `<button type="button" class="nearbyStationBtn ${g.entries.length>1?'integrated':''}" data-nearby-index="${i}">
+      <b>${escapeHtml(g.name)}</b><small>${escapeHtml(lines.slice(0,3).join(' • '))}${lines.length>3?' • +'+(lines.length-3):''}</small>
+      <small class="distance">aprox. ${Math.round(g.distance)} m${g.entries.length>1?` · ${g.entries.length} opções de linha`:''}</small></button>`;
+  }).join('');
+  document.querySelectorAll('[data-nearby-index]').forEach(btn=>btn.onclick=()=>chooseNearbyGroup(groups[Number(btn.dataset.nearbyIndex)]));
+}
+function chooseNearbyGroup(group){
+  if(!group) return;
+  if(group.entries.length===1){ selectLocationEntry(group.entries[0]); return; }
+  const panel=$('stationLinesPanel'); if(!panel) return;
+  panel.style.display='block';
+  panel.innerHTML=`<b>${escapeHtml(group.name)} é uma estação integrada.</b><div class="muted">Escolha a linha/operação onde o inventário está sendo realizado.</div><div class="stationLineChoices">${group.entries.map(x=>`<button type="button" class="secondary" data-loc-id="${x.id}">${escapeHtml(x.company)} · ${escapeHtml(x.line)}</button>`).join('')}</div>`;
+  panel.querySelectorAll('[data-loc-id]').forEach(b=>b.onclick=()=>{const loc=locations.find(x=>Number(x.id)===Number(b.dataset.locId));selectLocationEntry(loc);panel.style.display='none';});
+}
+function selectLocationEntry(loc){
+  if(!loc) return;
+  $('company').value=loc.company; $('company').dispatchEvent(new Event('change'));
+  $('line').value=loc.line; $('line').dispatchEvent(new Event('change'));
+  $('location').value=String(loc.id); $('location').dispatchEvent(new Event('change'));
+}
+function updateGpsValidation(){
+  const box=$('gpsValidation'),wrap=$('gpsOverrideWrap'); if(!box||!wrap) return true;
+  box.style.display='none';wrap.style.display='none';box.className='notice full';
+  if(!current||!lastGps) return true;
+  const ref=locReference(current);
+  if(!ref){
+    box.style.display='block';box.classList.add('gps-warn');
+    box.innerHTML='<b>Localidade sem referência geográfica.</b> O cadastro será aceito como ponto ainda não calibrado e ajudará na referência observada futura.'; return true;
+  }
+  const d=haversineMeters(lastGps.latitude,lastGps.longitude,ref.lat,ref.lon);
+  box.style.display='block';
+  if(d<=GPS_WARN_M){ box.classList.add('gps-ok');box.innerHTML=`<b>Localização compatível.</b> Aproximadamente ${Math.round(d)} m da referência ${ref.source}.`;return true; }
+  if(d<=GPS_MAX_M){ box.classList.add('gps-warn');box.innerHTML=`<b>Atenção à localização.</b> Aproximadamente ${Math.round(d)} m da referência ${ref.source}. Confirme estação e linha antes de salvar.`;return true; }
+  box.classList.add('gps-block');wrap.style.display='block';
+  box.innerHTML=`<b>GPS incompatível com a localidade selecionada.</b> Aproximadamente ${Math.round(d)} m da referência ${ref.source}. Corrija a estação ou justifique a exceção.`;
+  return String($('gps_override_reason')?.value||'').trim().length>=10;
+}
 
 let lastGps = null;
 
@@ -53,6 +130,9 @@ function applyGpsPosition(position) {
       : 'Localização capturada.',
     true
   );
+  lastNearbyGps={...lastGps};
+  renderNearbyStations(lastNearbyGps);
+  updateGpsValidation();
 
   return lastGps;
 }
@@ -236,6 +316,7 @@ async function loadLocations() {
   }
 
   fill($('company'), uniq(locations.map(x => x.company)));
+  renderNearbyStations();
 
   if (!locations.length) {
     showMsg('Sem internet e sem localidades armazenadas neste aparelho. Conecte-se uma vez antes de entrar em campo.', false);
@@ -269,6 +350,7 @@ $('location').onchange = async () => {
 
   if (current) {
     showInfo();
+    updateGpsValidation();
     await Promise.all([loadAlready(), loadAssets()]);
   } else {
     hideInfo();
@@ -789,6 +871,11 @@ $('invForm').onsubmit = async e => {
   }
 
   await captureGpsForSubmission();
+  if(!updateGpsValidation()){
+    showMsg('A localização está fora do limite da estação selecionada. Corrija a localidade ou informe uma justificativa de exceção.', false);
+    $('gps_override_reason')?.focus();
+    return;
+  }
 
   // Em modo coleta local, sempre guarda no aparelho, mesmo que haja internet.
   // Isso permite cadastrar vários equipamentos primeiro e sincronizar só no fim.
@@ -1007,6 +1094,17 @@ function showMsg(t, ok) {
 })();
 
 
+if($('toggleManualLocationBtn')) $('toggleManualLocationBtn').addEventListener('click',()=>{
+  const p=$('manualLocationPanel'); const open=p.style.display==='none'; p.style.display=open?'block':'none';
+  $('toggleManualLocationBtn').textContent=open?'Ocultar outras localidades':'Outra localidade / ponto externo';
+});
+if($('refreshNearbyBtn')) $('refreshNearbyBtn').addEventListener('click',async()=>{
+  if(!navigator.geolocation){showMsg('GPS não disponível neste aparelho.',false);return;}
+  $('nearbyStatus').textContent='Atualizando sua posição...';
+  navigator.geolocation.getCurrentPosition(p=>applyGpsPosition(p),()=>{$('nearbyStatus').textContent='Não foi possível obter a localização. Use a seleção manual se necessário.';},{enableHighAccuracy:true,timeout:10000,maximumAge:15000});
+});
+if($('gps_override_reason')) $('gps_override_reason').addEventListener('input',updateGpsValidation);
+
 const TEAM_LOCATION_KEY='autopass-team-location-enabled';
 let teamLocationWatchId=null;
 let teamLocationLastSent=0;
@@ -1019,6 +1117,7 @@ function setTeamLocationStatus(text, ok=false){
 }
 
 async function sendTeamLocation(position){
+  applyGpsPosition(position);
   const now=Date.now();
   if(now-teamLocationLastSent<90000) return;
   teamLocationLastSent=now;
