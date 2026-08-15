@@ -48,6 +48,12 @@
 
 <section class="card executiveAnalytics" id="executiveAnalytics">
   <div class="sectionHead"><div><h2>Visão analítica do recorte</h2><p class="muted">Indicadores e gráficos acompanham Empresa, Linha e Tipo selecionados acima.</p></div><span class="tag" id="analyticsContext">Visão geral</span></div>
+  <div class="biExecutiveStrip">
+    <article><span>Execução</span><b id="biCoverage">0%</b><small>previsto × inventariado</small></article>
+    <article><span>Pendência</span><b id="biMissing">0</b><small>ativos ainda não conciliados</small></article>
+    <article><span>Qualidade</span><b id="biQuality">100%</b><small>sem divergência / inoperância</small></article>
+    <article><span>Criticidade</span><b id="biCritical">Normal</b><small>prioridade do recorte</small></article>
+  </div>
   <div class="analyticsGrid">
     <article class="analyticsPanel"><span>Cobertura do recorte</span><b id="analyticsCoverage">0%</b><div class="executiveTrack"><i id="analyticsCoverageBar"></i></div><small id="analyticsCoverageText">0 de 0 inventariados</small></article>
     <article class="analyticsPanel"><span>Qualidade</span><div class="analyticPair"><div><b id="analyticsDivergences">0</b><small>Divergências</small></div><div><b id="analyticsInoperative">0</b><small>Inoperantes</small></div></div></article>
@@ -234,5 +240,5 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
         integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
         crossorigin=""></script>
-<script src="{{url_for('static',filename='manager.js')}}?v=dashboard-v17"></script>
+<script src="{{url_for('static',filename='manager.js')}}?v=dashboard-v18"></script>
 {% endblock %}
