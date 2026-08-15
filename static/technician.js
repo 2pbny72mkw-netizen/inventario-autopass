@@ -1,5 +1,5 @@
-window.AUTOPASS_PWA_VERSION='pwa-v15';
-window.AUTOPASS_TECHNICIAN_VERSION = 'v15-assisted-field';
+window.AUTOPASS_PWA_VERSION='pwa-v18';
+window.AUTOPASS_TECHNICIAN_VERSION = 'v18-assisted-field';
 console.log('AUTOPASS technician.js V15 carregado');
 
 let locations = [], current = null, assets = [];
@@ -704,7 +704,16 @@ function renderSelectedBaseInfo(a){
     add('Série',a.serial);
   }else if(type==='Bloqueio'){
     if(title) title.textContent='Dados da base — Bloqueio';
-    add('Bloqueio',a.terminal_number||a.top_id);
+    add('Ativo / Prefixo',a.terminal_number||a.top_id);
+    const cfg=a.technical_config||{};
+    add('Nº do bloqueio',cfg.blocking_number);
+    add('Grupo',cfg.group);
+    add('Linha lógica',cfg.line_logic);
+    add('IP esperado',cfg.ip);
+    add('Máscara',cfg.mask);
+    add('Gateway',cfg.gateway);
+    add('DNS 1',cfg.dns1);
+    add('DNS 2',cfg.dns2);
     add('Modelo',a.model);
     add('Versão',a.software_version);
     add('Instalação',a.installation_type||a.application);
@@ -1184,7 +1193,11 @@ async function sendTeamLocation(position){
     const j=await r.json().catch(()=>({ok:false}));
     if(!r.ok||!j.ok) throw new Error(j.error||'Falha ao enviar posição.');
     const acc=Number.isFinite(position.coords.accuracy)?Math.round(position.coords.accuracy):null;
-    setTeamLocationStatus(`Localização ativa${acc!==null?` · precisão aproximada ${acc} m`:''} · posição enviada agora.`,true);
+    if(j.integrity && j.integrity.status && j.integrity.status!=='OK'){
+      setTeamLocationStatus(`Atenção: ${j.integrity.reason||'posição incompatível com a posição anterior.'} Confirme se este é o usuário/aparelho correto.`,false);
+    }else{
+      setTeamLocationStatus(`Localização ativa${acc!==null?` · precisão aproximada ${acc} m`:''} · posição enviada agora.`,true);
+    }
   }catch(err){
     setTeamLocationStatus(`Localização ativa, mas o envio falhou: ${err.message}`,false);
   }

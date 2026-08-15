@@ -1,4 +1,4 @@
-window.AUTOPASS_MANAGER_VERSION='dashboard-v6-0';
+window.AUTOPASS_MANAGER_VERSION='dashboard-v18';
 console.log('AUTOPASS Dashboard Executivo V6 carregado');
 let locations=[];
 let dashboardData=null;
@@ -760,6 +760,14 @@ function updateExecutiveView(){
     $('filterContext').textContent=parts.join(' · ');
   }
   renderExecutiveAnalytics(rows,type);
+  const bm=filteredLocationMetrics(rows,type);
+  const bc=bm.expected?Math.min(100,Math.round(bm.inventoried/bm.expected*100)):0;
+  if($('biCoverage')) $('biCoverage').textContent=bc+'%';
+  if($('biMissing')) $('biMissing').textContent=fmt(bm.missing);
+  const qBase=Math.max(1,bm.inventoried);
+  const q=Math.max(0,Math.round(100-((bm.divergences+bm.inoperative)/qBase*100)));
+  if($('biQuality')) $('biQuality').textContent=q+'%';
+  if($('biCritical')) { const c=(bm.missing>0&&bc<50)?'Crítico':(bm.missing>0||bm.divergences>0||bm.inoperative>0)?'Atenção':'Normal'; $('biCritical').textContent=c; $('biCritical').dataset.state=c; }
   renderCriticalLocations();
   renderLocations();
 }
