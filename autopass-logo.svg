@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 210" role="img" aria-label="Autopass">
+  <rect width="760" height="210" fill="white"/>
+  <g fill="#ff6500">
+    <text x="22" y="145" font-family="Arial, Helvetica, sans-serif" font-size="120" font-weight="800" letter-spacing="-6">Autopass</text>
+    <path d="M704 42 L748 86 L704 130 L674 100 L688 86 L674 72 Z"/>
+  </g>
+</svg>
