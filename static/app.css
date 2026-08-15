@@ -645,3 +645,15 @@ input,select,textarea{
 input:focus,select:focus,textarea:focus{
   background:#fbfdff;
 }
+
+/* V7 Patrimônio 360 */
+.globalSearchBar{display:flex;gap:10px}.globalSearchBar input{flex:1}
+.v7LocationGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}
+.v7LocCard{padding:16px;border:1px solid #dce8f2;border-top:4px solid #276aa2;border-radius:14px;background:linear-gradient(145deg,#fff,#f3f9fd);cursor:pointer}
+.v7LocCard:hover{transform:translateY(-1px);box-shadow:0 9px 25px rgba(30,70,110,.09)}
+.v7MiniKpis,.v7DetailKpis{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin:12px 0}
+.v7MiniKpis b,.v7DetailKpis b{background:#fff;border:1px solid #e2ebf3;border-radius:10px;padding:9px;text-align:center;font-size:18px}
+.v7MiniKpis small,.v7DetailKpis small{display:block;font-size:9px;color:#708090;margin-top:3px}
+.v7Flags{display:flex;gap:6px;flex-wrap:wrap}.v7Flags span{background:#eef5fb;border-radius:999px;padding:4px 7px;font-size:10px}
+.v7Results{margin-top:14px}.v7Result{display:block;width:100%;text-align:left;margin:5px 0;padding:10px;border:1px solid #dfe8f0;background:#fff;border-radius:9px}
+.v7Table>div,.historyRow{display:grid;grid-template-columns:1fr 1.4fr 1fr;gap:10px;padding:9px;border-bottom:1px solid #edf1f5}
