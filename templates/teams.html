@@ -6,13 +6,15 @@
 
 <section class="dashHero">
   <div>
-    <span class="eyebrow">V5.1 · CENTRAL OPERACIONAL</span>
+    <span class="eyebrow">V5.2 · CENTRAL OPERACIONAL</span>
     <h1>Equipes em Campo</h1>
-    <p>Escala 12x36, turnos, ponto de entrada e última localização autorizada pelos técnicos.</p>
+    <p>Escala 12x36, gestão de turnos, ponto de entrada e última localização autorizada pelos técnicos.</p>
   </div>
   <div class="heroActions">
     <button class="secondary" id="refreshTeams" type="button">Atualizar</button>
-    <button class="secondary" id="teamMapFull" type="button">Expandir mapa</button>
+    {% if session.get('role') == 'manager' %}
+    <button class="primary" id="openScheduleAdmin" type="button">Gerenciar escala</button>
+    {% endif %}
   </div>
 </section>
 
@@ -29,21 +31,54 @@
       <h2>Mapa operacional</h2>
       <p class="muted">A cor ao redor do técnico indica o tempo desde a última localização.</p>
     </div>
-    <div class="teamLegend">
-      <span class="legendFresh current">≤ 5 min</span>
-      <span class="legendFresh attention">6–15 min</span>
-      <span class="legendFresh late">&gt; 15 min</span>
-      <span class="legendFresh noSignal">Sem sinal</span>
+    <div class="teamMapActions">
+      <div class="teamLegend">
+        <span class="legendFresh current">≤ 5 min</span>
+        <span class="legendFresh attention">6–15 min</span>
+        <span class="legendFresh late">&gt; 15 min</span>
+        <span class="legendFresh noSignal">Sem sinal</span>
+      </div>
+      <button class="secondary" id="teamMapFull" type="button">Expandir mapa</button>
     </div>
   </div>
-  <div id="teamMap" class="teamMap"></div>
+  <div id="teamMapWrap" class="teamMapWrap">
+    <div id="teamMap" class="teamMap"></div>
+    <button id="teamMapExit" type="button" class="secondary teamMapExit">Sair da tela cheia</button>
+  </div>
 </section>
 
 <section class="card">
   <div class="sectionHead">
     <div>
-      <h2>Técnicos previstos na escala</h2>
-      <p class="muted">Turnos 05h–17h e 11h–23h conforme a planilha de escala importada.</p>
+      <h2>Escala por dias</h2>
+      <p class="muted">Visão simples para conferir quem trabalha ou folga em cada dia.</p>
+    </div>
+    <div class="calendarControls">
+      <label>Início <input type="date" id="calendarStart"></label>
+      <label>Dias
+        <select id="calendarDays">
+          <option value="7">7</option>
+          <option value="14" selected>14</option>
+          <option value="21">21</option>
+          <option value="31">31</option>
+        </select>
+      </label>
+      <button type="button" class="secondary" id="reloadCalendar">Atualizar tabela</button>
+    </div>
+  </div>
+  <div class="scaleTableWrap">
+    <table class="scaleTable">
+      <thead id="scaleHead"></thead>
+      <tbody id="scaleBody"></tbody>
+    </table>
+  </div>
+</section>
+
+<section class="card">
+  <div class="sectionHead">
+    <div>
+      <h2>Técnicos previstos hoje</h2>
+      <p class="muted">Turnos 05h–17h e 11h–23h.</p>
     </div>
     <span class="tag" id="teamClock">—</span>
   </div>
@@ -55,7 +90,70 @@
   <div id="supportCards" class="supportCards"></div>
 </section>
 
+{% if session.get('role') == 'manager' %}
+<div id="scheduleAdminModal" class="scheduleModal hidden">
+  <div class="scheduleModalPanel">
+    <div class="sectionHead">
+      <div>
+        <h2>Gerenciar escala 12x36</h2>
+        <p class="muted">Adicionar, remover da escala, trocar turno, entrada, linhas ou supervisão.</p>
+      </div>
+      <button type="button" class="secondary" id="closeScheduleAdmin">Fechar</button>
+    </div>
+
+    <div class="scheduleAdminGrid">
+      <form id="scheduleForm" class="scheduleForm">
+        <input type="hidden" id="scheduleProfileId">
+        <div>
+          <label>Técnico *</label>
+          <select id="scheduleUser">
+            <option value="">Nome manual</option>
+          </select>
+          <input id="scheduleName" placeholder="Nome do técnico">
+        </div>
+        <div>
+          <label>Turno *</label>
+          <select id="scheduleShift">
+            <option value="05:00-17:00">05:00–17:00</option>
+            <option value="11:00-23:00">11:00–23:00</option>
+          </select>
+        </div>
+        <div>
+          <label>Primeiro dia de trabalho *</label>
+          <input type="date" id="scheduleAnchor" required>
+          <small>A partir desta data o sistema alterna trabalho/folga a cada 24h.</small>
+        </div>
+        <div>
+          <label>Ponto de entrada</label>
+          <input id="scheduleEntry" placeholder="Ex.: Jabaquara">
+        </div>
+        <div>
+          <label>Linhas</label>
+          <input id="scheduleLines" placeholder="Ex.: 1, 2, 3">
+        </div>
+        <div>
+          <label>Supervisão</label>
+          <input id="scheduleSupervision" placeholder="Ex.: Fabiana e Raphael">
+        </div>
+        <div class="scheduleFormActions">
+          <button class="primary" type="submit" id="scheduleSave">Adicionar à escala</button>
+          <button class="secondary hidden" type="button" id="scheduleCancelEdit">Cancelar edição</button>
+        </div>
+      </form>
+
+      <div>
+        <div class="scheduleListHead">
+          <b>Técnicos cadastrados na escala</b>
+          <input id="scheduleSearch" placeholder="Buscar técnico">
+        </div>
+        <div id="scheduleProfiles" class="scheduleProfiles"></div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
         integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-<script src="{{ url_for('static', filename='teams.js') }}?v=v5-1"></script>
+<script src="{{ url_for('static', filename='teams.js') }}?v=v5-2"></script>
 {% endblock %}

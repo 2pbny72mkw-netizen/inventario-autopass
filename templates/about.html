@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Sobre | Inventário SP{% endblock %}
+{% block content %}
+<section class="dashHero">
+  <div>
+    <span class="eyebrow">SOBRE / VERSÕES</span>
+    <h1>Inventário do Parque Instalado — SP</h1>
+    <p>Informações da aplicação, versão em produção, principais módulos e histórico recente de evolução.</p>
+  </div>
+</section>
+
+<section class="kpis aboutKpis">
+  <article class="kpi primaryKpi"><span>Aplicação</span><b>{{ app_release }}</b><small>Central Operacional</small></article>
+  <article class="kpi successKpi"><span>Dashboard</span><b>V5.2</b><small>{{ manager_version }}</small></article>
+  <article class="kpi warningKpi"><span>Equipes</span><b>V5.2</b><small>{{ teams_version }}</small></article>
+  <article class="kpi"><span>Base</span><b>{{ base_version }}</b><small>Base de ativos</small></article>
+</section>
+
+<section class="card">
+  <div class="sectionHead">
+    <div>
+      <h2>Módulos disponíveis</h2>
+      <p class="muted">Visão consolidada da versão atual.</p>
+    </div>
+  </div>
+  <div class="aboutModules">
+    <article><b>Dashboard Executivo</b><span>Big Numbers, filtros, gráficos, Excel e visão por localidade.</span></article>
+    <article><b>Evidências de Campo</b><span>WhatsApp, fotos, vídeos, confronto com base e auditoria.</span></article>
+    <article><b>Central de Equipes</b><span>Escala 12x36, mapa operacional, localização autorizada e status por tempo.</span></article>
+    <article><b>Lançamento de Campo</b><span>Inventário técnico, GPS, edição, exclusão, pendências e sincronização.</span></article>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Histórico recente</h2>
+  <div class="versionTimeline">
+    <div><b>V5.2</b><span>Gestão de escala, tabela por dias, alteração de turno, correção do mapa fullscreen e cores executivas.</span></div>
+    <div><b>V5.1</b><span>Central de Equipes, escala 12x36, localização e mapa operacional.</span></div>
+    <div><b>V4.2</b><span>Auditoria segura das evidências e ações específicas por situação.</span></div>
+    <div><b>V4.1</b><span>Centro de Evidências, WhatsApp, fotos/vídeos e confronto com base/inventário.</span></div>
+    <div><b>V3.1</b><span>Dashboard rápido, filtros globais, Excel e Big Numbers oficiais.</span></div>
+  </div>
+</section>
+
+<section class="card aboutCredit">
+  <span>Projeto e concepção</span>
+  <b>by Adil J. Poloni</b>
+</section>
+{% endblock %}
