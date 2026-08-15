@@ -254,3 +254,177 @@ body.mapFullscreenOpen #toggleMapFullscreenBtn{
 .aboutCredit span{color:#64748b}
 .aboutCredit b{color:#183153}
 @media(max-width:700px){.aboutModules{grid-template-columns:1fr}.versionTimeline div{grid-template-columns:60px 1fr}}
+
+
+/* ===== V5.2.1 · Refinamento visual global ===== */
+
+/* Correção Leaflet: evita tiles ampliados/desorganizados por regras globais de imagem */
+.leaflet-container img,
+.leaflet-tile,
+.leaflet-marker-icon,
+.leaflet-marker-shadow{
+  max-width:none !important;
+  max-height:none !important;
+}
+
+/* Mapa de equipes: compacto e contido dentro do card */
+.teamMap{
+  width:100%;
+  height:360px;
+  min-height:360px;
+  border:1px solid #dce4ee;
+  border-radius:14px;
+  overflow:hidden;
+  background:#eaf1f5;
+}
+.teamMapWrap{
+  overflow:hidden;
+  border-radius:14px;
+}
+.teamMapCollapsed{
+  display:none;
+}
+.teamMapWrap:fullscreen,
+.teamMapFullscreenFallback{
+  overflow:visible!important;
+}
+.teamMapWrap:fullscreen .teamMap,
+.teamMapFullscreenFallback .teamMap{
+  min-height:100vh!important;
+}
+
+/* Paleta geral: mais cor sem perder leitura executiva */
+:root{
+  --surface-blue:#f4f9ff;
+  --surface-green:#f1faf5;
+  --surface-orange:#fff7ed;
+  --surface-purple:#f8f3fc;
+  --surface-teal:#eefaf8;
+}
+
+body{
+  background:
+    radial-gradient(circle at 8% 0%,rgba(63,143,190,.08),transparent 24%),
+    radial-gradient(circle at 92% 6%,rgba(0,160,146,.06),transparent 24%),
+    #f4f7fb;
+}
+
+.nav{
+  background:linear-gradient(90deg,#ffffff 0%,#fbfdff 55%,#f6fbff 100%);
+  border-bottom:1px solid #d8e5f1;
+}
+.nav a{
+  border-radius:9px;
+  padding:8px 10px;
+  transition:.15s ease;
+}
+.nav a:hover{
+  background:#edf5fc;
+  color:#124f86;
+}
+
+.dashHero{
+  position:relative;
+  padding-top:4px;
+}
+.dashHero:before{
+  content:"";
+  position:absolute;
+  left:0;
+  top:0;
+  width:58px;
+  height:4px;
+  border-radius:999px;
+  background:linear-gradient(90deg,#ff6500,#00a092,#214f83);
+}
+
+.card{
+  border-color:#dbe4ee;
+}
+.card > h2,
+.sectionHead h2,
+.cardHead h2{
+  color:#183153;
+}
+
+/* Botões com hierarquia mais visível */
+.primary{
+  background:linear-gradient(135deg,#17345d,#214f83);
+  box-shadow:0 5px 14px rgba(33,79,131,.15);
+}
+.secondary{
+  background:linear-gradient(180deg,#f5f9fd,#eaf1f8);
+  border-color:#d4e0ec;
+  color:#17345d;
+}
+.secondary:hover{
+  background:#e4eef7;
+}
+
+/* Filtros e inputs com foco azul/verde */
+input:focus,select:focus,textarea:focus{
+  border-color:#4a84bb!important;
+  box-shadow:0 0 0 3px rgba(74,132,187,.12);
+  outline:none;
+}
+
+/* Tabelas mais legíveis */
+.tableWrap thead th,
+.scaleTable thead th{
+  background:linear-gradient(180deg,#edf5fc,#e6f0f9);
+  color:#294563;
+}
+.tableWrap tbody tr:nth-child(even){
+  background:#fbfdff;
+}
+.tableWrap tbody tr:hover{
+  background:#f0f7fd;
+}
+
+/* Páginas operacionais */
+.teamCard:nth-child(4n+1){background:linear-gradient(135deg,#fff,#f5f9ff)}
+.teamCard:nth-child(4n+2){background:linear-gradient(135deg,#fff,#f2faf6)}
+.teamCard:nth-child(4n+3){background:linear-gradient(135deg,#fff,#fff8ef)}
+.teamCard:nth-child(4n+4){background:linear-gradient(135deg,#fff,#f8f3fc)}
+
+.scheduleProfile:nth-child(3n+1){border-left:4px solid #3274ad}
+.scheduleProfile:nth-child(3n+2){border-left:4px solid #249364}
+.scheduleProfile:nth-child(3n+3){border-left:4px solid #d58a16}
+
+.evidenceVisitCard:nth-child(4n+1){background:linear-gradient(135deg,#fff,#f5f9ff)}
+.evidenceVisitCard:nth-child(4n+2){background:linear-gradient(135deg,#fff,#f2faf6)}
+.evidenceVisitCard:nth-child(4n+3){background:linear-gradient(135deg,#fff,#fff8ef)}
+.evidenceVisitCard:nth-child(4n+4){background:linear-gradient(135deg,#fff,#f8f3fc)}
+
+.notice{
+  background:linear-gradient(90deg,#fff9eb,#fffdf7);
+  border-color:#ecd293;
+}
+.alert{
+  background:#fff1f1;
+  border-color:#efb2b2;
+}
+
+/* Cards do Dashboard com cores um pouco mais presentes */
+.dashboardKpis .primaryKpi{border-top:3px solid #3274ad}
+.dashboardKpis .successKpi{border-top:3px solid #249364}
+.dashboardKpis .warningKpi{border-top:3px solid #d58a16}
+.dashboardKpis .dangerKpi{border-top:3px solid #d34a4a}
+
+.equipmentBig.atm{box-shadow:0 8px 24px rgba(33,79,131,.08)}
+.equipmentBig.val{box-shadow:0 8px 24px rgba(0,140,90,.08)}
+.equipmentBig.pos{box-shadow:0 8px 24px rgba(255,101,0,.08)}
+.equipmentBig.tdi{box-shadow:0 8px 24px rgba(122,62,157,.08)}
+.equipmentBig.bloq{box-shadow:0 8px 24px rgba(0,160,146,.08)}
+
+/* Usuários / formulários */
+.userCard,.userRow{
+  border-left:4px solid #8aa7c2;
+}
+.userCard:nth-child(3n+1),.userRow:nth-child(3n+1){border-left-color:#3274ad}
+.userCard:nth-child(3n+2),.userRow:nth-child(3n+2){border-left-color:#249364}
+.userCard:nth-child(3n+3),.userRow:nth-child(3n+3){border-left-color:#d58a16}
+
+@media(max-width:760px){
+  .teamMap{height:300px;min-height:300px}
+}

@@ -1,5 +1,5 @@
-window.AUTOPASS_MANAGER_VERSION='dashboard-v5-2';
-console.log('AUTOPASS Dashboard Executivo V5.2 carregado');
+window.AUTOPASS_MANAGER_VERSION='dashboard-v5-2-1';
+console.log('AUTOPASS Dashboard Executivo V5.2.1 carregado');
 let locations=[];
 let dashboardData=null;
 const $=id=>document.getElementById(id);

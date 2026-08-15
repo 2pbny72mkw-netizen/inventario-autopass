@@ -1,5 +1,5 @@
-window.AUTOPASS_TEAMS_VERSION='teams-v5-2';
-console.log('AUTOPASS Central de Equipes V5.2 carregada');
+window.AUTOPASS_TEAMS_VERSION='teams-v5-2-1';
+console.log('AUTOPASS Central de Equipes V5.2.1 carregada');
 
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -280,6 +280,14 @@ async function saveScheduleForm(e){
 async function refreshAll(){
   await Promise.allSettled([loadTeams(),loadCalendar(),loadProfiles()]);
 }
+
+
+$('toggleTeamMap').addEventListener('click',()=>{
+  const wrap=$('teamMapWrap');
+  const collapsed=wrap.classList.toggle('teamMapCollapsed');
+  $('toggleTeamMap').textContent=collapsed?'Mostrar mapa':'Ocultar mapa';
+  if(!collapsed) invalidateTeamMap();
+});
 
 $('refreshTeams').addEventListener('click',refreshAll);
 $('teamMapFull').addEventListener('click',()=>{
