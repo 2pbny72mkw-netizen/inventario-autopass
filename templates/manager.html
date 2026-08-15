@@ -14,13 +14,13 @@
   </div>
   <div class="heroActions">
     <span id="lastUpdate" class="lastUpdate">Atualizando...</span>
-    <button class="secondary" id="exportExecutive" type="button">Exportar CSV</button>
+    <button class="secondary" id="exportExecutive" type="button">Exportar Excel</button>
     <button class="secondary" onclick="loadAll()">Atualizar agora</button>
   </div>
 </section>
 
 <section class="kpis dashboardKpis executiveKpis">
-  <article class="kpi primaryKpi clickableKpi" data-exec-filter=""><span>Parque previsto</span><b id="expected">0</b><small>5 famílias de equipamentos</small></article>
+  <article class="kpi primaryKpi clickableKpi" data-exec-filter=""><span>Parque previsto</span><b id="expected">0</b><small>4 famílias oficiais · TDI técnico</small></article>
   <article class="kpi successKpi clickableKpi" data-exec-filter="inventoried"><span>Inventariado</span><b id="inventoried">0</b><small id="inventoryCoverageSmall">0% do parque</small></article>
   <article class="kpi dangerKpi clickableKpi" data-exec-filter="missing"><span>Faltante</span><b id="missing">0</b><small>Previsto ainda não levantado</small></article>
   <article class="kpi primaryKpi"><span>Conclusão do parque</span><b id="assetCoverageTop">0%</b><small>Cobertura por equipamentos</small></article>
@@ -30,9 +30,9 @@
 
 <section class="equipmentBigNumbers">
   <article class="equipmentBig atm" data-type="ATM"><span>ATM</span><b id="typeATM">0</b><small id="typeATMDetail">0 / 0 · 0%</small></article>
-  <article class="equipmentBig val" data-type="VALIDADOR"><span>Validador</span><b id="typeVALIDADOR">0</b><small id="typeVALIDADORDetail">0 / 0 · 0%</small></article>
+  <article class="equipmentBig val" data-type="VALIDADOR"><span>Recarga</span><b id="typeVALIDADOR">0</b><small id="typeVALIDADORDetail">0 / 0 · 0%</small></article>
   <article class="equipmentBig pos" data-type="POS"><span>POS</span><b id="typePOS">0</b><small id="typePOSDetail">0 / 0 · 0%</small></article>
-  <article class="equipmentBig tdi" data-type="TDI"><span>TDI</span><b id="typeTDI">0</b><small id="typeTDIDetail">0 / 0 · 0%</small></article>
+  <article class="equipmentBig tdi" data-type="TDI"><span>TDI <small style="font-weight:600">técnico</small></span><b id="typeTDI">0</b><small id="typeTDIDetail">0 / 0 · 0%</small></article>
   <article class="equipmentBig bloq" data-type="BLOQUEIO"><span>Bloqueio</span><b id="typeBLOQUEIO">0</b><small id="typeBLOQUEIODetail">0 / 0 · 0%</small></article>
 </section>
 
@@ -40,10 +40,10 @@
   <div class="grid4">
     <div><label>Empresa</label><select id="execCompany"><option value="">Todas</option></select></div>
     <div><label>Linha</label><select id="execLine"><option value="">Todas</option></select></div>
-    <div><label>Tipo de equipamento</label><select id="execType"><option value="">Todos</option><option value="ATM">ATM</option><option value="VALIDADOR">Validador</option><option value="POS">POS</option><option value="TDI">TDI</option><option value="BLOQUEIO">Bloqueio</option></select></div>
+    <div><label>Tipo de equipamento</label><select id="execType"><option value="">Todos</option><option value="ATM">ATM</option><option value="VALIDADOR">Recarga</option><option value="POS">POS</option><option value="TDI">TDI</option><option value="BLOQUEIO">Bloqueio</option></select></div>
     <div><label>Atalho executivo</label><button type="button" class="secondary execReset" id="execReset">Limpar filtros</button></div>
   </div>
-</section>
+<div id="filterContext" class="filterContext">Todas empresas · Todas linhas · Todos os tipos</div></section>
 
 <section class="dashboardGrid">
   <article class="card chartCard">
@@ -176,7 +176,7 @@
       <thead>
         <tr>
           <th>Status</th><th>Empresa</th><th>Linha</th><th>Estação / Localidade</th>
-          <th>Esperado</th><th>Levantado</th><th>Progresso</th><th>Inoperantes</th><th>Ação</th>
+          <th>Esperado</th><th>Levantado</th><th>Progresso</th><th>Divergências</th><th>Inoperantes</th><th>Ação</th>
         </tr>
       </thead>
       <tbody id="locRows"></tbody>
@@ -203,5 +203,5 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
         integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
         crossorigin=""></script>
-<script src="{{url_for('static',filename='manager.js')}}?v=dashboard-v2-5"></script>
+<script src="{{url_for('static',filename='manager.js')}}?v=dashboard-v3-1"></script>
 {% endblock %}
