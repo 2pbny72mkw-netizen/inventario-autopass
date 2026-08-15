@@ -29,8 +29,9 @@ from openpyxl.utils import get_column_letter
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
+STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-DASHBOARD_RELEASE = "v1.7-patrimonio-360"
+DASHBOARD_RELEASE = "v1.8-operacao-pwa-offline"
 # Denominadores executivos oficiais informados para o parque contratado.
 OFFICIAL_PARK = {
     "ATM": 590,
@@ -205,6 +206,7 @@ class Inventory(db.Model):
     longitude = db.Column(db.Float)
     gps_accuracy = db.Column(db.Float)
     gps_captured_at = db.Column(db.DateTime)
+    sync_uuid = db.Column(db.String(80), unique=True, index=True)
 
     __table_args__ = (
         UniqueConstraint(
@@ -481,6 +483,25 @@ def manager():
 
 
 
+
+
+
+def migrate_inventory_sync_uuid():
+    """V8: idempotency key for offline/PWA retries."""
+    try:
+        inspector = db.inspect(db.engine)
+        existing = {c["name"] for c in inspector.get_columns("inventory")}
+        if "sync_uuid" not in existing:
+            db.session.execute(db.text('ALTER TABLE inventory ADD COLUMN sync_uuid VARCHAR(80)'))
+            db.session.commit()
+        try:
+            db.session.execute(db.text('CREATE UNIQUE INDEX IF NOT EXISTS ix_inventory_sync_uuid ON inventory (sync_uuid)'))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+    except Exception:
+        db.session.rollback()
+        raise
 
 
 def migrate_team_schedule_columns():
@@ -1139,7 +1160,13 @@ def _location_360_payload(loc):
         } for x in inventories[:250]],
         "evidence_visits":[{
             "id":v.id, "date":v.source_date, "time":v.source_time, "author":v.author,
-            "confidence":v.match_confidence, "report":v.report_text
+            "confidence":v.match_confidence, "report":v.report_text,
+            "media":[{
+                "id":m.id,
+                "name":m.original_name,
+                "mime":m.mime_type,
+                "url":url_for("field_evidence_media", media_id=m.id)
+            } for m in FieldEvidenceMedia.query.filter_by(visit_id=v.id).order_by(FieldEvidenceMedia.id).all()]
         } for v in visits[:100]]
     }
 
@@ -1247,6 +1274,60 @@ def v7_global_search_api():
 def patrimonio_page():
     return render_template("patrimonio.html")
 
+
+@app.get("/api/v8/operacao")
+@dashboard_required
+def v8_operation_api():
+    local_now = datetime.now(ZoneInfo("America/Sao_Paulo"))
+    today_start_local = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start_utc = today_start_local.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+
+    today_inventory = Inventory.query.filter(Inventory.created_at >= today_start_utc).all()
+    visited_location_ids = {x.location_id for x in today_inventory}
+    divergences_today = sum(1 for x in today_inventory if (x.divergence or "").strip())
+    inoperative_today = sum(
+        1 for x in today_inventory
+        if normalize(x.operational_status) not in ("", "OPERACIONAL", "OK")
+    )
+
+    scheduled = _schedule_today_db(local_now.date())
+    now_utc = datetime.utcnow()
+    with_signal = 0
+    stale = 0
+    for member in scheduled:
+        pos = _team_latest_position(member.get("user_id"))
+        if not pos:
+            continue
+        minutes = max(0, int((now_utc - pos.captured_at).total_seconds() // 60))
+        if minutes <= 15:
+            with_signal += 1
+        else:
+            stale += 1
+
+    return jsonify({
+        "ok": True,
+        "date": local_now.date().isoformat(),
+        "time": local_now.strftime("%H:%M"),
+        "today": {
+            "inventory": len(today_inventory),
+            "locations": len(visited_location_ids),
+            "divergences": divergences_today,
+            "inoperative": inoperative_today,
+        },
+        "teams": {
+            "scheduled": len(scheduled),
+            "recent_signal": with_signal,
+            "stale_signal": stale,
+            "no_signal": max(0, len(scheduled)-with_signal-stale),
+        },
+        "offline": {
+            "mode": "PWA",
+            "idempotency": True,
+            "server_queue": 0
+        }
+    })
+
+
 @app.get("/equipes")
 @dashboard_required
 def teams_page():
@@ -1259,12 +1340,33 @@ def teams_page():
 def about_page():
     return render_template(
         "about.html",
-        app_release="V7.0",
+        app_release="V8.0",
         dashboard_release=DASHBOARD_RELEASE,
         base_version=BASE_DATA_VERSION,
         manager_version="dashboard-v6-0",
         teams_version="teams-v6-0",
     )
+
+
+
+@app.get("/sw.js")
+def service_worker():
+    response = send_from_directory(STATIC_DIR, "sw.js", mimetype="application/javascript")
+    response.headers["Service-Worker-Allowed"] = "/"
+    response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
+@app.get("/manifest.webmanifest")
+def web_manifest():
+    response = send_from_directory(STATIC_DIR, "manifest.webmanifest", mimetype="application/manifest+json")
+    response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
+@app.get("/offline")
+def offline_page():
+    return render_template("offline.html")
 
 
 @app.get("/health")
@@ -1624,6 +1726,12 @@ def create_inventory():
     longitude = _optional_float(request.form.get("longitude"))
     gps_accuracy = _optional_float(request.form.get("gps_accuracy"))
     gps_captured_at = _optional_iso_datetime(request.form.get("gps_captured_at"))
+    client_uuid = request.form.get("client_uuid", "").strip() or None
+
+    if client_uuid:
+        existing_sync = Inventory.query.filter_by(sync_uuid=client_uuid).first()
+        if existing_sync:
+            return jsonify({"ok": True, "id": existing_sync.id, "idempotent": True})
 
     if not location_id or not equipment_type or not asset_identifier:
         return jsonify({"ok": False, "error": "Local, tipo e identificação/série são obrigatórios."}), 400
@@ -1678,6 +1786,7 @@ def create_inventory():
         longitude=longitude,
         gps_accuracy=gps_accuracy,
         gps_captured_at=gps_captured_at,
+        sync_uuid=client_uuid,
         technician_id=session["user_id"],
         created_at=now
     )
@@ -3946,6 +4055,7 @@ with app.app_context():
     migrate_location_reference_columns()
     db.create_all()
     migrate_team_schedule_columns()
+    migrate_inventory_sync_uuid()
     migrate_base_asset_columns()
     migrate_inventory_validator_columns()
     seed_data()
