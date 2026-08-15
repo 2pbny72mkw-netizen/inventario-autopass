@@ -1,35 +1,37 @@
 {% extends "base.html" %}
 {% block title %}Equipes | Inventário SP{% endblock %}
 {% block content %}
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-      integrity="sha256-p4NxAoJBhIINfQ3ynNE44SmMZClcJBJ9KQx7Qdctc=" crossorigin="">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 
-<section class="dashHero">
+<section class="dashHero teamsHero">
   <div>
-    <span class="eyebrow">V5.2 · CENTRAL OPERACIONAL</span>
+    <span class="eyebrow">V6 · CENTRAL OPERACIONAL</span>
     <h1>Equipes em Campo</h1>
-    <p>Escala 12x36, gestão de turnos, ponto de entrada e última localização autorizada pelos técnicos.</p>
+    <p>Técnicos, supervisores e apoio: escala, entrada, vínculo com usuários e última localização autorizada.</p>
   </div>
   <div class="heroActions">
     <button class="secondary" id="refreshTeams" type="button">Atualizar</button>
+    <button class="secondary" id="exportScale" type="button">Exportar Excel</button>
     {% if session.get('role') == 'manager' %}
     <button class="primary" id="openScheduleAdmin" type="button">Gerenciar escala</button>
     {% endif %}
   </div>
 </section>
 
-<section class="kpis">
-  <article class="kpi"><span>Escalados hoje</span><b id="kScheduled">0</b><small id="teamDate">—</small></article>
+<section class="kpis teamKpis">
+  <article class="kpi primaryKpi"><span>Escalados hoje</span><b id="kScheduled">0</b><small id="teamDate">—</small></article>
   <article class="kpi successKpi"><span>Localização atual</span><b id="kCurrent">0</b><small>até 5 min</small></article>
   <article class="kpi warningKpi"><span>Atenção / atrasado</span><b id="kAttention">0</b><small>acima de 5 min</small></article>
   <article class="kpi"><span>Sem sinal</span><b id="kNoSignal">0</b><small>sem posição recebida</small></article>
+  <article class="kpi supervisorKpi"><span>Supervisores</span><b id="kSupervisors">0</b><small>escala 12x36</small></article>
+  <article class="kpi supportKpi"><span>Apoio</span><b id="kSupport">0</b><small>5x2 · 08h–18h</small></article>
 </section>
 
-<section class="card">
+<section class="card teamMapCard">
   <div class="sectionHead">
     <div>
       <h2>Mapa operacional</h2>
-      <p class="muted">A cor ao redor do técnico indica o tempo desde a última localização.</p>
+      <p class="muted">A cor ao redor do integrante indica o tempo desde a última localização.</p>
     </div>
     <div class="teamMapActions">
       <div class="teamLegend">
@@ -48,13 +50,21 @@
   </div>
 </section>
 
-<section class="card">
+<section class="card scaleCard">
   <div class="sectionHead">
     <div>
       <h2>Escala por dias</h2>
-      <p class="muted">Visão simples para conferir quem trabalha ou folga em cada dia.</p>
+      <p class="muted">Técnicos e supervisores em 12x36; apoio em 5x2 das 08h às 18h.</p>
     </div>
     <div class="calendarControls">
+      <label>Categoria
+        <select id="calendarCategory">
+          <option value="">Todos</option>
+          <option value="TECNICO">Técnicos</option>
+          <option value="SUPERVISOR">Supervisores</option>
+          <option value="APOIO">Apoio</option>
+        </select>
+      </label>
       <label>Início <input type="date" id="calendarStart"></label>
       <label>Dias
         <select id="calendarDays">
@@ -78,17 +88,12 @@
 <section class="card">
   <div class="sectionHead">
     <div>
-      <h2>Técnicos previstos hoje</h2>
-      <p class="muted">Turnos 05h–17h e 11h–23h.</p>
+      <h2>Equipe prevista hoje</h2>
+      <p class="muted">Vínculo com usuários permite foto, localização e histórico operacional.</p>
     </div>
     <span class="tag" id="teamClock">—</span>
   </div>
   <div id="teamCards" class="teamCards"></div>
-</section>
-
-<section class="card">
-  <h2>Supervisão / apoio</h2>
-  <div id="supportCards" class="supportCards"></div>
 </section>
 
 {% if session.get('role') == 'manager' %}
@@ -96,8 +101,8 @@
   <div class="scheduleModalPanel">
     <div class="sectionHead">
       <div>
-        <h2>Gerenciar escala 12x36</h2>
-        <p class="muted">Adicionar, remover da escala, trocar turno, entrada, linhas ou supervisão.</p>
+        <h2>Gerenciar equipe e escala</h2>
+        <p class="muted">Vincule ao usuário, altere entrada, turno, tipo de escala, linhas e supervisão.</p>
       </div>
       <button type="button" class="secondary" id="closeScheduleAdmin">Fechar</button>
     </div>
@@ -105,37 +110,67 @@
     <div class="scheduleAdminGrid">
       <form id="scheduleForm" class="scheduleForm">
         <input type="hidden" id="scheduleProfileId">
-        <div>
-          <label>Técnico *</label>
+
+        <div class="fullField">
+          <label>Vincular com usuário do sistema</label>
           <select id="scheduleUser">
-            <option value="">Nome manual</option>
+            <option value="">Não vinculado / nome manual</option>
           </select>
-          <input id="scheduleName" placeholder="Nome do técnico">
+          <small>O vínculo é necessário para foto, localização e rastreabilidade do técnico.</small>
         </div>
+
+        <div class="fullField">
+          <label>Nome na escala *</label>
+          <input id="scheduleName" placeholder="Nome do integrante">
+        </div>
+
+        <div>
+          <label>Categoria</label>
+          <select id="scheduleCategory">
+            <option value="TECNICO">Técnico</option>
+            <option value="SUPERVISOR">Supervisor</option>
+            <option value="APOIO">Apoio</option>
+          </select>
+        </div>
+
+        <div>
+          <label>Tipo de escala</label>
+          <select id="scheduleType">
+            <option value="12x36">12x36</option>
+            <option value="5x2">5x2</option>
+          </select>
+        </div>
+
         <div>
           <label>Turno *</label>
           <select id="scheduleShift">
             <option value="05:00-17:00">05:00–17:00</option>
             <option value="11:00-23:00">11:00–23:00</option>
+            <option value="08:00-18:00">08:00–18:00</option>
           </select>
         </div>
+
         <div>
-          <label>Primeiro dia de trabalho *</label>
-          <input type="date" id="scheduleAnchor" required>
-          <small>A partir desta data o sistema alterna trabalho/folga a cada 24h.</small>
+          <label>Primeiro dia do ciclo</label>
+          <input type="date" id="scheduleAnchor">
+          <small>Usado para definir os dias de trabalho da escala 12x36.</small>
         </div>
+
         <div>
-          <label>Ponto de entrada</label>
-          <input id="scheduleEntry" placeholder="Ex.: Jabaquara">
+          <label>Entrada / ponto de início</label>
+          <input id="scheduleEntry" placeholder="Ex.: Jabaquara, Osasco, Home Office">
         </div>
+
         <div>
           <label>Linhas</label>
           <input id="scheduleLines" placeholder="Ex.: 1, 2, 3">
         </div>
-        <div>
-          <label>Supervisão</label>
+
+        <div class="fullField">
+          <label>Supervisão / observação operacional</label>
           <input id="scheduleSupervision" placeholder="Ex.: Fabiana e Raphael">
         </div>
+
         <div class="scheduleFormActions">
           <button class="primary" type="submit" id="scheduleSave">Adicionar à escala</button>
           <button class="secondary hidden" type="button" id="scheduleCancelEdit">Cancelar edição</button>
@@ -144,8 +179,11 @@
 
       <div>
         <div class="scheduleListHead">
-          <b>Técnicos cadastrados na escala</b>
-          <input id="scheduleSearch" placeholder="Buscar técnico">
+          <div>
+            <b>Integrantes cadastrados</b>
+            <small id="linkSummary">—</small>
+          </div>
+          <input id="scheduleSearch" placeholder="Buscar nome, entrada ou usuário">
         </div>
         <div id="scheduleProfiles" class="scheduleProfiles"></div>
       </div>
@@ -154,7 +192,6 @@
 </div>
 {% endif %}
 
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-<script src="{{ url_for('static', filename='teams.js') }}?v=v5-2-1"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="{{ url_for('static', filename='teams.js') }}?v=v6-0"></script>
 {% endblock %}
