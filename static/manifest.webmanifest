@@ -1,0 +1,20 @@
+{
+  "name": "Inventário do Parque Instalado — SP",
+  "short_name": "Inventário SP",
+  "id": "/tecnico",
+  "start_url": "/tecnico",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f3f7fb",
+  "theme_color": "#17345d",
+  "description": "Inventário e operação de campo Autopass com coleta offline.",
+  "icons": [
+    {
+      "src": "/static/autopass-logo.png",
+      "sizes": "any",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

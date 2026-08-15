@@ -657,3 +657,10 @@ input:focus,select:focus,textarea:focus{
 .v7Flags{display:flex;gap:6px;flex-wrap:wrap}.v7Flags span{background:#eef5fb;border-radius:999px;padding:4px 7px;font-size:10px}
 .v7Results{margin-top:14px}.v7Result{display:block;width:100%;text-align:left;margin:5px 0;padding:10px;border:1px solid #dfe8f0;background:#fff;border-radius:9px}
 .v7Table>div,.historyRow{display:grid;grid-template-columns:1fr 1.4fr 1fr;gap:10px;padding:9px;border-bottom:1px solid #edf1f5}
+
+/* V8 · PWA / Offline / galeria 360 */
+.v7MediaGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-top:8px}
+.v7MediaGrid a{display:flex;flex-direction:column;text-decoration:none;color:#263b56;border:1px solid #dfe8ef;border-radius:11px;overflow:hidden;background:#fff}
+.v7MediaGrid img{width:100%;height:135px;object-fit:cover}
+.v7MediaGrid small,.v7MediaFile{padding:7px;font-size:10px}
+.offlinePage{max-width:720px;margin:60px auto;border-top:5px solid #d97706}

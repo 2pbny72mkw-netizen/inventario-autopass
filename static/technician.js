@@ -1,3 +1,4 @@
+window.AUTOPASS_PWA_VERSION='pwa-v8-0-auto';
 window.AUTOPASS_TECHNICIAN_VERSION = '1408-5';
 console.log('AUTOPASS technician.js 1408-5 carregado');
 
@@ -663,6 +664,7 @@ async function enqueueCurrentForm(form) {
 async function sendRecord(record) {
   const fd = new FormData();
   Object.entries(record.fields).forEach(([key, value]) => fd.append(key, value ?? ''));
+  fd.append('client_uuid', record.local_id);
 
   (record.files || []).forEach(f => {
     fd.append(f.field || 'attachments', new File([f.blob], f.name, { type: f.type }));
@@ -803,6 +805,8 @@ $('invForm').onsubmit = async e => {
 
   try {
     const fd = new FormData(e.target);
+    const onlineUuid = (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
+    fd.append('client_uuid', onlineUuid);
     const r = await fetch('/api/inventory', { method: 'POST', body: fd });
     const j = await r.json().catch(() => ({ ok: false, error: 'Erro no servidor.' }));
 
@@ -889,26 +893,89 @@ $('completeBtn').onclick = async () => {
 
 $('syncBtn').onclick = () => syncQueue({ silent: false });
 
+
+let autoSyncTimer = null;
+let autoSyncRunning = false;
+let autoSyncRetryMs = 15000;
+
+async function autoSyncQueue(reason='auto'){
+  if(autoSyncRunning || !navigator.onLine) return;
+  const queue = await idbGetAll(STORE_QUEUE);
+  if(!queue.length){
+    await refreshConnectionUI();
+    return;
+  }
+
+  autoSyncRunning = true;
+  try{
+    $('connectionStatus').textContent = `🔵 Sincronizando automaticamente...`;
+    showMsg(`Conexão disponível. Sincronizando ${queue.length} registro(s) automaticamente...`, true);
+
+    await syncQueue({silent:true});
+
+    const remaining = await idbGetAll(STORE_QUEUE);
+    if(!remaining.length){
+      autoSyncRetryMs = 15000;
+      showMsg('Sincronização automática concluída. Tudo enviado ao servidor.', true);
+    }else{
+      showMsg(`${remaining.length} registro(s) continuam pendentes. Nova tentativa automática será realizada.`, false);
+      scheduleAutoSyncRetry();
+    }
+  }catch(err){
+    console.error('Falha na sincronização automática:', err);
+    showMsg('Falha temporária na sincronização automática. O sistema tentará novamente.', false);
+    scheduleAutoSyncRetry();
+  }finally{
+    autoSyncRunning = false;
+    await refreshConnectionUI();
+  }
+}
+
+function scheduleAutoSyncRetry(){
+  if(autoSyncTimer) clearTimeout(autoSyncTimer);
+  autoSyncTimer = setTimeout(async ()=>{
+    autoSyncTimer = null;
+    await autoSyncQueue('retry');
+  }, autoSyncRetryMs);
+  autoSyncRetryMs = Math.min(autoSyncRetryMs * 2, 120000);
+}
+
+function triggerAutoSyncSoon(delay=2500){
+  if(autoSyncTimer) clearTimeout(autoSyncTimer);
+  autoSyncTimer = setTimeout(async ()=>{
+    autoSyncTimer = null;
+    await autoSyncQueue('online');
+  }, delay);
+}
+
 window.addEventListener('online', async () => {
   await refreshConnectionUI();
   const queue = await idbGetAll(STORE_QUEUE);
   if (queue.length) {
-    showMsg(`Conexão restabelecida. ${queue.length} registro(s) aguardam envio. Clique em "Sincronizar agora" quando desejar.`, true);
+    showMsg(`Conexão restabelecida. ${queue.length} registro(s) serão sincronizados automaticamente.`, true);
+    triggerAutoSyncSoon(2500);
   }
 });
 
-window.addEventListener('offline', refreshConnectionUI);
+window.addEventListener('offline', async () => {
+  if(autoSyncTimer){ clearTimeout(autoSyncTimer); autoSyncTimer=null; }
+  await refreshConnectionUI();
+  showMsg('Sem conexão. Os novos registros serão mantidos neste aparelho até a internet retornar.', false);
+});
 
 $('localMode').addEventListener('change', async e => {
   setLocalMode(e.target.checked);
   await refreshConnectionUI();
 
   if (e.target.checked) {
-    showMsg('Modo coleta local ativado. Os próximos registros ficarão neste aparelho até a sincronização manual.', true);
+    showMsg('Modo coleta local ativado. Os registros ficam no aparelho durante a coleta e serão sincronizados automaticamente quando o modo local for desativado ou a aplicação retomar o fluxo online.', true);
   } else {
     const queue = await idbGetAll(STORE_QUEUE);
-    if (queue.length) {
-      showMsg(`${queue.length} registro(s) continuam pendentes. Clique em "Sincronizar agora" quando desejar enviá-los.`, true);
+    if (queue.length && navigator.onLine) {
+      showMsg(`${queue.length} registro(s) pendentes. Iniciando sincronização automática...`, true);
+      triggerAutoSyncSoon(1200);
+    } else if (queue.length) {
+      showMsg(`${queue.length} registro(s) aguardando conexão para sincronização automática.`, true);
     } else {
       showMsg('Modo coleta local desativado.', true);
     }
@@ -927,6 +994,12 @@ function showMsg(t, ok) {
     await refreshConnectionUI();
 
     setLocalMode(isLocalMode());
+
+    const startupQueue = await idbGetAll(STORE_QUEUE);
+    if(navigator.onLine && startupQueue.length && !isLocalMode()){
+      showMsg(`${startupQueue.length} registro(s) pendentes encontrados. Sincronização automática será iniciada.`, true);
+      triggerAutoSyncSoon(1800);
+    }
   } catch (err) {
     console.error(err);
     showMsg('Não foi possível iniciar o armazenamento offline neste navegador.', false);
