@@ -31,7 +31,12 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-DASHBOARD_RELEASE = "v1.8-operacao-pwa-offline"
+APP_RELEASE = "V10.0"
+DASHBOARD_RELEASE = "dashboard-v10"
+TEAMS_RELEASE = "teams-v10"
+FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
+FIELD_GPS_GOOD_ACCURACY_M = float(os.getenv("FIELD_GPS_GOOD_ACCURACY_M", "30"))
+FIELD_GPS_MAX_ACCURACY_M = float(os.getenv("FIELD_GPS_MAX_ACCURACY_M", "80"))
 # Denominadores executivos oficiais informados para o parque contratado.
 OFFICIAL_PARK = {
     "ATM": 590,
@@ -117,6 +122,19 @@ class TechnicianPosition(db.Model):
     accuracy = db.Column(db.Float)
     captured_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
     source = db.Column(db.String(40), nullable=False, default="browser")
+
+class TechnicianCheckin(db.Model):
+    __tablename__ = "technician_checkins"
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    location_id = db.Column(db.Integer, db.ForeignKey("locations.id"), nullable=False, index=True)
+    latitude = db.Column(db.Float, nullable=False)
+    longitude = db.Column(db.Float, nullable=False)
+    accuracy = db.Column(db.Float)
+    distance_m = db.Column(db.Float)
+    status = db.Column(db.String(40), nullable=False, default="REGISTRADO", index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+
 
 class Location(db.Model):
     __tablename__ = "locations"
@@ -485,9 +503,9 @@ def index():
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
-        username = request.form.get("username", "").strip()
+        username = request.form.get("username", "").strip().lower()
         password = request.form.get("password", "")
-        user = User.query.filter_by(username=username, active=True).first()
+        user = User.query.filter(func.lower(User.username) == username, User.active.is_(True)).first()
         if user and check_password_hash(user.password_hash, password):
             session.clear()
             session.update(user_id=user.id, name=user.name, role=user.role)
@@ -771,6 +789,66 @@ def technician_position_update():
     db.session.add(row)
     db.session.commit()
     return jsonify({"ok": True, "captured_at": row.captured_at.isoformat() + "Z"})
+
+
+@app.get("/api/campo/config")
+@field_required
+def field_config_api():
+    return jsonify({
+        "ok": True,
+        "release": APP_RELEASE,
+        "nearby_radius_m": FIELD_NEARBY_RADIUS_M,
+        "gps_good_accuracy_m": FIELD_GPS_GOOD_ACCURACY_M,
+        "gps_max_accuracy_m": FIELD_GPS_MAX_ACCURACY_M,
+        "gps_warn_distance_m": float(os.getenv("FIELD_GPS_WARN_DISTANCE_M", "250")),
+        "gps_max_distance_m": float(os.getenv("FIELD_GPS_MAX_DISTANCE_M", "600")),
+    })
+
+
+@app.post("/api/tecnico/checkin")
+@field_required
+def technician_checkin():
+    data = request.get_json(silent=True) or {}
+    location_id = data.get("location_id")
+    try:
+        location_id = int(location_id)
+        lat = float(data.get("latitude"))
+        lon = float(data.get("longitude"))
+        acc = float(data.get("accuracy")) if data.get("accuracy") is not None else None
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Dados de check-in inválidos."}), 400
+
+    loc = db.session.get(Location, location_id)
+    if not loc:
+        return jsonify({"ok": False, "error": "Localidade inválida."}), 404
+
+    distance_m = None
+    status = "SEM_REFERENCIA"
+    if acc is not None and acc > FIELD_GPS_MAX_ACCURACY_M:
+        status = "BAIXA_PRECISAO"
+    elif loc.reference_latitude is not None and loc.reference_longitude is not None:
+        distance_m = _haversine_m(lat, lon, loc.reference_latitude, loc.reference_longitude)
+        warn_m = float(os.getenv("FIELD_GPS_WARN_DISTANCE_M", "250"))
+        max_m = float(os.getenv("FIELD_GPS_MAX_DISTANCE_M", "600"))
+        if distance_m <= warn_m:
+            status = "CONFIRMADO"
+        elif distance_m <= max_m:
+            status = "PROXIMO"
+        else:
+            status = "FORA_DA_AREA"
+
+    row = TechnicianCheckin(
+        user_id=session["user_id"], location_id=loc.id, latitude=lat, longitude=lon,
+        accuracy=acc, distance_m=distance_m, status=status, created_at=datetime.utcnow()
+    )
+    db.session.add(row)
+    db.session.commit()
+    return jsonify({
+        "ok": True, "status": status, "location": loc.location, "company": loc.company, "line": loc.line,
+        "distance_m": round(distance_m) if distance_m is not None else None,
+        "accuracy": round(acc) if acc is not None else None,
+        "created_at": row.created_at.isoformat()+"Z"
+    })
 
 
 @app.get("/api/equipes/status")
@@ -1388,11 +1466,11 @@ def teams_page():
 def about_page():
     return render_template(
         "about.html",
-        app_release="V9.3",
+        app_release=APP_RELEASE,
         dashboard_release=DASHBOARD_RELEASE,
         base_version=BASE_DATA_VERSION,
-        manager_version="dashboard-v9-3",
-        teams_version="teams-v9-3",
+        manager_version=DASHBOARD_RELEASE,
+        teams_version=TEAMS_RELEASE,
     )
 
 
@@ -1828,11 +1906,21 @@ def create_inventory():
     if not loc:
         return jsonify({"ok": False, "error": "Local inválido."}), 400
 
-    # V9: confronto geográfico entre o local declarado e o GPS capturado.
+    # V10: qualidade do GPS antes do confronto geográfico.
+    gps_override_reason = (request.form.get("gps_override_reason") or "").strip()
+    if gps_accuracy is not None and gps_accuracy > FIELD_GPS_MAX_ACCURACY_M and len(gps_override_reason) < 10:
+        return jsonify({
+            "ok": False,
+            "error": f"Precisão GPS insuficiente ({round(gps_accuracy)} m). Atualize a localização ou informe uma justificativa para prosseguir.",
+            "code": "GPS_LOW_ACCURACY",
+            "accuracy_m": round(gps_accuracy),
+            "max_accuracy_m": FIELD_GPS_MAX_ACCURACY_M
+        }), 409
+
+    # V10: confronto geográfico entre o local declarado e o GPS capturado.
     gps_distance_m = None
     gps_warn_m = float(os.getenv("FIELD_GPS_WARN_DISTANCE_M", "250"))
     gps_max_m = float(os.getenv("FIELD_GPS_MAX_DISTANCE_M", "600"))
-    gps_override_reason = (request.form.get("gps_override_reason") or "").strip()
     if latitude is not None and longitude is not None and loc.reference_latitude is not None and loc.reference_longitude is not None:
         gps_distance_m = _haversine_m(latitude, longitude, loc.reference_latitude, loc.reference_longitude)
         if gps_distance_m > gps_max_m and len(gps_override_reason) < 10:

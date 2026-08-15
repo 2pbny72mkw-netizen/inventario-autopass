@@ -1,0 +1,14 @@
+{
+  "release": "V10.0",
+  "name": "Campo Inteligente",
+  "nearby_radius_m": 3000,
+  "gps_max_accuracy_m": 80,
+  "features": [
+    "case-insensitive login",
+    "smart check-in",
+    "integrated stations",
+    "GPS quality",
+    "unified avatars",
+    "PWA cache refresh"
+  ]
+}
