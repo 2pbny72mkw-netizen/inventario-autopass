@@ -1,5 +1,5 @@
-window.AUTOPASS_MANAGER_VERSION='dashboard-v2-5';
-console.log('AUTOPASS Dashboard Executivo V2.5 carregado');
+window.AUTOPASS_MANAGER_VERSION='dashboard-v3-1';
+console.log('AUTOPASS Dashboard Executivo V3.1 carregado');
 let locations=[];
 let dashboardData=null;
 const $=id=>document.getElementById(id);
@@ -7,6 +7,37 @@ const uniq=a=>[...new Set(a)].sort((x,y)=>x.localeCompare(y,'pt-BR'));
 function st(s){return `<span class="status s${s.replaceAll(' ','')}">${s}</span>`}
 function fmt(n){return new Intl.NumberFormat('pt-BR').format(Number(n||0))}
 function esc(v){return String(v??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'","&#039;")}
+
+const OFFICIAL_EXEC_TYPES=['ATM','VALIDADOR','POS','BLOQUEIO'];
+function typeLabel(type){
+  return type==='VALIDADOR'?'Recarga':type==='BLOQUEIO'?'Bloqueio':type;
+}
+function sumObjectValues(obj){return Object.values(obj||{}).reduce((a,b)=>a+Number(b||0),0)}
+function filteredLocationMetrics(rows,type=''){
+  const result={
+    expected:0,inventoried:0,missing:0,inoperative:0,divergences:0,
+    byType:{ATM:{e:0,i:0},VALIDADOR:{e:0,i:0},POS:{e:0,i:0},TDI:{e:0,i:0},BLOQUEIO:{e:0,i:0}}
+  };
+  rows.forEach(x=>{
+    const exp=x.expected_by_type||{};
+    const inv=x.inventoried_by_type||{};
+    Object.keys(result.byType).forEach(t=>{
+      result.byType[t].e+=Number(exp[t]||0);
+      result.byType[t].i+=Number(inv[t]||0);
+    });
+    result.inoperative+=Number(x.inoperative||0);
+    result.divergences+=Number(x.divergences||0);
+  });
+  if(type){
+    result.expected=result.byType[type]?.e||0;
+    result.inventoried=result.byType[type]?.i||0;
+  }else{
+    result.expected=OFFICIAL_EXEC_TYPES.reduce((a,t)=>a+(result.byType[t]?.e||0),0);
+    result.inventoried=OFFICIAL_EXEC_TYPES.reduce((a,t)=>a+(result.byType[t]?.i||0),0);
+  }
+  result.missing=Math.max(0,result.expected-result.inventoried);
+  return result;
+}
 
 function hasReference(loc){
   if(!loc) return false;
@@ -403,66 +434,77 @@ async function loadAll(){
   const started=performance.now();
   if($('lastUpdate')) $('lastUpdate').textContent='Atualizando indicadores...';
   try{
-    // Fase 1: o painel executivo aparece primeiro. GPS/mapa não bloqueia os KPIs.
-    const [d,l]=await Promise.all([
-      fetch('/api/dashboard',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error('Dashboard '+r.status);return r.json()}),
-      fetch('/api/locations',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error('Localidades '+r.status);return r.json()})
-    ]);
-    locations=l;
+    // Fase 1: /api/dashboard é leve e exibe imediatamente os KPIs oficiais.
+    const d=await fetch('/api/dashboard',{cache:'no-store'}).then(r=>{
+      if(!r.ok) throw new Error('Dashboard '+r.status);
+      return r.json();
+    });
     dashboardData=d;
+    renderGlobalDashboard(d);
+    if($('lastUpdate')) $('lastUpdate').textContent='KPIs em '+((performance.now()-started)/1000).toFixed(1)+'s · carregando localidades...';
+
+    // Fase 2: localidades/base detalhada é mais pesada, mas não bloqueia os Big Numbers.
+    const l=await fetch('/api/locations',{cache:'no-store'}).then(r=>{
+      if(!r.ok) throw new Error('Localidades '+r.status);
+      return r.json();
+    });
+    locations=l;
     renderMapLocationSelect();
     renderExecutiveFilters();
-
-    $('total').textContent=fmt(d.totals.total);
-    $('pending').textContent=fmt(d.totals.pending);
-    $('progress').textContent=fmt(d.totals.progress);
-    $('completed').textContent=fmt(d.totals.completed);
-    $('expected').textContent=fmt(d.totals.expected);
-    $('inventoried').textContent=fmt(d.inventory.inventoried);
-    if($('missing')) $('missing').textContent=fmt(d.totals.missing||0);
-    $('inoperative').textContent=fmt(d.inventory.inoperative);
-    $('divergences').textContent=fmt(d.inventory.divergences);
-    if($('inoperativeQuality')) $('inoperativeQuality').textContent=fmt(d.inventory.inoperative);
-    if($('divergencesQuality')) $('divergencesQuality').textContent=fmt(d.inventory.divergences);
-    if($('unclassified')) $('unclassified').textContent=fmt(d.inventory.unclassified||0);
-
-    const total=Number(d.totals.total||0), done=Number(d.totals.completed||0),
-          prog=Number(d.totals.progress||0), pend=Number(d.totals.pending||0),
-          expected=Number(d.totals.expected||0), inventoried=Number(d.inventory.inventoried||0);
-    const pct=total?Math.round(done/total*100):0;
-    const coverage=expected?Math.min(100,Math.round(inventoried/expected*100)):0;
-
-    $('overallPct').textContent=pct+'%';
-    $('donutText').textContent=pct+'%';
-    $('legendDone').textContent=done;
-    $('legendProgress').textContent=prog;
-    $('legendPending').textContent=pend;
-    $('assetCoverage').textContent=coverage+'%';
-    if($('assetCoverageTop')) $('assetCoverageTop').textContent=coverage+'%';
-    if($('inventoryCoverageSmall')) $('inventoryCoverageSmall').textContent=coverage+'% do parque';
-    renderTypeBigNumbers(d.by_type||[]);
-    renderTypeProgress(d.by_type||[]);
-
-    const dDone=total?(done/total*360):0;
-    const dProg=total?(prog/total*360):0;
-    $('donut').style.background=`conic-gradient(var(--green) 0deg ${dDone}deg,var(--amber) ${dDone}deg ${dDone+dProg}deg,#e1e6ed ${dDone+dProg}deg 360deg)`;
 
     if(!$('fc').dataset.loaded){
       $('fc').innerHTML='<option value="">Todas</option>'+uniq(l.map(x=>x.company)).map(x=>`<option>${esc(x)}</option>`).join('');
       $('fc').dataset.loaded='1';
     }
+
     renderCompany(d.by_company||[]);
     renderCompanyBars(d.by_company||[]);
     renderLocations();
     renderCriticalLocations();
-    if($('lastUpdate')) $('lastUpdate').textContent='Atualizado em '+new Date().toLocaleString('pt-BR')+` · ${((performance.now()-started)/1000).toFixed(1)}s`;
+    updateExecutiveView();
 
-    // Fase 2: GPS/mapa é carregado depois, sem travar os números executivos.
-    setTimeout(loadGpsDeferred,80);
+    if($('lastUpdate')) $('lastUpdate').textContent='Atualizado em '+new Date().toLocaleString('pt-BR')+` · ${((performance.now()-started)/1000).toFixed(1)}s`;
+    setTimeout(loadGpsDeferred,120);
   }catch(err){
     console.error('Falha ao carregar dashboard',err);
     if($('lastUpdate')) $('lastUpdate').textContent='Falha ao atualizar — clique em Atualizar agora';
   }
+}
+
+function renderGlobalDashboard(d){
+  $('total').textContent=fmt(d.totals.total);
+  $('pending').textContent=fmt(d.totals.pending);
+  $('progress').textContent=fmt(d.totals.progress);
+  $('completed').textContent=fmt(d.totals.completed);
+  $('expected').textContent=fmt(d.totals.expected);
+  $('inventoried').textContent=fmt(d.inventory.official_inventoried ?? d.inventory.inventoried);
+  if($('missing')) $('missing').textContent=fmt(d.totals.missing||0);
+  $('inoperative').textContent=fmt(d.inventory.inoperative);
+  $('divergences').textContent=fmt(d.inventory.divergences);
+  if($('inoperativeQuality')) $('inoperativeQuality').textContent=fmt(d.inventory.inoperative);
+  if($('divergencesQuality')) $('divergencesQuality').textContent=fmt(d.inventory.divergences);
+  if($('unclassified')) $('unclassified').textContent=fmt(d.inventory.unclassified||0);
+
+  const total=Number(d.totals.total||0), done=Number(d.totals.completed||0),
+        prog=Number(d.totals.progress||0), pend=Number(d.totals.pending||0),
+        expected=Number(d.totals.expected||0), inventoried=Number((d.inventory.official_inventoried ?? d.inventory.inventoried) || 0);
+  const pct=total?Math.round(done/total*100):0;
+  const coverage=expected?Math.min(100,Math.round(inventoried/expected*100)):0;
+
+  $('overallPct').textContent=pct+'%';
+  $('donutText').textContent=pct+'%';
+  $('legendDone').textContent=done;
+  $('legendProgress').textContent=prog;
+  $('legendPending').textContent=pend;
+  $('assetCoverage').textContent=coverage+'%';
+  if($('assetCoverageTop')) $('assetCoverageTop').textContent=coverage+'%';
+  if($('inventoryCoverageSmall')) $('inventoryCoverageSmall').textContent=coverage+'% do parque';
+  renderTypeBigNumbers(d.by_type||[]);
+  renderTypeProgress(d.by_type||[]);
+
+  const dDone=total?(done/total*360):0;
+  const dProg=total?(prog/total*360):0;
+  $('donut').style.background=`conic-gradient(var(--green) 0deg ${dDone}deg,var(--amber) ${dDone}deg ${dDone+dProg}deg,#e1e6ed ${dDone+dProg}deg 360deg)`;
 }
 
 let gpsLoading=false;
@@ -575,37 +617,140 @@ function expectedBreakdown(x){
 }
 function renderTypeBigNumbers(rows){ rows.forEach(x=>{ const id=x.type; if($('type'+id)) $('type'+id).textContent=fmt(x.expected); if($('type'+id+'Detail')) $('type'+id+'Detail').textContent=`${fmt(x.inventoried)} levantados · ${fmt(x.missing)} faltam · ${x.coverage_pct}%`; }); }
 function renderTypeProgress(rows){ const box=$('typeProgressList'); if(!box)return; box.innerHTML=rows.map(x=>`<div class="typeProgressRow"><b>${esc(x.type==='VALIDADOR'?'Validador':x.type==='BLOQUEIO'?'Bloqueio':x.type)}</b><div class="companyTrack"><i style="width:${Math.min(100,Number(x.coverage_pct||0))}%"></i></div><small>${x.coverage_pct}%</small></div>`).join(''); }
-function renderExecutiveFilters(){ const c=$('execCompany'),line=$('execLine'); if(!c||!line)return; const oldC=c.value,oldL=line.value; c.innerHTML='<option value="">Todas</option>'+uniq(locations.map(x=>x.company)).map(x=>`<option>${esc(x)}</option>`).join(''); if([...c.options].some(o=>o.value===oldC))c.value=oldC; const avail=locations.filter(x=>!c.value||x.company===c.value); line.innerHTML='<option value="">Todas</option>'+uniq(avail.map(x=>x.line)).map(x=>`<option>${esc(x)}</option>`).join(''); if([...line.options].some(o=>o.value===oldL))line.value=oldL; }
-function executiveFilteredLocations(){ const c=$('execCompany')?.value||'',line=$('execLine')?.value||'',type=$('execType')?.value||''; return locations.filter(x=>(!c||x.company===c)&&(!line||x.line===line)&&(!type||Number((x.expected_by_type||{})[type]||0)>0)); }
-function renderCriticalLocations(){ const box=$('criticalLocations');if(!box)return; const rows=executiveFilteredLocations().map(x=>{const exp=Number(x.expected_total||0)||Object.values(x.expected_by_type||{}).reduce((a,b)=>a+Number(b||0),0)||(Number(x.expected_atm||0)+Number(x.expected_validator||0)+Number(x.expected_pos||0));return {...x,_missing:Math.max(0,exp-Number(x.inventoried||0))}}).filter(x=>x._missing>0).sort((a,b)=>b._missing-a._missing).slice(0,6); box.innerHTML=rows.length?rows.map(x=>`<div class="criticalItem"><div><b>${esc(x.location)}</b><small>${esc(x.company)} · ${esc(x.line)}</small></div><strong>${fmt(x._missing)} faltam</strong></div>`).join(''):'<div class="muted">Nenhuma pendência para os filtros atuais.</div>'; }
-function applyExecutiveFilterToTable(){ const c=$('execCompany')?.value||'',line=$('execLine')?.value||''; if($('fc'))$('fc').value=c; if($('fl')){$('fl').innerHTML='<option value="">Todas</option>'+uniq(locations.filter(x=>!c||x.company===c).map(x=>x.line)).map(x=>`<option>${esc(x)}</option>`).join('');$('fl').value=line;} renderLocations();renderCriticalLocations(); }
+function renderExecutiveFilters(){
+  const c=$('execCompany'),line=$('execLine');
+  if(!c||!line)return;
+  const oldC=c.value,oldL=line.value;
+  c.innerHTML='<option value="">Todas</option>'+uniq(locations.map(x=>x.company)).map(x=>`<option>${esc(x)}</option>`).join('');
+  if([...c.options].some(o=>o.value===oldC))c.value=oldC;
+  const avail=locations.filter(x=>!c.value||x.company===c.value);
+  line.innerHTML='<option value="">Todas</option>'+uniq(avail.map(x=>x.line)).map(x=>`<option>${esc(x)}</option>`).join('');
+  if([...line.options].some(o=>o.value===oldL))line.value=oldL;
+}
+function executiveFilteredLocations(){
+  const c=$('execCompany')?.value||'',line=$('execLine')?.value||'',type=$('execType')?.value||'';
+  return locations.filter(x=>
+    (!c||x.company===c)&&
+    (!line||x.line===line)&&
+    (!type||Number((x.expected_by_type||{})[type]||0)>0||Number((x.inventoried_by_type||{})[type]||0)>0)
+  );
+}
+function updateExecutiveView(){
+  if(!dashboardData) return;
+  const c=$('execCompany')?.value||'', line=$('execLine')?.value||'', type=$('execType')?.value||'';
+  const noGeoFilters=!c&&!line;
+  const rows=executiveFilteredLocations();
+
+  // Sem Empresa/Linha usamos os denominadores oficiais para os Big Numbers.
+  if(noGeoFilters){
+    const officialRows=(dashboardData.by_type||[]);
+    if(type){
+      const row=officialRows.find(x=>x.type===type);
+      const exp=Number(row?.expected||0), inv=Number(row?.inventoried||0);
+      $('expected').textContent=fmt(exp);
+      $('inventoried').textContent=fmt(inv);
+      $('missing').textContent=fmt(Math.max(0,exp-inv));
+      const coverage=exp?Math.min(100,Math.round(inv/exp*100)):0;
+      $('assetCoverageTop').textContent=coverage+'%';
+      $('inventoryCoverageSmall').textContent=coverage+'% do parque';
+    }else{
+      $('expected').textContent=fmt(dashboardData.totals.expected);
+      $('inventoried').textContent=fmt(dashboardData.inventory.official_inventoried ?? dashboardData.inventory.inventoried);
+      $('missing').textContent=fmt(dashboardData.totals.missing);
+      const coverage=dashboardData.totals.expected?Math.min(100,Math.round((dashboardData.inventory.official_inventoried ?? dashboardData.inventory.inventoried)/dashboardData.totals.expected*100)):0;
+      $('assetCoverageTop').textContent=coverage+'%';
+      $('inventoryCoverageSmall').textContent=coverage+'% do parque';
+    }
+    renderTypeBigNumbers(officialRows);
+  }else{
+    const m=filteredLocationMetrics(rows,type);
+    $('expected').textContent=fmt(m.expected);
+    $('inventoried').textContent=fmt(m.inventoried);
+    $('missing').textContent=fmt(m.missing);
+    const coverage=m.expected?Math.min(100,Math.round(m.inventoried/m.expected*100)):0;
+    $('assetCoverageTop').textContent=coverage+'%';
+    $('inventoryCoverageSmall').textContent=coverage+'% do recorte';
+
+    const dynamicRows=['ATM','VALIDADOR','POS','TDI','BLOQUEIO'].map(t=>{
+      const exp=m.byType[t].e,inv=m.byType[t].i;
+      return {type:t,expected:exp,inventoried:inv,missing:Math.max(0,exp-inv),coverage_pct:exp?Math.round(inv/exp*1000)/10:0};
+    });
+    renderTypeBigNumbers(dynamicRows);
+  }
+
+  if(c||line||type){
+    const fm=filteredLocationMetrics(rows,type);
+    $('inoperative').textContent=fmt(fm.inoperative);
+    $('divergences').textContent=fmt(fm.divergences);
+    if($('inoperativeQuality')) $('inoperativeQuality').textContent=fmt(fm.inoperative);
+    if($('divergencesQuality')) $('divergencesQuality').textContent=fmt(fm.divergences);
+  }else{
+    $('inoperative').textContent=fmt(dashboardData.inventory.inoperative);
+    $('divergences').textContent=fmt(dashboardData.inventory.divergences);
+    if($('inoperativeQuality')) $('inoperativeQuality').textContent=fmt(dashboardData.inventory.inoperative);
+    if($('divergencesQuality')) $('divergencesQuality').textContent=fmt(dashboardData.inventory.divergences);
+  }
+
+  if($('filterContext')){
+    const parts=[c||'Todas empresas',line||'Todas linhas',type?typeLabel(type):'Todos os tipos'];
+    $('filterContext').textContent=parts.join(' · ');
+  }
+  renderCriticalLocations();
+  renderLocations();
+}
+
+function renderCriticalLocations(){
+  const box=$('criticalLocations');if(!box)return;
+  const type=$('execType')?.value||'';
+  const rows=executiveFilteredLocations().map(x=>{
+    const exp=type?Number((x.expected_by_type||{})[type]||0):OFFICIAL_EXEC_TYPES.reduce((a,t)=>a+Number((x.expected_by_type||{})[t]||0),0);
+    const inv=type?Number((x.inventoried_by_type||{})[type]||0):OFFICIAL_EXEC_TYPES.reduce((a,t)=>a+Number((x.inventoried_by_type||{})[t]||0),0);
+    return {...x,_expected:exp,_inventoried:inv,_missing:Math.max(0,exp-inv)};
+  }).filter(x=>x._missing>0).sort((a,b)=>b._missing-a._missing).slice(0,8);
+  box.innerHTML=rows.length?rows.map(x=>`<div class="criticalItem"><div><b>${esc(x.location)}</b><small>${esc(x.company)} · ${esc(x.line)}</small></div><strong>${fmt(x._missing)} faltam</strong></div>`).join(''):'<div class="muted">Nenhuma pendência para os filtros atuais.</div>';
+}
+function applyExecutiveFilterToTable(){
+  const c=$('execCompany')?.value||'',line=$('execLine')?.value||'';
+  if($('fc'))$('fc').value=c;
+  if($('fl')){
+    $('fl').innerHTML='<option value="">Todas</option>'+uniq(locations.filter(x=>!c||x.company===c).map(x=>x.line)).map(x=>`<option>${esc(x)}</option>`).join('');
+    $('fl').value=line;
+  }
+  updateExecutiveView();
+}
 
 function renderLocations(){
+  if(!$('locRows')) return;
   let fs=$('fs').value,fc=$('fc').value,fl=$('fl').value,q=$('fq').value.toUpperCase();
+  const execC=$('execCompany')?.value||'',execL=$('execLine')?.value||'',execType=$('execType')?.value||'';
   let a=locations.filter(x=>
     (!fs||x.survey_status===fs)&&
     (!fc||x.company===fc)&&
     (!fl||x.line===fl)&&
+    (!execC||x.company===execC)&&
+    (!execL||x.line===execL)&&
+    (!execType||Number((x.expected_by_type||{})[execType]||0)>0||Number((x.inventoried_by_type||{})[execType]||0)>0)&&
     (!q||(`${x.location} ${x.line} ${x.company}`).toUpperCase().includes(q))
   );
   $('visibleCount').textContent=`${a.length} localidade(s)`;
 
   $('locRows').innerHTML=a.length?a.map(x=>{
-    let exp=Number(x.expected_total||0) || (x.expected_atm+x.expected_validator+x.expected_pos),
-        inv=x.inventoried||0,
-        p=exp?Math.min(100,Math.round(inv/exp*100)):0;
+    const exp=execType?Number((x.expected_by_type||{})[execType]||0):OFFICIAL_EXEC_TYPES.reduce((s,t)=>s+Number((x.expected_by_type||{})[t]||0),0);
+    const inv=execType?Number((x.inventoried_by_type||{})[execType]||0):OFFICIAL_EXEC_TYPES.reduce((s,t)=>s+Number((x.inventoried_by_type||{})[t]||0),0);
+    const p=exp?Math.min(100,Math.round(inv/exp*100)):0;
     return `<tr>
       <td>${st(x.survey_status)}</td>
-      <td>${x.company}</td>
-      <td>${x.line}</td>
-      <td><b>${x.location}</b></td>
-      <td>${exp}<br><small>${expectedBreakdown(x)}</small></td>
-      <td><b>${inv}</b></td>
+      <td>${esc(x.company)}</td>
+      <td>${esc(x.line)}</td>
+      <td><b>${esc(x.location)}</b></td>
+      <td>${fmt(exp)}<br><small>${execType?typeLabel(execType):expectedBreakdown(x)}</small></td>
+      <td><b>${fmt(inv)}</b></td>
       <td><div class="bar"><i style="width:${p}%"></i></div><small>${p}% do parque-base</small></td>
-      <td>${x.inoperative||0}</td>
+      <td>${fmt(x.divergences||0)}</td>
+      <td>${fmt(x.inoperative||0)}</td>
       <td>${x.survey_status==='CONCLUIDA'?`<button class="secondary" onclick="reopen(${x.id})">Reabrir</button>`:'—'}</td>
     </tr>`;
-  }).join(''):`<tr><td colspan="9">Nenhuma localidade encontrada com os filtros selecionados.</td></tr>`;
+  }).join(''):`<tr><td colspan="10">Nenhuma localidade encontrada com os filtros selecionados.</td></tr>`;
 }
 
 $('fs').onchange=()=>{syncChips();renderLocations()};
@@ -630,26 +775,41 @@ async function reopen(id){
   await loadAll();
 }
 
-if($('execCompany')) $('execCompany').onchange=()=>{renderExecutiveFilters();applyExecutiveFilterToTable();};
+if($('execCompany')) $('execCompany').onchange=()=>{
+  renderExecutiveFilters();
+  applyExecutiveFilterToTable();
+};
 if($('execLine')) $('execLine').onchange=applyExecutiveFilterToTable;
-if($('execType')) $('execType').onchange=()=>{document.querySelectorAll('.equipmentBig').forEach(x=>x.classList.toggle('active',x.dataset.type===$('execType').value));renderCriticalLocations();};
-if($('execReset')) $('execReset').onclick=()=>{$('execCompany').value='';renderExecutiveFilters();$('execLine').value='';$('execType').value='';document.querySelectorAll('.equipmentBig').forEach(x=>x.classList.remove('active'));applyExecutiveFilterToTable();};
-document.querySelectorAll('.equipmentBig').forEach(card=>card.onclick=()=>{const type=card.dataset.type;$('execType').value=$('execType').value===type?'':type;document.querySelectorAll('.equipmentBig').forEach(x=>x.classList.toggle('active',x.dataset.type===$('execType').value));renderCriticalLocations();});
+if($('execType')) $('execType').onchange=()=>{
+  document.querySelectorAll('.equipmentBig').forEach(x=>x.classList.toggle('active',x.dataset.type===$('execType').value));
+  updateExecutiveView();
+};
+if($('execReset')) $('execReset').onclick=()=>{
+  $('execCompany').value='';
+  renderExecutiveFilters();
+  $('execLine').value='';
+  $('execType').value='';
+  document.querySelectorAll('.equipmentBig').forEach(x=>x.classList.remove('active'));
+  applyExecutiveFilterToTable();
+};
+document.querySelectorAll('.equipmentBig').forEach(card=>card.onclick=()=>{
+  const type=card.dataset.type;
+  $('execType').value=$('execType').value===type?'':type;
+  document.querySelectorAll('.equipmentBig').forEach(x=>x.classList.toggle('active',x.dataset.type===$('execType').value));
+  updateExecutiveView();
+});
 
-
-function exportExecutiveCsv(){
-  const rows=executiveFilteredLocations();
-  const header=['Empresa','Linha','Localidade','Status','Previsto','Inventariado','Faltante','Inoperantes'];
-  const data=rows.map(x=>{
-    const exp=Number(x.expected_total||0)||Object.values(x.expected_by_type||{}).reduce((a,b)=>a+Number(b||0),0);
-    const inv=Number(x.inventoried||0);
-    return [x.company,x.line,x.location,x.survey_status,exp,inv,Math.max(0,exp-inv),Number(x.inoperative||0)];
-  });
-  const csv=[header,...data].map(row=>row.map(v=>'"'+String(v??'').replaceAll('"','""')+'"').join(';')).join('\r\n');
-  const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'});
-  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='autopass_dashboard_'+new Date().toISOString().slice(0,10)+'.csv';a.click();URL.revokeObjectURL(a.href);
+function exportExecutiveExcel(){
+  const params=new URLSearchParams();
+  const company=$('execCompany')?.value||'';
+  const line=$('execLine')?.value||'';
+  const type=$('execType')?.value||'';
+  if(company) params.set('company',company);
+  if(line) params.set('line',line);
+  if(type) params.set('type',type);
+  window.location.href='/api/export/excel'+(params.toString()?'?'+params.toString():'');
 }
-if($('exportExecutive')) $('exportExecutive').onclick=exportExecutiveCsv;
+if($('exportExecutive')) $('exportExecutive').onclick=exportExecutiveExcel;
 
 loadAll();
 setInterval(loadAll,120000);

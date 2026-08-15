@@ -51,3 +51,18 @@ textarea{min-height:100px;resize:vertical}small,.muted{color:var(--muted)}
 .heroActions{display:flex;gap:8px;align-items:center;justify-content:flex-end;flex-wrap:wrap}
 .diagnosticItem{border-style:dashed}
 @media(max-width:760px){.heroActions{justify-content:flex-start}.heroActions .secondary{width:auto}}
+
+/* Dashboard V3 */
+.filterContext{
+  margin:10px 4px 0;
+  font-size:12px;
+  font-weight:700;
+  color:#475569;
+}
+.heroActions{flex-wrap:wrap}
+.equipmentBig{cursor:pointer;transition:transform .12s ease,box-shadow .12s ease}
+.equipmentBig:hover{transform:translateY(-1px);box-shadow:0 8px 22px rgba(15,23,42,.09)}
+.equipmentBig.active{outline:3px solid rgba(37,99,235,.18);box-shadow:0 0 0 2px rgba(37,99,235,.18)}
+@media(max-width:900px){
+  .executiveKpis,.equipmentBigNumbers{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
