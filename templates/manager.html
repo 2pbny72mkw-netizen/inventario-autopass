@@ -46,6 +46,15 @@
 <div id="filterContext" class="filterContext">Todas empresas · Todas linhas · Todos os tipos</div></section>
 
 
+<section class="card executiveAnalytics" id="executiveAnalytics">
+  <div class="sectionHead"><div><h2>Visão analítica do recorte</h2><p class="muted">Indicadores e gráficos acompanham Empresa, Linha e Tipo selecionados acima.</p></div><span class="tag" id="analyticsContext">Visão geral</span></div>
+  <div class="analyticsGrid">
+    <article class="analyticsPanel"><span>Cobertura do recorte</span><b id="analyticsCoverage">0%</b><div class="executiveTrack"><i id="analyticsCoverageBar"></i></div><small id="analyticsCoverageText">0 de 0 inventariados</small></article>
+    <article class="analyticsPanel"><span>Qualidade</span><div class="analyticPair"><div><b id="analyticsDivergences">0</b><small>Divergências</small></div><div><b id="analyticsInoperative">0</b><small>Inoperantes</small></div></div></article>
+    <article class="analyticsPanel"><span>Composição do parque</span><div id="analyticsTypes" class="analyticsTypes"></div></article>
+  </div>
+</section>
+
 <section class="card evidenceExecutiveStrip" id="evidenceExecutiveStrip">
   <div class="sectionHead">
     <div>
@@ -225,5 +234,5 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
         integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
         crossorigin=""></script>
-<script src="{{url_for('static',filename='manager.js')}}?v=dashboard-v15"></script>
+<script src="{{url_for('static',filename='manager.js')}}?v=dashboard-v17"></script>
 {% endblock %}
