@@ -1,4 +1,4 @@
-const VERSION='autopass-v8-0-auto';
+const VERSION='autopass-v8-0-1';
 const SHELL=`${VERSION}-shell`;
 const DATA=`${VERSION}-data`;
 const APP_SHELL=[

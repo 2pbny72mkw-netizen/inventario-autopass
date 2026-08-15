@@ -1,4 +1,4 @@
-window.AUTOPASS_PWA_VERSION='pwa-v8-0-auto';
+window.AUTOPASS_PWA_VERSION='pwa-v8-0-1';
 window.AUTOPASS_TECHNICIAN_VERSION = '1408-5';
 console.log('AUTOPASS technician.js 1408-5 carregado');
 
@@ -1005,5 +1005,26 @@ function showMsg(t, ok) {
     showMsg('Não foi possível iniciar o armazenamento offline neste navegador.', false);
   }
 })();
-\n\nfunction startTechnicianPositionSharing(){\n  if(!navigator.geolocation) return;\n  let lastSent=0;\n  navigator.geolocation.watchPosition(async pos=>{\n    const now=Date.now();\n    if(now-lastSent<120000) return;\n    lastSent=now;\n    try{\n      await fetch('/api/tecnico/position',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({\n        latitude:pos.coords.latitude,longitude:pos.coords.longitude,accuracy:pos.coords.accuracy\n      })});\n    }catch(_e){}\n  },()=>{}, {enableHighAccuracy:true,maximumAge:60000,timeout:15000});\n}\n
+
+function startTechnicianPositionSharing(){
+  if(!navigator.geolocation) return;
+  let lastSent=0;
+  navigator.geolocation.watchPosition(async pos=>{
+    const now=Date.now();
+    if(now-lastSent<120000) return;
+    lastSent=now;
+    try{
+      await fetch('/api/tecnico/position',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          latitude:pos.coords.latitude,
+          longitude:pos.coords.longitude,
+          accuracy:pos.coords.accuracy
+        })
+      });
+    }catch(_e){}
+  },()=>{}, {enableHighAccuracy:true,maximumAge:60000,timeout:15000});
+}
+
 startTechnicianPositionSharing();
