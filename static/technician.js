@@ -1,6 +1,6 @@
-window.AUTOPASS_PWA_VERSION='pwa-v10';
-window.AUTOPASS_TECHNICIAN_VERSION = 'v10-field-intelligence';
-console.log('AUTOPASS technician.js V10 carregado');
+window.AUTOPASS_PWA_VERSION='pwa-v15';
+window.AUTOPASS_TECHNICIAN_VERSION = 'v15-assisted-field';
+console.log('AUTOPASS technician.js V15 carregado');
 
 let locations = [], current = null, assets = [];
 let currentInventoryRows = [];
@@ -382,6 +382,8 @@ $('location').onchange = async () => {
   $('location_id').value = current?.id || '';
 
   if (current) {
+    document.getElementById('fieldStep1')?.classList.add('done');
+    document.getElementById('fieldStep2')?.classList.add('active');
     showInfo();
     updateGpsValidation();
     if(smartSelectionPending){ smartSelectionPending=false; registerSmartCheckin(current); }
@@ -1226,3 +1228,12 @@ if($('teamLocationToggle')){
   }
 }
 
+
+// V15 — estado simples do App de Campo
+function updateFieldHeroConnection(){
+  const el=document.getElementById('fieldHeroConnection'),dot=document.getElementById('fieldOnlineDot');
+  if(!el||!dot)return; const online=navigator.onLine; el.textContent=online?'Online':'Offline'; dot.className=online?'online':'offline';
+}
+window.addEventListener('online',updateFieldHeroConnection); window.addEventListener('offline',updateFieldHeroConnection); updateFieldHeroConnection();
+document.getElementById('equipment_type')?.addEventListener('change',()=>{if(document.getElementById('equipment_type').value)document.getElementById('fieldStep2')?.classList.add('done');});
+document.querySelector('input[name="attachments"]')?.addEventListener('change',e=>{if(e.target.files?.length)document.getElementById('fieldStep3')?.classList.add('done');});

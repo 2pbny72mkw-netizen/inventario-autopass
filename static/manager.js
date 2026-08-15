@@ -412,10 +412,10 @@ function renderGpsMap(items){
 
     marker.bindPopup(`
       <div style="min-width:220px">
-        <b>${esc(x.location_name||'Localidade')}</b><br>
+        <b>${esc(x._team_current?'Posição atual do técnico':(x.location_name||'Localidade'))}</b><br>
         <small>${esc(x.company||'')} · ${esc(x.line||'')}</small>
         <hr style="border:0;border-top:1px solid #e5e7eb;margin:8px 0">
-        <b>${esc(x.equipment_type||'Equipamento')} ${esc(x.asset_identifier||'')}</b><br>
+        ${x._team_current?'':`<b>${esc(x.equipment_type||'Equipamento')} ${esc(x.asset_identifier||'')}</b><br>`}
         Técnico: ${esc(x.technician||'—')}<br>
         Coleta: ${esc(when)}<br>
         Precisão GPS: <b>${esc(accuracyText)}</b><br>
@@ -548,14 +548,22 @@ function renderGlobalDashboard(d){
 
 let gpsLoading=false;
 async function loadGpsDeferred(){
-  if(gpsLoading) return;
-  gpsLoading=true;
+  if(gpsLoading) return; gpsLoading=true;
   try{
-    const r=await fetch('/api/gps/recent?limit=100',{cache:'no-store'});
-    if(!r.ok) throw new Error('GPS '+r.status);
-    renderGps(await r.json());
-  }catch(err){console.warn('GPS não carregado',err)}
-  finally{gpsLoading=false}
+    const [gpsR,teamR]=await Promise.all([fetch('/api/gps/recent?limit=100',{cache:'no-store'}),fetch('/api/equipes/status',{cache:'no-store'})]);
+    if(!gpsR.ok) throw new Error('GPS '+gpsR.status);
+    const gps=await gpsR.json(); renderGps(gps);
+    if(teamR.ok){ const team=await teamR.json(); renderTeamPositionsOnDashboard(team.technicians||team.rows||team.items||[]); }
+  }catch(err){console.warn('GPS não carregado',err)} finally{gpsLoading=false}
+}
+
+function renderTeamPositionsOnDashboard(rows){
+  const items=(rows||[]).filter(x=>Number.isFinite(Number(x.latitude))&&Number.isFinite(Number(x.longitude))).map(x=>({
+    latitude:x.latitude,longitude:x.longitude,gps_accuracy:x.accuracy,gps_captured_at:x.captured_at,created_at:x.captured_at,
+    technician:x.name||x.technician||'Técnico',technician_code:x.user_code||'',technician_photo_url:x.photo_url||'',
+    location_name:'Posição atual',company:'Equipe de campo',line:x.shift||'',equipment_type:'Última posição autorizada',asset_identifier:'',_team_current:true
+  }));
+  renderGpsMap(items);
 }
 
 function renderGps(g){
