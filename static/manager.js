@@ -1,5 +1,5 @@
-window.AUTOPASS_MANAGER_VERSION='dashboard-v2-2';
-console.log('AUTOPASS Dashboard Executivo V2.2 carregado');
+window.AUTOPASS_MANAGER_VERSION='dashboard-v2-5';
+console.log('AUTOPASS Dashboard Executivo V2.5 carregado');
 let locations=[];
 let dashboardData=null;
 const $=id=>document.getElementById(id);
@@ -400,65 +400,81 @@ function renderGpsMap(items){
 }
 
 async function loadAll(){
-  const [d,l,g]=await Promise.all([
-    fetch('/api/dashboard').then(r=>r.json()),
-    fetch('/api/locations').then(r=>r.json()),
-    fetch('/api/gps/recent?limit=100').then(r=>r.json())
-  ]);
-  locations=l;
-  dashboardData=d;
-  renderMapLocationSelect();
-  renderExecutiveFilters();
+  const started=performance.now();
+  if($('lastUpdate')) $('lastUpdate').textContent='Atualizando indicadores...';
+  try{
+    // Fase 1: o painel executivo aparece primeiro. GPS/mapa não bloqueia os KPIs.
+    const [d,l]=await Promise.all([
+      fetch('/api/dashboard',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error('Dashboard '+r.status);return r.json()}),
+      fetch('/api/locations',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error('Localidades '+r.status);return r.json()})
+    ]);
+    locations=l;
+    dashboardData=d;
+    renderMapLocationSelect();
+    renderExecutiveFilters();
 
-  $('total').textContent=fmt(d.totals.total);
-  $('pending').textContent=fmt(d.totals.pending);
-  $('progress').textContent=fmt(d.totals.progress);
-  $('completed').textContent=fmt(d.totals.completed);
-  $('expected').textContent=fmt(d.totals.expected);
-  $('inventoried').textContent=fmt(d.inventory.inventoried);
-  if($('missing')) $('missing').textContent=fmt(d.totals.missing||0);
-  $('inoperative').textContent=fmt(d.inventory.inoperative);
-  $('divergences').textContent=fmt(d.inventory.divergences);
-  if($('inoperativeQuality')) $('inoperativeQuality').textContent=fmt(d.inventory.inoperative);
-  if($('divergencesQuality')) $('divergencesQuality').textContent=fmt(d.inventory.divergences);
+    $('total').textContent=fmt(d.totals.total);
+    $('pending').textContent=fmt(d.totals.pending);
+    $('progress').textContent=fmt(d.totals.progress);
+    $('completed').textContent=fmt(d.totals.completed);
+    $('expected').textContent=fmt(d.totals.expected);
+    $('inventoried').textContent=fmt(d.inventory.inventoried);
+    if($('missing')) $('missing').textContent=fmt(d.totals.missing||0);
+    $('inoperative').textContent=fmt(d.inventory.inoperative);
+    $('divergences').textContent=fmt(d.inventory.divergences);
+    if($('inoperativeQuality')) $('inoperativeQuality').textContent=fmt(d.inventory.inoperative);
+    if($('divergencesQuality')) $('divergencesQuality').textContent=fmt(d.inventory.divergences);
+    if($('unclassified')) $('unclassified').textContent=fmt(d.inventory.unclassified||0);
 
-  const total=Number(d.totals.total||0), done=Number(d.totals.completed||0),
-        prog=Number(d.totals.progress||0), pend=Number(d.totals.pending||0),
-        expected=Number(d.totals.expected||0), inventoried=Number(d.inventory.inventoried||0);
-  const pct=total?Math.round(done/total*100):0;
-  const coverage=expected?Math.min(100,Math.round(inventoried/expected*100)):0;
+    const total=Number(d.totals.total||0), done=Number(d.totals.completed||0),
+          prog=Number(d.totals.progress||0), pend=Number(d.totals.pending||0),
+          expected=Number(d.totals.expected||0), inventoried=Number(d.inventory.inventoried||0);
+    const pct=total?Math.round(done/total*100):0;
+    const coverage=expected?Math.min(100,Math.round(inventoried/expected*100)):0;
 
-  $('overallPct').textContent=pct+'%';
-  $('donutText').textContent=pct+'%';
-  $('legendDone').textContent=done;
-  $('legendProgress').textContent=prog;
-  $('legendPending').textContent=pend;
-  if($('openLocations')) $('openLocations').textContent=pend+prog;
-  $('assetCoverage').textContent=coverage+'%';
-  if($('assetCoverageTop')) $('assetCoverageTop').textContent=coverage+'%';
-  if($('inventoryCoverageSmall')) $('inventoryCoverageSmall').textContent=coverage+'% do parque';
-  renderTypeBigNumbers(d.by_type||[]);
-  renderTypeProgress(d.by_type||[]);
+    $('overallPct').textContent=pct+'%';
+    $('donutText').textContent=pct+'%';
+    $('legendDone').textContent=done;
+    $('legendProgress').textContent=prog;
+    $('legendPending').textContent=pend;
+    $('assetCoverage').textContent=coverage+'%';
+    if($('assetCoverageTop')) $('assetCoverageTop').textContent=coverage+'%';
+    if($('inventoryCoverageSmall')) $('inventoryCoverageSmall').textContent=coverage+'% do parque';
+    renderTypeBigNumbers(d.by_type||[]);
+    renderTypeProgress(d.by_type||[]);
 
-  const dDone=total?(done/total*360):0;
-  const dProg=total?(prog/total*360):0;
-  $('donut').style.background=`conic-gradient(
-    var(--green) 0deg ${dDone}deg,
-    var(--amber) ${dDone}deg ${dDone+dProg}deg,
-    #e1e6ed ${dDone+dProg}deg 360deg
-  )`;
+    const dDone=total?(done/total*360):0;
+    const dProg=total?(prog/total*360):0;
+    $('donut').style.background=`conic-gradient(var(--green) 0deg ${dDone}deg,var(--amber) ${dDone}deg ${dDone+dProg}deg,#e1e6ed ${dDone+dProg}deg 360deg)`;
 
-  if(!$('fc').dataset.loaded){
-    $('fc').innerHTML='<option value="">Todas</option>'+uniq(l.map(x=>x.company)).map(x=>`<option>${x}</option>`).join('');
-    $('fc').dataset.loaded='1';
+    if(!$('fc').dataset.loaded){
+      $('fc').innerHTML='<option value="">Todas</option>'+uniq(l.map(x=>x.company)).map(x=>`<option>${esc(x)}</option>`).join('');
+      $('fc').dataset.loaded='1';
+    }
+    renderCompany(d.by_company||[]);
+    renderCompanyBars(d.by_company||[]);
+    renderLocations();
+    renderCriticalLocations();
+    if($('lastUpdate')) $('lastUpdate').textContent='Atualizado em '+new Date().toLocaleString('pt-BR')+` · ${((performance.now()-started)/1000).toFixed(1)}s`;
+
+    // Fase 2: GPS/mapa é carregado depois, sem travar os números executivos.
+    setTimeout(loadGpsDeferred,80);
+  }catch(err){
+    console.error('Falha ao carregar dashboard',err);
+    if($('lastUpdate')) $('lastUpdate').textContent='Falha ao atualizar — clique em Atualizar agora';
   }
+}
 
-  renderGps(g);
-  renderCompany(d.by_company);
-  renderCompanyBars(d.by_company);
-  renderLocations();
-  renderCriticalLocations();
-  $('lastUpdate').textContent='Atualizado em '+new Date().toLocaleString('pt-BR');
+let gpsLoading=false;
+async function loadGpsDeferred(){
+  if(gpsLoading) return;
+  gpsLoading=true;
+  try{
+    const r=await fetch('/api/gps/recent?limit=100',{cache:'no-store'});
+    if(!r.ok) throw new Error('GPS '+r.status);
+    renderGps(await r.json());
+  }catch(err){console.warn('GPS não carregado',err)}
+  finally{gpsLoading=false}
 }
 
 function renderGps(g){
@@ -561,7 +577,7 @@ function renderTypeBigNumbers(rows){ rows.forEach(x=>{ const id=x.type; if($('ty
 function renderTypeProgress(rows){ const box=$('typeProgressList'); if(!box)return; box.innerHTML=rows.map(x=>`<div class="typeProgressRow"><b>${esc(x.type==='VALIDADOR'?'Validador':x.type==='BLOQUEIO'?'Bloqueio':x.type)}</b><div class="companyTrack"><i style="width:${Math.min(100,Number(x.coverage_pct||0))}%"></i></div><small>${x.coverage_pct}%</small></div>`).join(''); }
 function renderExecutiveFilters(){ const c=$('execCompany'),line=$('execLine'); if(!c||!line)return; const oldC=c.value,oldL=line.value; c.innerHTML='<option value="">Todas</option>'+uniq(locations.map(x=>x.company)).map(x=>`<option>${esc(x)}</option>`).join(''); if([...c.options].some(o=>o.value===oldC))c.value=oldC; const avail=locations.filter(x=>!c.value||x.company===c.value); line.innerHTML='<option value="">Todas</option>'+uniq(avail.map(x=>x.line)).map(x=>`<option>${esc(x)}</option>`).join(''); if([...line.options].some(o=>o.value===oldL))line.value=oldL; }
 function executiveFilteredLocations(){ const c=$('execCompany')?.value||'',line=$('execLine')?.value||'',type=$('execType')?.value||''; return locations.filter(x=>(!c||x.company===c)&&(!line||x.line===line)&&(!type||Number((x.expected_by_type||{})[type]||0)>0)); }
-function renderCriticalLocations(){ const box=$('criticalLocations');if(!box)return; const rows=executiveFilteredLocations().map(x=>{const exp=Number(x.expected_total||0)||(x.expected_atm+x.expected_validator+x.expected_pos);return {...x,_missing:Math.max(0,exp-Number(x.inventoried||0))}}).filter(x=>x._missing>0).sort((a,b)=>b._missing-a._missing).slice(0,6); box.innerHTML=rows.length?rows.map(x=>`<div class="criticalItem"><div><b>${esc(x.location)}</b><small>${esc(x.company)} · ${esc(x.line)}</small></div><strong>${fmt(x._missing)} faltam</strong></div>`).join(''):'<div class="muted">Nenhuma pendência para os filtros atuais.</div>'; }
+function renderCriticalLocations(){ const box=$('criticalLocations');if(!box)return; const rows=executiveFilteredLocations().map(x=>{const exp=Number(x.expected_total||0)||Object.values(x.expected_by_type||{}).reduce((a,b)=>a+Number(b||0),0)||(Number(x.expected_atm||0)+Number(x.expected_validator||0)+Number(x.expected_pos||0));return {...x,_missing:Math.max(0,exp-Number(x.inventoried||0))}}).filter(x=>x._missing>0).sort((a,b)=>b._missing-a._missing).slice(0,6); box.innerHTML=rows.length?rows.map(x=>`<div class="criticalItem"><div><b>${esc(x.location)}</b><small>${esc(x.company)} · ${esc(x.line)}</small></div><strong>${fmt(x._missing)} faltam</strong></div>`).join(''):'<div class="muted">Nenhuma pendência para os filtros atuais.</div>'; }
 function applyExecutiveFilterToTable(){ const c=$('execCompany')?.value||'',line=$('execLine')?.value||''; if($('fc'))$('fc').value=c; if($('fl')){$('fl').innerHTML='<option value="">Todas</option>'+uniq(locations.filter(x=>!c||x.company===c).map(x=>x.line)).map(x=>`<option>${esc(x)}</option>`).join('');$('fl').value=line;} renderLocations();renderCriticalLocations(); }
 
 function renderLocations(){
@@ -620,5 +636,20 @@ if($('execType')) $('execType').onchange=()=>{document.querySelectorAll('.equipm
 if($('execReset')) $('execReset').onclick=()=>{$('execCompany').value='';renderExecutiveFilters();$('execLine').value='';$('execType').value='';document.querySelectorAll('.equipmentBig').forEach(x=>x.classList.remove('active'));applyExecutiveFilterToTable();};
 document.querySelectorAll('.equipmentBig').forEach(card=>card.onclick=()=>{const type=card.dataset.type;$('execType').value=$('execType').value===type?'':type;document.querySelectorAll('.equipmentBig').forEach(x=>x.classList.toggle('active',x.dataset.type===$('execType').value));renderCriticalLocations();});
 
+
+function exportExecutiveCsv(){
+  const rows=executiveFilteredLocations();
+  const header=['Empresa','Linha','Localidade','Status','Previsto','Inventariado','Faltante','Inoperantes'];
+  const data=rows.map(x=>{
+    const exp=Number(x.expected_total||0)||Object.values(x.expected_by_type||{}).reduce((a,b)=>a+Number(b||0),0);
+    const inv=Number(x.inventoried||0);
+    return [x.company,x.line,x.location,x.survey_status,exp,inv,Math.max(0,exp-inv),Number(x.inoperative||0)];
+  });
+  const csv=[header,...data].map(row=>row.map(v=>'"'+String(v??'').replaceAll('"','""')+'"').join(';')).join('\r\n');
+  const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='autopass_dashboard_'+new Date().toISOString().slice(0,10)+'.csv';a.click();URL.revokeObjectURL(a.href);
+}
+if($('exportExecutive')) $('exportExecutive').onclick=exportExecutiveCsv;
+
 loadAll();
-setInterval(loadAll,60000);
+setInterval(loadAll,120000);
