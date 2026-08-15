@@ -1,5 +1,5 @@
-window.AUTOPASS_MANAGER_VERSION='dashboard-v4-1';
-console.log('AUTOPASS Dashboard Executivo V4.1 carregado');
+window.AUTOPASS_MANAGER_VERSION='dashboard-v4-1-1';
+console.log('AUTOPASS Dashboard Executivo V4.1.1 carregado');
 let locations=[];
 let dashboardData=null;
 const $=id=>document.getElementById(id);
@@ -430,6 +430,33 @@ function renderGpsMap(items){
 
   setTimeout(()=>map.invalidateSize(),50);
 }
+
+
+function setMapFullscreen(on){
+  const mapEl=$('gpsMap');
+  const btn=$('toggleMapFullscreenBtn');
+  if(!mapEl) return;
+
+  mapEl.classList.toggle('gpsMapFullscreen',!!on);
+  document.body.classList.toggle('mapFullscreenOpen',!!on);
+  if(btn) btn.textContent=on?'Sair da tela cheia':'Expandir mapa';
+
+  setTimeout(()=>{
+    try{ gpsMap?.invalidateSize(); }catch(_e){}
+  },80);
+}
+
+if($('toggleMapFullscreenBtn')){
+  $('toggleMapFullscreenBtn').addEventListener('click',()=>{
+    setMapFullscreen(!$('gpsMap')?.classList.contains('gpsMapFullscreen'));
+  });
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape' && $('gpsMap')?.classList.contains('gpsMapFullscreen')){
+    setMapFullscreen(false);
+  }
+});
 
 async function loadAll(){
   const started=performance.now();

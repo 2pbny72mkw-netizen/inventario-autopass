@@ -105,3 +105,25 @@ textarea{min-height:100px;resize:vertical}small,.muted{color:var(--muted)}
   .evidenceGrid,.evidenceFilters{grid-template-columns:1fr}
   .mediaGallery{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
+
+
+/* V4.1.1 - mapa em tela cheia */
+body.mapFullscreenOpen{overflow:hidden}
+#gpsMap.gpsMapFullscreen{
+  position:fixed !important;
+  inset:0 !important;
+  z-index:9998 !important;
+  width:100vw !important;
+  height:100vh !important;
+  margin:0 !important;
+  border:0 !important;
+  border-radius:0 !important;
+  background:#fff;
+}
+body.mapFullscreenOpen #toggleMapFullscreenBtn{
+  position:fixed;
+  right:18px;
+  top:18px;
+  z-index:10000;
+  box-shadow:0 6px 18px rgba(0,0,0,.18);
+}
