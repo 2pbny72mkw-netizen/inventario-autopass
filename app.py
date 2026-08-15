@@ -374,14 +374,57 @@ def manager():
 def health():
     try:
         db.session.execute(db.text("SELECT 1"))
-        return jsonify({"ok": True, "database": "connected", "release": "campo-1408-v2"})
+        return jsonify({"ok": True, "database": "connected", "release": "v1-operacional-dashboard-v2"})
     except Exception as exc:
         return jsonify({"ok": False, "database": "error", "detail": str(exc)}), 500
+
+
+def _canonical_equipment_type(value):
+    value = normalize(value)
+    aliases = {
+        "ATM": "ATM", "VALIDADOR": "VALIDADOR", "VALIDADOR DE RECARGA": "VALIDADOR",
+        "POS": "POS", "POS DE BILHETERIA": "POS", "TDI": "TDI", "BLOQUEIO": "BLOQUEIO"
+    }
+    return aliases.get(value, value or "OUTRO")
+
+
+def _base_asset_matches_location(asset, loc):
+    if "INATIVO" in normalize(asset.base_status):
+        return False
+    asset_line = re.sub(r"^L(?=\\d{2}\\s*-)", "", normalize(asset.line))
+    loc_line = re.sub(r"^L(?=\\d{2}\\s*-)", "", normalize(loc.line))
+    if asset_line != loc_line:
+        return False
+    ac, lc = normalize(asset.company), normalize(loc.company)
+    if ac and lc and lc not in ac and ac not in lc:
+        return False
+    station_text = normalize(loc.location)
+    station_name = normalize(asset.locality)
+    code = normalize(asset.location_code or asset.station_code)
+    return bool((station_name and (station_name in station_text or station_text.endswith(station_name))) or
+                (code and station_text.startswith(code + " ")))
+
+
+def _expected_assets_by_location():
+    locations = Location.query.all()
+    result = {loc.id: {"ATM":0,"VALIDADOR":0,"POS":0,"TDI":0,"BLOQUEIO":0} for loc in locations}
+    assets = BaseAsset.query.all()
+    for asset in assets:
+        qty = max(1, int(asset.quantity or 1))
+        typ = _canonical_equipment_type(asset.equipment_type)
+        if typ not in {"ATM","VALIDADOR","POS","TDI","BLOQUEIO"}:
+            continue
+        for loc in locations:
+            if _base_asset_matches_location(asset, loc):
+                result[loc.id][typ] += qty
+                break
+    return result
 
 
 @app.get("/api/locations")
 @login_required
 def api_locations():
+    expected_map = _expected_assets_by_location()
     inventoried = func.count(Inventory.id)
     operational = func.coalesce(func.sum(case((Inventory.operational_status == "Operacional", 1), else_=0)), 0)
     inoperative = func.coalesce(func.sum(case((Inventory.operational_status == "Inoperante", 1), else_=0)), 0)
@@ -410,6 +453,8 @@ def api_locations():
             "expected_atm": loc.expected_atm,
             "expected_validator": loc.expected_validator,
             "expected_pos": loc.expected_pos,
+            "expected_by_type": expected_map.get(loc.id, {}),
+            "expected_total": sum(expected_map.get(loc.id, {}).values()),
             "survey_status": loc.survey_status,
             "started_at": loc.started_at.isoformat(timespec="seconds") if loc.started_at else None,
             "completed_at": loc.completed_at.isoformat(timespec="seconds") if loc.completed_at else None,
@@ -939,52 +984,41 @@ def dashboard():
     progress = Location.query.filter_by(survey_status="EM ANDAMENTO").count()
     completed = Location.query.filter_by(survey_status="CONCLUIDA").count()
 
-    expected = db.session.query(
-        func.coalesce(
-            func.sum(Location.expected_atm + Location.expected_validator + Location.expected_pos), 0
-        )
-    ).scalar() or 0
+    expected_map = _expected_assets_by_location()
+    expected_by_type = {"ATM":0,"VALIDADOR":0,"POS":0,"TDI":0,"BLOQUEIO":0}
+    for counts in expected_map.values():
+        for typ in expected_by_type:
+            expected_by_type[typ] += int(counts.get(typ,0) or 0)
 
+    inv_rows = db.session.query(Inventory.equipment_type, func.count(Inventory.id)).group_by(Inventory.equipment_type).all()
+    inventoried_by_type = {"ATM":0,"VALIDADOR":0,"POS":0,"TDI":0,"BLOQUEIO":0}
+    for typ, count in inv_rows:
+        canonical = _canonical_equipment_type(typ)
+        if canonical in inventoried_by_type:
+            inventoried_by_type[canonical] += int(count or 0)
+
+    expected = sum(expected_by_type.values())
     inventoried = Inventory.query.count()
     inoperative = Inventory.query.filter_by(operational_status="Inoperante").count()
-    divergences = Inventory.query.filter(
-        Inventory.divergence.isnot(None),
-        Inventory.divergence.notin_(["", "Não", "Nao"])
-    ).count()
+    divergences = Inventory.query.filter(Inventory.divergence.isnot(None), Inventory.divergence.notin_(["", "Não", "Nao"])).count()
 
-    companies = (
-        db.session.query(
-            Location.company.label("company"),
-            func.count(Location.id).label("total"),
-            func.sum(case((Location.survey_status == "PENDENTE", 1), else_=0)).label("pending"),
-            func.sum(case((Location.survey_status == "EM ANDAMENTO", 1), else_=0)).label("progress"),
-            func.sum(case((Location.survey_status == "CONCLUIDA", 1), else_=0)).label("completed")
-        )
-        .group_by(Location.company)
-        .order_by(Location.company)
-        .all()
-    )
+    by_type=[]
+    for typ in ["ATM","VALIDADOR","POS","TDI","BLOQUEIO"]:
+        exp=expected_by_type[typ]; inv=inventoried_by_type[typ]
+        by_type.append({"type":typ,"expected":exp,"inventoried":inv,"missing":max(0,exp-inv),"coverage_pct":round(min(100,(inv/exp*100)),1) if exp else 0})
+
+    companies = (db.session.query(Location.company.label("company"), func.count(Location.id).label("total"),
+        func.sum(case((Location.survey_status == "PENDENTE", 1), else_=0)).label("pending"),
+        func.sum(case((Location.survey_status == "EM ANDAMENTO", 1), else_=0)).label("progress"),
+        func.sum(case((Location.survey_status == "CONCLUIDA", 1), else_=0)).label("completed"))
+        .group_by(Location.company).order_by(Location.company).all())
 
     return jsonify({
-        "totals": {
-            "total": total,
-            "pending": pending,
-            "progress": progress,
-            "completed": completed,
-            "expected": int(expected)
-        },
-        "inventory": {
-            "inventoried": inventoried,
-            "inoperative": inoperative,
-            "divergences": divergences
-        },
-        "by_company": [{
-            "company": x.company,
-            "total": int(x.total or 0),
-            "pending": int(x.pending or 0),
-            "progress": int(x.progress or 0),
-            "completed": int(x.completed or 0),
-        } for x in companies]
+        "release":"v1-operacional-dashboard-v2",
+        "totals":{"total":total,"pending":pending,"progress":progress,"completed":completed,"expected":int(expected),"missing":max(0,int(expected)-inventoried)},
+        "inventory":{"inventoried":inventoried,"inoperative":inoperative,"divergences":divergences},
+        "by_type":by_type,
+        "by_company":[{"company":x.company,"total":int(x.total or 0),"pending":int(x.pending or 0),"progress":int(x.progress or 0),"completed":int(x.completed or 0)} for x in companies]
     })
 
 
