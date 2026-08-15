@@ -1,6 +1,6 @@
-window.AUTOPASS_PWA_VERSION='pwa-v9-0';
-window.AUTOPASS_TECHNICIAN_VERSION = 'v9-0-location-intelligence';
-console.log('AUTOPASS technician.js V9 carregado');
+window.AUTOPASS_PWA_VERSION='pwa-v10';
+window.AUTOPASS_TECHNICIAN_VERSION = 'v10-field-intelligence';
+console.log('AUTOPASS technician.js V10 carregado');
 
 let locations = [], current = null, assets = [];
 let currentInventoryRows = [];
@@ -11,10 +11,22 @@ const uniq = a => [...new Set(a)].sort((x, y) => x.localeCompare(y, 'pt-BR'));
 const fill = (el, a, label = 'Selecione') =>
   el.innerHTML = `<option value="">${label}</option>` + a.map(x => `<option>${x}</option>`).join('');
 
-const NEARBY_RADIUS_M = 6000;
-const GPS_WARN_M = 250;
-const GPS_MAX_M = 600;
+let NEARBY_RADIUS_M = 3000;
+let GPS_WARN_M = 250;
+let GPS_MAX_M = 600;
+let GPS_MAX_ACCURACY_M = 80;
 let lastNearbyGps = null;
+async function loadFieldConfig(){
+  try{
+    const r=await fetch('/api/campo/config',{cache:'no-store'}); const j=await r.json();
+    if(r.ok&&j.ok){
+      NEARBY_RADIUS_M=Number(j.nearby_radius_m)||3000;
+      GPS_WARN_M=Number(j.gps_warn_distance_m)||250;
+      GPS_MAX_M=Number(j.gps_max_distance_m)||600;
+      GPS_MAX_ACCURACY_M=Number(j.gps_max_accuracy_m)||80;
+    }
+  }catch(_){}
+}
 
 function haversineMeters(lat1,lon1,lat2,lon2){
   const R=6371000, toRad=x=>x*Math.PI/180;
@@ -42,7 +54,7 @@ function groupNearbyStations(position){
     if(!groups.has(key)) groups.set(key,{name:loc.location,distance,entries:[]});
     const g=groups.get(key); g.distance=Math.min(g.distance,distance); g.entries.push({...loc,_distance:distance});
   }
-  return [...groups.values()].sort((a,b)=>a.distance-b.distance);
+  return [...groups.values()].filter(g=>g.distance<=NEARBY_RADIUS_M).sort((a,b)=>a.distance-b.distance);
 }
 function renderNearbyStations(position=lastNearbyGps||lastGps){
   const box=$('nearbyStations'),status=$('nearbyStatus'); if(!box||!status) return;
@@ -51,7 +63,7 @@ function renderNearbyStations(position=lastNearbyGps||lastGps){
   status.textContent=groups.length?`${groups.length} estação(ões) próxima(s) em até ${(NEARBY_RADIUS_M/1000).toFixed(0)} km. Toque na estação correta.`:'Nenhuma estação referenciada encontrada próxima. Use “Outra localidade / ponto externo”.';
   box.innerHTML=groups.slice(0,12).map((g,i)=>{
     const lines=[...new Set(g.entries.map(x=>`${x.company} · ${x.line}`))];
-    return `<button type="button" class="nearbyStationBtn ${g.entries.length>1?'integrated':''}" data-nearby-index="${i}">
+    return `<button type="button" class="nearbyStationBtn ${i===0?'closest ':''}${g.entries.length>1?'integrated':''}" data-nearby-index="${i}">
       <b>${escapeHtml(g.name)}</b><small>${escapeHtml(lines.slice(0,3).join(' • '))}${lines.length>3?' • +'+(lines.length-3):''}</small>
       <small class="distance">aprox. ${Math.round(g.distance)} m${g.entries.length>1?` · ${g.entries.length} opções de linha`:''}</small></button>`;
   }).join('');
@@ -65,8 +77,24 @@ function chooseNearbyGroup(group){
   panel.innerHTML=`<b>${escapeHtml(group.name)} é uma estação integrada.</b><div class="muted">Escolha a linha/operação onde o inventário está sendo realizado.</div><div class="stationLineChoices">${group.entries.map(x=>`<button type="button" class="secondary" data-loc-id="${x.id}">${escapeHtml(x.company)} · ${escapeHtml(x.line)}</button>`).join('')}</div>`;
   panel.querySelectorAll('[data-loc-id]').forEach(b=>b.onclick=()=>{const loc=locations.find(x=>Number(x.id)===Number(b.dataset.locId));selectLocationEntry(loc);panel.style.display='none';});
 }
+let smartSelectionPending=false;
+async function registerSmartCheckin(loc){
+  const box=$('smartCheckinStatus');
+  if(!loc||!lastGps||!box) return;
+  box.style.display='block'; box.className='smartCheckinStatus pending'; box.textContent='Registrando chegada à localidade...';
+  try{
+    const r=await fetch('/api/tecnico/checkin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location_id:loc.id,latitude:lastGps.latitude,longitude:lastGps.longitude,accuracy:lastGps.accuracy})});
+    const j=await r.json(); if(!r.ok||!j.ok) throw new Error(j.error||'Falha no check-in.');
+    const d=j.distance_m!=null?` · ${j.distance_m} m da referência`:'';
+    const a=j.accuracy!=null?` · GPS ±${j.accuracy} m`:'';
+    const labels={CONFIRMADO:'Chegada confirmada',PROXIMO:'Próximo da estação',FORA_DA_AREA:'Fora da área esperada',BAIXA_PRECISAO:'GPS com baixa precisão',SEM_REFERENCIA:'Localidade ainda sem referência'};
+    box.className=`smartCheckinStatus ${String(j.status||'').toLowerCase()}`;
+    box.innerHTML=`<b>${escapeHtml(labels[j.status]||'Check-in registrado')}</b>${escapeHtml(d+a)}`;
+  }catch(err){ box.className='smartCheckinStatus warning'; box.textContent=`Não foi possível registrar o check-in: ${err.message}`; }
+}
 function selectLocationEntry(loc){
   if(!loc) return;
+  smartSelectionPending=true;
   $('company').value=loc.company; $('company').dispatchEvent(new Event('change'));
   $('line').value=loc.line; $('line').dispatchEvent(new Event('change'));
   $('location').value=String(loc.id); $('location').dispatchEvent(new Event('change'));
@@ -75,6 +103,11 @@ function updateGpsValidation(){
   const box=$('gpsValidation'),wrap=$('gpsOverrideWrap'); if(!box||!wrap) return true;
   box.style.display='none';wrap.style.display='none';box.className='notice full';
   if(!current||!lastGps) return true;
+  if(Number.isFinite(Number(lastGps.accuracy)) && Number(lastGps.accuracy)>GPS_MAX_ACCURACY_M){
+    box.style.display='block'; box.classList.add('gps-block'); wrap.style.display='block';
+    box.innerHTML=`<b>GPS com baixa precisão.</b> Aproximadamente ±${Math.round(Number(lastGps.accuracy))} m. Atualize a localização ou justifique a exceção.`;
+    return String($('gps_override_reason')?.value||'').trim().length>=10;
+  }
   const ref=locReference(current);
   if(!ref){
     box.style.display='block';box.classList.add('gps-warn');
@@ -351,6 +384,7 @@ $('location').onchange = async () => {
   if (current) {
     showInfo();
     updateGpsValidation();
+    if(smartSelectionPending){ smartSelectionPending=false; registerSmartCheckin(current); }
     await Promise.all([loadAlready(), loadAssets()]);
   } else {
     hideInfo();
@@ -1077,6 +1111,7 @@ function showMsg(t, ok) {
 (async function init() {
   try {
     await openDB();
+    await loadFieldConfig();
     await loadLocations();
     await refreshConnectionUI();
 

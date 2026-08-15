@@ -253,7 +253,7 @@ function ensureGpsMap(){
   railLineLayer=L.layerGroup().addTo(gpsMap);
   referenceLayer=L.layerGroup().addTo(gpsMap);
   gpsPointLayer=L.layerGroup().addTo(gpsMap);
-  gpsAccuracyLayer=L.layerGroup().addTo(gpsMap);
+  gpsAccuracyLayer=L.layerGroup();
 
   addRailLegend();
 
@@ -261,7 +261,7 @@ function ensureGpsMap(){
     'Linhas':railLineLayer,
     'Estações':referenceLayer,
     'Técnicos (GPS)':gpsPointLayer,
-    'Precisão GPS':gpsAccuracyLayer
+    'Precisão GPS (auditoria)':gpsAccuracyLayer
   },{collapsed:false,position:'bottomright'}).addTo(gpsMap);
 
   gpsMap.on('click', async e=>{
@@ -389,16 +389,15 @@ function renderGpsMap(items){
       distanceText=`Distância até referência: ${Math.round(d)} m`;
     }
 
-    if(Number.isFinite(accuracy)&&accuracy>0){
-      L.circle([lat,lon],{
-        radius:accuracy,color,weight:1,opacity:.55,fillColor:color,fillOpacity:.08
-      }).addTo(gpsAccuracyLayer);
+    // V10: círculo de precisão disponível apenas na camada opcional de auditoria.
+    if(Number.isFinite(accuracy)&&accuracy>0&&accuracy<=500){
+      L.circle([lat,lon],{radius:accuracy,color,weight:1,opacity:.45,fillColor:color,fillOpacity:.05}).addTo(gpsAccuracyLayer);
     }
 
     const techInitials=String(x.technician||'?').trim().split(/\s+/).slice(0,2).map(v=>v[0]||'').join('').toUpperCase();
     const markerIcon=L.divIcon({
       className:'',
-      html:`<div class="gpsTechAvatar" style="outline:3px solid ${color}">${x.technician_photo_url?`<img src="${esc(x.technician_photo_url)}" alt="">`:`<span>${esc(techInitials)}</span>`}</div>`,
+      html:`<div class="gpsTechAvatar" style="outline:3px solid ${color}">${x.technician_photo_url?`<img src="${esc(x.technician_photo_url)}?v=${encodeURIComponent(x.gps_captured_at||x.created_at||'v10')}" alt="">`:`<span>${esc(techInitials)}</span>`}</div>`,
       iconSize:[40,40],iconAnchor:[20,20]
     });
     const marker=L.marker([lat,lon],{icon:markerIcon}).addTo(gpsPointLayer);
