@@ -1,5 +1,5 @@
-window.AUTOPASS_TEAMS_VERSION='teams-v9-0';
-console.log('AUTOPASS Central Operacional V9 carregada');
+window.AUTOPASS_TEAMS_VERSION='teams-v9-1';
+console.log('AUTOPASS Central Operacional V9.1 carregada');
 
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -83,9 +83,11 @@ function markerIcon(t){
     ? `<img src="${esc(t.photo_url)}" alt="">`
     : `<span>${esc(initials(t.name))}</span>`;
   return L.divIcon({
-    className:'',
+    className:'teamAvatarMarker',
     html:`<div class="teamMapAvatar ${cls} ${categoryClass(t.category)}">${photo}</div>`,
-    iconSize:[46,46],iconAnchor:[23,23]
+    iconSize:[52,52],
+    iconAnchor:[26,26],
+    popupAnchor:[0,-28]
   });
 }
 async function loadTeams(){
@@ -131,11 +133,14 @@ async function loadTeams(){
       const m=L.marker([Number(t.latitude),Number(t.longitude)],{icon:markerIcon(t)})
         .addTo(teamMap)
         .bindPopup(`
-          <b>${esc(t.name)}</b><br>
-          ${esc(t.category)} · ${esc(t.shift||'')}<br>
-          Entrada: ${esc(t.entry||'—')}<br>
-          ${esc(freshnessText(t))}
-        `);
+          <div class="teamMapPopup">
+            <b>${esc(t.name)}</b><br>
+            ${esc(t.category)} · ${esc(t.shift||'')}<br>
+            Entrada: ${esc(t.entry||'—')}<br>
+            ${t.accuracy!=null?`Precisão GPS: ${Math.round(Number(t.accuracy))} m<br>`:''}
+            ${esc(freshnessText(t))}
+          </div>
+        `,{maxWidth:260,closeButton:true});
       markers.push(m);
     }
   }
