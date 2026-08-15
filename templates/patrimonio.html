@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Patrimônio 360 | Inventário SP{% endblock %}
+{% block content %}
+<section class="dashHero">
+  <div><span class="eyebrow">V7 · PATRIMÔNIO 360</span><h1>Localidades e Equipamentos</h1>
+  <p>Pesquisa central para confrontar base, inventário e evidências de campo.</p></div>
+</section>
+<section class="card">
+  <div class="sectionHead"><div><h2>Busca global</h2><p class="muted">Série, patrimônio, QR Code, equipamento, estação, linha ou empresa.</p></div></div>
+  <div class="globalSearchBar"><input id="v7Search" placeholder="Digite ao menos 2 caracteres"><button class="primary" id="v7SearchBtn">Pesquisar</button></div>
+  <div id="v7SearchResults" class="v7Results"></div>
+</section>
+<section class="card">
+ <div class="sectionHead"><div><h2>Localidades 360°</h2><p class="muted">Cobertura, faltantes, divergências, evidências e situação do parque.</p></div></div>
+ <div id="v7Locations" class="v7LocationGrid"></div>
+</section>
+<div id="v7DetailModal" class="scheduleModal hidden"><div class="scheduleModalPanel"><div class="sectionHead"><h2 id="v7DetailTitle">360°</h2><button class="secondary" id="v7Close">Fechar</button></div><div id="v7Detail"></div></div></div>
+<script src="{{ url_for('static',filename='patrimonio.js') }}?v=v7-0"></script>
+{% endblock %}
