@@ -30,7 +30,7 @@ from openpyxl.utils import get_column_letter
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 BASE_DATA_VERSION = "1408-5"
-DASHBOARD_RELEASE = "v1.6-operacional-dashboard-v6"
+DASHBOARD_RELEASE = "v1.7-patrimonio-360"
 # Denominadores executivos oficiais informados para o parque contratado.
 OFFICIAL_PARK = {
     "ATM": 590,
@@ -1107,6 +1107,146 @@ def teams_export_excel_api():
     )
 
 
+
+# ============================================================
+# V7.0 — PATRIMÔNIO 360
+# ============================================================
+
+def _location_360_payload(loc):
+    inventories = Inventory.query.filter_by(location_id=loc.id).order_by(Inventory.created_at.desc()).all()
+    visits = FieldEvidenceVisit.query.filter_by(location_id=loc.id).order_by(FieldEvidenceVisit.id.desc()).all()
+    expected = int(loc.expected_atm or 0) + int(loc.expected_validator or 0) + int(loc.expected_pos or 0)
+    inventoried = len(inventories)
+    divergences = sum(1 for x in inventories if (x.divergence or "").strip())
+    inoperative = sum(1 for x in inventories if normalize(x.operational_status) not in ("", "OPERACIONAL", "OK"))
+    media_count = 0
+    if visits:
+        visit_ids=[v.id for v in visits]
+        media_count = FieldEvidenceMedia.query.filter(FieldEvidenceMedia.visit_id.in_(visit_ids)).count()
+    return {
+        "id":loc.id, "company":loc.company, "line":loc.line, "location":loc.location,
+        "survey_status":loc.survey_status,
+        "expected":expected, "inventoried":inventoried, "missing":max(0,expected-inventoried),
+        "coverage_pct":round((inventoried/expected*100),1) if expected else 0,
+        "divergences":divergences, "inoperative":inoperative,
+        "visits":len(visits), "media":media_count,
+        "latitude":loc.reference_latitude, "longitude":loc.reference_longitude,
+        "equipment":[{
+            "id":x.id, "type":x.equipment_type, "identifier":x.asset_identifier,
+            "serial":x.serial, "model":x.model, "supplier":x.supplier,
+            "status":x.operational_status, "divergence":x.divergence,
+            "created_at":x.created_at.isoformat()+"Z" if x.created_at else None
+        } for x in inventories[:250]],
+        "evidence_visits":[{
+            "id":v.id, "date":v.source_date, "time":v.source_time, "author":v.author,
+            "confidence":v.match_confidence, "report":v.report_text
+        } for v in visits[:100]]
+    }
+
+
+@app.get("/api/v7/localidades")
+@dashboard_required
+def v7_locations_api():
+    q=(request.args.get("q") or "").strip()
+    query=Location.query
+    if q:
+        like=f"%{q}%"
+        query=query.filter(db.or_(
+            Location.location.ilike(like), Location.line.ilike(like), Location.company.ilike(like)
+        ))
+    rows=query.order_by(Location.company,Location.line,Location.location).limit(500).all()
+    return jsonify({"ok":True,"locations":[_location_360_payload(x) for x in rows]})
+
+
+@app.get("/api/v7/localidades/<int:location_id>")
+@dashboard_required
+def v7_location_detail_api(location_id):
+    loc=db.session.get(Location,location_id)
+    if not loc:
+        return jsonify({"ok":False,"error":"Localidade não encontrada."}),404
+    return jsonify({"ok":True,"location":_location_360_payload(loc)})
+
+
+def _asset_360_payload(asset):
+    inventories=Inventory.query.filter(
+        db.or_(Inventory.base_asset_id==asset.id,
+               Inventory.serial==asset.serial if asset.serial else db.false())
+    ).order_by(Inventory.created_at.desc()).all()
+    evidence=FieldEvidenceItem.query.filter(
+        db.or_(FieldEvidenceItem.base_asset_id==asset.id,
+               FieldEvidenceItem.serial==asset.serial if asset.serial else db.false())
+    ).order_by(FieldEvidenceItem.id.desc()).all()
+    latest=inventories[0] if inventories else None
+    loc=db.session.get(Location,latest.location_id) if latest else None
+    return {
+        "id":asset.id,"asset_key":asset.asset_key,"type":asset.equipment_type,
+        "serial":asset.serial,"qrcode_id":asset.qrcode_id,"top_id":asset.top_id,
+        "model":asset.model,"supplier":asset.supplier,
+        "company":asset.company,"line":asset.line,"locality":asset.locality,
+        "base_status":asset.base_status,
+        "latest_inventory":{
+            "id":latest.id,"location_id":latest.location_id,
+            "location":loc.location if loc else None,
+            "line":loc.line if loc else None,
+            "status":latest.operational_status,
+            "divergence":latest.divergence,
+            "technician_id":latest.technician_id,
+            "created_at":latest.created_at.isoformat()+"Z" if latest.created_at else None
+        } if latest else None,
+        "history":[{
+            "inventory_id":x.id,"location_id":x.location_id,"status":x.operational_status,
+            "divergence":x.divergence,"created_at":x.created_at.isoformat()+"Z" if x.created_at else None
+        } for x in inventories[:100]],
+        "evidence":[{
+            "id":e.id,"visit_id":e.visit_id,"status":e.audit_status,
+            "detail":e.audit_detail,"identifier":e.identifier
+        } for e in evidence[:100]]
+    }
+
+
+@app.get("/api/v7/equipamentos/<int:asset_id>")
+@dashboard_required
+def v7_asset_detail_api(asset_id):
+    asset=db.session.get(BaseAsset,asset_id)
+    if not asset:
+        return jsonify({"ok":False,"error":"Equipamento não encontrado."}),404
+    return jsonify({"ok":True,"asset":_asset_360_payload(asset)})
+
+
+@app.get("/api/v7/busca")
+@dashboard_required
+def v7_global_search_api():
+    q=(request.args.get("q") or "").strip()
+    if len(q)<2:
+        return jsonify({"ok":True,"query":q,"locations":[],"assets":[],"inventory":[]})
+    like=f"%{q}%"
+    locations=Location.query.filter(db.or_(
+        Location.location.ilike(like),Location.line.ilike(like),Location.company.ilike(like)
+    )).limit(15).all()
+    assets=BaseAsset.query.filter(db.or_(
+        BaseAsset.serial.ilike(like),BaseAsset.asset_key.ilike(like),
+        BaseAsset.qrcode_id.ilike(like),BaseAsset.top_id.ilike(like),
+        BaseAsset.locality.ilike(like),BaseAsset.description.ilike(like)
+    )).limit(25).all()
+    inventory=Inventory.query.filter(db.or_(
+        Inventory.serial.ilike(like),Inventory.asset_identifier.ilike(like),
+        Inventory.model.ilike(like),Inventory.supplier.ilike(like)
+    )).order_by(Inventory.created_at.desc()).limit(25).all()
+    return jsonify({
+        "ok":True,"query":q,
+        "locations":[{"id":x.id,"company":x.company,"line":x.line,"location":x.location} for x in locations],
+        "assets":[{"id":x.id,"type":x.equipment_type,"serial":x.serial,"asset_key":x.asset_key,
+                   "locality":x.locality,"line":x.line,"model":x.model} for x in assets],
+        "inventory":[{"id":x.id,"type":x.equipment_type,"identifier":x.asset_identifier,
+                      "serial":x.serial,"location_id":x.location_id,"status":x.operational_status} for x in inventory]
+    })
+
+
+@app.get("/patrimonio")
+@dashboard_required
+def patrimonio_page():
+    return render_template("patrimonio.html")
+
 @app.get("/equipes")
 @dashboard_required
 def teams_page():
@@ -1119,7 +1259,7 @@ def teams_page():
 def about_page():
     return render_template(
         "about.html",
-        app_release="V6.0",
+        app_release="V7.0",
         dashboard_release=DASHBOARD_RELEASE,
         base_version=BASE_DATA_VERSION,
         manager_version="dashboard-v6-0",
