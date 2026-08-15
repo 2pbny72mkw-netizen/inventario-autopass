@@ -73,6 +73,7 @@ let gpsMap=null;
 let gpsPointLayer=null;
 let gpsAccuracyLayer=null;
 let referenceLayer=null;
+let stationLabelLayer=null;
 let referenceMode=false;
 let referenceTempMarker=null;
 let railLineLayer=null;
@@ -252,6 +253,7 @@ function ensureGpsMap(){
 
   railLineLayer=L.layerGroup().addTo(gpsMap);
   referenceLayer=L.layerGroup().addTo(gpsMap);
+  stationLabelLayer=L.layerGroup();
   gpsPointLayer=L.layerGroup().addTo(gpsMap);
   gpsAccuracyLayer=L.layerGroup();
 
@@ -260,6 +262,7 @@ function ensureGpsMap(){
   mapLayersControl=L.control.layers(null,{
     'Linhas':railLineLayer,
     'Estações':referenceLayer,
+    'Nomes das estações':stationLabelLayer,
     'Técnicos (GPS)':gpsPointLayer,
     'Precisão GPS (auditoria)':gpsAccuracyLayer
   },{collapsed:false,position:'bottomright'}).addTo(gpsMap);
@@ -343,6 +346,7 @@ function renderRailLines(){
 function renderStations(){
   if(!referenceLayer) return;
   referenceLayer.clearLayers();
+  if(stationLabelLayer) stationLabelLayer.clearLayers();
 
   locations.filter(hasReference).forEach(x=>{
     const lat=Number(x.reference_latitude),lon=Number(x.reference_longitude);
@@ -355,8 +359,12 @@ function renderStations(){
     ref.bindPopup(`<div style="min-width:210px"><b>${esc(x.location)}</b><br><small>${esc(x.company)} · ${esc(x.line)}</small><br><small>Fonte: ${esc(x.reference_source||'não informada')}</small></div>`);
 
     ref.bindTooltip(esc(x.location),{
-      permanent:true,direction:'right',offset:[6,0],className:'rail-station-label',opacity:.94
+      permanent:false,direction:'top',offset:[0,-6],className:'rail-station-hover',opacity:.96
     });
+    if(stationLabelLayer){
+      const label=L.marker([lat,lon],{interactive:false,icon:L.divIcon({className:'stationLabelIcon',html:`<span>${esc(x.location)}</span>`,iconSize:null})});
+      label.addTo(stationLabelLayer);
+    }
   });
 }
 

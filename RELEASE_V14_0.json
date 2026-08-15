@@ -1,0 +1,12 @@
+{
+  "release": "V14.0",
+  "name": "Gestão, Qualidade e Inteligência Executiva",
+  "base": "V12.0",
+  "features": [
+    "Central Executiva",
+    "Prioridades por criticidade",
+    "Nomes de estações opcionais no mapa",
+    "ESC em modais",
+    "UX visual executiva"
+  ]
+}

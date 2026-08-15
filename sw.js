@@ -1,7 +1,7 @@
-const VERSION='autopass-v12';
+const VERSION='autopass-v14';
 const SHELL=`${VERSION}-shell`;
 const DATA=`${VERSION}-data`;
-const APP_SHELL=['/offline','/static/app.css?v=v12','/static/autopass-logo.png','/static/technician.js?v=v12'];
+const APP_SHELL=['/offline','/static/app.css?v=v14','/static/autopass-logo.png','/static/technician.js?v=v14'];
 self.addEventListener('install',event=>{event.waitUntil(caches.open(SHELL).then(c=>c.addAll(APP_SHELL)).then(()=>self.skipWaiting()));});
 self.addEventListener('activate',event=>{event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>!k.startsWith(VERSION)).map(k=>caches.delete(k)))).then(()=>self.clients.claim()));});
 self.addEventListener('fetch',event=>{

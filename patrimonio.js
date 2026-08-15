@@ -1,4 +1,4 @@
-window.AUTOPASS_PATRIMONIO_VERSION='patrimonio-v12-0';
+window.AUTOPASS_PATRIMONIO_VERSION='patrimonio-v14-0';
 const $=x=>document.getElementById(x), esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function getj(u){const r=await fetch(u,{cache:'no-store'}),j=await r.json();if(!r.ok||!j.ok)throw Error(j.error||'Falha');return j}
 function locationCard(x){return `<article class="v7LocCard" data-loc="${x.id}"><div><span class="tag">${esc(x.company)} · ${esc(x.line)}</span><h3>${esc(x.location)}</h3></div><div class="v7MiniKpis"><b>${x.expected}<small>Previstos</small></b><b>${x.inventoried}<small>Inventariados</small></b><b>${x.missing}<small>Faltantes</small></b><b>${x.coverage_pct}%<small>Cobertura</small></b></div><div class="v7Flags"><span>${x.divergences} diverg.</span><span>${x.inoperative} inoper.</span><span>${x.media} mídias</span></div></article>`}
@@ -13,3 +13,20 @@ async function loadV12(){try{const [s,l]=await Promise.all([getj('/api/v12/resum
 $('v12Kpis').innerHTML=`<article><span>Confiabilidade média</span><b>${s.average_score}%</b></article><article class="good"><span>Confiáveis</span><b>${s.reliable}</b></article><article class="warn"><span>Atenção</span><b>${s.attention}</b></article><article class="bad"><span>Críticas</span><b>${s.critical}</b></article><article><span>Faltantes</span><b>${s.missing}</b></article><article><span>Divergências</span><b>${s.divergences}</b></article>`;
 $('v12Locations').innerHTML=l.locations.slice(0,18).map(x=>`<button class="v12IntelLoc ${x.level.toLowerCase()}" data-v12loc="${x.id}"><span><b>${esc(x.location)}</b><small>${esc(x.company)} · ${esc(x.line)}</small></span><strong>${x.score}%</strong><em>${x.missing} falt. · ${x.divergences} diverg.</em></button>`).join('');document.querySelectorAll('[data-v12loc]').forEach(e=>e.onclick=()=>openLocation(e.dataset.v12loc));}catch(e){console.error(e)}}
 if($('v12Refresh'))$('v12Refresh').onclick=loadV12;loadV12();
+loadV14Executive();
+setupGlobalModalUX();
+
+
+async function loadV14Executive(){
+ try{const [s,l]=await Promise.all([getj('/api/v12/resumo'),getj('/api/v12/localidades')]);
+ const k=$('v14ExecutiveKpis'); if(k) k.innerHTML=`<article><span>Cobertura confiável</span><b>${s.reliable||0}</b><small>localidades ≥ 85</small></article><article><span>Em atenção</span><b>${s.attention||0}</b><small>score 65–84</small></article><article><span>Críticas</span><b>${s.critical||0}</b><small>score abaixo de 65</small></article><article><span>Faltantes</span><b>${s.missing||0}</b><small>itens previstos</small></article>`;
+ const total=Math.max(1,s.locations||0), q=$('v14QualityBars'); if(q) q.innerHTML=[['Confiáveis',s.reliable||0,'good'],['Atenção',s.attention||0,'warn'],['Críticas',s.critical||0,'bad']].map(([n,v,c])=>`<div class="v14Bar"><span>${n}<b>${v}</b></span><i><em class="${c}" style="width:${Math.min(100,v/total*100)}%"></em></i></div>`).join('');
+ const p=$('v14Priorities'); if(p) p.innerHTML=(l.locations||[]).slice(0,6).map(x=>`<button data-v14loc="${x.id}"><b>${esc(x.location)}</b><span>${esc(x.company)} · ${esc(x.line)}</span><small>${x.score}% confiança · ${x.missing} falt. · ${x.divergences} diverg.</small></button>`).join('')||'<span class="muted">Sem prioridades.</span>';
+ p?.querySelectorAll('[data-v14loc]').forEach(b=>b.onclick=()=>document.querySelector(`[data-loc="${b.dataset.v14loc}"]`)?.click());
+ }catch(e){console.error(e)}
+}
+function setupGlobalModalUX(){
+ const modal=$('v7DetailModal'); if(!modal)return;
+ document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!modal.classList.contains('hidden')) modal.classList.add('hidden')});
+ modal.addEventListener('mousedown',e=>{if(e.target===modal) modal.classList.add('hidden')});
+}
