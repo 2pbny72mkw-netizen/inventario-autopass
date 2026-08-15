@@ -14,6 +14,7 @@
   </div>
   <div class="heroActions">
     <span id="lastUpdate" class="lastUpdate">Atualizando...</span>
+    <button class="secondary" id="exportExecutive" type="button">Exportar CSV</button>
     <button class="secondary" onclick="loadAll()">Atualizar agora</button>
   </div>
 </section>
@@ -67,6 +68,7 @@
       <div class="qualityItem"><span>Divergências com a base</span><b id="divergencesQuality">0</b></div>
       <div class="qualityItem"><span>Localidades</span><b><span id="completed">0</span>/<span id="total">0</span></b><small><span id="pending">0</span> pend. · <span id="progress">0</span> andamento</small></div>
       <div class="qualityItem"><span>Cobertura do parque</span><b id="assetCoverage">0%</b></div>
+      <div class="qualityItem diagnosticItem"><span>Não classificados</span><b id="unclassified">0</b><small>Inventários fora das 5 famílias</small></div>
     </div>
   </article>
 </section>
@@ -201,5 +203,5 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
         integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
         crossorigin=""></script>
-<script src="{{url_for('static',filename='manager.js')}}?v=dashboard-v2-2"></script>
+<script src="{{url_for('static',filename='manager.js')}}?v=dashboard-v2-5"></script>
 {% endblock %}
