@@ -6,6 +6,8 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{% block title %}Inventário SP{% endblock %}</title>
 <link rel="stylesheet" href="{{url_for('static',filename='app.css')}}">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#17345d">
 </head>
 <body>
 {% if session.get('user_id') %}
@@ -19,16 +21,15 @@
       </div>
     </div>
     <nav>
-      {% if session.get('role')=='manager' %}
       <a href="/gerencial">Dashboard</a>
       <a href="/evidencias-campo">Evidências</a>
       <a href="/equipes">Equipes</a>
       <a href="/tecnico">Lançamento</a>
       <a href="/usuarios">Usuários</a>
+      <a href="/patrimonio">Patrimônio 360</a>
       <a href="/sobre">Sobre</a>
-      {% endif %}
       <a href="/logout">Sair</a>
-    <a href="/patrimonio">Patrimônio 360</a></nav>
+    </nav>
   </div>
 </header>
 {% endif %}
@@ -39,5 +40,10 @@
 {% block content %}{% endblock %}
 </main>
 {% block scripts %}{% endblock %}
+<script>
+if('serviceWorker' in navigator){
+  window.addEventListener('load',()=>navigator.serviceWorker.register('/sw.js').catch(console.error));
+}
+</script>
 </body>
 </html>
