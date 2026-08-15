@@ -68,3 +68,11 @@ TESTES APÓS LIVE
    - módulos disponíveis
    - histórico recente
    - crédito by Adil J. Poloni
+
+8. Refinamento visual V5.2.1
+   - correção do mapa Leaflet na Central de Equipes
+   - mapa normal limitado a 360 px
+   - botão Mostrar/Ocultar mapa
+   - mantém expansão em tela cheia
+   - cores mais presentes no Dashboard e demais telas
+   - tabelas, filtros, evidências, equipes e usuários com identidade visual suave
