@@ -29,7 +29,7 @@ from openpyxl.utils import get_column_letter
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 BASE_DATA_VERSION = "1408-5"
-DASHBOARD_RELEASE = "v1.3-operacional-dashboard-v4.1.1"
+DASHBOARD_RELEASE = "v1.4-operacional-dashboard-v5"
 # Denominadores executivos oficiais informados para o parque contratado.
 OFFICIAL_PARK = {
     "ATM": 590,
@@ -78,6 +78,17 @@ class User(db.Model):
     email = db.Column(db.String(180), unique=True, index=True)
     phone = db.Column(db.String(30), unique=True, index=True)
     photo_url = db.Column(db.String(500))
+
+
+class TechnicianPosition(db.Model):
+    __tablename__ = "technician_positions"
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    latitude = db.Column(db.Float, nullable=False)
+    longitude = db.Column(db.Float, nullable=False)
+    accuracy = db.Column(db.Float)
+    captured_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    source = db.Column(db.String(40), nullable=False, default="browser")
 
 class Location(db.Model):
     __tablename__ = "locations"
@@ -441,6 +452,68 @@ def technician():
 @dashboard_required
 def manager():
     return render_template("manager.html")
+
+
+
+def _load_technician_schedule():
+    path = DATA_DIR / "technician_schedule_v5.json"
+    if not path.exists():
+        return {"technicians": [], "support": []}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _schedule_today(schedule, today=None):
+    today = today or datetime.now().date().isoformat()
+    return [x for x in schedule.get("technicians", []) if today in x.get("days", [])]
+
+
+@app.post("/api/tecnico/position")
+@field_required
+def technician_position_update():
+    data = request.get_json(silent=True) or {}
+    try:
+        lat = float(data.get("latitude")); lon = float(data.get("longitude"))
+        acc = float(data.get("accuracy")) if data.get("accuracy") is not None else None
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Coordenadas inválidas"}), 400
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        return jsonify({"ok": False, "error": "Coordenadas fora do intervalo"}), 400
+    row = TechnicianPosition(user_id=session["user_id"], latitude=lat, longitude=lon, accuracy=acc, captured_at=datetime.utcnow())
+    db.session.add(row); db.session.commit()
+    return jsonify({"ok": True, "captured_at": row.captured_at.isoformat() + "Z"})
+
+
+@app.get("/api/equipes/status")
+@dashboard_required
+def teams_status_api():
+    schedule = _load_technician_schedule()
+    today = datetime.now().date().isoformat()
+    scheduled = _schedule_today(schedule, today)
+    users = User.query.filter(User.active.is_(True)).all()
+    users_by_name = {normalize(u.name): u for u in users}
+    rows=[]
+    now=datetime.utcnow()
+    for tech in scheduled:
+        user=users_by_name.get(normalize(tech.get("name")))
+        pos=None
+        if user:
+            pos=TechnicianPosition.query.filter_by(user_id=user.id).order_by(TechnicianPosition.captured_at.desc()).first()
+        minutes=None
+        if pos: minutes=max(0,int((now-pos.captured_at).total_seconds()//60))
+        if minutes is None: freshness="SEM SINAL"
+        elif minutes <= 5: freshness="ATUAL"
+        elif minutes <= 15: freshness="ATENÇÃO"
+        else: freshness="ATRASADO"
+        rows.append({**tech,"user_id": user.id if user else None,"photo_url": user.photo_url if user else None,
+                     "latitude": pos.latitude if pos else None,"longitude": pos.longitude if pos else None,
+                     "accuracy": pos.accuracy if pos else None,"minutes_since": minutes,"freshness": freshness})
+    return jsonify({"ok":True,"date":today,"scheduled":len(rows),"technicians":rows,"support":schedule.get("support",[])})
+
+
+@app.get("/equipes")
+@dashboard_required
+def teams_page():
+    return render_template("teams.html")
 
 
 @app.get("/health")
