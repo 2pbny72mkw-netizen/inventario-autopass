@@ -428,3 +428,220 @@ input:focus,select:focus,textarea:focus{
 @media(max-width:760px){
   .teamMap{height:300px;min-height:300px}
 }
+
+
+/* ===========================================================
+   V6 · Identidade visual + Central Operacional
+   =========================================================== */
+
+/* Leaflet hard isolation: prevents global application styles from changing tiles. */
+.leaflet-container{
+  font:12px/1.5 "Helvetica Neue",Arial,Helvetica,sans-serif !important;
+}
+.leaflet-container .leaflet-pane,
+.leaflet-container .leaflet-tile,
+.leaflet-container .leaflet-marker-icon,
+.leaflet-container .leaflet-marker-shadow,
+.leaflet-container .leaflet-tile-container{
+  position:absolute !important;
+  left:0;
+  top:0;
+}
+.leaflet-container .leaflet-tile{
+  width:256px !important;
+  height:256px !important;
+  max-width:none !important;
+  max-height:none !important;
+  margin:0 !important;
+  padding:0 !important;
+  border:0 !important;
+  object-fit:none !important;
+}
+.leaflet-container img{
+  max-width:none !important;
+  max-height:none !important;
+}
+.teamMap{
+  height:360px !important;
+  min-height:360px !important;
+  width:100% !important;
+  position:relative !important;
+  overflow:hidden !important;
+  isolation:isolate;
+}
+.teamMapWrap{
+  overflow:hidden !important;
+  position:relative;
+}
+.teamMapWrap:fullscreen .teamMap,
+.teamMapFullscreenFallback .teamMap{
+  height:100vh !important;
+  min-height:100vh !important;
+}
+
+/* V6 palette */
+:root{
+  --v6-blue:#276aa2;
+  --v6-blue-soft:#eaf4fd;
+  --v6-green:#14865a;
+  --v6-green-soft:#eaf8f1;
+  --v6-orange:#d97706;
+  --v6-orange-soft:#fff4e5;
+  --v6-purple:#7650a3;
+  --v6-purple-soft:#f5effb;
+  --v6-teal:#058b84;
+  --v6-teal-soft:#e9f8f7;
+  --v6-red:#c73f3f;
+  --v6-red-soft:#fff0f0;
+}
+
+body{
+  background:
+    radial-gradient(circle at 5% 0%,rgba(39,106,162,.12),transparent 23%),
+    radial-gradient(circle at 92% 3%,rgba(5,139,132,.09),transparent 25%),
+    #f3f7fb;
+}
+
+.nav{
+  box-shadow:0 3px 18px rgba(23,52,93,.05);
+}
+.nav a:hover{
+  background:linear-gradient(180deg,#edf6fd,#e4f0fa);
+}
+.eyebrow{
+  color:#d65f00;
+}
+.card{
+  box-shadow:0 7px 26px rgba(28,54,82,.055);
+}
+
+/* Dashboard general KPIs: stronger but still executive. */
+.dashboardKpis .primaryKpi{
+  background:linear-gradient(135deg,#ffffff 0%,var(--v6-blue-soft) 100%);
+  border-top:4px solid var(--v6-blue);
+}
+.dashboardKpis .successKpi{
+  background:linear-gradient(135deg,#ffffff 0%,var(--v6-green-soft) 100%);
+  border-top:4px solid var(--v6-green);
+}
+.dashboardKpis .warningKpi{
+  background:linear-gradient(135deg,#ffffff 0%,var(--v6-orange-soft) 100%);
+  border-top:4px solid var(--v6-orange);
+}
+.dashboardKpis .dangerKpi{
+  background:linear-gradient(135deg,#ffffff 0%,var(--v6-red-soft) 100%);
+  border-top:4px solid var(--v6-red);
+}
+.equipmentBig.atm{background:linear-gradient(145deg,#fff,#eaf4fd)}
+.equipmentBig.val{background:linear-gradient(145deg,#fff,#eaf8f1)}
+.equipmentBig.pos{background:linear-gradient(145deg,#fff,#fff4e5)}
+.equipmentBig.tdi{background:linear-gradient(145deg,#fff,#f5effb)}
+.equipmentBig.bloq{background:linear-gradient(145deg,#fff,#e9f8f7)}
+
+.executiveFilterBar{
+  background:linear-gradient(90deg,#eef6fd 0%,#ffffff 48%,#edf9f6 100%);
+  border-top:4px solid #70a5ce;
+}
+.evidenceExecutiveStrip{
+  background:linear-gradient(110deg,#f6effc,#fff 55%,#eef8f7);
+  border-left:5px solid var(--v6-purple);
+}
+
+/* Teams */
+.teamsHero:before{
+  background:linear-gradient(90deg,var(--v6-blue),var(--v6-green),var(--v6-orange));
+}
+.teamKpis .supervisorKpi{
+  background:linear-gradient(135deg,#fff,var(--v6-purple-soft));
+}
+.teamKpis .supervisorKpi:before{background:var(--v6-purple)}
+.teamKpis .supportKpi{
+  background:linear-gradient(135deg,#fff,var(--v6-teal-soft));
+}
+.teamKpis .supportKpi:before{background:var(--v6-teal)}
+.teamMapCard{
+  border-top:4px solid var(--v6-blue);
+}
+.scaleCard{
+  border-top:4px solid var(--v6-green);
+}
+
+.categoryBadge{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  padding:4px 7px;
+  border-radius:999px;
+  font-size:10px;
+  font-weight:800;
+  letter-spacing:.02em;
+}
+.categoryBadge.technician{background:var(--v6-blue-soft);color:#215d91}
+.categoryBadge.supervisor{background:var(--v6-purple-soft);color:#65418d}
+.categoryBadge.support{background:var(--v6-teal-soft);color:#06736e}
+
+.linkBadge{
+  display:inline-flex!important;
+  width:max-content;
+  margin-top:6px!important;
+  padding:4px 7px;
+  border-radius:999px;
+  font-size:10px!important;
+  font-weight:800;
+}
+.linkBadge.linked{background:#e9f8ef;color:#137346}
+.linkBadge.unlinked{background:#fff2db;color:#8a5700}
+
+.teamCard.category-technician{background:linear-gradient(135deg,#fff,#f0f7fd)}
+.teamCard.category-supervisor{background:linear-gradient(135deg,#fff,#f6f0fc)}
+.teamCard.category-support{background:linear-gradient(135deg,#fff,#edf9f8)}
+.teamCard.category-supervisor{border-top:3px solid var(--v6-purple)}
+.teamCard.category-support{border-top:3px solid var(--v6-teal)}
+
+.scheduleProfile.category-technician{border-left:4px solid var(--v6-blue)}
+.scheduleProfile.category-supervisor{border-left:4px solid var(--v6-purple)}
+.scheduleProfile.category-support{border-left:4px solid var(--v6-teal)}
+.profileTitle{display:flex;gap:7px;align-items:center;flex-wrap:wrap}
+.fullField{grid-column:1/-1}
+
+.scale-technician .stickyTechCol{border-left:4px solid var(--v6-blue)}
+.scale-supervisor .stickyTechCol{border-left:4px solid var(--v6-purple)}
+.scale-support .stickyTechCol{border-left:4px solid var(--v6-teal)}
+
+/* Evidence pages */
+.evidenceKpis .kpi:nth-child(1){background:linear-gradient(135deg,#fff,var(--v6-blue-soft))}
+.evidenceKpis .kpi:nth-child(2){background:linear-gradient(135deg,#fff,var(--v6-purple-soft))}
+.evidenceKpis .kpi:nth-child(3){background:linear-gradient(135deg,#fff,var(--v6-green-soft))}
+.evidenceKpis .kpi:nth-child(4){background:linear-gradient(135deg,#fff,var(--v6-orange-soft))}
+.evidenceKpis .kpi:nth-child(5){background:linear-gradient(135deg,#fff,var(--v6-teal-soft))}
+.evidenceKpis .kpi:nth-child(6){background:linear-gradient(135deg,#fff,var(--v6-red-soft))}
+
+/* User and technician screens */
+.userCard,.userRow{
+  background:linear-gradient(145deg,#fff,#f7fbff);
+}
+#teamLocationPanel{
+  border-left:5px solid var(--v6-teal);
+  background:linear-gradient(90deg,#eefaf8,#fff 60%);
+}
+
+/* About */
+.aboutKpis .kpi:nth-child(1){background:linear-gradient(135deg,#fff,var(--v6-blue-soft))}
+.aboutKpis .kpi:nth-child(2){background:linear-gradient(135deg,#fff,var(--v6-green-soft))}
+.aboutKpis .kpi:nth-child(3){background:linear-gradient(135deg,#fff,var(--v6-orange-soft))}
+.aboutKpis .kpi:nth-child(4){background:linear-gradient(135deg,#fff,var(--v6-purple-soft))}
+
+/* Form / table polish */
+table thead th{
+  background:linear-gradient(180deg,#edf5fc,#e6eff8);
+  color:#294b6a;
+}
+table tbody tr:hover{
+  background:#f0f8ff;
+}
+input,select,textarea{
+  transition:border-color .15s,box-shadow .15s,background .15s;
+}
+input:focus,select:focus,textarea:focus{
+  background:#fbfdff;
+}
