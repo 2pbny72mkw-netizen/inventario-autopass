@@ -147,6 +147,10 @@
     <span class="tag">O círculo indica a precisão informada pelo aparelho</span>
   </div>
 
+  <div style="display:flex;justify-content:flex-end;margin:0 0 8px">
+    <button type="button" class="secondary" id="toggleMapFullscreenBtn">Expandir mapa</button>
+  </div>
+
   <div id="gpsMap"
        style="height:460px;border:1px solid #dfe5ec;border-radius:14px;overflow:hidden;margin-bottom:18px">
   </div>
@@ -221,5 +225,5 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
         integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
         crossorigin=""></script>
-<script src="{{url_for('static',filename='manager.js')}}?v=dashboard-v4-1"></script>
+<script src="{{url_for('static',filename='manager.js')}}?v=dashboard-v4-1-1"></script>
 {% endblock %}
