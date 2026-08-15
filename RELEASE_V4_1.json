@@ -1,0 +1,15 @@
+{
+  "release": "v1.3-operacional-dashboard-v4",
+  "manager_version": "dashboard-v4-1",
+  "features": [
+    "centro_de_evidencias",
+    "galeria_fotos_videos",
+    "whatsapp_deduplicado",
+    "confronto_base_inventario",
+    "promocao_controlada",
+    "excel_evidencias",
+    "dashboard_evidencias"
+  ],
+  "raw_whatsapp_embedded": false,
+  "reason": "GitHub repository is public; raw chat/media must go directly to R2/database."
+}

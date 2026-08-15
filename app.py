@@ -8,6 +8,7 @@ import io
 import boto3
 import uuid
 import mimetypes
+import hashlib
 from pathlib import Path
 from datetime import datetime
 import time
@@ -27,7 +28,7 @@ from openpyxl.utils import get_column_letter
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 BASE_DATA_VERSION = "1408-5"
-DASHBOARD_RELEASE = "v1.2-operacional-dashboard-v3"
+DASHBOARD_RELEASE = "v1.3-operacional-dashboard-v4"
 # Denominadores executivos oficiais informados para o parque contratado.
 OFFICIAL_PARK = {
     "ATM": 590,
@@ -52,7 +53,7 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("INVENTARIO_SECRET_KEY", "chave-local-apenas-para-desenvolvimento")
 app.config["SQLALCHEMY_DATABASE_URI"] = database_url
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-app.config["MAX_CONTENT_LENGTH"] = 80 * 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = 160 * 1024 * 1024
 
 # Mantém conexões saudáveis em hospedagens gerenciadas.
 app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
@@ -185,6 +186,62 @@ class Attachment(db.Model):
 
 
 Index("idx_inventory_location", Inventory.location_id)
+
+
+class FieldEvidenceVisit(db.Model):
+    __tablename__ = "field_evidence_visits"
+    id = db.Column(db.Integer, primary_key=True)
+    source_key = db.Column(db.String(80), nullable=False, unique=True, index=True)
+    source_batch = db.Column(db.String(120), index=True)
+    source_date = db.Column(db.String(20))
+    source_time = db.Column(db.String(20))
+    author = db.Column(db.String(180))
+    station_raw = db.Column(db.String(220))
+    line_raw = db.Column(db.String(120))
+    location_id = db.Column(db.Integer, db.ForeignKey("locations.id"), index=True)
+    match_confidence = db.Column(db.String(40), index=True)
+    match_score = db.Column(db.Float)
+    report_text = db.Column(db.Text)
+    competition_text = db.Column(db.Text)
+    storage_source = db.Column(db.String(40))
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+
+class FieldEvidenceItem(db.Model):
+    __tablename__ = "field_evidence_items"
+    id = db.Column(db.Integer, primary_key=True)
+    visit_id = db.Column(db.Integer, db.ForeignKey("field_evidence_visits.id", ondelete="CASCADE"), nullable=False, index=True)
+    equipment_type = db.Column(db.String(80), nullable=False, index=True)
+    identifier = db.Column(db.String(220), nullable=False)
+    model = db.Column(db.String(180))
+    serial = db.Column(db.String(220))
+    patrimony = db.Column(db.String(120))
+    operational_status = db.Column(db.String(120))
+    source_line = db.Column(db.Text)
+    base_asset_id = db.Column(db.Integer, db.ForeignKey("base_assets.id"))
+    inventory_id = db.Column(db.Integer, db.ForeignKey("inventory.id"))
+    audit_status = db.Column(db.String(80), index=True)
+    audit_detail = db.Column(db.Text)
+
+    __table_args__ = (
+        UniqueConstraint("visit_id", "equipment_type", "identifier", name="uq_field_evidence_visit_item"),
+    )
+
+
+class FieldEvidenceMedia(db.Model):
+    __tablename__ = "field_evidence_media"
+    id = db.Column(db.Integer, primary_key=True)
+    visit_id = db.Column(db.Integer, db.ForeignKey("field_evidence_visits.id", ondelete="CASCADE"), nullable=False, index=True)
+    sha256 = db.Column(db.String(64), nullable=False, unique=True, index=True)
+    original_name = db.Column(db.String(300), nullable=False)
+    mime_type = db.Column(db.String(180))
+    storage_kind = db.Column(db.String(30), nullable=False)
+    storage_key = db.Column(db.String(700), nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+
+Index("idx_field_evidence_location", FieldEvidenceVisit.location_id)
+Index("idx_field_evidence_item_audit", FieldEvidenceItem.audit_status)
 
 
 def normalize(value):
@@ -1318,6 +1375,38 @@ def export_dashboard_excel():
             inv.latitude, inv.longitude
         ])
 
+
+    # Evidências de campo (WhatsApp) — fonte separada do inventário canônico.
+    if FieldEvidenceVisit.query.count():
+        ws_ev = wb.create_sheet("Evidências de Campo")
+        ev_headers = [
+            "Data", "Hora", "Responsável", "Estação informada", "Linha informada",
+            "Localidade associada", "Confiança", "Tipo", "Identificador", "Modelo",
+            "Série", "Patrimônio", "Status operacional", "Auditoria", "Mídias"
+        ]
+        ws_ev.append(ev_headers)
+        for c in ws_ev[1]:
+            c.font = Font(bold=True)
+        evidence_rows = (
+            db.session.query(FieldEvidenceVisit, FieldEvidenceItem)
+            .join(FieldEvidenceItem, FieldEvidenceItem.visit_id == FieldEvidenceVisit.id)
+            .order_by(FieldEvidenceVisit.source_date, FieldEvidenceVisit.source_time)
+            .all()
+        )
+        media_counts = dict(
+            db.session.query(FieldEvidenceMedia.visit_id, func.count(FieldEvidenceMedia.id))
+            .group_by(FieldEvidenceMedia.visit_id).all()
+        )
+        for visit, item in evidence_rows:
+            loc = db.session.get(Location, visit.location_id) if visit.location_id else None
+            ws_ev.append([
+                visit.source_date, visit.source_time, visit.author, visit.station_raw, visit.line_raw,
+                loc.location if loc else "", visit.match_confidence,
+                item.equipment_type, item.identifier, item.model or "", item.serial or "",
+                item.patrimony or "", item.operational_status or "", item.audit_status or "",
+                int(media_counts.get(visit.id, 0)),
+            ])
+
     for sheet in wb.worksheets:
         for col in range(1, sheet.max_column + 1):
             letter = get_column_letter(col)
@@ -1675,16 +1764,20 @@ def reset_user_password(user_id):
     return redirect(url_for("users_page"))
 
 
+
 def _wa_parse_messages(chat_text):
-    # Mensagem exportada no formato:
-    # [dd/mm/aaaa, hh:mm:ss] Autor: texto...
     pattern = re.compile(
         r'^\[(\d{2}/\d{2}/\d{4}),\s*(\d{2}:\d{2}:\d{2})\]\s*([^:]+):\s?(.*)$'
     )
     messages = []
     current = None
     for raw in chat_text.splitlines():
-        line = raw.replace("\u200e", "").replace("\ufeff", "")
+        line = (
+            raw.replace("\u200e", "")
+               .replace("\ufeff", "")
+               .replace("\u202a", "")
+               .replace("\u202c", "")
+        )
         m = pattern.match(line)
         if m:
             if current:
@@ -1706,99 +1799,200 @@ def _wa_extract_attachments(text):
     return re.findall(r'<anexado:\s*([^>]+)>', text or "", flags=re.I)
 
 
+_WA_LINE_COLORS = {
+    1: "AZUL", 2: "VERDE", 3: "VERMELHA", 4: "AMARELA", 5: "LILAS",
+    7: "RUBI", 8: "DIAMANTE", 9: "ESMERALDA", 10: "TURQUESA",
+    11: "CORAL", 12: "SAFIRA", 13: "JADE", 15: "PRATA", 17: "OURO",
+}
+
+
 def _wa_extract_station(text):
-    # Ex.: Estação Anhangabau Linha 3-Vermelha Plataforma Formosa
-    clean = re.sub(r'<anexado:[^>]+>', '', text or '', flags=re.I).strip()
+    clean = re.sub(r'<anexado:[^>]+>', '', text or '', flags=re.I)
     m = re.search(
-        r'Est[aã]ção\s+(.+?)\s+Linha\s+(\d{1,2})\s*[-–]\s*([A-Za-zÀ-ÿ]+)(.*)',
+        r'Est[aã]ção\s+(.+?)\s+Linha\s+(\d{1,2})(?:\s*[-–]\s*([A-Za-zÀ-ÿ]+))?',
         clean, flags=re.I | re.S
     )
     if not m:
         return None
     station = re.sub(r'\s+', ' ', m.group(1)).strip(" -")
-    number = m.group(2).zfill(2)
-    color = m.group(3).upper()
-    tail = re.sub(r'\s+', ' ', m.group(4)).strip()
-    line_label = f"{number} - {color}"
-    return {"station": station, "line": line_label, "detail": tail}
+    number = int(m.group(2))
+    color = (m.group(3) or _WA_LINE_COLORS.get(number, "")).upper()
+    tail = clean[m.end():].splitlines()[0].strip() if m.end() < len(clean) else ""
+    if normalize(station) in {"MOTIVA", "METRO", "CPTM"} and tail:
+        station = tail.split("*", 1)[0].strip(" -")
+    return {
+        "station": station,
+        "line_number": number,
+        "line": f"{number:02d} - {color}" if color else f"{number:02d}",
+    }
 
 
-def _wa_equipment_rows(text):
-    clean = re.sub(r'<anexado:[^>]+>', '', text or '', flags=re.I)
+def _wa_split_competition(text):
+    m = re.search(r'\*?\s*Concorr[eê]ncia\s*\*?', text or "", flags=re.I)
+    if not m:
+        m = re.search(r'\*?\s*concorrencia\s*\*?', text or "", flags=re.I)
+    if not m:
+        return text or "", ""
+    return (text or "")[:m.start()], (text or "")[m.end():]
+
+
+def _wa_equipment_rows(text, visit_token="WA"):
+    official, competition = _wa_split_competition(text)
+    clean = re.sub(r'<anexado:[^>]+>', '', official or '', flags=re.I)
     rows = []
+    provisional_index = 0
 
-    # Validadores: captura números depois de VALIDADOR/VALIDADORES/VALIDADOREZ
-    for m in re.finditer(r'VALIDADOR(?:ES|EZ)?\s*:?\s*([^\n]+)', clean, flags=re.I):
-        nums = re.findall(r'\b\d{2,7}\b', m.group(1))
-        for n in nums:
-            rows.append({"type": "Validador de Recarga", "identifier": n, "model": ""})
+    for raw_line in clean.splitlines():
+        line = re.sub(r'\s+', ' ', raw_line).strip()
+        if not line:
+            continue
 
-    # ATM: uma linha pode conter um ou vários IDs
-    for line in clean.splitlines():
-        if re.search(r'\bATM\b', line, flags=re.I):
-            label = line.strip()
-            # remove patrimônios para não tratá-los como IDs principais
-            without_patr = re.sub(r'\(?\s*Patrim[oô]nio\s*\d+\s*\)?', '', label, flags=re.I)
-            ids = re.findall(r'\b\d{4,8}\b', without_patr)
-            model_match = re.search(r'ATM\s+([^:]+):', label, flags=re.I)
+        # POS: TOPs de 6-8 dígitos. SN e patrimônio são atributos, não identificadores.
+        if re.search(r'\bPOS\b', line, flags=re.I):
+            tmp = re.sub(r'\bSN\s*[A-Za-z0-9]+\b', ' ', line, flags=re.I)
+            tmp = re.sub(r'Patrim[oô]nio\s*(?:off|[A-Za-z0-9]+)', ' ', tmp, flags=re.I)
+            for ident in re.findall(r'\b\d{6,8}\b', tmp):
+                rows.append({
+                    "type": "POS", "identifier": ident, "model": "",
+                    "serial": "", "patrimony": "", "status": "Não informado",
+                    "source_line": line, "provisional": False
+                })
+
+        # ATM inclui equipamentos descritos em campo como TCI / TCI NEO / MK / MK NEO.
+        if re.search(r'\b(?:ATM|TCI)\b', line, flags=re.I):
+            tmp = re.sub(r'\(?\s*Patrim[oô]nio\s*(?:off|\d+)\s*\)?', ' ', line, flags=re.I)
+            tmp = re.sub(r'\bSN\s*[A-Za-z0-9]+\b', ' ', tmp, flags=re.I)
+            ids = re.findall(r'\b\d{4,8}\b', tmp)
+            model_match = re.search(r'\b(?:ATM|TCI)\s*([^:]*?)(?::|$)', line, flags=re.I)
             model = model_match.group(1).strip() if model_match else ""
-            for n in ids:
-                rows.append({"type": "ATM", "identifier": n, "model": model})
+            if ids:
+                for ident in ids:
+                    rows.append({
+                        "type": "ATM", "identifier": ident, "model": model,
+                        "serial": "", "patrimony": "",
+                        "status": "Inoperante" if re.search(r'inoperante', line, re.I) else "Não informado",
+                        "source_line": line, "provisional": False
+                    })
+            elif re.search(r'inoperante', line, re.I):
+                provisional_index += 1
+                rows.append({
+                    "type": "ATM",
+                    "identifier": f"ATM-SID-{visit_token}-{provisional_index}",
+                    "model": model, "serial": "", "patrimony": "",
+                    "status": "Inoperante", "source_line": line, "provisional": True
+                })
 
-    # Rack sem identificação numérica: gera identificador provisório só para prévia
-    rack_count = len(re.findall(r'\bRacks?\b', clean, flags=re.I))
-    for idx in range(rack_count):
-        rows.append({"type": "Rack de Comunicação", "identifier": f"RACK-{idx+1}", "model": ""})
+        # Validadores de recarga.
+        if re.search(r'\bVALIDADOR', line, flags=re.I):
+            nums = re.findall(r'\b\d{2,5}\b', line)
+            for ident in [x for x in nums if int(x) > 20]:
+                rows.append({
+                    "type": "VALIDADOR", "identifier": ident, "model": "",
+                    "serial": "", "patrimony": "", "status": "Não informado",
+                    "source_line": line, "provisional": False
+                })
 
-    # Remove duplicatas dentro da mesma mensagem
+    # POS em linhas detalhadas: TOP SN patrimônio.
+    for m in re.finditer(
+        r'\b(\d{6,8})\s+SN\s+([A-Za-z0-9]+)(?:\s+Patrim[oô]nio\s+([A-Za-z0-9]+))?',
+        clean, flags=re.I
+    ):
+        ident, serial, patrimony = m.group(1), m.group(2), (m.group(3) or "")
+        existing = next((x for x in rows if x["type"] == "POS" and x["identifier"] == ident), None)
+        if existing:
+            existing["serial"] = serial
+            existing["patrimony"] = patrimony
+        else:
+            rows.append({
+                "type": "POS", "identifier": ident, "model": "",
+                "serial": serial, "patrimony": patrimony, "status": "Não informado",
+                "source_line": m.group(0), "provisional": False
+            })
+
+    # Rack/Hack é guardado como evidência, sem contaminar os Big Numbers oficiais.
+    rack_mentions = re.findall(r'\b(?:RACK|HACK)\b', clean, flags=re.I)
+    for idx in range(len(rack_mentions)):
+        rows.append({
+            "type": "RACK", "identifier": f"RACK-{visit_token}-{idx + 1}",
+            "model": "", "serial": "", "patrimony": "",
+            "status": "Não informado", "source_line": "Rack citado no relatório",
+            "provisional": True
+        })
+
     seen = set()
     out = []
-    for r in rows:
-        key = (r["type"], r["identifier"])
+    for row in rows:
+        key = (row["type"], row["identifier"])
         if key not in seen:
             seen.add(key)
-            out.append(r)
-    return out
+            out.append(row)
+
+    competition_summary = {}
+    for type_name, regex in (
+        ("ATM", r'(\d+)\s+ATMs?'),
+        ("VALIDADOR", r'(\d+)\s+validadores?'),
+        ("TERMINAL", r'(\d+)\s+terminais?'),
+    ):
+        vals = [int(x) for x in re.findall(regex, competition or "", flags=re.I)]
+        if vals:
+            competition_summary[type_name] = sum(vals)
+
+    return out, (competition or "").strip(), competition_summary
 
 
-def _wa_match_location(station_name, line_label):
-    ns = normalize(station_name)
-    nl = normalize(line_label)
-
-    candidates = Location.query.filter(func.upper(Location.line).like(f"%{line_label.split(' - ')[0]}%")).all()
-    exact = []
-    for loc in candidates:
-        location_text = normalize(loc.location)
-        # remove sigla inicial tipo "BGD - BRIGADEIRO"
-        if " - " in location_text:
-            location_name = location_text.split(" - ", 1)[1]
-        else:
-            location_name = location_text
-        if ns == location_name or ns in location_name or location_name in ns:
-            exact.append(loc)
-
-    if len(exact) == 1:
-        return exact[0], "SEGURA"
-    if len(exact) > 1:
-        # prioriza METRO para linhas 1,2,3
-        metro = [x for x in exact if normalize(x.company) in ("METRO", "METRÔ")]
-        if len(metro) == 1:
-            return metro[0], "SEGURA"
-        return exact[0], "REVISAR"
-    return None, "NAO IDENTIFICADA"
+def _wa_location_name(loc):
+    if not loc:
+        return ""
+    name = normalize(loc.location)
+    return name.split(" - ", 1)[1] if " - " in name else name
 
 
-@app.get("/r2-status")
-@manager_required
-def r2_status():
-    ok, message = r2_test_connection()
-    status_code = 200 if ok else 500
-    return jsonify({
-        "ok": ok,
-        "storage": "Cloudflare R2",
-        "bucket": os.environ.get("R2_BUCKET_NAME", ""),
-        "message": message
-    }), status_code
+def _wa_match_location(station_name, line_number):
+    aliases = {
+        "BRAZ CUBAS": "BRAS CUBAS",
+        "ENG MANOEL FEIO": "MANOEL FEIO",
+        "ENG GOULART": "ENGENHEIRO GOULART",
+        "GUARULHOS": "GUARULHOS CECAP",
+        "AEROPORTO": "AEROPORTO GUARULHOS",
+    }
+    target = aliases.get(normalize(station_name), normalize(station_name))
+
+    all_locations = Location.query.all()
+    same_line = []
+    other_line = []
+    for loc in all_locations:
+        m = re.match(r'(\d+)', loc.line or "")
+        ln = int(m.group(1)) if m else None
+        name = _wa_location_name(loc)
+        score = SequenceMatcher(None, target, name).ratio()
+        if target in name or name in target:
+            score = max(score, 0.93)
+        bucket = same_line if ln == line_number else other_line
+        bucket.append((score, loc))
+
+    same_line.sort(key=lambda x: x[0], reverse=True)
+    other_line.sort(key=lambda x: x[0], reverse=True)
+
+    if same_line and same_line[0][0] >= 0.72:
+        score, loc = same_line[0]
+        return loc, ("SEGURA" if score >= 0.82 else "REVISAR"), round(score, 3)
+
+    # Estações compartilhadas podem aparecer no WhatsApp com uma linha que ainda não existe
+    # como Location separada (ex.: Luz / Brás). Mantém como revisão, sem atribuição automática.
+    if other_line and other_line[0][0] >= 0.90:
+        score, _loc = other_line[0]
+        return None, "REVISAR", round(score, 3)
+
+    return None, "NAO IDENTIFICADA", 0.0
+
+
+def _wa_visit_source_key(msg, station):
+    seed = "|".join([
+        msg["date"], msg["time"], normalize(msg["author"]),
+        normalize(station["station"]), str(station["line_number"]),
+        normalize(re.sub(r'<anexado:[^>]+>', '', msg["text"], flags=re.I))
+    ])
+    return hashlib.sha256(seed.encode("utf-8")).hexdigest()[:40]
 
 
 def _wa_analyze_archive(raw):
@@ -1813,65 +2007,210 @@ def _wa_analyze_archive(raw):
         available_media = set(names)
 
         visits = []
-        current_visit = None
-        visit_index = 0
+        active_by_author = {}
+        pending_media = {}
+        seen_visit_keys = set()
+
+        def msg_dt(msg):
+            try:
+                return datetime.strptime(f'{msg["date"]} {msg["time"]}', "%d/%m/%Y %H:%M:%S")
+            except Exception:
+                return datetime.utcnow()
 
         for msg in messages:
+            author = msg["author"]
+            dt = msg_dt(msg)
             station = _wa_extract_station(msg["text"])
             attachments = [a for a in _wa_extract_attachments(msg["text"]) if a in available_media]
 
             if station:
-                visit_index += 1
-                loc, confidence = _wa_match_location(station["station"], station["line"])
-                current_visit = {
-                    "visit_index": visit_index,
+                source_key = _wa_visit_source_key(msg, station)
+                active = active_by_author.get(author)
+
+                # Concorrência/continuação da mesma estação é incorporada à mesma visita.
+                if (
+                    active
+                    and normalize(active["station_raw"]) == normalize(station["station"])
+                    and active["line_number"] == station["line_number"]
+                    and (dt - active["_last_dt"]).total_seconds() <= 5400
+                ):
+                    signature = normalize(re.sub(r'<anexado:[^>]+>', '', msg["text"], flags=re.I))
+                    if signature and signature not in active["_signatures"]:
+                        active["_signatures"].add(signature)
+                        active["messages"].append(msg)
+                        eqs, comp_text, comp_summary = _wa_equipment_rows(msg["text"], active["source_key"][:10])
+                        existing_keys = {(x["type"], x["identifier"]) for x in active["equipment"]}
+                        for eq in eqs:
+                            if (eq["type"], eq["identifier"]) not in existing_keys:
+                                active["equipment"].append(eq)
+                                existing_keys.add((eq["type"], eq["identifier"]))
+                        if comp_text:
+                            active["competition_text"] = (active["competition_text"] + "\n" + comp_text).strip()
+                        for k, v in comp_summary.items():
+                            active["competition_summary"][k] = active["competition_summary"].get(k, 0) + v
+                    for name in attachments:
+                        if name not in active["attachments"]:
+                            active["attachments"].append(name)
+                    active["_last_dt"] = dt
+                    continue
+
+                if source_key in seen_visit_keys:
+                    continue
+                seen_visit_keys.add(source_key)
+
+                loc, confidence, score = _wa_match_location(station["station"], station["line_number"])
+                eqs, comp_text, comp_summary = _wa_equipment_rows(msg["text"], source_key[:10])
+                visit = {
+                    "source_key": source_key,
                     "date": msg["date"],
                     "time": msg["time"],
-                    "author": msg["author"],
+                    "author": author,
                     "station_raw": station["station"],
+                    "line_number": station["line_number"],
                     "line_raw": station["line"],
-                    "detail": station["detail"],
                     "location_id": loc.id if loc else None,
                     "location_name": loc.location if loc else "",
                     "company": loc.company if loc else "",
                     "confidence": confidence,
-                    "attachments": list(attachments),
-                    "equipment": []
+                    "match_score": score,
+                    "messages": [msg],
+                    "equipment": eqs,
+                    "competition_text": comp_text,
+                    "competition_summary": comp_summary,
+                    "attachments": list(dict.fromkeys(attachments)),
+                    "_last_dt": dt,
+                    "_signatures": {
+                        normalize(re.sub(r'<anexado:[^>]+>', '', msg["text"], flags=re.I))
+                    },
                 }
 
-                for eq_index, eq in enumerate(_wa_equipment_rows(msg["text"]), start=1):
-                    # Rack não possui ID físico na mensagem; cria ID determinístico por visita.
-                    if eq["type"] == "Rack de Comunicação" and eq["identifier"].startswith("RACK-"):
-                        dt_ref = msg["date"].replace("/", "") + "-" + msg["time"].replace(":", "")
-                        eq["identifier"] = f"RACK-WA-{dt_ref}-{eq_index}"
+                # Fotos enviadas pouco antes do texto da estação.
+                pending = pending_media.get(author, [])
+                keep = []
+                for pdt, name in pending:
+                    if 0 <= (dt - pdt).total_seconds() <= 900:
+                        if name not in visit["attachments"]:
+                            visit["attachments"].append(name)
+                    else:
+                        keep.append((pdt, name))
+                pending_media[author] = keep
 
-                    duplicate = False
-                    duplicate_info = ""
-                    if loc:
-                        found = (
-                            db.session.query(Inventory, User.name.label("technician"))
-                            .join(User, User.id == Inventory.technician_id)
-                            .filter(
-                                Inventory.location_id == loc.id,
-                                Inventory.equipment_type == eq["type"],
-                                func.upper(Inventory.asset_identifier) == eq["identifier"].upper()
-                            ).first()
+                visits.append(visit)
+                active_by_author[author] = visit
+
+            else:
+                active = active_by_author.get(author)
+
+                if attachments:
+                    if active and 0 <= (dt - active["_last_dt"]).total_seconds() <= 5400:
+                        for name in attachments:
+                            if name not in active["attachments"]:
+                                active["attachments"].append(name)
+                        active["_last_dt"] = dt
+                    else:
+                        pending_media.setdefault(author, [])
+                        for name in attachments:
+                            pending_media[author].append((dt, name))
+
+                # POS e complementos enviados em mensagem seguinte pertencem à última estação
+                # do mesmo técnico, desde que dentro de 90 minutos.
+                if active and 0 <= (dt - active["_last_dt"]).total_seconds() <= 5400:
+                    clean = re.sub(r'<anexado:[^>]+>', '', msg["text"]).strip()
+                    if clean and clean != "Mensagem apagada":
+                        eqs, comp_text, comp_summary = _wa_equipment_rows(msg["text"], active["source_key"][:10])
+                        if eqs or re.search(r'\bPOS\b|\bSN\b|Patrim|concorr|autoriz', clean, flags=re.I):
+                            signature = normalize(clean)
+                            if signature and signature not in active["_signatures"]:
+                                active["_signatures"].add(signature)
+                                active["messages"].append(msg)
+                            existing_keys = {(x["type"], x["identifier"]) for x in active["equipment"]}
+                            for eq in eqs:
+                                if (eq["type"], eq["identifier"]) not in existing_keys:
+                                    active["equipment"].append(eq)
+                                    existing_keys.add((eq["type"], eq["identifier"]))
+                            if comp_text:
+                                active["competition_text"] = (active["competition_text"] + "\n" + comp_text).strip()
+                            for k, v in comp_summary.items():
+                                active["competition_summary"][k] = active["competition_summary"].get(k, 0) + v
+                            active["_last_dt"] = dt
+
+        for visit in visits:
+            visit.pop("_last_dt", None)
+            visit.pop("_signatures", None)
+
+            # Comparação preliminar com a base e inventário atual.
+            for eq in visit["equipment"]:
+                eq["base_status"] = "NÃO CONFRONTADO"
+                eq["inventory_status"] = "NÃO CONFRONTADO"
+                eq["audit_status"] = "PENDENTE"
+                eq["base_asset_id"] = None
+                eq["inventory_id"] = None
+
+                if eq["type"] == "RACK":
+                    eq["audit_status"] = "EVIDÊNCIA FORA DO PARQUE OFICIAL"
+                    continue
+
+                type_map = {
+                    "ATM": "ATM",
+                    "VALIDADOR": "VALIDADOR",
+                    "POS": "POS",
+                }
+                base_type = type_map.get(eq["type"], eq["type"])
+                candidates = BaseAsset.query.filter(
+                    func.upper(BaseAsset.equipment_type) == base_type,
+                    (
+                        (func.upper(func.coalesce(BaseAsset.terminal_number, "")) == eq["identifier"].upper())
+                        | (func.upper(func.coalesce(BaseAsset.top_id, "")) == eq["identifier"].upper())
+                        | (func.upper(func.coalesce(BaseAsset.serial, "")) == eq["identifier"].upper())
+                    )
+                ).all()
+
+                if candidates:
+                    chosen = candidates[0]
+                    eq["base_asset_id"] = chosen.id
+                    if visit["location_id"]:
+                        loc = db.session.get(Location, visit["location_id"])
+                        same_line = normalize(chosen.line) == normalize(loc.line)
+                        same_name = (
+                            normalize(chosen.locality) in normalize(loc.location)
+                            or normalize(_wa_location_name(loc)) in normalize(chosen.locality)
                         )
-                        if found:
-                            duplicate = True
-                            inv, tech_name = found
-                            duplicate_info = f"Já cadastrado por {tech_name}"
+                        if same_line and same_name:
+                            eq["base_status"] = "BASE CONFERE"
+                        else:
+                            eq["base_status"] = "BASE EM OUTRA LOCALIDADE"
+                    else:
+                        eq["base_status"] = "ENCONTRADO NA BASE"
+                else:
+                    eq["base_status"] = "NÃO PREVISTO NA BASE"
 
-                    eq["duplicate"] = duplicate
-                    eq["duplicate_info"] = duplicate_info
-                    current_visit["equipment"].append(eq)
+                if visit["location_id"]:
+                    inv_type = {
+                        "ATM": "ATM",
+                        "VALIDADOR": "Validador de Recarga",
+                        "POS": "POS de Bilheteria",
+                    }.get(eq["type"], eq["type"])
+                    inv = Inventory.query.filter(
+                        Inventory.location_id == visit["location_id"],
+                        Inventory.equipment_type == inv_type,
+                        func.upper(Inventory.asset_identifier) == eq["identifier"].upper()
+                    ).first()
+                    if inv:
+                        eq["inventory_id"] = inv.id
+                        eq["inventory_status"] = "JÁ INVENTARIADO"
+                    else:
+                        eq["inventory_status"] = "AINDA NÃO INVENTARIADO"
 
-                visits.append(current_visit)
-
-            elif current_visit and attachments:
-                current_visit["attachments"].extend(
-                    a for a in attachments if a not in current_visit["attachments"]
-                )
+                if eq["inventory_id"]:
+                    eq["audit_status"] = "CONFORME / JÁ INVENTARIADO"
+                elif eq["base_status"] == "BASE CONFERE":
+                    eq["audit_status"] = "CONFIRMADO EM CAMPO / FALTA PROMOVER"
+                elif eq["base_status"] == "BASE EM OUTRA LOCALIDADE":
+                    eq["audit_status"] = "DIVERGÊNCIA DE LOCALIDADE"
+                elif eq["base_status"] == "NÃO PREVISTO NA BASE":
+                    eq["audit_status"] = "NOVO / NÃO PREVISTO"
+                else:
+                    eq["audit_status"] = "PENDENTE DE REVISÃO"
 
         summary = {
             "messages": len(messages),
@@ -1881,7 +2220,21 @@ def _wa_analyze_archive(raw):
             "safe": sum(1 for v in visits if v["confidence"] == "SEGURA"),
             "review": sum(1 for v in visits if v["confidence"] == "REVISAR"),
             "unmatched": sum(1 for v in visits if v["confidence"] == "NAO IDENTIFICADA"),
-            "duplicates": sum(1 for v in visits for e in v["equipment"] if e["duplicate"]),
+            "duplicates": sum(
+                1 for v in visits for e in v["equipment"]
+                if e.get("inventory_status") == "JÁ INVENTARIADO"
+            ),
+            "by_type": {
+                t: sum(1 for v in visits for e in v["equipment"] if e["type"] == t)
+                for t in ("ATM", "VALIDADOR", "POS", "RACK")
+            },
+            "audit": {
+                status: sum(1 for v in visits for e in v["equipment"] if e["audit_status"] == status)
+                for status in sorted({
+                    e["audit_status"] for v in visits for e in v["equipment"]
+                })
+            },
+            "media_linked": len({a for v in visits for a in v["attachments"]}),
         }
         return visits, summary
 
@@ -1902,6 +2255,89 @@ def _r2_get_bytes(key):
     return obj["Body"].read()
 
 
+def _r2_available():
+    required = ("R2_ENDPOINT", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET_NAME")
+    return all(os.environ.get(x, "").strip() for x in required)
+
+
+def _wa_stage_archive(raw, filename):
+    batch_id = uuid.uuid4().hex
+    safe_name = secure_filename(filename) or "whatsapp.zip"
+    if _r2_available():
+        key = f"whatsapp/fontes/{batch_id}/{safe_name}"
+        _r2_put_bytes(key, raw, "application/zip")
+        return f"r2:{key}", batch_id, "R2"
+
+    staging_dir = UPLOAD_DIR / "whatsapp_staging"
+    staging_dir.mkdir(parents=True, exist_ok=True)
+    path = staging_dir / f"{batch_id}_{safe_name}"
+    path.write_bytes(raw)
+    return f"local:{path.name}", batch_id, "LOCAL TEMPORÁRIO"
+
+
+def _wa_load_staged(staging_key):
+    if staging_key.startswith("r2:"):
+        return _r2_get_bytes(staging_key[3:])
+    if staging_key.startswith("local:"):
+        path = UPLOAD_DIR / "whatsapp_staging" / staging_key[6:]
+        return path.read_bytes()
+    raise ValueError("Origem de importação inválida.")
+
+
+def _evidence_store_media(data, original_name, batch_id):
+    sha = hashlib.sha256(data).hexdigest()
+    existing = FieldEvidenceMedia.query.filter_by(sha256=sha).first()
+    if existing:
+        return existing, False
+
+    safe_name = secure_filename(Path(original_name).name) or f"midia-{sha[:12]}"
+    mime = mimetypes.guess_type(safe_name)[0] or "application/octet-stream"
+
+    if _r2_available():
+        key = f"whatsapp/evidencias/{batch_id}/{sha[:12]}_{safe_name}"
+        _r2_put_bytes(key, data, mime)
+        return FieldEvidenceMedia(
+            sha256=sha, original_name=safe_name, mime_type=mime,
+            storage_kind="r2", storage_key=key
+        ), True
+
+    evidence_dir = UPLOAD_DIR / "field_evidence"
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    stored = f"{sha[:16]}_{safe_name}"
+    (evidence_dir / stored).write_bytes(data)
+    return FieldEvidenceMedia(
+        sha256=sha, original_name=safe_name, mime_type=mime,
+        storage_kind="local", storage_key=stored
+    ), True
+
+
+def _evidence_summary():
+    visits = FieldEvidenceVisit.query.count()
+    items = FieldEvidenceItem.query.count()
+    media = FieldEvidenceMedia.query.count()
+    matched = FieldEvidenceItem.query.filter(
+        FieldEvidenceItem.audit_status.in_((
+            "CONFORME / JÁ INVENTARIADO",
+            "CONFIRMADO EM CAMPO / FALTA PROMOVER",
+        ))
+    ).count()
+    review = FieldEvidenceItem.query.filter(
+        ~FieldEvidenceItem.audit_status.in_((
+            "CONFORME / JÁ INVENTARIADO",
+            "CONFIRMADO EM CAMPO / FALTA PROMOVER",
+            "EVIDÊNCIA FORA DO PARQUE OFICIAL",
+        ))
+    ).count()
+    return {
+        "visits": visits,
+        "items": items,
+        "media": media,
+        "matched": matched,
+        "review": review,
+        "unresolved_visits": FieldEvidenceVisit.query.filter(FieldEvidenceVisit.location_id.is_(None)).count(),
+    }
+
+
 @app.route("/importar-whatsapp", methods=["GET", "POST"])
 @manager_required
 def import_whatsapp():
@@ -1910,6 +2346,7 @@ def import_whatsapp():
     error = None
     staging_key = None
     import_result = None
+    storage_note = "Cloudflare R2" if _r2_available() else "armazenamento local temporário"
 
     if request.method == "POST":
         action = request.form.get("action", "analyze")
@@ -1922,133 +2359,124 @@ def import_whatsapp():
                 try:
                     raw = upload.read()
                     preview, summary = _wa_analyze_archive(raw)
-
-                    batch_id = uuid.uuid4().hex
-                    safe_name = secure_filename(upload.filename) or "whatsapp.zip"
-                    staging_key = f"whatsapp/fontes/{batch_id}/{safe_name}"
-                    _r2_put_bytes(staging_key, raw, "application/zip")
+                    staging_key, _batch_id, storage_note = _wa_stage_archive(raw, upload.filename)
                 except Exception as exc:
-                    error = f"Não foi possível analisar o ZIP: {exc}"
+                    error = f"Não foi possível analisar o ZIP: {type(exc).__name__}: {exc}"
 
         elif action == "import":
             staging_key = request.form.get("staging_key", "").strip()
-            mark_completed = request.form.get("mark_completed") == "1"
-
             if not staging_key:
                 error = "Arquivo de origem não encontrado. Analise o ZIP novamente."
             else:
                 try:
-                    raw = _r2_get_bytes(staging_key)
+                    raw = _wa_load_staged(staging_key)
                     preview, summary = _wa_analyze_archive(raw)
-
-                    inserted = 0
-                    skipped_duplicates = 0
-                    safe_visits = 0
+                    batch_id = hashlib.sha256(raw).hexdigest()[:16]
+                    inserted_visits = 0
+                    updated_visits = 0
+                    inserted_items = 0
+                    skipped_items = 0
                     media_uploaded = 0
-                    imported_locations = set()
-                    uploaded_media = {}
 
                     with zipfile.ZipFile(io.BytesIO(raw)) as z:
                         names = set(z.namelist())
-                        batch_root = staging_key.rsplit("/", 1)[0].replace("/fontes/", "/midias/")
 
                         for visit in preview:
-                            if visit["confidence"] != "SEGURA" or not visit["location_id"]:
-                                continue
+                            row = FieldEvidenceVisit.query.filter_by(source_key=visit["source_key"]).first()
+                            report_text = "\n\n".join(
+                                f'[{m["date"]} {m["time"]}] {m["author"]}: {m["text"]}'
+                                for m in visit["messages"]
+                            )
 
-                            loc = db.session.get(Location, visit["location_id"])
-                            if not loc:
-                                continue
+                            if not row:
+                                row = FieldEvidenceVisit(
+                                    source_key=visit["source_key"],
+                                    source_batch=batch_id,
+                                    source_date=visit["date"],
+                                    source_time=visit["time"],
+                                    author=visit["author"],
+                                    station_raw=visit["station_raw"],
+                                    line_raw=visit["line_raw"],
+                                    location_id=visit["location_id"],
+                                    match_confidence=visit["confidence"],
+                                    match_score=visit["match_score"],
+                                    report_text=report_text,
+                                    competition_text=visit["competition_text"],
+                                    storage_source="R2" if _r2_available() else "LOCAL"
+                                )
+                                db.session.add(row)
+                                db.session.flush()
+                                inserted_visits += 1
+                            else:
+                                row.location_id = visit["location_id"]
+                                row.match_confidence = visit["confidence"]
+                                row.match_score = visit["match_score"]
+                                row.report_text = report_text
+                                row.competition_text = visit["competition_text"]
+                                updated_visits += 1
 
-                            safe_visits += 1
-                            imported_locations.add(loc.id)
+                            for eq in visit["equipment"]:
+                                existing_item = FieldEvidenceItem.query.filter_by(
+                                    visit_id=row.id,
+                                    equipment_type=eq["type"],
+                                    identifier=eq["identifier"]
+                                ).first()
+                                if existing_item:
+                                    skipped_items += 1
+                                    continue
 
-                            # Sobe cada mídia apenas uma vez no R2.
-                            media_refs = []
+                                item = FieldEvidenceItem(
+                                    visit_id=row.id,
+                                    equipment_type=eq["type"],
+                                    identifier=eq["identifier"],
+                                    model=eq.get("model", ""),
+                                    serial=eq.get("serial", ""),
+                                    patrimony=eq.get("patrimony", ""),
+                                    operational_status=eq.get("status", ""),
+                                    source_line=eq.get("source_line", ""),
+                                    base_asset_id=eq.get("base_asset_id"),
+                                    inventory_id=eq.get("inventory_id"),
+                                    audit_status=eq.get("audit_status", "PENDENTE"),
+                                    audit_detail=(
+                                        f'Base: {eq.get("base_status", "")}. '
+                                        f'Inventário: {eq.get("inventory_status", "")}.'
+                                    )
+                                )
+                                db.session.add(item)
+                                inserted_items += 1
+
+                            existing_media_hashes = {
+                                x.sha256 for x in FieldEvidenceMedia.query.filter_by(visit_id=row.id).all()
+                            }
                             for media_name in visit["attachments"]:
                                 if media_name not in names:
                                     continue
-                                if media_name not in uploaded_media:
-                                    data = z.read(media_name)
-                                    base = secure_filename(Path(media_name).name) or f"midia-{uuid.uuid4().hex}"
-                                    object_key = f"{batch_root}/{base}"
-                                    mime = mimetypes.guess_type(base)[0] or "application/octet-stream"
-                                    _r2_put_bytes(object_key, data, mime)
-                                    uploaded_media[media_name] = (object_key, mime)
-                                    media_uploaded += 1
-                                media_refs.append((media_name, *uploaded_media[media_name]))
-
-                            for eq in visit["equipment"]:
-                                existing = Inventory.query.filter(
-                                    Inventory.location_id == loc.id,
-                                    Inventory.equipment_type == eq["type"],
-                                    func.upper(Inventory.asset_identifier) == eq["identifier"].upper()
-                                ).first()
-
-                                if existing:
-                                    skipped_duplicates += 1
+                                data = z.read(media_name)
+                                sha = hashlib.sha256(data).hexdigest()
+                                if sha in existing_media_hashes:
                                     continue
 
-                                try:
-                                    dt = datetime.strptime(
-                                        f'{visit["date"]} {visit["time"]}',
-                                        "%d/%m/%Y %H:%M:%S"
-                                    )
-                                except Exception:
-                                    dt = datetime.utcnow()
+                                global_media = FieldEvidenceMedia.query.filter_by(sha256=sha).first()
+                                if global_media:
+                                    # Uma mídia pertence a uma visita no modelo. Se repetida em outro relatório,
+                                    # não duplica o arquivo; registra a repetição no texto de auditoria.
+                                    continue
 
-                                notes = (
-                                    f'Importado do WhatsApp. Responsável informado: {visit["author"]}. '
-                                    f'Origem: {staging_key}.'
-                                )
-
-                                inv = Inventory(
-                                    location_id=loc.id,
-                                    equipment_type=eq["type"],
-                                    asset_identifier=eq["identifier"],
-                                    serial=eq["identifier"],
-                                    model=eq.get("model", ""),
-                                    exact_position=visit.get("detail", ""),
-                                    operational_status="Não informado (WhatsApp)",
-                                    connectivity="",
-                                    network_id="",
-                                    label_status="",
-                                    in_base="Sim",
-                                    divergence="Não",
-                                    notes=notes,
-                                    technician_id=session["user_id"],
-                                    created_at=dt
-                                )
-                                db.session.add(inv)
-                                db.session.flush()
-
-                                for original_name, object_key, mime in media_refs:
-                                    db.session.add(Attachment(
-                                        inventory_id=inv.id,
-                                        original_name=Path(original_name).name,
-                                        stored_name=object_key,
-                                        mime_type=mime
-                                    ))
-
-                                inserted += 1
-
-                            if mark_completed:
-                                loc.survey_status = "CONCLUIDA"
-                                loc.completed_at = datetime.utcnow()
-                                loc.completed_by = session["user_id"]
-                            elif loc.survey_status == "PENDENTE":
-                                loc.survey_status = "EM ANDAMENTO"
-                                loc.started_at = datetime.utcnow()
+                                media_obj, is_new = _evidence_store_media(data, media_name, batch_id)
+                                media_obj.visit_id = row.id
+                                if is_new:
+                                    db.session.add(media_obj)
+                                    media_uploaded += 1
+                                existing_media_hashes.add(sha)
 
                     db.session.commit()
-
                     import_result = {
-                        "safe_visits": safe_visits,
-                        "inserted": inserted,
-                        "duplicates": skipped_duplicates,
+                        "inserted_visits": inserted_visits,
+                        "updated_visits": updated_visits,
+                        "inserted_items": inserted_items,
+                        "skipped_items": skipped_items,
                         "media_uploaded": media_uploaded,
-                        "locations": len(imported_locations),
-                        "completed": mark_completed
+                        "storage": "R2" if _r2_available() else "LOCAL TEMPORÁRIO",
                     }
 
                 except Exception as exc:
@@ -2061,8 +2489,209 @@ def import_whatsapp():
         summary=summary,
         error=error,
         staging_key=staging_key,
-        import_result=import_result
+        import_result=import_result,
+        storage_note=storage_note,
     )
+
+
+@app.get("/api/evidencias-campo/resumo")
+@dashboard_required
+def field_evidence_summary_api():
+    return jsonify({"ok": True, **_evidence_summary()})
+
+
+@app.get("/evidencias-campo")
+@dashboard_required
+def field_evidence_page():
+    q = request.args.get("q", "").strip()
+    audit = request.args.get("audit", "").strip()
+    location_id = request.args.get("location_id", type=int)
+    visit_id = request.args.get("visit", type=int)
+
+    query = FieldEvidenceVisit.query
+    if location_id:
+        query = query.filter(FieldEvidenceVisit.location_id == location_id)
+    if q:
+        like = f"%{q}%"
+        query = query.filter(
+            (FieldEvidenceVisit.station_raw.ilike(like))
+            | (FieldEvidenceVisit.author.ilike(like))
+            | (FieldEvidenceVisit.line_raw.ilike(like))
+        )
+    if audit:
+        query = query.join(
+            FieldEvidenceItem,
+            FieldEvidenceItem.visit_id == FieldEvidenceVisit.id
+        ).filter(FieldEvidenceItem.audit_status == audit).distinct()
+
+    visits = query.order_by(
+        FieldEvidenceVisit.source_date.desc(),
+        FieldEvidenceVisit.source_time.desc()
+    ).limit(250).all()
+
+    selected = db.session.get(FieldEvidenceVisit, visit_id) if visit_id else None
+    selected_items = []
+    selected_media = []
+    selected_location = None
+    if selected:
+        selected_items = FieldEvidenceItem.query.filter_by(visit_id=selected.id).order_by(
+            FieldEvidenceItem.equipment_type, FieldEvidenceItem.identifier
+        ).all()
+        selected_media = FieldEvidenceMedia.query.filter_by(visit_id=selected.id).order_by(
+            FieldEvidenceMedia.id
+        ).all()
+        selected_location = db.session.get(Location, selected.location_id) if selected.location_id else None
+
+    audit_statuses = [
+        x[0] for x in db.session.query(FieldEvidenceItem.audit_status)
+        .filter(FieldEvidenceItem.audit_status.isnot(None))
+        .distinct().order_by(FieldEvidenceItem.audit_status).all()
+    ]
+
+    visit_cards = []
+    for visit in visits:
+        item_count = FieldEvidenceItem.query.filter_by(visit_id=visit.id).count()
+        media_count = FieldEvidenceMedia.query.filter_by(visit_id=visit.id).count()
+        review_count = FieldEvidenceItem.query.filter(
+            FieldEvidenceItem.visit_id == visit.id,
+            ~FieldEvidenceItem.audit_status.in_((
+                "CONFORME / JÁ INVENTARIADO",
+                "CONFIRMADO EM CAMPO / FALTA PROMOVER",
+                "EVIDÊNCIA FORA DO PARQUE OFICIAL",
+            ))
+        ).count()
+        loc = db.session.get(Location, visit.location_id) if visit.location_id else None
+        visit_cards.append({
+            "visit": visit, "items": item_count, "media": media_count,
+            "review": review_count, "location": loc
+        })
+
+    return render_template(
+        "field_evidence.html",
+        summary=_evidence_summary(),
+        visit_cards=visit_cards,
+        selected=selected,
+        selected_items=selected_items,
+        selected_media=selected_media,
+        selected_location=selected_location,
+        audit_statuses=audit_statuses,
+        q=q,
+        audit=audit,
+    )
+
+
+@app.get("/evidencias-campo/midia/<int:media_id>")
+@dashboard_required
+def field_evidence_media(media_id):
+    media = db.session.get(FieldEvidenceMedia, media_id)
+    if not media:
+        return "Mídia não encontrada.", 404
+
+    if media.storage_kind == "r2":
+        try:
+            raw = _r2_get_bytes(media.storage_key)
+            return send_file(
+                io.BytesIO(raw),
+                mimetype=media.mime_type or "application/octet-stream",
+                download_name=media.original_name,
+                max_age=3600,
+            )
+        except Exception:
+            return "Não foi possível recuperar a mídia do R2.", 502
+
+    return send_from_directory(
+        UPLOAD_DIR / "field_evidence",
+        media.storage_key,
+        mimetype=media.mime_type,
+        max_age=3600,
+    )
+
+
+@app.post("/evidencias-campo/item/<int:item_id>/promover")
+@manager_required
+def promote_evidence_item(item_id):
+    item = db.session.get(FieldEvidenceItem, item_id)
+    if not item:
+        flash("Evidência não encontrada.")
+        return redirect(url_for("field_evidence_page"))
+
+    visit = db.session.get(FieldEvidenceVisit, item.visit_id)
+    if not visit or not visit.location_id:
+        flash("A evidência precisa estar associada a uma localidade antes de ser promovida.")
+        return redirect(url_for("field_evidence_page", visit=visit.id if visit else None))
+
+    type_map = {
+        "ATM": "ATM",
+        "VALIDADOR": "Validador de Recarga",
+        "POS": "POS de Bilheteria",
+    }
+    inv_type = type_map.get(item.equipment_type)
+    if not inv_type:
+        flash("Esse tipo é mantido somente como evidência e não pode ser promovido automaticamente.")
+        return redirect(url_for("field_evidence_page", visit=visit.id))
+
+    existing = Inventory.query.filter(
+        Inventory.location_id == visit.location_id,
+        Inventory.equipment_type == inv_type,
+        func.upper(Inventory.asset_identifier) == item.identifier.upper()
+    ).first()
+    if existing:
+        item.inventory_id = existing.id
+        item.audit_status = "CONFORME / JÁ INVENTARIADO"
+        db.session.commit()
+        flash("O equipamento já existia no inventário. A evidência foi vinculada.")
+        return redirect(url_for("field_evidence_page", visit=visit.id))
+
+    now = datetime.utcnow()
+    inv = Inventory(
+        location_id=visit.location_id,
+        equipment_type=inv_type,
+        base_asset_id=item.base_asset_id,
+        asset_identifier=item.identifier,
+        serial=item.serial or item.identifier,
+        supplier="",
+        model=item.model or "",
+        exact_position="Importado após revisão da evidência de campo do WhatsApp.",
+        mount="",
+        operational_status=item.operational_status or "Não informado",
+        connectivity="",
+        network_id="",
+        label_status="",
+        in_base="Sim" if item.base_asset_id else "Não",
+        divergence="Não" if item.base_asset_id else "Sim - identificação",
+        notes=f"Evidência WhatsApp V4. Visita #{visit.id}. Responsável: {visit.author}.",
+        technician_id=session["user_id"],
+        created_at=now,
+    )
+    db.session.add(inv)
+    db.session.flush()
+    item.inventory_id = inv.id
+    item.audit_status = "CONFORME / JÁ INVENTARIADO"
+    db.session.commit()
+    flash(f"{item.equipment_type} {item.identifier} promovido para o inventário.")
+    return redirect(url_for("field_evidence_page", visit=visit.id))
+
+
+@app.post("/evidencias-campo/visita/<int:visit_id>/associar")
+@manager_required
+def associate_evidence_visit(visit_id):
+    visit = db.session.get(FieldEvidenceVisit, visit_id)
+    if not visit:
+        flash("Visita não encontrada.")
+        return redirect(url_for("field_evidence_page"))
+
+    location_id = request.form.get("location_id", type=int)
+    loc = db.session.get(Location, location_id) if location_id else None
+    if not loc:
+        flash("Localidade inválida.")
+        return redirect(url_for("field_evidence_page", visit=visit.id))
+
+    visit.location_id = loc.id
+    visit.match_confidence = "REVISADA PELO GESTOR"
+    db.session.commit()
+    flash(f"Evidência associada a {loc.location}.")
+    return redirect(url_for("field_evidence_page", visit=visit.id))
+
 
 def migrate_base_asset_columns():
     with db.engine.begin() as conn:
