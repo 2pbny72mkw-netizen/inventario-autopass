@@ -2,8 +2,17 @@
 {% block title %}Patrimônio 360 | Inventário SP{% endblock %}
 {% block content %}
 <section class="dashHero">
-  <div><span class="eyebrow">V12.0 · INTELIGÊNCIA DO PARQUE</span><h1>Localidades e Equipamentos</h1>
-  <p>Conciliação da base, inventário, evidências e ciclo de vida dos ativos.</p></div>
+  <div><span class="eyebrow">V14.0 · GESTÃO, QUALIDADE E INTELIGÊNCIA</span><h1>Localidades e Equipamentos</h1>
+  <p>Visão executiva, qualidade do inventário, conciliação da base, evidências e ciclo de vida dos ativos.</p></div>
+</section>
+
+<section class="card v14Executive">
+  <div class="sectionHead"><div><h2>Central Executiva do Inventário</h2><p class="muted">Leitura rápida de cobertura, confiabilidade e prioridades de atuação.</p></div><span class="tag">V14</span></div>
+  <div id="v14ExecutiveKpis" class="v14ExecutiveKpis"></div>
+  <div class="v14ExecutiveGrid">
+    <div><h3>Qualidade do parque</h3><div id="v14QualityBars"></div></div>
+    <div><h3>Prioridades imediatas</h3><div id="v14Priorities" class="v14Priorities"></div></div>
+  </div>
 </section>
 <section class="card v12Intel"><div class="sectionHead"><div><h2>Saúde e confiabilidade do parque</h2><p class="muted">Leitura automática das localidades. Clique em uma localidade crítica para investigar no 360°.</p></div><button class="secondary" id="v12Refresh">Atualizar análise</button></div><div id="v12Kpis" class="v12Kpis"></div><div class="v12Legend"><span class="v12Good">Confiável ≥ 85</span><span class="v12Warn">Atenção 65–84</span><span class="v12Bad">Crítico &lt; 65</span></div><div id="v12Locations" class="v12IntelGrid"></div></section>
 <section class="card">
@@ -16,5 +25,5 @@
  <div id="v7Locations" class="v7LocationGrid"></div>
 </section>
 <div id="v7DetailModal" class="scheduleModal hidden"><div class="scheduleModalPanel"><div class="sectionHead"><h2 id="v7DetailTitle">360°</h2><button class="secondary" id="v7Close">Fechar</button></div><div id="v7Detail"></div></div></div>
-<script src="{{ url_for('static',filename='patrimonio.js') }}?v=v12"></script>
+<script src="{{ url_for('static',filename='patrimonio.js') }}?v=v14"></script>
 {% endblock %}
