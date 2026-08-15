@@ -803,6 +803,7 @@ def teams_status_api():
         rows.append({
             **member,
             "photo_url": (f"/usuarios/{user.id}/foto" if user and user.photo_url else None),
+            "photo_version": (str(user.photo_url) if user and user.photo_url else None),
             "latitude": pos.latitude if pos else None,
             "longitude": pos.longitude if pos else None,
             "accuracy": pos.accuracy if pos else None,
@@ -1387,11 +1388,11 @@ def teams_page():
 def about_page():
     return render_template(
         "about.html",
-        app_release="V9.1",
+        app_release="V9.3",
         dashboard_release=DASHBOARD_RELEASE,
         base_version=BASE_DATA_VERSION,
-        manager_version="dashboard-v9-1",
-        teams_version="teams-v9-1",
+        manager_version="dashboard-v9-3",
+        teams_version="teams-v9-3",
     )
 
 
@@ -2615,7 +2616,7 @@ def user_photo(user_id):
         return Response(
             obj["Body"].read(),
             mimetype=obj.get("ContentType") or "image/jpeg",
-            headers={"Cache-Control": "private, max-age=300"}
+            headers={"Cache-Control": "private, no-cache, max-age=0", "Pragma": "no-cache"}
         )
     except Exception:
         return "", 404
