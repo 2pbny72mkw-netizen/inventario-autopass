@@ -130,3 +130,549 @@ body.mapFullscreenOpen #toggleMapFullscreenBtn{
 
 /* V5 Central de Equipes */
 .teamCards{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}.teamCard{display:flex;gap:12px;align-items:center;border:1px solid #dfe6ef;border-radius:14px;padding:12px;background:#fff}.teamCard small,.teamCard span{display:block;margin-top:4px;font-size:12px;color:#65758b}.avatarRing{width:58px;height:58px;border-radius:50%;padding:4px;background:#aab4c0;flex:0 0 auto}.avatarFallback{width:100%;height:100%;border-radius:50%;background:#eef3f8;display:flex;align-items:center;justify-content:center;font-weight:800;color:#233a5a}.freshness-ATUAL .avatarRing{background:#2e9d61}.freshness-ATENÇÃO .avatarRing{background:#e0a629}.freshness-ATRASADO .avatarRing{background:#d55252}.freshness-SEM-SINAL .avatarRing{background:#9aa5b1}.teamMapFullscreen{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;z-index:9998!important;border-radius:0!important}
+
+
+/* ===== V5.2 · Escala e mapa operacional ===== */
+.teamMapActions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.teamMapWrap{position:relative;width:100%;background:#fff}
+.teamMapExit{display:none;position:absolute;right:18px;top:18px;z-index:10000;box-shadow:0 6px 22px rgba(0,0,0,.18)}
+.teamMapWrap:fullscreen{width:100vw;height:100vh;background:#fff}
+.teamMapWrap:fullscreen .teamMap{width:100%;height:100vh!important;border:0;border-radius:0}
+.teamMapFullscreenFallback{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;z-index:9998!important;background:#fff}
+.teamMapFullscreenFallback .teamMap{width:100%!important;height:100vh!important;border:0!important;border-radius:0!important}
+.calendarControls{display:flex;gap:8px;align-items:end;flex-wrap:wrap}
+.calendarControls label{font-size:11px;display:flex;flex-direction:column;gap:3px}
+.scaleTableWrap{overflow:auto;max-height:650px;border:1px solid #dfe6ef;border-radius:12px}
+.scaleTable{border-collapse:separate;border-spacing:0;min-width:1200px;width:100%;font-size:12px}
+.scaleTable th,.scaleTable td{padding:8px;border-right:1px solid #e7ecf2;border-bottom:1px solid #e7ecf2;text-align:center;white-space:nowrap}
+.scaleTable thead th{position:sticky;top:0;background:#f4f7fb;z-index:3}
+.scaleTable th small,.scaleTable td small{display:block;font-size:10px;color:#68788c;margin-top:2px}
+.scaleTable .stickyTechCol{position:sticky;left:0;text-align:left;background:#fff;z-index:2;min-width:230px}
+.scaleTable thead .stickyTechCol{z-index:5;background:#f4f7fb}
+.scaleWork{background:#e8f7ef;color:#136f44;font-weight:700}
+.scaleOff{background:#f7f8fa;color:#8995a4}
+.scheduleModal{position:fixed;inset:0;z-index:11000;background:rgba(12,27,48,.48);padding:30px;overflow:auto}
+.scheduleModal.hidden{display:none!important}
+.scheduleModalPanel{max-width:1250px;margin:0 auto;background:#fff;border-radius:18px;padding:20px;box-shadow:0 20px 70px rgba(0,0,0,.25)}
+.scheduleAdminGrid{display:grid;grid-template-columns:minmax(340px,.8fr) minmax(520px,1.2fr);gap:18px}
+.scheduleForm{border:1px solid #dfe6ef;border-radius:14px;padding:14px;display:grid;grid-template-columns:1fr 1fr;gap:10px;align-content:start}
+.scheduleForm>div:first-child{grid-column:1/-1}
+.scheduleFormActions{grid-column:1/-1;display:flex;gap:8px}
+.scheduleListHead{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:10px}
+.scheduleListHead input{max-width:260px}
+.scheduleProfiles{display:flex;flex-direction:column;gap:8px;max-height:620px;overflow:auto}
+.scheduleProfile{display:flex;justify-content:space-between;gap:12px;align-items:center;border:1px solid #dfe6ef;border-radius:12px;padding:10px 12px}
+.scheduleProfile>div:first-child{display:flex;flex-direction:column;gap:2px}
+.scheduleProfileActions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.profileInactive{opacity:.55}
+.dangerGhost{border:1px solid #efb2b2;background:#fff5f5;color:#a52c2c;border-radius:9px;padding:8px 10px;font-weight:700;cursor:pointer}
+@media(max-width:900px){
+  .scheduleAdminGrid{grid-template-columns:1fr}
+  .scheduleForm{grid-template-columns:1fr}
+  .scheduleForm>div:first-child,.scheduleFormActions{grid-column:auto}
+  .scheduleModal{padding:8px}
+}
+
+
+/* ===== V5.2 · Dashboard com cores executivas ===== */
+.dashboardKpis .kpi{
+  background:linear-gradient(180deg,#ffffff 0%,#fbfcfe 100%);
+}
+.dashboardKpis .primaryKpi{
+  background:linear-gradient(180deg,#f8fbff 0%,#eef5ff 100%);
+}
+.dashboardKpis .successKpi{
+  background:linear-gradient(180deg,#f8fffb 0%,#edf9f2 100%);
+}
+.dashboardKpis .warningKpi{
+  background:linear-gradient(180deg,#fffdf7 0%,#fff5df 100%);
+}
+.dashboardKpis .dangerKpi{
+  background:linear-gradient(180deg,#fffafa 0%,#fff0f0 100%);
+}
+.dashboardKpis .successKpi b{color:#087447}
+.dashboardKpis .warningKpi b{color:#a76500}
+.dashboardKpis .dangerKpi b{color:#b62f2f}
+
+.equipmentBig.atm{
+  background:linear-gradient(180deg,#ffffff 0%,#eef5ff 100%);
+}
+.equipmentBig.val{
+  background:linear-gradient(180deg,#ffffff 0%,#edf9f2 100%);
+}
+.equipmentBig.pos{
+  background:linear-gradient(180deg,#ffffff 0%,#fff3e9 100%);
+}
+.equipmentBig.tdi{
+  background:linear-gradient(180deg,#ffffff 0%,#f6eefb 100%);
+}
+.equipmentBig.bloq{
+  background:linear-gradient(180deg,#ffffff 0%,#eaf9f7 100%);
+}
+.equipmentBig.atm b{color:#1f568f}
+.equipmentBig.val b{color:#087447}
+.equipmentBig.pos b{color:#c65100}
+.equipmentBig.tdi b{color:#6b368f}
+.equipmentBig.bloq b{color:#007f75}
+
+.executiveFilterBar{
+  border-top:3px solid #d7e5f5;
+  background:linear-gradient(90deg,#fbfdff 0%,#ffffff 45%,#fbfdff 100%);
+}
+.evidenceExecutiveStrip{
+  border-left:4px solid #6d4aa1;
+  background:linear-gradient(90deg,#fbf8ff 0%,#ffffff 42%);
+}
+.evidenceMiniKpis span:nth-child(1){border-top:3px solid #4678ad}
+.evidenceMiniKpis span:nth-child(2){border-top:3px solid #7a5aa6}
+.evidenceMiniKpis span:nth-child(3){border-top:3px solid #249364}
+.evidenceMiniKpis span:nth-child(4){border-top:3px solid #d58a16}
+.evidenceMiniKpis span:nth-child(5){border-top:3px solid #2b8f9f}
+
+.dashboardGrid .chartCard:first-child{
+  border-top:4px solid #214f83;
+}
+.dashboardGrid .chartCard:nth-child(2){
+  border-top:4px solid #249364;
+}
+.bigPercent{color:#087447}
+
+
+/* ===== V5.2 · Sobre / Versões ===== */
+.aboutKpis{margin-bottom:14px}
+.aboutModules{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.aboutModules article{border:1px solid #dfe6ef;border-radius:14px;padding:14px;background:linear-gradient(180deg,#fff,#f8fbff)}
+.aboutModules article b{display:block;color:#183153;margin-bottom:5px}
+.aboutModules article span{font-size:13px;color:#64748b}
+.versionTimeline{display:flex;flex-direction:column;gap:10px}
+.versionTimeline div{display:grid;grid-template-columns:80px 1fr;gap:12px;align-items:start;border-left:4px solid #214f83;padding:10px 12px;background:#f8fbff;border-radius:0 12px 12px 0}
+.versionTimeline div:nth-child(2){border-left-color:#249364}
+.versionTimeline div:nth-child(3){border-left-color:#d58a16}
+.versionTimeline div:nth-child(4){border-left-color:#7a5aa6}
+.versionTimeline div:nth-child(5){border-left-color:#2b8f9f}
+.aboutCredit{display:flex;justify-content:space-between;align-items:center;gap:12px;background:linear-gradient(90deg,#f8fbff,#fff)}
+.aboutCredit span{color:#64748b}
+.aboutCredit b{color:#183153}
+@media(max-width:700px){.aboutModules{grid-template-columns:1fr}.versionTimeline div{grid-template-columns:60px 1fr}}
+
+
+/* ===== V5.2.1 · Refinamento visual global ===== */
+
+/* Correção Leaflet: evita tiles ampliados/desorganizados por regras globais de imagem */
+.leaflet-container img,
+.leaflet-tile,
+.leaflet-marker-icon,
+.leaflet-marker-shadow{
+  max-width:none !important;
+  max-height:none !important;
+}
+
+/* Mapa de equipes: compacto e contido dentro do card */
+.teamMap{
+  width:100%;
+  height:360px;
+  min-height:360px;
+  border:1px solid #dce4ee;
+  border-radius:14px;
+  overflow:hidden;
+  background:#eaf1f5;
+}
+.teamMapWrap{
+  overflow:hidden;
+  border-radius:14px;
+}
+.teamMapCollapsed{
+  display:none;
+}
+.teamMapWrap:fullscreen,
+.teamMapFullscreenFallback{
+  overflow:visible!important;
+}
+.teamMapWrap:fullscreen .teamMap,
+.teamMapFullscreenFallback .teamMap{
+  min-height:100vh!important;
+}
+
+/* Paleta geral: mais cor sem perder leitura executiva */
+:root{
+  --surface-blue:#f4f9ff;
+  --surface-green:#f1faf5;
+  --surface-orange:#fff7ed;
+  --surface-purple:#f8f3fc;
+  --surface-teal:#eefaf8;
+}
+
+body{
+  background:
+    radial-gradient(circle at 8% 0%,rgba(63,143,190,.08),transparent 24%),
+    radial-gradient(circle at 92% 6%,rgba(0,160,146,.06),transparent 24%),
+    #f4f7fb;
+}
+
+.nav{
+  background:linear-gradient(90deg,#ffffff 0%,#fbfdff 55%,#f6fbff 100%);
+  border-bottom:1px solid #d8e5f1;
+}
+.nav a{
+  border-radius:9px;
+  padding:8px 10px;
+  transition:.15s ease;
+}
+.nav a:hover{
+  background:#edf5fc;
+  color:#124f86;
+}
+
+.dashHero{
+  position:relative;
+  padding-top:4px;
+}
+.dashHero:before{
+  content:"";
+  position:absolute;
+  left:0;
+  top:0;
+  width:58px;
+  height:4px;
+  border-radius:999px;
+  background:linear-gradient(90deg,#ff6500,#00a092,#214f83);
+}
+
+.card{
+  border-color:#dbe4ee;
+}
+.card > h2,
+.sectionHead h2,
+.cardHead h2{
+  color:#183153;
+}
+
+/* Botões com hierarquia mais visível */
+.primary{
+  background:linear-gradient(135deg,#17345d,#214f83);
+  box-shadow:0 5px 14px rgba(33,79,131,.15);
+}
+.secondary{
+  background:linear-gradient(180deg,#f5f9fd,#eaf1f8);
+  border-color:#d4e0ec;
+  color:#17345d;
+}
+.secondary:hover{
+  background:#e4eef7;
+}
+
+/* Filtros e inputs com foco azul/verde */
+input:focus,select:focus,textarea:focus{
+  border-color:#4a84bb!important;
+  box-shadow:0 0 0 3px rgba(74,132,187,.12);
+  outline:none;
+}
+
+/* Tabelas mais legíveis */
+.tableWrap thead th,
+.scaleTable thead th{
+  background:linear-gradient(180deg,#edf5fc,#e6f0f9);
+  color:#294563;
+}
+.tableWrap tbody tr:nth-child(even){
+  background:#fbfdff;
+}
+.tableWrap tbody tr:hover{
+  background:#f0f7fd;
+}
+
+/* Páginas operacionais */
+.teamCard:nth-child(4n+1){background:linear-gradient(135deg,#fff,#f5f9ff)}
+.teamCard:nth-child(4n+2){background:linear-gradient(135deg,#fff,#f2faf6)}
+.teamCard:nth-child(4n+3){background:linear-gradient(135deg,#fff,#fff8ef)}
+.teamCard:nth-child(4n+4){background:linear-gradient(135deg,#fff,#f8f3fc)}
+
+.scheduleProfile:nth-child(3n+1){border-left:4px solid #3274ad}
+.scheduleProfile:nth-child(3n+2){border-left:4px solid #249364}
+.scheduleProfile:nth-child(3n+3){border-left:4px solid #d58a16}
+
+.evidenceVisitCard:nth-child(4n+1){background:linear-gradient(135deg,#fff,#f5f9ff)}
+.evidenceVisitCard:nth-child(4n+2){background:linear-gradient(135deg,#fff,#f2faf6)}
+.evidenceVisitCard:nth-child(4n+3){background:linear-gradient(135deg,#fff,#fff8ef)}
+.evidenceVisitCard:nth-child(4n+4){background:linear-gradient(135deg,#fff,#f8f3fc)}
+
+.notice{
+  background:linear-gradient(90deg,#fff9eb,#fffdf7);
+  border-color:#ecd293;
+}
+.alert{
+  background:#fff1f1;
+  border-color:#efb2b2;
+}
+
+/* Cards do Dashboard com cores um pouco mais presentes */
+.dashboardKpis .primaryKpi{border-top:3px solid #3274ad}
+.dashboardKpis .successKpi{border-top:3px solid #249364}
+.dashboardKpis .warningKpi{border-top:3px solid #d58a16}
+.dashboardKpis .dangerKpi{border-top:3px solid #d34a4a}
+
+.equipmentBig.atm{box-shadow:0 8px 24px rgba(33,79,131,.08)}
+.equipmentBig.val{box-shadow:0 8px 24px rgba(0,140,90,.08)}
+.equipmentBig.pos{box-shadow:0 8px 24px rgba(255,101,0,.08)}
+.equipmentBig.tdi{box-shadow:0 8px 24px rgba(122,62,157,.08)}
+.equipmentBig.bloq{box-shadow:0 8px 24px rgba(0,160,146,.08)}
+
+/* Usuários / formulários */
+.userCard,.userRow{
+  border-left:4px solid #8aa7c2;
+}
+.userCard:nth-child(3n+1),.userRow:nth-child(3n+1){border-left-color:#3274ad}
+.userCard:nth-child(3n+2),.userRow:nth-child(3n+2){border-left-color:#249364}
+.userCard:nth-child(3n+3),.userRow:nth-child(3n+3){border-left-color:#d58a16}
+
+@media(max-width:760px){
+  .teamMap{height:300px;min-height:300px}
+}
+
+
+/* ===========================================================
+   V6 · Identidade visual + Central Operacional
+   =========================================================== */
+
+/* Leaflet hard isolation: prevents global application styles from changing tiles. */
+.leaflet-container{
+  font:12px/1.5 "Helvetica Neue",Arial,Helvetica,sans-serif !important;
+}
+.leaflet-container .leaflet-pane,
+.leaflet-container .leaflet-tile,
+.leaflet-container .leaflet-marker-icon,
+.leaflet-container .leaflet-marker-shadow,
+.leaflet-container .leaflet-tile-container{
+  position:absolute !important;
+  left:0;
+  top:0;
+}
+.leaflet-container .leaflet-tile{
+  width:256px !important;
+  height:256px !important;
+  max-width:none !important;
+  max-height:none !important;
+  margin:0 !important;
+  padding:0 !important;
+  border:0 !important;
+  object-fit:none !important;
+}
+.leaflet-container img{
+  max-width:none !important;
+  max-height:none !important;
+}
+.teamMap{
+  height:360px !important;
+  min-height:360px !important;
+  width:100% !important;
+  position:relative !important;
+  overflow:hidden !important;
+  isolation:isolate;
+}
+.teamMapWrap{
+  overflow:hidden !important;
+  position:relative;
+}
+.teamMapWrap:fullscreen .teamMap,
+.teamMapFullscreenFallback .teamMap{
+  height:100vh !important;
+  min-height:100vh !important;
+}
+
+/* V6 palette */
+:root{
+  --v6-blue:#276aa2;
+  --v6-blue-soft:#eaf4fd;
+  --v6-green:#14865a;
+  --v6-green-soft:#eaf8f1;
+  --v6-orange:#d97706;
+  --v6-orange-soft:#fff4e5;
+  --v6-purple:#7650a3;
+  --v6-purple-soft:#f5effb;
+  --v6-teal:#058b84;
+  --v6-teal-soft:#e9f8f7;
+  --v6-red:#c73f3f;
+  --v6-red-soft:#fff0f0;
+}
+
+body{
+  background:
+    radial-gradient(circle at 5% 0%,rgba(39,106,162,.12),transparent 23%),
+    radial-gradient(circle at 92% 3%,rgba(5,139,132,.09),transparent 25%),
+    #f3f7fb;
+}
+
+.nav{
+  box-shadow:0 3px 18px rgba(23,52,93,.05);
+}
+.nav a:hover{
+  background:linear-gradient(180deg,#edf6fd,#e4f0fa);
+}
+.eyebrow{
+  color:#d65f00;
+}
+.card{
+  box-shadow:0 7px 26px rgba(28,54,82,.055);
+}
+
+/* Dashboard general KPIs: stronger but still executive. */
+.dashboardKpis .primaryKpi{
+  background:linear-gradient(135deg,#ffffff 0%,var(--v6-blue-soft) 100%);
+  border-top:4px solid var(--v6-blue);
+}
+.dashboardKpis .successKpi{
+  background:linear-gradient(135deg,#ffffff 0%,var(--v6-green-soft) 100%);
+  border-top:4px solid var(--v6-green);
+}
+.dashboardKpis .warningKpi{
+  background:linear-gradient(135deg,#ffffff 0%,var(--v6-orange-soft) 100%);
+  border-top:4px solid var(--v6-orange);
+}
+.dashboardKpis .dangerKpi{
+  background:linear-gradient(135deg,#ffffff 0%,var(--v6-red-soft) 100%);
+  border-top:4px solid var(--v6-red);
+}
+.equipmentBig.atm{background:linear-gradient(145deg,#fff,#eaf4fd)}
+.equipmentBig.val{background:linear-gradient(145deg,#fff,#eaf8f1)}
+.equipmentBig.pos{background:linear-gradient(145deg,#fff,#fff4e5)}
+.equipmentBig.tdi{background:linear-gradient(145deg,#fff,#f5effb)}
+.equipmentBig.bloq{background:linear-gradient(145deg,#fff,#e9f8f7)}
+
+.executiveFilterBar{
+  background:linear-gradient(90deg,#eef6fd 0%,#ffffff 48%,#edf9f6 100%);
+  border-top:4px solid #70a5ce;
+}
+.evidenceExecutiveStrip{
+  background:linear-gradient(110deg,#f6effc,#fff 55%,#eef8f7);
+  border-left:5px solid var(--v6-purple);
+}
+
+/* Teams */
+.teamsHero:before{
+  background:linear-gradient(90deg,var(--v6-blue),var(--v6-green),var(--v6-orange));
+}
+.teamKpis .supervisorKpi{
+  background:linear-gradient(135deg,#fff,var(--v6-purple-soft));
+}
+.teamKpis .supervisorKpi:before{background:var(--v6-purple)}
+.teamKpis .supportKpi{
+  background:linear-gradient(135deg,#fff,var(--v6-teal-soft));
+}
+.teamKpis .supportKpi:before{background:var(--v6-teal)}
+.teamMapCard{
+  border-top:4px solid var(--v6-blue);
+}
+.scaleCard{
+  border-top:4px solid var(--v6-green);
+}
+
+.categoryBadge{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  padding:4px 7px;
+  border-radius:999px;
+  font-size:10px;
+  font-weight:800;
+  letter-spacing:.02em;
+}
+.categoryBadge.technician{background:var(--v6-blue-soft);color:#215d91}
+.categoryBadge.supervisor{background:var(--v6-purple-soft);color:#65418d}
+.categoryBadge.support{background:var(--v6-teal-soft);color:#06736e}
+
+.linkBadge{
+  display:inline-flex!important;
+  width:max-content;
+  margin-top:6px!important;
+  padding:4px 7px;
+  border-radius:999px;
+  font-size:10px!important;
+  font-weight:800;
+}
+.linkBadge.linked{background:#e9f8ef;color:#137346}
+.linkBadge.unlinked{background:#fff2db;color:#8a5700}
+
+.teamCard.category-technician{background:linear-gradient(135deg,#fff,#f0f7fd)}
+.teamCard.category-supervisor{background:linear-gradient(135deg,#fff,#f6f0fc)}
+.teamCard.category-support{background:linear-gradient(135deg,#fff,#edf9f8)}
+.teamCard.category-supervisor{border-top:3px solid var(--v6-purple)}
+.teamCard.category-support{border-top:3px solid var(--v6-teal)}
+
+.scheduleProfile.category-technician{border-left:4px solid var(--v6-blue)}
+.scheduleProfile.category-supervisor{border-left:4px solid var(--v6-purple)}
+.scheduleProfile.category-support{border-left:4px solid var(--v6-teal)}
+.profileTitle{display:flex;gap:7px;align-items:center;flex-wrap:wrap}
+.fullField{grid-column:1/-1}
+
+.scale-technician .stickyTechCol{border-left:4px solid var(--v6-blue)}
+.scale-supervisor .stickyTechCol{border-left:4px solid var(--v6-purple)}
+.scale-support .stickyTechCol{border-left:4px solid var(--v6-teal)}
+
+/* Evidence pages */
+.evidenceKpis .kpi:nth-child(1){background:linear-gradient(135deg,#fff,var(--v6-blue-soft))}
+.evidenceKpis .kpi:nth-child(2){background:linear-gradient(135deg,#fff,var(--v6-purple-soft))}
+.evidenceKpis .kpi:nth-child(3){background:linear-gradient(135deg,#fff,var(--v6-green-soft))}
+.evidenceKpis .kpi:nth-child(4){background:linear-gradient(135deg,#fff,var(--v6-orange-soft))}
+.evidenceKpis .kpi:nth-child(5){background:linear-gradient(135deg,#fff,var(--v6-teal-soft))}
+.evidenceKpis .kpi:nth-child(6){background:linear-gradient(135deg,#fff,var(--v6-red-soft))}
+
+/* User and technician screens */
+.userCard,.userRow{
+  background:linear-gradient(145deg,#fff,#f7fbff);
+}
+#teamLocationPanel{
+  border-left:5px solid var(--v6-teal);
+  background:linear-gradient(90deg,#eefaf8,#fff 60%);
+}
+
+/* About */
+.aboutKpis .kpi:nth-child(1){background:linear-gradient(135deg,#fff,var(--v6-blue-soft))}
+.aboutKpis .kpi:nth-child(2){background:linear-gradient(135deg,#fff,var(--v6-green-soft))}
+.aboutKpis .kpi:nth-child(3){background:linear-gradient(135deg,#fff,var(--v6-orange-soft))}
+.aboutKpis .kpi:nth-child(4){background:linear-gradient(135deg,#fff,var(--v6-purple-soft))}
+
+/* Form / table polish */
+table thead th{
+  background:linear-gradient(180deg,#edf5fc,#e6eff8);
+  color:#294b6a;
+}
+table tbody tr:hover{
+  background:#f0f8ff;
+}
+input,select,textarea{
+  transition:border-color .15s,box-shadow .15s,background .15s;
+}
+input:focus,select:focus,textarea:focus{
+  background:#fbfdff;
+}
+
+/* V7 Patrimônio 360 */
+.globalSearchBar{display:flex;gap:10px}.globalSearchBar input{flex:1}
+.v7LocationGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}
+.v7LocCard{padding:16px;border:1px solid #dce8f2;border-top:4px solid #276aa2;border-radius:14px;background:linear-gradient(145deg,#fff,#f3f9fd);cursor:pointer}
+.v7LocCard:hover{transform:translateY(-1px);box-shadow:0 9px 25px rgba(30,70,110,.09)}
+.v7MiniKpis,.v7DetailKpis{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin:12px 0}
+.v7MiniKpis b,.v7DetailKpis b{background:#fff;border:1px solid #e2ebf3;border-radius:10px;padding:9px;text-align:center;font-size:18px}
+.v7MiniKpis small,.v7DetailKpis small{display:block;font-size:9px;color:#708090;margin-top:3px}
+.v7Flags{display:flex;gap:6px;flex-wrap:wrap}.v7Flags span{background:#eef5fb;border-radius:999px;padding:4px 7px;font-size:10px}
+.v7Results{margin-top:14px}.v7Result{display:block;width:100%;text-align:left;margin:5px 0;padding:10px;border:1px solid #dfe8f0;background:#fff;border-radius:9px}
+.v7Table>div,.historyRow{display:grid;grid-template-columns:1fr 1.4fr 1fr;gap:10px;padding:9px;border-bottom:1px solid #edf1f5}
+
+/* V8 · PWA / Offline / galeria 360 */
+.v7MediaGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-top:8px}
+.v7MediaGrid a{display:flex;flex-direction:column;text-decoration:none;color:#263b56;border:1px solid #dfe8ef;border-radius:11px;overflow:hidden;background:#fff}
+.v7MediaGrid img{width:100%;height:135px;object-fit:cover}
+.v7MediaGrid small,.v7MediaFile{padding:7px;font-size:10px}
+.offlinePage{max-width:720px;margin:60px auto;border-top:5px solid #d97706}
+
+/* V9 - localização inteligente do técnico */
+.nearbyStations{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:10px}
+.nearbyStationBtn{appearance:none;border:1px solid #d6e0ea;background:#fff;border-radius:14px;padding:12px;text-align:left;cursor:pointer;box-shadow:0 2px 8px rgba(20,50,80,.05)}
+.nearbyStationBtn:hover{border-color:#7899bd;transform:translateY(-1px)}
+.nearbyStationBtn b{display:block;font-size:15px;margin-bottom:3px}.nearbyStationBtn small{display:block;color:#667085;line-height:1.35}
+.nearbyStationBtn .distance{font-weight:700;color:#17345d;margin-top:6px}.nearbyStationBtn.integrated{border-left:4px solid #17345d}
+.stationLineChoices{display:flex;gap:8px;flex-wrap:wrap;margin-top:9px}.stationLineChoices button{padding:9px 11px}
+.gps-ok{border-color:#b7dfc4!important;background:#f3fbf6!important}.gps-warn{border-color:#efd88c!important;background:#fff9e9!important}.gps-block{border-color:#f0b4b4!important;background:#fff4f4!important}
+.teamMapAvatar img{width:100%;height:100%;object-fit:cover;border-radius:50%}
+.gpsTechAvatar{width:40px;height:40px;border-radius:50%;overflow:hidden;border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.3);background:#17345d;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800}
+.gpsTechAvatar img{width:100%;height:100%;object-fit:cover}

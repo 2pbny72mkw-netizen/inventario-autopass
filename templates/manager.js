@@ -1,5 +1,5 @@
-window.AUTOPASS_MANAGER_VERSION='dashboard-v4-1-1';
-console.log('AUTOPASS Dashboard Executivo V4.1.1 carregado');
+window.AUTOPASS_MANAGER_VERSION='dashboard-v6-0';
+console.log('AUTOPASS Dashboard Executivo V6 carregado');
 let locations=[];
 let dashboardData=null;
 const $=id=>document.getElementById(id);
@@ -395,9 +395,13 @@ function renderGpsMap(items){
       }).addTo(gpsAccuracyLayer);
     }
 
-    const marker=L.circleMarker([lat,lon],{
-      radius:8,color:'#ffffff',weight:2,fillColor:color,fillOpacity:1
-    }).addTo(gpsPointLayer);
+    const techInitials=String(x.technician||'?').trim().split(/\s+/).slice(0,2).map(v=>v[0]||'').join('').toUpperCase();
+    const markerIcon=L.divIcon({
+      className:'',
+      html:`<div class="gpsTechAvatar" style="outline:3px solid ${color}">${x.technician_photo_url?`<img src="${esc(x.technician_photo_url)}" alt="">`:`<span>${esc(techInitials)}</span>`}</div>`,
+      iconSize:[40,40],iconAnchor:[20,20]
+    });
+    const marker=L.marker([lat,lon],{icon:markerIcon}).addTo(gpsPointLayer);
 
     marker.bindPopup(`
       <div style="min-width:220px">

@@ -40,7 +40,20 @@
 </div>
 
 <div class="card">
-  <h2>Selecionar estação / localidade</h2>
+  <div class="sectionHead">
+    <div>
+      <h2>Estação / localidade</h2>
+      <p class="muted">V9 prioriza os pontos próximos da sua posição. Estações integradas podem conter várias linhas no mesmo ponto físico.</p>
+    </div>
+    <button type="button" class="secondary" id="refreshNearbyBtn">Atualizar próximos</button>
+  </div>
+  <div id="nearbyStatus" class="notice">Ative a localização para ver as estações próximas.</div>
+  <div id="nearbyStations" class="nearbyStations"></div>
+  <div id="stationLinesPanel" class="notice" style="display:none"></div>
+  <div style="margin:12px 0 4px">
+    <button type="button" class="secondary" id="toggleManualLocationBtn">Outra localidade / ponto externo</button>
+  </div>
+  <div id="manualLocationPanel" style="display:none">
   <div class="grid3">
     <div>
       <label>Empresa</label>
@@ -54,6 +67,7 @@
       <label>Estação / Localidade</label>
       <select id="location" disabled><option value="">Selecione</option></select>
     </div>
+  </div>
   </div>
   <div id="locInfo" class="hidden summary"></div>
 </div>
@@ -98,6 +112,12 @@
     <input type="hidden" id="longitude" name="longitude">
     <input type="hidden" id="gps_accuracy" name="gps_accuracy">
     <input type="hidden" id="gps_captured_at" name="gps_captured_at">
+    <div id="gpsValidation" class="notice full" style="display:none;margin-bottom:12px"></div>
+    <div id="gpsOverrideWrap" class="full" style="display:none">
+      <label>Justificativa para localização fora da referência *</label>
+      <input id="gps_override_reason" name="gps_override_reason" placeholder="Ex.: acesso externo da estação, equipe em área técnica...">
+      <small>Obrigatória quando o GPS estiver além do limite configurado para a localidade.</small>
+    </div>
 
     <div class="grid3">
       <div>
@@ -252,5 +272,5 @@
 {% endblock %}
 {% block scripts %}
 <script>window.CURRENT_USER_ROLE = {{ session.get("role")|tojson }};</script>
-<script src="{{ url_for('static', filename='technician.js') }}?v=v8-0-2"></script>
+<script src="{{ url_for('static', filename='technician.js') }}?v=v9-0"></script>
 {% endblock %}

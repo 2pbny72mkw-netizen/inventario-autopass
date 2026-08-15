@@ -1,5 +1,6 @@
-window.AUTOPASS_TECHNICIAN_VERSION = '1408-5';
-console.log('AUTOPASS technician.js 1408-5 carregado');
+window.AUTOPASS_PWA_VERSION='pwa-v9-0';
+window.AUTOPASS_TECHNICIAN_VERSION = 'v9-0-location-intelligence';
+console.log('AUTOPASS technician.js V9 carregado');
 
 let locations = [], current = null, assets = [];
 let currentInventoryRows = [];
@@ -10,6 +11,83 @@ const uniq = a => [...new Set(a)].sort((x, y) => x.localeCompare(y, 'pt-BR'));
 const fill = (el, a, label = 'Selecione') =>
   el.innerHTML = `<option value="">${label}</option>` + a.map(x => `<option>${x}</option>`).join('');
 
+const NEARBY_RADIUS_M = 6000;
+const GPS_WARN_M = 250;
+const GPS_MAX_M = 600;
+let lastNearbyGps = null;
+
+function haversineMeters(lat1,lon1,lat2,lon2){
+  const R=6371000, toRad=x=>x*Math.PI/180;
+  const p1=toRad(lat1),p2=toRad(lat2),dp=toRad(lat2-lat1),dl=toRad(lon2-lon1);
+  const a=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;
+  return 2*R*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+function locReference(loc){
+  const lat=Number(loc?.reference_latitude),lon=Number(loc?.reference_longitude);
+  if(Number.isFinite(lat)&&Number.isFinite(lon)) return {lat,lon,source:'oficial'};
+  const o=loc?.observed_reference||{};
+  const olat=Number(o.latitude),olon=Number(o.longitude);
+  if(Number(o.count)>=3&&Number.isFinite(olat)&&Number.isFinite(olon)) return {lat:olat,lon:olon,source:'observada'};
+  return null;
+}
+function stationKey(loc){ return String(loc?.location||'').trim().toLocaleUpperCase('pt-BR'); }
+function groupNearbyStations(position){
+  if(!position||!locations.length) return [];
+  const groups=new Map();
+  for(const loc of locations){
+    const ref=locReference(loc); if(!ref) continue;
+    const distance=haversineMeters(position.latitude,position.longitude,ref.lat,ref.lon);
+    if(distance>NEARBY_RADIUS_M) continue;
+    const key=stationKey(loc);
+    if(!groups.has(key)) groups.set(key,{name:loc.location,distance,entries:[]});
+    const g=groups.get(key); g.distance=Math.min(g.distance,distance); g.entries.push({...loc,_distance:distance});
+  }
+  return [...groups.values()].sort((a,b)=>a.distance-b.distance);
+}
+function renderNearbyStations(position=lastNearbyGps||lastGps){
+  const box=$('nearbyStations'),status=$('nearbyStatus'); if(!box||!status) return;
+  if(!position){ box.innerHTML=''; status.textContent='Ative ou atualize a localização para ver as estações próximas.'; return; }
+  const groups=groupNearbyStations(position);
+  status.textContent=groups.length?`${groups.length} estação(ões) próxima(s) em até ${(NEARBY_RADIUS_M/1000).toFixed(0)} km. Toque na estação correta.`:'Nenhuma estação referenciada encontrada próxima. Use “Outra localidade / ponto externo”.';
+  box.innerHTML=groups.slice(0,12).map((g,i)=>{
+    const lines=[...new Set(g.entries.map(x=>`${x.company} · ${x.line}`))];
+    return `<button type="button" class="nearbyStationBtn ${g.entries.length>1?'integrated':''}" data-nearby-index="${i}">
+      <b>${escapeHtml(g.name)}</b><small>${escapeHtml(lines.slice(0,3).join(' • '))}${lines.length>3?' • +'+(lines.length-3):''}</small>
+      <small class="distance">aprox. ${Math.round(g.distance)} m${g.entries.length>1?` · ${g.entries.length} opções de linha`:''}</small></button>`;
+  }).join('');
+  document.querySelectorAll('[data-nearby-index]').forEach(btn=>btn.onclick=()=>chooseNearbyGroup(groups[Number(btn.dataset.nearbyIndex)]));
+}
+function chooseNearbyGroup(group){
+  if(!group) return;
+  if(group.entries.length===1){ selectLocationEntry(group.entries[0]); return; }
+  const panel=$('stationLinesPanel'); if(!panel) return;
+  panel.style.display='block';
+  panel.innerHTML=`<b>${escapeHtml(group.name)} é uma estação integrada.</b><div class="muted">Escolha a linha/operação onde o inventário está sendo realizado.</div><div class="stationLineChoices">${group.entries.map(x=>`<button type="button" class="secondary" data-loc-id="${x.id}">${escapeHtml(x.company)} · ${escapeHtml(x.line)}</button>`).join('')}</div>`;
+  panel.querySelectorAll('[data-loc-id]').forEach(b=>b.onclick=()=>{const loc=locations.find(x=>Number(x.id)===Number(b.dataset.locId));selectLocationEntry(loc);panel.style.display='none';});
+}
+function selectLocationEntry(loc){
+  if(!loc) return;
+  $('company').value=loc.company; $('company').dispatchEvent(new Event('change'));
+  $('line').value=loc.line; $('line').dispatchEvent(new Event('change'));
+  $('location').value=String(loc.id); $('location').dispatchEvent(new Event('change'));
+}
+function updateGpsValidation(){
+  const box=$('gpsValidation'),wrap=$('gpsOverrideWrap'); if(!box||!wrap) return true;
+  box.style.display='none';wrap.style.display='none';box.className='notice full';
+  if(!current||!lastGps) return true;
+  const ref=locReference(current);
+  if(!ref){
+    box.style.display='block';box.classList.add('gps-warn');
+    box.innerHTML='<b>Localidade sem referência geográfica.</b> O cadastro será aceito como ponto ainda não calibrado e ajudará na referência observada futura.'; return true;
+  }
+  const d=haversineMeters(lastGps.latitude,lastGps.longitude,ref.lat,ref.lon);
+  box.style.display='block';
+  if(d<=GPS_WARN_M){ box.classList.add('gps-ok');box.innerHTML=`<b>Localização compatível.</b> Aproximadamente ${Math.round(d)} m da referência ${ref.source}.`;return true; }
+  if(d<=GPS_MAX_M){ box.classList.add('gps-warn');box.innerHTML=`<b>Atenção à localização.</b> Aproximadamente ${Math.round(d)} m da referência ${ref.source}. Confirme estação e linha antes de salvar.`;return true; }
+  box.classList.add('gps-block');wrap.style.display='block';
+  box.innerHTML=`<b>GPS incompatível com a localidade selecionada.</b> Aproximadamente ${Math.round(d)} m da referência ${ref.source}. Corrija a estação ou justifique a exceção.`;
+  return String($('gps_override_reason')?.value||'').trim().length>=10;
+}
 
 let lastGps = null;
 
@@ -52,6 +130,9 @@ function applyGpsPosition(position) {
       : 'Localização capturada.',
     true
   );
+  lastNearbyGps={...lastGps};
+  renderNearbyStations(lastNearbyGps);
+  updateGpsValidation();
 
   return lastGps;
 }
@@ -235,6 +316,7 @@ async function loadLocations() {
   }
 
   fill($('company'), uniq(locations.map(x => x.company)));
+  renderNearbyStations();
 
   if (!locations.length) {
     showMsg('Sem internet e sem localidades armazenadas neste aparelho. Conecte-se uma vez antes de entrar em campo.', false);
@@ -268,6 +350,7 @@ $('location').onchange = async () => {
 
   if (current) {
     showInfo();
+    updateGpsValidation();
     await Promise.all([loadAlready(), loadAssets()]);
   } else {
     hideInfo();
@@ -663,6 +746,7 @@ async function enqueueCurrentForm(form) {
 async function sendRecord(record) {
   const fd = new FormData();
   Object.entries(record.fields).forEach(([key, value]) => fd.append(key, value ?? ''));
+  fd.append('client_uuid', record.local_id);
 
   (record.files || []).forEach(f => {
     fd.append(f.field || 'attachments', new File([f.blob], f.name, { type: f.type }));
@@ -787,6 +871,11 @@ $('invForm').onsubmit = async e => {
   }
 
   await captureGpsForSubmission();
+  if(!updateGpsValidation()){
+    showMsg('A localização está fora do limite da estação selecionada. Corrija a localidade ou informe uma justificativa de exceção.', false);
+    $('gps_override_reason')?.focus();
+    return;
+  }
 
   // Em modo coleta local, sempre guarda no aparelho, mesmo que haja internet.
   // Isso permite cadastrar vários equipamentos primeiro e sincronizar só no fim.
@@ -803,6 +892,8 @@ $('invForm').onsubmit = async e => {
 
   try {
     const fd = new FormData(e.target);
+    const onlineUuid = (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
+    fd.append('client_uuid', onlineUuid);
     const r = await fetch('/api/inventory', { method: 'POST', body: fd });
     const j = await r.json().catch(() => ({ ok: false, error: 'Erro no servidor.' }));
 
@@ -889,26 +980,89 @@ $('completeBtn').onclick = async () => {
 
 $('syncBtn').onclick = () => syncQueue({ silent: false });
 
+
+let autoSyncTimer = null;
+let autoSyncRunning = false;
+let autoSyncRetryMs = 15000;
+
+async function autoSyncQueue(reason='auto'){
+  if(autoSyncRunning || !navigator.onLine) return;
+  const queue = await idbGetAll(STORE_QUEUE);
+  if(!queue.length){
+    await refreshConnectionUI();
+    return;
+  }
+
+  autoSyncRunning = true;
+  try{
+    $('connectionStatus').textContent = `🔵 Sincronizando automaticamente...`;
+    showMsg(`Conexão disponível. Sincronizando ${queue.length} registro(s) automaticamente...`, true);
+
+    await syncQueue({silent:true});
+
+    const remaining = await idbGetAll(STORE_QUEUE);
+    if(!remaining.length){
+      autoSyncRetryMs = 15000;
+      showMsg('Sincronização automática concluída. Tudo enviado ao servidor.', true);
+    }else{
+      showMsg(`${remaining.length} registro(s) continuam pendentes. Nova tentativa automática será realizada.`, false);
+      scheduleAutoSyncRetry();
+    }
+  }catch(err){
+    console.error('Falha na sincronização automática:', err);
+    showMsg('Falha temporária na sincronização automática. O sistema tentará novamente.', false);
+    scheduleAutoSyncRetry();
+  }finally{
+    autoSyncRunning = false;
+    await refreshConnectionUI();
+  }
+}
+
+function scheduleAutoSyncRetry(){
+  if(autoSyncTimer) clearTimeout(autoSyncTimer);
+  autoSyncTimer = setTimeout(async ()=>{
+    autoSyncTimer = null;
+    await autoSyncQueue('retry');
+  }, autoSyncRetryMs);
+  autoSyncRetryMs = Math.min(autoSyncRetryMs * 2, 120000);
+}
+
+function triggerAutoSyncSoon(delay=2500){
+  if(autoSyncTimer) clearTimeout(autoSyncTimer);
+  autoSyncTimer = setTimeout(async ()=>{
+    autoSyncTimer = null;
+    await autoSyncQueue('online');
+  }, delay);
+}
+
 window.addEventListener('online', async () => {
   await refreshConnectionUI();
   const queue = await idbGetAll(STORE_QUEUE);
   if (queue.length) {
-    showMsg(`Conexão restabelecida. ${queue.length} registro(s) aguardam envio. Clique em "Sincronizar agora" quando desejar.`, true);
+    showMsg(`Conexão restabelecida. ${queue.length} registro(s) serão sincronizados automaticamente.`, true);
+    triggerAutoSyncSoon(2500);
   }
 });
 
-window.addEventListener('offline', refreshConnectionUI);
+window.addEventListener('offline', async () => {
+  if(autoSyncTimer){ clearTimeout(autoSyncTimer); autoSyncTimer=null; }
+  await refreshConnectionUI();
+  showMsg('Sem conexão. Os novos registros serão mantidos neste aparelho até a internet retornar.', false);
+});
 
 $('localMode').addEventListener('change', async e => {
   setLocalMode(e.target.checked);
   await refreshConnectionUI();
 
   if (e.target.checked) {
-    showMsg('Modo coleta local ativado. Os próximos registros ficarão neste aparelho até a sincronização manual.', true);
+    showMsg('Modo coleta local ativado. Os registros ficam no aparelho durante a coleta e serão sincronizados automaticamente quando o modo local for desativado ou a aplicação retomar o fluxo online.', true);
   } else {
     const queue = await idbGetAll(STORE_QUEUE);
-    if (queue.length) {
-      showMsg(`${queue.length} registro(s) continuam pendentes. Clique em "Sincronizar agora" quando desejar enviá-los.`, true);
+    if (queue.length && navigator.onLine) {
+      showMsg(`${queue.length} registro(s) pendentes. Iniciando sincronização automática...`, true);
+      triggerAutoSyncSoon(1200);
+    } else if (queue.length) {
+      showMsg(`${queue.length} registro(s) aguardando conexão para sincronização automática.`, true);
     } else {
       showMsg('Modo coleta local desativado.', true);
     }
@@ -927,10 +1081,113 @@ function showMsg(t, ok) {
     await refreshConnectionUI();
 
     setLocalMode(isLocalMode());
+
+    const startupQueue = await idbGetAll(STORE_QUEUE);
+    if(navigator.onLine && startupQueue.length && !isLocalMode()){
+      showMsg(`${startupQueue.length} registro(s) pendentes encontrados. Sincronização automática será iniciada.`, true);
+      triggerAutoSyncSoon(1800);
+    }
   } catch (err) {
     console.error(err);
     showMsg('Não foi possível iniciar o armazenamento offline neste navegador.', false);
   }
 })();
-\n\nfunction startTechnicianPositionSharing(){\n  if(!navigator.geolocation) return;\n  let lastSent=0;\n  navigator.geolocation.watchPosition(async pos=>{\n    const now=Date.now();\n    if(now-lastSent<120000) return;\n    lastSent=now;\n    try{\n      await fetch('/api/tecnico/position',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({\n        latitude:pos.coords.latitude,longitude:pos.coords.longitude,accuracy:pos.coords.accuracy\n      })});\n    }catch(_e){}\n  },()=>{}, {enableHighAccuracy:true,maximumAge:60000,timeout:15000});\n}\n
-startTechnicianPositionSharing();
+
+
+if($('toggleManualLocationBtn')) $('toggleManualLocationBtn').addEventListener('click',()=>{
+  const p=$('manualLocationPanel'); const open=p.style.display==='none'; p.style.display=open?'block':'none';
+  $('toggleManualLocationBtn').textContent=open?'Ocultar outras localidades':'Outra localidade / ponto externo';
+});
+if($('refreshNearbyBtn')) $('refreshNearbyBtn').addEventListener('click',async()=>{
+  if(!navigator.geolocation){showMsg('GPS não disponível neste aparelho.',false);return;}
+  $('nearbyStatus').textContent='Atualizando sua posição...';
+  navigator.geolocation.getCurrentPosition(p=>applyGpsPosition(p),()=>{$('nearbyStatus').textContent='Não foi possível obter a localização. Use a seleção manual se necessário.';},{enableHighAccuracy:true,timeout:10000,maximumAge:15000});
+});
+if($('gps_override_reason')) $('gps_override_reason').addEventListener('input',updateGpsValidation);
+
+const TEAM_LOCATION_KEY='autopass-team-location-enabled';
+let teamLocationWatchId=null;
+let teamLocationLastSent=0;
+
+function setTeamLocationStatus(text, ok=false){
+  const el=$('teamLocationStatus');
+  if(!el) return;
+  el.textContent=text;
+  el.style.borderColor=ok?'#89d3ae':'';
+}
+
+async function sendTeamLocation(position){
+  applyGpsPosition(position);
+  const now=Date.now();
+  if(now-teamLocationLastSent<90000) return;
+  teamLocationLastSent=now;
+  try{
+    const r=await fetch('/api/tecnico/position',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        latitude:position.coords.latitude,
+        longitude:position.coords.longitude,
+        accuracy:position.coords.accuracy
+      })
+    });
+    const j=await r.json().catch(()=>({ok:false}));
+    if(!r.ok||!j.ok) throw new Error(j.error||'Falha ao enviar posição.');
+    const acc=Number.isFinite(position.coords.accuracy)?Math.round(position.coords.accuracy):null;
+    setTeamLocationStatus(`Localização ativa${acc!==null?` · precisão aproximada ${acc} m`:''} · posição enviada agora.`,true);
+  }catch(err){
+    setTeamLocationStatus(`Localização ativa, mas o envio falhou: ${err.message}`,false);
+  }
+}
+
+function stopTeamLocation(){
+  if(teamLocationWatchId!==null && navigator.geolocation){
+    navigator.geolocation.clearWatch(teamLocationWatchId);
+  }
+  teamLocationWatchId=null;
+  localStorage.removeItem(TEAM_LOCATION_KEY);
+  if($('teamLocationToggle')) $('teamLocationToggle').textContent='Ativar localização';
+  setTeamLocationStatus('Localização da equipe desativada neste aparelho.');
+}
+
+function startTeamLocation(){
+  if(!navigator.geolocation){
+    setTeamLocationStatus('Geolocalização não disponível neste navegador/aparelho.',false);
+    return;
+  }
+  if(teamLocationWatchId!==null) return;
+
+  setTeamLocationStatus('Solicitando autorização de localização...');
+  teamLocationWatchId=navigator.geolocation.watchPosition(
+    position=>sendTeamLocation(position),
+    error=>{
+      const msg={
+        1:'Permissão de localização negada.',
+        2:'Localização indisponível neste momento.',
+        3:'Tempo esgotado ao obter localização.'
+      }[error.code]||'Não foi possível obter a localização.';
+      setTeamLocationStatus(msg,false);
+      if(error.code===1){
+        if(teamLocationWatchId!==null) navigator.geolocation.clearWatch(teamLocationWatchId);
+        teamLocationWatchId=null;
+        localStorage.removeItem(TEAM_LOCATION_KEY);
+        if($('teamLocationToggle')) $('teamLocationToggle').textContent='Ativar localização';
+      }
+    },
+    {enableHighAccuracy:true,maximumAge:30000,timeout:15000}
+  );
+  localStorage.setItem(TEAM_LOCATION_KEY,'1');
+  if($('teamLocationToggle')) $('teamLocationToggle').textContent='Desativar localização';
+}
+
+if($('teamLocationToggle')){
+  $('teamLocationToggle').addEventListener('click',()=>{
+    if(teamLocationWatchId!==null) stopTeamLocation();
+    else startTeamLocation();
+  });
+
+  if(localStorage.getItem(TEAM_LOCATION_KEY)==='1'){
+    startTeamLocation();
+  }
+}
+

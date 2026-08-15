@@ -5,7 +5,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{% block title %}Inventário SP{% endblock %}</title>
-<link rel="stylesheet" href="{{url_for('static',filename='app.css')}}">
+<link rel="stylesheet" href="{{url_for('static',filename='app.css')}}?v=v9-0">
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#17345d">
 </head>
@@ -17,16 +17,16 @@
       <img src="{{url_for('static',filename='autopass-logo.png')}}" alt="Autopass">
       <div class="brandtext">
         <b>Inventário do Parque Instalado — SP</b>
-        <small>{{session.get('name')}} • {{'Gestor' if session.get('role')=='manager' else 'Técnico de Campo'}}</small>
+        <small>{{session.get('name')}} • {{ {'manager':'Gestor','technician':'Técnico de Campo','consultation':'Consulta','hr':'RH'}.get(session.get('role'),'Usuário') }}</small>
       </div>
     </div>
     <nav>
-      <a href="/gerencial">Dashboard</a>
-      <a href="/evidencias-campo">Evidências</a>
-      <a href="/equipes">Equipes</a>
-      <a href="/tecnico">Lançamento</a>
-      <a href="/usuarios">Usuários</a>
-      <a href="/patrimonio">Patrimônio 360</a>
+      {% if session.get('role') in ('manager','consultation') %}<a href="/gerencial">Dashboard</a>{% endif %}
+      {% if session.get('role') in ('manager','consultation') %}<a href="/evidencias-campo">Evidências</a>{% endif %}
+      {% if session.get('role') in ('manager','consultation','hr') %}<a href="/equipes">Equipes</a>{% endif %}
+      {% if session.get('role') in ('manager','technician') %}<a href="/tecnico">Lançamento</a>{% endif %}
+      {% if session.get('role') in ('manager','hr') %}<a href="/usuarios">Usuários</a>{% endif %}
+      {% if session.get('role') in ('manager','consultation') %}<a href="/patrimonio">Patrimônio 360</a>{% endif %}
       <a href="/sobre">Sobre</a>
       <a href="/logout">Sair</a>
     </nav>

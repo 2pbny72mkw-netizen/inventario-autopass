@@ -35,6 +35,7 @@
             <option value="technician">Técnico de Campo</option>
             <option value="manager">Gestor</option>
             <option value="consultation">Consulta</option>
+            <option value="hr">RH</option>
           </select>
         </div>
         <div>
@@ -75,6 +76,7 @@
     <p><b>Gestor</b><br><span class="muted">Dashboard, consultas, usuários, edição, conclusão/reabertura e funções administrativas.</span></p>
     <p><b>Técnico de Campo</b><br><span class="muted">Coleta de campo, equipamentos, evidências e conclusão conforme o fluxo operacional.</span></p>
     <p><b>Consulta</b><br><span class="muted">Somente leitura de dashboard e informações. Não cadastra, edita, conclui ou reabre registros.</span></p>
+    <p><b>RH</b><br><span class="muted">Visualiza equipes e administra usuários. Não acessa lançamentos de campo nem funções gerenciais do inventário.</span></p>
     <div class="notice">
       <b>Privacidade:</b> coletamos apenas os dados necessários para o acesso e a operação. CPF não faz parte deste cadastro.
     </div>
@@ -128,6 +130,7 @@
           <td>
             {% if u.role == "manager" %}Gestor
             {% elif u.role == "consultation" %}Consulta
+            {% elif u.role == "hr" %}RH
             {% else %}Técnico de Campo{% endif %}
           </td>
           <td>
@@ -190,6 +193,7 @@
                       <option value="technician" {% if u.role == "technician" %}selected{% endif %}>Técnico de Campo</option>
                       <option value="manager" {% if u.role == "manager" %}selected{% endif %}>Gestor</option>
                       <option value="consultation" {% if u.role == "consultation" %}selected{% endif %}>Consulta</option>
+                      <option value="hr" {% if u.role == "hr" %}selected{% endif %}>RH</option>
                     </select>
                   </div>
                   <div>
