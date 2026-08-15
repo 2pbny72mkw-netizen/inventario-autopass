@@ -31,9 +31,9 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V15.0"
-DASHBOARD_RELEASE = "dashboard-v12"
-TEAMS_RELEASE = "teams-v12"
+APP_RELEASE = "V16.0"
+DASHBOARD_RELEASE = "dashboard-v16"
+TEAMS_RELEASE = "teams-v16"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
 FIELD_GPS_GOOD_ACCURACY_M = float(os.getenv("FIELD_GPS_GOOD_ACCURACY_M", "30"))
 FIELD_GPS_MAX_ACCURACY_M = float(os.getenv("FIELD_GPS_MAX_ACCURACY_M", "80"))
@@ -2236,18 +2236,81 @@ def delete_inventory(inventory_id):
         return jsonify({"ok": False, "error": str(exc)}), 500
 
 
+def _location_completion_check(loc):
+    """V16: fechamento só ocorre após conciliação e evidência mínima de campo."""
+    inventories = Inventory.query.filter_by(location_id=loc.id).all()
+    base_assets = [a for a in BaseAsset.query.all() if _base_asset_matches_location(a, loc)]
+
+    expected_by_type = {}
+    for a in base_assets:
+        typ = _canonical_equipment_type(a.equipment_type)
+        expected_by_type[typ] = expected_by_type.get(typ, 0) + max(int(a.quantity or 1), 1)
+    # Compatibilidade com localidades cuja previsão veio da base resumida.
+    expected_by_type["ATM"] = max(expected_by_type.get("ATM", 0), int(loc.expected_atm or 0))
+    expected_by_type["VALIDADOR"] = max(expected_by_type.get("VALIDADOR", 0), int(loc.expected_validator or 0))
+    expected_by_type["POS"] = max(expected_by_type.get("POS", 0), int(loc.expected_pos or 0))
+
+    reconciled_by_type = {}
+    missing_evidence = []
+    missing_justification = []
+    for inv in inventories:
+        typ = _canonical_equipment_type(inv.equipment_type)
+        reconciled_by_type[typ] = reconciled_by_type.get(typ, 0) + 1
+        media_count = Attachment.query.filter_by(inventory_id=inv.id).count()
+        if media_count < 1:
+            missing_evidence.append(inv.asset_identifier or f"registro {inv.id}")
+        if normalize(inv.operational_status) == "NAO ENCONTRADO" and not (inv.notes or "").strip():
+            missing_justification.append(inv.asset_identifier or f"registro {inv.id}")
+
+    pending = []
+    for typ, expected in expected_by_type.items():
+        if expected <= 0:
+            continue
+        done = reconciled_by_type.get(typ, 0)
+        if done < expected:
+            pending.append({"type": typ, "expected": expected, "reconciled": done, "remaining": expected-done})
+
+    errors = []
+    if sum(expected_by_type.values()) == 0 and not inventories:
+        errors.append("Nenhum equipamento foi registrado nesta localidade.")
+    if pending:
+        errors.append("Existem equipamentos previstos ainda não conciliados.")
+    if missing_evidence:
+        errors.append("Todos os registros precisam de ao menos uma foto/vídeo como evidência.")
+    if missing_justification:
+        errors.append("Itens marcados como Não encontrado exigem justificativa em Observações.")
+    return {
+        "ok": not errors, "errors": errors, "pending": pending,
+        "missing_evidence": missing_evidence, "missing_justification": missing_justification,
+        "registered": len(inventories), "expected": sum(expected_by_type.values())
+    }
+
+
+@app.get("/api/location/<int:location_id>/completion-check")
+@field_required
+def location_completion_check(location_id):
+    loc = db.session.get(Location, location_id)
+    if not loc:
+        return jsonify({"ok": False, "error": "Local inválido."}), 404
+    result = _location_completion_check(loc)
+    return jsonify(result), (200 if result["ok"] else 409)
+
+
 @app.post("/api/location/<int:location_id>/complete")
 @field_required
 def complete_location(location_id):
     loc = db.session.get(Location, location_id)
     if not loc:
         return jsonify({"ok": False, "error": "Local inválido."}), 404
+    result = _location_completion_check(loc)
+    if not result["ok"]:
+        return jsonify({"ok": False, "error": "Localidade ainda não pode ser concluída.", **result}), 409
 
     loc.survey_status = "CONCLUIDA"
     loc.completed_at = datetime.utcnow()
     loc.completed_by = session["user_id"]
     db.session.commit()
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, "message": "Localidade concluída após validação V16."})
 
 
 @app.post("/api/location/<int:location_id>/reopen")

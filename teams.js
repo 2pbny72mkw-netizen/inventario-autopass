@@ -112,6 +112,7 @@ async function loadTeams(){
   markers=[];
 
   $('teamCards').innerHTML='';
+  if($('todayTeamTable')) $('todayTeamTable').innerHTML='';
   for(const t of d.technicians||[]){
     if(t.freshness==='ATUAL') current++;
     else if(t.freshness==='ATENÇÃO'||t.freshness==='ATRASADO') attention++;
@@ -133,6 +134,7 @@ async function loadTeams(){
         <span class="linkBadge ${t.linked?'linked':'unlinked'}">${t.linked?'Usuário vinculado':'Sem vínculo com Usuários'}</span>
       </div>`;
     $('teamCards').appendChild(card);
+    if($('todayTeamTable')){ const tr=document.createElement('tr'); tr.innerHTML=`<td><b>${esc(t.name)}</b></td><td>${esc(t.category)}</td><td>${esc(t.schedule_type||'—')}</td><td>${esc(t.shift||'—')}</td><td>${esc(t.entry||'—')}</td><td>${esc((t.lines||[]).join(' / ')||'—')}</td><td>${esc(t.freshness||'SEM SINAL')}</td><td>${esc(freshnessText(t))}</td>`; $('todayTeamTable').appendChild(tr); }
 
     if(t.latitude!=null&&t.longitude!=null){
       const m=L.marker([Number(t.latitude),Number(t.longitude)],{icon:markerIcon(t)})

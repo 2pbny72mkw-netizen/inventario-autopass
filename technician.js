@@ -975,43 +975,29 @@ $('invForm').onsubmit = async e => {
 
 $('completeBtn').onclick = async () => {
   if (!current) return showMsg('Selecione uma localidade.', false);
-
   const localPending = await queuedForLocation(current.id);
-  if (localPending.length) {
-    return showMsg(
-      `Esta localidade ainda tem ${localPending.length} registro(s) pendente(s) neste aparelho. Sincronize antes de concluir.`,
-      false
-    );
+  if (localPending.length) return showMsg(`Há ${localPending.length} registro(s) pendente(s) neste aparelho. Sincronize antes de concluir.`, false);
+  if (!navigator.onLine) return showMsg('A conclusão exige conexão para validar base, evidências e sincronização.', false);
+
+  const check = await fetch(`/api/location/${current.id}/completion-check`, {cache:'no-store'});
+  const result = await check.json().catch(()=>({ok:false,errors:['Não foi possível validar a localidade.']}));
+  if (!check.ok || !result.ok) {
+    const details=[];
+    (result.pending||[]).forEach(x=>details.push(`${x.type}: faltam ${x.remaining} de ${x.expected}`));
+    if ((result.missing_evidence||[]).length) details.push(`${result.missing_evidence.length} registro(s) sem foto/vídeo`);
+    if ((result.missing_justification||[]).length) details.push(`${result.missing_justification.length} item(ns) não encontrado(s) sem justificativa`);
+    const msg=[...(result.errors||[]),...details].join(' • ');
+    return showMsg(`Não é possível concluir. ${msg}`, false);
   }
 
-  if (!navigator.onLine) {
-    return showMsg('A conclusão da localidade exige conexão para evitar encerramento sem sincronizar os registros.', false);
-  }
-
-  const operationalPending = pendingDefinitions().reduce((s, x) => s + x.remaining, 0);
-  if (operationalPending > 0) {
-    const proceed = confirm(`A base ainda indica ${operationalPending} equipamento(s) pendente(s) nesta localidade. Deseja mesmo assim continuar para a confirmação final?`);
-    if (!proceed) return;
-  }
-
-  if (!confirm('Confirma que o levantamento desta localidade foi finalizado? Ela aparecerá como CONCLUÍDA no painel gerencial.')) {
-    return;
-  }
-
+  if (!confirm(`Validação concluída: ${result.registered} registro(s), evidências conferidas e previsão conciliada. Confirmar encerramento desta localidade?`)) return;
   const r = await fetch(`/api/location/${current.id}/complete`, { method: 'POST' });
-
-  if (r.ok) {
-    showMsg('Localidade marcada como CONCLUÍDA.', true);
+  const j = await r.json().catch(()=>({ok:false}));
+  if (r.ok && j.ok) {
+    showMsg('Localidade marcada como CONCLUÍDA após validação completa.', true);
     const rr = await fetch('/api/locations', { cache: 'no-store' });
-    if (rr.ok) {
-      locations = await rr.json();
-      await cacheSet('locations', locations);
-      current = locations.find(x => x.id === current.id);
-      showInfo();
-    }
-  } else {
-    showMsg('Não foi possível concluir a localidade.', false);
-  }
+    if (rr.ok) { locations = await rr.json(); await cacheSet('locations', locations); current = locations.find(x => x.id === current.id); showInfo(); }
+  } else showMsg(j.error || 'Não foi possível concluir a localidade.', false);
 };
 
 $('syncBtn').onclick = () => syncQueue({ silent: false });
