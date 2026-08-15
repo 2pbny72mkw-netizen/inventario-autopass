@@ -130,3 +130,127 @@ body.mapFullscreenOpen #toggleMapFullscreenBtn{
 
 /* V5 Central de Equipes */
 .teamCards{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}.teamCard{display:flex;gap:12px;align-items:center;border:1px solid #dfe6ef;border-radius:14px;padding:12px;background:#fff}.teamCard small,.teamCard span{display:block;margin-top:4px;font-size:12px;color:#65758b}.avatarRing{width:58px;height:58px;border-radius:50%;padding:4px;background:#aab4c0;flex:0 0 auto}.avatarFallback{width:100%;height:100%;border-radius:50%;background:#eef3f8;display:flex;align-items:center;justify-content:center;font-weight:800;color:#233a5a}.freshness-ATUAL .avatarRing{background:#2e9d61}.freshness-ATENÇÃO .avatarRing{background:#e0a629}.freshness-ATRASADO .avatarRing{background:#d55252}.freshness-SEM-SINAL .avatarRing{background:#9aa5b1}.teamMapFullscreen{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;z-index:9998!important;border-radius:0!important}
+
+
+/* ===== V5.2 · Escala e mapa operacional ===== */
+.teamMapActions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.teamMapWrap{position:relative;width:100%;background:#fff}
+.teamMapExit{display:none;position:absolute;right:18px;top:18px;z-index:10000;box-shadow:0 6px 22px rgba(0,0,0,.18)}
+.teamMapWrap:fullscreen{width:100vw;height:100vh;background:#fff}
+.teamMapWrap:fullscreen .teamMap{width:100%;height:100vh!important;border:0;border-radius:0}
+.teamMapFullscreenFallback{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;z-index:9998!important;background:#fff}
+.teamMapFullscreenFallback .teamMap{width:100%!important;height:100vh!important;border:0!important;border-radius:0!important}
+.calendarControls{display:flex;gap:8px;align-items:end;flex-wrap:wrap}
+.calendarControls label{font-size:11px;display:flex;flex-direction:column;gap:3px}
+.scaleTableWrap{overflow:auto;max-height:650px;border:1px solid #dfe6ef;border-radius:12px}
+.scaleTable{border-collapse:separate;border-spacing:0;min-width:1200px;width:100%;font-size:12px}
+.scaleTable th,.scaleTable td{padding:8px;border-right:1px solid #e7ecf2;border-bottom:1px solid #e7ecf2;text-align:center;white-space:nowrap}
+.scaleTable thead th{position:sticky;top:0;background:#f4f7fb;z-index:3}
+.scaleTable th small,.scaleTable td small{display:block;font-size:10px;color:#68788c;margin-top:2px}
+.scaleTable .stickyTechCol{position:sticky;left:0;text-align:left;background:#fff;z-index:2;min-width:230px}
+.scaleTable thead .stickyTechCol{z-index:5;background:#f4f7fb}
+.scaleWork{background:#e8f7ef;color:#136f44;font-weight:700}
+.scaleOff{background:#f7f8fa;color:#8995a4}
+.scheduleModal{position:fixed;inset:0;z-index:11000;background:rgba(12,27,48,.48);padding:30px;overflow:auto}
+.scheduleModal.hidden{display:none!important}
+.scheduleModalPanel{max-width:1250px;margin:0 auto;background:#fff;border-radius:18px;padding:20px;box-shadow:0 20px 70px rgba(0,0,0,.25)}
+.scheduleAdminGrid{display:grid;grid-template-columns:minmax(340px,.8fr) minmax(520px,1.2fr);gap:18px}
+.scheduleForm{border:1px solid #dfe6ef;border-radius:14px;padding:14px;display:grid;grid-template-columns:1fr 1fr;gap:10px;align-content:start}
+.scheduleForm>div:first-child{grid-column:1/-1}
+.scheduleFormActions{grid-column:1/-1;display:flex;gap:8px}
+.scheduleListHead{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:10px}
+.scheduleListHead input{max-width:260px}
+.scheduleProfiles{display:flex;flex-direction:column;gap:8px;max-height:620px;overflow:auto}
+.scheduleProfile{display:flex;justify-content:space-between;gap:12px;align-items:center;border:1px solid #dfe6ef;border-radius:12px;padding:10px 12px}
+.scheduleProfile>div:first-child{display:flex;flex-direction:column;gap:2px}
+.scheduleProfileActions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.profileInactive{opacity:.55}
+.dangerGhost{border:1px solid #efb2b2;background:#fff5f5;color:#a52c2c;border-radius:9px;padding:8px 10px;font-weight:700;cursor:pointer}
+@media(max-width:900px){
+  .scheduleAdminGrid{grid-template-columns:1fr}
+  .scheduleForm{grid-template-columns:1fr}
+  .scheduleForm>div:first-child,.scheduleFormActions{grid-column:auto}
+  .scheduleModal{padding:8px}
+}
+
+
+/* ===== V5.2 · Dashboard com cores executivas ===== */
+.dashboardKpis .kpi{
+  background:linear-gradient(180deg,#ffffff 0%,#fbfcfe 100%);
+}
+.dashboardKpis .primaryKpi{
+  background:linear-gradient(180deg,#f8fbff 0%,#eef5ff 100%);
+}
+.dashboardKpis .successKpi{
+  background:linear-gradient(180deg,#f8fffb 0%,#edf9f2 100%);
+}
+.dashboardKpis .warningKpi{
+  background:linear-gradient(180deg,#fffdf7 0%,#fff5df 100%);
+}
+.dashboardKpis .dangerKpi{
+  background:linear-gradient(180deg,#fffafa 0%,#fff0f0 100%);
+}
+.dashboardKpis .successKpi b{color:#087447}
+.dashboardKpis .warningKpi b{color:#a76500}
+.dashboardKpis .dangerKpi b{color:#b62f2f}
+
+.equipmentBig.atm{
+  background:linear-gradient(180deg,#ffffff 0%,#eef5ff 100%);
+}
+.equipmentBig.val{
+  background:linear-gradient(180deg,#ffffff 0%,#edf9f2 100%);
+}
+.equipmentBig.pos{
+  background:linear-gradient(180deg,#ffffff 0%,#fff3e9 100%);
+}
+.equipmentBig.tdi{
+  background:linear-gradient(180deg,#ffffff 0%,#f6eefb 100%);
+}
+.equipmentBig.bloq{
+  background:linear-gradient(180deg,#ffffff 0%,#eaf9f7 100%);
+}
+.equipmentBig.atm b{color:#1f568f}
+.equipmentBig.val b{color:#087447}
+.equipmentBig.pos b{color:#c65100}
+.equipmentBig.tdi b{color:#6b368f}
+.equipmentBig.bloq b{color:#007f75}
+
+.executiveFilterBar{
+  border-top:3px solid #d7e5f5;
+  background:linear-gradient(90deg,#fbfdff 0%,#ffffff 45%,#fbfdff 100%);
+}
+.evidenceExecutiveStrip{
+  border-left:4px solid #6d4aa1;
+  background:linear-gradient(90deg,#fbf8ff 0%,#ffffff 42%);
+}
+.evidenceMiniKpis span:nth-child(1){border-top:3px solid #4678ad}
+.evidenceMiniKpis span:nth-child(2){border-top:3px solid #7a5aa6}
+.evidenceMiniKpis span:nth-child(3){border-top:3px solid #249364}
+.evidenceMiniKpis span:nth-child(4){border-top:3px solid #d58a16}
+.evidenceMiniKpis span:nth-child(5){border-top:3px solid #2b8f9f}
+
+.dashboardGrid .chartCard:first-child{
+  border-top:4px solid #214f83;
+}
+.dashboardGrid .chartCard:nth-child(2){
+  border-top:4px solid #249364;
+}
+.bigPercent{color:#087447}
+
+
+/* ===== V5.2 · Sobre / Versões ===== */
+.aboutKpis{margin-bottom:14px}
+.aboutModules{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.aboutModules article{border:1px solid #dfe6ef;border-radius:14px;padding:14px;background:linear-gradient(180deg,#fff,#f8fbff)}
+.aboutModules article b{display:block;color:#183153;margin-bottom:5px}
+.aboutModules article span{font-size:13px;color:#64748b}
+.versionTimeline{display:flex;flex-direction:column;gap:10px}
+.versionTimeline div{display:grid;grid-template-columns:80px 1fr;gap:12px;align-items:start;border-left:4px solid #214f83;padding:10px 12px;background:#f8fbff;border-radius:0 12px 12px 0}
+.versionTimeline div:nth-child(2){border-left-color:#249364}
+.versionTimeline div:nth-child(3){border-left-color:#d58a16}
+.versionTimeline div:nth-child(4){border-left-color:#7a5aa6}
+.versionTimeline div:nth-child(5){border-left-color:#2b8f9f}
+.aboutCredit{display:flex;justify-content:space-between;align-items:center;gap:12px;background:linear-gradient(90deg,#f8fbff,#fff)}
+.aboutCredit span{color:#64748b}
+.aboutCredit b{color:#183153}
+@media(max-width:700px){.aboutModules{grid-template-columns:1fr}.versionTimeline div{grid-template-columns:60px 1fr}}
