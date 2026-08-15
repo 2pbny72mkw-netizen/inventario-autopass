@@ -45,6 +45,24 @@
   </div>
 <div id="filterContext" class="filterContext">Todas empresas · Todas linhas · Todos os tipos</div></section>
 
+
+<section class="card evidenceExecutiveStrip" id="evidenceExecutiveStrip">
+  <div class="sectionHead">
+    <div>
+      <h2>Evidências de campo</h2>
+      <p class="muted">WhatsApp, fotos e confronto com a base — fonte separada do inventário oficial.</p>
+    </div>
+    <a href="/evidencias-campo" class="secondary buttonLink">Abrir evidências</a>
+  </div>
+  <div class="evidenceMiniKpis">
+    <span><small>Visitas</small><b id="evVisits">0</b></span>
+    <span><small>Itens</small><b id="evItems">0</b></span>
+    <span><small>Conformes</small><b id="evMatched">0</b></span>
+    <span><small>Revisar</small><b id="evReview">0</b></span>
+    <span><small>Fotos/vídeos</small><b id="evMedia">0</b></span>
+  </div>
+</section>
+
 <section class="dashboardGrid">
   <article class="card chartCard">
     <div class="cardHead">
@@ -203,5 +221,5 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
         integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
         crossorigin=""></script>
-<script src="{{url_for('static',filename='manager.js')}}?v=dashboard-v3-1"></script>
+<script src="{{url_for('static',filename='manager.js')}}?v=dashboard-v4-1"></script>
 {% endblock %}

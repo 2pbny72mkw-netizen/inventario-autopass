@@ -3,45 +3,51 @@
 {% block content %}
 <section class="dashHero">
   <div>
-    <span class="eyebrow">IMPORTAÇÃO ASSISTIDA</span>
-    <h1>Importar levantamento do WhatsApp</h1>
-    <p>Analise o ZIP, confira a prévia e importe somente as correspondências seguras.</p>
+    <span class="eyebrow">V4 · AUDITORIA DE CAMPO</span>
+    <h1>Importar evidências do WhatsApp</h1>
+    <p>Analisa o histórico completo, remove repetições, confronta com a base e o inventário e preserva fotos/vídeos para consulta.</p>
+  </div>
+  <div class="heroActions">
+    <a class="secondary buttonLink" href="/evidencias-campo">Abrir Centro de Evidências</a>
   </div>
 </section>
 
 {% if import_result %}
 <section class="card">
-  <h2>Importação concluída</h2>
+  <h2>Importação de evidências concluída</h2>
   <div class="kpis">
-    <article class="kpi successKpi"><span>Equipamentos inseridos</span><b>{{ import_result.inserted }}</b></article>
-    <article class="kpi"><span>Localidades afetadas</span><b>{{ import_result.locations }}</b></article>
-    <article class="kpi"><span>Visitas seguras processadas</span><b>{{ import_result.safe_visits }}</b></article>
-    <article class="kpi"><span>Mídias enviadas ao R2</span><b>{{ import_result.media_uploaded }}</b></article>
-    <article class="kpi warningKpi"><span>Duplicidades ignoradas</span><b>{{ import_result.duplicates }}</b></article>
+    <article class="kpi successKpi"><span>Visitas novas</span><b>{{ import_result.inserted_visits }}</b></article>
+    <article class="kpi"><span>Visitas atualizadas</span><b>{{ import_result.updated_visits }}</b></article>
+    <article class="kpi"><span>Itens novos</span><b>{{ import_result.inserted_items }}</b></article>
+    <article class="kpi warningKpi"><span>Itens repetidos ignorados</span><b>{{ import_result.skipped_items }}</b></article>
+    <article class="kpi"><span>Mídias preservadas</span><b>{{ import_result.media_uploaded }}</b></article>
   </div>
   <div class="notice">
-    {% if import_result.completed %}
-      As localidades importadas foram marcadas como <b>CONCLUÍDAS</b>.
-    {% else %}
-      As localidades importadas permanecem <b>EM ANDAMENTO</b>. O gestor pode concluir depois de revisar.
-    {% endif %}
+    Os dados foram gravados como <b>evidência de campo</b>. Eles não alteram os Big Numbers oficiais nem criam inventário automaticamente.
+    O gestor pode revisar e promover cada equipamento posteriormente.
   </div>
 </section>
 {% endif %}
 
 <section class="card">
-  <h2>Analisar arquivo</h2>
+  <div class="sectionHead">
+    <div>
+      <h2>1. Analisar arquivo exportado</h2>
+      <p class="muted">Aceita o ZIP completo com fotos, vídeos e mensagens. Limite V4: 160 MB.</p>
+    </div>
+    <span class="tag">Storage: {{ storage_note }}</span>
+  </div>
   <form method="post" enctype="multipart/form-data">
     <input type="hidden" name="action" value="analyze">
     <div class="grid3">
       <div class="full">
         <label>ZIP exportado do WhatsApp *</label>
         <input type="file" name="zip_file" accept=".zip,application/zip" required>
-        <small>O ZIP de origem também será preservado no Cloudflare R2.</small>
+        <small>Recomendado: Cloudflare R2 configurado para manter as mídias de forma persistente.</small>
       </div>
     </div>
     <div class="actions">
-      <button class="primary" type="submit">Analisar ZIP</button>
+      <button class="primary" type="submit">Analisar e confrontar</button>
     </div>
   </form>
   {% if error %}<div class="alert">{{ error }}</div>{% endif %}
@@ -51,27 +57,33 @@
 <section class="kpis">
   <article class="kpi"><span>Mensagens</span><b>{{ summary.messages }}</b></article>
   <article class="kpi"><span>Mídias no ZIP</span><b>{{ summary.media_total }}</b></article>
-  <article class="kpi"><span>Visitas/localidades</span><b>{{ summary.visits }}</b></article>
-  <article class="kpi"><span>Equipamentos detectados</span><b>{{ summary.equipment }}</b></article>
-  <article class="kpi successKpi"><span>Correspondência segura</span><b>{{ summary.safe }}</b></article>
-  <article class="kpi warningKpi"><span>Revisar / não identificada</span><b>{{ summary.review + summary.unmatched }}</b></article>
+  <article class="kpi"><span>Visitas detectadas</span><b>{{ summary.visits }}</b></article>
+  <article class="kpi"><span>Itens extraídos</span><b>{{ summary.equipment }}</b></article>
+  <article class="kpi successKpi"><span>Localidades seguras</span><b>{{ summary.safe }}</b></article>
+  <article class="kpi warningKpi"><span>Localidades para revisar</span><b>{{ summary.review + summary.unmatched }}</b></article>
 </section>
 
 <section class="card">
   <div class="sectionHead">
     <div>
-      <h2>Prévia da importação</h2>
-      <p class="muted">Somente linhas verdes/SEGURAS serão importadas automaticamente.</p>
+      <h2>Comparativo preliminar</h2>
+      <p class="muted">A informação do WhatsApp é tratada como evidência; o inventário oficial só muda depois da revisão.</p>
     </div>
-    <span class="tag">{{ summary.duplicates }} duplicidade(s)</span>
+    <span class="tag">{{ summary.media_linked }} mídia(s) associada(s)</span>
   </div>
-
+  <div class="evidenceTypeStrip">
+    <span><b>ATM</b> {{ summary.by_type.ATM }}</span>
+    <span><b>Recarga</b> {{ summary.by_type.VALIDADOR }}</span>
+    <span><b>POS</b> {{ summary.by_type.POS }}</span>
+    <span><b>Rack</b> {{ summary.by_type.RACK }}</span>
+    <span><b>Já inventariados</b> {{ summary.duplicates }}</span>
+  </div>
   <div class="tableWrap tall">
     <table>
       <thead>
         <tr>
-          <th>Data</th><th>Responsável</th><th>Estação informada</th><th>Base encontrada</th>
-          <th>Confiança</th><th>Área/Saída</th><th>Equipamentos detectados</th><th>Mídias</th>
+          <th>Data</th><th>Responsável</th><th>Estação informada</th><th>Correspondência</th>
+          <th>Confiança</th><th>Itens detectados</th><th>Fotos/vídeos</th>
         </tr>
       </thead>
       <tbody>
@@ -84,28 +96,24 @@
             {% if v.location_id %}
               <b>{{ v.location_name }}</b><br><small>{{ v.company }}</small>
             {% else %}
-              <span class="status sPENDENTE">NÃO ENCONTRADA</span>
+              <span class="status sPENDENTE">REVISAR</span>
             {% endif %}
           </td>
           <td>
             {% if v.confidence == "SEGURA" %}
               <span class="status sCONCLUIDA">SEGURA</span>
-            {% elif v.confidence == "REVISAR" %}
-              <span class="status sEMANDAMENTO">REVISAR</span>
             {% else %}
-              <span class="status sPENDENTE">REVISAR</span>
+              <span class="status sEMANDAMENTO">{{ v.confidence }}</span>
             {% endif %}
           </td>
-          <td>{{ v.detail }}</td>
           <td>
             {% for e in v.equipment %}
-              <div style="margin-bottom:5px">
-                <b>{{ e.type }}</b> — {{ e.identifier }}
-                {% if e.model %}<small>({{ e.model }})</small>{% endif %}
-                {% if e.duplicate %}<span class="status sPENDENTE">JÁ CADASTRADO</span>{% endif %}
+              <div class="auditLine">
+                <b>{{ e.type }}</b> {{ e.identifier }}
+                <small>{{ e.audit_status }}</small>
               </div>
             {% else %}
-              <small>Nenhum equipamento extraído automaticamente.</small>
+              <small>Nenhum item extraído automaticamente.</small>
             {% endfor %}
           </td>
           <td><b>{{ v.attachments|length }}</b></td>
@@ -118,19 +126,17 @@
 
 {% if staging_key %}
 <section class="card">
-  <h2>Confirmar importação</h2>
-  <p>O arquivo de origem já está protegido no R2. Ao confirmar, o sistema gravará somente as correspondências <b>SEGURAS</b> e ignorará duplicidades.</p>
+  <h2>2. Gravar no banco de evidências</h2>
+  <p>
+    Esta etapa é <b>idempotente</b>: mensagens, visitas, itens e mídias repetidos são ignorados.
+    O histórico completo pode ser reimportado no futuro sem duplicar os dados.
+  </p>
   <form method="post">
     <input type="hidden" name="action" value="import">
     <input type="hidden" name="staging_key" value="{{ staging_key }}">
-    <label style="display:flex;gap:8px;align-items:center;margin:14px 0">
-      <input type="checkbox" name="mark_completed" value="1" style="width:auto">
-      Marcar as localidades importadas como CONCLUÍDAS
-    </label>
-    <small>Recomendação: deixe desmarcado na primeira importação e confira o dashboard antes de concluir as localidades.</small>
     <div class="actions">
-      <button class="primary" type="submit" onclick="return confirm('Importar agora os registros seguros para o PostgreSQL e as mídias para o R2?')">
-        Importar somente seguros
+      <button class="primary" type="submit" onclick="return confirm('Gravar agora as evidências e mídias para futura consulta?')">
+        Importar evidências para o PostgreSQL
       </button>
     </div>
   </form>

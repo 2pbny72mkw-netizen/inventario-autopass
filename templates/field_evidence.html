@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% block title %}Evidências de Campo | Inventário SP{% endblock %}
+{% block content %}
+<section class="dashHero">
+  <div>
+    <span class="eyebrow">V4 · INTELIGÊNCIA E AUDITORIA</span>
+    <h1>Centro de Evidências de Campo</h1>
+    <p>Fotos, vídeos, relatórios do WhatsApp e confronto com a base oficial e o inventário realizado.</p>
+  </div>
+  <div class="heroActions">
+    {% if session.get('role') == 'manager' %}
+    <a class="primary buttonLink" href="/importar-whatsapp">Importar WhatsApp</a>
+    {% endif %}
+  </div>
+</section>
+
+<section class="kpis evidenceKpis">
+  <article class="kpi"><span>Visitas de campo</span><b>{{ summary.visits }}</b></article>
+  <article class="kpi"><span>Itens confrontados</span><b>{{ summary.items }}</b></article>
+  <article class="kpi successKpi"><span>Conformes / confirmados</span><b>{{ summary.matched }}</b></article>
+  <article class="kpi warningKpi"><span>Precisam revisão</span><b>{{ summary.review }}</b></article>
+  <article class="kpi"><span>Fotos / vídeos</span><b>{{ summary.media }}</b></article>
+  <article class="kpi warningKpi"><span>Visitas sem localidade</span><b>{{ summary.unresolved_visits }}</b></article>
+</section>
+
+<section class="card">
+  <form method="get" class="filterBar evidenceFilters">
+    <div>
+      <label>Buscar</label>
+      <input name="q" value="{{ q }}" placeholder="Estação, linha ou responsável">
+    </div>
+    <div>
+      <label>Auditoria</label>
+      <select name="audit">
+        <option value="">Todas</option>
+        {% for s in audit_statuses %}
+        <option value="{{ s }}" {% if s == audit %}selected{% endif %}>{{ s }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="filterActions">
+      <button class="secondary" type="submit">Filtrar</button>
+      <a class="secondary buttonLink" href="/evidencias-campo">Limpar</a>
+    </div>
+  </form>
+</section>
+
+{% if selected %}
+<section class="card evidenceDetail">
+  <div class="sectionHead">
+    <div>
+      <h2>{{ selected.station_raw }} · {{ selected.line_raw }}</h2>
+      <p class="muted">
+        {{ selected.source_date }} {{ selected.source_time }} · {{ selected.author }}
+        {% if selected_location %} · {{ selected_location.company }} / {{ selected_location.location }}{% endif %}
+      </p>
+    </div>
+    <span class="status {% if selected.match_confidence == 'SEGURA' %}sCONCLUIDA{% else %}sEMANDAMENTO{% endif %}">
+      {{ selected.match_confidence }}
+    </span>
+  </div>
+
+  {% if not selected.location_id and session.get('role') == 'manager' %}
+  <form method="post" action="/evidencias-campo/visita/{{ selected.id }}/associar" class="associateForm">
+    <label>Associar manualmente pelo ID da localidade</label>
+    <input type="number" name="location_id" placeholder="ID da localidade" required>
+    <button type="submit" class="secondary">Associar</button>
+  </form>
+  {% endif %}
+
+  <div class="evidenceGrid">
+    <div>
+      <h3>Itens confrontados</h3>
+      <div class="tableWrap">
+        <table>
+          <thead><tr><th>Tipo</th><th>ID</th><th>Modelo/Série</th><th>Auditoria</th><th>Ação</th></tr></thead>
+          <tbody>
+          {% for item in selected_items %}
+            <tr>
+              <td>{{ item.equipment_type }}</td>
+              <td><b>{{ item.identifier }}</b></td>
+              <td>{{ item.model or '—' }}{% if item.serial %}<br><small>SN {{ item.serial }}</small>{% endif %}</td>
+              <td><span class="auditBadge">{{ item.audit_status }}</span><br><small>{{ item.audit_detail }}</small></td>
+              <td>
+                {% if session.get('role') == 'manager' and not item.inventory_id and item.equipment_type in ['ATM','VALIDADOR','POS'] %}
+                <form method="post" action="/evidencias-campo/item/{{ item.id }}/promover">
+                  <button class="secondary" type="submit" onclick="return confirm('Promover esta evidência para o inventário oficial?')">Promover</button>
+                </form>
+                {% elif item.inventory_id %}
+                <span class="status sCONCLUIDA">INVENTÁRIO #{{ item.inventory_id }}</span>
+                {% else %}—{% endif %}
+              </td>
+            </tr>
+          {% else %}
+            <tr><td colspan="5">Nenhum equipamento extraído.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div>
+      <h3>Relatório de campo</h3>
+      <pre class="fieldReport">{{ selected.report_text }}</pre>
+      {% if selected.competition_text %}
+      <h3>Concorrência</h3>
+      <pre class="fieldReport competitionReport">{{ selected.competition_text }}</pre>
+      {% endif %}
+    </div>
+  </div>
+
+  <h3>Fotos e vídeos da localidade</h3>
+  <div class="mediaGallery">
+    {% for media in selected_media %}
+      {% if media.mime_type and media.mime_type.startswith('image/') %}
+      <a href="/evidencias-campo/midia/{{ media.id }}" target="_blank" class="mediaTile">
+        <img loading="lazy" src="/evidencias-campo/midia/{{ media.id }}" alt="{{ media.original_name }}">
+        <small>{{ media.original_name }}</small>
+      </a>
+      {% elif media.mime_type and media.mime_type.startswith('video/') %}
+      <div class="mediaTile videoTile">
+        <video controls preload="metadata" src="/evidencias-campo/midia/{{ media.id }}"></video>
+        <small>{{ media.original_name }}</small>
+      </div>
+      {% else %}
+      <a class="mediaTile fileTile" href="/evidencias-campo/midia/{{ media.id }}" target="_blank">{{ media.original_name }}</a>
+      {% endif %}
+    {% else %}
+      <p class="muted">Nenhuma mídia associada a esta visita.</p>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+<section class="card">
+  <div class="sectionHead">
+    <div>
+      <h2>Visitas importadas</h2>
+      <p class="muted">Clique em uma visita para abrir relatório, confronto e galeria.</p>
+    </div>
+    <span class="tag">{{ visit_cards|length }} exibida(s)</span>
+  </div>
+  <div class="evidenceVisitGrid">
+  {% for card in visit_cards %}
+    <a class="evidenceVisitCard {% if card.review %}needsReview{% endif %}" href="?visit={{ card.visit.id }}{% if q %}&q={{ q }}{% endif %}{% if audit %}&audit={{ audit }}{% endif %}">
+      <div class="evTop">
+        <b>{{ card.visit.station_raw }}</b>
+        <span>{{ card.visit.source_date }}</span>
+      </div>
+      <small>{{ card.visit.line_raw }} · {{ card.visit.author }}</small>
+      {% if card.location %}<div class="evLocation">{{ card.location.company }} · {{ card.location.location }}</div>{% endif %}
+      <div class="evCounts">
+        <span>{{ card.items }} item(ns)</span>
+        <span>{{ card.media }} mídia(s)</span>
+        {% if card.review %}<span class="reviewCount">{{ card.review }} revisar</span>{% endif %}
+      </div>
+    </a>
+  {% else %}
+    <p class="muted">Nenhuma evidência importada ainda.</p>
+  {% endfor %}
+  </div>
+</section>
+{% endblock %}
