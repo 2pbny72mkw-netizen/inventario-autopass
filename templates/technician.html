@@ -43,13 +43,14 @@
   <div class="sectionHead">
     <div>
       <h2>Estação / localidade</h2>
-      <p class="muted">V9 prioriza os pontos próximos da sua posição. Estações integradas podem conter várias linhas no mesmo ponto físico.</p>
+      <p class="muted">V10 prioriza os pontos próximos da sua posição e registra o check-in operacional da estação selecionada. Estações integradas podem conter várias linhas no mesmo ponto físico.</p>
     </div>
     <button type="button" class="secondary" id="refreshNearbyBtn">Atualizar próximos</button>
   </div>
   <div id="nearbyStatus" class="notice">Ative a localização para ver as estações próximas.</div>
   <div id="nearbyStations" class="nearbyStations"></div>
   <div id="stationLinesPanel" class="notice" style="display:none"></div>
+  <div id="smartCheckinStatus" class="smartCheckinStatus" style="display:none"></div>
   <div style="margin:12px 0 4px">
     <button type="button" class="secondary" id="toggleManualLocationBtn">Outra localidade / ponto externo</button>
   </div>
@@ -272,5 +273,5 @@
 {% endblock %}
 {% block scripts %}
 <script>window.CURRENT_USER_ROLE = {{ session.get("role")|tojson }};</script>
-<script src="{{ url_for('static', filename='technician.js') }}?v=v9-3"></script>
+<script src="{{ url_for('static', filename='technician.js') }}?v=v10"></script>
 {% endblock %}

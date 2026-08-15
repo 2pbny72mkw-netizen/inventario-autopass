@@ -1,5 +1,5 @@
-window.AUTOPASS_TEAMS_VERSION='teams-v9-1';
-console.log('AUTOPASS Central Operacional V9.1 carregada');
+window.AUTOPASS_TEAMS_VERSION='teams-v10';
+console.log('AUTOPASS Central Operacional V10 carregada');
 
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -64,10 +64,16 @@ function categoryClass(value){
 function initials(name){
   return String(name||'?').trim().split(/\s+/).slice(0,2).map(x=>x[0]||'').join('').toUpperCase();
 }
+function photoUrl(t){
+  if(!t?.photo_url) return '';
+  const sep=String(t.photo_url).includes('?')?'&':'?';
+  return `${t.photo_url}${sep}v=${encodeURIComponent(t.photo_version||t.captured_at||Date.now())}`;
+}
 function avatarHtml(t){
   const cls=freshnessClass(t.freshness);
-  if(t.photo_url){
-    return `<div class="avatarRing ${cls}"><img src="${esc(t.photo_url)}" alt="${esc(t.name)}"></div>`;
+  const url=photoUrl(t);
+  if(url){
+    return `<div class="avatarRing ${cls}"><img class="teamCardAvatarPhoto" src="${esc(url)}" alt="${esc(t.name)}" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"><div class="avatarFallback" style="display:none">${esc(initials(t.name))}</div></div>`;
   }
   return `<div class="avatarRing ${cls}"><div class="avatarFallback">${esc(initials(t.name))}</div></div>`;
 }
@@ -79,15 +85,14 @@ function freshnessText(t){
 }
 function markerIcon(t){
   const cls=freshnessClass(t.freshness);
-  const photo=t.photo_url
-    ? `<img src="${esc(t.photo_url)}" alt="">`
-    : `<span>${esc(initials(t.name))}</span>`;
+  const url=photoUrl(t);
+  const photo=url
+    ? `<img class="teamMapAvatarPhoto" src="${esc(url)}" alt="${esc(t.name)}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"><span class="teamMapAvatarInitials" style="display:none">${esc(initials(t.name))}</span>`
+    : `<span class="teamMapAvatarInitials">${esc(initials(t.name))}</span>`;
   return L.divIcon({
     className:'teamAvatarMarker',
     html:`<div class="teamMapAvatar ${cls} ${categoryClass(t.category)}">${photo}</div>`,
-    iconSize:[52,52],
-    iconAnchor:[26,26],
-    popupAnchor:[0,-28]
+    iconSize:L.point(52,52), iconAnchor:L.point(26,26), popupAnchor:L.point(0,-28)
   });
 }
 async function loadTeams(){
