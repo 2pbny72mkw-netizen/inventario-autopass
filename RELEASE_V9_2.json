@@ -1,0 +1,12 @@
+{
+  "version": "V9.2",
+  "name": "Consolidação Funcional",
+  "base": "V9.1",
+  "changes": [
+    "Correção robusta do avatar/foto no mapa e nos cards, sem depender de regras globais de IMG",
+    "Versões visíveis atualizadas para V9.2",
+    "Mantida estrutura de estação integrada com múltiplas linhas",
+    "Mantida priorização de estações próximas e validação GPS com exceção justificada",
+    "Preparação consolidada para V10 Campo Inteligente"
+  ]
+}
