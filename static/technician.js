@@ -932,3 +932,5 @@ function showMsg(t, ok) {
     showMsg('Não foi possível iniciar o armazenamento offline neste navegador.', false);
   }
 })();
+\n\nfunction startTechnicianPositionSharing(){\n  if(!navigator.geolocation) return;\n  let lastSent=0;\n  navigator.geolocation.watchPosition(async pos=>{\n    const now=Date.now();\n    if(now-lastSent<120000) return;\n    lastSent=now;\n    try{\n      await fetch('/api/tecnico/position',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({\n        latitude:pos.coords.latitude,longitude:pos.coords.longitude,accuracy:pos.coords.accuracy\n      })});\n    }catch(_e){}\n  },()=>{}, {enableHighAccuracy:true,maximumAge:60000,timeout:15000});\n}\n
+startTechnicianPositionSharing();

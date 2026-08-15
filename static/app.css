@@ -127,3 +127,6 @@ body.mapFullscreenOpen #toggleMapFullscreenBtn{
   z-index:10000;
   box-shadow:0 6px 18px rgba(0,0,0,.18);
 }
+
+/* V5 Central de Equipes */
+.teamCards{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}.teamCard{display:flex;gap:12px;align-items:center;border:1px solid #dfe6ef;border-radius:14px;padding:12px;background:#fff}.teamCard small,.teamCard span{display:block;margin-top:4px;font-size:12px;color:#65758b}.avatarRing{width:58px;height:58px;border-radius:50%;padding:4px;background:#aab4c0;flex:0 0 auto}.avatarFallback{width:100%;height:100%;border-radius:50%;background:#eef3f8;display:flex;align-items:center;justify-content:center;font-weight:800;color:#233a5a}.freshness-ATUAL .avatarRing{background:#2e9d61}.freshness-ATENÇÃO .avatarRing{background:#e0a629}.freshness-ATRASADO .avatarRing{background:#d55252}.freshness-SEM-SINAL .avatarRing{background:#9aa5b1}.teamMapFullscreen{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;z-index:9998!important;border-radius:0!important}
