@@ -1,0 +1,11 @@
+{
+  "source_file": "WhatsApp export received in this conversation",
+  "note": "Aggregate pre-analysis only. Raw chat and media are intentionally NOT embedded in this public-repository package.",
+  "expected_after_upload": {
+    "messages": 1026,
+    "media_files_in_zip": 685,
+    "approx_station_visits_detected": 104,
+    "safe_location_matches_approx": 94
+  },
+  "privacy": "Use /importar-whatsapp after V4 is Live. The original ZIP goes directly to R2 (or temporary local fallback), not to GitHub."
+}
