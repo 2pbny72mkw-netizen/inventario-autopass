@@ -23,7 +23,7 @@ from sqlalchemy.exc import IntegrityError
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from botocore.exceptions import ClientError, BotoCoreError
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 
@@ -31,9 +31,9 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V32.0"
-DASHBOARD_RELEASE = "dashboard-v32"
-TEAMS_RELEASE = "teams-v32"
+APP_RELEASE = "V33.0"
+DASHBOARD_RELEASE = "dashboard-v33"
+TEAMS_RELEASE = "teams-v33"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
 FIELD_GPS_GOOD_ACCURACY_M = float(os.getenv("FIELD_GPS_GOOD_ACCURACY_M", "30"))
 FIELD_GPS_MAX_ACCURACY_M = float(os.getenv("FIELD_GPS_MAX_ACCURACY_M", "80"))
@@ -1697,6 +1697,19 @@ def v12_lifecycle_create_api(inventory_id):
 def my_profile_page():
     user=db.session.get(User,session["user_id"])
     if request.method=="POST":
+        action=(request.form.get("action") or "photo").strip()
+        if action=="password":
+            current=request.form.get("current_password") or ""
+            new_password=request.form.get("new_password") or ""
+            confirm=request.form.get("confirm_password") or ""
+            if not check_password_hash(user.password_hash,current):
+                flash("Senha atual incorreta."); return redirect(url_for("my_profile_page"))
+            if len(new_password)<8:
+                flash("A nova senha deve ter pelo menos 8 caracteres."); return redirect(url_for("my_profile_page"))
+            if new_password!=confirm:
+                flash("A confirmação da nova senha não confere."); return redirect(url_for("my_profile_page"))
+            user.password_hash=generate_password_hash(new_password); db.session.commit()
+            flash("Senha alterada com sucesso."); return redirect(url_for("my_profile_page"))
         photo=request.files.get("photo")
         if not photo or not photo.filename:
             flash("Selecione uma imagem."); return redirect(url_for("my_profile_page"))
@@ -4186,6 +4199,33 @@ def r2_status_v22():
     elif not configured:
         payload["message"] = "Configure R2_ENDPOINT_URL, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY e R2_BUCKET_NAME."
     return jsonify(payload), (200 if payload["ok"] else 503)
+
+
+@app.route("/importar-excel", methods=["GET", "POST"])
+@manager_required
+def import_excel():
+    preview=[]; error=None; filename=None
+    if request.method=="POST":
+        upload=request.files.get("excel_file")
+        if not upload or not upload.filename.lower().endswith((".xlsx",".xlsm")):
+            error="Selecione uma planilha Excel .xlsx ou .xlsm."
+        else:
+            try:
+                filename=secure_filename(upload.filename) or upload.filename
+                wb=load_workbook(io.BytesIO(upload.read()), read_only=True, data_only=True)
+                for ws in wb.worksheets:
+                    rows=ws.iter_rows(values_only=True)
+                    headers=next(rows,())
+                    headers=[str(x).strip() if x is not None else "" for x in headers]
+                    sample=[]; count=0
+                    for row in rows:
+                        if not any(v not in (None,"") for v in row): continue
+                        count+=1
+                        if len(sample)<5: sample.append(["" if v is None else str(v) for v in row[:12]])
+                    preview.append({"sheet":ws.title,"headers":headers[:12],"rows":count,"sample":sample})
+            except Exception as exc:
+                error=f"Não foi possível analisar a planilha: {type(exc).__name__}: {exc}"
+    return render_template("import_excel.html",preview=preview,error=error,filename=filename,app_release=APP_RELEASE)
 
 
 @app.route("/importar-whatsapp", methods=["GET", "POST"])
