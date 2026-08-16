@@ -1006,6 +1006,7 @@ def teams_calendar_api():
         start_raw = request.args.get("start", "").strip()
         days = max(1, min(31, request.args.get("days", type=int) or 14))
         category = normalize(request.args.get("category", ""))
+        cargo = (request.args.get("cargo", "") or "").strip().casefold()
 
         try:
             start_date = (
@@ -1027,6 +1028,10 @@ def teams_calendar_api():
                     continue
             if category and normalize(p.category) != category:
                 continue
+            if cargo:
+                u = db.session.get(User, p.user_id) if p.user_id else None
+                if not u or (u.job_title or "").strip().casefold() != cargo:
+                    continue
             active_profiles.append(p)
 
         date_list = [start_date + timedelta(days=i) for i in range(days)]
@@ -2241,7 +2246,13 @@ def create_inventory():
                 continue
             safe = secure_filename(f.filename)
             stored = f"{inv.id}_{secrets.token_hex(6)}_{safe}"
-            f.save(UPLOAD_DIR / stored)
+            if _r2_available():
+                data = f.read()
+                key = f"inventory/{datetime.utcnow().strftime('%Y/%m')}/{stored}"
+                _r2_put_bytes(key, data, f.mimetype or "application/octet-stream")
+                stored = "r2__" + key
+            else:
+                f.save(UPLOAD_DIR / stored)
             db.session.add(Attachment(
                 inventory_id=inv.id,
                 original_name=f.filename,
@@ -2907,6 +2918,17 @@ def export_dashboard_excel():
 @app.route("/uploads/<path:name>")
 @login_required
 def uploaded(name):
+    # V26: anexos novos podem viver no R2. O prefixo r2__ mantém compatibilidade
+    # com a coluna stored_name já existente, sem migração destrutiva do banco.
+    if name.startswith("r2__"):
+        key = name[4:]
+        try:
+            raw = _r2_get_bytes(key)
+            ext = Path(key).suffix.lower()
+            mime = {".jpg":"image/jpeg",".jpeg":"image/jpeg",".png":"image/png",".webp":"image/webp",".mp4":"video/mp4"}.get(ext,"application/octet-stream")
+            return send_file(io.BytesIO(raw), mimetype=mime, download_name=Path(key).name)
+        except Exception:
+            abort(404)
     return send_from_directory(UPLOAD_DIR, name)
 
 

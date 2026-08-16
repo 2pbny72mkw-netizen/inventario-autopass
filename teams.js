@@ -1,5 +1,5 @@
-window.AUTOPASS_TEAMS_VERSION='teams-v24';
-console.log('AUTOPASS Central Operacional V24 carregada');
+window.AUTOPASS_TEAMS_VERSION='teams-v26';
+console.log('AUTOPASS Central Operacional V26 carregada');
 
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -170,7 +170,7 @@ async function loadCalendar(){
     start:$('calendarStart').value,
     days:$('calendarDays').value
   });
-  if($('calendarCategory').value) params.set('category',$('calendarCategory').value);
+  if($('calendarCategory').value) params.set('cargo',$('calendarCategory').value);
 
   const r=await fetch(`/api/equipes/calendario?${params.toString()}`,{cache:'no-store',headers:{'Accept':'application/json'}});
   const contentType=String(r.headers.get('content-type')||'');
@@ -342,7 +342,7 @@ function exportScale(){
     start:$('calendarStart').value,
     days:$('calendarDays').value
   });
-  if($('calendarCategory').value) params.set('category',$('calendarCategory').value);
+  if($('calendarCategory').value) params.set('cargo',$('calendarCategory').value);
   window.location.href=`/api/equipes/export/excel?${params.toString()}`;
 }
 
@@ -371,6 +371,13 @@ function syncFullscreenButtons(){
 }
 document.addEventListener('fullscreenchange',syncFullscreenButtons);
 
+function refreshCargoFilter(){
+  const sel=$('calendarCategory'); if(!sel) return;
+  const keep=sel.value;
+  const cargos=[...new Set(profilesCache.map(p=>String(p.job_title||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'pt-BR'));
+  sel.innerHTML='<option value="">Todos os cargos</option>'+cargos.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('');
+  if(cargos.includes(keep)) sel.value=keep;
+}
 async function refreshAll(){
   await Promise.allSettled([loadTeams(),loadCalendar(),loadProfiles()]);
 }
@@ -419,3 +426,17 @@ $('calendarStart').value=today.toISOString().slice(0,10);
 resetScheduleForm();
 refreshAll();
 setInterval(loadTeams,120000);
+
+
+// V26 — seções operacionais sob demanda para reduzir poluição visual.
+function bindTeamCollapsible(buttonId, contentId){
+  const btn=$(buttonId), content=$(contentId); if(!btn||!content) return;
+  btn.addEventListener('click',()=>{
+    const opening=content.classList.contains('hidden');
+    content.classList.toggle('hidden',!opening);
+    btn.setAttribute('aria-expanded',opening?'true':'false');
+    const span=btn.querySelector('span'); if(span) span.textContent=opening?'−':'＋';
+  });
+}
+bindTeamCollapsible('toggleTodayOperational','todayOperationalContent');
+bindTeamCollapsible('toggleExpectedTeam','expectedTeamContent');
