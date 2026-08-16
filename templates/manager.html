@@ -180,7 +180,7 @@
 <section class="card v21ExecutiveCharts v23Panel" data-v23-panel="overview execution" id="v21ExecutiveCharts">
   <div class="sectionHead">
     <div><h2>Painel executivo do recorte</h2><p class="muted">Leitura visual de execução, pendência e prioridades para apresentação gerencial.</p></div>
-    <span class="tag">V34.2 · INTELLIGENCE WALL</span>
+    <span class="tag">V34.3 · INTELLIGENCE WALL</span>
   </div>
   <div class="v21ChartGrid">
     <article class="v21ChartPanel">
@@ -202,7 +202,7 @@
 <section class="card v22ExecutiveCockpit v23Panel" data-v23-panel="execution" id="v22ExecutiveCockpit">
   <div class="sectionHead">
     <div><h2>Cockpit executivo</h2><p class="muted">Ritmo de execução, produtividade recente e qualidade das evidências para decisão gerencial.</p></div>
-    <span class="tag">V34.2 · LIVE</span>
+    <span class="tag">V34.3 · LIVE</span>
   </div>
   <div class="v22CockpitGrid">
     <article class="v22Panel"><div class="v21ChartTitle"><span>Evolução diária</span><small>inventários registrados</small></div><div id="v22Trend" class="v22Trend"></div></article>
@@ -342,5 +342,28 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
         integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
         crossorigin=""></script>
-<script src="{{url_for('static',filename='manager.js')}}?v=dashboard-v34-2"></script>
+
+<div id="v343TvOverlay" class="v343TvOverlay" aria-hidden="true">
+  <div class="v343TvTop">
+    <div><span class="v343TvEyebrow">INVENTÁRIO AUTOPASS · AO VIVO</span><h1>Central de Inteligência do Inventário</h1></div>
+    <div class="v343TvClock"><b id="v343TvTime">--:--</b><small id="v343TvUpdated">Atualização em tempo real</small></div>
+  </div>
+  <div class="v343TvKpis">
+    <article><span>Parque previsto</span><b id="tvExpected">0</b></article>
+    <article><span>Inventariado</span><b id="tvInventoried">0</b></article>
+    <article><span>Faltante</span><b id="tvMissing">0</b></article>
+    <article><span>Conclusão</span><b id="tvCoverage">0%</b></article>
+    <article><span>Ritmo 7 dias</span><b id="tvPace">0/dia</b></article>
+    <article><span>Projeção</span><b id="tvProjection">—</b></article>
+  </div>
+  <div class="v343TvGrid">
+    <article class="v343TvPanel v343TvProgress"><div class="v343TvPanelHead"><b>Cobertura do parque</b><span>EXECUÇÃO</span></div><div class="v343TvDonut" id="v343TvDonut"><strong id="v343TvDonutPct">0%</strong><small>concluído</small></div><p id="v343TvProgressText">0 de 0 ativos conciliados</p></article>
+    <article class="v343TvPanel"><div class="v343TvPanelHead"><b>Evolução · 14 dias</b><span>TENDÊNCIA</span></div><div id="v343TvTrend" class="v343TvClone v343TvTrend"></div></article>
+    <article class="v343TvPanel"><div class="v343TvPanelHead"><b>Execução por tipo</b><span>COBERTURA</span></div><div id="v343TvTypes" class="v343TvClone"></div></article>
+    <article class="v343TvPanel"><div class="v343TvPanelHead"><b>Prioridades</b><span>ATENÇÃO</span></div><div id="v343TvPriority" class="v343TvClone"></div></article>
+  </div>
+  <div class="v343TvFooter"><span id="v343TvHeadline">Monitoramento executivo do inventário.</span><span>SUPORTE A CAMPO · V34.3</span></div>
+</div>
+
+<script src="{{url_for('static',filename='manager.js')}}?v=dashboard-v34-3"></script>
 {% endblock %}
