@@ -8,7 +8,7 @@
   "orientation": "any",
   "background_color": "#f3f7fb",
   "theme_color": "#17345d",
-  "description": "Inventário Autopass V25.0 — BI Executivo, escala operacional multi-dia, evidências persistentes R2 e operação offline-first.",
+  "description": "Inventário Autopass V25.1 — BI Executivo, escala operacional multi-dia, evidências persistentes R2 e operação offline-first.",
   "icons": [
     {
       "src": "/static/autopass-logo.png",

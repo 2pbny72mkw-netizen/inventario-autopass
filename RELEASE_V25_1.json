@@ -1,0 +1,12 @@
+{
+  "release": "V25.1",
+  "name": "Fechamento Executivo e Patrimônio 360",
+  "focus": [
+    "Patrimonio 360 unificado com inventario de campo e itens Outro",
+    "Ficha da localidade acionada pela busca global",
+    "Filtros Empresa Linha Localidade Tipo",
+    "Saude e confiabilidade sensivel aos filtros",
+    "Dashboard executivo com cores reforcadas e mapa logo apos filtros",
+    "PWA cache atualizado para V25.1"
+  ]
+}

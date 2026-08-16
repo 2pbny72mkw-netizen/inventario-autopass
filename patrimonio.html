@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Patrimônio 360 | Inventário SP{% endblock %}
+{% block content %}
+<section class="dashHero">
+  <div><span class="eyebrow">V25.1 · PATRIMÔNIO, QUALIDADE E INTELIGÊNCIA</span><h1>Patrimônio 360</h1>
+  <p>Pesquisa única da base prevista, inventário realizado, itens encontrados fora da base e evidências de campo.</p></div>
+</section>
+
+<section class="card v251SearchTop">
+  <div class="sectionHead"><div><h2>Busca global</h2><p class="muted">Série, patrimônio, QR Code, equipamento, estação, linha, empresa ou item encontrado em campo.</p></div></div>
+  <div class="globalSearchBar"><input id="v7Search" placeholder="Ex.: ARV, Praça da Árvore, 500502, ATM, 2222"><button class="primary" id="v7SearchBtn">Pesquisar</button></div>
+  <div id="v7SearchResults" class="v7Results"></div>
+</section>
+
+<section class="card v251Filters">
+  <div class="sectionHead"><div><h2>Filtros do Patrimônio</h2><p class="muted">Refine todas as visões por empresa, linha, localidade e tipo.</p></div><button class="secondary" id="v251ClearFilters">Limpar filtros</button></div>
+  <div class="grid4">
+    <div><label>Empresa</label><select id="v251Company"><option value="">Todas</option></select></div>
+    <div><label>Linha</label><select id="v251Line"><option value="">Todas</option></select></div>
+    <div><label>Localidade</label><select id="v251Location"><option value="">Todas</option></select></div>
+    <div><label>Tipo</label><select id="v251Type"><option value="">Todos</option><option>ATM</option><option value="VALIDADOR">Recarga</option><option>POS</option><option>TDI</option><option>BLOQUEIO</option><option>OUTRO</option></select></div>
+  </div>
+  <div id="v251FilterContext" class="filterContext">Todas empresas · Todas linhas · Todas localidades · Todos os tipos</div>
+</section>
+
+<section class="card v14Executive">
+  <div class="sectionHead"><div><h2>Central Executiva do Inventário</h2><p class="muted">Cobertura, confiabilidade e prioridades do recorte selecionado.</p></div><span class="tag">V25.1</span></div>
+  <div id="v14ExecutiveKpis" class="v14ExecutiveKpis"></div>
+  <div class="v14ExecutiveGrid">
+    <div><h3>Qualidade do parque</h3><div id="v14QualityBars"></div></div>
+    <div><h3>Prioridades imediatas</h3><div id="v14Priorities" class="v14Priorities"></div></div>
+  </div>
+</section>
+
+<section class="card v12Intel">
+  <div class="sectionHead"><div><h2>Saúde e confiabilidade do parque</h2><p class="muted">Leitura automática respeitando os filtros acima. Clique em uma localidade para abrir a ficha completa.</p></div><button class="secondary" id="v12Refresh">Atualizar análise</button></div>
+  <div id="v12Kpis" class="v12Kpis"></div><div class="v12Legend"><span class="v12Good">Confiável ≥ 85</span><span class="v12Warn">Atenção 65–84</span><span class="v12Bad">Crítico &lt; 65</span></div><div id="v12Locations" class="v12IntelGrid"></div>
+</section>
+
+<section class="card">
+ <div class="sectionHead"><div><h2>Situação do parque por localidade</h2><p class="muted">Cobertura, faltantes, divergências, evidências e itens encontrados fora da base.</p></div></div>
+ <div id="v7Locations" class="v7LocationGrid"></div>
+</section>
+
+<div id="v7DetailModal" class="scheduleModal hidden"><div class="scheduleModalPanel v251LocationModal"><div class="sectionHead"><h2 id="v7DetailTitle">Ficha da Localidade</h2><button class="secondary" id="v7Close">Fechar</button></div><div id="v7Detail"></div></div></div>
+<script src="{{ url_for('static',filename='patrimonio.js') }}?v=v25-1"></script>
+{% endblock %}

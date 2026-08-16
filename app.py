@@ -31,9 +31,9 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V25.0"
-DASHBOARD_RELEASE = "dashboard-v25"
-TEAMS_RELEASE = "teams-v22-2"
+APP_RELEASE = "V25.1"
+DASHBOARD_RELEASE = "dashboard-v25-1"
+TEAMS_RELEASE = "teams-v25-1"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
 FIELD_GPS_GOOD_ACCURACY_M = float(os.getenv("FIELD_GPS_GOOD_ACCURACY_M", "30"))
 FIELD_GPS_MAX_ACCURACY_M = float(os.getenv("FIELD_GPS_MAX_ACCURACY_M", "80"))
@@ -1376,8 +1376,10 @@ def teams_export_excel_api():
 def _location_360_payload(loc):
     inventories = Inventory.query.filter_by(location_id=loc.id).order_by(Inventory.created_at.desc()).all()
     visits = FieldEvidenceVisit.query.filter_by(location_id=loc.id).order_by(FieldEvidenceVisit.id.desc()).all()
-    expected = int(loc.expected_atm or 0) + int(loc.expected_validator or 0) + int(loc.expected_pos or 0)
+    expected_bucket = _expected_assets_by_location().get(loc.id, {})
+    expected = sum(int(expected_bucket.get(t, 0) or 0) for t in ("ATM","VALIDADOR","POS","TDI","BLOQUEIO"))
     inventoried = len(inventories)
+    outside_base = sum(1 for x in inventories if normalize(x.in_base) in ("NAO","NÃO","NO","FORA DA BASE") or _canonical_equipment_type(x.equipment_type)=="OUTRO")
     divergences = sum(1 for x in inventories if (x.divergence or "").strip())
     inoperative = sum(1 for x in inventories if normalize(x.operational_status) not in ("", "OPERACIONAL", "OK"))
     media_count = 0
@@ -1390,13 +1392,18 @@ def _location_360_payload(loc):
         "expected":expected, "inventoried":inventoried, "missing":max(0,expected-inventoried),
         "coverage_pct":round((inventoried/expected*100),1) if expected else 0,
         "divergences":divergences, "inoperative":inoperative,
-        "visits":len(visits), "media":media_count,
+        "visits":len(visits), "media":media_count, "outside_base":outside_base,
         "latitude":loc.reference_latitude, "longitude":loc.reference_longitude,
         "equipment":[{
             "id":x.id, "type":x.equipment_type, "identifier":x.asset_identifier,
             "serial":x.serial, "model":x.model, "supplier":x.supplier,
-            "status":x.operational_status, "divergence":x.divergence,
-            "created_at":x.created_at.isoformat()+"Z" if x.created_at else None
+            "status":x.operational_status, "divergence":x.divergence, "in_base":x.in_base,
+            "notes":x.notes, "technician_id":x.technician_id,
+            "created_at":x.created_at.isoformat()+"Z" if x.created_at else None,
+            "media":[{
+                "id":a.id,"name":a.original_name,"mime":a.mime_type,
+                "url":url_for("uploaded", name=a.stored_name)
+            } for a in Attachment.query.filter_by(inventory_id=x.id).order_by(Attachment.id).all()]
         } for x in inventories[:250]],
         "evidence_visits":[{
             "id":v.id, "date":v.source_date, "time":v.source_time, "author":v.author,
@@ -1495,17 +1502,24 @@ def v7_global_search_api():
         BaseAsset.qrcode_id.ilike(like),BaseAsset.top_id.ilike(like),
         BaseAsset.locality.ilike(like),BaseAsset.description.ilike(like)
     )).limit(25).all()
-    inventory=Inventory.query.filter(db.or_(
+    matching_location_ids=[x.id for x in locations]
+    inventory_filters=[
         Inventory.serial.ilike(like),Inventory.asset_identifier.ilike(like),
-        Inventory.model.ilike(like),Inventory.supplier.ilike(like)
-    )).order_by(Inventory.created_at.desc()).limit(25).all()
+        Inventory.model.ilike(like),Inventory.supplier.ilike(like),
+        Inventory.equipment_type.ilike(like), Inventory.notes.ilike(like)
+    ]
+    if matching_location_ids:
+        inventory_filters.append(Inventory.location_id.in_(matching_location_ids))
+    inventory=Inventory.query.filter(db.or_(*inventory_filters)).order_by(Inventory.created_at.desc()).limit(50).all()
     return jsonify({
         "ok":True,"query":q,
         "locations":[{"id":x.id,"company":x.company,"line":x.line,"location":x.location} for x in locations],
         "assets":[{"id":x.id,"type":x.equipment_type,"serial":x.serial,"asset_key":x.asset_key,
                    "locality":x.locality,"line":x.line,"model":x.model} for x in assets],
         "inventory":[{"id":x.id,"type":x.equipment_type,"identifier":x.asset_identifier,
-                      "serial":x.serial,"location_id":x.location_id,"status":x.operational_status} for x in inventory]
+                      "serial":x.serial,"location_id":x.location_id,"status":x.operational_status,
+                      "in_base":x.in_base,"model":x.model,
+                      "created_at":x.created_at.isoformat()+"Z" if x.created_at else None} for x in inventory]
     })
 
 
