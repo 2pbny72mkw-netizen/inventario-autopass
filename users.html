@@ -38,6 +38,27 @@
             <option value="hr">RH</option>
           </select>
         </div>
+        <div class="fieldExtended">
+          <label>Empresa</label>
+          <input name="company" placeholder="Ex.: Autopass, prestadora...">
+        </div>
+        <div class="fieldExtended scheduleField">
+          <label>Escala</label>
+          <select name="work_schedule_type"><option value="12x36">12x36</option><option value="5x2">5x2</option></select>
+        </div>
+        <div class="fieldExtended scheduleField">
+          <label>Horário</label>
+          <input name="work_shift" value="05:00-17:00" placeholder="05:00-17:00">
+        </div>
+        <div class="fieldExtended scheduleField">
+          <label>Data de referência da escala</label>
+          <input name="work_anchor_date" type="date">
+        </div>
+        <div class="fieldExtended scheduleField">
+          <label>Nessa data o colaborador</label>
+          <select name="work_anchor_status"><option value="TRABALHA">Trabalha</option><option value="FOLGA">Folga</option></select>
+          <small>Define a alternância individual do 12x36.</small>
+        </div>
         <div>
           <label>E-mail corporativo</label>
           <input name="email" type="email" placeholder="nome@empresa.com.br" autocomplete="email">
@@ -100,6 +121,7 @@
           <th>Código</th>
           <th>Login</th>
           <th>Perfil</th>
+          <th>Empresa</th>
           <th>Contato</th>
           <th>Status</th>
           <th>Ações</th>
@@ -133,6 +155,7 @@
             {% elif u.role == "hr" %}RH
             {% else %}Técnico de Campo{% endif %}
           </td>
+          <td>{{ u.company or "—" }}</td>
           <td>
             {% if u.email %}<div>{{ u.email }}</div>{% endif %}
             {% if u.phone %}<small>{{ u.phone }}</small>{% endif %}
@@ -167,7 +190,7 @@
         </tr>
 
         <tr id="edit-user-{{ u.id }}" class="editUserRow" style="display:none">
-          <td colspan="7">
+          <td colspan="8">
             <div class="card" style="margin:8px 0;background:#fafbfc">
               <div class="sectionHead">
                 <div>
@@ -195,6 +218,26 @@
                       <option value="consultation" {% if u.role == "consultation" %}selected{% endif %}>Consulta</option>
                       <option value="hr" {% if u.role == "hr" %}selected{% endif %}>RH</option>
                     </select>
+                  </div>
+                  <div class="editExtended">
+                    <label>Empresa</label>
+                    <input name="company" value="{{ u.company or '' }}">
+                  </div>
+                  <div class="editExtended scheduleField">
+                    <label>Escala</label>
+                    <select name="work_schedule_type"><option value="12x36" {% if (u.work_schedule_type or '12x36') == '12x36' %}selected{% endif %}>12x36</option><option value="5x2" {% if u.work_schedule_type == '5x2' %}selected{% endif %}>5x2</option></select>
+                  </div>
+                  <div class="editExtended scheduleField">
+                    <label>Horário</label>
+                    <input name="work_shift" value="{{ u.work_shift or '05:00-17:00' }}">
+                  </div>
+                  <div class="editExtended scheduleField">
+                    <label>Data referência</label>
+                    <input name="work_anchor_date" type="date" value="{{ u.work_anchor_date.isoformat() if u.work_anchor_date else '' }}">
+                  </div>
+                  <div class="editExtended scheduleField">
+                    <label>Situação na data referência</label>
+                    <select name="work_anchor_status"><option value="TRABALHA" {% if (u.work_anchor_status or 'TRABALHA') == 'TRABALHA' %}selected{% endif %}>Trabalha</option><option value="FOLGA" {% if u.work_anchor_status == 'FOLGA' %}selected{% endif %}>Folga</option></select>
                   </div>
                   <div>
                     <label>Código *</label>

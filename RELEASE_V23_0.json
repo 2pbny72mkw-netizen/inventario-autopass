@@ -1,0 +1,13 @@
+{
+  "version": "V23.0",
+  "name": "Dashboard Executivo + Modo TV",
+  "date": "2026-08-16",
+  "features": [
+    "Menu lateral no Dashboard",
+    "Primeiro Modo TV com rotação automática",
+    "Empresa e referência individual da escala 12x36 no usuário",
+    "Tipo Outro no BI",
+    "Câmera e galeria com múltiplas mídias",
+    "Feedback explícito de exceção geográfica"
+  ]
+}

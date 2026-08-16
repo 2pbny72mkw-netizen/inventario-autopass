@@ -31,7 +31,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V22.2"
+APP_RELEASE = "V23.0"
 DASHBOARD_RELEASE = "dashboard-v22-2"
 TEAMS_RELEASE = "teams-v22-2"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -86,6 +86,11 @@ class User(db.Model):
     phone = db.Column(db.String(30), unique=True, index=True)
     photo_url = db.Column(db.String(500))
     archived_at = db.Column(db.DateTime)
+    company = db.Column(db.String(180))
+    work_schedule_type = db.Column(db.String(30))
+    work_shift = db.Column(db.String(30))
+    work_anchor_date = db.Column(db.Date)
+    work_anchor_status = db.Column(db.String(20))
 
 
 
@@ -564,6 +569,60 @@ def migrate_user_archive_column():
         raise
 
 
+def migrate_user_v23_columns():
+    """V23: empresa e referência individual da escala do colaborador."""
+    try:
+        inspector = db.inspect(db.engine)
+        existing = {c["name"] for c in inspector.get_columns("users")}
+        commands = []
+        if "company" not in existing:
+            commands.append('ALTER TABLE users ADD COLUMN company VARCHAR(180)')
+        if "work_schedule_type" not in existing:
+            commands.append('ALTER TABLE users ADD COLUMN work_schedule_type VARCHAR(30)')
+        if "work_shift" not in existing:
+            commands.append('ALTER TABLE users ADD COLUMN work_shift VARCHAR(30)')
+        if "work_anchor_date" not in existing:
+            commands.append('ALTER TABLE users ADD COLUMN work_anchor_date DATE')
+        if "work_anchor_status" not in existing:
+            commands.append('ALTER TABLE users ADD COLUMN work_anchor_status VARCHAR(20)')
+        for command in commands:
+            db.session.execute(db.text(command))
+        if commands:
+            db.session.commit()
+    except Exception:
+        db.session.rollback()
+        raise
+
+
+def _sync_user_schedule_profile(user):
+    """Mantém a grade operacional alinhada ao cadastro do usuário."""
+    if not user or user.role != "technician":
+        return
+    profile = TeamScheduleProfile.query.filter_by(user_id=user.id).first()
+    if not profile:
+        profile = TeamScheduleProfile.query.filter(func.upper(TeamScheduleProfile.name) == normalize(user.name)).first()
+    schedule_type = (user.work_schedule_type or "12x36").strip()
+    shift = (user.work_shift or "05:00-17:00").strip()
+    ref_date = user.work_anchor_date or datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+    status = normalize(user.work_anchor_status or "TRABALHA")
+    anchor = ref_date if status != "FOLGA" else ref_date - timedelta(days=1)
+    if not profile:
+        profile = TeamScheduleProfile(
+            user_id=user.id, name=user.name, active=bool(user.active), category="TECNICO",
+            schedule_type=schedule_type, shift=shift, supervision="", entry="",
+            lines_json="[]", anchor_date=anchor
+        )
+        db.session.add(profile)
+    else:
+        profile.user_id=user.id
+        profile.name=user.name
+        profile.active=bool(user.active)
+        profile.schedule_type=schedule_type
+        profile.shift=shift
+        profile.anchor_date=anchor
+    profile.updated_at=datetime.utcnow()
+
+
 def migrate_inventory_sync_uuid():
     """V8: idempotency key for offline/PWA retries."""
     try:
@@ -755,6 +814,7 @@ def _profile_to_dict(profile):
         "lines": profile.lines,
         "anchor_date": profile.anchor_date.isoformat() if profile.anchor_date else None,
         "active": bool(profile.active),
+        "company": (user.company if user else "") or "",
     }
 
 
@@ -1005,6 +1065,7 @@ def teams_profiles_api():
                 "name": u.name,
                 "role": u.role,
                 "user_code": u.user_code or "",
+                "company": u.company or "",
             }
             for u in users
         ],
@@ -2877,6 +2938,15 @@ def create_user():
     role = request.form.get("role", "technician").strip()
     email = _normalize_optional_email(request.form.get("email"))
     phone = _normalize_optional_phone(request.form.get("phone"))
+    company = request.form.get("company", "").strip() or None
+    work_schedule_type = request.form.get("work_schedule_type", "12x36").strip() or "12x36"
+    work_shift = request.form.get("work_shift", "05:00-17:00").strip() or "05:00-17:00"
+    work_anchor_status = request.form.get("work_anchor_status", "TRABALHA").strip() or "TRABALHA"
+    work_anchor_date_raw = request.form.get("work_anchor_date", "").strip()
+    try:
+        work_anchor_date = datetime.strptime(work_anchor_date_raw, "%Y-%m-%d").date() if work_anchor_date_raw else None
+    except ValueError:
+        work_anchor_date = None
 
     if not name or not username or not password:
         flash("Nome, usuário e senha são obrigatórios.")
@@ -2912,6 +2982,11 @@ def create_user():
         user_code=user_code,
         email=email,
         phone=phone,
+        company=company,
+        work_schedule_type=work_schedule_type if role == "technician" else None,
+        work_shift=work_shift if role == "technician" else None,
+        work_anchor_date=work_anchor_date if role == "technician" else None,
+        work_anchor_status=work_anchor_status if role == "technician" else None,
     )
 
     photo = request.files.get("photo")
@@ -2930,6 +3005,8 @@ def create_user():
 
     try:
         db.session.add(user)
+        db.session.flush()
+        _sync_user_schedule_profile(user)
         db.session.commit()
     except IntegrityError:
         db.session.rollback()
@@ -3004,6 +3081,15 @@ def edit_user(user_id):
     user_code = request.form.get("user_code", "").strip().upper()
     email = _normalize_optional_email(request.form.get("email"))
     phone = _normalize_optional_phone(request.form.get("phone"))
+    company = request.form.get("company", "").strip() or None
+    work_schedule_type = request.form.get("work_schedule_type", user.work_schedule_type or "12x36").strip() or "12x36"
+    work_shift = request.form.get("work_shift", user.work_shift or "05:00-17:00").strip() or "05:00-17:00"
+    work_anchor_status = request.form.get("work_anchor_status", user.work_anchor_status or "TRABALHA").strip() or "TRABALHA"
+    work_anchor_date_raw = request.form.get("work_anchor_date", "").strip()
+    try:
+        work_anchor_date = datetime.strptime(work_anchor_date_raw, "%Y-%m-%d").date() if work_anchor_date_raw else user.work_anchor_date
+    except ValueError:
+        work_anchor_date = user.work_anchor_date
 
     if not name or not username:
         flash("Nome e usuário são obrigatórios.")
@@ -3088,6 +3174,17 @@ def edit_user(user_id):
     user.user_code = user_code
     user.email = email
     user.phone = phone
+    user.company = company
+    if role == "technician":
+        user.work_schedule_type = work_schedule_type
+        user.work_shift = work_shift
+        user.work_anchor_date = work_anchor_date
+        user.work_anchor_status = work_anchor_status
+    else:
+        user.work_schedule_type = None
+        user.work_shift = None
+        user.work_anchor_date = None
+        user.work_anchor_status = None
 
     if new_photo_key:
         user.photo_url = new_photo_key
@@ -3095,6 +3192,7 @@ def edit_user(user_id):
         user.photo_url = None
 
     try:
+        _sync_user_schedule_profile(user)
         db.session.commit()
     except IntegrityError:
         db.session.rollback()
@@ -4614,6 +4712,7 @@ with app.app_context():
     migrate_team_schedule_columns()
     migrate_inventory_sync_uuid()
     migrate_user_archive_column()
+    migrate_user_v23_columns()
     migrate_base_asset_columns()
     migrate_inventory_validator_columns()
     seed_data()
