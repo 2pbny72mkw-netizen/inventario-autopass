@@ -1,0 +1,15 @@
+{
+  "version": "V24.0",
+  "name": "Gestão de Pessoas + UX de Campo + BI/TV Refinado",
+  "date": "2026-08-16",
+  "highlights": [
+    "Cargo separado do Perfil de acesso",
+    "Empresa e situação do colaborador no cadastro",
+    "Escala 12x36 calculada pelo cadastro do usuário; 5x2 sem referência de alternância",
+    "Férias, afastamento, licença e folga programada retiram o colaborador da operação sem desativar o acesso",
+    "Grade de escala preserva base legada para conferência, priorizando usuários vinculados",
+    "Exceção geográfica aceita com justificativa mínima e feedback de sucesso",
+    "Seleção de estação avança suavemente ao passo 2",
+    "BI/Modo TV com contraste e cores executivas reforçadas"
+  ]
+}

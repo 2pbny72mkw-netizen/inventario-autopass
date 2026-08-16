@@ -1,5 +1,5 @@
-window.AUTOPASS_TEAMS_VERSION='teams-v10';
-console.log('AUTOPASS Central Operacional V10 carregada');
+window.AUTOPASS_TEAMS_VERSION='teams-v24';
+console.log('AUTOPASS Central Operacional V24 carregada');
 
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -125,7 +125,7 @@ async function loadTeams(){
       <div class="teamCardBody">
         <div class="teamNameRow">
           <b>${esc(t.name)}</b>
-          <span class="categoryBadge ${categoryClass(t.category)}">${esc(t.category)}</span>
+          <span class="categoryBadge ${categoryClass(t.category)}">${esc(t.job_title||t.category)}</span>
         </div>
         <small><b>${esc(t.schedule_type)}</b> · ${esc(t.shift||'—')} · entrada ${esc(t.entry||'—')}</small>
         ${t.lines?.length?`<small>Linhas ${esc(t.lines.join(' / '))}</small>`:''}
@@ -134,7 +134,7 @@ async function loadTeams(){
         <span class="linkBadge ${t.linked?'linked':'unlinked'}">${t.linked?'Usuário vinculado':'Sem vínculo com Usuários'}</span>
       </div>`;
     $('teamCards').appendChild(card);
-    if($('todayTeamTable')){ const tr=document.createElement('tr'); tr.innerHTML=`<td><b>${esc(t.name)}</b></td><td>${esc(t.category)}</td><td>${esc(t.schedule_type||'—')}</td><td>${esc(t.shift||'—')}</td><td>${esc(t.entry||'—')}</td><td>${esc((t.lines||[]).join(' / ')||'—')}</td><td>${esc(t.freshness||'SEM SINAL')}</td><td>${esc(freshnessText(t))}</td>`; $('todayTeamTable').appendChild(tr); }
+    if($('todayTeamTable')){ const tr=document.createElement('tr'); tr.innerHTML=`<td><b>${esc(t.name)}</b></td><td>${esc(t.job_title||t.category)}</td><td>${esc(t.schedule_type||'—')}</td><td>${esc(t.shift||'—')}</td><td>${esc(t.entry||'—')}</td><td>${esc((t.lines||[]).join(' / ')||'—')}</td><td>${esc(t.freshness||'SEM SINAL')}</td><td>${esc(freshnessText(t))}</td>`; $('todayTeamTable').appendChild(tr); }
 
     if(t.latitude!=null&&t.longitude!=null){
       const m=L.marker([Number(t.latitude),Number(t.longitude)],{icon:markerIcon(t)})
@@ -201,13 +201,13 @@ async function loadCalendar(){
     <tr class="scale-${categoryClass(t.category)}">
       <td class="stickyTechCol">
         <b>${esc(t.name)}</b>
-        <small>${t.linked?'✓ '+esc(t.linked_user_name):'Não vinculado'}</small>
+        <small>${t.linked?'✓ '+esc(t.linked_user_name):'Não vinculado'}${t.job_title?' · '+esc(t.job_title):''}</small>
       </td>
       <td>${esc(t.shift)}</td>
       <td>${esc(t.entry||'—')}</td>
       ${t.days.map(day=>`
         <td class="${day.scheduled?'scaleWork':'scaleOff'}">
-          ${day.scheduled?esc(t.shift.replaceAll(':00','')):'Folga'}
+          ${day.status_override?esc(String(day.status_override).replaceAll('_',' ')):(day.scheduled?esc(t.shift.replaceAll(':00','')):'Folga')}
         </td>`).join('')}
     </tr>`).join('');  if($('calendarTableWrap')) $('calendarTableWrap').scrollLeft=0;
 }

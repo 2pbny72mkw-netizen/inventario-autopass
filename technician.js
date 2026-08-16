@@ -98,6 +98,7 @@ function selectLocationEntry(loc){
   $('company').value=loc.company; $('company').dispatchEvent(new Event('change'));
   $('line').value=loc.line; $('line').dispatchEvent(new Event('change'));
   $('location').value=String(loc.id); $('location').dispatchEvent(new Event('change'));
+  setTimeout(()=>document.getElementById('equipmentStep')?.scrollIntoView({behavior:'smooth',block:'start'}),260);
 }
 function updateGpsValidation(){
   const box=$('gpsValidation'),wrap=$('gpsOverrideWrap'); if(!box||!wrap) return true;
@@ -106,7 +107,7 @@ function updateGpsValidation(){
   if(Number.isFinite(Number(lastGps.accuracy)) && Number(lastGps.accuracy)>GPS_MAX_ACCURACY_M){
     box.style.display='block'; box.classList.add('gps-block'); wrap.style.display='block';
     box.innerHTML=`<b>GPS com baixa precisão.</b> Aproximadamente ±${Math.round(Number(lastGps.accuracy))} m. Atualize a localização ou justifique a exceção.`;
-    return String($('gps_override_reason')?.value||'').trim().length>=10;
+    return String($('gps_override_reason')?.value||'').trim().length>=3;
   }
   const ref=locReference(current);
   if(!ref){
@@ -119,7 +120,7 @@ function updateGpsValidation(){
   if(d<=GPS_MAX_M){ box.classList.add('gps-warn');box.innerHTML=`<b>Atenção à localização.</b> Aproximadamente ${Math.round(d)} m da referência ${ref.source}. Confirme estação e linha antes de salvar.`;return true; }
   box.classList.add('gps-block');wrap.style.display='block';
   box.innerHTML=`<b>GPS incompatível com a localidade selecionada.</b> Aproximadamente ${Math.round(d)} m da referência ${ref.source}. Corrija a estação ou justifique a exceção.`;
-  return String($('gps_override_reason')?.value||'').trim().length>=10;
+  return String($('gps_override_reason')?.value||'').trim().length>=3;
 }
 
 let lastGps = null;

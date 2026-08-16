@@ -31,7 +31,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V23.0"
+APP_RELEASE = "V24.0"
 DASHBOARD_RELEASE = "dashboard-v22-2"
 TEAMS_RELEASE = "teams-v22-2"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -91,6 +91,9 @@ class User(db.Model):
     work_shift = db.Column(db.String(30))
     work_anchor_date = db.Column(db.Date)
     work_anchor_status = db.Column(db.String(20))
+    job_title = db.Column(db.String(120))
+    personnel_status = db.Column(db.String(30), nullable=False, default="ATIVO")
+    personnel_status_note = db.Column(db.String(240))
 
 
 
@@ -585,6 +588,12 @@ def migrate_user_v23_columns():
             commands.append('ALTER TABLE users ADD COLUMN work_anchor_date DATE')
         if "work_anchor_status" not in existing:
             commands.append('ALTER TABLE users ADD COLUMN work_anchor_status VARCHAR(20)')
+        if "job_title" not in existing:
+            commands.append('ALTER TABLE users ADD COLUMN job_title VARCHAR(120)')
+        if "personnel_status" not in existing:
+            commands.append("ALTER TABLE users ADD COLUMN personnel_status VARCHAR(30) DEFAULT 'ATIVO'")
+        if "personnel_status_note" not in existing:
+            commands.append('ALTER TABLE users ADD COLUMN personnel_status_note VARCHAR(240)')
         for command in commands:
             db.session.execute(db.text(command))
         if commands:
@@ -815,6 +824,10 @@ def _profile_to_dict(profile):
         "anchor_date": profile.anchor_date.isoformat() if profile.anchor_date else None,
         "active": bool(profile.active),
         "company": (user.company if user else "") or "",
+        "job_title": (user.job_title if user else "") or "",
+        "personnel_status": (user.personnel_status if user else "ATIVO") or "ATIVO",
+        "personnel_status_note": (user.personnel_status_note if user else "") or "",
+        "source": "CADASTRO_USUARIO" if user else "LEGADO_ESCALA",
     }
 
 
@@ -827,7 +840,8 @@ def _schedule_today_db(target_date=None):
             TeamScheduleProfile.category, TeamScheduleProfile.name
         ).all()
         if _team_profile_is_scheduled(p, target_date)
-        and (not p.user_id or (db.session.get(User, p.user_id) and db.session.get(User, p.user_id).active))
+        and (not p.user_id or (db.session.get(User, p.user_id) and db.session.get(User, p.user_id).active
+        and normalize(db.session.get(User, p.user_id).personnel_status or "ATIVO") == "ATIVO"))
     ]
 
 
@@ -878,6 +892,7 @@ def field_config_api():
         "gps_max_accuracy_m": FIELD_GPS_MAX_ACCURACY_M,
         "gps_warn_distance_m": float(os.getenv("FIELD_GPS_WARN_DISTANCE_M", "250")),
         "gps_max_distance_m": float(os.getenv("FIELD_GPS_MAX_DISTANCE_M", "600")),
+        "gps_override_min_chars": 3,
     })
 
 
@@ -940,7 +955,7 @@ def teams_status_api():
 
     for member in scheduled:
         user = db.session.get(User, member.get("user_id")) if member.get("user_id") else None
-        if user is not None and not user.active:
+        if user is not None and (not user.active or normalize(user.personnel_status or "ATIVO") != "ATIVO"):
             continue
         pos = _team_latest_position(user.id if user else None)
         minutes = None
@@ -1018,12 +1033,15 @@ def teams_calendar_api():
         rows = []
         for p in active_profiles:
             day_rows = []
+            linked_user = db.session.get(User, p.user_id) if p.user_id else None
+            personnel_status = normalize(linked_user.personnel_status or "ATIVO") if linked_user else "ATIVO"
             for d in date_list:
-                scheduled = bool(_team_profile_is_scheduled(p, d))
+                scheduled = bool(_team_profile_is_scheduled(p, d)) if personnel_status == "ATIVO" else False
                 day_rows.append({
                     "date": d.isoformat(),
                     "scheduled": scheduled,
                     "shift": (p.shift or "") if scheduled else "FOLGA",
+                    "status_override": personnel_status if personnel_status != "ATIVO" else None,
                 })
             row = _profile_to_dict(p)
             row["days"] = day_rows
@@ -2122,7 +2140,7 @@ def create_inventory():
 
     # V10: qualidade do GPS antes do confronto geográfico.
     gps_override_reason = (request.form.get("gps_override_reason") or "").strip()
-    if gps_accuracy is not None and gps_accuracy > FIELD_GPS_MAX_ACCURACY_M and len(gps_override_reason) < 10:
+    if gps_accuracy is not None and gps_accuracy > FIELD_GPS_MAX_ACCURACY_M and len(gps_override_reason) < 3:
         return jsonify({
             "ok": False,
             "error": f"Precisão GPS insuficiente ({round(gps_accuracy)} m). Atualize a localização ou informe uma justificativa para prosseguir.",
@@ -2137,7 +2155,7 @@ def create_inventory():
     gps_max_m = float(os.getenv("FIELD_GPS_MAX_DISTANCE_M", "600"))
     if latitude is not None and longitude is not None and loc.reference_latitude is not None and loc.reference_longitude is not None:
         gps_distance_m = _haversine_m(latitude, longitude, loc.reference_latitude, loc.reference_longitude)
-        if gps_distance_m > gps_max_m and len(gps_override_reason) < 10:
+        if gps_distance_m > gps_max_m and len(gps_override_reason) < 3:
             return jsonify({
                 "ok": False,
                 "error": f"GPS incompatível com {loc.location}: distância aproximada de {round(gps_distance_m)} m da referência. Confirme a localidade ou informe uma justificativa para exceção.",
@@ -2939,6 +2957,9 @@ def create_user():
     email = _normalize_optional_email(request.form.get("email"))
     phone = _normalize_optional_phone(request.form.get("phone"))
     company = request.form.get("company", "").strip() or None
+    job_title = request.form.get("job_title", "").strip() or None
+    personnel_status = request.form.get("personnel_status", "ATIVO").strip().upper() or "ATIVO"
+    personnel_status_note = request.form.get("personnel_status_note", "").strip() or None
     work_schedule_type = request.form.get("work_schedule_type", "12x36").strip() or "12x36"
     work_shift = request.form.get("work_shift", "05:00-17:00").strip() or "05:00-17:00"
     work_anchor_status = request.form.get("work_anchor_status", "TRABALHA").strip() or "TRABALHA"
@@ -2955,6 +2976,10 @@ def create_user():
     if role not in ("manager", "technician", "consultation", "hr"):
         flash("Perfil de acesso inválido.")
         return redirect(url_for("users_page"))
+
+    allowed_personnel_status = {"ATIVO", "FERIAS", "AFASTADO", "LICENCA", "FOLGA_PROGRAMADA", "OUTRO"}
+    if personnel_status not in allowed_personnel_status:
+        personnel_status = "ATIVO"
 
     if len(password) < 8:
         flash("A senha deve ter pelo menos 8 caracteres.")
@@ -2983,10 +3008,13 @@ def create_user():
         email=email,
         phone=phone,
         company=company,
+        job_title=job_title,
+        personnel_status=personnel_status,
+        personnel_status_note=personnel_status_note,
         work_schedule_type=work_schedule_type if role == "technician" else None,
         work_shift=work_shift if role == "technician" else None,
-        work_anchor_date=work_anchor_date if role == "technician" else None,
-        work_anchor_status=work_anchor_status if role == "technician" else None,
+        work_anchor_date=work_anchor_date if role == "technician" and work_schedule_type == "12x36" else None,
+        work_anchor_status=work_anchor_status if role == "technician" and work_schedule_type == "12x36" else None,
     )
 
     photo = request.files.get("photo")
@@ -3082,6 +3110,9 @@ def edit_user(user_id):
     email = _normalize_optional_email(request.form.get("email"))
     phone = _normalize_optional_phone(request.form.get("phone"))
     company = request.form.get("company", "").strip() or None
+    job_title = request.form.get("job_title", user.job_title or "").strip() or None
+    personnel_status = request.form.get("personnel_status", user.personnel_status or "ATIVO").strip().upper() or "ATIVO"
+    personnel_status_note = request.form.get("personnel_status_note", user.personnel_status_note or "").strip() or None
     work_schedule_type = request.form.get("work_schedule_type", user.work_schedule_type or "12x36").strip() or "12x36"
     work_shift = request.form.get("work_shift", user.work_shift or "05:00-17:00").strip() or "05:00-17:00"
     work_anchor_status = request.form.get("work_anchor_status", user.work_anchor_status or "TRABALHA").strip() or "TRABALHA"
@@ -3098,6 +3129,10 @@ def edit_user(user_id):
     if role not in ("manager", "technician", "consultation", "hr"):
         flash("Perfil de acesso inválido.")
         return redirect(url_for("users_page"))
+
+    allowed_personnel_status = {"ATIVO", "FERIAS", "AFASTADO", "LICENCA", "FOLGA_PROGRAMADA", "OUTRO"}
+    if personnel_status not in allowed_personnel_status:
+        personnel_status = "ATIVO"
 
     if not user_code:
         user_code = user.user_code or _next_user_code(role)
@@ -3175,11 +3210,14 @@ def edit_user(user_id):
     user.email = email
     user.phone = phone
     user.company = company
+    user.job_title = job_title
+    user.personnel_status = personnel_status
+    user.personnel_status_note = personnel_status_note
     if role == "technician":
         user.work_schedule_type = work_schedule_type
         user.work_shift = work_shift
-        user.work_anchor_date = work_anchor_date
-        user.work_anchor_status = work_anchor_status
+        user.work_anchor_date = work_anchor_date if work_schedule_type == "12x36" else None
+        user.work_anchor_status = work_anchor_status if work_schedule_type == "12x36" else None
     else:
         user.work_schedule_type = None
         user.work_shift = None
