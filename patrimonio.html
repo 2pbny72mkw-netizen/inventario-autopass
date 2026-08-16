@@ -2,13 +2,13 @@
 {% block title %}Patrimônio 360 | Inventário SP{% endblock %}
 {% block content %}
 <section class="dashHero">
-  <div><span class="eyebrow">V25.1 · PATRIMÔNIO, QUALIDADE E INTELIGÊNCIA</span><h1>Patrimônio 360</h1>
+  <div><span class="eyebrow">V30 · PATRIMÔNIO, QUALIDADE E INTELIGÊNCIA</span><h1>Patrimônio 360</h1>
   <p>Pesquisa única da base prevista, inventário realizado, itens encontrados fora da base e evidências de campo.</p></div>
 </section>
 
 <section class="card v251SearchTop">
   <div class="sectionHead"><div><h2>Busca global</h2><p class="muted">Série, patrimônio, QR Code, equipamento, estação, linha, empresa ou item encontrado em campo.</p></div></div>
-  <div class="globalSearchBar"><input id="v7Search" placeholder="Ex.: ARV, Praça da Árvore, 500502, ATM, 2222"><button class="primary" id="v7SearchBtn">Pesquisar</button></div>
+  <div class="globalSearchBar"><input id="v7Search" placeholder="Ex.: ARV, Praça da Árvore, 500502, ATM, 2222"><button class="primary" id="v7SearchBtn">Pesquisar</button><button class="secondary" id="v7SearchClear" type="button">Limpar</button></div>
   <div id="v7SearchResults" class="v7Results"></div>
 </section>
 
@@ -20,11 +20,11 @@
     <div><label>Localidade</label><select id="v251Location"><option value="">Todas</option></select></div>
     <div><label>Tipo</label><select id="v251Type"><option value="">Todos</option><option>ATM</option><option value="VALIDADOR">Recarga</option><option>POS</option><option>TDI</option><option>BLOQUEIO</option><option>OUTRO</option></select></div>
   </div>
-  <div id="v251FilterContext" class="filterContext">Todas empresas · Todas linhas · Todas localidades · Todos os tipos</div>
+  <div class="v30AtmFilters" id="v30AtmFilters"><div><label>Contrato ATM</label><select id="v30PatContract"><option value="">Todos</option></select></div><div><label>Vencimento</label><select id="v30PatHorizon"><option value="">Todos</option><option value="30">Até 30 dias</option><option value="60">Até 60 dias</option><option value="90">Até 90 dias</option><option value="expired">Vencidos</option></select></div><button class="secondary" id="v30PatExport" type="button">Exportar ATM</button></div><div id="v251FilterContext" class="filterContext">Todas empresas · Todas linhas · Todas localidades · Todos os tipos</div>
 </section>
 
 <section class="card v14Executive">
-  <div class="sectionHead"><div><h2>Central Executiva do Inventário</h2><p class="muted">Cobertura, confiabilidade e prioridades do recorte selecionado.</p></div><span class="tag">V25.1</span></div>
+  <div class="sectionHead"><div><h2>Central Executiva do Inventário</h2><p class="muted">Cobertura, confiabilidade e prioridades do recorte selecionado.</p></div><span class="tag">V30</span></div>
   <div id="v14ExecutiveKpis" class="v14ExecutiveKpis"></div>
   <div class="v14ExecutiveGrid">
     <div><h3>Qualidade do parque</h3><div id="v14QualityBars"></div></div>
@@ -43,5 +43,5 @@
 </section>
 
 <div id="v7DetailModal" class="scheduleModal hidden"><div class="scheduleModalPanel v251LocationModal"><div class="sectionHead"><h2 id="v7DetailTitle">Ficha da Localidade</h2><button class="secondary" id="v7Close">Fechar</button></div><div id="v7Detail"></div></div></div>
-<script src="{{ url_for('static',filename='patrimonio.js') }}?v=v25-1"></script>
+<script src="{{ url_for('static',filename='patrimonio.js') }}?v=v30"></script>
 {% endblock %}

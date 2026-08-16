@@ -31,9 +31,9 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V30.0"
-DASHBOARD_RELEASE = "dashboard-v30"
-TEAMS_RELEASE = "teams-v25-1"
+APP_RELEASE = "V32.0"
+DASHBOARD_RELEASE = "dashboard-v32"
+TEAMS_RELEASE = "teams-v32"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
 FIELD_GPS_GOOD_ACCURACY_M = float(os.getenv("FIELD_GPS_GOOD_ACCURACY_M", "30"))
 FIELD_GPS_MAX_ACCURACY_M = float(os.getenv("FIELD_GPS_MAX_ACCURACY_M", "80"))
@@ -495,6 +495,28 @@ def user_admin_required(fn):
             return redirect(url_for("manager" if session.get("role") == "consultation" else "technician"))
         return fn(*args, **kwargs)
     return inner
+
+
+def _current_user_is_superadmin():
+    """Somente o administrador principal pode atribuir perfis sensíveis.
+    Por padrão, considera o login `admin`; pode ser alterado por SUPERADMIN_USERNAME.
+    O usuário ID 1/manager é mantido como fallback de compatibilidade do projeto.
+    """
+    uid = session.get("user_id")
+    if not uid:
+        return False
+    user = db.session.get(User, uid)
+    if not user or user.role != "manager":
+        return False
+    expected = os.getenv("SUPERADMIN_USERNAME", "admin").strip().lower()
+    return (user.username or "").strip().lower() == expected or user.id == 1
+
+
+def _role_assignment_allowed(role):
+    role = (role or "").strip()
+    if role in ("manager", "consultation"):
+        return _current_user_is_superadmin()
+    return role in ("technician", "hr")
 
 
 def field_required(fn):
@@ -3022,8 +3044,14 @@ def attachments(inventory_id):
 @app.route("/usuarios")
 @user_admin_required
 def users_page():
-    users = User.query.order_by(User.active.desc(), User.name).all()
-    return render_template("users.html", users=users)
+    active_users = User.query.filter(User.archived_at.is_(None)).order_by(User.active.desc(), User.name).all()
+    archived_users = User.query.filter(User.archived_at.isnot(None)).order_by(User.archived_at.desc(), User.name).all()
+    return render_template(
+        "users.html",
+        users=active_users,
+        archived_users=archived_users,
+        can_assign_sensitive_roles=_current_user_is_superadmin(),
+    )
 
 
 def _normalize_optional_email(value):
@@ -3085,6 +3113,9 @@ def create_user():
 
     if role not in ("manager", "technician", "consultation", "hr"):
         flash("Perfil de acesso inválido.")
+        return redirect(url_for("users_page"))
+    if not _role_assignment_allowed(role):
+        flash("Somente o Administrador principal pode criar ou atribuir os perfis Gestor ou Consulta.")
         return redirect(url_for("users_page"))
 
     allowed_personnel_status = {"ATIVO", "FERIAS", "AFASTADO", "LICENCA", "FOLGA_PROGRAMADA", "OUTRO"}
@@ -3238,6 +3269,9 @@ def edit_user(user_id):
 
     if role not in ("manager", "technician", "consultation", "hr"):
         flash("Perfil de acesso inválido.")
+        return redirect(url_for("users_page"))
+    if not _role_assignment_allowed(role):
+        flash("Somente o Administrador principal pode atribuir os perfis Gestor ou Consulta.")
         return redirect(url_for("users_page"))
 
     allowed_personnel_status = {"ATIVO", "FERIAS", "AFASTADO", "LICENCA", "FOLGA_PROGRAMADA", "OUTRO"}
@@ -3443,6 +3477,73 @@ def delete_or_archive_user(user_id):
 
     flash("Usuário sem histórico excluído definitivamente.")
     return redirect(url_for("users_page"))
+
+
+
+@app.post("/usuarios/<int:user_id>/reativar")
+@user_admin_required
+def reactivate_user(user_id):
+    user = db.session.get(User, user_id)
+    if not user or not user.archived_at:
+        flash("Usuário arquivado não encontrado.")
+        return redirect(url_for("users_page"))
+    # RH não pode restaurar diretamente um perfil sensível.
+    if user.role in ("manager", "consultation") and not _current_user_is_superadmin():
+        flash("Somente o Administrador principal pode reativar usuários Gestor ou Consulta.")
+        return redirect(url_for("users_page"))
+    base_login = normalize(user.name).lower().replace(" ", ".")[:60] or f"usuario{user.id}"
+    base_login = re.sub(r"[^a-z0-9._-]+", "", base_login) or f"usuario{user.id}"
+    candidate = base_login
+    n=1
+    while User.query.filter(User.id != user.id, func.lower(User.username)==candidate.lower()).first():
+        n += 1
+        candidate = f"{base_login}.{n}"
+    user.username = candidate
+    user.active = True
+    user.archived_at = None
+    user.personnel_status = "ATIVO"
+    user.password_hash = generate_password_hash(secrets.token_urlsafe(12))
+    db.session.commit()
+    flash(f"{user.name} foi reativado. Atualize login, contato, escala e redefina a senha antes de liberar o acesso.")
+    return redirect(url_for("users_page"))
+
+
+@app.get("/usuarios/exportar.xlsx")
+@user_admin_required
+def export_users_excel():
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Cadastro de usuários"
+    headers = ["Código","Nome","Login","Perfil","Cargo","Empresa","E-mail","Celular","Status de acesso","Situação","Escala","Horário","Data referência","Trabalha/Folga","Arquivado em"]
+    ws.append(headers)
+    for c in ws[1]:
+        c.font = Font(bold=True, color="FFFFFF")
+        c.fill = PatternFill("solid", fgColor="17345D")
+        c.alignment = Alignment(horizontal="center")
+    role_label={"manager":"Gestor","technician":"Técnico de Campo","consultation":"Consulta","hr":"RH"}
+    for u in User.query.order_by(User.name).all():
+        status = "ARQUIVADO" if u.archived_at else ("ATIVO" if u.active else "INATIVO")
+        ws.append([
+            u.user_code or "",u.name,u.username,role_label.get(u.role,u.role),u.job_title or "",u.company or "",u.email or "",u.phone or "",
+            status,u.personnel_status or "",u.work_schedule_type or "",u.work_shift or "",
+            u.work_anchor_date.isoformat() if u.work_anchor_date else "",u.work_anchor_status or "",
+            u.archived_at.strftime("%d/%m/%Y %H:%M") if u.archived_at else "",
+        ])
+    ws2=wb.create_sheet("Resumo")
+    ws2.append(["Indicador","Quantidade"])
+    ws2.append(["Usuários ativos",User.query.filter(User.archived_at.is_(None),User.active.is_(True)).count()])
+    ws2.append(["Usuários inativos",User.query.filter(User.archived_at.is_(None),User.active.is_(False)).count()])
+    ws2.append(["Usuários arquivados",User.query.filter(User.archived_at.isnot(None)).count()])
+    for sheet in wb.worksheets:
+        for col in range(1,sheet.max_column+1):
+            letter=get_column_letter(col); width=12
+            for row in range(1,min(sheet.max_row,500)+1):
+                v=sheet.cell(row=row,column=col).value
+                if v is not None: width=max(width,min(36,len(str(v))+2))
+            sheet.column_dimensions[letter].width=width
+        sheet.freeze_panes="A2"
+    out=io.BytesIO(); wb.save(out); out.seek(0)
+    return send_file(out,as_attachment=True,download_name=f"usuarios_autopass_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
 @app.post("/usuarios/<int:user_id>/senha")
@@ -4095,6 +4196,7 @@ def import_whatsapp():
     error = None
     staging_key = None
     import_result = None
+    analyzed_filename = None
     storage_note = "Cloudflare R2" if _r2_available() else "armazenamento local temporário"
 
     if request.method == "POST":
@@ -4107,8 +4209,11 @@ def import_whatsapp():
             else:
                 try:
                     raw = upload.read()
+                    analyzed_filename = secure_filename(upload.filename) or upload.filename
                     preview, summary = _wa_analyze_archive(raw)
                     staging_key, _batch_id, storage_note = _wa_stage_archive(raw, upload.filename)
+                    summary["filename"] = analyzed_filename
+                    summary["archive_sha"] = hashlib.sha256(raw).hexdigest()[:16]
                 except Exception as exc:
                     error = f"Não foi possível analisar o ZIP: {type(exc).__name__}: {exc}"
 
@@ -4123,6 +4228,9 @@ def import_whatsapp():
                     raw = _wa_load_staged(staging_key)
                     preview, summary = _wa_analyze_archive(raw)
                     batch_id = hashlib.sha256(raw).hexdigest()[:16]
+                    analyzed_filename = Path(staging_key.split(":",1)[-1]).name if staging_key else "arquivo analisado"
+                    summary["filename"] = analyzed_filename
+                    summary["archive_sha"] = batch_id
                     inserted_visits = 0
                     updated_visits = 0
                     inserted_items = 0
@@ -4235,6 +4343,8 @@ def import_whatsapp():
         staging_key=staging_key,
         import_result=import_result,
         storage_note=storage_note,
+        app_release=APP_RELEASE,
+        analyzed_filename=analyzed_filename or (summary.get("filename") if summary else None),
     )
 
 

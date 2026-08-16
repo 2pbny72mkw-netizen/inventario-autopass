@@ -1,0 +1,13 @@
+{
+  "release": "V32.0",
+  "dashboard": "dashboard-v32",
+  "teams": "teams-v32",
+  "base": "1408-5",
+  "focus": [
+    "BI Executivo 16:9",
+    "PWA offline",
+    "WhatsApp idempotente",
+    "Usuários arquivados e exportação",
+    "Suporte a Campo"
+  ]
+}
