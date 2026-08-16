@@ -1,0 +1,12 @@
+{
+  "release": "V34.3",
+  "dashboard": "dashboard-v34-3",
+  "teams": "teams-v34-3",
+  "base": "1408-5",
+  "focus": [
+    "Modo TV independente e estável",
+    "Visão Geral executiva sem Evidências",
+    "Mapa com tela cheia visível",
+    "Correções de cache e layout"
+  ]
+}

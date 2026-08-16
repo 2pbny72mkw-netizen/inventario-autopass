@@ -1,4 +1,4 @@
-window.AUTOPASS_MANAGER_VERSION='dashboard-v23';
+window.AUTOPASS_MANAGER_VERSION='dashboard-v34-1';
 console.log('AUTOPASS Dashboard Executivo V25 carregado');
 let locations=[];
 let dashboardData=null;
@@ -406,7 +406,7 @@ function renderGpsMap(items){
     const techInitials=String(x.technician||'?').trim().split(/\s+/).slice(0,2).map(v=>v[0]||'').join('').toUpperCase();
     const markerIcon=L.divIcon({
       className:'',
-      html:`<div class="gpsTechAvatar" style="outline:3px solid ${color}">${x.technician_photo_url?`<img src="${esc(x.technician_photo_url)}?v=${encodeURIComponent(x.gps_captured_at||x.created_at||'v10')}" alt="">`:`<span>${esc(techInitials)}</span>`}</div>`,
+      html:`<div class="gpsTechAvatar" style="outline:3px solid ${color}">${x.technician_photo_url?`<img src="${esc(x.technician_photo_url)}" alt="">`:`<span>${esc(techInitials)}</span>`}</div>`,
       iconSize:[40,40],iconAnchor:[20,20]
     });
     const marker=L.marker([lat,lon],{icon:markerIcon}).addTo(gpsPointLayer);
@@ -960,25 +960,44 @@ const V23_TV_VIEWS=['overview','execution','competition','quality','map','eviden
 function v23SetView(view){
   v23ActiveView=view||'overview';
   document.body.dataset.dashboardView=v23ActiveView;
+  document.body.dataset.dashboardView=v23ActiveView;
   document.querySelectorAll('.v23Panel').forEach(el=>{
-    el.style.display=String(el.dataset.v23Panel||'').split(/\s+/).includes(v23ActiveView)?'':'none';
+    const active=String(el.dataset.v23Panel||'').split(/\s+/).includes(v23ActiveView);
+    el.classList.toggle('v23PanelActive',active);
+    el.hidden=!active;
   });
   document.querySelectorAll('.v23Nav').forEach(btn=>btn.classList.toggle('active',btn.dataset.v23View===v23ActiveView));
-  if(v23ActiveView==='map' && gpsMap) setTimeout(()=>gpsMap.invalidateSize(),100);
+  if(v23ActiveView==='map' && gpsMap) setTimeout(()=>gpsMap.invalidateSize(),140);
   window.scrollTo({top:0,behavior:document.body.classList.contains('v23TvMode')?'auto':'smooth'});
+}
+function v343SyncTv(){
+  const txt=(id,fallback='—')=>document.getElementById(id)?.textContent?.trim()||fallback;
+  const set=(id,val)=>{const e=document.getElementById(id);if(e)e.textContent=val;};
+  set('tvExpected',txt('expected','0')); set('tvInventoried',txt('inventoried','0')); set('tvMissing',txt('missing','0'));
+  set('tvCoverage',txt('assetCoverageTop','0%')); set('tvPace',txt('v29Pace','0/dia')); set('tvProjection',txt('v29Projection','—'));
+  set('v343TvDonutPct',txt('assetCoverageTop','0%')); set('v343TvProgressText',txt('v29ProgressText',''));
+  set('v343TvHeadline',txt('v29Headline','Monitoramento executivo do inventário.'));
+  const pct=parseFloat((txt('assetCoverageTop','0').replace(',','.')))||0;
+  const donut=document.getElementById('v343TvDonut'); if(donut)donut.style.setProperty('--tvpct',Math.max(0,Math.min(100,pct))+'%');
+  const clone=(from,to)=>{const a=document.getElementById(from),b=document.getElementById(to);if(a&&b)b.innerHTML=a.innerHTML;};
+  clone('v34Trend','v343TvTrend'); clone('v21TypeBars','v343TvTypes'); clone('v21PriorityBars','v343TvPriority');
+  const t=document.getElementById('v343TvTime'); if(t)t.textContent=new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+  const u=document.getElementById('v343TvUpdated'); if(u)u.textContent='Atualizado '+new Date().toLocaleDateString('pt-BR')+' · '+new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
 }
 function v23StopTv(){
   if(v23TvTimer){clearInterval(v23TvTimer);v23TvTimer=null;}
   document.body.classList.remove('v23TvMode');
+  const overlay=document.getElementById('v343TvOverlay'); if(overlay){overlay.classList.remove('active');overlay.setAttribute('aria-hidden','true');}
   const btn=$('v23TvBtn'); if(btn) btn.querySelector('span').textContent='Modo TV';
 }
 function v23StartTv(){
-  v23SetView('overview');
-  document.body.classList.add('v23TvMode');
+  const overlay=document.getElementById('v343TvOverlay'); if(!overlay)return;
+  v343SyncTv();
+  overlay.classList.add('active'); overlay.setAttribute('aria-hidden','false'); document.body.classList.add('v23TvMode');
   const btn=$('v23TvBtn'); if(btn) btn.querySelector('span').textContent='Sair da TV';
-  if(document.documentElement.requestFullscreen && !document.fullscreenElement){document.documentElement.requestFullscreen().catch(()=>{});}
-  let idx=Math.max(0,V23_TV_VIEWS.indexOf(v23ActiveView));
-  v23TvTimer=setInterval(()=>{idx=(idx+1)%V23_TV_VIEWS.length;v23SetView(V23_TV_VIEWS[idx]);},15000);
+  const target=overlay;
+  if(target.requestFullscreen && !document.fullscreenElement){target.requestFullscreen().catch(()=>{});}
+  v23TvTimer=setInterval(v343SyncTv,5000);
 }
 function initV23DashboardNav(){
   document.querySelectorAll('.v23Nav').forEach(btn=>btn.addEventListener('click',()=>v23SetView(btn.dataset.v23View)));
@@ -1039,3 +1058,27 @@ document.getElementById('v30ContractExport')?.addEventListener('click',()=>{
  const p=new URLSearchParams({company:document.getElementById('execCompany')?.value||'',line:document.getElementById('execLine')?.value||'',contract:document.getElementById('v30Contract')?.value||'',horizon:document.getElementById('v30Horizon')?.value||''}); location.href='/api/v30/atm-contracts/export?'+p.toString();
 });
 setTimeout(loadV30Contracts,800);
+
+
+// V34 — Intelligence Wall / atenção gerencial
+function renderV34Intelligence(){
+  if(!dashboardData||!document.getElementById('v34Radial'))return;
+  const t=dashboardData.totals||{}, inv=dashboardData.inventory||{};
+  const exp=Number(t.expected||0), done=Number(inv.official_inventoried||0), pct=exp?Math.min(100,done/exp*100):0;
+  document.getElementById('v34Radial').style.setProperty('--pct',pct.toFixed(1)+'%');
+  document.getElementById('v34RadialPct').textContent=pct.toFixed(1).replace('.',',')+'%';
+  document.getElementById('v34RadialText').textContent=`${fmt(done)} de ${fmt(exp)} ativos oficiais`;
+  const trend=dashboardData.trend_14d||[], max=Math.max(1,...trend.map(x=>Number(x.count||0)));
+  document.getElementById('v34Trend').innerHTML=trend.map((x,i)=>`<i style="height:${Math.max(5,Math.round(Number(x.count||0)/max*100))}%"><span>${fmt(x.count||0)}</span><small>${String(x.date||'').slice(8)}</small></i>`).join('');
+  const comps=(dashboardData.by_company||[]).slice().sort((a,b)=>Number(b.total||0)-Number(a.total||0)).slice(0,10);
+  document.getElementById('v34Heatmap').innerHTML=comps.map(x=>{const p=Number(x.total)?Math.round(Number(x.completed||0)/Number(x.total)*100):0;let c=p>=80?'hot5':p>=60?'hot4':p>=40?'hot3':p>=20?'hot2':'hot1';return `<div class="${c}" title="${esc(x.company||'—')} · ${p}%"><b>${esc((x.company||'—').slice(0,12))}</b><span>${p}%</span></div>`}).join('');
+  const e=dashboardData.evidence||{}; const alerts=[
+    [Number(inv.divergences||0),'Divergências com a base','quality'],
+    [Number(inv.inoperative||0),'Equipamentos inoperantes','quality'],
+    [Number(e.review||0),'Evidências aguardando revisão','evidence'],
+    [Number(e.unresolved_visits||0),'Visitas sem localidade vinculada','evidence'],
+    [Number(t.pending||0),'Localidades ainda não iniciadas','ranking']
+  ].sort((a,b)=>b[0]-a[0]);
+  document.getElementById('v34Attention').innerHTML=alerts.map(([n,label,view],i)=>`<button type="button" onclick="v23SetView('${view}')"><em>${i+1}</em><span>${esc(label)}</span><b>${fmt(n)}</b></button>`).join('');
+}
+const _v34UpdateExecutiveView=updateExecutiveView; updateExecutiveView=function(){_v34UpdateExecutiveView();renderV34Intelligence();};
