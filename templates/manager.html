@@ -15,6 +15,7 @@
     <button class="v23Nav" data-v23-view="map">⌖ <span>Mapa</span></button>
     <button class="v23Nav" data-v23-view="evidence">▣ <span>Evidências</span></button>
     <button class="v23Nav" data-v23-view="ranking">↗ <span>Ranking</span></button>
+    <button class="v23Nav" data-v23-view="competition">◉ <span>Concorrência</span></button>
     <div class="v23SidebarSpacer"></div>
     <button class="v23TvBtn" id="v23TvBtn" type="button">▣ <span>Modo TV</span></button>
   </aside>
@@ -79,7 +80,7 @@
 <section class="card v21ExecutiveCharts v23Panel" data-v23-panel="execution" id="v21ExecutiveCharts">
   <div class="sectionHead">
     <div><h2>Painel executivo do recorte</h2><p class="muted">Leitura visual de execução, pendência e prioridades para apresentação gerencial.</p></div>
-    <span class="tag">V23.0 · BI Executivo</span>
+    <span class="tag">V25.0 · BI Executivo</span>
   </div>
   <div class="v21ChartGrid">
     <article class="v21ChartPanel">
@@ -101,13 +102,28 @@
 <section class="card v22ExecutiveCockpit v23Panel" data-v23-panel="execution" id="v22ExecutiveCockpit">
   <div class="sectionHead">
     <div><h2>Cockpit executivo</h2><p class="muted">Ritmo de execução, produtividade recente e qualidade das evidências para decisão gerencial.</p></div>
-    <span class="tag">V23.0 · 14 dias</span>
+    <span class="tag">V25.0 · 14 dias</span>
   </div>
   <div class="v22CockpitGrid">
     <article class="v22Panel"><div class="v21ChartTitle"><span>Evolução diária</span><small>inventários registrados</small></div><div id="v22Trend" class="v22Trend"></div></article>
     <article class="v22Panel"><div class="v21ChartTitle"><span>Produtividade</span><small>top técnicos · 14 dias</small></div><div id="v22Productivity" class="v22Productivity"></div></article>
     <article class="v22Panel"><div class="v21ChartTitle"><span>Qualidade das evidências</span><small>WhatsApp / campo</small></div><div id="v22EvidenceQuality" class="v22EvidenceQuality"></div></article>
   </div>
+</section>
+
+<section class="card v25BiArena v23Panel" data-v23-panel="execution" id="v25BiArena">
+  <div class="sectionHead"><div><span class="eyebrow">V25 · INTELIGÊNCIA EXECUTIVA</span><h2>BI de performance e tendência</h2><p class="muted">Comparativos de ritmo, cobertura e concentração de pendências.</p></div><span class="v25LivePill">● LIVE BI</span></div>
+  <div class="v25BiGrid">
+    <article class="v25Visual v25TrendCard"><div class="v25VisualHead"><b>Tendência de execução</b><span id="v25TrendDelta">—</span></div><div id="v25TrendChart" class="v25TrendChart"></div><small>Últimos 14 dias · comparação 7d × 7d anteriores</small></article>
+    <article class="v25Visual"><div class="v25VisualHead"><b>Mix do parque</b><span>cobertura</span></div><div class="v25DonutWrap"><div id="v25MixDonut" class="v25MixDonut"><b id="v25MixPct">0%</b><small>executado</small></div><div id="v25MixLegend" class="v25MixLegend"></div></div></article>
+    <article class="v25Visual"><div class="v25VisualHead"><b>Comparativo por empresa</b><span>localidades</span></div><div id="v25CompanyCompare" class="v25CompanyCompare"></div></article>
+    <article class="v25Visual"><div class="v25VisualHead"><b>Radar de atenção</b><span>qualidade</span></div><div id="v25Attention" class="v25Attention"></div></article>
+  </div>
+</section>
+
+<section class="card v25Competition v23Panel" data-v23-panel="competition">
+ <div class="sectionHead"><div><span class="eyebrow">INTELIGÊNCIA DE MERCADO</span><h2>Concorrência encontrada em campo</h2><p class="muted">Leitura consolidada das evidências importadas. Não altera o parque oficial.</p></div><span class="tag">Fonte: Evidências</span></div>
+ <div class="v25CompetitionHero"><article><span>Total identificado</span><b id="v25CompetitionTotal">0</b><small>equipamentos concorrentes citados</small></article><div id="v25CompetitionBars" class="v25CompetitionBars"></div></div>
 </section>
 
 <section class="card evidenceExecutiveStrip v23Panel" data-v23-panel="evidence" id="evidenceExecutiveStrip">
