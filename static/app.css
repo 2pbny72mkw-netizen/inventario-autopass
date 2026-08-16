@@ -932,3 +932,57 @@ body:has(.v33CommandCenter){background:#eaf2f8}
 .v33CommandCenter .equipmentBigNumbers{grid-template-columns:repeat(3,1fr)!important}.v33CommandCenter .equipmentBig{min-height:90px!important}.v33CommandCenter .equipmentBig b{font-size:27px!important}
 .waProgressOverlay{position:fixed;inset:0;background:#061a2dcc;z-index:9999;display:grid;place-items:center;backdrop-filter:blur(4px)}.waProgressOverlay[hidden]{display:none}.waProgressBox{width:min(560px,88vw);background:#fff;padding:28px;border-radius:20px;box-shadow:0 30px 90px #0006;display:grid;gap:13px}.waProgressBox b{font-size:22px;color:#102d4c}.waProgressBox strong{font-size:34px;color:#087e70}.waProgressTrack{height:18px;border-radius:99px;background:#dfeaf2;overflow:hidden}.waProgressTrack i{display:block;width:0;height:100%;background:linear-gradient(90deg,#13c998,#1c9fe8,#745cff);transition:width .35s ease}.profilePasswordCard{margin-top:16px}
 @media(min-width:1400px) and (min-height:800px){.v33CommandCenter .v23Panel[data-v23-panel~="overview"] .v21ChartPanel{height:155px!important}}
+
+
+/* V34 — Executive Intelligence Wall */
+:root{--v34-bg:#06182d;--v34-card:#0b3158;--v34-cyan:#19d7ff;--v34-mint:#21e3a2;--v34-amber:#ffb020;--v34-red:#ff4e6a}
+.v34CommandCenter{width:calc(100vw - 8px)!important;margin:4px 0!important;border-radius:16px!important;min-height:calc(100vh - 82px)!important;background:radial-gradient(circle at 70% -10%,#17577d 0,transparent 31%),linear-gradient(145deg,#051529,#092a49 58%,#06172b)!important}
+.v34CommandCenter .v23Sidebar{width:132px!important;min-width:132px!important}.v34CommandCenter .v23DashboardContent{gap:6px!important}.v34CommandCenter .dashHero{display:none!important}
+.v34CommandCenter .dashboardKpis .kpi{min-height:68px!important;padding:7px 10px!important}.v34CommandCenter .dashboardKpis .kpi b{font-size:25px!important}.v34CommandCenter .v29CommandDeck{display:none!important}.v34CommandCenter .executiveFilterBar{padding:4px 8px!important}
+.v34IntelligenceWall{grid-column:1/-1;display:grid;grid-template-columns:.85fr 1.25fr 1.2fr 1.55fr;gap:7px;min-height:205px}.v34IntelligenceWall>article{border-radius:15px;padding:13px;background:linear-gradient(145deg,#f9fcff,#eaf4fb);color:#0b2949;box-shadow:0 10px 28px #00162b24;min-width:0;overflow:hidden}.v34RadialCard{display:flex;align-items:center;gap:14px}.v34Radial{--pct:0%;width:118px;height:118px;flex:0 0 118px;border-radius:50%;display:grid;place-items:center;align-content:center;background:radial-gradient(circle at center,#f7fbff 55%,transparent 57%),conic-gradient(var(--v34-mint) var(--pct),#dce8f1 0);box-shadow:inset 0 0 20px #fff,0 10px 30px #0aa5a51f}.v34Radial b{font-size:25px}.v34Radial small{font-size:10px;color:#6b8195}.v34RadialCard h2{font-size:17px;margin:5px 0}.v34RadialCard p{font-size:11px;color:#647b90}.v34CardHead{display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:8px}.v34CardHead>b{font-size:14px}.v34CardHead small{color:#758aa0;font-size:9px}
+.v34Trend{height:135px;display:flex;gap:4px;align-items:end;border-bottom:1px solid #cbdbe7;padding-top:20px}.v34Trend i{position:relative;flex:1;min-width:4px;border-radius:5px 5px 0 0;background:linear-gradient(#20d9ff,#1769d5);box-shadow:0 0 12px #19bdf633}.v34Trend i span{position:absolute;top:-15px;width:100%;text-align:center;font-style:normal;font-size:8px;font-weight:800}.v34Trend i small{position:absolute;bottom:-15px;width:100%;text-align:center;font-style:normal;font-size:7px;color:#73889b}
+.v34Heatmap{display:grid;grid-template-columns:repeat(5,1fr);gap:5px}.v34Heatmap div{height:54px;border-radius:8px;padding:6px;display:flex;flex-direction:column;justify-content:space-between}.v34Heatmap b{font-size:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.v34Heatmap span{font-size:14px;font-weight:900}.hot1{background:#ffd6dc}.hot2{background:#ffe2a8}.hot3{background:#d8ecff}.hot4{background:#bcebd8}.hot5{background:#67dfb2}
+.v34Attention{display:grid;gap:5px}.v34Attention button{border:0;background:#edf5fb;border-radius:9px;padding:7px 9px;display:grid;grid-template-columns:24px 1fr auto;align-items:center;gap:7px;text-align:left;color:#12324f;cursor:pointer}.v34Attention button:hover{background:#dceeff}.v34Attention em{width:22px;height:22px;border-radius:50%;background:#0b3762;color:#fff;display:grid;place-items:center;font-style:normal;font-size:10px}.v34Attention span{font-size:10px;font-weight:700}.v34Attention b{font-size:16px;color:#d73c54}.v34Live{font-size:9px;font-weight:900;background:#c7f8e4;color:#087451;padding:4px 7px;border-radius:99px}
+.v34CommandCenter .v21ExecutiveCharts{display:none!important}.v34CommandCenter [data-v23-panel="map"] #gpsMap{height:calc(100vh - 175px)!important;min-height:560px!important}.v34CommandCenter [data-v23-panel="map"] .cardHead,.v34CommandCenter [data-v23-panel="map"] details,.v34CommandCenter [data-v23-panel="map"]>div[style*="justify-content"]{display:none!important}.v34CommandCenter [data-v23-panel="map"]{padding:7px!important}
+.v34CommandCenter #evidenceExecutiveStrip{grid-template-columns:1fr 2.6fr!important}.v34CommandCenter .v22CockpitGrid{grid-template-columns:1.2fr 1.2fr .9fr!important}.v34CommandCenter .v25BiGrid{grid-template-columns:1.2fr 1fr 1.2fr 1fr!important}
+.v23TvMode .v34CommandCenter .dashboardKpis{grid-template-columns:repeat(6,1fr)!important}.v23TvMode .v34IntelligenceWall{min-height:calc(100vh - 225px);grid-template-columns:.8fr 1.3fr 1.2fr 1.6fr}.v23TvMode .v34IntelligenceWall>article{align-self:stretch}
+@media(max-width:1200px){.v34IntelligenceWall{grid-template-columns:1fr 1fr}.v34CommandCenter .v23Sidebar{width:100%!important;min-width:0!important}}
+
+
+/* V34.1 — correções de navegação, mapa dedicado e TV 16:9 */
+.v23Panel:not(.v23PanelActive){display:none!important}
+body[data-dashboard-view="map"] .executiveFilterBar,
+body[data-dashboard-view="map"] .dashboardKpis,
+body[data-dashboard-view="map"] .equipmentBigNumbers,
+body[data-dashboard-view="map"] .v29CommandDeck,
+body[data-dashboard-view="map"] .v29InsightRail{display:none!important}
+body[data-dashboard-view="map"] .v34CommandCenter .v23DashboardContent{grid-template-columns:1fr!important;gap:0!important}
+body[data-dashboard-view="map"] .v34CommandCenter [data-v23-panel="map"]{display:block!important;height:calc(100vh - 105px)!important;padding:0!important;border:0!important;background:transparent!important;box-shadow:none!important}
+body[data-dashboard-view="map"] .v34CommandCenter [data-v23-panel="map"] #gpsMap{height:calc(100vh - 112px)!important;min-height:0!important;border-radius:14px!important;margin:0!important}
+body[data-dashboard-view="map"] .v34CommandCenter [data-v23-panel="map"] .cardHead,
+body[data-dashboard-view="map"] .v34CommandCenter [data-v23-panel="map"] details,
+body[data-dashboard-view="map"] .v34CommandCenter [data-v23-panel="map"]>div:not(#gpsMap){display:none!important}
+
+/* Big Numbers somente na Visão Geral */
+body:not([data-dashboard-view="overview"]) .dashboardKpis,
+body:not([data-dashboard-view="overview"]) .equipmentBigNumbers{display:none!important}
+body[data-dashboard-view="overview"] .equipmentBigNumbers{display:grid!important;grid-template-columns:repeat(6,minmax(0,1fr))!important;gap:7px!important}
+body[data-dashboard-view="overview"] .equipmentBigNumbers .equipmentBig{min-height:62px!important;padding:8px 10px!important;border-radius:12px!important}
+body[data-dashboard-view="overview"] .equipmentBigNumbers .equipmentBig b{font-size:23px!important}
+
+/* TV: uma tela executiva sem scroll e sem controles administrativos */
+body.v23TvMode{overflow:hidden!important;background:#041426!important}
+body.v23TvMode main.wrap{max-width:none!important;width:100vw!important;height:100vh!important;padding:0!important;margin:0!important}
+body.v23TvMode .v34CommandCenter{width:100vw!important;height:100vh!important;min-height:100vh!important;margin:0!important;border-radius:0!important;padding:10px 14px!important;overflow:hidden!important}
+body.v23TvMode .v23DashboardContent{height:100%!important;max-height:100%!important;overflow:hidden!important;display:grid!important;grid-template-rows:auto auto 1fr!important;gap:8px!important}
+body.v23TvMode .dashboardKpis{display:grid!important;grid-template-columns:repeat(6,minmax(0,1fr))!important;gap:8px!important}
+body.v23TvMode .dashboardKpis .kpi{min-height:78px!important;padding:8px 11px!important}
+body.v23TvMode .equipmentBigNumbers{display:none!important}
+body.v23TvMode .executiveFilterBar,.v23TvMode .v29InsightRail{display:none!important}
+body.v23TvMode .v34IntelligenceWall{display:grid!important;grid-template-columns:.9fr 1.35fr 1.2fr 1.55fr!important;gap:9px!important;min-height:0!important;height:auto!important;align-self:stretch!important}
+body.v23TvMode .v34IntelligenceWall>article{height:100%!important;min-height:0!important;padding:12px!important}
+body.v23TvMode .v34Trend{height:clamp(125px,20vh,210px)!important}
+body.v23TvMode .v34Heatmap div{height:clamp(44px,7vh,68px)!important}
+body.v23TvMode .v34Radial{width:clamp(108px,11vw,160px)!important;height:clamp(108px,11vw,160px)!important;flex-basis:clamp(108px,11vw,160px)!important}
+body.v23TvMode .v34Attention button{padding:8px 10px!important}
+@media(max-width:1350px){body[data-dashboard-view="overview"] .equipmentBigNumbers{grid-template-columns:repeat(3,1fr)!important}}
