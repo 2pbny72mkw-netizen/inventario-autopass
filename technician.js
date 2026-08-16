@@ -813,7 +813,7 @@ async function enqueueCurrentForm(form) {
     if(await hasLocalDuplicate(record)){showMsg('Este equipamento já está na fila de sincronização deste aparelho.',false);return false;}
     await idbPut(STORE_QUEUE,record);
     const savedGps=lastGps?{...lastGps}:null;
-    form.reset(); $('location_id').value=current.id; clearGpsFields(); updateEquipmentTypeUI(); renderSelectedBaseInfo(null);
+    form.reset(); resetEvidencePickerUI(); $('location_id').value=current.id; clearGpsFields(); updateEquipmentTypeUI(); renderSelectedBaseInfo(null);
     if(savedGps){const a=Number.isFinite(savedGps.accuracy)?Math.round(savedGps.accuracy):null;setGpsMessage(a!==null?`Último registro salvo com GPS • precisão aproximada ${a} m`:'Último registro salvo com GPS.',true);}
     else setGpsMessage('Último registro salvo sem GPS disponível.',false);
     await refreshConnectionUI(); await loadAlready(); await loadAssets();
@@ -939,7 +939,7 @@ $('invForm').onsubmit = async e => {
       const j=await r.json().catch(()=>({ok:false,error:'Resposta inválida do servidor.'}));
       if(!r.ok){showMsg(j.error||'Não foi possível atualizar o cadastro.',false);return;}
       showMsg('Cadastro atualizado com sucesso.',true);
-      editingInventoryId=null; e.target.reset(); $('location_id').value=current.id; clearGpsFields(); updateEquipmentTypeUI(); renderSelectedBaseInfo(null);
+      editingInventoryId=null; e.target.reset(); resetEvidencePickerUI(); $('location_id').value=current.id; clearGpsFields(); updateEquipmentTypeUI(); renderSelectedBaseInfo(null);
       $('saveBtn').textContent=isLocalMode()?'Salvar no aparelho':'Salvar equipamento';
       await loadAlready(); await loadAssets(); renderLocationPending(); return;
     }catch(err){console.error('Erro ao editar cadastro:',err);showMsg('Erro ao atualizar o cadastro.',false);return;}
@@ -1304,3 +1304,13 @@ function bindEvidenceInputs(){
 }
 bindEvidenceInputs();
 document.querySelectorAll('input[name="attachments"]').forEach(x=>x.addEventListener('change',updateEvidencePicker));
+
+function resetEvidencePickerUI(){
+  const inputs=[...document.querySelectorAll('input[name="attachments"]')];
+  inputs.forEach(input=>{try{input.value='';}catch(e){}});
+  document.querySelectorAll('.cameraAction.selectedEvidence').forEach(label=>label.remove());
+  document.querySelectorAll('.cameraAction').forEach((label,idx)=>{ if(idx>0 && label.querySelector('[data-evidence-camera]')) label.remove(); });
+  const first=document.querySelector('.cameraAction [data-evidence-camera]');
+  if(first){delete first.dataset.spawned; const label=first.closest('.cameraAction'); if(label&&label.firstChild)label.firstChild.textContent='📷 Tirar foto ';}
+  updateEvidencePicker();
+}
