@@ -1,5 +1,5 @@
 window.AUTOPASS_MANAGER_VERSION='dashboard-v23';
-console.log('AUTOPASS Dashboard Executivo V23 carregado');
+console.log('AUTOPASS Dashboard Executivo V25 carregado');
 let locations=[];
 let dashboardData=null;
 const $=id=>document.getElementById(id);
@@ -734,8 +734,25 @@ function renderV22Cockpit(){
   $('v22EvidenceQuality').innerHTML=`<div class="v22EvidenceHero"><b>${conf}%</b><span>itens conciliados</span></div><div class="v22EvidenceRows"><span>Visitas <b>${fmt(e.visits||0)}</b></span><span>Itens <b>${fmt(total)}</b></span><span>Revisar <b>${fmt(review)}</b></span><span>Fotos/vídeos <b>${fmt(media)}</b></span></div>`;
 }
 
+function renderV25ExecutiveBI(){
+  if(!dashboardData||!$('v25BiArena')) return;
+  const trend=dashboardData.trend_14d||[], max=Math.max(1,...trend.map(x=>Number(x.count||0)));
+  $('v25TrendChart').innerHTML=trend.map(x=>{const n=Number(x.count||0),h=Math.max(3,Math.round(n/max*100));const d=new Date(x.date+'T12:00:00');return `<i class="v25TrendBar" style="height:${h}%" data-tip="${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')} · ${fmt(n)}"></i>`}).join('');
+  const prev=trend.slice(0,7).reduce((a,x)=>a+Number(x.count||0),0), now=trend.slice(7).reduce((a,x)=>a+Number(x.count||0),0);
+  const delta=prev?Math.round((now-prev)/prev*100):(now?100:0); $('v25TrendDelta').textContent=(delta>=0?'▲ ':'▼ ')+Math.abs(delta)+'% vs 7d ant.';
+  const exp=Number(dashboardData.totals?.expected||0), inv=Number(dashboardData.inventory?.official_inventoried||0), pct=exp?Math.min(100,Math.round(inv/exp*100)):0;
+  $('v25MixPct').textContent=pct+'%'; $('v25MixDonut').style.setProperty('--pct',pct+'%');
+  const types=(dashboardData.by_type||[]).filter(x=>x.type!=='TDI'); $('v25MixLegend').innerHTML=types.map(x=>`<span>${esc(typeLabel(x.type))}<b>${fmt(x.inventoried||0)}</b></span>`).join('');
+  const companies=(dashboardData.by_company||[]).slice().sort((a,b)=>Number(b.completed||0)-Number(a.completed||0)).slice(0,7), cmax=Math.max(1,...companies.map(x=>Number(x.total||0)));
+  $('v25CompanyCompare').innerHTML=companies.length?companies.map(x=>{const done=Number(x.completed||0),tot=Number(x.total||0),p=tot?Math.round(done/tot*100):0;return `<div class="v25CompanyRow"><span>${esc(x.company||'—')}</span><div class="v25CompanyTrack"><i style="width:${p}%"></i></div><b>${p}%</b></div>`}).join(''):'<span class="muted">Sem dados por empresa.</span>';
+  const e=dashboardData.evidence||{}; $('v25Attention').innerHTML=`<article><b>${fmt(dashboardData.inventory?.divergences||0)}</b><span>Divergências</span></article><article><b>${fmt(dashboardData.inventory?.inoperative||0)}</b><span>Inoperantes</span></article><article><b>${fmt(e.review||0)}</b><span>Evidências a revisar</span></article><article><b>${fmt(e.unresolved_visits||0)}</b><span>Visitas sem vínculo</span></article>`;
+  const comp=e.competition||{}; $('v25CompetitionTotal').textContent=fmt(e.competition_total||0); const entries=Object.entries(comp).sort((a,b)=>b[1]-a[1]), m=Math.max(1,...entries.map(x=>Number(x[1]||0)));
+  $('v25CompetitionBars').innerHTML=entries.length?entries.map(([k,v])=>`<div class="v25CompanyRow"><span>${esc(k)}</span><div class="v25CompanyTrack"><i style="width:${Math.round(Number(v)/m*100)}%"></i></div><b>${fmt(v)}</b></div>`).join(''):'<div class="muted">Nenhuma quantidade estruturada de concorrência encontrada nas evidências importadas.</div>';
+}
+
 function updateExecutiveView(){
   if(!dashboardData) return;
+  renderV25ExecutiveBI();
   const c=$('execCompany')?.value||'', line=$('execLine')?.value||'', type=$('execType')?.value||'';
   const noGeoFilters=!c&&!line;
   const rows=executiveFilteredLocations();
@@ -938,7 +955,7 @@ async function loadFieldEvidenceSummary(){
 // V23 — navegação lateral e primeiro Modo TV
 let v23ActiveView='overview';
 let v23TvTimer=null;
-const V23_TV_VIEWS=['overview','execution','quality','map','evidence','ranking'];
+const V23_TV_VIEWS=['overview','execution','competition','quality','map','evidence','ranking'];
 function v23SetView(view){
   v23ActiveView=view||'overview';
   document.querySelectorAll('.v23Panel').forEach(el=>{
