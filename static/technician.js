@@ -1314,3 +1314,19 @@ function resetEvidencePickerUI(){
   if(first){delete first.dataset.spawned; const label=first.closest('.cameraAction'); if(label&&label.firstChild)label.firstChild.textContent='📷 Tirar foto ';}
   updateEvidencePicker();
 }
+
+
+// V30 — Safari/iOS pode não disparar "online" de forma confiável após modo avião.
+// Fazemos tentativas leves também em retorno à aba, foco e intervalo periódico.
+async function v30MaybeSync(reason='heartbeat'){
+  if(!navigator.onLine) return;
+  try{
+    const q=await idbGetAll(STORE_QUEUE);
+    if(!q.length) return;
+    await autoSyncQueue(reason);
+  }catch(err){ console.warn('V30 auto-sync:',err); }
+}
+window.addEventListener('pageshow',()=>setTimeout(()=>v30MaybeSync('pageshow'),700));
+window.addEventListener('focus',()=>setTimeout(()=>v30MaybeSync('focus'),700));
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')setTimeout(()=>v30MaybeSync('visible'),700)});
+setInterval(()=>v30MaybeSync('heartbeat'),20000);

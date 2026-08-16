@@ -1010,3 +1010,30 @@ function renderV29CommandCenter(){
  if(div||ino) headline+=` Atenção: ${fmt(div)} divergência(s) e ${fmt(ino)} inoperante(s).`;
  if($('v29Headline'))$('v29Headline').textContent=headline;
 }
+
+
+// V30 — gestão contratual ATM
+async function loadV30Contracts(){
+  const box=document.getElementById('v30ContractBars'); if(!box) return;
+  const company=document.getElementById('execCompany')?.value||'';
+  const line=document.getElementById('execLine')?.value||'';
+  const contract=document.getElementById('v30Contract')?.value||'';
+  const horizon=document.getElementById('v30Horizon')?.value||'';
+  try{
+    const r=await fetch(`/api/v30/atm-contracts?company=${encodeURIComponent(company)}&line=${encodeURIComponent(line)}&contract=${encodeURIComponent(contract)}&horizon=${encodeURIComponent(horizon)}`,{cache:'no-store'});
+    const d=await r.json(); if(!r.ok) throw new Error(d.error||'Falha');
+    const sel=document.getElementById('v30Contract'); const before=sel.value;
+    const opts=['<option value="">Todos</option>',...(d.contracts||[]).map(x=>`<option value="${esc(x)}">${esc(x)}</option>`)]; sel.innerHTML=opts.join(''); if([...sel.options].some(o=>o.value===before))sel.value=before;
+    document.getElementById('v30ContractCount').textContent=fmt(d.count||0);
+    const risk=(d.assets||[]).filter(x=>['VENCIDO','ATÉ 30 DIAS','31–60 DIAS','61–90 DIAS'].includes(x.contract_status)).length;
+    document.getElementById('v30ContractRisk').textContent=fmt(risk);
+    const groups={}; (d.assets||[]).forEach(x=>groups[x.contract_status]=(groups[x.contract_status]||0)+1); const max=Math.max(1,...Object.values(groups));
+    box.innerHTML=Object.entries(groups).map(([k,v])=>`<div class="v30ContractRow"><span>${esc(k)}</span><div><i style="width:${Math.round(v/max*100)}%"></i></div><b>${fmt(v)}</b></div>`).join('')||'<span class="muted">Nenhum ATM no recorte.</span>';
+  }catch(err){box.innerHTML='<span class="muted">Não foi possível carregar contratos ATM.</span>'}
+}
+['v30Contract','v30Horizon'].forEach(id=>document.getElementById(id)?.addEventListener('change',loadV30Contracts));
+['execCompany','execLine'].forEach(id=>document.getElementById(id)?.addEventListener('change',()=>setTimeout(loadV30Contracts,50)));
+document.getElementById('v30ContractExport')?.addEventListener('click',()=>{
+ const p=new URLSearchParams({company:document.getElementById('execCompany')?.value||'',line:document.getElementById('execLine')?.value||'',contract:document.getElementById('v30Contract')?.value||'',horizon:document.getElementById('v30Horizon')?.value||''}); location.href='/api/v30/atm-contracts/export?'+p.toString();
+});
+setTimeout(loadV30Contracts,800);
