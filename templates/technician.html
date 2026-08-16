@@ -118,7 +118,7 @@
   <div id="locationPendingList"></div>
 </div>
 
-<div class="card">
+<div class="card" id="equipmentStep">
   <h2>2. Registrar equipamento</h2>
   <p class="muted fieldFormIntro">Selecione o tipo e, quando existir, escolha o ativo esperado na base. QR Code é apenas um atalho: patrimônio, série ou identificação manual continuam válidos.</p>
   <form id="invForm" enctype="multipart/form-data">
@@ -131,7 +131,7 @@
     <div id="gpsOverrideWrap" class="full" style="display:none">
       <label>Justificativa para localização fora da referência *</label>
       <input id="gps_override_reason" name="gps_override_reason" placeholder="Ex.: acesso externo da estação, equipe em área técnica...">
-      <small>Obrigatória quando o GPS estiver além do limite configurado para a localidade.</small>
+      <small>Obrigatória quando o GPS estiver além do limite configurado para a localidade. Mínimo de 3 caracteres.</small>
     </div>
 
     <div class="grid3">
@@ -291,5 +291,5 @@
 {% endblock %}
 {% block scripts %}
 <script>window.CURRENT_USER_ROLE = {{ session.get("role")|tojson }};</script>
-<script src="{{ url_for('static', filename='technician.js') }}?v=v23"></script>
+<script src="{{ url_for('static', filename='technician.js') }}?v=v24"></script>
 {% endblock %}

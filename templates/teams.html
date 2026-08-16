@@ -5,7 +5,7 @@
 
 <section class="dashHero teamsHero">
   <div>
-    <span class="eyebrow">V23.0 · CENTRAL OPERACIONAL</span>
+    <span class="eyebrow">V24.0 · CENTRAL OPERACIONAL</span>
     <h1>Equipes em Campo</h1>
     <p>Técnicos, supervisores e apoio: escala, entrada, vínculo com usuários e última localização autorizada.</p>
   </div>
@@ -54,7 +54,7 @@
   <div class="sectionHead">
     <div>
       <h2>Escala por dias</h2>
-      <p class="muted">Técnicos e supervisores em 12x36; apoio em 5x2 das 08h às 18h.</p>
+      <p class="muted">Fonte principal: cadastro de usuários. 12x36 usa a referência individual; 5x2 segue segunda a sexta. Situações como férias/licença sobrepõem a jornada.</p>
     </div>
     <div class="calendarControls">
       <label>Categoria
@@ -195,5 +195,5 @@
 {% endif %}
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="{{ url_for('static', filename='teams.js') }}?v=teams-v22-2"></script>
+<script src="{{ url_for('static', filename='teams.js') }}?v=teams-v24"></script>
 {% endblock %}

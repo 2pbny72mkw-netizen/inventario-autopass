@@ -42,6 +42,21 @@
           <label>Empresa</label>
           <input name="company" placeholder="Ex.: Autopass, prestadora...">
         </div>
+        <div class="fieldExtended">
+          <label>Cargo</label>
+          <input name="job_title" placeholder="Ex.: Técnico de Campo, Eletricista, Líder...">
+          <small>Função profissional. Não altera as permissões do Perfil.</small>
+        </div>
+        <div class="fieldExtended">
+          <label>Situação do colaborador</label>
+          <select name="personnel_status">
+            <option value="ATIVO">Ativo</option><option value="FERIAS">Férias</option><option value="AFASTADO">Afastado</option><option value="LICENCA">Licença</option><option value="FOLGA_PROGRAMADA">Folga programada</option><option value="OUTRO">Outro</option>
+          </select>
+        </div>
+        <div class="fieldExtended">
+          <label>Observação da situação</label>
+          <input name="personnel_status_note" placeholder="Opcional: retorno previsto, motivo administrativo...">
+        </div>
         <div class="fieldExtended scheduleField">
           <label>Escala</label>
           <select name="work_schedule_type"><option value="12x36">12x36</option><option value="5x2">5x2</option></select>
@@ -50,11 +65,11 @@
           <label>Horário</label>
           <input name="work_shift" value="05:00-17:00" placeholder="05:00-17:00">
         </div>
-        <div class="fieldExtended scheduleField">
+        <div class="fieldExtended scheduleField anchorField">
           <label>Data de referência da escala</label>
           <input name="work_anchor_date" type="date">
         </div>
-        <div class="fieldExtended scheduleField">
+        <div class="fieldExtended scheduleField anchorField">
           <label>Nessa data o colaborador</label>
           <select name="work_anchor_status"><option value="TRABALHA">Trabalha</option><option value="FOLGA">Folga</option></select>
           <small>Define a alternância individual do 12x36.</small>
@@ -121,6 +136,7 @@
           <th>Código</th>
           <th>Login</th>
           <th>Perfil</th>
+          <th>Cargo</th>
           <th>Empresa</th>
           <th>Contato</th>
           <th>Status</th>
@@ -155,6 +171,7 @@
             {% elif u.role == "hr" %}RH
             {% else %}Técnico de Campo{% endif %}
           </td>
+          <td>{{ u.job_title or "—" }}</td>
           <td>{{ u.company or "—" }}</td>
           <td>
             {% if u.email %}<div>{{ u.email }}</div>{% endif %}
@@ -163,8 +180,9 @@
           </td>
           <td>
             {% if u.archived_at %}<span class="status sPENDENTE">ARQUIVADO</span>
-            {% elif u.active %}<span class="status sCONCLUIDA">ATIVO</span>
-            {% else %}<span class="status sPENDENTE">INATIVO</span>{% endif %}
+            {% elif not u.active %}<span class="status sPENDENTE">INATIVO</span>
+            {% elif (u.personnel_status or 'ATIVO') != 'ATIVO' %}<span class="status sPENDENTE">{{ (u.personnel_status or '')|replace('_',' ') }}</span>
+            {% else %}<span class="status sCONCLUIDA">ATIVO</span>{% endif %}
           </td>
           <td>
             <div style="display:flex;gap:6px;flex-wrap:wrap;min-width:230px">
@@ -190,7 +208,7 @@
         </tr>
 
         <tr id="edit-user-{{ u.id }}" class="editUserRow" style="display:none">
-          <td colspan="8">
+          <td colspan="9">
             <div class="card" style="margin:8px 0;background:#fafbfc">
               <div class="sectionHead">
                 <div>
@@ -223,6 +241,22 @@
                     <label>Empresa</label>
                     <input name="company" value="{{ u.company or '' }}">
                   </div>
+                  <div class="editExtended">
+                    <label>Cargo</label>
+                    <input name="job_title" value="{{ u.job_title or '' }}" placeholder="Função profissional">
+                  </div>
+                  <div class="editExtended">
+                    <label>Situação do colaborador</label>
+                    <select name="personnel_status">
+                      {% for st,label in [('ATIVO','Ativo'),('FERIAS','Férias'),('AFASTADO','Afastado'),('LICENCA','Licença'),('FOLGA_PROGRAMADA','Folga programada'),('OUTRO','Outro')] %}
+                      <option value="{{ st }}" {% if (u.personnel_status or 'ATIVO') == st %}selected{% endif %}>{{ label }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                  <div class="editExtended">
+                    <label>Observação da situação</label>
+                    <input name="personnel_status_note" value="{{ u.personnel_status_note or '' }}">
+                  </div>
                   <div class="editExtended scheduleField">
                     <label>Escala</label>
                     <select name="work_schedule_type"><option value="12x36" {% if (u.work_schedule_type or '12x36') == '12x36' %}selected{% endif %}>12x36</option><option value="5x2" {% if u.work_schedule_type == '5x2' %}selected{% endif %}>5x2</option></select>
@@ -231,11 +265,11 @@
                     <label>Horário</label>
                     <input name="work_shift" value="{{ u.work_shift or '05:00-17:00' }}">
                   </div>
-                  <div class="editExtended scheduleField">
+                  <div class="editExtended scheduleField anchorField">
                     <label>Data referência</label>
                     <input name="work_anchor_date" type="date" value="{{ u.work_anchor_date.isoformat() if u.work_anchor_date else '' }}">
                   </div>
-                  <div class="editExtended scheduleField">
+                  <div class="editExtended scheduleField anchorField">
                     <label>Situação na data referência</label>
                     <select name="work_anchor_status"><option value="TRABALHA" {% if (u.work_anchor_status or 'TRABALHA') == 'TRABALHA' %}selected{% endif %}>Trabalha</option><option value="FOLGA" {% if u.work_anchor_status == 'FOLGA' %}selected{% endif %}>Folga</option></select>
                   </div>
@@ -304,14 +338,23 @@
 
   function updateCreateProfileFields() {
     const consultation = role.value === "consultation";
+    const technician = role.value === "technician";
     extended.forEach(el => {
       el.style.display = consultation ? "none" : "";
-      if (consultation) {
-        el.querySelectorAll("input").forEach(input => input.value = "");
-      }
+      if (consultation) el.querySelectorAll("input").forEach(input => input.value = "");
     });
+    document.querySelectorAll("#userForm .scheduleField").forEach(el=>el.style.display=technician?"":"none");
+    updateAnchorFields(document.getElementById('userForm'));
     hint.style.display = consultation ? "block" : "none";
   }
+
+  function updateAnchorFields(form){
+    const schedule=form.querySelector('[name="work_schedule_type"]');
+    if(!schedule) return;
+    const is12=schedule.value==='12x36';
+    form.querySelectorAll('.anchorField').forEach(el=>{el.style.display=is12?'':'none'; el.querySelectorAll('input,select').forEach(i=>i.disabled=!is12);});
+  }
+  document.querySelector('#userForm [name="work_schedule_type"]')?.addEventListener('change',()=>updateAnchorFields(document.getElementById('userForm')));
 
   role.addEventListener("change", updateCreateProfileFields);
   updateCreateProfileFields();
@@ -338,11 +381,12 @@
 
     function updateEditFields() {
       const consultation = roleSelect.value === "consultation";
-      editExtended.forEach(el => {
-        el.style.display = consultation ? "none" : "";
-      });
+      const technician = roleSelect.value === "technician";
+      editExtended.forEach(el => el.style.display = consultation ? "none" : "");
+      form.querySelectorAll('.scheduleField').forEach(el=>el.style.display=technician?'':'none');
+      updateAnchorFields(form);
     }
-
+    form.querySelector('[name="work_schedule_type"]')?.addEventListener('change',()=>updateAnchorFields(form));
     roleSelect.addEventListener("change", updateEditFields);
     updateEditFields();
   });

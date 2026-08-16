@@ -1,6 +1,6 @@
-window.AUTOPASS_PWA_VERSION='pwa-v10';
-window.AUTOPASS_TECHNICIAN_VERSION = 'v10-field-intelligence';
-console.log('AUTOPASS technician.js V10 carregado');
+window.AUTOPASS_PWA_VERSION='pwa-v18';
+window.AUTOPASS_TECHNICIAN_VERSION = 'v18-assisted-field';
+console.log('AUTOPASS technician.js V15 carregado');
 
 let locations = [], current = null, assets = [];
 let currentInventoryRows = [];
@@ -98,6 +98,7 @@ function selectLocationEntry(loc){
   $('company').value=loc.company; $('company').dispatchEvent(new Event('change'));
   $('line').value=loc.line; $('line').dispatchEvent(new Event('change'));
   $('location').value=String(loc.id); $('location').dispatchEvent(new Event('change'));
+  setTimeout(()=>document.getElementById('equipmentStep')?.scrollIntoView({behavior:'smooth',block:'start'}),260);
 }
 function updateGpsValidation(){
   const box=$('gpsValidation'),wrap=$('gpsOverrideWrap'); if(!box||!wrap) return true;
@@ -106,7 +107,7 @@ function updateGpsValidation(){
   if(Number.isFinite(Number(lastGps.accuracy)) && Number(lastGps.accuracy)>GPS_MAX_ACCURACY_M){
     box.style.display='block'; box.classList.add('gps-block'); wrap.style.display='block';
     box.innerHTML=`<b>GPS com baixa precisão.</b> Aproximadamente ±${Math.round(Number(lastGps.accuracy))} m. Atualize a localização ou justifique a exceção.`;
-    return String($('gps_override_reason')?.value||'').trim().length>=10;
+    return String($('gps_override_reason')?.value||'').trim().length>=3;
   }
   const ref=locReference(current);
   if(!ref){
@@ -119,7 +120,7 @@ function updateGpsValidation(){
   if(d<=GPS_MAX_M){ box.classList.add('gps-warn');box.innerHTML=`<b>Atenção à localização.</b> Aproximadamente ${Math.round(d)} m da referência ${ref.source}. Confirme estação e linha antes de salvar.`;return true; }
   box.classList.add('gps-block');wrap.style.display='block';
   box.innerHTML=`<b>GPS incompatível com a localidade selecionada.</b> Aproximadamente ${Math.round(d)} m da referência ${ref.source}. Corrija a estação ou justifique a exceção.`;
-  return String($('gps_override_reason')?.value||'').trim().length>=10;
+  return String($('gps_override_reason')?.value||'').trim().length>=3;
 }
 
 let lastGps = null;
@@ -382,6 +383,8 @@ $('location').onchange = async () => {
   $('location_id').value = current?.id || '';
 
   if (current) {
+    document.getElementById('fieldStep1')?.classList.add('done');
+    document.getElementById('fieldStep2')?.classList.add('active');
     showInfo();
     updateGpsValidation();
     if(smartSelectionPending){ smartSelectionPending=false; registerSmartCheckin(current); }
@@ -497,7 +500,7 @@ async function loadAssets() {
   }else{allLocationAssets=(await cacheGet(cacheKey))||[];}
   const selected=normalizedEquipmentType($('equipment_type').value||'');
   assets=selected ? allLocationAssets.filter(a=>normalizedEquipmentType(a.equipment_type||'ATM')===selected) : [];
-  renderAssets(); renderLocationPending();
+  renderAssets(); renderLocationPending(); refreshAvailableEquipmentTypes();
 }
 
 function renderAssets(){
@@ -516,6 +519,32 @@ function renderAssets(){
     : navigator.onLine ? `Nenhum ativo detalhado de ${typeLabel} encontrado para este local.` : 'Nenhum ativo armazenado offline para este local.';
 }
 
+
+function resetEquipmentFieldsForTypeChange(){
+  const keep=new Set(['equipment_type','location_id','latitude','longitude','gps_accuracy','gps_captured_at','gps_override_reason']);
+  const form=$('invForm'); if(!form) return;
+  form.querySelectorAll('input,select,textarea').forEach(el=>{
+    if(!el.name || keep.has(el.name) || el.type==='hidden' || el.type==='button' || el.type==='submit') return;
+    if(el.type==='file'){ el.value=''; return; }
+    if(el.type==='checkbox'||el.type==='radio'){ el.checked=false; return; }
+    el.value='';
+  });
+  renderSelectedBaseInfo(null);
+}
+function refreshAvailableEquipmentTypes(){
+  const sel=$('equipment_type'); if(!sel || !current) return;
+  const available=new Set(allLocationAssets.map(a=>normalizedEquipmentType(a.equipment_type||'ATM')));
+  if(Number(current.expected_atm||0)>0) available.add('ATM');
+  if(Number(current.expected_validator||0)>0) available.add('Validador de Recarga');
+  if(Number(current.expected_pos||0)>0) available.add('POS de Bilheteria');
+  [...sel.options].forEach(o=>{
+    if(!o.value) return;
+    // Outro permanece como exceção controlada para ativo encontrado fora da base.
+    const show=o.value==='Outro' || available.has(normalizedEquipmentType(o.value));
+    o.hidden=!show; o.disabled=!show; o.classList.toggle('fieldTypeUnavailable',!show);
+  });
+  if(sel.value && sel.selectedOptions[0]?.disabled) sel.value='';
+}
 function normalizedEquipmentType(value) {
   const v = String(value || '').trim().toUpperCase();
   if (v === 'ATM') return 'ATM';
@@ -676,7 +705,16 @@ function renderSelectedBaseInfo(a){
     add('Série',a.serial);
   }else if(type==='Bloqueio'){
     if(title) title.textContent='Dados da base — Bloqueio';
-    add('Bloqueio',a.terminal_number||a.top_id);
+    add('Ativo / Prefixo',a.terminal_number||a.top_id);
+    const cfg=a.technical_config||{};
+    add('Nº do bloqueio',cfg.blocking_number);
+    add('Grupo',cfg.group);
+    add('Linha lógica',cfg.line_logic);
+    add('IP esperado',cfg.ip);
+    add('Máscara',cfg.mask);
+    add('Gateway',cfg.gateway);
+    add('DNS 1',cfg.dns1);
+    add('DNS 2',cfg.dns2);
     add('Modelo',a.model);
     add('Versão',a.software_version);
     add('Instalação',a.installation_type||a.application);
@@ -696,6 +734,7 @@ function renderSelectedBaseInfo(a){
 }
 
 $('equipment_type').onchange = async () => {
+  resetEquipmentFieldsForTypeChange();
   updateEquipmentTypeUI();
   renderSelectedBaseInfo(null);
   $('base_asset_id').value='';
@@ -713,6 +752,12 @@ $('base_asset_id').onchange = () => {
   if($('bu_id')) $('bu_id').value=a.bu_id||'';
   if($('validator_top_id')) $('validator_top_id').value=a.top_id||a.terminal_number||'';
   if($('software_version')) $('software_version').value=a.software_version||'';
+  // V20: em Bloqueios, usa o IP esperado da planilha técnica como referência no campo de rede.
+  if(normalizedEquipmentType(a.equipment_type)==='Bloqueio' && $('network_id')){
+    const cfg=a.technical_config||{};
+    $('network_id').value=cfg.ip||'';
+    $('network_id').placeholder=cfg.ip ? `IP esperado: ${cfg.ip}` : 'IP / rede / SIM';
+  }
   renderSelectedBaseInfo(a);
 };
 
@@ -772,7 +817,8 @@ async function enqueueCurrentForm(form) {
     if(savedGps){const a=Number.isFinite(savedGps.accuracy)?Math.round(savedGps.accuracy):null;setGpsMessage(a!==null?`Último registro salvo com GPS • precisão aproximada ${a} m`:'Último registro salvo com GPS.',true);}
     else setGpsMessage('Último registro salvo sem GPS disponível.',false);
     await refreshConnectionUI(); await loadAlready(); await loadAssets();
-    showMsg('Equipamento salvo neste aparelho com sucesso. O formulário foi limpo e as pendências foram atualizadas.',true);
+    const geoReason=String(record.fields.gps_override_reason||'').trim();
+    showMsg(geoReason ? `Equipamento salvo neste aparelho ✓ • Exceção geográfica registrada: ${geoReason} • aguardando sincronização.` : 'Equipamento salvo neste aparelho com sucesso. O formulário foi limpo e as pendências foram atualizadas.',true);
     return true;
   }catch(err){console.error('Erro ao salvar localmente:',err);showMsg(`Erro ao salvar neste aparelho: ${err?.message||String(err)}`,false);return false;}
 }
@@ -940,7 +986,8 @@ $('invForm').onsubmit = async e => {
       return;
     }
 
-    showMsg('Equipamento salvo no servidor.', true);
+    const geoReason=String(fd.get('gps_override_reason')||'').trim();
+    showMsg(geoReason ? `Equipamento salvo com sucesso ✓ • Exceção geográfica registrada: ${geoReason} • aguardando revisão do gestor.` : 'Equipamento salvo no servidor ✓', true);
     const savedGps = lastGps ? {...lastGps} : null;
     e.target.reset();
     $('location_id').value = current.id;
@@ -973,43 +1020,29 @@ $('invForm').onsubmit = async e => {
 
 $('completeBtn').onclick = async () => {
   if (!current) return showMsg('Selecione uma localidade.', false);
-
   const localPending = await queuedForLocation(current.id);
-  if (localPending.length) {
-    return showMsg(
-      `Esta localidade ainda tem ${localPending.length} registro(s) pendente(s) neste aparelho. Sincronize antes de concluir.`,
-      false
-    );
+  if (localPending.length) return showMsg(`Há ${localPending.length} registro(s) pendente(s) neste aparelho. Sincronize antes de concluir.`, false);
+  if (!navigator.onLine) return showMsg('A conclusão exige conexão para validar base, evidências e sincronização.', false);
+
+  const check = await fetch(`/api/location/${current.id}/completion-check`, {cache:'no-store'});
+  const result = await check.json().catch(()=>({ok:false,errors:['Não foi possível validar a localidade.']}));
+  if (!check.ok || !result.ok) {
+    const details=[];
+    (result.pending||[]).forEach(x=>details.push(`${x.type}: faltam ${x.remaining} de ${x.expected}`));
+    if ((result.missing_evidence||[]).length) details.push(`${result.missing_evidence.length} registro(s) sem foto/vídeo`);
+    if ((result.missing_justification||[]).length) details.push(`${result.missing_justification.length} item(ns) não encontrado(s) sem justificativa`);
+    const msg=[...(result.errors||[]),...details].join(' • ');
+    return showMsg(`Não é possível concluir. ${msg}`, false);
   }
 
-  if (!navigator.onLine) {
-    return showMsg('A conclusão da localidade exige conexão para evitar encerramento sem sincronizar os registros.', false);
-  }
-
-  const operationalPending = pendingDefinitions().reduce((s, x) => s + x.remaining, 0);
-  if (operationalPending > 0) {
-    const proceed = confirm(`A base ainda indica ${operationalPending} equipamento(s) pendente(s) nesta localidade. Deseja mesmo assim continuar para a confirmação final?`);
-    if (!proceed) return;
-  }
-
-  if (!confirm('Confirma que o levantamento desta localidade foi finalizado? Ela aparecerá como CONCLUÍDA no painel gerencial.')) {
-    return;
-  }
-
+  if (!confirm(`Validação concluída: ${result.registered} registro(s), evidências conferidas e previsão conciliada. Confirmar encerramento desta localidade?`)) return;
   const r = await fetch(`/api/location/${current.id}/complete`, { method: 'POST' });
-
-  if (r.ok) {
-    showMsg('Localidade marcada como CONCLUÍDA.', true);
+  const j = await r.json().catch(()=>({ok:false}));
+  if (r.ok && j.ok) {
+    showMsg('Localidade marcada como CONCLUÍDA após validação completa.', true);
     const rr = await fetch('/api/locations', { cache: 'no-store' });
-    if (rr.ok) {
-      locations = await rr.json();
-      await cacheSet('locations', locations);
-      current = locations.find(x => x.id === current.id);
-      showInfo();
-    }
-  } else {
-    showMsg('Não foi possível concluir a localidade.', false);
-  }
+    if (rr.ok) { locations = await rr.json(); await cacheSet('locations', locations); current = locations.find(x => x.id === current.id); showInfo(); }
+  } else showMsg(j.error || 'Não foi possível concluir a localidade.', false);
 };
 
 $('syncBtn').onclick = () => syncQueue({ silent: false });
@@ -1169,7 +1202,11 @@ async function sendTeamLocation(position){
     const j=await r.json().catch(()=>({ok:false}));
     if(!r.ok||!j.ok) throw new Error(j.error||'Falha ao enviar posição.');
     const acc=Number.isFinite(position.coords.accuracy)?Math.round(position.coords.accuracy):null;
-    setTeamLocationStatus(`Localização ativa${acc!==null?` · precisão aproximada ${acc} m`:''} · posição enviada agora.`,true);
+    if(j.integrity && j.integrity.status && j.integrity.status!=='OK'){
+      setTeamLocationStatus(`Atenção: ${j.integrity.reason||'posição incompatível com a posição anterior.'} Confirme se este é o usuário/aparelho correto.`,false);
+    }else{
+      setTeamLocationStatus(`Localização ativa${acc!==null?` · precisão aproximada ${acc} m`:''} · posição enviada agora.`,true);
+    }
   }catch(err){
     setTeamLocationStatus(`Localização ativa, mas o envio falhou: ${err.message}`,false);
   }
@@ -1226,3 +1263,44 @@ if($('teamLocationToggle')){
   }
 }
 
+
+// V15 — estado simples do App de Campo
+function updateFieldHeroConnection(){
+  const el=document.getElementById('fieldHeroConnection'),dot=document.getElementById('fieldOnlineDot');
+  if(!el||!dot)return; const online=navigator.onLine; el.textContent=online?'Online':'Offline'; dot.className=online?'online':'offline';
+}
+window.addEventListener('online',updateFieldHeroConnection); window.addEventListener('offline',updateFieldHeroConnection); updateFieldHeroConnection();
+document.getElementById('equipment_type')?.addEventListener('change',()=>{if(document.getElementById('equipment_type').value)document.getElementById('fieldStep2')?.classList.add('done');});
+function updateEvidencePicker(){
+  const inputs=[...document.querySelectorAll('input[name="attachments"]')];
+  const count=inputs.reduce((n,x)=>n+(x.files?.length||0),0);
+  const box=document.getElementById('evidenceCount'); if(box)box.textContent=count?`${count} mídia(s) selecionada(s). Você pode adicionar mais.`:'Nenhuma mídia selecionada.';
+  if(count)document.getElementById('fieldStep3')?.classList.add('done');
+}
+function bindEvidenceInputs(){
+  document.querySelectorAll('input[name="attachments"]').forEach(input=>{
+    if(input.dataset.boundEvidence)return; input.dataset.boundEvidence='1';
+    input.addEventListener('change',()=>{
+      if(input.matches('[data-evidence-camera]') && input.files?.length && !input.dataset.spawned){
+        input.dataset.spawned='1';
+        const label=input.closest('.cameraAction');
+        if(label){
+          label.classList.add('selectedEvidence');
+          if(label.firstChild) label.firstChild.textContent='✅ Foto adicionada ';
+          const clone=label.cloneNode(true);
+          clone.classList.remove('selectedEvidence');
+          const cloneInput=clone.querySelector('input');
+          cloneInput.value='';
+          delete cloneInput.dataset.boundEvidence;
+          delete cloneInput.dataset.spawned;
+          if(clone.firstChild) clone.firstChild.textContent='📷 Tirar outra foto ';
+          label.insertAdjacentElement('afterend',clone);
+          bindEvidenceInputs();
+        }
+      }
+      updateEvidencePicker();
+    });
+  });
+}
+bindEvidenceInputs();
+document.querySelectorAll('input[name="attachments"]').forEach(x=>x.addEventListener('change',updateEvidencePicker));

@@ -776,3 +776,18 @@ input:focus,select:focus,textarea:focus{
 @media(max-width:980px){.v23DashboardShell{display:block}.v23Sidebar{position:relative;top:auto;height:auto;flex-direction:row;overflow:auto;border-radius:14px;margin-bottom:12px}.v23SidebarBrand,.v23SidebarSpacer{display:none}.v23Nav,.v23TvBtn{min-width:max-content}.v23TvMode .v23DashboardShell{display:block}.v23TvMode .v23Sidebar{position:fixed;left:10px;bottom:10px;top:auto;height:auto;width:auto;right:10px;flex-direction:row;z-index:9999}.v23TvMode .v23Nav,.v23TvMode .v23TvBtn{font-size:16px}.evidencePickerActions{display:grid;grid-template-columns:1fr 1fr}.evidenceAction{min-height:48px}}
 
 .selectedEvidence{background:#e9f8f1!important;color:#0c6d49!important;border-color:#93d7ba!important}
+
+/* V24 — apresentação executiva mais viva para TV sem perder legibilidade */
+.v24Executive .kpi,.v24Executive .equipmentBig{box-shadow:0 10px 24px rgba(15,47,82,.08)}
+.v24Executive .successKpi{background:linear-gradient(145deg,#f0fff8,#e8f8f1)}
+.v24Executive .dangerKpi{background:linear-gradient(145deg,#fff7f7,#fff0f0)}
+.v24Executive .warningKpi{background:linear-gradient(145deg,#fffaf0,#fff4df)}
+.v24Executive .equipmentBig.atm{background:linear-gradient(145deg,#f5f9ff,#edf5ff)}
+.v24Executive .equipmentBig.val{background:linear-gradient(145deg,#effcf6,#e6f8ef)}
+.v24Executive .equipmentBig.pos{background:linear-gradient(145deg,#fff8f1,#fff0df)}
+.v24Executive .equipmentBig.tdi{background:linear-gradient(145deg,#fbf6ff,#f3eaff)}
+.v24Executive .equipmentBig.bloq{background:linear-gradient(145deg,#f0fffd,#e6faf7)}
+.v24Executive .equipmentBig.outro{background:linear-gradient(145deg,#fafafa,#f2f4f7)}
+.v24Executive .companyFill,.v24Executive .analyticsProgressFill{min-width:3px}
+.scaleStatusOverride{font-weight:800;color:#9a6700;background:#fff3cd}
+@media(min-width:1200px){.v23TvMode .v24Executive .kpi b,.v23TvMode .v24Executive .equipmentBig b{font-size:38px}}
