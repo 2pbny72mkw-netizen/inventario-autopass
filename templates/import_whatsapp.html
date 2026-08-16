@@ -3,7 +3,7 @@
 {% block content %}
 <section class="dashHero">
   <div>
-    <span class="eyebrow">V25.0 · AUDITORIA DE CAMPO</span>
+    <span class="eyebrow">{{ app_release }} · EVIDÊNCIAS E AUDITORIA</span>
     <h1>Importar evidências do WhatsApp</h1>
     <p>Analisa o histórico completo, remove repetições, confronta com a base e o inventário e preserva fotos/vídeos para consulta.</p>
   </div>
@@ -44,7 +44,8 @@
       <div class="full">
         <label>ZIP exportado do WhatsApp *</label>
         <input type="file" name="zip_file" accept=".zip,application/zip" required>
-        <small>A V25.0 exige Cloudflare R2 na importação definitiva. Diagnóstico: <a href="/r2-status?test=1" target="_blank">testar R2</a>.</small>
+        <small>O arquivo é analisado antes de qualquer gravação definitiva. A importação é idempotente e mídias repetidas são protegidas por SHA-256.</small>
+        <details class="waDiagnostic"><summary>Diagnóstico de armazenamento</summary><a href="/r2-status?test=1" target="_blank">Testar Cloudflare R2</a></details>
       </div>
     </div>
     <div class="actions">
@@ -55,6 +56,7 @@
 </section>
 
 {% if summary %}
+<section class="card waAnalysisDone"><div class="sectionHead"><div><span class="status sCONCLUIDA">ANÁLISE CONCLUÍDA</span><h2>Arquivo pronto para revisão</h2><p><b>{{ analyzed_filename or summary.filename or 'ZIP do WhatsApp' }}</b></p><p class="muted">A análise foi concluída. Revise os números abaixo e, somente depois, avance para o Passo 2.</p></div><span class="tag">SHA {{ summary.archive_sha or '—' }}</span></div></section>
 <section class="kpis">
   <article class="kpi"><span>Mensagens</span><b>{{ summary.messages }}</b></article>
   <article class="kpi"><span>Mídias no ZIP</span><b>{{ summary.media_total }}</b></article>
@@ -127,7 +129,7 @@
 
 {% if staging_key %}
 <section class="card">
-  <h2>2. Gravar no banco de evidências</h2>
+  <h2>2. Gravar no banco de evidências</h2><p class="waFileName"><b>Arquivo analisado:</b> {{ analyzed_filename or summary.filename or "ZIP do WhatsApp" }}</p>
   <p>
     Esta etapa é <b>idempotente</b>: mensagens, visitas, itens e mídias repetidos são ignorados.
     O histórico completo pode ser reimportado no futuro sem duplicar os dados.
@@ -137,7 +139,7 @@
     <input type="hidden" name="staging_key" value="{{ staging_key }}">
     <div class="actions">
       <button class="primary" type="submit" onclick="return confirm('Gravar agora as evidências e mídias para futura consulta?')">
-        Importar evidências para o PostgreSQL
+        Importar evidências analisadas para o PostgreSQL
       </button>
     </div>
   </form>

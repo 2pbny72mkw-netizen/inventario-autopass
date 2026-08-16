@@ -125,7 +125,7 @@
       <h2>Usuários cadastrados</h2>
       <p class="muted">Edite dados, redefina senhas e desative acessos. Exclusão definitiva ocorre apenas sem histórico; com histórico, o usuário é arquivado.</p>
     </div>
-    <span class="tag">{{ users|length }} usuário(s)</span>
+    <div class="userHeaderActions"><span class="tag">{{ users|length }} usuário(s)</span><a class="secondary buttonLink" href="/usuarios/exportar.xlsx">Exportar Excel</a>{% if archived_users %}<button type="button" class="secondary" id="toggleArchivedUsers">Ver arquivados ({{ archived_users|length }})</button>{% endif %}</div>
   </div>
 
   <div class="tableWrap">
@@ -232,8 +232,8 @@
                     <label>Perfil *</label>
                     <select name="role" class="editRoleSelect" required>
                       <option value="technician" {% if u.role == "technician" %}selected{% endif %}>Técnico de Campo</option>
-                      <option value="manager" {% if u.role == "manager" %}selected{% endif %}>Gestor</option>
-                      <option value="consultation" {% if u.role == "consultation" %}selected{% endif %}>Consulta</option>
+                      {% if can_assign_sensitive_roles %}<option value="manager" {% if u.role == "manager" %}selected{% endif %}>Gestor</option>
+                      <option value="consultation" {% if u.role == "consultation" %}selected{% endif %}>Consulta</option>{% elif u.role in ("manager","consultation") %}<option value="{{ u.role }}" selected disabled>{{ "Gestor" if u.role == "manager" else "Consulta" }}</option>{% endif %}
                       <option value="hr" {% if u.role == "hr" %}selected{% endif %}>RH</option>
                     </select>
                   </div>
@@ -392,4 +392,14 @@
   });
 })();
 </script>
+
+{% if archived_users %}
+<section class="card archivedUsersPanel" id="archivedUsersPanel" hidden>
+  <div class="sectionHead"><div><h2>Usuários arquivados</h2><p class="muted">Histórico separado da operação diária. Um colaborador que retornar deve ser reativado, preservando sua identidade histórica.</p></div><span class="tag">{{ archived_users|length }} arquivado(s)</span></div>
+  <div class="tableWrap"><table><thead><tr><th>Usuário</th><th>Código</th><th>Perfil</th><th>Cargo</th><th>Empresa</th><th>Arquivado em</th><th>Ações</th></tr></thead><tbody>
+  {% for u in archived_users %}<tr><td><b>{{ u.name }}</b></td><td>{{ u.user_code or '—' }}</td><td>{{ {'manager':'Gestor','technician':'Técnico de Campo','consultation':'Consulta','hr':'RH'}.get(u.role,u.role) }}</td><td>{{ u.job_title or '—' }}</td><td>{{ u.company or '—' }}</td><td>{{ u.archived_at.strftime('%d/%m/%Y %H:%M') if u.archived_at else '—' }}</td><td><form method="post" action="/usuarios/{{u.id}}/reativar" onsubmit="return confirm('Reativar este colaborador preservando o histórico anterior?')"><button class="secondary" type="submit">Reativar</button></form></td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+{% endif %}
+<script>document.getElementById('toggleArchivedUsers')?.addEventListener('click',e=>{const p=document.getElementById('archivedUsersPanel');if(!p)return;p.hidden=!p.hidden;e.currentTarget.textContent=p.hidden?`Ver arquivados ({{ archived_users|length }})`:'Ocultar arquivados';});</script>
 {% endblock %}
