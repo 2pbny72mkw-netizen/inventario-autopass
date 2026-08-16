@@ -31,9 +31,9 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V20.0"
-DASHBOARD_RELEASE = "dashboard-v20"
-TEAMS_RELEASE = "teams-v20"
+APP_RELEASE = "V21.0"
+DASHBOARD_RELEASE = "dashboard-v21"
+TEAMS_RELEASE = "teams-v21"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
 FIELD_GPS_GOOD_ACCURACY_M = float(os.getenv("FIELD_GPS_GOOD_ACCURACY_M", "30"))
 FIELD_GPS_MAX_ACCURACY_M = float(os.getenv("FIELD_GPS_MAX_ACCURACY_M", "80"))
@@ -739,11 +739,13 @@ def _team_profile_is_scheduled(profile, target_date):
 
 def _profile_to_dict(profile):
     user = db.session.get(User, profile.user_id) if profile.user_id else None
+    # Perfil vinculado a usuário inativo deixa de participar da visão operacional.
+    linked_user_active = bool(user and user.active)
     return {
         "profile_id": profile.id,
         "user_id": profile.user_id,
-        "linked_user_name": user.name if user else None,
-        "linked": bool(user),
+        "linked_user_name": user.name if linked_user_active else None,
+        "linked": linked_user_active,
         "name": profile.name,
         "category": profile.category or "TECNICO",
         "schedule_type": profile.schedule_type or "12x36",
@@ -765,6 +767,7 @@ def _schedule_today_db(target_date=None):
             TeamScheduleProfile.category, TeamScheduleProfile.name
         ).all()
         if _team_profile_is_scheduled(p, target_date)
+        and (not p.user_id or (db.session.get(User, p.user_id) and db.session.get(User, p.user_id).active))
     ]
 
 
@@ -877,6 +880,8 @@ def teams_status_api():
 
     for member in scheduled:
         user = db.session.get(User, member.get("user_id")) if member.get("user_id") else None
+        if user is not None and not user.active:
+            continue
         pos = _team_latest_position(user.id if user else None)
         minutes = None
         if pos:
@@ -936,6 +941,7 @@ def teams_calendar_api():
     profiles = TeamScheduleProfile.query.filter_by(active=True).order_by(
         TeamScheduleProfile.category, TeamScheduleProfile.name
     ).all()
+    profiles = [p for p in profiles if (not p.user_id) or (db.session.get(User, p.user_id) and db.session.get(User, p.user_id).active)]
     if category:
         profiles = [p for p in profiles if normalize(p.category) == category]
 
@@ -2406,7 +2412,8 @@ def api_recent_gps():
         .join(Location, Location.id == Inventory.location_id)
         .filter(
             Inventory.latitude.isnot(None),
-            Inventory.longitude.isnot(None)
+            Inventory.longitude.isnot(None),
+            User.active.is_(True)
         )
         .order_by(
             func.coalesce(Inventory.gps_captured_at, Inventory.created_at).desc()

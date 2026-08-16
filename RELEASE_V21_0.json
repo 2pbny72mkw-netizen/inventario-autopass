@@ -1,0 +1,10 @@
+{
+  "version": "V21.0",
+  "title": "BI Executivo + Consolidação Operacional",
+  "highlights": [
+    "Escala 7/14/21/31 com período visível e tabela reconstruída",
+    "Usuários desativados removidos de mapas e visões operacionais",
+    "BI executivo com previsto x realizado, execução por tipo e ranking de prioridades",
+    "Preparação para reimportação idempotente do WhatsApp após homologação V21"
+  ]
+}
