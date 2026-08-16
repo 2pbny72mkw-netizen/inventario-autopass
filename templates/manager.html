@@ -61,6 +61,28 @@
   </div>
 </section>
 
+<section class="card v21ExecutiveCharts" id="v21ExecutiveCharts">
+  <div class="sectionHead">
+    <div><h2>Painel executivo do recorte</h2><p class="muted">Leitura visual de execução, pendência e prioridades para apresentação gerencial.</p></div>
+    <span class="tag">V21 · BI Executivo</span>
+  </div>
+  <div class="v21ChartGrid">
+    <article class="v21ChartPanel">
+      <div class="v21ChartTitle"><span>Previsto × realizado</span><b id="v21ExecPct">0%</b></div>
+      <div id="v21StackedExecution" class="v21StackedExecution"></div>
+      <div class="v21ChartLegend"><span><i class="done"></i>Inventariado <b id="v21Done">0</b></span><span><i class="missing"></i>Faltante <b id="v21Left">0</b></span></div>
+    </article>
+    <article class="v21ChartPanel">
+      <div class="v21ChartTitle"><span>Execução por tipo</span><small>cobertura do recorte</small></div>
+      <div id="v21TypeBars" class="v21TypeBars"></div>
+    </article>
+    <article class="v21ChartPanel v21PriorityPanel">
+      <div class="v21ChartTitle"><span>Top prioridades</span><small>maior volume faltante</small></div>
+      <div id="v21PriorityBars" class="v21PriorityBars"></div>
+    </article>
+  </div>
+</section>
+
 <section class="card evidenceExecutiveStrip" id="evidenceExecutiveStrip">
   <div class="sectionHead">
     <div>
@@ -240,5 +262,5 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
         integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
         crossorigin=""></script>
-<script src="{{url_for('static',filename='manager.js')}}?v=dashboard-v18"></script>
+<script src="{{url_for('static',filename='manager.js')}}?v=dashboard-v21"></script>
 {% endblock %}

@@ -5,7 +5,7 @@
 
 <section class="dashHero teamsHero">
   <div>
-    <span class="eyebrow">V18.0 · CENTRAL OPERACIONAL</span>
+    <span class="eyebrow">V21.0 · CENTRAL OPERACIONAL</span>
     <h1>Equipes em Campo</h1>
     <p>Técnicos, supervisores e apoio: escala, entrada, vínculo com usuários e última localização autorizada.</p>
   </div>
@@ -77,8 +77,9 @@
       <button type="button" class="secondary" id="reloadCalendar">Atualizar tabela</button>
     </div>
   </div>
-  <div class="scaleTableWrap">
-    <table class="scaleTable">
+  <div id="calendarRangeSummary" class="calendarRangeSummary">Carregando período...</div>
+  <div class="scaleTableWrap" id="calendarTableWrap">
+    <table class="scaleTable" id="calendarTable">
       <thead id="scaleHead"></thead>
       <tbody id="scaleBody"></tbody>
     </table>
@@ -194,5 +195,5 @@
 {% endif %}
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="{{ url_for('static', filename='teams.js') }}?v=v18"></script>
+<script src="{{ url_for('static', filename='teams.js') }}?v=teams-v21"></script>
 {% endblock %}
