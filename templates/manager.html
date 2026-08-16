@@ -1,14 +1,14 @@
 {% extends "base.html" %}
-{% block title %}Dashboard Gerencial | Inventário SP{% endblock %}
+{% block title %}Central de Inteligência | Inventário SP{% endblock %}
 {% block content %}
 <link rel="stylesheet"
       href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
       integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
       crossorigin="">
 
-<div class="v23DashboardShell v24Executive v30Executive" id="v23DashboardShell">
+<div class="v23DashboardShell v24Executive v30Executive v31CommandCenter" id="v23DashboardShell">
   <aside class="v23Sidebar" id="v23Sidebar">
-    <div class="v23SidebarBrand"><b>BI Executivo</b><small>Inventário Autopass</small></div>
+    <div class="v23SidebarBrand"><b>COMMAND CENTER</b><small>Inventário Autopass · LIVE</small></div>
     <button class="v23Nav active" data-v23-view="overview">▦ <span>Visão Geral</span></button>
     <button class="v23Nav" data-v23-view="execution">▥ <span>Execução</span></button>
     <button class="v23Nav" data-v23-view="quality">◆ <span>Qualidade</span></button>
@@ -24,8 +24,8 @@
 <section class="dashHero v23Panel" data-v23-panel="overview">
   <div>
     <span class="eyebrow">CONTROLE DE INVENTÁRIO EM CAMPO</span>
-    <h1>Dashboard Gerencial</h1>
-    <p>Visão centralizada do parque previsto, localidades pendentes, execução em campo e divergências encontradas.</p>
+    <h1>Central de Inteligência do Inventário</h1>
+    <p>Operação, progresso, tendência e criticidade do parque em tempo real.</p>
   </div>
   <div class="heroActions">
     <span id="lastUpdate" class="lastUpdate">Atualizando...</span>
@@ -43,7 +43,7 @@
   <article class="kpi dangerKpi"><span>Inoperantes</span><b id="inoperative">0</b><small>Encontrados em campo</small></article>
 </section>
 
-<section class="equipmentBigNumbers v23Panel" data-v23-panel="overview">
+<section class="equipmentBigNumbers v23Panel" data-v23-panel="execution">
   <article class="equipmentBig atm" data-type="ATM"><span>ATM</span><b id="typeATM">0</b><small id="typeATMDetail">0 / 0 · 0%</small></article>
   <article class="equipmentBig val" data-type="VALIDADOR"><span>Recarga</span><b id="typeVALIDADOR">0</b><small id="typeVALIDADORDetail">0 / 0 · 0%</small></article>
   <article class="equipmentBig pos" data-type="POS"><span>POS</span><b id="typePOS">0</b><small id="typePOSDetail">0 / 0 · 0%</small></article>
@@ -71,7 +71,7 @@
   </div>
 <div id="filterContext" class="filterContext">Todas empresas · Todas linhas · Todos os tipos</div></section>
 
-<section class="card v23Panel" data-v23-panel="overview map">
+<section class="card v23Panel" data-v23-panel="map">
   <div class="cardHead">
     <div>
       <h2>Mapa operacional e auditoria GPS</h2>
@@ -154,7 +154,7 @@
 
 
 
-<section class="card executiveAnalytics v23Panel" data-v23-panel="overview" id="executiveAnalytics">
+<section class="card executiveAnalytics v23Panel" data-v23-panel="quality" id="executiveAnalytics">
   <div class="sectionHead"><div><h2>Resumo executivo do recorte</h2><p class="muted">Execução, pendência, qualidade e composição do parque em uma leitura visual.</p></div><span class="tag" id="analyticsContext">Visão geral</span></div>
   <div class="biExecutiveStrip">
     <article><span>Execução</span><b id="biCoverage">0%</b><small>previsto × inventariado</small></article>
@@ -169,10 +169,10 @@
   </div>
 </section>
 
-<section class="card v21ExecutiveCharts v23Panel" data-v23-panel="execution" id="v21ExecutiveCharts">
+<section class="card v21ExecutiveCharts v23Panel" data-v23-panel="overview execution" id="v21ExecutiveCharts">
   <div class="sectionHead">
     <div><h2>Painel executivo do recorte</h2><p class="muted">Leitura visual de execução, pendência e prioridades para apresentação gerencial.</p></div>
-    <span class="tag">V30 · BI EXECUTIVO</span>
+    <span class="tag">V31 · COMMAND CENTER</span>
   </div>
   <div class="v21ChartGrid">
     <article class="v21ChartPanel">
@@ -194,7 +194,7 @@
 <section class="card v22ExecutiveCockpit v23Panel" data-v23-panel="execution" id="v22ExecutiveCockpit">
   <div class="sectionHead">
     <div><h2>Cockpit executivo</h2><p class="muted">Ritmo de execução, produtividade recente e qualidade das evidências para decisão gerencial.</p></div>
-    <span class="tag">V30 · LIVE</span>
+    <span class="tag">V31 · LIVE</span>
   </div>
   <div class="v22CockpitGrid">
     <article class="v22Panel"><div class="v21ChartTitle"><span>Evolução diária</span><small>inventários registrados</small></div><div id="v22Trend" class="v22Trend"></div></article>
@@ -334,5 +334,5 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
         integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
         crossorigin=""></script>
-<script src="{{url_for('static',filename='manager.js')}}?v=dashboard-v30"></script>
+<script src="{{url_for('static',filename='manager.js')}}?v=dashboard-v31"></script>
 {% endblock %}
