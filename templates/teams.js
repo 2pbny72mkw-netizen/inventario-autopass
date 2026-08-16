@@ -1,5 +1,5 @@
-window.AUTOPASS_TEAMS_VERSION='teams-v19';
-console.log('AUTOPASS Central Operacional V19 carregada');
+window.AUTOPASS_TEAMS_VERSION='teams-v10';
+console.log('AUTOPASS Central Operacional V10 carregada');
 
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -367,8 +367,6 @@ $('refreshTeams').addEventListener('click',refreshAll);
 $('exportScale').addEventListener('click',exportScale);
 $('reloadCalendar').addEventListener('click',()=>loadCalendar().catch(console.error));
 $('calendarCategory').addEventListener('change',()=>loadCalendar().catch(console.error));
-$('calendarDays').addEventListener('change',()=>loadCalendar().catch(console.error));
-$('calendarStart').addEventListener('change',()=>loadCalendar().catch(console.error));
 
 $('toggleTeamMap').addEventListener('click',()=>{
   const wrap=$('teamMapWrap');

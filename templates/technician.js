@@ -676,15 +676,7 @@ function renderSelectedBaseInfo(a){
     add('Série',a.serial);
   }else if(type==='Bloqueio'){
     if(title) title.textContent='Dados da base — Bloqueio';
-    add('Bloqueio',a.block_number||a.terminal_number||a.top_id);
-    add('Prefixo / Ativo',a.block_prefix||a.terminal_number||a.top_id);
-    add('Grupo',a.block_group);
-    add('Linha lógica',a.block_logical_line);
-    add('IP esperado',a.block_ip);
-    add('Máscara',a.block_netmask);
-    add('Gateway',a.block_gateway);
-    add('DNS 1',a.block_dns1);
-    add('DNS 2',a.block_dns2);
+    add('Bloqueio',a.terminal_number||a.top_id);
     add('Modelo',a.model);
     add('Versão',a.software_version);
     add('Instalação',a.installation_type||a.application);
