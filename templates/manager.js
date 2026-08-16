@@ -451,7 +451,7 @@ function setMapFullscreen(on){
 
   mapEl.classList.toggle('gpsMapFullscreen',!!on);
   document.body.classList.toggle('mapFullscreenOpen',!!on);
-  if(btn) btn.textContent=on?'Sair da tela cheia':'Expandir mapa';
+  if(btn) btn.textContent=on?'Sair da tela cheia':'⛶ Tela cheia';
 
   setTimeout(()=>{
     try{ gpsMap?.invalidateSize(); }catch(_e){}
@@ -959,6 +959,7 @@ let v23TvTimer=null;
 const V23_TV_VIEWS=['overview','execution','competition','quality','map','evidence','ranking'];
 function v23SetView(view){
   v23ActiveView=view||'overview';
+  document.body.dataset.dashboardView=v23ActiveView;
   document.querySelectorAll('.v23Panel').forEach(el=>{
     el.style.display=String(el.dataset.v23Panel||'').split(/\s+/).includes(v23ActiveView)?'':'none';
   });
@@ -972,6 +973,7 @@ function v23StopTv(){
   const btn=$('v23TvBtn'); if(btn) btn.querySelector('span').textContent='Modo TV';
 }
 function v23StartTv(){
+  v23SetView('overview');
   document.body.classList.add('v23TvMode');
   const btn=$('v23TvBtn'); if(btn) btn.querySelector('span').textContent='Sair da TV';
   if(document.documentElement.requestFullscreen && !document.fullscreenElement){document.documentElement.requestFullscreen().catch(()=>{});}
