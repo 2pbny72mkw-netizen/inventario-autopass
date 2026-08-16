@@ -1,3 +1,6 @@
+## V31.0 — Command Center
+Dashboard executivo reconstruído para uma tela única e Modo TV sem rolagem.
+
 # Inventário Central do Parque Instalado — SP
 
 Aplicação web estruturada para equipes de campo e gestão do inventário.
