@@ -8,13 +8,9 @@
   "orientation": "any",
   "background_color": "#f3f7fb",
   "theme_color": "#17345d",
-  "description": "Inventário Autopass V22.1 — BI Executivo, escala operacional multi-dia, evidências persistentes R2 e operação offline-first.",
+  "description": "Inventário Autopass V22.2 — hotfix de Dashboard, escala operacional e PWA.",
   "icons": [
-    {
-      "src": "/static/autopass-logo.png",
-      "sizes": "any",
-      "type": "image/png",
-      "purpose": "any"
-    }
+    {"src":"/static/autopass-icon-192.png","sizes":"192x192","type":"image/png","purpose":"any maskable"},
+    {"src":"/static/autopass-icon-512.png","sizes":"512x512","type":"image/png","purpose":"any maskable"}
   ]
 }
