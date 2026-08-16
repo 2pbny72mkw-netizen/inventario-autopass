@@ -150,7 +150,7 @@
       <small>{{ card.visit.line_raw }} · {{ card.visit.author }}</small>
       {% if card.location %}<div class="evLocation">{{ card.location.company }} · {{ card.location.location }}</div>{% endif %}
       <div class="evCounts">
-        <span>{{ card.items }} item(ns)</span>
+        <span>{{ card["items"] }} item(ns)</span>
         <span>{{ card.media }} mídia(s)</span>
         {% if card.review %}<span class="reviewCount">{{ card.review }} revisar</span>{% endif %}
       </div>

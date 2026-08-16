@@ -170,8 +170,14 @@ async function loadCalendar(){
   });
   if($('calendarCategory').value) params.set('category',$('calendarCategory').value);
 
-  const r=await fetch(`/api/equipes/calendario?${params.toString()}`,{cache:'no-store'});
-  const d=await r.json();
+  const r=await fetch(`/api/equipes/calendario?${params.toString()}`,{cache:'no-store',headers:{'Accept':'application/json'}});
+  const contentType=String(r.headers.get('content-type')||'');
+  let d;
+  if(contentType.includes('application/json')) d=await r.json();
+  else {
+    const raw=await r.text();
+    throw new Error(`Servidor retornou ${r.status} em vez de JSON${raw?': '+raw.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim().slice(0,160):''}`);
+  }
   if(!r.ok||!d.ok) throw new Error(d.error||'Falha ao carregar escala.');
   const requestedDays=Number($('calendarDays').value||14);
   if((d.dates||[]).length!==requestedDays) throw new Error(`Período retornado inválido: esperado ${requestedDays}, recebido ${(d.dates||[]).length}.`);
