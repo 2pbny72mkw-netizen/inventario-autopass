@@ -751,6 +751,12 @@ $('base_asset_id').onchange = () => {
   if($('bu_id')) $('bu_id').value=a.bu_id||'';
   if($('validator_top_id')) $('validator_top_id').value=a.top_id||a.terminal_number||'';
   if($('software_version')) $('software_version').value=a.software_version||'';
+  // V20: em Bloqueios, usa o IP esperado da planilha técnica como referência no campo de rede.
+  if(normalizedEquipmentType(a.equipment_type)==='Bloqueio' && $('network_id')){
+    const cfg=a.technical_config||{};
+    $('network_id').value=cfg.ip||'';
+    $('network_id').placeholder=cfg.ip ? `IP esperado: ${cfg.ip}` : 'IP / rede / SIM';
+  }
   renderSelectedBaseInfo(a);
 };
 

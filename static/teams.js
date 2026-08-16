@@ -1,4 +1,4 @@
-window.AUTOPASS_TEAMS_VERSION='teams-v18';
+window.AUTOPASS_TEAMS_VERSION='teams-v10';
 console.log('AUTOPASS Central Operacional V10 carregada');
 
 const $=id=>document.getElementById(id);
@@ -134,7 +134,7 @@ async function loadTeams(){
         <span class="linkBadge ${t.linked?'linked':'unlinked'}">${t.linked?'Usuário vinculado':'Sem vínculo com Usuários'}</span>
       </div>`;
     $('teamCards').appendChild(card);
-    if($('todayTeamTable')){ const tr=document.createElement('tr'); tr.innerHTML=`<td><b>${esc(t.name)}</b></td><td>${esc(t.category)}</td><td>${esc(t.schedule_type||'—')}</td><td>${esc(t.shift||'—')}</td><td>${esc(t.entry||'—')}</td><td>${esc((t.lines||[]).join(' / ')||'—')}</td><td>${t.integrity==='ALERTA'?'<b class="integrityAlert">⚠ Integridade</b>':esc(t.freshness||'SEM SINAL')}</td><td>${esc(freshnessText(t))}</td>`; $('todayTeamTable').appendChild(tr); }
+    if($('todayTeamTable')){ const tr=document.createElement('tr'); tr.innerHTML=`<td><b>${esc(t.name)}</b></td><td>${esc(t.category)}</td><td>${esc(t.schedule_type||'—')}</td><td>${esc(t.shift||'—')}</td><td>${esc(t.entry||'—')}</td><td>${esc((t.lines||[]).join(' / ')||'—')}</td><td>${esc(t.freshness||'SEM SINAL')}</td><td>${esc(freshnessText(t))}</td>`; $('todayTeamTable').appendChild(tr); }
 
     if(t.latitude!=null&&t.longitude!=null){
       const m=L.marker([Number(t.latitude),Number(t.longitude)],{icon:markerIcon(t)})
@@ -152,7 +152,6 @@ async function loadTeams(){
     }
   }
 
-  if($('todayTeamTable') && !(d.technicians||[]).length) $('todayTeamTable').innerHTML='<tr><td colspan="8" class="todayTeamEmpty">Nenhum integrante escalado para hoje.</td></tr>';
   $('kCurrent').textContent=current;
   $('kAttention').textContent=attention;
   $('kNoSignal').textContent=noSignal;
@@ -370,6 +369,8 @@ $('refreshTeams').addEventListener('click',refreshAll);
 $('exportScale').addEventListener('click',exportScale);
 $('reloadCalendar').addEventListener('click',()=>loadCalendar().catch(console.error));
 $('calendarCategory').addEventListener('change',()=>loadCalendar().catch(console.error));
+$('calendarDays').addEventListener('change',()=>loadCalendar().catch(console.error));
+$('calendarStart').addEventListener('change',()=>loadCalendar().catch(console.error));
 
 $('toggleTeamMap').addEventListener('click',()=>{
   const wrap=$('teamMapWrap');
