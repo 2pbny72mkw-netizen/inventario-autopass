@@ -1,0 +1,12 @@
+{
+  "version": "V30.0",
+  "dashboard": "dashboard-v30",
+  "base": "1408-5",
+  "focus": [
+    "PWA offline",
+    "BI executivo",
+    "Modo TV",
+    "Patrimonio 360",
+    "Contratos ATM"
+  ]
+}

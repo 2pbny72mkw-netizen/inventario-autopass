@@ -31,8 +31,8 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V29.0"
-DASHBOARD_RELEASE = "dashboard-v29"
+APP_RELEASE = "V30.0"
+DASHBOARD_RELEASE = "dashboard-v30"
 TEAMS_RELEASE = "teams-v25-1"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
 FIELD_GPS_GOOD_ACCURACY_M = float(os.getenv("FIELD_GPS_GOOD_ACCURACY_M", "30"))
@@ -1399,6 +1399,7 @@ def _location_360_payload(loc):
         "divergences":divergences, "inoperative":inoperative,
         "visits":len(visits), "media":media_count, "outside_base":outside_base,
         "latitude":loc.reference_latitude, "longitude":loc.reference_longitude,
+        "can_manage": session.get("role") == "manager",
         "equipment":[{
             "id":x.id, "type":x.equipment_type, "identifier":x.asset_identifier,
             "serial":x.serial, "model":x.model, "supplier":x.supplier,
@@ -1570,6 +1571,79 @@ def v12_locations_api():
     rows=[_v12_location_intelligence(x) for x in Location.query.order_by(Location.company,Location.line,Location.location).all()]
     rows.sort(key=lambda x:(x["score"],-x["missing"],x["location"]))
     return jsonify({"ok":True,"locations":rows})
+
+
+
+def _parse_contract_date(value):
+    raw=(value or "").strip()
+    if not raw:
+        return None
+    for fmt in ("%Y-%m-%d","%d/%m/%Y","%d-%m-%Y"):
+        try:
+            return datetime.strptime(raw,fmt).date()
+        except Exception:
+            pass
+    return None
+
+@app.get("/api/v30/atm-contracts")
+@dashboard_required
+def v30_atm_contracts():
+    company=(request.args.get("company") or "").strip()
+    line=(request.args.get("line") or "").strip()
+    contract=(request.args.get("contract") or "").strip()
+    horizon=(request.args.get("horizon") or "").strip()
+    q=BaseAsset.query.filter(func.upper(func.coalesce(BaseAsset.equipment_type,""))=="ATM")
+    if company: q=q.filter(BaseAsset.company==company)
+    if line: q=q.filter(BaseAsset.line==line)
+    if contract: q=q.filter(BaseAsset.leasing_status==contract)
+    rows=q.order_by(BaseAsset.company,BaseAsset.line,BaseAsset.locality,BaseAsset.asset_key).all()
+    today=datetime.utcnow().date()
+    out=[]
+    for a in rows:
+        end=_parse_contract_date(a.contract_end)
+        days=(end-today).days if end else None
+        status="SEM DATA"
+        if end:
+            status="VENCIDO" if days<0 else ("ATÉ 30 DIAS" if days<=30 else ("31–60 DIAS" if days<=60 else ("61–90 DIAS" if days<=90 else "ACIMA DE 90 DIAS")))
+        if horizon=="expired" and status!="VENCIDO": continue
+        if horizon=="30" and not(end and 0<=days<=30): continue
+        if horizon=="60" and not(end and 0<=days<=60): continue
+        if horizon=="90" and not(end and 0<=days<=90): continue
+        out.append({"id":a.id,"asset_key":a.asset_key,"company":a.company,"line":a.line,"locality":a.locality,
+                    "serial":a.serial,"model":a.model,"supplier":a.supplier,"contract":a.leasing_status or "Não informado",
+                    "contract_end":a.contract_end or "","days_to_expire":days,"contract_status":status})
+    contracts=sorted({x["contract"] for x in out if x["contract"]})
+    return jsonify({"ok":True,"release":APP_RELEASE,"count":len(out),"contracts":contracts,"assets":out})
+
+@app.get("/api/v30/atm-contracts/export")
+@dashboard_required
+def v30_atm_contracts_export():
+    company=(request.args.get("company") or "").strip(); line=(request.args.get("line") or "").strip()
+    contract=(request.args.get("contract") or "").strip(); horizon=(request.args.get("horizon") or "").strip()
+    # Reaplica os mesmos filtros de forma local para exportação.
+    q=BaseAsset.query.filter(func.upper(func.coalesce(BaseAsset.equipment_type,""))=="ATM")
+    if company: q=q.filter(BaseAsset.company==company)
+    if line: q=q.filter(BaseAsset.line==line)
+    if contract: q=q.filter(BaseAsset.leasing_status==contract)
+    today=datetime.utcnow().date(); selected=[]
+    for a in q.order_by(BaseAsset.company,BaseAsset.line,BaseAsset.locality).all():
+        end=_parse_contract_date(a.contract_end); days=(end-today).days if end else None
+        status="SEM DATA" if not end else ("VENCIDO" if days<0 else ("ATÉ 30 DIAS" if days<=30 else ("31–60 DIAS" if days<=60 else ("61–90 DIAS" if days<=90 else "ACIMA DE 90 DIAS"))))
+        if horizon=="expired" and status!="VENCIDO": continue
+        if horizon=="30" and not(end and 0<=days<=30): continue
+        if horizon=="60" and not(end and 0<=days<=60): continue
+        if horizon=="90" and not(end and 0<=days<=90): continue
+        selected.append((a,days,status))
+    wb=Workbook(); ws=wb.active; ws.title="Contratos ATM"
+    headers=["Empresa","Linha","Localidade","ATM","Série","Modelo","Fornecedor","Contrato","Vencimento","Dias para vencer","Status contrato","Status base"]
+    ws.append(headers)
+    fill=PatternFill("solid",fgColor="17365D"); font=Font(color="FFFFFF",bold=True)
+    for c in ws[1]: c.fill=fill; c.font=font
+    for a,days,status in selected:
+        ws.append([a.company,a.line,a.locality,a.asset_key,a.serial,a.model,a.supplier,a.leasing_status,a.contract_end,days,status,a.base_status])
+    for col in range(1,ws.max_column+1): ws.column_dimensions[get_column_letter(col)].width=20
+    ws.freeze_panes="A2"; out=io.BytesIO(); wb.save(out); out.seek(0)
+    return send_file(out,as_attachment=True,download_name=f"autopass_contratos_atm_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 @app.get("/api/v12/inventario/<int:inventory_id>/ciclo")
 @dashboard_required
