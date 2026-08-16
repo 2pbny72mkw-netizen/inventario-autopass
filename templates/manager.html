@@ -6,7 +6,21 @@
       integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
       crossorigin="">
 
-<section class="dashHero">
+<div class="v23DashboardShell" id="v23DashboardShell">
+  <aside class="v23Sidebar" id="v23Sidebar">
+    <div class="v23SidebarBrand"><b>BI Executivo</b><small>Inventário Autopass</small></div>
+    <button class="v23Nav active" data-v23-view="overview">▦ <span>Visão Geral</span></button>
+    <button class="v23Nav" data-v23-view="execution">▥ <span>Execução</span></button>
+    <button class="v23Nav" data-v23-view="quality">◆ <span>Qualidade</span></button>
+    <button class="v23Nav" data-v23-view="map">⌖ <span>Mapa</span></button>
+    <button class="v23Nav" data-v23-view="evidence">▣ <span>Evidências</span></button>
+    <button class="v23Nav" data-v23-view="ranking">↗ <span>Ranking</span></button>
+    <div class="v23SidebarSpacer"></div>
+    <button class="v23TvBtn" id="v23TvBtn" type="button">▣ <span>Modo TV</span></button>
+  </aside>
+  <div class="v23DashboardContent">
+
+<section class="dashHero v23Panel" data-v23-panel="overview">
   <div>
     <span class="eyebrow">CONTROLE DE INVENTÁRIO EM CAMPO</span>
     <h1>Dashboard Gerencial</h1>
@@ -19,7 +33,7 @@
   </div>
 </section>
 
-<section class="kpis dashboardKpis executiveKpis">
+<section class="kpis dashboardKpis executiveKpis v23Panel" data-v23-panel="overview">
   <article class="kpi primaryKpi clickableKpi" data-exec-filter=""><span>Parque previsto</span><b id="expected">0</b><small>4 famílias oficiais · TDI técnico</small></article>
   <article class="kpi successKpi clickableKpi" data-exec-filter="inventoried"><span>Inventariado</span><b id="inventoried">0</b><small id="inventoryCoverageSmall">0% do parque</small></article>
   <article class="kpi dangerKpi clickableKpi" data-exec-filter="missing"><span>Faltante</span><b id="missing">0</b><small>Previsto ainda não levantado</small></article>
@@ -28,25 +42,26 @@
   <article class="kpi dangerKpi"><span>Inoperantes</span><b id="inoperative">0</b><small>Encontrados em campo</small></article>
 </section>
 
-<section class="equipmentBigNumbers">
+<section class="equipmentBigNumbers v23Panel" data-v23-panel="overview">
   <article class="equipmentBig atm" data-type="ATM"><span>ATM</span><b id="typeATM">0</b><small id="typeATMDetail">0 / 0 · 0%</small></article>
   <article class="equipmentBig val" data-type="VALIDADOR"><span>Recarga</span><b id="typeVALIDADOR">0</b><small id="typeVALIDADORDetail">0 / 0 · 0%</small></article>
   <article class="equipmentBig pos" data-type="POS"><span>POS</span><b id="typePOS">0</b><small id="typePOSDetail">0 / 0 · 0%</small></article>
   <article class="equipmentBig tdi" data-type="TDI"><span>TDI <small style="font-weight:600">técnico</small></span><b id="typeTDI">0</b><small id="typeTDIDetail">0 / 0 · 0%</small></article>
   <article class="equipmentBig bloq" data-type="BLOQUEIO"><span>Bloqueio</span><b id="typeBLOQUEIO">0</b><small id="typeBLOQUEIODetail">0 / 0 · 0%</small></article>
+  <article class="equipmentBig outro" data-type="OUTRO"><span>Outro</span><b id="typeOUTRO">0</b><small id="typeOUTRODetail">Encontrados fora da base</small></article>
 </section>
 
-<section class="card executiveFilterBar">
+<section class="card executiveFilterBar v23Shared">
   <div class="grid4">
     <div><label>Empresa</label><select id="execCompany"><option value="">Todas</option></select></div>
     <div><label>Linha</label><select id="execLine"><option value="">Todas</option></select></div>
-    <div><label>Tipo de equipamento</label><select id="execType"><option value="">Todos</option><option value="ATM">ATM</option><option value="VALIDADOR">Recarga</option><option value="POS">POS</option><option value="TDI">TDI</option><option value="BLOQUEIO">Bloqueio</option></select></div>
+    <div><label>Tipo de equipamento</label><select id="execType"><option value="">Todos</option><option value="ATM">ATM</option><option value="VALIDADOR">Recarga</option><option value="POS">POS</option><option value="TDI">TDI</option><option value="BLOQUEIO">Bloqueio</option><option value="OUTRO">Outro</option></select></div>
     <div><label>Atalho executivo</label><button type="button" class="secondary execReset" id="execReset">Limpar filtros</button></div>
   </div>
 <div id="filterContext" class="filterContext">Todas empresas · Todas linhas · Todos os tipos</div></section>
 
 
-<section class="card executiveAnalytics" id="executiveAnalytics">
+<section class="card executiveAnalytics v23Panel" data-v23-panel="overview" id="executiveAnalytics">
   <div class="sectionHead"><div><h2>Visão analítica do recorte</h2><p class="muted">Indicadores e gráficos acompanham Empresa, Linha e Tipo selecionados acima.</p></div><span class="tag" id="analyticsContext">Visão geral</span></div>
   <div class="biExecutiveStrip">
     <article><span>Execução</span><b id="biCoverage">0%</b><small>previsto × inventariado</small></article>
@@ -61,10 +76,10 @@
   </div>
 </section>
 
-<section class="card v21ExecutiveCharts" id="v21ExecutiveCharts">
+<section class="card v21ExecutiveCharts v23Panel" data-v23-panel="execution" id="v21ExecutiveCharts">
   <div class="sectionHead">
     <div><h2>Painel executivo do recorte</h2><p class="muted">Leitura visual de execução, pendência e prioridades para apresentação gerencial.</p></div>
-    <span class="tag">V22.2 · BI Executivo</span>
+    <span class="tag">V23.0 · BI Executivo</span>
   </div>
   <div class="v21ChartGrid">
     <article class="v21ChartPanel">
@@ -83,10 +98,10 @@
   </div>
 </section>
 
-<section class="card v22ExecutiveCockpit" id="v22ExecutiveCockpit">
+<section class="card v22ExecutiveCockpit v23Panel" data-v23-panel="execution" id="v22ExecutiveCockpit">
   <div class="sectionHead">
     <div><h2>Cockpit executivo</h2><p class="muted">Ritmo de execução, produtividade recente e qualidade das evidências para decisão gerencial.</p></div>
-    <span class="tag">V22.2 · 14 dias</span>
+    <span class="tag">V23.0 · 14 dias</span>
   </div>
   <div class="v22CockpitGrid">
     <article class="v22Panel"><div class="v21ChartTitle"><span>Evolução diária</span><small>inventários registrados</small></div><div id="v22Trend" class="v22Trend"></div></article>
@@ -95,7 +110,7 @@
   </div>
 </section>
 
-<section class="card evidenceExecutiveStrip" id="evidenceExecutiveStrip">
+<section class="card evidenceExecutiveStrip v23Panel" data-v23-panel="evidence" id="evidenceExecutiveStrip">
   <div class="sectionHead">
     <div>
       <h2>Evidências de campo</h2>
@@ -112,7 +127,7 @@
   </div>
 </section>
 
-<section class="dashboardGrid">
+<section class="dashboardGrid v23Panel" data-v23-panel="quality">
   <article class="card chartCard">
     <div class="cardHead">
       <div><h2>Andamento geral</h2><p>Percentual de localidades encerradas.</p></div>
@@ -140,7 +155,7 @@
   </article>
 </section>
 
-<section class="dashboardGrid">
+<section class="dashboardGrid v23Panel" data-v23-panel="ranking">
   <article class="card">
     <div class="cardHead"><div><h2>Avanço por equipamento</h2><p>Inventariado em relação ao parque previsto.</p></div></div>
     <div id="typeProgressList" class="typeProgressList"></div>
@@ -151,7 +166,7 @@
   </article>
 </section>
 
-<section class="card">
+<section class="card v23Panel" data-v23-panel="map">
   <div class="cardHead">
     <div>
       <h2>Mapa operacional e auditoria GPS</h2>
@@ -223,7 +238,7 @@
   </div>
 </section>
 
-<section class="card">
+<section class="card v23Panel" data-v23-panel="ranking">
   <div class="cardHead filterHeader">
     <div><h2>Controle por localidade</h2><p>Use esta tabela para saber exatamente o que falta fazer e evitar visitas repetidas.</p></div>
     <span id="visibleCount" class="tag"></span>
@@ -255,7 +270,7 @@
   </div>
 </section>
 
-<section class="dashboardGrid">
+<section class="dashboardGrid v23Panel" data-v23-panel="ranking">
   <article class="card">
     <div class="cardHead"><div><h2>Execução por empresa</h2><p>Comparativo de localidades concluídas.</p></div></div>
     <div id="companyBars" class="companyBars"></div>
@@ -269,10 +284,12 @@
   </article>
 </section>
 
+  </div>
+</div>
 {% endblock %}
 {% block scripts %}
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
         integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
         crossorigin=""></script>
-<script src="{{url_for('static',filename='manager.js')}}?v=dashboard-v22-2"></script>
+<script src="{{url_for('static',filename='manager.js')}}?v=dashboard-v23"></script>
 {% endblock %}

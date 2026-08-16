@@ -4,7 +4,7 @@
 
 <section class="fieldAppHero">
   <div>
-    <span class="eyebrow">V22.2 · APP DE CAMPO · OFFLINE-FIRST</span>
+    <span class="eyebrow">V23.0 · APP DE CAMPO · OFFLINE-FIRST</span>
     <h1>Inventário assistido</h1>
     <p>Escolha a estação próxima, confira o que falta e registre o equipamento em poucos passos.</p>
   </div>
@@ -249,10 +249,14 @@
         </select>
       </div>
 
-      <div>
+      <div class="evidencePicker">
         <label>3. Evidência — fotos / vídeos</label>
-        <input name="attachments" type="file" accept="image/*,video/*" multiple capture="environment">
-        <small>Sem sinal, os arquivos ficam guardados neste aparelho até a sincronização.</small>
+        <div class="evidencePickerActions">
+          <label class="evidenceAction cameraAction">📷 Tirar foto<input name="attachments" type="file" accept="image/*" capture="environment" data-evidence-camera></label>
+          <label class="evidenceAction galleryAction">🖼️ Escolher da galeria<input name="attachments" type="file" accept="image/*,video/*" multiple data-evidence-gallery></label>
+        </div>
+        <div id="evidenceCount" class="evidenceCount">Nenhuma mídia selecionada.</div>
+        <small>Você pode anexar várias fotos ao mesmo cadastro. Sem sinal, os arquivos ficam guardados neste aparelho até a sincronização.</small>
       </div>
 
       <div class="full">
@@ -287,5 +291,5 @@
 {% endblock %}
 {% block scripts %}
 <script>window.CURRENT_USER_ROLE = {{ session.get("role")|tojson }};</script>
-<script src="{{ url_for('static', filename='technician.js') }}?v=v22-2"></script>
+<script src="{{ url_for('static', filename='technician.js') }}?v=v23"></script>
 {% endblock %}
