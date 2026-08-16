@@ -6,7 +6,7 @@
       integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
       crossorigin="">
 
-<div class="v23DashboardShell v24Executive" id="v23DashboardShell">
+<div class="v23DashboardShell v24Executive v30Executive" id="v23DashboardShell">
   <aside class="v23Sidebar" id="v23Sidebar">
     <div class="v23SidebarBrand"><b>BI Executivo</b><small>Inventário Autopass</small></div>
     <button class="v23Nav active" data-v23-view="overview">▦ <span>Visão Geral</span></button>
@@ -80,12 +80,14 @@
     <span id="gpsCoverageTag" class="tag">GPS 0%</span>
   </div>
 
-  <div class="qualityGrid" style="margin-bottom:16px">
-    <div class="qualityItem"><span>Registros com GPS</span><b id="gpsWith">0</b></div>
-    <div class="qualityItem"><span>Sem GPS</span><b id="gpsWithout">0</b></div>
-    <div class="qualityItem"><span>Cobertura GPS</span><b id="gpsCoverage">0%</b></div>
-    <div class="qualityItem"><span>Última coleta localizada</span><b id="gpsLast">—</b></div>
-  </div>
+  <details class="v30Disclosure">
+    <summary>Auditoria GPS <span>ver indicadores e referência</span></summary>
+    <div class="qualityGrid" style="margin:14px 0 16px">
+      <div class="qualityItem"><span>Registros com GPS</span><b id="gpsWith">0</b></div>
+      <div class="qualityItem"><span>Sem GPS</span><b id="gpsWithout">0</b></div>
+      <div class="qualityItem"><span>Cobertura GPS</span><b id="gpsCoverage">0%</b></div>
+      <div class="qualityItem"><span>Última coleta localizada</span><b id="gpsLast">—</b></div>
+    </div>
 
   <div class="notice" style="margin:8px 0 12px">
     <b>Referência da localidade:</b> selecione uma localidade e clique em
@@ -116,6 +118,8 @@
     <span class="tag">O círculo indica a precisão informada pelo aparelho</span>
   </div>
 
+  </details>
+
   <div style="display:flex;justify-content:flex-end;margin:0 0 8px">
     <button type="button" class="secondary" id="toggleMapFullscreenBtn">Expandir mapa</button>
   </div>
@@ -124,7 +128,9 @@
        style="height:460px;border:1px solid #dfe5ec;border-radius:14px;overflow:hidden;margin-bottom:18px">
   </div>
 
-  <div class="tableWrap">
+  <details class="v30Disclosure v30History">
+    <summary>Histórico de coletas GPS <span>clique para consultar</span></summary>
+    <div class="tableWrap">
     <table>
       <thead>
         <tr>
@@ -140,7 +146,8 @@
         <tr><td colspan="6">Carregando...</td></tr>
       </tbody>
     </table>
-  </div>
+    </div>
+  </details>
 </section>
 
 
@@ -165,7 +172,7 @@
 <section class="card v21ExecutiveCharts v23Panel" data-v23-panel="execution" id="v21ExecutiveCharts">
   <div class="sectionHead">
     <div><h2>Painel executivo do recorte</h2><p class="muted">Leitura visual de execução, pendência e prioridades para apresentação gerencial.</p></div>
-    <span class="tag">V29 · BI EXECUTIVO</span>
+    <span class="tag">V30 · BI EXECUTIVO</span>
   </div>
   <div class="v21ChartGrid">
     <article class="v21ChartPanel">
@@ -187,7 +194,7 @@
 <section class="card v22ExecutiveCockpit v23Panel" data-v23-panel="execution" id="v22ExecutiveCockpit">
   <div class="sectionHead">
     <div><h2>Cockpit executivo</h2><p class="muted">Ritmo de execução, produtividade recente e qualidade das evidências para decisão gerencial.</p></div>
-    <span class="tag">V29 · LIVE</span>
+    <span class="tag">V30 · LIVE</span>
   </div>
   <div class="v22CockpitGrid">
     <article class="v22Panel"><div class="v21ChartTitle"><span>Evolução diária</span><small>inventários registrados</small></div><div id="v22Trend" class="v22Trend"></div></article>
@@ -204,6 +211,13 @@
     <article class="v25Visual"><div class="v25VisualHead"><b>Comparativo por empresa</b><span>localidades</span></div><div id="v25CompanyCompare" class="v25CompanyCompare"></div></article>
     <article class="v25Visual"><div class="v25VisualHead"><b>Radar de atenção</b><span>qualidade</span></div><div id="v25Attention" class="v25Attention"></div></article>
   </div>
+</section>
+
+
+<section class="card v30Contracts v23Panel" data-v23-panel="execution" id="v30Contracts">
+ <div class="sectionHead"><div><span class="eyebrow">GESTÃO CONTRATUAL ATM</span><h2>Contratos e vencimentos</h2><p class="muted">Filtro e exportação dos contratos cadastrados na base ATM.</p></div><button class="secondary" id="v30ContractExport" type="button">Exportar contratos</button></div>
+ <div class="grid4"><div><label>Contrato</label><select id="v30Contract"><option value="">Todos</option></select></div><div><label>Vencimento</label><select id="v30Horizon"><option value="">Todos</option><option value="30">Até 30 dias</option><option value="60">Até 60 dias</option><option value="90">Até 90 dias</option><option value="expired">Vencidos</option></select></div><div class="v30ContractKpi"><span>ATMs no recorte</span><b id="v30ContractCount">0</b></div><div class="v30ContractKpi danger"><span>Vencidos / até 90d</span><b id="v30ContractRisk">0</b></div></div>
+ <div id="v30ContractBars" class="v30ContractBars"></div>
 </section>
 
 <section class="card v25Competition v23Panel" data-v23-panel="competition">
@@ -320,5 +334,5 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
         integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
         crossorigin=""></script>
-<script src="{{url_for('static',filename='manager.js')}}?v=dashboard-v29"></script>
+<script src="{{url_for('static',filename='manager.js')}}?v=dashboard-v30"></script>
 {% endblock %}
