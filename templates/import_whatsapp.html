@@ -1,5 +1,7 @@
 {% extends "base.html" %}
-{% block title %}Importar WhatsApp | Inventário SP{% endblock %}
+{% block title %}Importar WhatsApp | Inventário SP<div id="waProgress" class="waProgressOverlay" hidden><div class="waProgressBox"><b id="waProgressTitle">Processando arquivo…</b><div class="waProgressTrack"><i id="waProgressBar"></i></div><strong id="waProgressPct">0%</strong><small>Não feche esta página durante o processamento.</small></div></div>
+<script>(()=>{document.querySelectorAll('.waTrackedForm').forEach(f=>f.addEventListener('submit',()=>{const o=document.getElementById('waProgress'),b=document.getElementById('waProgressBar'),p=document.getElementById('waProgressPct');o.hidden=false;let n=4;const timer=setInterval(()=>{n=Math.min(94,n+Math.max(1,Math.round((96-n)/9)));b.style.width=n+'%';p.textContent=n+'%';if(n>=94)clearInterval(timer)},450)}));{% if summary %}setTimeout(()=>document.querySelector('.waAnalysisDone')?.scrollIntoView({behavior:'smooth',block:'start'}),120);{% endif %}})();</script>
+{% endblock %}
 {% block content %}
 <section class="dashHero">
   <div>
@@ -8,7 +10,7 @@
     <p>Analisa o histórico completo, remove repetições, confronta com a base e o inventário e preserva fotos/vídeos para consulta.</p>
   </div>
   <div class="heroActions">
-    <a class="secondary buttonLink" href="/evidencias-campo">Abrir Centro de Evidências</a>
+    <a class="secondary buttonLink" href="/evidencias-campo">Abrir Centro de Evidências</a><a class="secondary buttonLink" href="/importar-excel">Importar Excel</a>
   </div>
 </section>
 
@@ -38,7 +40,7 @@
     </div>
     <span class="tag">Storage: {{ storage_note }}</span>
   </div>
-  <form method="post" enctype="multipart/form-data">
+  <form method="post" enctype="multipart/form-data" class="waTrackedForm">
     <input type="hidden" name="action" value="analyze">
     <div class="grid3">
       <div class="full">
@@ -134,7 +136,7 @@
     Esta etapa é <b>idempotente</b>: mensagens, visitas, itens e mídias repetidos são ignorados.
     O histórico completo pode ser reimportado no futuro sem duplicar os dados.
   </p>
-  <form method="post">
+  <form method="post" class="waTrackedForm">
     <input type="hidden" name="action" value="import">
     <input type="hidden" name="staging_key" value="{{ staging_key }}">
     <div class="actions">
@@ -146,4 +148,6 @@
 </section>
 {% endif %}
 {% endif %}
+<div id="waProgress" class="waProgressOverlay" hidden><div class="waProgressBox"><b id="waProgressTitle">Processando arquivo…</b><div class="waProgressTrack"><i id="waProgressBar"></i></div><strong id="waProgressPct">0%</strong><small>Não feche esta página durante o processamento.</small></div></div>
+<script>(()=>{document.querySelectorAll('.waTrackedForm').forEach(f=>f.addEventListener('submit',()=>{const o=document.getElementById('waProgress'),b=document.getElementById('waProgressBar'),p=document.getElementById('waProgressPct');o.hidden=false;let n=4;const timer=setInterval(()=>{n=Math.min(94,n+Math.max(1,Math.round((96-n)/9)));b.style.width=n+'%';p.textContent=n+'%';if(n>=94)clearInterval(timer)},450)}));{% if summary %}setTimeout(()=>document.querySelector('.waAnalysisDone')?.scrollIntoView({behavior:'smooth',block:'start'}),120);{% endif %}})();</script>
 {% endblock %}
