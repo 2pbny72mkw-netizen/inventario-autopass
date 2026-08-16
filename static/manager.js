@@ -1,5 +1,5 @@
-window.AUTOPASS_MANAGER_VERSION='dashboard-v21';
-console.log('AUTOPASS Dashboard Executivo V22 carregado');
+window.AUTOPASS_MANAGER_VERSION='dashboard-v23';
+console.log('AUTOPASS Dashboard Executivo V23 carregado');
 let locations=[];
 let dashboardData=null;
 const $=id=>document.getElementById(id);
@@ -9,14 +9,15 @@ function fmt(n){return new Intl.NumberFormat('pt-BR').format(Number(n||0))}
 function esc(v){return String(v??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'","&#039;")}
 
 const OFFICIAL_EXEC_TYPES=['ATM','VALIDADOR','POS','BLOQUEIO'];
+const DASHBOARD_DISPLAY_TYPES=['ATM','VALIDADOR','POS','TDI','BLOQUEIO','OUTRO'];
 function typeLabel(type){
-  return type==='VALIDADOR'?'Recarga':type==='BLOQUEIO'?'Bloqueio':type;
+  return type==='VALIDADOR'?'Recarga':type==='BLOQUEIO'?'Bloqueio':type==='OUTRO'?'Outro':type;
 }
 function sumObjectValues(obj){return Object.values(obj||{}).reduce((a,b)=>a+Number(b||0),0)}
 function filteredLocationMetrics(rows,type=''){
   const result={
     expected:0,inventoried:0,missing:0,inoperative:0,divergences:0,
-    byType:{ATM:{e:0,i:0},VALIDADOR:{e:0,i:0},POS:{e:0,i:0},TDI:{e:0,i:0},BLOQUEIO:{e:0,i:0}}
+    byType:{ATM:{e:0,i:0},VALIDADOR:{e:0,i:0},POS:{e:0,i:0},TDI:{e:0,i:0},BLOQUEIO:{e:0,i:0},OUTRO:{e:0,i:0}}
   };
   rows.forEach(x=>{
     const exp=x.expected_by_type||{};
@@ -662,7 +663,7 @@ function expectedBreakdown(x){
   if(Object.keys(e).length) return `ATM ${e.ATM||0} · VAL ${e.VALIDADOR||0} · POS ${e.POS||0} · TDI ${e.TDI||0} · BLOQ ${e.BLOQUEIO||0}`;
   return `ATM ${x.expected_atm||0} · VAL ${x.expected_validator||0} · POS ${x.expected_pos||0}`;
 }
-function renderTypeBigNumbers(rows){ rows.forEach(x=>{ const id=x.type; if($('type'+id)) $('type'+id).textContent=fmt(x.expected); if($('type'+id+'Detail')) $('type'+id+'Detail').textContent=`${fmt(x.inventoried)} levantados · ${fmt(x.missing)} faltam · ${x.coverage_pct}%`; }); }
+function renderTypeBigNumbers(rows){ rows.forEach(x=>{ const id=x.type; if($('type'+id)) $('type'+id).textContent=fmt(id==='OUTRO'?x.inventoried:x.expected); if($('type'+id+'Detail')) $('type'+id+'Detail').textContent=id==='OUTRO'?`${fmt(x.inventoried)} encontrado(s) fora da base`:`${fmt(x.inventoried)} levantados · ${fmt(x.missing)} faltam · ${x.coverage_pct}%`; }); const other=locations.reduce((n,x)=>n+Number((x.inventoried_by_type||{}).OUTRO||0),0); if($('typeOUTRO'))$('typeOUTRO').textContent=fmt(other); if($('typeOUTRODetail'))$('typeOUTRODetail').textContent=`${fmt(other)} encontrado(s) fora da base`; }
 function renderTypeProgress(rows){ const box=$('typeProgressList'); if(!box)return; box.innerHTML=rows.map(x=>`<div class="typeProgressRow"><b>${esc(x.type==='VALIDADOR'?'Validador':x.type==='BLOQUEIO'?'Bloqueio':x.type)}</b><div class="companyTrack"><i style="width:${Math.min(100,Number(x.coverage_pct||0))}%"></i></div><small>${x.coverage_pct}%</small></div>`).join(''); }
 function renderExecutiveFilters(){
   const c=$('execCompany'),line=$('execLine');
@@ -694,9 +695,9 @@ function renderExecutiveAnalytics(rows,type){
   $('analyticsInoperative').textContent=fmt(m.inoperative);
   const c=$('execCompany')?.value||'',l=$('execLine')?.value||'';
   $('analyticsContext').textContent=[c||'Todas empresas',l||'Todas linhas',type?typeLabel(type):'Todos os tipos'].join(' · ');
-  const types=type?[type]:OFFICIAL_EXEC_TYPES;
+  const types=type?[type]:DASHBOARD_DISPLAY_TYPES;
   $('analyticsTypes').innerHTML=types.map(t=>{const z=m.byType[t]||{e:0,i:0};const p=z.e?Math.min(100,Math.round(z.i/z.e*100)):0;return `<div class="analyticsTypeRow"><b>${esc(typeLabel(t))}</b><div class="track"><i style="width:${p}%"></i></div><span>${p}%</span></div>`}).join('');
-  const dynamicRows=OFFICIAL_EXEC_TYPES.map(t=>{const z=m.byType[t]||{e:0,i:0};return {type:t,expected:z.e,inventoried:z.i,missing:Math.max(0,z.e-z.i),coverage_pct:z.e?Math.round(z.i/z.e*1000)/10:0}});
+  const dynamicRows=DASHBOARD_DISPLAY_TYPES.map(t=>{const z=m.byType[t]||{e:0,i:0};return {type:t,expected:z.e,inventoried:z.i,missing:Math.max(0,z.e-z.i),coverage_pct:z.e?Math.round(z.i/z.e*1000)/10:0}});
   renderTypeProgress(type?dynamicRows.filter(x=>x.type===type):dynamicRows);
 }
 
@@ -708,10 +709,10 @@ function renderV21ExecutiveCharts(rows,type){
   $('v21Done').textContent=fmt(m.inventoried);
   $('v21Left').textContent=fmt(m.missing);
   $('v21StackedExecution').innerHTML=`<i class="done" style="width:${pct}%"></i><i class="missing" style="width:${Math.max(0,100-pct)}%"></i>`;
-  const types=type?[type]:OFFICIAL_EXEC_TYPES;
+  const types=type?[type]:DASHBOARD_DISPLAY_TYPES;
   $('v21TypeBars').innerHTML=types.map(t=>{
     const z=m.byType[t]||{e:0,i:0}, p=z.e?Math.min(100,Math.round(z.i/z.e*100)):0;
-    return `<div class="v21BarRow"><div><b>${esc(typeLabel(t))}</b><span>${fmt(z.i)}/${fmt(z.e)}</span></div><div class="v21BarTrack"><i style="width:${p}%"></i></div><strong>${p}%</strong></div>`;
+    return `<div class="v21BarRow"><div><b>${esc(typeLabel(t))}</b><span>${t==='OUTRO'?fmt(z.i)+' encontrado(s)':fmt(z.i)+'/'+fmt(z.e)}</span></div><div class="v21BarTrack"><i style="width:${t==='OUTRO'?(z.i?100:0):p}%"></i></div><strong>${t==='OUTRO'?(z.i?'fora base':'0'):p+'%'}</strong></div>`;
   }).join('');
   const priorities=rows.map(x=>{
     const exp=type?Number((x.expected_by_type||{})[type]||0):OFFICIAL_EXEC_TYPES.reduce((a,t)=>a+Number((x.expected_by_type||{})[t]||0),0);
@@ -934,5 +935,41 @@ async function loadFieldEvidenceSummary(){
   }catch(_err){}
 }
 
+// V23 — navegação lateral e primeiro Modo TV
+let v23ActiveView='overview';
+let v23TvTimer=null;
+const V23_TV_VIEWS=['overview','execution','quality','map','evidence','ranking'];
+function v23SetView(view){
+  v23ActiveView=view||'overview';
+  document.querySelectorAll('.v23Panel').forEach(el=>{
+    el.style.display=(el.dataset.v23Panel===v23ActiveView)?'':'none';
+  });
+  document.querySelectorAll('.v23Nav').forEach(btn=>btn.classList.toggle('active',btn.dataset.v23View===v23ActiveView));
+  if(v23ActiveView==='map' && gpsMap) setTimeout(()=>gpsMap.invalidateSize(),100);
+  window.scrollTo({top:0,behavior:document.body.classList.contains('v23TvMode')?'auto':'smooth'});
+}
+function v23StopTv(){
+  if(v23TvTimer){clearInterval(v23TvTimer);v23TvTimer=null;}
+  document.body.classList.remove('v23TvMode');
+  const btn=$('v23TvBtn'); if(btn) btn.querySelector('span').textContent='Modo TV';
+}
+function v23StartTv(){
+  document.body.classList.add('v23TvMode');
+  const btn=$('v23TvBtn'); if(btn) btn.querySelector('span').textContent='Sair da TV';
+  if(document.documentElement.requestFullscreen && !document.fullscreenElement){document.documentElement.requestFullscreen().catch(()=>{});}
+  let idx=Math.max(0,V23_TV_VIEWS.indexOf(v23ActiveView));
+  v23TvTimer=setInterval(()=>{idx=(idx+1)%V23_TV_VIEWS.length;v23SetView(V23_TV_VIEWS[idx]);},15000);
+}
+function initV23DashboardNav(){
+  document.querySelectorAll('.v23Nav').forEach(btn=>btn.addEventListener('click',()=>v23SetView(btn.dataset.v23View)));
+  $('v23TvBtn')?.addEventListener('click',()=>{
+    if(document.body.classList.contains('v23TvMode')){v23StopTv();if(document.fullscreenElement)document.exitFullscreen?.();}
+    else v23StartTv();
+  });
+  document.addEventListener('fullscreenchange',()=>{if(!document.fullscreenElement && document.body.classList.contains('v23TvMode'))v23StopTv();});
+  v23SetView('overview');
+}
+
+initV23DashboardNav();
 loadAll();
 setInterval(loadAll,120000);

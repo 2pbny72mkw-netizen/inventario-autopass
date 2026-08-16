@@ -816,7 +816,8 @@ async function enqueueCurrentForm(form) {
     if(savedGps){const a=Number.isFinite(savedGps.accuracy)?Math.round(savedGps.accuracy):null;setGpsMessage(a!==null?`Último registro salvo com GPS • precisão aproximada ${a} m`:'Último registro salvo com GPS.',true);}
     else setGpsMessage('Último registro salvo sem GPS disponível.',false);
     await refreshConnectionUI(); await loadAlready(); await loadAssets();
-    showMsg('Equipamento salvo neste aparelho com sucesso. O formulário foi limpo e as pendências foram atualizadas.',true);
+    const geoReason=String(record.fields.gps_override_reason||'').trim();
+    showMsg(geoReason ? `Equipamento salvo neste aparelho ✓ • Exceção geográfica registrada: ${geoReason} • aguardando sincronização.` : 'Equipamento salvo neste aparelho com sucesso. O formulário foi limpo e as pendências foram atualizadas.',true);
     return true;
   }catch(err){console.error('Erro ao salvar localmente:',err);showMsg(`Erro ao salvar neste aparelho: ${err?.message||String(err)}`,false);return false;}
 }
@@ -984,7 +985,8 @@ $('invForm').onsubmit = async e => {
       return;
     }
 
-    showMsg('Equipamento salvo no servidor.', true);
+    const geoReason=String(fd.get('gps_override_reason')||'').trim();
+    showMsg(geoReason ? `Equipamento salvo com sucesso ✓ • Exceção geográfica registrada: ${geoReason} • aguardando revisão do gestor.` : 'Equipamento salvo no servidor ✓', true);
     const savedGps = lastGps ? {...lastGps} : null;
     e.target.reset();
     $('location_id').value = current.id;
@@ -1268,4 +1270,36 @@ function updateFieldHeroConnection(){
 }
 window.addEventListener('online',updateFieldHeroConnection); window.addEventListener('offline',updateFieldHeroConnection); updateFieldHeroConnection();
 document.getElementById('equipment_type')?.addEventListener('change',()=>{if(document.getElementById('equipment_type').value)document.getElementById('fieldStep2')?.classList.add('done');});
-document.querySelector('input[name="attachments"]')?.addEventListener('change',e=>{if(e.target.files?.length)document.getElementById('fieldStep3')?.classList.add('done');});
+function updateEvidencePicker(){
+  const inputs=[...document.querySelectorAll('input[name="attachments"]')];
+  const count=inputs.reduce((n,x)=>n+(x.files?.length||0),0);
+  const box=document.getElementById('evidenceCount'); if(box)box.textContent=count?`${count} mídia(s) selecionada(s). Você pode adicionar mais.`:'Nenhuma mídia selecionada.';
+  if(count)document.getElementById('fieldStep3')?.classList.add('done');
+}
+function bindEvidenceInputs(){
+  document.querySelectorAll('input[name="attachments"]').forEach(input=>{
+    if(input.dataset.boundEvidence)return; input.dataset.boundEvidence='1';
+    input.addEventListener('change',()=>{
+      if(input.matches('[data-evidence-camera]') && input.files?.length && !input.dataset.spawned){
+        input.dataset.spawned='1';
+        const label=input.closest('.cameraAction');
+        if(label){
+          label.classList.add('selectedEvidence');
+          if(label.firstChild) label.firstChild.textContent='✅ Foto adicionada ';
+          const clone=label.cloneNode(true);
+          clone.classList.remove('selectedEvidence');
+          const cloneInput=clone.querySelector('input');
+          cloneInput.value='';
+          delete cloneInput.dataset.boundEvidence;
+          delete cloneInput.dataset.spawned;
+          if(clone.firstChild) clone.firstChild.textContent='📷 Tirar outra foto ';
+          label.insertAdjacentElement('afterend',clone);
+          bindEvidenceInputs();
+        }
+      }
+      updateEvidencePicker();
+    });
+  });
+}
+bindEvidenceInputs();
+document.querySelectorAll('input[name="attachments"]').forEach(x=>x.addEventListener('change',updateEvidencePicker));
