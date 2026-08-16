@@ -8,7 +8,7 @@
   "orientation": "any",
   "background_color": "#f3f7fb",
   "theme_color": "#17345d",
-  "description": "Inventário Autopass V15 — App de Campo assistido, operação offline e inteligência operacional.",
+  "description": "Inventário Autopass V22 — BI Executivo, escala operacional multi-dia, evidências persistentes R2 e operação offline-first.",
   "icons": [
     {
       "src": "/static/autopass-logo.png",

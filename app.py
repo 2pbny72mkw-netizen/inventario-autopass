@@ -31,9 +31,9 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V21.0"
-DASHBOARD_RELEASE = "dashboard-v21"
-TEAMS_RELEASE = "teams-v21"
+APP_RELEASE = "V22.0"
+DASHBOARD_RELEASE = "dashboard-v22"
+TEAMS_RELEASE = "teams-v22"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
 FIELD_GPS_GOOD_ACCURACY_M = float(os.getenv("FIELD_GPS_GOOD_ACCURACY_M", "30"))
 FIELD_GPS_MAX_ACCURACY_M = float(os.getenv("FIELD_GPS_MAX_ACCURACY_M", "80"))
@@ -2527,6 +2527,25 @@ def dashboard():
         for typ, exp in OFFICIAL_PARK.items()
     )
 
+    # V22 — evolução recente e produtividade para o cockpit executivo.
+    today_utc = datetime.utcnow().date()
+    start_14 = today_utc - timedelta(days=13)
+    recent_rows = Inventory.query.filter(Inventory.created_at >= datetime.combine(start_14, datetime.min.time())).all()
+    daily_counts = {(start_14 + timedelta(days=i)).isoformat(): 0 for i in range(14)}
+    tech_counts = {}
+    for inv in recent_rows:
+        if inv.created_at:
+            key = inv.created_at.date().isoformat()
+            if key in daily_counts:
+                daily_counts[key] += 1
+        tech_counts[inv.technician_id] = tech_counts.get(inv.technician_id, 0) + 1
+    user_names = {u.id: u.name for u in User.query.filter(User.id.in_(list(tech_counts.keys()) or [-1])).all()}
+    top_technicians = [
+        {"user_id": uid, "name": user_names.get(uid, f"Usuário {uid}"), "count": count}
+        for uid, count in sorted(tech_counts.items(), key=lambda x: (-x[1], user_names.get(x[0], "")))[:8]
+    ]
+    evidence_kpis = _evidence_summary()
+
     return jsonify({
         "release": DASHBOARD_RELEASE,
         "official_park": {
@@ -2551,6 +2570,9 @@ def dashboard():
             "divergences": divergences,
         },
         "by_type": by_type,
+        "trend_14d": [{"date": d, "count": c} for d, c in daily_counts.items()],
+        "top_technicians_14d": top_technicians,
+        "evidence": evidence_kpis,
         "by_company": [{
             "company": x.company,
             "total": int(x.total or 0),
@@ -3660,7 +3682,7 @@ def _r2_get_bytes(key):
 
 
 def _r2_available():
-    required = ("R2_ENDPOINT", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET_NAME")
+    required = ("R2_ENDPOINT_URL", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET_NAME")
     return all(os.environ.get(x, "").strip() for x in required)
 
 
@@ -3689,13 +3711,22 @@ def _wa_load_staged(staging_key):
 
 
 def _evidence_store_media(data, original_name, batch_id):
+    """Persiste mídia de evidência. V22 também repara registros antigos locais quando o R2 está disponível."""
     sha = hashlib.sha256(data).hexdigest()
-    existing = FieldEvidenceMedia.query.filter_by(sha256=sha).first()
-    if existing:
-        return existing, False
-
     safe_name = secure_filename(Path(original_name).name) or f"midia-{sha[:12]}"
     mime = mimetypes.guess_type(safe_name)[0] or "application/octet-stream"
+    existing = FieldEvidenceMedia.query.filter_by(sha256=sha).first()
+
+    if existing:
+        if _r2_available() and existing.storage_kind != "r2":
+            key = f"whatsapp/evidencias/reparados/{sha[:12]}_{safe_name}"
+            _r2_put_bytes(key, data, mime)
+            existing.storage_kind = "r2"
+            existing.storage_key = key
+            existing.mime_type = mime
+            existing.original_name = safe_name
+            return existing, False, True
+        return existing, False, False
 
     if _r2_available():
         key = f"whatsapp/evidencias/{batch_id}/{sha[:12]}_{safe_name}"
@@ -3703,7 +3734,7 @@ def _evidence_store_media(data, original_name, batch_id):
         return FieldEvidenceMedia(
             sha256=sha, original_name=safe_name, mime_type=mime,
             storage_kind="r2", storage_key=key
-        ), True
+        ), True, False
 
     evidence_dir = UPLOAD_DIR / "field_evidence"
     evidence_dir.mkdir(parents=True, exist_ok=True)
@@ -3712,7 +3743,7 @@ def _evidence_store_media(data, original_name, batch_id):
     return FieldEvidenceMedia(
         sha256=sha, original_name=safe_name, mime_type=mime,
         storage_kind="local", storage_key=stored
-    ), True
+    ), True, False
 
 
 def _evidence_summary():
@@ -3740,6 +3771,28 @@ def _evidence_summary():
         "review": review,
         "unresolved_visits": FieldEvidenceVisit.query.filter(FieldEvidenceVisit.location_id.is_(None)).count(),
     }
+
+
+@app.get("/r2-status")
+@manager_required
+def r2_status_v22():
+    configured = _r2_available()
+    payload = {
+        "ok": configured,
+        "release": APP_RELEASE,
+        "storage": "Cloudflare R2",
+        "bucket": os.environ.get("R2_BUCKET_NAME", ""),
+        "endpoint_configured": bool(os.environ.get("R2_ENDPOINT_URL", "").strip()),
+        "access_key_configured": bool(os.environ.get("R2_ACCESS_KEY_ID", "").strip()),
+        "secret_key_configured": bool(os.environ.get("R2_SECRET_ACCESS_KEY", "").strip()),
+    }
+    if request.args.get("test") == "1" and configured:
+        ok, message = r2_test_connection()
+        payload["ok"] = ok
+        payload["connection_test"] = message
+    elif not configured:
+        payload["message"] = "Configure R2_ENDPOINT_URL, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY e R2_BUCKET_NAME."
+    return jsonify(payload), (200 if payload["ok"] else 503)
 
 
 @app.route("/importar-whatsapp", methods=["GET", "POST"])
@@ -3773,6 +3826,8 @@ def import_whatsapp():
                 error = "Arquivo de origem não encontrado. Analise o ZIP novamente."
             else:
                 try:
+                    if not _r2_available():
+                        raise RuntimeError("Cloudflare R2 não está configurado corretamente. A V22 não permite importação definitiva de mídias no armazenamento temporário do Render.")
                     raw = _wa_load_staged(staging_key)
                     preview, summary = _wa_analyze_archive(raw)
                     batch_id = hashlib.sha256(raw).hexdigest()[:16]
@@ -3781,6 +3836,7 @@ def import_whatsapp():
                     inserted_items = 0
                     skipped_items = 0
                     media_uploaded = 0
+                    media_repaired = 0
 
                     with zipfile.ZipFile(io.BytesIO(raw)) as z:
                         names = set(z.namelist())
@@ -3860,17 +3916,14 @@ def import_whatsapp():
                                 if sha in existing_media_hashes:
                                     continue
 
-                                global_media = FieldEvidenceMedia.query.filter_by(sha256=sha).first()
-                                if global_media:
-                                    # Uma mídia pertence a uma visita no modelo. Se repetida em outro relatório,
-                                    # não duplica o arquivo; registra a repetição no texto de auditoria.
-                                    continue
-
-                                media_obj, is_new = _evidence_store_media(data, media_name, batch_id)
-                                media_obj.visit_id = row.id
+                                media_obj, is_new, was_repaired = _evidence_store_media(data, media_name, batch_id)
+                                if not media_obj.visit_id:
+                                    media_obj.visit_id = row.id
                                 if is_new:
                                     db.session.add(media_obj)
                                     media_uploaded += 1
+                                elif was_repaired:
+                                    media_repaired += 1
                                 existing_media_hashes.add(sha)
 
                     db.session.commit()
@@ -3880,7 +3933,8 @@ def import_whatsapp():
                         "inserted_items": inserted_items,
                         "skipped_items": skipped_items,
                         "media_uploaded": media_uploaded,
-                        "storage": "R2" if _r2_available() else "LOCAL TEMPORÁRIO",
+                        "media_repaired": media_repaired,
+                        "storage": "R2",
                     }
 
                 except Exception as exc:
@@ -4003,6 +4057,9 @@ def field_evidence_media(media_id):
         except Exception:
             return "Não foi possível recuperar a mídia do R2.", 502
 
+    local_path = UPLOAD_DIR / "field_evidence" / media.storage_key
+    if not local_path.exists():
+        return "Mídia histórica registrada, mas o arquivo local temporário não existe mais. Reimporte a fonte após validar o R2.", 410
     return send_from_directory(
         UPLOAD_DIR / "field_evidence",
         media.storage_key,

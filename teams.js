@@ -175,17 +175,17 @@ async function loadCalendar(){
   const r=await fetch(`/api/equipes/calendario?${params.toString()}`,{cache:'no-store'});
   const d=await r.json();
   if(!r.ok||!d.ok) throw new Error(d.error||'Falha ao carregar escala.');
+  const requestedDays=Number($('calendarDays').value||14);
+  if((d.dates||[]).length!==requestedDays) throw new Error(`Período retornado inválido: esperado ${requestedDays}, recebido ${(d.dates||[]).length}.`);
 
   if($('calendarRangeSummary')){
     const first=d.dates?.[0], last=d.dates?.[d.dates.length-1];
-    $('calendarRangeSummary').innerHTML=`<b>${d.dates.length} dia(s)</b> · ${first?fmtDate(first):'—'} a ${last?fmtDate(last):'—'} · ${(d.members||[]).length} integrante(s)`;
+    $('calendarRangeSummary').innerHTML=`<b>Exibindo ${d.dates.length} dia(s)</b> · ${first?fmtDate(first):'—'} a ${last?fmtDate(last):'—'} · ${(d.members||[]).length} integrante(s)`;
   }
   if($('calendarTable')) $('calendarTable').style.minWidth=`${Math.max(900,520+(d.dates?.length||0)*92)}px`;
   $('scaleHead').innerHTML=`
     <tr>
-      <th class="stickyTechCol">Nome</th>
-      <th>Categoria</th>
-      <th>Escala</th>
+      <th class="stickyTechCol">Técnico</th>
       <th>Turno</th>
       <th>Entrada</th>
       ${d.dates.map(x=>`<th><b>${weekday(x)}</b><small>${fmtDate(x)}</small></th>`).join('')}
@@ -197,8 +197,6 @@ async function loadCalendar(){
         <b>${esc(t.name)}</b>
         <small>${t.linked?'✓ '+esc(t.linked_user_name):'Não vinculado'}</small>
       </td>
-      <td><span class="categoryBadge ${categoryClass(t.category)}">${esc(t.category)}</span></td>
-      <td>${esc(t.schedule_type)}</td>
       <td>${esc(t.shift)}</td>
       <td>${esc(t.entry||'—')}</td>
       ${t.days.map(day=>`
@@ -373,10 +371,11 @@ async function refreshAll(){
 
 $('refreshTeams').addEventListener('click',refreshAll);
 $('exportScale').addEventListener('click',exportScale);
-$('reloadCalendar').addEventListener('click',()=>loadCalendar().catch(console.error));
-$('calendarCategory').addEventListener('change',()=>loadCalendar().catch(console.error));
-$('calendarDays').addEventListener('change',()=>loadCalendar().catch(console.error));
-$('calendarStart').addEventListener('change',()=>loadCalendar().catch(console.error));
+const reloadCalendarVisible=()=>{ if($('calendarRangeSummary')) $('calendarRangeSummary').textContent='Atualizando período...'; loadCalendar().catch(err=>{console.error(err); if($('calendarRangeSummary')) $('calendarRangeSummary').innerHTML=`<b>Erro:</b> ${esc(err.message)}`;}); };
+$('reloadCalendar').addEventListener('click',reloadCalendarVisible);
+$('calendarCategory').addEventListener('change',reloadCalendarVisible);
+$('calendarDays').addEventListener('change',reloadCalendarVisible);
+$('calendarStart').addEventListener('change',reloadCalendarVisible);
 
 $('toggleTeamMap').addEventListener('click',()=>{
   const wrap=$('teamMapWrap');

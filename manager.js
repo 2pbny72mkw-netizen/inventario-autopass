@@ -1,5 +1,5 @@
 window.AUTOPASS_MANAGER_VERSION='dashboard-v21';
-console.log('AUTOPASS Dashboard Executivo V21 carregado');
+console.log('AUTOPASS Dashboard Executivo V22 carregado');
 let locations=[];
 let dashboardData=null;
 const $=id=>document.getElementById(id);
@@ -721,6 +721,18 @@ function renderV21ExecutiveCharts(rows,type){
   const max=Math.max(1,...priorities.map(x=>x._missing));
   $('v21PriorityBars').innerHTML=priorities.length?priorities.map((x,i)=>`<div class="v21PriorityRow"><span class="rank">${i+1}</span><div class="who"><b>${esc(x.location)}</b><small>${esc(x.company)} · ${esc(x.line)}</small><div class="v21PriorityTrack"><i style="width:${Math.round(x._missing/max*100)}%"></i></div></div><strong>${fmt(x._missing)}</strong></div>`).join(''):'<div class="muted">Nenhuma pendência no recorte atual.</div>';
 }
+
+function renderV22Cockpit(){
+  if(!dashboardData||!$('v22ExecutiveCockpit')) return;
+  const trend=dashboardData.trend_14d||[]; const max=Math.max(1,...trend.map(x=>Number(x.count||0)));
+  $('v22Trend').innerHTML=trend.map(x=>{const h=Math.max(4,Math.round(Number(x.count||0)/max*100)); const d=new Date(x.date+'T12:00:00'); return `<div class="v22TrendCol"><b>${fmt(x.count||0)}</b><i style="height:${h}%"></i><small>${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}</small></div>`}).join('');
+  const tech=dashboardData.top_technicians_14d||[]; const tmax=Math.max(1,...tech.map(x=>Number(x.count||0)));
+  $('v22Productivity').innerHTML=tech.length?tech.map((x,i)=>`<div class="v22ProdRow"><span>${i+1}</span><div><b>${esc(x.name)}</b><div class="v22ProdTrack"><i style="width:${Math.round(Number(x.count||0)/tmax*100)}%"></i></div></div><strong>${fmt(x.count||0)}</strong></div>`).join(''):'<div class="muted">Sem lançamentos nos últimos 14 dias.</div>';
+  const e=dashboardData.evidence||{}; const total=Number(e.items||0), matched=Number(e.matched||0), review=Number(e.review||0), media=Number(e.media||0);
+  const conf=total?Math.round(matched/total*100):0;
+  $('v22EvidenceQuality').innerHTML=`<div class="v22EvidenceHero"><b>${conf}%</b><span>itens conciliados</span></div><div class="v22EvidenceRows"><span>Visitas <b>${fmt(e.visits||0)}</b></span><span>Itens <b>${fmt(total)}</b></span><span>Revisar <b>${fmt(review)}</b></span><span>Fotos/vídeos <b>${fmt(media)}</b></span></div>`;
+}
+
 function updateExecutiveView(){
   if(!dashboardData) return;
   const c=$('execCompany')?.value||'', line=$('execLine')?.value||'', type=$('execType')?.value||'';
@@ -793,6 +805,7 @@ function updateExecutiveView(){
   if($('biCritical')) { const c=(bm.missing>0&&bc<50)?'Crítico':(bm.missing>0||bm.divergences>0||bm.inoperative>0)?'Atenção':'Normal'; $('biCritical').textContent=c; $('biCritical').dataset.state=c; }
   renderCriticalLocations();
   renderLocations();
+  renderV22Cockpit();
 }
 
 function renderCriticalLocations(){
