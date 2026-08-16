@@ -1,0 +1,11 @@
+{
+  "version": "V22.1",
+  "name": "Hotfix R2, Dashboard e Escala",
+  "focus": [
+    "Dashboard não zera se módulos executivos auxiliares falharem",
+    "Escala 7/14/21/31 sempre responde JSON e grade multi-dia",
+    "Reimportação WhatsApp repara mídias históricas pelo SHA antes de deduplicar",
+    "Mídias R2 ausentes são reenviadas a partir da fonte",
+    "Correção do card de visitas de evidências"
+  ]
+}

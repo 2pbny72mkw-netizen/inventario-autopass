@@ -31,9 +31,9 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V22.0"
-DASHBOARD_RELEASE = "dashboard-v22"
-TEAMS_RELEASE = "teams-v22"
+APP_RELEASE = "V22.1"
+DASHBOARD_RELEASE = "dashboard-v22-1"
+TEAMS_RELEASE = "teams-v22-1"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
 FIELD_GPS_GOOD_ACCURACY_M = float(os.getenv("FIELD_GPS_GOOD_ACCURACY_M", "30"))
 FIELD_GPS_MAX_ACCURACY_M = float(os.getenv("FIELD_GPS_MAX_ACCURACY_M", "80"))
@@ -925,51 +925,67 @@ def teams_status_api():
 @app.get("/api/equipes/calendario")
 @teams_view_required
 def teams_calendar_api():
-    _ensure_team_schedule_profiles()
-    start_raw = request.args.get("start", "").strip()
-    days = max(1, min(31, request.args.get("days", type=int) or 14))
-    category = normalize(request.args.get("category", ""))
-
+    """V22.1 — grade multi-dia sempre responde JSON, inclusive em erro controlado."""
     try:
-        start_date = (
-            datetime.strptime(start_raw, "%Y-%m-%d").date()
-            if start_raw else datetime.now(ZoneInfo("America/Sao_Paulo")).date()
-        )
-    except ValueError:
-        return jsonify({"ok": False, "error": "Data inicial inválida."}), 400
+        _ensure_team_schedule_profiles()
+        start_raw = request.args.get("start", "").strip()
+        days = max(1, min(31, request.args.get("days", type=int) or 14))
+        category = normalize(request.args.get("category", ""))
 
-    profiles = TeamScheduleProfile.query.filter_by(active=True).order_by(
-        TeamScheduleProfile.category, TeamScheduleProfile.name
-    ).all()
-    profiles = [p for p in profiles if (not p.user_id) or (db.session.get(User, p.user_id) and db.session.get(User, p.user_id).active)]
-    if category:
-        profiles = [p for p in profiles if normalize(p.category) == category]
+        try:
+            start_date = (
+                datetime.strptime(start_raw, "%Y-%m-%d").date()
+                if start_raw else datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+            )
+        except ValueError:
+            return jsonify({"ok": False, "error": "Data inicial inválida."}), 400
 
-    date_list = [start_date + timedelta(days=i) for i in range(days)]
-    rows = []
+        profiles = TeamScheduleProfile.query.filter_by(active=True).order_by(
+            TeamScheduleProfile.category, TeamScheduleProfile.name
+        ).all()
 
-    for p in profiles:
-        day_rows = []
-        for d in date_list:
-            scheduled = _team_profile_is_scheduled(p, d)
-            day_rows.append({
-                "date": d.isoformat(),
-                "scheduled": scheduled,
-                "shift": p.shift if scheduled else "FOLGA",
-            })
+        active_profiles = []
+        for p in profiles:
+            if p.user_id:
+                user = db.session.get(User, p.user_id)
+                if not user or not user.active:
+                    continue
+            if category and normalize(p.category) != category:
+                continue
+            active_profiles.append(p)
 
-        rows.append({
-            **_profile_to_dict(p),
-            "days": day_rows,
+        date_list = [start_date + timedelta(days=i) for i in range(days)]
+        rows = []
+        for p in active_profiles:
+            day_rows = []
+            for d in date_list:
+                scheduled = bool(_team_profile_is_scheduled(p, d))
+                day_rows.append({
+                    "date": d.isoformat(),
+                    "scheduled": scheduled,
+                    "shift": (p.shift or "") if scheduled else "FOLGA",
+                })
+            row = _profile_to_dict(p)
+            row["days"] = day_rows
+            rows.append(row)
+
+        return jsonify({
+            "ok": True,
+            "release": TEAMS_RELEASE,
+            "start": start_date.isoformat(),
+            "requested_days": days,
+            "dates": [d.isoformat() for d in date_list],
+            "members": rows,
+            "technicians": rows,
         })
-
-    return jsonify({
-        "ok": True,
-        "start": start_date.isoformat(),
-        "dates": [d.isoformat() for d in date_list],
-        "members": rows,
-        "technicians": rows,  # backward compatible
-    })
+    except Exception as exc:
+        app.logger.exception("V22.1: falha no calendário de equipes: %s", exc)
+        db.session.rollback()
+        return jsonify({
+            "ok": False,
+            "release": TEAMS_RELEASE,
+            "error": f"Falha ao montar escala por dias: {type(exc).__name__}: {exc}",
+        }), 500
 
 
 @app.get("/api/equipes/perfis")
@@ -2527,24 +2543,36 @@ def dashboard():
         for typ, exp in OFFICIAL_PARK.items()
     )
 
-    # V22 — evolução recente e produtividade para o cockpit executivo.
+    # V22.1 — os módulos executivos nunca podem derrubar os KPIs principais.
     today_utc = datetime.utcnow().date()
     start_14 = today_utc - timedelta(days=13)
-    recent_rows = Inventory.query.filter(Inventory.created_at >= datetime.combine(start_14, datetime.min.time())).all()
     daily_counts = {(start_14 + timedelta(days=i)).isoformat(): 0 for i in range(14)}
-    tech_counts = {}
-    for inv in recent_rows:
-        if inv.created_at:
-            key = inv.created_at.date().isoformat()
-            if key in daily_counts:
-                daily_counts[key] += 1
-        tech_counts[inv.technician_id] = tech_counts.get(inv.technician_id, 0) + 1
-    user_names = {u.id: u.name for u in User.query.filter(User.id.in_(list(tech_counts.keys()) or [-1])).all()}
-    top_technicians = [
-        {"user_id": uid, "name": user_names.get(uid, f"Usuário {uid}"), "count": count}
-        for uid, count in sorted(tech_counts.items(), key=lambda x: (-x[1], user_names.get(x[0], "")))[:8]
-    ]
-    evidence_kpis = _evidence_summary()
+    top_technicians = []
+    evidence_kpis = {"visits": 0, "items": 0, "media": 0, "matched": 0, "review": 0, "unresolved_visits": 0}
+    try:
+        recent_rows = Inventory.query.filter(
+            Inventory.created_at >= datetime.combine(start_14, datetime.min.time())
+        ).all()
+        tech_counts = {}
+        for inv in recent_rows:
+            if inv.created_at:
+                key = inv.created_at.date().isoformat()
+                if key in daily_counts:
+                    daily_counts[key] += 1
+            if inv.technician_id is not None:
+                tech_counts[inv.technician_id] = tech_counts.get(inv.technician_id, 0) + 1
+        ids = [uid for uid in tech_counts.keys() if uid is not None]
+        user_names = {u.id: u.name for u in User.query.filter(User.id.in_(ids or [-1])).all()}
+        top_technicians = [
+            {"user_id": uid, "name": user_names.get(uid, f"Usuário {uid}"), "count": count}
+            for uid, count in sorted(tech_counts.items(), key=lambda x: (-x[1], user_names.get(x[0], "")))[:8]
+        ]
+    except Exception as exc:
+        app.logger.exception("V22.1: falha não crítica ao montar tendência/produtividade: %s", exc)
+    try:
+        evidence_kpis = _evidence_summary()
+    except Exception as exc:
+        app.logger.exception("V22.1: falha não crítica ao montar KPIs de evidências: %s", exc)
 
     return jsonify({
         "release": DASHBOARD_RELEASE,
@@ -3718,14 +3746,22 @@ def _evidence_store_media(data, original_name, batch_id):
     existing = FieldEvidenceMedia.query.filter_by(sha256=sha).first()
 
     if existing:
-        if _r2_available() and existing.storage_kind != "r2":
-            key = f"whatsapp/evidencias/reparados/{sha[:12]}_{safe_name}"
-            _r2_put_bytes(key, data, mime)
-            existing.storage_kind = "r2"
-            existing.storage_key = key
-            existing.mime_type = mime
-            existing.original_name = safe_name
-            return existing, False, True
+        if _r2_available():
+            needs_repair = existing.storage_kind != "r2"
+            if existing.storage_kind == "r2":
+                try:
+                    # Confirma que o objeto ainda existe; se não existir, reenvia usando os bytes da fonte.
+                    _r2_get_bytes(existing.storage_key)
+                except Exception:
+                    needs_repair = True
+            if needs_repair:
+                key = existing.storage_key if existing.storage_kind == "r2" and existing.storage_key else f"whatsapp/evidencias/reparados/{sha[:12]}_{safe_name}"
+                _r2_put_bytes(key, data, mime)
+                existing.storage_kind = "r2"
+                existing.storage_key = key
+                existing.mime_type = mime
+                existing.original_name = safe_name
+                return existing, False, True
         return existing, False, False
 
     if _r2_available():
@@ -3905,17 +3941,12 @@ def import_whatsapp():
                                 db.session.add(item)
                                 inserted_items += 1
 
-                            existing_media_hashes = {
-                                x.sha256 for x in FieldEvidenceMedia.query.filter_by(visit_id=row.id).all()
-                            }
+                            # V22.1: não descartar pelo SHA antes de verificar/reparar a mídia.
+                            # Registros antigos podem existir no banco e apontar para arquivo local já perdido.
                             for media_name in visit["attachments"]:
                                 if media_name not in names:
                                     continue
                                 data = z.read(media_name)
-                                sha = hashlib.sha256(data).hexdigest()
-                                if sha in existing_media_hashes:
-                                    continue
-
                                 media_obj, is_new, was_repaired = _evidence_store_media(data, media_name, batch_id)
                                 if not media_obj.visit_id:
                                     media_obj.visit_id = row.id
@@ -3924,7 +3955,6 @@ def import_whatsapp():
                                     media_uploaded += 1
                                 elif was_repaired:
                                     media_repaired += 1
-                                existing_media_hashes.add(sha)
 
                     db.session.commit()
                     import_result = {
