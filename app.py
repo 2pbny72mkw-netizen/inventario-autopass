@@ -31,8 +31,8 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V24.0"
-DASHBOARD_RELEASE = "dashboard-v22-2"
+APP_RELEASE = "V25.0"
+DASHBOARD_RELEASE = "dashboard-v25"
 TEAMS_RELEASE = "teams-v22-2"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
 FIELD_GPS_GOOD_ACCURACY_M = float(os.getenv("FIELD_GPS_GOOD_ACCURACY_M", "30"))
@@ -3935,12 +3935,22 @@ def _evidence_summary():
             "EVIDÊNCIA FORA DO PARQUE OFICIAL",
         ))
     ).count()
+    competition = {}
+    for row in FieldEvidenceVisit.query.with_entities(FieldEvidenceVisit.competition_text).all():
+        text = (row[0] or "").strip()
+        if not text:
+            continue
+        for label, regex in (("ATM", r"ATM\s*[:=-]?\s*(\d+)"), ("POS", r"POS\s*[:=-]?\s*(\d+)"), ("Recarga", r"(?:RECARGA|VALIDADOR)\s*[:=-]?\s*(\d+)")):
+            vals = [int(x) for x in re.findall(regex, text, flags=re.I)]
+            if vals: competition[label] = competition.get(label, 0) + sum(vals)
     return {
         "visits": visits,
         "items": items,
         "media": media,
         "matched": matched,
         "review": review,
+        "competition": competition,
+        "competition_total": sum(competition.values()),
         "unresolved_visits": FieldEvidenceVisit.query.filter(FieldEvidenceVisit.location_id.is_(None)).count(),
     }
 
