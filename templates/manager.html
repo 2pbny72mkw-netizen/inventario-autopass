@@ -61,9 +61,84 @@
   </div>
 <div id="filterContext" class="filterContext">Todas empresas · Todas linhas · Todos os tipos</div></section>
 
+<section class="card v23Panel" data-v23-panel="overview map">
+  <div class="cardHead">
+    <div>
+      <h2>Mapa operacional e auditoria GPS</h2>
+      <p>O mapa mostra uma posição atual por técnico. A tabela preserva as últimas coletas para auditoria.</p>
+    </div>
+    <span id="gpsCoverageTag" class="tag">GPS 0%</span>
+  </div>
+
+  <div class="qualityGrid" style="margin-bottom:16px">
+    <div class="qualityItem"><span>Registros com GPS</span><b id="gpsWith">0</b></div>
+    <div class="qualityItem"><span>Sem GPS</span><b id="gpsWithout">0</b></div>
+    <div class="qualityItem"><span>Cobertura GPS</span><b id="gpsCoverage">0%</b></div>
+    <div class="qualityItem"><span>Última coleta localizada</span><b id="gpsLast">—</b></div>
+  </div>
+
+  <div class="notice" style="margin:8px 0 12px">
+    <b>Referência da localidade:</b> selecione uma localidade e clique em
+    <b>Definir referência no mapa</b>. Depois clique no ponto correto da estação/localidade.
+    O sistema passa a comparar o GPS da coleta com essa referência.
+  </div>
+
+  <div class="grid3" style="margin-bottom:12px">
+    <div>
+      <label>Localidade para referência</label>
+      <select id="mapLocationSelect"><option value="">Selecione</option></select>
+    </div>
+    <div style="display:flex;align-items:end">
+      <button type="button" class="secondary" id="setReferenceBtn">Definir referência no mapa</button>
+    </div>
+    <div>
+      <label>Status</label>
+      <div id="referenceStatus" class="muted" style="padding-top:10px">Nenhuma localidade selecionada.</div>
+    </div>
+  </div>
+
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 12px">
+    <span class="tag">● coleta GPS</span>
+    <span class="tag">◆ referência da localidade</span>
+    <span class="tag">🟢 até 30 m</span>
+    <span class="tag">🟠 31–80 m</span>
+    <span class="tag">🔴 acima de 80 m</span>
+    <span class="tag">O círculo indica a precisão informada pelo aparelho</span>
+  </div>
+
+  <div style="display:flex;justify-content:flex-end;margin:0 0 8px">
+    <button type="button" class="secondary" id="toggleMapFullscreenBtn">Expandir mapa</button>
+  </div>
+
+  <div id="gpsMap"
+       style="height:460px;border:1px solid #dfe5ec;border-radius:14px;overflow:hidden;margin-bottom:18px">
+  </div>
+
+  <div class="tableWrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Data/hora</th>
+          <th>Técnico</th>
+          <th>Localidade</th>
+          <th>Equipamento</th>
+          <th>Precisão</th>
+          <th>Coordenadas</th>
+        </tr>
+      </thead>
+      <tbody id="gpsRows">
+        <tr><td colspan="6">Carregando...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+
+
+
 
 <section class="card executiveAnalytics v23Panel" data-v23-panel="overview" id="executiveAnalytics">
-  <div class="sectionHead"><div><h2>Visão analítica do recorte</h2><p class="muted">Indicadores e gráficos acompanham Empresa, Linha e Tipo selecionados acima.</p></div><span class="tag" id="analyticsContext">Visão geral</span></div>
+  <div class="sectionHead"><div><h2>Resumo executivo do recorte</h2><p class="muted">Execução, pendência, qualidade e composição do parque em uma leitura visual.</p></div><span class="tag" id="analyticsContext">Visão geral</span></div>
   <div class="biExecutiveStrip">
     <article><span>Execução</span><b id="biCoverage">0%</b><small>previsto × inventariado</small></article>
     <article><span>Pendência</span><b id="biMissing">0</b><small>ativos ainda não conciliados</small></article>
@@ -80,7 +155,7 @@
 <section class="card v21ExecutiveCharts v23Panel" data-v23-panel="execution" id="v21ExecutiveCharts">
   <div class="sectionHead">
     <div><h2>Painel executivo do recorte</h2><p class="muted">Leitura visual de execução, pendência e prioridades para apresentação gerencial.</p></div>
-    <span class="tag">V25.0 · BI Executivo</span>
+    <span class="tag">V25.1 · BI Executivo</span>
   </div>
   <div class="v21ChartGrid">
     <article class="v21ChartPanel">
@@ -102,7 +177,7 @@
 <section class="card v22ExecutiveCockpit v23Panel" data-v23-panel="execution" id="v22ExecutiveCockpit">
   <div class="sectionHead">
     <div><h2>Cockpit executivo</h2><p class="muted">Ritmo de execução, produtividade recente e qualidade das evidências para decisão gerencial.</p></div>
-    <span class="tag">V25.0 · 14 dias</span>
+    <span class="tag">V25.1 · 14 dias</span>
   </div>
   <div class="v22CockpitGrid">
     <article class="v22Panel"><div class="v21ChartTitle"><span>Evolução diária</span><small>inventários registrados</small></div><div id="v22Trend" class="v22Trend"></div></article>
@@ -180,78 +255,6 @@
     <div class="cardHead"><div><h2>Localidades com maior pendência</h2><p>Prioridade operacional baseada no parque ainda faltante.</p></div></div>
     <div id="criticalLocations" class="criticalList"></div>
   </article>
-</section>
-
-<section class="card v23Panel" data-v23-panel="map">
-  <div class="cardHead">
-    <div>
-      <h2>Mapa operacional e auditoria GPS</h2>
-      <p>O mapa mostra uma posição atual por técnico. A tabela preserva as últimas coletas para auditoria.</p>
-    </div>
-    <span id="gpsCoverageTag" class="tag">GPS 0%</span>
-  </div>
-
-  <div class="qualityGrid" style="margin-bottom:16px">
-    <div class="qualityItem"><span>Registros com GPS</span><b id="gpsWith">0</b></div>
-    <div class="qualityItem"><span>Sem GPS</span><b id="gpsWithout">0</b></div>
-    <div class="qualityItem"><span>Cobertura GPS</span><b id="gpsCoverage">0%</b></div>
-    <div class="qualityItem"><span>Última coleta localizada</span><b id="gpsLast">—</b></div>
-  </div>
-
-  <div class="notice" style="margin:8px 0 12px">
-    <b>Referência da localidade:</b> selecione uma localidade e clique em
-    <b>Definir referência no mapa</b>. Depois clique no ponto correto da estação/localidade.
-    O sistema passa a comparar o GPS da coleta com essa referência.
-  </div>
-
-  <div class="grid3" style="margin-bottom:12px">
-    <div>
-      <label>Localidade para referência</label>
-      <select id="mapLocationSelect"><option value="">Selecione</option></select>
-    </div>
-    <div style="display:flex;align-items:end">
-      <button type="button" class="secondary" id="setReferenceBtn">Definir referência no mapa</button>
-    </div>
-    <div>
-      <label>Status</label>
-      <div id="referenceStatus" class="muted" style="padding-top:10px">Nenhuma localidade selecionada.</div>
-    </div>
-  </div>
-
-  <div style="display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 12px">
-    <span class="tag">● coleta GPS</span>
-    <span class="tag">◆ referência da localidade</span>
-    <span class="tag">🟢 até 30 m</span>
-    <span class="tag">🟠 31–80 m</span>
-    <span class="tag">🔴 acima de 80 m</span>
-    <span class="tag">O círculo indica a precisão informada pelo aparelho</span>
-  </div>
-
-  <div style="display:flex;justify-content:flex-end;margin:0 0 8px">
-    <button type="button" class="secondary" id="toggleMapFullscreenBtn">Expandir mapa</button>
-  </div>
-
-  <div id="gpsMap"
-       style="height:460px;border:1px solid #dfe5ec;border-radius:14px;overflow:hidden;margin-bottom:18px">
-  </div>
-
-  <div class="tableWrap">
-    <table>
-      <thead>
-        <tr>
-          <th>Data/hora</th>
-          <th>Técnico</th>
-          <th>Localidade</th>
-          <th>Equipamento</th>
-          <th>Precisão</th>
-          <th>Coordenadas</th>
-        </tr>
-      </thead>
-      <tbody id="gpsRows">
-        <tr><td colspan="6">Carregando...</td></tr>
-      </tbody>
-    </table>
-  </div>
 </section>
 
 <section class="card v23Panel" data-v23-panel="ranking">

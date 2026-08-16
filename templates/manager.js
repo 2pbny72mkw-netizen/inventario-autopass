@@ -959,7 +959,7 @@ const V23_TV_VIEWS=['overview','execution','competition','quality','map','eviden
 function v23SetView(view){
   v23ActiveView=view||'overview';
   document.querySelectorAll('.v23Panel').forEach(el=>{
-    el.style.display=(el.dataset.v23Panel===v23ActiveView)?'':'none';
+    el.style.display=String(el.dataset.v23Panel||'').split(/\s+/).includes(v23ActiveView)?'':'none';
   });
   document.querySelectorAll('.v23Nav').forEach(btn=>btn.classList.toggle('active',btn.dataset.v23View===v23ActiveView));
   if(v23ActiveView==='map' && gpsMap) setTimeout(()=>gpsMap.invalidateSize(),100);
