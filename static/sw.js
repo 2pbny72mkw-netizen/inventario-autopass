@@ -1,7 +1,7 @@
-const VERSION='autopass-v30';
+const VERSION='autopass-v32';
 const SHELL=`${VERSION}-shell`; const DATA=`${VERSION}-data`;
 const OFFLINE='/offline';
-const APP_SHELL=[OFFLINE,'/tecnico','/static/app.css?v=v30','/static/autopass-logo.png','/static/technician.js?v=v30'];
+const APP_SHELL=[OFFLINE,'/tecnico','/static/app.css?v=v32','/static/autopass-logo.png','/static/technician.js?v=v32'];
 self.addEventListener('install',event=>event.waitUntil((async()=>{const c=await caches.open(SHELL);for(const u of APP_SHELL){try{const r=await fetch(u,{cache:'reload'});if(r&&r.ok)await c.put(u,r.clone())}catch(_){}}await self.skipWaiting()})()));
 self.addEventListener('activate',event=>event.waitUntil((async()=>{for(const key of await caches.keys())if(!key.startsWith(VERSION))await caches.delete(key);await self.clients.claim()})()));
 async function safeFetch(req,fallback){try{const r=await fetch(req);if(r)return r}catch(_){} if(fallback){const c=await caches.match(fallback);if(c)return c} const hit=await caches.match(req);if(hit)return hit;return new Response('Sem conexão',{status:503,headers:{'Content-Type':'text/plain; charset=utf-8'}})}

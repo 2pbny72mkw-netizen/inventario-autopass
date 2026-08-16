@@ -806,6 +806,15 @@ async function hasLocalDuplicate(record) {
   );
 }
 
+function resetFieldWorkflowAfterSave(){
+  ['fieldStep1','fieldStep2','fieldStep3','fieldStep4'].forEach((id,idx)=>{
+    const el=document.getElementById(id); if(!el)return; el.classList.remove('done','active');
+    if(idx===0)el.classList.add('active');
+  });
+  resetEvidencePickerUI();
+  try{window.scrollTo({top:0,behavior:'smooth'})}catch(_){window.scrollTo(0,0)}
+}
+
 async function enqueueCurrentForm(form) {
   try{
     showMsg('Preparando salvamento local...',true);
@@ -813,7 +822,7 @@ async function enqueueCurrentForm(form) {
     if(await hasLocalDuplicate(record)){showMsg('Este equipamento já está na fila de sincronização deste aparelho.',false);return false;}
     await idbPut(STORE_QUEUE,record);
     const savedGps=lastGps?{...lastGps}:null;
-    form.reset(); resetEvidencePickerUI(); $('location_id').value=current.id; clearGpsFields(); updateEquipmentTypeUI(); renderSelectedBaseInfo(null);
+    form.reset(); resetFieldWorkflowAfterSave(); $('location_id').value=current.id; clearGpsFields(); updateEquipmentTypeUI(); renderSelectedBaseInfo(null);
     if(savedGps){const a=Number.isFinite(savedGps.accuracy)?Math.round(savedGps.accuracy):null;setGpsMessage(a!==null?`Último registro salvo com GPS • precisão aproximada ${a} m`:'Último registro salvo com GPS.',true);}
     else setGpsMessage('Último registro salvo sem GPS disponível.',false);
     await refreshConnectionUI(); await loadAlready(); await loadAssets();
@@ -939,7 +948,7 @@ $('invForm').onsubmit = async e => {
       const j=await r.json().catch(()=>({ok:false,error:'Resposta inválida do servidor.'}));
       if(!r.ok){showMsg(j.error||'Não foi possível atualizar o cadastro.',false);return;}
       showMsg('Cadastro atualizado com sucesso.',true);
-      editingInventoryId=null; e.target.reset(); resetEvidencePickerUI(); $('location_id').value=current.id; clearGpsFields(); updateEquipmentTypeUI(); renderSelectedBaseInfo(null);
+      editingInventoryId=null; e.target.reset(); resetFieldWorkflowAfterSave(); $('location_id').value=current.id; clearGpsFields(); updateEquipmentTypeUI(); renderSelectedBaseInfo(null);
       $('saveBtn').textContent=isLocalMode()?'Salvar no aparelho':'Salvar equipamento';
       await loadAlready(); await loadAssets(); renderLocationPending(); return;
     }catch(err){console.error('Erro ao editar cadastro:',err);showMsg('Erro ao atualizar o cadastro.',false);return;}
@@ -990,6 +999,7 @@ $('invForm').onsubmit = async e => {
     showMsg(geoReason ? `Equipamento salvo com sucesso ✓ • Exceção geográfica registrada: ${geoReason} • aguardando revisão do gestor.` : 'Equipamento salvo no servidor ✓', true);
     const savedGps = lastGps ? {...lastGps} : null;
     e.target.reset();
+    resetFieldWorkflowAfterSave();
     $('location_id').value = current.id;
     clearGpsFields();
     if (savedGps) {
@@ -1330,3 +1340,21 @@ window.addEventListener('pageshow',()=>setTimeout(()=>v30MaybeSync('pageshow'),7
 window.addEventListener('focus',()=>setTimeout(()=>v30MaybeSync('focus'),700));
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')setTimeout(()=>v30MaybeSync('visible'),700)});
 setInterval(()=>v30MaybeSync('heartbeat'),20000);
+
+
+// V32 — progresso compacto da localidade atual para o técnico
+function updateFieldProgressMeter(){
+  const summary=document.getElementById('locationPendingSummary');
+  const pctEl=document.getElementById('fieldProgressPct'); const bar=document.getElementById('fieldProgressBar');
+  if(!summary||!pctEl||!bar)return;
+  const txt=summary.textContent||'';
+  let pct=0;
+  const m=txt.match(/(\d+)\s*de\s*(\d+)/i);
+  if(m){const done=Number(m[1]), total=Number(m[2]); pct=total?Math.round(done*100/total):0;}
+  const p=txt.match(/(\d{1,3})%/); if(p)pct=Math.max(0,Math.min(100,Number(p[1])));
+  pctEl.textContent=`${pct}%`; bar.style.width=`${pct}%`;
+}
+const _v32ProgressObserver=new MutationObserver(updateFieldProgressMeter);
+const _v32ProgressTarget=document.getElementById('locationPendingSummary');
+if(_v32ProgressTarget)_v32ProgressObserver.observe(_v32ProgressTarget,{childList:true,subtree:true,characterData:true});
+updateFieldProgressMeter();

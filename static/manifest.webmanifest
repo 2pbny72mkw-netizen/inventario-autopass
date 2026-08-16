@@ -7,8 +7,8 @@
   "display": "standalone",
   "orientation": "any",
   "background_color": "#f3f7fb",
-  "theme_color": "#17345d",
-  "description": "Inventário Autopass V26 — BI Executivo, escala operacional multi-dia, evidências persistentes R2 e PWA offline-first com fila local, múltiplas mídias e sincronização posterior.",
+  "theme_color": "#071a32",
+  "description": "Inventário Autopass V32 — Suporte a Campo, BI Executivo, Patrimônio 360 e PWA offline-first com sincronização de múltiplas mídias.",
   "icons": [
     {
       "src": "/static/autopass-logo.png",
