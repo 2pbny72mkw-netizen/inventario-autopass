@@ -1,4 +1,4 @@
-Inventário Autopass V22.1
+Inventário Autopass V22.2
 
 Hotfix concentrado após homologação da V22.0.
 
@@ -7,6 +7,6 @@ Hotfix concentrado após homologação da V22.0.
 3. Reimportação do WhatsApp não ignora SHA antes de tentar reparar mídia histórica.
 4. Registro R2 existente, mas objeto ausente, é reenviado.
 5. Cards de Evidências corrigidos para a chave items.
-6. Cache/PWA atualizado para v22-1.
+6. Cache/PWA atualizado para v22-2.
 
 Antes da carga completa do WhatsApp: validar /r2-status?test=1 e importar uma amostra pequena.
