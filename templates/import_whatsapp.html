@@ -3,7 +3,7 @@
 {% block content %}
 <section class="dashHero">
   <div>
-    <span class="eyebrow">V10.0 · AUDITORIA DE CAMPO</span>
+    <span class="eyebrow">V22.0 · AUDITORIA DE CAMPO</span>
     <h1>Importar evidências do WhatsApp</h1>
     <p>Analisa o histórico completo, remove repetições, confronta com a base e o inventário e preserva fotos/vídeos para consulta.</p>
   </div>
@@ -20,7 +20,8 @@
     <article class="kpi"><span>Visitas atualizadas</span><b>{{ import_result.updated_visits }}</b></article>
     <article class="kpi"><span>Itens novos</span><b>{{ import_result.inserted_items }}</b></article>
     <article class="kpi warningKpi"><span>Itens repetidos ignorados</span><b>{{ import_result.skipped_items }}</b></article>
-    <article class="kpi"><span>Mídias preservadas</span><b>{{ import_result.media_uploaded }}</b></article>
+    <article class="kpi"><span>Mídias novas</span><b>{{ import_result.media_uploaded }}</b></article>
+    <article class="kpi successKpi"><span>Mídias reparadas</span><b>{{ import_result.media_repaired or 0 }}</b></article>
   </div>
   <div class="notice">
     Os dados foram gravados como <b>evidência de campo</b>. Eles não alteram os Big Numbers oficiais nem criam inventário automaticamente.
@@ -43,7 +44,7 @@
       <div class="full">
         <label>ZIP exportado do WhatsApp *</label>
         <input type="file" name="zip_file" accept=".zip,application/zip" required>
-        <small>Recomendado: Cloudflare R2 configurado para manter as mídias de forma persistente.</small>
+        <small>A V22 exige Cloudflare R2 na importação definitiva. Diagnóstico: <a href="/r2-status?test=1" target="_blank">testar R2</a>.</small>
       </div>
     </div>
     <div class="actions">
