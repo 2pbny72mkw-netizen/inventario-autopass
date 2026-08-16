@@ -5,7 +5,7 @@
 
 <section class="dashHero teamsHero">
   <div>
-    <span class="eyebrow">V25.0 · CENTRAL OPERACIONAL</span>
+    <span class="eyebrow">V26 · CENTRAL OPERACIONAL</span>
     <h1>Equipes em Campo</h1>
     <p>Técnicos, supervisores e apoio: escala, entrada, vínculo com usuários e última localização autorizada.</p>
   </div>
@@ -57,13 +57,8 @@
       <p class="muted">Fonte principal: cadastro de usuários. 12x36 usa a referência individual; 5x2 segue segunda a sexta. Situações como férias/licença sobrepõem a jornada.</p>
     </div>
     <div class="calendarControls">
-      <label>Categoria
-        <select id="calendarCategory">
-          <option value="">Todos</option>
-          <option value="TECNICO">Técnicos</option>
-          <option value="SUPERVISOR">Supervisores</option>
-          <option value="APOIO">Apoio</option>
-        </select>
+      <label>Cargo
+        <select id="calendarCategory"><option value="">Todos os cargos</option></select>
       </label>
       <label>Início <input type="date" id="calendarStart"></label>
       <label>Dias
@@ -86,16 +81,21 @@
   </div>
 </section>
 
-<section class="card operationalTeamTable">
+<section class="card teamCollapsible">
+  <button type="button" class="teamSectionToggle" id="toggleTodayOperational" aria-expanded="false">Ver operação de hoje <span>＋</span></button>
+  <div id="todayOperationalContent" class="teamCollapsibleContent hidden">
   <div class="sectionHead"><div><h2>Visão operacional de hoje</h2><p class="muted">Equipe, função, jornada e situação de campo em uma leitura única.</p></div><span class="tag" id="teamClock">—</span></div>
   <div class="scaleTableWrap">
     <table class="scaleTable"><thead><tr><th>Nome</th><th>Cargo</th><th>Escala</th><th>Horário</th><th>Entrada</th><th>Linhas</th><th>Situação</th><th>Última posição</th></tr></thead><tbody id="todayTeamTable"></tbody></table>
   </div>
-</section>
+</div></section>
 
-<section class="card">
+<section class="card teamCollapsible">
+  <button type="button" class="teamSectionToggle" id="toggleExpectedTeam" aria-expanded="false">Ver equipe prevista hoje <span>＋</span></button>
+  <div id="expectedTeamContent" class="teamCollapsibleContent hidden">
   <div class="sectionHead"><div><h2>Equipe prevista hoje</h2><p class="muted">Cards individuais para foto, vínculo e acompanhamento rápido.</p></div></div>
   <div id="teamCards" class="teamCards"></div>
+  </div>
 </section>
 
 {% if session.get('role') == 'manager' %}
@@ -195,5 +195,5 @@
 {% endif %}
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="{{ url_for('static', filename='teams.js') }}?v=teams-v24"></script>
+<script src="{{ url_for('static', filename='teams.js') }}?v=teams-v26"></script>
 {% endblock %}
