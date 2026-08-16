@@ -176,6 +176,11 @@ async function loadCalendar(){
   const d=await r.json();
   if(!r.ok||!d.ok) throw new Error(d.error||'Falha ao carregar escala.');
 
+  if($('calendarRangeSummary')){
+    const first=d.dates?.[0], last=d.dates?.[d.dates.length-1];
+    $('calendarRangeSummary').innerHTML=`<b>${d.dates.length} dia(s)</b> · ${first?fmtDate(first):'—'} a ${last?fmtDate(last):'—'} · ${(d.members||[]).length} integrante(s)`;
+  }
+  if($('calendarTable')) $('calendarTable').style.minWidth=`${Math.max(900,520+(d.dates?.length||0)*92)}px`;
   $('scaleHead').innerHTML=`
     <tr>
       <th class="stickyTechCol">Nome</th>
@@ -200,8 +205,9 @@ async function loadCalendar(){
         <td class="${day.scheduled?'scaleWork':'scaleOff'}">
           ${day.scheduled?esc(t.shift.replaceAll(':00','')):'Folga'}
         </td>`).join('')}
-    </tr>`).join('');
+    </tr>`).join('');  if($('calendarTableWrap')) $('calendarTableWrap').scrollLeft=0;
 }
+
 
 async function loadProfiles(){
   if(!$('scheduleProfiles')) return;

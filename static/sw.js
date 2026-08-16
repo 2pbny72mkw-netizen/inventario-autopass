@@ -1,4 +1,4 @@
-const VERSION='autopass-v18';
+const VERSION='autopass-v21';
 const SHELL=`${VERSION}-shell`; const DATA=`${VERSION}-data`;
 const APP_SHELL=['/offline','/static/app.css?v=v18','/static/autopass-logo.png','/static/technician.js?v=v18'];
 self.addEventListener('install',e=>e.waitUntil(caches.open(SHELL).then(c=>c.addAll(APP_SHELL)).then(()=>self.skipWaiting())));
