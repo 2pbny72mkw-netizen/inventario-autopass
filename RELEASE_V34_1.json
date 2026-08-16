@@ -1,0 +1,14 @@
+{
+  "version": "V34.1",
+  "application": "V34.1",
+  "dashboard": "dashboard-v34-1",
+  "teams": "teams-v34-1",
+  "base": "1408-5",
+  "focus": [
+    "Big Numbers somente na Visão Geral",
+    "Mapa dedicado em tela cheia útil",
+    "Modo TV 16:9 estável e sem rolagem",
+    "Importação WhatsApp com ZIP em disco temporário e commits incrementais",
+    "Menor uso de memória na validação e upload de mídias"
+  ]
+}

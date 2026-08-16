@@ -14,6 +14,8 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import time
+import tempfile
+import shutil
 from functools import wraps
 
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify, flash, send_from_directory, Response, send_file
@@ -31,9 +33,9 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V33.0"
-DASHBOARD_RELEASE = "dashboard-v33"
-TEAMS_RELEASE = "teams-v33"
+APP_RELEASE = "V34.1"
+DASHBOARD_RELEASE = "dashboard-v34-1"
+TEAMS_RELEASE = "teams-v34-1"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
 FIELD_GPS_GOOD_ACCURACY_M = float(os.getenv("FIELD_GPS_GOOD_ACCURACY_M", "30"))
 FIELD_GPS_MAX_ACCURACY_M = float(os.getenv("FIELD_GPS_MAX_ACCURACY_M", "80"))
@@ -3050,7 +3052,9 @@ def attachments(inventory_id):
         "inventory_id": a.inventory_id,
         "original_name": a.original_name,
         "stored_name": a.stored_name,
-        "mime_type": a.mime_type
+        "mime_type": a.mime_type,
+        "storage": "R2" if (a.stored_name or "").startswith("r2__") else "LOCAL",
+        "url": url_for("uploaded", name=a.stored_name)
     } for a in rows])
 
 
@@ -3810,7 +3814,8 @@ def _wa_visit_source_key(msg, station):
 
 
 def _wa_analyze_archive(raw):
-    with zipfile.ZipFile(io.BytesIO(raw)) as z:
+    source = raw if isinstance(raw, (str, Path)) else io.BytesIO(raw)
+    with zipfile.ZipFile(source) as z:
         names = z.namelist()
         chat_names = [n for n in names if n.lower().endswith("_chat.txt") or n.lower().endswith(".txt")]
         if not chat_names:
@@ -4097,6 +4102,40 @@ def _wa_load_staged(staging_key):
         return path.read_bytes()
     raise ValueError("Origem de importação inválida.")
 
+def _wa_materialize_staged(staging_key):
+    """Materializa o ZIP em disco temporário sem mantê-lo inteiro na RAM."""
+    tmp = tempfile.NamedTemporaryFile(prefix="wa-import-", suffix=".zip", delete=False)
+    tmp_path = Path(tmp.name)
+    try:
+        if staging_key.startswith("r2:"):
+            obj = r2_client().get_object(Bucket=os.environ["R2_BUCKET_NAME"], Key=staging_key[3:])
+            body = obj["Body"]
+            while True:
+                chunk = body.read(1024 * 1024)
+                if not chunk:
+                    break
+                tmp.write(chunk)
+        elif staging_key.startswith("local:"):
+            src = UPLOAD_DIR / "whatsapp_staging" / staging_key[6:]
+            with src.open("rb") as fh:
+                shutil.copyfileobj(fh, tmp, length=1024 * 1024)
+        else:
+            raise ValueError("Origem de importação inválida.")
+        tmp.flush(); tmp.close()
+        return tmp_path
+    except Exception:
+        try: tmp.close()
+        except Exception: pass
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+def _sha256_file(path):
+    h = hashlib.sha256()
+    with Path(path).open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
 
 def _evidence_store_media(data, original_name, batch_id):
     """Persiste mídia de evidência. V22 também repara registros antigos locais quando o R2 está disponível."""
@@ -4110,8 +4149,8 @@ def _evidence_store_media(data, original_name, batch_id):
             needs_repair = existing.storage_kind != "r2"
             if existing.storage_kind == "r2":
                 try:
-                    # Confirma que o objeto ainda existe; se não existir, reenvia usando os bytes da fonte.
-                    _r2_get_bytes(existing.storage_key)
+                    # V34.1: HEAD evita carregar a mídia existente inteira em memória apenas para validar sua existência.
+                    r2_client().head_object(Bucket=os.environ["R2_BUCKET_NAME"], Key=existing.storage_key)
                 except Exception:
                     needs_repair = True
             if needs_repair:
@@ -4203,29 +4242,79 @@ def r2_status_v22():
 
 @app.route("/importar-excel", methods=["GET", "POST"])
 @manager_required
-def import_excel():
-    preview=[]; error=None; filename=None
-    if request.method=="POST":
-        upload=request.files.get("excel_file")
-        if not upload or not upload.filename.lower().endswith((".xlsx",".xlsm")):
-            error="Selecione uma planilha Excel .xlsx ou .xlsm."
-        else:
-            try:
-                filename=secure_filename(upload.filename) or upload.filename
-                wb=load_workbook(io.BytesIO(upload.read()), read_only=True, data_only=True)
-                for ws in wb.worksheets:
-                    rows=ws.iter_rows(values_only=True)
-                    headers=next(rows,())
-                    headers=[str(x).strip() if x is not None else "" for x in headers]
-                    sample=[]; count=0
-                    for row in rows:
-                        if not any(v not in (None,"") for v in row): continue
-                        count+=1
-                        if len(sample)<5: sample.append(["" if v is None else str(v) for v in row[:12]])
-                    preview.append({"sheet":ws.title,"headers":headers[:12],"rows":count,"sample":sample})
-            except Exception as exc:
-                error=f"Não foi possível analisar a planilha: {type(exc).__name__}: {exc}"
-    return render_template("import_excel.html",preview=preview,error=error,filename=filename,app_release=APP_RELEASE)
+def import_excel_v34():
+    from openpyxl import load_workbook
+    preview=[]; error=None; filename=None; staging_key=None; import_result=None
+    aliases={
+      "location":["LOCALIDADE","ESTACAO","ESTAÇÃO","LOCAL","STATION"],
+      "line":["LINHA","LINE"], "company":["EMPRESA","OPERADORA","COMPANY"],
+      "type":["TIPO","EQUIPAMENTO","TIPO EQUIPAMENTO","TIPO DE EQUIPAMENTO"],
+      "identifier":["IDENTIFICACAO","IDENTIFICAÇÃO","PATRIMONIO","PATRIMÔNIO","ATIVO","QR CODE","QRCODE"],
+      "serial":["SERIE","SÉRIE","NUMERO DE SERIE","NÚMERO DE SÉRIE"],
+      "supplier":["FABRICANTE","FORNECEDOR","FABRICANTE / FORNECEDOR"], "model":["MODELO"],
+      "status":["STATUS","STATUS OPERACIONAL","SITUACAO","SITUAÇÃO"], "notes":["OBSERVACOES","OBSERVAÇÕES","OBS","NOTAS"]}
+    def norm(v): return normalize(str(v or '')).replace('_',' ')
+    def mapping(headers):
+      out={}; nh=[norm(x) for x in headers]
+      for key,vals in aliases.items():
+        for i,h in enumerate(nh):
+          if h in [norm(v) for v in vals] or any(norm(v) in h for v in vals if len(norm(v))>4): out[key]=i; break
+      return out
+    def analyze(raw):
+      wb=load_workbook(io.BytesIO(raw),read_only=True,data_only=True)
+      result=[]
+      for ws in wb.worksheets:
+        rows=ws.iter_rows(values_only=True); headers=list(next(rows,[]) or [])
+        mp=mapping(headers); sample=[]; count=0; ready=0
+        for row in rows:
+          if not any(v not in (None,'') for v in row): continue
+          count+=1
+          if len(sample)<5: sample.append([str(v or '')[:90] for v in row])
+          if mp.get('location') is not None and mp.get('identifier') is not None: ready+=1
+        result.append({'sheet':ws.title,'rows':count,'headers':[str(x or '') for x in headers], 'sample':sample,'mapping':mp,'ready':ready})
+      return result
+    if request.method=='POST':
+      action=request.form.get('action','analyze')
+      try:
+        if action=='analyze':
+          up=request.files.get('excel_file')
+          if not up or not up.filename.lower().endswith(('.xlsx','.xlsm')): raise ValueError('Selecione um arquivo .xlsx ou .xlsm.')
+          raw=up.read(); filename=secure_filename(up.filename) or up.filename
+          preview=analyze(raw); staging_key,_bid,_store=_wa_stage_archive(raw,filename)
+        elif action=='import':
+          staging_key=request.form.get('staging_key',''); raw=_wa_load_staged(staging_key); preview=analyze(raw)
+          wb=load_workbook(io.BytesIO(raw),read_only=True,data_only=True)
+          created=0; skipped=0; unresolved=0
+          # usuário executor: mantém auditoria no gestor logado
+          tech_id=session['user_id']
+          locs=Location.query.all()
+          def find_loc(name,line='',company=''):
+            n=norm(name); ln=norm(line); co=norm(company); best=None; score=0
+            for loc in locs:
+              sc=0; a=norm(loc.location)
+              if n and n==a: sc+=100
+              elif n and (n in a or a in n): sc+=70
+              if ln and ln==norm(loc.line): sc+=20
+              if co and co==norm(loc.company): sc+=10
+              if sc>score: score=sc; best=loc
+            return best if score>=70 else None
+          for ws in wb.worksheets:
+            rows=ws.iter_rows(values_only=True); headers=list(next(rows,[]) or []); mp=mapping(headers)
+            if 'location' not in mp or 'identifier' not in mp: continue
+            for row in rows:
+              if not any(v not in (None,'') for v in row): continue
+              get=lambda k: str(row[mp[k]] or '').strip() if k in mp and mp[k]<len(row) else ''
+              loc=find_loc(get('location'),get('line'),get('company')); ident=get('identifier')
+              if not loc or not ident: unresolved+=1; continue
+              typ=_canonical_equipment_type(get('type') or 'OUTRO') or 'OUTRO'
+              exists=Inventory.query.filter_by(location_id=loc.id,equipment_type=typ,asset_identifier=ident).first()
+              if exists: skipped+=1; continue
+              inv=Inventory(location_id=loc.id,equipment_type=typ,asset_identifier=ident,serial=get('serial'),supplier=get('supplier'),model=get('model'),operational_status=get('status') or 'Não informado',notes=(get('notes')+'\n[Importado via Excel V34.1]').strip(),technician_id=tech_id,created_at=datetime.utcnow())
+              db.session.add(inv); created+=1
+          db.session.commit(); import_result={'created':created,'skipped':skipped,'unresolved':unresolved}
+      except Exception as exc:
+        db.session.rollback(); error=f'{type(exc).__name__}: {exc}'
+    return render_template('import_excel.html',preview=preview,error=error,filename=filename,staging_key=staging_key,import_result=import_result,app_release=APP_RELEASE)
 
 
 @app.route("/importar-whatsapp", methods=["GET", "POST"])
@@ -4265,111 +4354,87 @@ def import_whatsapp():
                 try:
                     if not _r2_available():
                         raise RuntimeError("Cloudflare R2 não está configurado corretamente. A V22 não permite importação definitiva de mídias no armazenamento temporário do Render.")
-                    raw = _wa_load_staged(staging_key)
-                    preview, summary = _wa_analyze_archive(raw)
-                    batch_id = hashlib.sha256(raw).hexdigest()[:16]
-                    analyzed_filename = Path(staging_key.split(":",1)[-1]).name if staging_key else "arquivo analisado"
-                    summary["filename"] = analyzed_filename
-                    summary["archive_sha"] = batch_id
-                    inserted_visits = 0
-                    updated_visits = 0
-                    inserted_items = 0
-                    skipped_items = 0
-                    media_uploaded = 0
-                    media_repaired = 0
+                    temp_zip = _wa_materialize_staged(staging_key)
+                    try:
+                        preview, summary = _wa_analyze_archive(temp_zip)
+                        full_sha = _sha256_file(temp_zip)
+                        batch_id = full_sha[:16]
+                        analyzed_filename = Path(staging_key.split(":",1)[-1]).name if staging_key else "arquivo analisado"
+                        summary["filename"] = analyzed_filename
+                        summary["archive_sha"] = batch_id
+                        inserted_visits = 0
+                        updated_visits = 0
+                        inserted_items = 0
+                        skipped_items = 0
+                        media_uploaded = 0
+                        media_repaired = 0
+                        media_failed = 0
 
-                    with zipfile.ZipFile(io.BytesIO(raw)) as z:
-                        names = set(z.namelist())
-
-                        for visit in preview:
-                            row = FieldEvidenceVisit.query.filter_by(source_key=visit["source_key"]).first()
-                            report_text = "\n\n".join(
-                                f'[{m["date"]} {m["time"]}] {m["author"]}: {m["text"]}'
-                                for m in visit["messages"]
-                            )
-
-                            if not row:
-                                row = FieldEvidenceVisit(
-                                    source_key=visit["source_key"],
-                                    source_batch=batch_id,
-                                    source_date=visit["date"],
-                                    source_time=visit["time"],
-                                    author=visit["author"],
-                                    station_raw=visit["station_raw"],
-                                    line_raw=visit["line_raw"],
-                                    location_id=visit["location_id"],
-                                    match_confidence=visit["confidence"],
-                                    match_score=visit["match_score"],
-                                    report_text=report_text,
-                                    competition_text=visit["competition_text"],
-                                    storage_source="R2" if _r2_available() else "LOCAL"
+                        with zipfile.ZipFile(temp_zip) as z:
+                            names = set(z.namelist())
+                            total_visits = max(1, len(preview))
+                            for visit_idx, visit in enumerate(preview, start=1):
+                                row = FieldEvidenceVisit.query.filter_by(source_key=visit["source_key"]).first()
+                                report_text = "\n\n".join(
+                                    f'[{m["date"]} {m["time"]}] {m["author"]}: {m["text"]}'
+                                    for m in visit["messages"]
                                 )
-                                db.session.add(row)
-                                db.session.flush()
-                                inserted_visits += 1
-                            else:
-                                row.location_id = visit["location_id"]
-                                row.match_confidence = visit["confidence"]
-                                row.match_score = visit["match_score"]
-                                row.report_text = report_text
-                                row.competition_text = visit["competition_text"]
-                                updated_visits += 1
-
-                            for eq in visit["equipment"]:
-                                existing_item = FieldEvidenceItem.query.filter_by(
-                                    visit_id=row.id,
-                                    equipment_type=eq["type"],
-                                    identifier=eq["identifier"]
-                                ).first()
-                                if existing_item:
-                                    skipped_items += 1
-                                    continue
-
-                                item = FieldEvidenceItem(
-                                    visit_id=row.id,
-                                    equipment_type=eq["type"],
-                                    identifier=eq["identifier"],
-                                    model=eq.get("model", ""),
-                                    serial=eq.get("serial", ""),
-                                    patrimony=eq.get("patrimony", ""),
-                                    operational_status=eq.get("status", ""),
-                                    source_line=eq.get("source_line", ""),
-                                    base_asset_id=eq.get("base_asset_id"),
-                                    inventory_id=eq.get("inventory_id"),
-                                    audit_status=eq.get("audit_status", "PENDENTE"),
-                                    audit_detail=(
-                                        f'Base: {eq.get("base_status", "")}. '
-                                        f'Inventário: {eq.get("inventory_status", "")}.'
+                                if not row:
+                                    row = FieldEvidenceVisit(
+                                        source_key=visit["source_key"], source_batch=batch_id,
+                                        source_date=visit["date"], source_time=visit["time"], author=visit["author"],
+                                        station_raw=visit["station_raw"], line_raw=visit["line_raw"],
+                                        location_id=visit["location_id"], match_confidence=visit["confidence"],
+                                        match_score=visit["match_score"], report_text=report_text,
+                                        competition_text=visit["competition_text"], storage_source="R2"
                                     )
-                                )
-                                db.session.add(item)
-                                inserted_items += 1
+                                    db.session.add(row); db.session.flush(); inserted_visits += 1
+                                else:
+                                    row.location_id=visit["location_id"]; row.match_confidence=visit["confidence"]
+                                    row.match_score=visit["match_score"]; row.report_text=report_text
+                                    row.competition_text=visit["competition_text"]; updated_visits += 1
 
-                            # V22.1: não descartar pelo SHA antes de verificar/reparar a mídia.
-                            # Registros antigos podem existir no banco e apontar para arquivo local já perdido.
-                            for media_name in visit["attachments"]:
-                                if media_name not in names:
-                                    continue
-                                data = z.read(media_name)
-                                media_obj, is_new, was_repaired = _evidence_store_media(data, media_name, batch_id)
-                                if not media_obj.visit_id:
-                                    media_obj.visit_id = row.id
-                                if is_new:
-                                    db.session.add(media_obj)
-                                    media_uploaded += 1
-                                elif was_repaired:
-                                    media_repaired += 1
+                                for eq in visit["equipment"]:
+                                    existing_item = FieldEvidenceItem.query.filter_by(
+                                        visit_id=row.id, equipment_type=eq["type"], identifier=eq["identifier"]
+                                    ).first()
+                                    if existing_item:
+                                        skipped_items += 1; continue
+                                    db.session.add(FieldEvidenceItem(
+                                        visit_id=row.id, equipment_type=eq["type"], identifier=eq["identifier"],
+                                        model=eq.get("model", ""), serial=eq.get("serial", ""), patrimony=eq.get("patrimony", ""),
+                                        operational_status=eq.get("status", ""), source_line=eq.get("source_line", ""),
+                                        base_asset_id=eq.get("base_asset_id"), inventory_id=eq.get("inventory_id"),
+                                        audit_status=eq.get("audit_status", "PENDENTE"),
+                                        audit_detail=f'Base: {eq.get("base_status", "")}. Inventário: {eq.get("inventory_status", "")}.'
+                                    )); inserted_items += 1
 
-                    db.session.commit()
-                    import_result = {
-                        "inserted_visits": inserted_visits,
-                        "updated_visits": updated_visits,
-                        "inserted_items": inserted_items,
-                        "skipped_items": skipped_items,
-                        "media_uploaded": media_uploaded,
-                        "media_repaired": media_repaired,
-                        "storage": "R2",
-                    }
+                                for media_name in visit["attachments"]:
+                                    if media_name not in names:
+                                        continue
+                                    try:
+                                        # Uma mídia por vez: o ZIP completo permanece no disco temporário.
+                                        data = z.read(media_name)
+                                        media_obj, is_new, was_repaired = _evidence_store_media(data, media_name, batch_id)
+                                        if not media_obj.visit_id: media_obj.visit_id = row.id
+                                        if is_new: db.session.add(media_obj); media_uploaded += 1
+                                        elif was_repaired: media_repaired += 1
+                                        del data
+                                    except Exception:
+                                        media_failed += 1
+
+                                # V34.1: commit incremental. Reduz memória e torna a reexecução segura/idempotente.
+                                db.session.commit()
+                                db.session.expire_all()
+
+                        import_result = {
+                            "inserted_visits": inserted_visits, "updated_visits": updated_visits,
+                            "inserted_items": inserted_items, "skipped_items": skipped_items,
+                            "media_uploaded": media_uploaded, "media_repaired": media_repaired,
+                            "media_failed": media_failed, "storage": "R2",
+                        }
+                    finally:
+                        temp_zip.unlink(missing_ok=True)
 
                 except Exception as exc:
                     db.session.rollback()
