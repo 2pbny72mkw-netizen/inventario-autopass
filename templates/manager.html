@@ -52,6 +52,16 @@
   <article class="equipmentBig outro" data-type="OUTRO"><span>Outro</span><b id="typeOUTRO">0</b><small id="typeOUTRODetail">Encontrados fora da base</small></article>
 </section>
 
+<section class="v29CommandDeck v23Panel" data-v23-panel="overview execution">
+  <article class="v29ProgressHero"><span>PROGRESSO GERAL</span><b id="v29Progress">0%</b><div class="v29MegaTrack"><i id="v29ProgressBar"></i></div><small id="v29ProgressText">0 de 0 ativos oficiais conciliados</small></article>
+  <article class="v29Pulse"><span>RITMO · 7 DIAS</span><b id="v29Pace">0/dia</b><small id="v29PaceDelta">Sem histórico suficiente</small></article>
+  <article class="v29Pulse"><span>TENDÊNCIA</span><b id="v29Trend">—</b><small>7 dias atuais × 7 anteriores</small></article>
+  <article class="v29Pulse"><span>PROJEÇÃO</span><b id="v29Projection">—</b><small id="v29ProjectionSmall">calculada pelo ritmo recente</small></article>
+</section>
+<section class="v29InsightRail v23Panel" data-v23-panel="overview">
+ <div><span>FOCO EXECUTIVO</span><b id="v29Headline">Carregando leitura operacional...</b></div>
+ <div class="v29Signal" id="v29Signal">LIVE</div>
+</section>
 <section class="card executiveFilterBar v23Shared">
   <div class="grid4">
     <div><label>Empresa</label><select id="execCompany"><option value="">Todas</option></select></div>
@@ -155,7 +165,7 @@
 <section class="card v21ExecutiveCharts v23Panel" data-v23-panel="execution" id="v21ExecutiveCharts">
   <div class="sectionHead">
     <div><h2>Painel executivo do recorte</h2><p class="muted">Leitura visual de execução, pendência e prioridades para apresentação gerencial.</p></div>
-    <span class="tag">V25.1 · BI Executivo</span>
+    <span class="tag">V29 · BI EXECUTIVO</span>
   </div>
   <div class="v21ChartGrid">
     <article class="v21ChartPanel">
@@ -177,7 +187,7 @@
 <section class="card v22ExecutiveCockpit v23Panel" data-v23-panel="execution" id="v22ExecutiveCockpit">
   <div class="sectionHead">
     <div><h2>Cockpit executivo</h2><p class="muted">Ritmo de execução, produtividade recente e qualidade das evidências para decisão gerencial.</p></div>
-    <span class="tag">V25.1 · 14 dias</span>
+    <span class="tag">V29 · LIVE</span>
   </div>
   <div class="v22CockpitGrid">
     <article class="v22Panel"><div class="v21ChartTitle"><span>Evolução diária</span><small>inventários registrados</small></div><div id="v22Trend" class="v22Trend"></div></article>
@@ -310,5 +320,5 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
         integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
         crossorigin=""></script>
-<script src="{{url_for('static',filename='manager.js')}}?v=dashboard-v24"></script>
+<script src="{{url_for('static',filename='manager.js')}}?v=dashboard-v29"></script>
 {% endblock %}

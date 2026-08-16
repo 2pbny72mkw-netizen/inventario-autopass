@@ -841,3 +841,15 @@ input:focus,select:focus,textarea:focus{
 .teamSectionToggle{width:100%;display:flex;align-items:center;justify-content:space-between;border:0;background:linear-gradient(90deg,#123b69,#1f5e96);color:#fff;padding:15px 18px;border-radius:12px;font-weight:800;font-size:16px;cursor:pointer}
 .teamSectionToggle span{font-size:24px;line-height:1}.teamCollapsibleContent{padding-top:16px}.teamCollapsibleContent.hidden{display:none!important}
 @media (min-width:1200px){.v23DashboardContent{padding-right:18px}.equipmentBigNumbers{grid-template-columns:repeat(6,minmax(0,1fr))}.dashboardKpis{grid-template-columns:repeat(6,minmax(0,1fr))}}
+
+/* V29 — Command Center / TV BI */
+.v24Executive{background:linear-gradient(145deg,#061427 0%,#0a2140 48%,#07182e 100%);border-radius:24px;padding:12px;color:#eef7ff}
+.v24Executive .card,.v24Executive .kpi,.v24Executive .equipmentBig{box-shadow:0 14px 36px rgba(0,0,0,.18)}
+.v29CommandDeck{display:grid;grid-template-columns:2.1fr repeat(3,1fr);gap:14px;margin:14px 0}
+.v29CommandDeck article{border-radius:20px;padding:18px;background:linear-gradient(145deg,rgba(11,43,78,.96),rgba(8,27,52,.96));border:1px solid rgba(102,199,255,.18);min-height:132px}
+.v29CommandDeck span{font-size:11px;letter-spacing:.13em;font-weight:800;color:#8fdcff}.v29CommandDeck b{display:block;font-size:30px;margin:8px 0;color:#fff}.v29ProgressHero b{font-size:48px;color:#35e6a1}
+.v29MegaTrack{height:15px;border-radius:99px;background:#112f50;overflow:hidden}.v29MegaTrack i{display:block;height:100%;width:0;background:linear-gradient(90deg,#00d4ff,#20e39c,#e9f85b);box-shadow:0 0 20px rgba(32,227,156,.5);transition:width .6s}
+.v29Pulse:nth-child(2){background:linear-gradient(145deg,#112d62,#173b86)}.v29Pulse:nth-child(3){background:linear-gradient(145deg,#44236d,#702f98)}.v29Pulse:nth-child(4){background:linear-gradient(145deg,#63361b,#9b551e)}
+.v29InsightRail{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:14px 18px;margin:10px 0 16px;border-radius:16px;background:linear-gradient(90deg,#102d54,#123f66 60%,#0d5961);border:1px solid rgba(90,222,255,.25)}.v29InsightRail span{font-size:10px;letter-spacing:.14em;color:#73dcff;font-weight:900}.v29InsightRail b{display:block;margin-top:4px;font-size:17px}.v29Signal{padding:8px 12px;border-radius:99px;background:#17d68b;color:#04261a;font-weight:900;box-shadow:0 0 20px rgba(23,214,139,.35)}
+.v24Executive .primaryKpi{background:linear-gradient(145deg,#0b6bdb,#103b91)!important}.v24Executive .successKpi{background:linear-gradient(145deg,#08a76f,#0b694e)!important}.v24Executive .dangerKpi{background:linear-gradient(145deg,#d73b55,#84233c)!important}.v24Executive .warningKpi{background:linear-gradient(145deg,#f59e0b,#a9510b)!important}.v24Executive .kpi span,.v24Executive .kpi small,.v24Executive .kpi b{color:white!important}
+@media(max-width:1000px){.v29CommandDeck{grid-template-columns:1fr 1fr}.v29ProgressHero{grid-column:1/-1}}@media(max-width:650px){.v29CommandDeck{grid-template-columns:1fr}.v29ProgressHero{grid-column:auto}}

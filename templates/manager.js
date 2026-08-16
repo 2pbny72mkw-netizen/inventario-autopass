@@ -753,6 +753,7 @@ function renderV25ExecutiveBI(){
 function updateExecutiveView(){
   if(!dashboardData) return;
   renderV25ExecutiveBI();
+  renderV29CommandCenter();
   const c=$('execCompany')?.value||'', line=$('execLine')?.value||'', type=$('execType')?.value||'';
   const noGeoFilters=!c&&!line;
   const rows=executiveFilteredLocations();
@@ -990,3 +991,22 @@ function initV23DashboardNav(){
 initV23DashboardNav();
 loadAll();
 setInterval(loadAll,120000);
+function renderV29CommandCenter(){
+ if(!dashboardData)return;
+ const t=dashboardData.totals||{}, inv=dashboardData.inventory||{};
+ const expected=Number(t.expected||0), done=Number(inv.official_inventoried||0), missing=Math.max(0,expected-done), pct=expected?Math.min(100,done/expected*100):0;
+ if($('v29Progress'))$('v29Progress').textContent=`${pct.toFixed(1)}%`;
+ if($('v29ProgressBar'))$('v29ProgressBar').style.width=`${pct}%`;
+ if($('v29ProgressText'))$('v29ProgressText').textContent=`${fmt(done)} de ${fmt(expected)} ativos oficiais conciliados`;
+ const trend=dashboardData.trend_14d||[], prev=trend.slice(0,7).reduce((a,x)=>a+Number(x.count||0),0), now=trend.slice(7).reduce((a,x)=>a+Number(x.count||0),0), pace=now/7;
+ if($('v29Pace'))$('v29Pace').textContent=`${pace.toFixed(1).replace('.',',')}/dia`;
+ const delta=prev?((now-prev)/prev*100):null;
+ if($('v29PaceDelta'))$('v29PaceDelta').textContent=delta===null?'Primeira janela comparável':`${delta>=0?'▲':'▼'} ${Math.abs(delta).toFixed(1).replace('.',',')}% vs. 7 dias anteriores`;
+ if($('v29Trend'))$('v29Trend').textContent=delta===null?'—':delta>=5?'ACELERANDO':delta<=-5?'DESACELERANDO':'ESTÁVEL';
+ if($('v29Projection'))$('v29Projection').textContent=pace>0?`${Math.ceil(missing/pace)} dias`:'—';
+ if($('v29ProjectionSmall'))$('v29ProjectionSmall').textContent=pace>0?`${fmt(missing)} pendentes ao ritmo dos últimos 7 dias`:'Sem ritmo recente para projeção';
+ const div=Number(inv.divergences||0), ino=Number(inv.inoperative||0);
+ let headline=`Cobertura ${pct.toFixed(1).replace('.',',')}% · ${fmt(missing)} ativos oficiais ainda pendentes.`;
+ if(div||ino) headline+=` Atenção: ${fmt(div)} divergência(s) e ${fmt(ino)} inoperante(s).`;
+ if($('v29Headline'))$('v29Headline').textContent=headline;
+}
