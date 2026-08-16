@@ -970,19 +970,34 @@ function v23SetView(view){
   if(v23ActiveView==='map' && gpsMap) setTimeout(()=>gpsMap.invalidateSize(),140);
   window.scrollTo({top:0,behavior:document.body.classList.contains('v23TvMode')?'auto':'smooth'});
 }
+function v343SyncTv(){
+  const txt=(id,fallback='—')=>document.getElementById(id)?.textContent?.trim()||fallback;
+  const set=(id,val)=>{const e=document.getElementById(id);if(e)e.textContent=val;};
+  set('tvExpected',txt('expected','0')); set('tvInventoried',txt('inventoried','0')); set('tvMissing',txt('missing','0'));
+  set('tvCoverage',txt('assetCoverageTop','0%')); set('tvPace',txt('v29Pace','0/dia')); set('tvProjection',txt('v29Projection','—'));
+  set('v343TvDonutPct',txt('assetCoverageTop','0%')); set('v343TvProgressText',txt('v29ProgressText',''));
+  set('v343TvHeadline',txt('v29Headline','Monitoramento executivo do inventário.'));
+  const pct=parseFloat((txt('assetCoverageTop','0').replace(',','.')))||0;
+  const donut=document.getElementById('v343TvDonut'); if(donut)donut.style.setProperty('--tvpct',Math.max(0,Math.min(100,pct))+'%');
+  const clone=(from,to)=>{const a=document.getElementById(from),b=document.getElementById(to);if(a&&b)b.innerHTML=a.innerHTML;};
+  clone('v34Trend','v343TvTrend'); clone('v21TypeBars','v343TvTypes'); clone('v21PriorityBars','v343TvPriority');
+  const t=document.getElementById('v343TvTime'); if(t)t.textContent=new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+  const u=document.getElementById('v343TvUpdated'); if(u)u.textContent='Atualizado '+new Date().toLocaleDateString('pt-BR')+' · '+new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+}
 function v23StopTv(){
   if(v23TvTimer){clearInterval(v23TvTimer);v23TvTimer=null;}
   document.body.classList.remove('v23TvMode');
+  const overlay=document.getElementById('v343TvOverlay'); if(overlay){overlay.classList.remove('active');overlay.setAttribute('aria-hidden','true');}
   const btn=$('v23TvBtn'); if(btn) btn.querySelector('span').textContent='Modo TV';
 }
 function v23StartTv(){
-  v23SetView('overview');
-  document.body.classList.add('v23TvMode');
+  const overlay=document.getElementById('v343TvOverlay'); if(!overlay)return;
+  v343SyncTv();
+  overlay.classList.add('active'); overlay.setAttribute('aria-hidden','false'); document.body.classList.add('v23TvMode');
   const btn=$('v23TvBtn'); if(btn) btn.querySelector('span').textContent='Sair da TV';
-  // V34.1: TV usa uma composição executiva estável em uma única tela.
-  // A rotação automática entre telas especializadas volta somente após cada layout ser homologado em 16:9.
-  v23SetView('overview');
-  if(document.documentElement.requestFullscreen && !document.fullscreenElement){document.documentElement.requestFullscreen().catch(()=>{});}
+  const target=overlay;
+  if(target.requestFullscreen && !document.fullscreenElement){target.requestFullscreen().catch(()=>{});}
+  v23TvTimer=setInterval(v343SyncTv,5000);
 }
 function initV23DashboardNav(){
   document.querySelectorAll('.v23Nav').forEach(btn=>btn.addEventListener('click',()=>v23SetView(btn.dataset.v23View)));
