@@ -369,6 +369,8 @@ $('refreshTeams').addEventListener('click',refreshAll);
 $('exportScale').addEventListener('click',exportScale);
 $('reloadCalendar').addEventListener('click',()=>loadCalendar().catch(console.error));
 $('calendarCategory').addEventListener('change',()=>loadCalendar().catch(console.error));
+$('calendarDays').addEventListener('change',()=>loadCalendar().catch(console.error));
+$('calendarStart').addEventListener('change',()=>loadCalendar().catch(console.error));
 
 $('toggleTeamMap').addEventListener('click',()=>{
   const wrap=$('teamMapWrap');

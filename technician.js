@@ -1,5 +1,5 @@
-window.AUTOPASS_PWA_VERSION='pwa-v15';
-window.AUTOPASS_TECHNICIAN_VERSION = 'v15-assisted-field';
+window.AUTOPASS_PWA_VERSION='pwa-v18';
+window.AUTOPASS_TECHNICIAN_VERSION = 'v18-assisted-field';
 console.log('AUTOPASS technician.js V15 carregado');
 
 let locations = [], current = null, assets = [];
@@ -499,7 +499,7 @@ async function loadAssets() {
   }else{allLocationAssets=(await cacheGet(cacheKey))||[];}
   const selected=normalizedEquipmentType($('equipment_type').value||'');
   assets=selected ? allLocationAssets.filter(a=>normalizedEquipmentType(a.equipment_type||'ATM')===selected) : [];
-  renderAssets(); renderLocationPending();
+  renderAssets(); renderLocationPending(); refreshAvailableEquipmentTypes();
 }
 
 function renderAssets(){
@@ -518,6 +518,32 @@ function renderAssets(){
     : navigator.onLine ? `Nenhum ativo detalhado de ${typeLabel} encontrado para este local.` : 'Nenhum ativo armazenado offline para este local.';
 }
 
+
+function resetEquipmentFieldsForTypeChange(){
+  const keep=new Set(['equipment_type','location_id','latitude','longitude','gps_accuracy','gps_captured_at','gps_override_reason']);
+  const form=$('invForm'); if(!form) return;
+  form.querySelectorAll('input,select,textarea').forEach(el=>{
+    if(!el.name || keep.has(el.name) || el.type==='hidden' || el.type==='button' || el.type==='submit') return;
+    if(el.type==='file'){ el.value=''; return; }
+    if(el.type==='checkbox'||el.type==='radio'){ el.checked=false; return; }
+    el.value='';
+  });
+  renderSelectedBaseInfo(null);
+}
+function refreshAvailableEquipmentTypes(){
+  const sel=$('equipment_type'); if(!sel || !current) return;
+  const available=new Set(allLocationAssets.map(a=>normalizedEquipmentType(a.equipment_type||'ATM')));
+  if(Number(current.expected_atm||0)>0) available.add('ATM');
+  if(Number(current.expected_validator||0)>0) available.add('Validador de Recarga');
+  if(Number(current.expected_pos||0)>0) available.add('POS de Bilheteria');
+  [...sel.options].forEach(o=>{
+    if(!o.value) return;
+    // Outro permanece como exceção controlada para ativo encontrado fora da base.
+    const show=o.value==='Outro' || available.has(normalizedEquipmentType(o.value));
+    o.hidden=!show; o.disabled=!show; o.classList.toggle('fieldTypeUnavailable',!show);
+  });
+  if(sel.value && sel.selectedOptions[0]?.disabled) sel.value='';
+}
 function normalizedEquipmentType(value) {
   const v = String(value || '').trim().toUpperCase();
   if (v === 'ATM') return 'ATM';
@@ -678,7 +704,16 @@ function renderSelectedBaseInfo(a){
     add('Série',a.serial);
   }else if(type==='Bloqueio'){
     if(title) title.textContent='Dados da base — Bloqueio';
-    add('Bloqueio',a.terminal_number||a.top_id);
+    add('Ativo / Prefixo',a.terminal_number||a.top_id);
+    const cfg=a.technical_config||{};
+    add('Nº do bloqueio',cfg.blocking_number);
+    add('Grupo',cfg.group);
+    add('Linha lógica',cfg.line_logic);
+    add('IP esperado',cfg.ip);
+    add('Máscara',cfg.mask);
+    add('Gateway',cfg.gateway);
+    add('DNS 1',cfg.dns1);
+    add('DNS 2',cfg.dns2);
     add('Modelo',a.model);
     add('Versão',a.software_version);
     add('Instalação',a.installation_type||a.application);
@@ -698,6 +733,7 @@ function renderSelectedBaseInfo(a){
 }
 
 $('equipment_type').onchange = async () => {
+  resetEquipmentFieldsForTypeChange();
   updateEquipmentTypeUI();
   renderSelectedBaseInfo(null);
   $('base_asset_id').value='';
@@ -715,6 +751,12 @@ $('base_asset_id').onchange = () => {
   if($('bu_id')) $('bu_id').value=a.bu_id||'';
   if($('validator_top_id')) $('validator_top_id').value=a.top_id||a.terminal_number||'';
   if($('software_version')) $('software_version').value=a.software_version||'';
+  // V20: em Bloqueios, usa o IP esperado da planilha técnica como referência no campo de rede.
+  if(normalizedEquipmentType(a.equipment_type)==='Bloqueio' && $('network_id')){
+    const cfg=a.technical_config||{};
+    $('network_id').value=cfg.ip||'';
+    $('network_id').placeholder=cfg.ip ? `IP esperado: ${cfg.ip}` : 'IP / rede / SIM';
+  }
   renderSelectedBaseInfo(a);
 };
 
@@ -1157,7 +1199,11 @@ async function sendTeamLocation(position){
     const j=await r.json().catch(()=>({ok:false}));
     if(!r.ok||!j.ok) throw new Error(j.error||'Falha ao enviar posição.');
     const acc=Number.isFinite(position.coords.accuracy)?Math.round(position.coords.accuracy):null;
-    setTeamLocationStatus(`Localização ativa${acc!==null?` · precisão aproximada ${acc} m`:''} · posição enviada agora.`,true);
+    if(j.integrity && j.integrity.status && j.integrity.status!=='OK'){
+      setTeamLocationStatus(`Atenção: ${j.integrity.reason||'posição incompatível com a posição anterior.'} Confirme se este é o usuário/aparelho correto.`,false);
+    }else{
+      setTeamLocationStatus(`Localização ativa${acc!==null?` · precisão aproximada ${acc} m`:''} · posição enviada agora.`,true);
+    }
   }catch(err){
     setTeamLocationStatus(`Localização ativa, mas o envio falhou: ${err.message}`,false);
   }
