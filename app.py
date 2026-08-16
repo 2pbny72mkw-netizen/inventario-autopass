@@ -31,9 +31,9 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V16.0"
-DASHBOARD_RELEASE = "dashboard-v16"
-TEAMS_RELEASE = "teams-v16"
+APP_RELEASE = "V19.0"
+DASHBOARD_RELEASE = "dashboard-v19"
+TEAMS_RELEASE = "teams-v19"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
 FIELD_GPS_GOOD_ACCURACY_M = float(os.getenv("FIELD_GPS_GOOD_ACCURACY_M", "30"))
 FIELD_GPS_MAX_ACCURACY_M = float(os.getenv("FIELD_GPS_MAX_ACCURACY_M", "80"))
@@ -47,6 +47,28 @@ OFFICIAL_PARK = {
 OFFICIAL_PARK_TOTAL = sum(OFFICIAL_PARK.values())  # 3.801
 EXPECTED_CACHE_TTL_SECONDS = 600
 _expected_cache = {"at": 0.0, "data": None}
+
+_BLOCK_CONFIG_CACHE = None
+def _block_network_config():
+    global _BLOCK_CONFIG_CACHE
+    if _BLOCK_CONFIG_CACHE is None:
+        path = BASE_DIR / "block_network_config_v19.json"
+        try:
+            _BLOCK_CONFIG_CACHE = json.loads(path.read_text(encoding="utf-8")).get("by_prefix", {})
+        except Exception:
+            _BLOCK_CONFIG_CACHE = {}
+    return _BLOCK_CONFIG_CACHE
+
+def _block_prefix_for_asset(asset):
+    # Prefixo oficial: prioriza terminal/top e, por fim, os dígitos finais da chave.
+    candidates = [asset.terminal_number, asset.top_id, asset.qrcode_id, asset.asset_key]
+    cfg = _block_network_config()
+    for value in candidates:
+        if not value: continue
+        digits = re.findall(r"\d{5,8}", str(value))
+        for d in reversed(digits):
+            if d in cfg: return d
+    return None
 UPLOAD_DIR = BASE_DIR / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 
@@ -765,6 +787,7 @@ def _schedule_today_db(target_date=None):
             TeamScheduleProfile.category, TeamScheduleProfile.name
         ).all()
         if _team_profile_is_scheduled(p, target_date)
+        and (not p.user_id or bool((db.session.get(User, p.user_id) or User(active=False)).active))
     ]
 
 
@@ -936,6 +959,7 @@ def teams_calendar_api():
     profiles = TeamScheduleProfile.query.filter_by(active=True).order_by(
         TeamScheduleProfile.category, TeamScheduleProfile.name
     ).all()
+    profiles = [p for p in profiles if not p.user_id or (db.session.get(User, p.user_id) and db.session.get(User, p.user_id).active)]
     if category:
         profiles = [p for p in profiles if normalize(p.category) == category]
 
@@ -1959,6 +1983,13 @@ def api_assets(location_id):
             "contract_end": a.contract_end,
             "installation_type": a.installation_type,
             "installation_date": a.installation_date,
+            **((lambda cfg: {
+                "block_prefix": cfg.get("prefix"), "block_number": cfg.get("block_number"),
+                "block_group": cfg.get("group"), "block_logical_line": cfg.get("logical_line"),
+                "block_ip": cfg.get("ip"), "block_netmask": cfg.get("netmask"),
+                "block_gateway": cfg.get("gateway"), "block_dns1": cfg.get("dns1"),
+                "block_dns2": cfg.get("dns2"), "block_config_source": cfg.get("source_sheet")
+            })(_block_network_config().get(_block_prefix_for_asset(a), {})) if asset_type == "BLOQUEIO" else {}),
             "already_inventoried": a.id in already,
         })
 
