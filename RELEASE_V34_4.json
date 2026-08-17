@@ -1,0 +1,13 @@
+{
+  "release": "V34.4",
+  "dashboard": "dashboard-v34-4",
+  "teams": "teams-v34-4",
+  "base": "1408-5",
+  "notes": [
+    "Redesign executivo com proporções controladas",
+    "Menu lateral maior",
+    "Modo TV em rota própria com rotação automática",
+    "Mapa dedicado com tela cheia",
+    "Importação WhatsApp em lotes"
+  ]
+}
