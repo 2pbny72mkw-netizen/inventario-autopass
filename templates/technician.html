@@ -174,7 +174,23 @@
           <div class="muted">Ao selecionar um ativo da base, os dados conhecidos serão preenchidos automaticamente.</div>
         </div>
         <div class="grid3">
-          <div id="fieldApplication"><label id="applicationLabel">Aplicação</label><input name="application" id="application"></div>
+          <div id="fieldApplication"><label id="applicationLabel">Aplicação</label><select name="application" id="application">
+            <option value="">Selecione</option>
+            <option>BOM / TOP / BU</option>
+            <option>BOM / TOP</option>
+            <option>BU</option>
+            <option>BU / TOP</option>
+            <option>BU / QRCODE / TOP</option>
+            <option>BU / TOP / PIX</option>
+            <option>CITY+</option>
+            <option>PIX</option>
+            <option>QRCode</option>
+            <option>QRCODE (Metra)</option>
+            <option>QRCODE / PRAJA</option>
+            <option>QRCODE / TOP</option>
+            <option>TOP</option>
+            <option>TOP / PIX</option>
+          </select></div>
           <div id="fieldBom"><label>BOM</label><input name="bom_id" id="bom_id"></div>
           <div id="fieldBu"><label>BU</label><input name="bu_id" id="bu_id"></div>
           <div id="fieldTop"><label>TOP</label><input name="validator_top_id" id="validator_top_id"></div>
@@ -292,5 +308,5 @@
 {% endblock %}
 {% block scripts %}
 <script>window.CURRENT_USER_ROLE = {{ session.get("role")|tojson }};</script>
-<script src="{{ url_for('static', filename='technician.js') }}?v=v30"></script>
+<script src="{{ url_for('static', filename='technician.js') }}?v=v37-1"></script>
 {% endblock %}
