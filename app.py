@@ -33,9 +33,9 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V35.3"
-DASHBOARD_RELEASE = "dashboard-v35-3"
-TEAMS_RELEASE = "teams-v35-3"
+APP_RELEASE = "V36.0"
+DASHBOARD_RELEASE = "dashboard-v36-0"
+TEAMS_RELEASE = "teams-v36-0"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
 FIELD_GPS_GOOD_ACCURACY_M = float(os.getenv("FIELD_GPS_GOOD_ACCURACY_M", "30"))
 FIELD_GPS_MAX_ACCURACY_M = float(os.getenv("FIELD_GPS_MAX_ACCURACY_M", "80"))
@@ -2902,7 +2902,14 @@ def dashboard():
         "official_park": {
             "total": OFFICIAL_PARK_TOTAL,
             "by_type": OFFICIAL_PARK,
+            "technical_tdi": TECHNICAL_TDI_TOTAL,
             "note": "TDI é acompanhado separadamente e não compõe o total oficial de 3.801."
+        },
+        "technical_tdi": {
+            "expected": TECHNICAL_TDI_TOTAL,
+            "inventoried": int(inventoried_by_type.get("TDI", 0)),
+            "missing": max(0, TECHNICAL_TDI_TOTAL - int(inventoried_by_type.get("TDI", 0))),
+            "coverage_pct": round(min(100, int(inventoried_by_type.get("TDI", 0)) / TECHNICAL_TDI_TOTAL * 100), 1) if TECHNICAL_TDI_TOTAL else 0,
         },
         "totals": {
             "total": total,
