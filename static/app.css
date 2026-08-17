@@ -1161,3 +1161,39 @@ body[data-dashboard-view="map"] .v34CommandCenter [data-v23-panel="map"] > .mapF
     gap:11px!important;
   }
 }
+
+
+/* ===========================================================
+   V35 — status operacional + mix do parque + empresa evolutiva
+   =========================================================== */
+:root{--v35-done:#18b981;--v35-progress:#2587e8;--v35-pending:#ff9f2f;--v35-red:#ef476f;--v35-navy:#0a2a4b;--v35-soft:#f5f9fd}
+
+body[data-dashboard-view="overview"] .v35OverviewWall{
+  grid-column:1/-1!important;width:100%!important;min-width:0!important;
+  display:grid!important;
+  grid-template-columns:1.02fr 1.55fr 1.20fr!important;
+  grid-template-areas:"coverage status mix" "company priority attention"!important;
+  grid-template-rows:minmax(270px,1fr) minmax(285px,1fr)!important;
+  gap:14px!important;height:auto!important;min-height:590px!important;max-height:none!important;
+  overflow:visible!important;margin:0 0 18px!important;
+}
+body[data-dashboard-view="overview"] .v35Panel{background:#f9fcff;border:1px solid #d8e6f1;border-radius:16px;padding:18px;box-shadow:0 10px 26px #052b4a1b;min-width:0;min-height:0;overflow:visible}
+.v35CoveragePanel{grid-area:coverage;background:linear-gradient(155deg,#0a3155,#0c6879)!important;color:#fff!important}.v35StatusPanel{grid-area:status;border-top:5px solid var(--v35-progress)!important}.v35MixPanel{grid-area:mix;border-top:5px solid #17bfa0!important}.v35CompanyPanel{grid-area:company;border-top:5px solid #8168ed!important}.v35PriorityPanel{grid-area:priority;border-top:5px solid #f4a126!important}.v35AttentionPanel{grid-area:attention;border-top:5px solid var(--v35-red)!important}
+.v35PanelHead{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:14px}.v35PanelHead span{display:block;font-size:10px;letter-spacing:1.4px;font-weight:900;color:#668198}.v35PanelHead b{display:block;font-size:19px;line-height:1.15;color:#0d2b49}.v35PanelHead small{font-size:10px;color:#7890a2}.v35CoveragePanel .v35PanelHead span,.v35CoveragePanel .v35PanelHead b,.v35CoveragePanel .v35PanelHead small{color:#fff}
+.v35CoverageBody{height:calc(100% - 46px);display:grid;place-items:center;align-content:center;gap:14px}.v35CoveragePanel .v34Radial{width:174px!important;height:174px!important;flex-basis:174px!important;background:radial-gradient(circle at center,#0b3a59 57%,transparent 58%),conic-gradient(#20dca0 var(--pct),#174c68 0)!important;box-shadow:0 0 0 10px #104762,0 0 34px #1ddda244!important}.v35CoveragePanel .v34Radial b{font-size:38px!important;color:#fff!important}.v35CoverageCopy{text-align:center;color:#fff}.v35CoverageCopy strong{font-size:14px}.v35Legend{font-size:11px;color:#c8edf2;margin-top:8px}.v35Legend i{display:inline-block;width:8px;height:8px;border-radius:50%;margin:0 5px 0 10px}.v35Legend .ok{background:var(--v35-done)}.v35Legend .miss{background:var(--v35-red)}
+
+.v35StatusCards{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.v35Status{border:0;border-radius:14px;padding:16px 14px;text-align:left;cursor:pointer;box-shadow:inset 0 0 0 1px #dce8f1;background:#fff}.v35Status span,.v35Status b,.v35Status small{display:block}.v35Status span{font-size:11px;font-weight:800;color:#5f7487}.v35Status b{font-size:34px;line-height:1;margin:9px 0 5px;color:#0e2d4c}.v35Status small{font-size:11px;font-weight:800}.v35Status.completed{background:#edfbf6}.v35Status.completed small{color:#07895c}.v35Status.progress{background:#eef6ff}.v35Status.progress small{color:#126fc9}.v35Status.pending{background:#fff6e9}.v35Status.pending small{color:#c86e00}.v35Status:hover{transform:translateY(-1px);box-shadow:0 8px 18px #0c345115}
+.v35StatusTrack{height:15px;border-radius:999px;overflow:hidden;display:flex;background:#edf2f7;margin:18px 0 12px}.v35StatusTrack i{height:100%;display:block;transition:width .3s}.v35StatusTrack #v35StatusDone{background:var(--v35-done)}.v35StatusTrack #v35StatusProgress{background:var(--v35-progress)}.v35StatusTrack #v35StatusPending{background:var(--v35-pending)}.v35StatusFoot{display:flex;justify-content:space-between;gap:12px;color:#6b8193;font-size:10px;font-weight:700}
+
+.v35MixBody{height:calc(100% - 50px);display:grid;grid-template-columns:160px 1fr;gap:18px;align-items:center}.v35MixDonut{width:150px;height:150px;border-radius:50%;position:relative;display:grid;place-items:center;box-shadow:0 8px 24px #092d4a20}.v35MixDonut:after{content:"";position:absolute;inset:30px;background:#fff;border-radius:50%;box-shadow:inset 0 0 0 1px #e1e9f0}.v35MixDonut>div{position:relative;z-index:2;text-align:center}.v35MixDonut b{display:block;font-size:27px;color:#0d2b49}.v35MixDonut small{font-size:10px;color:#7890a2}.v35MixLegend{display:grid;gap:8px}.v35MixLegend>div{display:grid;grid-template-columns:10px 1fr auto 34px;align-items:center;gap:7px;font-size:10px}.v35MixLegend i{width:9px;height:9px;border-radius:3px}.v35MixLegend span{font-weight:800;color:#29445d}.v35MixLegend b{color:#0d2b49}.v35MixLegend small{text-align:right;color:#71879a}
+
+.v35CompanyBars{display:grid;gap:11px;max-height:238px;overflow:auto;padding-right:4px}.v35CompanyRow{display:grid;gap:5px}.v35CompanyTitle{display:flex;justify-content:space-between;gap:12px;align-items:center}.v35CompanyTitle b{font-size:11px;color:#143553}.v35CompanyTitle span{font-size:9px;color:#6f8496}.v35CompanyTrack{height:13px;border-radius:999px;overflow:hidden;background:#e8eff5;display:flex}.v35CompanyTrack i{height:100%;display:block}.v35CompanyTrack .done{background:var(--v35-done)}.v35CompanyTrack .progress{background:var(--v35-progress)}.v35CompanyTrack .pending{background:var(--v35-pending)}.v35CompanyMeta{display:flex;gap:12px;flex-wrap:wrap;font-size:8px;color:#718394}.v35CompanyMeta span{display:flex;align-items:center;gap:4px}.v35CompanyMeta .dot{width:6px;height:6px;border-radius:50%}.v35CompanyMeta .dot.done{background:var(--v35-done)}.v35CompanyMeta .dot.progress{background:var(--v35-progress)}.v35CompanyMeta .dot.pending{background:var(--v35-pending)}
+
+/* Inferiores não podem ser cortados: permitem crescimento natural e rolagem interna apenas onde há listas longas. */
+body[data-dashboard-view="overview"] .v35PriorityPanel .v344PriorityBars{height:auto!important;max-height:235px!important;overflow:auto!important;padding-right:3px}.v35AttentionPanel .v34Attention{max-height:235px;overflow:auto;padding-right:3px}
+
+/* Mapa: controle Leaflet garante o botão mesmo quando o cabeçalho do painel é oculto. */
+.autopassMapFullscreenControl{background:transparent!important;border:0!important;box-shadow:none!important}.autopassMapFullscreenBtn{height:38px!important;min-width:118px!important;padding:0 12px!important;border:1px solid #4bb9ef!important;border-radius:8px!important;background:#103f6e!important;color:#fff!important;font:800 12px/1 Arial,sans-serif!important;cursor:pointer!important;box-shadow:0 7px 20px #001b3545!important}.autopassMapFullscreenBtn:hover{background:#0b3158!important}.autopassMapFullscreenBtn span{vertical-align:middle}
+body.mapFullscreenOpen .autopassMapFullscreenControl{position:fixed!important;right:16px!important;top:14px!important;z-index:100001!important}
+
+@media(max-width:1500px) and (min-width:1000px){body[data-dashboard-view="overview"] .v35OverviewWall{grid-template-columns:1fr 1.4fr 1.15fr!important;gap:11px!important}.v35MixBody{grid-template-columns:130px 1fr}.v35MixDonut{width:125px;height:125px}.v35Status b{font-size:29px}}

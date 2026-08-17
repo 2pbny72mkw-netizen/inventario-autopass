@@ -1,4 +1,4 @@
-window.AUTOPASS_MANAGER_VERSION='dashboard-v34-1';
+window.AUTOPASS_MANAGER_VERSION='dashboard-v35';
 console.log('AUTOPASS Dashboard Executivo V25 carregado');
 let locations=[];
 let dashboardData=null;
@@ -268,6 +268,19 @@ function ensureGpsMap(){
     'Precisão GPS (auditoria)':gpsAccuracyLayer
   },{collapsed:false,position:'bottomright'}).addTo(gpsMap);
 
+  // V35 — controle nativo do Leaflet: permanece visível mesmo quando o cabeçalho do mapa é ocultado.
+  const fullscreenControl=L.control({position:'topright'});
+  fullscreenControl.onAdd=()=>{
+    const wrap=L.DomUtil.create('div','leaflet-bar autopassMapFullscreenControl');
+    const btn=L.DomUtil.create('button','autopassMapFullscreenBtn',wrap);
+    btn.type='button'; btn.title='Abrir mapa em tela cheia'; btn.setAttribute('aria-label','Abrir mapa em tela cheia');
+    btn.innerHTML='⛶ <span>Tela cheia</span>';
+    L.DomEvent.disableClickPropagation(wrap);
+    L.DomEvent.on(btn,'click',ev=>{L.DomEvent.stop(ev);setMapFullscreen(!$('gpsMap')?.classList.contains('gpsMapFullscreen'));});
+    return wrap;
+  };
+  fullscreenControl.addTo(gpsMap);
+
   gpsMap.on('click', async e=>{
     if(!referenceMode) return;
     const locationId=Number($('mapLocationSelect').value);
@@ -452,6 +465,8 @@ function setMapFullscreen(on){
   mapEl.classList.toggle('gpsMapFullscreen',!!on);
   document.body.classList.toggle('mapFullscreenOpen',!!on);
   if(btn) btn.textContent=on?'Sair da tela cheia':'⛶ Tela cheia';
+  const leafletBtn=document.querySelector('.autopassMapFullscreenBtn');
+  if(leafletBtn) leafletBtn.innerHTML=on?'✕ <span>Sair da tela cheia</span>':'⛶ <span>Tela cheia</span>';
 
   setTimeout(()=>{
     try{ gpsMap?.invalidateSize(); }catch(_e){}
@@ -1059,25 +1074,76 @@ document.getElementById('v30ContractExport')?.addEventListener('click',()=>{
 setTimeout(loadV30Contracts,800);
 
 
-// V34 — Intelligence Wall / atenção gerencial
-function renderV34Intelligence(){
-  if(!dashboardData||!document.getElementById('v34Radial'))return;
-  const t=dashboardData.totals||{}, inv=dashboardData.inventory||{};
-  const exp=Number(t.expected||0), done=Number(inv.official_inventoried||0), pct=exp?Math.min(100,done/exp*100):0;
+// V35 — visão geral operacional filtrável
+function renderV35Overview(){
+  if(!dashboardData||!document.getElementById('v34Radial')) return;
+  const rows=executiveFilteredLocations();
+  const type=document.getElementById('execType')?.value||'';
+  const company=document.getElementById('execCompany')?.value||'';
+  const line=document.getElementById('execLine')?.value||'';
+  const metrics=filteredLocationMetrics(rows,type);
+
+  // Cobertura: usa exatamente o mesmo recorte dos Big Numbers.
+  const exp=Number(metrics.expected||0), done=Number(metrics.inventoried||0);
+  const pct=exp?Math.min(100,done/exp*100):0;
   document.getElementById('v34Radial').style.setProperty('--pct',pct.toFixed(1)+'%');
   document.getElementById('v34RadialPct').textContent=pct.toFixed(1).replace('.',',')+'%';
-  document.getElementById('v34RadialText').textContent=`${fmt(done)} de ${fmt(exp)} ativos oficiais`;
-  const trend=dashboardData.trend_14d||[], max=Math.max(1,...trend.map(x=>Number(x.count||0)));
-  document.getElementById('v34Trend').innerHTML=trend.map((x,i)=>`<i style="height:${Math.max(5,Math.round(Number(x.count||0)/max*100))}%"><span>${fmt(x.count||0)}</span><small>${String(x.date||'').slice(8)}</small></i>`).join('');
-  const comps=(dashboardData.by_company||[]).slice().sort((a,b)=>Number(b.total||0)-Number(a.total||0)).slice(0,10);
-  document.getElementById('v34Heatmap').innerHTML=comps.map(x=>{const p=Number(x.total)?Math.round(Number(x.completed||0)/Number(x.total)*100):0;let c=p>=80?'hot5':p>=60?'hot4':p>=40?'hot3':p>=20?'hot2':'hot1';return `<div class="${c}" title="${esc(x.company||'—')} · ${p}%"><b>${esc((x.company||'—').slice(0,12))}</b><span>${p}%</span></div>`}).join('');
+  document.getElementById('v34RadialText').textContent=`${fmt(done)} de ${fmt(exp)} ativos no recorte`;
+
+  // Status das localidades — responde aos filtros Empresa/Linha/Tipo.
+  const countStatus=status=>rows.filter(x=>String(x.survey_status||'').toUpperCase()===status).length;
+  const completed=countStatus('CONCLUIDA'), progress=countStatus('EM ANDAMENTO'), pending=countStatus('PENDENTE');
+  const total=rows.length||0, denominator=Math.max(1,total);
+  const cp=completed/denominator*100, pp=progress/denominator*100, pendp=pending/denominator*100;
+  const setText=(id,val)=>{const e=document.getElementById(id);if(e)e.textContent=val;};
+  setText('v35Completed',fmt(completed)); setText('v35Progress',fmt(progress)); setText('v35Pending',fmt(pending));
+  setText('v35CompletedPct',Math.round(cp)+'%'); setText('v35ProgressPct',Math.round(pp)+'%'); setText('v35PendingPct',Math.round(pendp)+'%');
+  setText('v35LocationsTotal',`${fmt(total)} localidade(s) no recorte`);
+  setText('v35StatusContext',[company||'Todas empresas',line||'Todas linhas',type?typeLabel(type):'Todos os tipos'].join(' · '));
+  const doneBar=document.getElementById('v35StatusDone'), progBar=document.getElementById('v35StatusProgress'), pendBar=document.getElementById('v35StatusPending');
+  if(doneBar)doneBar.style.width=cp+'%'; if(progBar)progBar.style.width=pp+'%'; if(pendBar)pendBar.style.width=pendp+'%';
+
+  // Mix do parque — composição do esperado; OUTRO entra pelo inventariado fora da base.
+  const mixTypes=['ATM','VALIDADOR','POS','TDI','BLOQUEIO','OUTRO'];
+  const mix=mixTypes.map(t=>{const z=metrics.byType[t]||{e:0,i:0};return {type:t,value:t==='OUTRO'?Number(z.i||0):Number(z.e||0)}}).filter(x=>x.value>0);
+  const mixTotal=mix.reduce((a,x)=>a+x.value,0);
+  const colors={ATM:'#2878d8',VALIDADOR:'#16b98e',POS:'#ff9f2e',TDI:'#8a63d2',BLOQUEIO:'#16b8b0',OUTRO:'#f4c64d'};
+  let cursor=0, stops=[];
+  mix.forEach(x=>{const start=cursor;cursor+=mixTotal?x.value/mixTotal*100:0;stops.push(`${colors[x.type]} ${start.toFixed(2)}% ${cursor.toFixed(2)}%`)});
+  const donut=document.getElementById('v35MixDonut'); if(donut)donut.style.background=mixTotal?`conic-gradient(${stops.join(',')})`:'#dfe8f1';
+  setText('v35MixTotal',fmt(mixTotal));
+  const mixLegend=document.getElementById('v35MixLegend');
+  if(mixLegend)mixLegend.innerHTML=mix.length?mix.map(x=>`<div><i style="background:${colors[x.type]}"></i><span>${esc(typeLabel(x.type))}</span><b>${fmt(x.value)}</b><small>${mixTotal?Math.round(x.value/mixTotal*100):0}%</small></div>`).join(''):'<div class="muted">Sem ativos no recorte.</div>';
+
+  // Evolução por empresa — distribuição de status, não apenas um percentual isolado.
+  const groups={};
+  rows.forEach(x=>{const key=x.company||'Não informado';const g=groups[key]||(groups[key]={total:0,completed:0,progress:0,pending:0});g.total++;const st=String(x.survey_status||'').toUpperCase();if(st==='CONCLUIDA')g.completed++;else if(st==='EM ANDAMENTO')g.progress++;else g.pending++;});
+  const companies=Object.entries(groups).map(([name,g])=>({name,...g,pct:g.total?Math.round(g.completed/g.total*100):0})).sort((a,b)=>b.pct-a.pct||b.completed-a.completed||b.total-a.total).slice(0,8);
+  const companyBox=document.getElementById('v35CompanyBars');
+  if(companyBox)companyBox.innerHTML=companies.length?companies.map(g=>{const d=g.total?g.completed/g.total*100:0,pr=g.total?g.progress/g.total*100:0,p=g.total?g.pending/g.total*100:0;return `<div class="v35CompanyRow"><div class="v35CompanyTitle"><b>${esc(g.name)}</b><span>${g.pct}% concluído · ${fmt(g.completed)}/${fmt(g.total)}</span></div><div class="v35CompanyTrack"><i class="done" style="width:${d}%"></i><i class="progress" style="width:${pr}%"></i><i class="pending" style="width:${p}%"></i></div><div class="v35CompanyMeta"><span><i class="dot done"></i>${fmt(g.completed)} concluídas</span><span><i class="dot progress"></i>${fmt(g.progress)} andamento</span><span><i class="dot pending"></i>${fmt(g.pending)} pendentes</span></div></div>`}).join(''):'<div class="muted">Sem empresas no recorte atual.</div>';
+
+  // Atenção continua gerencial, mas as localidades não iniciadas respeitam o recorte.
   const e=dashboardData.evidence||{}; const alerts=[
-    [Number(inv.divergences||0),'Divergências com a base','quality'],
-    [Number(inv.inoperative||0),'Equipamentos inoperantes','quality'],
     [Number(e.review||0),'Evidências aguardando revisão','evidence'],
-    [Number(e.unresolved_visits||0),'Visitas sem localidade vinculada','evidence'],
-    [Number(t.pending||0),'Localidades ainda não iniciadas','ranking']
+    [pending,'Localidades pendentes no recorte','ranking'],
+    [progress,'Localidades em andamento','execution'],
+    [Number(metrics.divergences||0),'Divergências com a base','quality'],
+    [Number(metrics.inoperative||0),'Equipamentos inoperantes','quality']
   ].sort((a,b)=>b[0]-a[0]);
-  document.getElementById('v34Attention').innerHTML=alerts.map(([n,label,view],i)=>`<button type="button" onclick="v23SetView('${view}')"><em>${i+1}</em><span>${esc(label)}</span><b>${fmt(n)}</b></button>`).join('');
+  const att=document.getElementById('v34Attention');
+  if(att)att.innerHTML=alerts.map(([n,label,view],i)=>`<button type="button" onclick="v23SetView('${view}')"><em>${i+1}</em><span>${esc(label)}</span><b>${fmt(n)}</b></button>`).join('');
 }
+
+// Compatibilidade: módulos antigos chamam este nome.
+function renderV34Intelligence(){ renderV35Overview(); }
+
 const _v34UpdateExecutiveView=updateExecutiveView; updateExecutiveView=function(){_v34UpdateExecutiveView();renderV34Intelligence();};
+
+
+// V35 — clique nos status da Visão Geral abre a execução já filtrada por situação.
+document.querySelectorAll('.v35Status[data-status]').forEach(btn=>btn.addEventListener('click',()=>{
+  const target=btn.dataset.status||'';
+  if(document.getElementById('fs')) document.getElementById('fs').value=target;
+  try{syncChips();renderLocations();}catch(_e){}
+  v23SetView('execution');
+}));
