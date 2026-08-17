@@ -55,9 +55,14 @@
         {% if selected_location %} · {{ selected_location.company }} / {{ selected_location.location }}{% endif %}
       </p>
     </div>
-    <span class="status {% if selected.match_confidence == 'SEGURA' %}sCONCLUIDA{% else %}sEMANDAMENTO{% endif %}">
-      {{ selected.match_confidence }}
-    </span>
+    <div class="evidenceDetailActions">
+      <span class="status {% if selected.match_confidence == 'SEGURA' %}sCONCLUIDA{% else %}sEMANDAMENTO{% endif %}">{{ selected.match_confidence }}</span>
+      {% if session.get('role') == 'manager' %}
+      <form method="post" action="/evidencias-campo/visita/{{ selected.id }}/excluir" onsubmit="return confirm('Excluir esta visita importada, seus itens e mídias? A base oficial da estação não será apagada.')">
+        <button type="submit" class="dangerButton">Excluir visita</button>
+      </form>
+      {% endif %}
+    </div>
   </div>
 
   {% if not selected.location_id and session.get('role') == 'manager' %}

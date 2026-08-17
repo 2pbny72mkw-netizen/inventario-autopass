@@ -22,7 +22,7 @@
     </div>
     <nav>
       {% if session.get('role') in ('manager','consultation') %}<a href="/gerencial">Dashboard</a>{% endif %}
-      {% if session.get('role') in ('manager','consultation') %}<a href="/patrimonio">Patrimônio 360</a>{% endif %}
+      {% if session.get('role') in ('manager','consultation') %}<a href="/patrimonio">Equipamentos</a>{% endif %}
       {% if session.get('role') in ('manager','consultation') %}<a href="/evidencias-campo">Evidências</a>{% endif %}
       {% if session.get('role') in ('manager','technician') %}<a href="/tecnico">Lançamento</a>{% endif %}
       {% if session.get('role') in ('manager','consultation','hr') %}<a href="/equipes">Equipes</a>{% endif %}
