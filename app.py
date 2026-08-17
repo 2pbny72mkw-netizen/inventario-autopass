@@ -33,9 +33,9 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V38.0"
+APP_RELEASE = "V38.1"
 DASHBOARD_RELEASE = "dashboard-v36-0"
-TEAMS_RELEASE = "teams-v36-0"
+TEAMS_RELEASE = "teams-v38-1"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
 FIELD_GPS_GOOD_ACCURACY_M = float(os.getenv("FIELD_GPS_GOOD_ACCURACY_M", "30"))
 FIELD_GPS_MAX_ACCURACY_M = float(os.getenv("FIELD_GPS_MAX_ACCURACY_M", "80"))
@@ -495,7 +495,7 @@ def dashboard_required(fn):
     def inner(*args, **kwargs):
         if not session.get("user_id"):
             return redirect(url_for("login"))
-        if session.get("role") not in ("manager", "consultation"):
+        if session.get("role") not in ("manager", "consultation", "dispatcher"):
             if session.get("role") == "hr":
                 return redirect(url_for("teams_page"))
             return redirect(url_for("technician"))
@@ -509,7 +509,7 @@ def teams_view_required(fn):
     def inner(*args, **kwargs):
         if not session.get("user_id"):
             return redirect(url_for("login"))
-        if session.get("role") not in ("manager", "consultation", "hr"):
+        if session.get("role") not in ("manager", "consultation", "hr", "dispatcher"):
             return redirect(url_for("technician"))
         return fn(*args, **kwargs)
     return inner
@@ -544,7 +544,7 @@ def _current_user_is_superadmin():
 
 def _role_assignment_allowed(role):
     role = (role or "").strip()
-    if role in ("manager", "consultation"):
+    if role in ("manager", "consultation", "dispatcher"):
         return _current_user_is_superadmin()
     return role in ("technician", "hr")
 
@@ -570,7 +570,7 @@ def index():
     role = session.get("role")
     if role == "hr":
         return redirect(url_for("teams_page"))
-    return redirect(url_for("manager" if role in ("manager", "consultation") else "technician"))
+    return redirect(url_for("manager" if role in ("manager", "consultation", "dispatcher") else "technician"))
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -584,7 +584,7 @@ def login():
             session.update(user_id=user.id, name=user.name, role=user.role)
             if user.role == "hr":
                 return redirect(url_for("teams_page"))
-            return redirect(url_for("manager" if user.role in ("manager", "consultation") else "technician"))
+            return redirect(url_for("manager" if user.role in ("manager", "consultation", "dispatcher") else "technician"))
         flash("Usuário ou senha inválidos.")
     return render_template("login.html")
 
@@ -1321,7 +1321,7 @@ def teams_profile_remove_api(profile_id):
 
 
 @app.get("/api/equipes/export/excel")
-@dashboard_required
+@teams_view_required
 def teams_export_excel_api():
     _ensure_team_schedule_profiles()
     start_raw = request.args.get("start", "").strip()
@@ -3301,6 +3301,7 @@ def _next_user_code(role):
         "manager": "G",
         "consultation": "C",
         "hr": "RH",
+        "dispatcher": "D",
     }
     prefix = prefixes.get(role, "U")
     existing = (
@@ -3342,11 +3343,11 @@ def create_user():
         flash("Nome, usuário e senha são obrigatórios.")
         return redirect(url_for("users_page"))
 
-    if role not in ("manager", "technician", "consultation", "hr"):
+    if role not in ("manager", "technician", "consultation", "hr", "dispatcher"):
         flash("Perfil de acesso inválido.")
         return redirect(url_for("users_page"))
     if not _role_assignment_allowed(role):
-        flash("Somente o Administrador principal pode criar ou atribuir os perfis Gestor ou Consulta.")
+        flash("Somente o Administrador principal pode criar ou atribuir os perfis Gestor, Consulta ou Dispatcher.")
         return redirect(url_for("users_page"))
 
     allowed_personnel_status = {"ATIVO", "FERIAS", "AFASTADO", "LICENCA", "FOLGA_PROGRAMADA", "OUTRO"}
@@ -3498,11 +3499,11 @@ def edit_user(user_id):
         flash("Nome e usuário são obrigatórios.")
         return redirect(url_for("users_page"))
 
-    if role not in ("manager", "technician", "consultation", "hr"):
+    if role not in ("manager", "technician", "consultation", "hr", "dispatcher"):
         flash("Perfil de acesso inválido.")
         return redirect(url_for("users_page"))
     if not _role_assignment_allowed(role):
-        flash("Somente o Administrador principal pode atribuir os perfis Gestor ou Consulta.")
+        flash("Somente o Administrador principal pode atribuir os perfis Gestor, Consulta ou Dispatcher.")
         return redirect(url_for("users_page"))
 
     allowed_personnel_status = {"ATIVO", "FERIAS", "AFASTADO", "LICENCA", "FOLGA_PROGRAMADA", "OUTRO"}
@@ -3719,7 +3720,7 @@ def reactivate_user(user_id):
         flash("Usuário arquivado não encontrado.")
         return redirect(url_for("users_page"))
     # RH não pode restaurar diretamente um perfil sensível.
-    if user.role in ("manager", "consultation") and not _current_user_is_superadmin():
+    if user.role in ("manager", "consultation", "dispatcher") and not _current_user_is_superadmin():
         flash("Somente o Administrador principal pode reativar usuários Gestor ou Consulta.")
         return redirect(url_for("users_page"))
     base_login = normalize(user.name).lower().replace(" ", ".")[:60] or f"usuario{user.id}"
@@ -3751,7 +3752,7 @@ def export_users_excel():
         c.font = Font(bold=True, color="FFFFFF")
         c.fill = PatternFill("solid", fgColor="17345D")
         c.alignment = Alignment(horizontal="center")
-    role_label={"manager":"Gestor","technician":"Técnico de Campo","consultation":"Consulta","hr":"RH"}
+    role_label={"manager":"Gestor","technician":"Técnico de Campo","consultation":"Consulta","hr":"RH","dispatcher":"Dispatcher"}
     for u in User.query.order_by(User.name).all():
         status = "ARQUIVADO" if u.archived_at else ("ATIVO" if u.active else "INATIVO")
         ws.append([
@@ -4744,7 +4745,7 @@ def v38_diario_bordo():
     days = max(1, min(request.args.get("days", 7, type=int) or 7, 30))
     user_id = request.args.get("user_id", type=int)
     since = datetime.utcnow() - timedelta(days=days)
-    uq = User.query.filter(User.active.is_(True))
+    uq = User.query.filter(User.active.is_(True), ~User.role.in_(("manager","hr")))
     users = uq.order_by(User.name).all()
     if not user_id:
         return jsonify({"ok": True, "days": days, "users": [{"id":u.id,"name":u.name,"role":u.role} for u in users], "events": [], "summary": {}})
