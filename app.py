@@ -33,9 +33,9 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V35.1"
-DASHBOARD_RELEASE = "dashboard-v35-1"
-TEAMS_RELEASE = "teams-v35-1"
+APP_RELEASE = "V35.3"
+DASHBOARD_RELEASE = "dashboard-v35-3"
+TEAMS_RELEASE = "teams-v35-3"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
 FIELD_GPS_GOOD_ACCURACY_M = float(os.getenv("FIELD_GPS_GOOD_ACCURACY_M", "30"))
 FIELD_GPS_MAX_ACCURACY_M = float(os.getenv("FIELD_GPS_MAX_ACCURACY_M", "80"))
@@ -47,6 +47,7 @@ OFFICIAL_PARK = {
     "BLOQUEIO": 1610,
 }
 OFFICIAL_PARK_TOTAL = sum(OFFICIAL_PARK.values())  # 3.801
+TECHNICAL_TDI_TOTAL = int(os.getenv("TECHNICAL_TDI_TOTAL", "80"))
 EXPECTED_CACHE_TTL_SECONDS = 600
 _expected_cache = {"at": 0.0, "data": None}
 UPLOAD_DIR = BASE_DIR / "uploads"
@@ -1428,12 +1429,14 @@ def _location_360_payload(loc):
         "divergences":divergences, "inoperative":inoperative,
         "visits":len(visits), "media":media_count, "outside_base":outside_base,
         "latitude":loc.reference_latitude, "longitude":loc.reference_longitude,
-        "can_manage": session.get("role") == "manager",
+        "can_manage": _current_user_is_superadmin(),
         "equipment":[{
             "id":x.id, "type":x.equipment_type, "identifier":x.asset_identifier,
             "serial":x.serial, "model":x.model, "supplier":x.supplier,
             "status":x.operational_status, "divergence":x.divergence, "in_base":x.in_base,
             "notes":x.notes, "technician_id":x.technician_id,
+            "creator": ((db.session.get(User, x.technician_id).name if db.session.get(User, x.technician_id) else None) or "—"),
+            "creator_username": ((db.session.get(User, x.technician_id).username if db.session.get(User, x.technician_id) else None) or ""),
             "created_at":x.created_at.isoformat()+"Z" if x.created_at else None,
             "media":[{
                 "id":a.id,"name":a.original_name,"mime":a.mime_type,
@@ -1538,22 +1541,29 @@ def v7_global_search_api():
         BaseAsset.locality.ilike(like),BaseAsset.description.ilike(like)
     )).limit(25).all()
     matching_location_ids=[x.id for x in locations]
+    creator_rows=User.query.filter(db.or_(User.name.ilike(like),User.username.ilike(like),User.user_code.ilike(like))).limit(50).all()
+    creator_ids=[u.id for u in creator_rows]
     inventory_filters=[
         Inventory.serial.ilike(like),Inventory.asset_identifier.ilike(like),
         Inventory.model.ilike(like),Inventory.supplier.ilike(like),
         Inventory.equipment_type.ilike(like), Inventory.notes.ilike(like)
     ]
+    if creator_ids:
+        inventory_filters.append(Inventory.technician_id.in_(creator_ids))
     if matching_location_ids:
         inventory_filters.append(Inventory.location_id.in_(matching_location_ids))
     inventory=Inventory.query.filter(db.or_(*inventory_filters)).order_by(Inventory.created_at.desc()).limit(50).all()
+    creator_map={u.id:u for u in User.query.filter(User.id.in_([x.technician_id for x in inventory] or [-1])).all()}
     return jsonify({
-        "ok":True,"query":q,
+        "ok":True,"query":q,"can_admin":_current_user_is_superadmin(),
         "locations":[{"id":x.id,"company":x.company,"line":x.line,"location":x.location} for x in locations],
         "assets":[{"id":x.id,"type":x.equipment_type,"serial":x.serial,"asset_key":x.asset_key,
                    "locality":x.locality,"line":x.line,"model":x.model} for x in assets],
         "inventory":[{"id":x.id,"type":x.equipment_type,"identifier":x.asset_identifier,
                       "serial":x.serial,"location_id":x.location_id,"status":x.operational_status,
                       "in_base":x.in_base,"model":x.model,
+                      "creator":creator_map.get(x.technician_id).name if creator_map.get(x.technician_id) else "—",
+                      "creator_username":creator_map.get(x.technician_id).username if creator_map.get(x.technician_id) else "",
                       "created_at":x.created_at.isoformat()+"Z" if x.created_at else None} for x in inventory]
     })
 
@@ -1673,6 +1683,81 @@ def v30_atm_contracts_export():
     for col in range(1,ws.max_column+1): ws.column_dimensions[get_column_letter(col)].width=20
     ws.freeze_panes="A2"; out=io.BytesIO(); wb.save(out); out.seek(0)
     return send_file(out,as_attachment=True,download_name=f"autopass_contratos_atm_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+@app.get("/api/v35/equipments/export")
+@dashboard_required
+def v35_equipments_export():
+    """Exporta a base de equipamentos respeitando o recorte da tela Equipamentos.
+
+    Para ATM, os filtros de contrato/vencimento também são aplicados. Para os
+    demais tipos esses filtros são ignorados, permitindo usar o mesmo botão para
+    ATM, Recarga, POS, TDI, Bloqueio ou todos os tipos.
+    """
+    company=(request.args.get("company") or "").strip()
+    line=(request.args.get("line") or "").strip()
+    location_id=(request.args.get("location") or "").strip()
+    equipment_type=(request.args.get("type") or "").strip().upper()
+    contract=(request.args.get("contract") or "").strip()
+    horizon=(request.args.get("horizon") or "").strip()
+
+    q=BaseAsset.query
+    if company:
+        q=q.filter(BaseAsset.company==company)
+    if line:
+        q=q.filter(BaseAsset.line==line)
+    if location_id:
+        try:
+            loc=db.session.get(Location,int(location_id))
+        except Exception:
+            loc=None
+        if loc:
+            q=q.filter(BaseAsset.locality==loc.location)
+
+    type_variants={
+        "ATM":{"ATM"},
+        "VALIDADOR":{"VALIDADOR","RECARGA","VALIDADOR DE RECARGA"},
+        "RECARGA":{"VALIDADOR","RECARGA","VALIDADOR DE RECARGA"},
+        "POS":{"POS"},
+        "TDI":{"TDI","TDI TECNICO","TDI TÉCNICO"},
+        "BLOQUEIO":{"BLOQUEIO","BLOQUEIO DE ACESSO"},
+        "OUTRO":{"OUTRO"},
+    }
+    if equipment_type:
+        variants=type_variants.get(equipment_type,{equipment_type})
+        q=q.filter(func.upper(func.coalesce(BaseAsset.equipment_type,"" )).in_(variants))
+
+    today=datetime.utcnow().date()
+    selected=[]
+    for a in q.order_by(BaseAsset.company,BaseAsset.line,BaseAsset.locality,BaseAsset.equipment_type,BaseAsset.asset_key).all():
+        # Contrato/vencimento são atributos específicos de ATM.
+        if equipment_type=="ATM":
+            if contract and (a.leasing_status or "")!=contract:
+                continue
+            end=_parse_contract_date(a.contract_end)
+            days=(end-today).days if end else None
+            if horizon=="expired" and not(end and days<0): continue
+            if horizon=="30" and not(end and 0<=days<=30): continue
+            if horizon=="60" and not(end and 0<=days<=60): continue
+            if horizon=="90" and not(end and 0<=days<=90): continue
+        else:
+            end=_parse_contract_date(a.contract_end)
+            days=(end-today).days if end else None
+        selected.append((a,days))
+
+    wb=Workbook(); ws=wb.active; ws.title="Equipamentos"
+    headers=["Empresa","Linha","Localidade","Tipo","Ativo / patrimônio","Série","QR Code","TOP ID","Modelo","Fornecedor","Aplicação","Terminal","Versão software","Quantidade","Status base","Contrato ATM","Vencimento","Dias para vencer","Observações da base"]
+    ws.append(headers)
+    fill=PatternFill("solid",fgColor="17365D"); font=Font(color="FFFFFF",bold=True)
+    for c in ws[1]: c.fill=fill; c.font=font
+    for a,days in selected:
+        ws.append([a.company,a.line,a.locality,a.equipment_type,a.asset_key,a.serial,a.qrcode_id,a.top_id,a.model,a.supplier,a.application,a.terminal_number,a.software_version,a.quantity,a.base_status,a.leasing_status,a.contract_end,days,a.base_notes])
+    for col in range(1,ws.max_column+1):
+        ws.column_dimensions[get_column_letter(col)].width=22
+    ws.freeze_panes="A2"; ws.auto_filter.ref=ws.dimensions
+    out=io.BytesIO(); wb.save(out); out.seek(0)
+    label=(equipment_type or "todos").lower().replace(" ","-")
+    return send_file(out,as_attachment=True,download_name=f"autopass_equipamentos_{label}_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 @app.get("/api/v12/inventario/<int:inventory_id>/ciclo")
 @dashboard_required
@@ -2097,7 +2182,7 @@ def api_location_inventory(location_id):
             "gps_captured_at": inv.gps_captured_at.isoformat(timespec="seconds") if inv.gps_captured_at else None,
             "technician": technician_name,
             "attachments_count": attachment_count,
-            "can_manage": session.get("role") == "manager",
+            "can_manage": _current_user_is_superadmin(),
         })
     return jsonify(out)
 
@@ -2388,9 +2473,32 @@ def create_inventory():
     return jsonify({"ok": True, "id": inv.id})
 
 
+@app.get("/api/inventory/<int:inventory_id>")
+@dashboard_required
+def get_inventory_admin(inventory_id):
+    if not _current_user_is_superadmin():
+        return jsonify({"ok": False, "error": "Edição disponível somente para o administrador principal."}), 403
+    inv = db.session.get(Inventory, inventory_id)
+    if not inv:
+        return jsonify({"ok": False, "error": "Registro não encontrado."}), 404
+    loc = db.session.get(Location, inv.location_id)
+    user = db.session.get(User, inv.technician_id)
+    return jsonify({"ok": True, "inventory": {
+        "id": inv.id, "location_id": inv.location_id, "location": loc.location if loc else "",
+        "company": loc.company if loc else "", "line": loc.line if loc else "",
+        "equipment_type": inv.equipment_type, "asset_identifier": inv.asset_identifier,
+        "serial": inv.serial or "", "supplier": inv.supplier or "", "model": inv.model or "",
+        "operational_status": inv.operational_status or "", "in_base": inv.in_base or "",
+        "divergence": inv.divergence or "", "notes": inv.notes or "",
+        "creator": user.name if user else "—", "creator_username": user.username if user else ""
+    }})
+
+
 @app.route("/api/inventory/<int:inventory_id>", methods=["PUT", "PATCH"])
 @manager_required
 def update_inventory(inventory_id):
+    if not _current_user_is_superadmin():
+        return jsonify({"ok": False, "error": "Edição disponível somente para o administrador principal."}), 403
     inv = db.session.get(Inventory, inventory_id)
     if not inv:
         return jsonify({"ok": False, "error": "Registro não encontrado."}), 404
@@ -2468,6 +2576,8 @@ def update_inventory(inventory_id):
 @app.delete("/api/inventory/<int:inventory_id>")
 @manager_required
 def delete_inventory(inventory_id):
+    if not _current_user_is_superadmin():
+        return jsonify({"ok": False, "error": "Exclusão disponível somente para o administrador principal."}), 403
     inv = db.session.get(Inventory, inventory_id)
     if not inv:
         return jsonify({"ok": False, "error": "Registro não encontrado."}), 404
@@ -2722,14 +2832,7 @@ def dashboard():
         Inventory.divergence.notin_(["", "Não", "Nao"])
     ).count()
 
-    technical_tdi_expected = int(
-        db.session.query(func.coalesce(func.sum(func.coalesce(BaseAsset.quantity, 1)), 0))
-        .filter(
-            func.upper(func.coalesce(BaseAsset.equipment_type, "")) == "TDI",
-            ~func.upper(func.coalesce(BaseAsset.base_status, "")).like("%INATIVO%")
-        )
-        .scalar() or 0
-    )
+    technical_tdi_expected = TECHNICAL_TDI_TOTAL
 
     by_type = []
     for typ in ["ATM", "VALIDADOR", "POS", "TDI", "BLOQUEIO"]:
@@ -5213,6 +5316,29 @@ def debug_conciliar_estacoes():
     except Exception as e:
         return jsonify({"ok": False, "erro": str(e)}), 500
 
+
+def cleanup_v352_test_reference():
+    """Remove somente a referência manual de teste LUZ/01-AZUL criada no mapa.
+    Não remove a localidade, inventários, evidências nem referências de outras linhas.
+    """
+    rows = Location.query.filter(
+        func.upper(func.coalesce(Location.location, "")).like("%LUZ%"),
+        func.upper(func.coalesce(Location.line, "")).like("%01%AZUL%"),
+        func.upper(func.coalesce(Location.reference_source, "")).like("%GESTOR%MAPA%")
+    ).all()
+    changed = 0
+    for loc in rows:
+        if loc.reference_latitude is None and loc.reference_longitude is None:
+            continue
+        loc.reference_latitude = None
+        loc.reference_longitude = None
+        loc.reference_source = "V35.2 · referência de teste removida"
+        loc.reference_updated_at = datetime.utcnow()
+        changed += 1
+    if changed:
+        db.session.commit()
+    return changed
+
 with app.app_context():
     migrate_location_reference_columns()
     db.create_all()
@@ -5224,6 +5350,7 @@ with app.app_context():
     migrate_inventory_validator_columns()
     seed_data()
     sync_base_assets_1408(force=False)
+    cleanup_v352_test_reference()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "5000")), debug=False)
