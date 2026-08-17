@@ -1,4 +1,4 @@
-window.AUTOPASS_MANAGER_VERSION='dashboard-v36-0';
+window.AUTOPASS_MANAGER_VERSION='dashboard-v38-1';
 console.log('AUTOPASS Dashboard Executivo V25 carregado');
 let locations=[];
 let dashboardData=null;

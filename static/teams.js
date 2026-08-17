@@ -1,4 +1,4 @@
-window.AUTOPASS_TEAMS_VERSION='teams-v38';
+window.AUTOPASS_TEAMS_VERSION='teams-v38-1';
 console.log('AUTOPASS Central Operacional V26 carregada');
 
 const $=id=>document.getElementById(id);
@@ -171,7 +171,7 @@ async function loadCalendar(){
     start:$('calendarStart').value,
     days:$('calendarDays').value
   });
-  if($('calendarCategory').value) params.set('cargo',$('calendarCategory').value);
+  if($('calendarCategory').value) params.set('cargo',$('calendarCategory').value); if($('v38TeamSearch')?.value) params.set('q',$('v38TeamSearch').value); if($('v38TeamGps')?.value) params.set('gps',$('v38TeamGps').value);
 
   const r=await fetch(`/api/equipes/calendario?${params.toString()}`,{cache:'no-store',headers:{'Accept':'application/json'}});
   const contentType=String(r.headers.get('content-type')||'');
@@ -343,7 +343,7 @@ function exportScale(){
     start:$('calendarStart').value,
     days:$('calendarDays').value
   });
-  if($('calendarCategory').value) params.set('cargo',$('calendarCategory').value);
+  if($('calendarCategory').value) params.set('cargo',$('calendarCategory').value); if($('v38TeamSearch')?.value) params.set('q',$('v38TeamSearch').value); if($('v38TeamGps')?.value) params.set('gps',$('v38TeamGps').value);
   window.location.href=`/api/equipes/export/excel?${params.toString()}`;
 }
 
@@ -443,6 +443,14 @@ bindTeamCollapsible('toggleTodayOperational','todayOperationalContent');
 bindTeamCollapsible('toggleExpectedTeam','expectedTeamContent');
 
 // V38 — malha metroferroviária também no mapa de equipes
-async function v38DrawRailNetwork(){try{const locs=await fetch('/api/locations',{cache:'no-store'}).then(r=>r.json());const colors={'1':'#005ca9','2':'#008c5a','3':'#ee3338','4':'#f4b800','5':'#7651a2','6':'#f28c00','7':'#9b0058','8':'#8b8b8b','9':'#008c7d','10':'#00a5b5','11':'#e94b24','12':'#1455a0','13':'#008b68','15':'#9a9a9a','17':'#8a7627'};const groups={};(locs||[]).forEach(x=>{if(x.reference_latitude==null||x.reference_longitude==null)return;const m=String(x.line||'').match(/(?:^|\D)(1[0-7]|[1-9])(?:\D|$)/);if(!m)return;(groups[m[1]]??=[]).push(x)});Object.entries(groups).forEach(([n,a])=>{if(a.length<2)return;const pts=a.map(x=>[Number(x.reference_latitude),Number(x.reference_longitude)]);L.polyline(pts,{color:colors[n]||'#64748b',weight:5,opacity:.85}).addTo(teamMap)})}catch(e){console.warn('V38 trilhos equipes',e)}}
+async function v38DrawRailNetwork(){
+ const colors={'1':'#0054A6','2':'#008C5A','3':'#E6332A','4':'#F4C300','5':'#7A3E9D','6':'#F28C18','7':'#A60055','8':'#8C8C8C','9':'#00A092','10':'#00A5B5','11':'#F04B23','12':'#164F9C','13':'#009B62','15':'#9B9DA0','17':'#9A7A24'};
+ const fallback={'4':[[-23.5362,-46.6335],[-23.5441,-46.6422],[-23.5489,-46.652],[-23.5553,-46.662],[-23.5608,-46.6719],[-23.5662,-46.684],[-23.5673,-46.693],[-23.5669,-46.7012],[-23.5718,-46.708],[-23.5864,-46.723],[-23.5944,-46.733]],'17':[[-23.6217,-46.7012],[-23.6222,-46.6947],[-23.6209,-46.6878],[-23.6201,-46.68],[-23.621,-46.6732],[-23.6241,-46.667],[-23.6288,-46.6633],[-23.6328,-46.6603]]};
+ const rn=v=>{const t=String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase();const m=t.match(/(?:^|\s)(0?1[0-7]|0?[1-9])(?:\s|\-|$)/);if(m)return String(Number(m[1]));const a={AZUL:'1',VERDE:'2',VERMELHA:'3',AMARELA:'4',LILAS:'5',LARANJA:'6',RUBI:'7',DIAMANTE:'8',ESMERALDA:'9',TURQUESA:'10',CORAL:'11',SAFIRA:'12',JADE:'13',PRATA:'15',OURO:'17'};return Object.entries(a).find(([k])=>t.includes(k))?.[1]||''};
+ try{const locs=await fetch('/api/locations',{cache:'no-store'}).then(r=>r.json());const groups={};(locs||[]).forEach(x=>{if(x.reference_latitude==null||x.reference_longitude==null)return;const n=rn(x.line);if(n)(groups[n]??=[]).push(x)});['4','17'].forEach(n=>groups[n]??=[]);
+ for(const [n,a] of Object.entries(groups)){let pool=[...a],seq=[];if(pool.length){pool.sort((x,y)=>(+x.reference_longitude + +x.reference_latitude*.08)-(+y.reference_longitude + +y.reference_latitude*.08));seq=[pool.shift()];while(pool.length){const last=seq.at(-1);let bi=0,bd=Infinity;pool.forEach((c,i)=>{const dx=(+c.reference_longitude)-(+last.reference_longitude),dy=(+c.reference_latitude)-(+last.reference_latitude),d=dx*dx+dy*dy;if(d<bd){bd=d;bi=i}});seq.push(pool.splice(bi,1)[0])}}
+ const pts=seq.length>=2?seq.map(x=>[+x.reference_latitude,+x.reference_longitude]):(fallback[n]||[]);if(pts.length<2)continue;L.polyline(pts,{color:'#fff',weight:10,opacity:.95,interactive:false}).addTo(teamMap);L.polyline(pts,{color:colors[n]||'#64748b',weight:6,opacity:1}).addTo(teamMap)}
+ }catch(e){console.warn('V38.1 trilhos equipes',e)}
+}
 function v38ApplyTeamFilter(){const q=String($('v38TeamSearch')?.value||'').toLowerCase(),cat=$('v38TeamCategory')?.value||'',gps=$('v38TeamGps')?.value||'';document.querySelectorAll('#todayTeamTable tr').forEach(tr=>{const txt=tr.textContent.toLowerCase();tr.style.display=(!q||txt.includes(q))&&(!cat||txt.includes(cat.toLowerCase()))&&(!gps||txt.includes(gps.toLowerCase()))?'':'none'});document.querySelectorAll('#teamCards > *').forEach(el=>{const txt=el.textContent.toLowerCase();el.style.display=(!q||txt.includes(q))&&(!cat||txt.includes(cat.toLowerCase()))&&(!gps||txt.includes(gps.toLowerCase()))?'':'none'})}
 ['v38TeamSearch','v38TeamCategory','v38TeamGps'].forEach(id=>$(id)?.addEventListener(id==='v38TeamSearch'?'input':'change',v38ApplyTeamFilter));$('v38ClearTeam')?.addEventListener('click',()=>{['v38TeamSearch','v38TeamCategory','v38TeamGps'].forEach(id=>$(id).value='');v38ApplyTeamFilter()});
