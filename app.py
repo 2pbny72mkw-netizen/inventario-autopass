@@ -33,7 +33,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V37.2"
+APP_RELEASE = "V38.0"
 DASHBOARD_RELEASE = "dashboard-v36-0"
 TEAMS_RELEASE = "teams-v36-0"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -4729,6 +4729,43 @@ def import_whatsapp():
         app_release=APP_RELEASE,
         analyzed_filename=analyzed_filename or (summary.get("filename") if summary else None),
     )
+
+
+
+
+@app.get("/api/v38/gps-config")
+@login_required
+def v38_gps_config():
+    return jsonify({"ok": True, "enabled": True, "interval_seconds": max(60, int(os.getenv("TEAM_GPS_INTERVAL_SECONDS", "300")))})
+
+@app.get("/api/v38/diario-bordo")
+@teams_view_required
+def v38_diario_bordo():
+    days = max(1, min(request.args.get("days", 7, type=int) or 7, 30))
+    user_id = request.args.get("user_id", type=int)
+    since = datetime.utcnow() - timedelta(days=days)
+    uq = User.query.filter(User.active.is_(True))
+    users = uq.order_by(User.name).all()
+    if not user_id:
+        return jsonify({"ok": True, "days": days, "users": [{"id":u.id,"name":u.name,"role":u.role} for u in users], "events": [], "summary": {}})
+    u = db.session.get(User, user_id)
+    if not u: return jsonify({"ok":False,"error":"Colaborador não encontrado"}),404
+    positions = TechnicianPosition.query.filter(TechnicianPosition.user_id==user_id, TechnicianPosition.captured_at>=since).order_by(TechnicianPosition.captured_at).all()
+    inventories = Inventory.query.filter(Inventory.technician_id==user_id, Inventory.created_at>=since).order_by(Inventory.created_at).all()
+    locids={x.location_id for x in inventories}; locmap={x.id:x for x in Location.query.filter(Location.id.in_(locids)).all()} if locids else {}
+    events=[]
+    for x in positions: events.append({"kind":"GPS","at":x.captured_at.isoformat()+"Z","latitude":x.latitude,"longitude":x.longitude,"accuracy":x.accuracy,"detail":"Posição automática"})
+    for x in inventories:
+        loc=locmap.get(x.location_id); events.append({"kind":"ATIVIDADE","at":x.created_at.isoformat()+"Z","latitude":x.latitude,"longitude":x.longitude,"detail":f"{x.equipment_type} · {x.asset_identifier}","location":loc.location if loc else ""})
+    events.sort(key=lambda x:x['at'])
+    return jsonify({"ok":True,"days":days,"user":{"id":u.id,"name":u.name},"events":events,"summary":{"gps":len(positions),"equipment":len(inventories),"locations":len(locids),"first":events[0]['at'] if events else None,"last":events[-1]['at'] if events else None}})
+
+@app.get("/api/v38/evidence-analytics")
+@dashboard_required
+def v38_evidence_analytics():
+    summary=_evidence_summary()
+    statuses=db.session.query(FieldEvidenceItem.audit_status,func.count(FieldEvidenceItem.id)).group_by(FieldEvidenceItem.audit_status).all()
+    return jsonify({"ok":True,**summary,"statuses":[{"status":a or "SEM STATUS","count":int(n)} for a,n in statuses]})
 
 
 @app.get("/api/evidencias-campo/resumo")
