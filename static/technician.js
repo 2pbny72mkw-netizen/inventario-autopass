@@ -640,7 +640,12 @@ function updateEquipmentTypeUI(){
     else if(type==='Bloqueio') title.textContent='Dados específicos do Bloqueio';
   }
   const isBlock=type==='Bloqueio';
-  ['fieldBom','fieldBu','fieldTop'].forEach(id=>{if($(id)) $(id).style.display=isBlock?'none':'block';});
+  const isValidator=type==='Validador de Recarga';
+  // V37.2: no Validador, Aplicação passa a ser a informação padronizada.
+  // BOM/BU/TOP permanecem no banco/base histórica, mas não são mais exibidos para novo preenchimento.
+  ['fieldBom','fieldBu','fieldTop'].forEach(id=>{if($(id)) $(id).style.display=(isBlock||isValidator)?'none':'block';});
+  // V37.2: IP/rede/SIM não é solicitado no formulário de Validador.
+  if($('fieldNetwork')) $('fieldNetwork').style.display=isValidator?'none':'block';
   if($('applicationLabel')) $('applicationLabel').textContent=isBlock?'Instalação':'Aplicação';
 }
 
