@@ -35,6 +35,7 @@
             <option value="technician">Técnico de Campo</option>
             <option value="manager">Gestor</option>
             <option value="consultation">Consulta</option>
+            {% if can_assign_sensitive_roles %}<option value="dispatcher">Dispatcher</option>{% endif %}
             <option value="hr">RH</option>
           </select>
         </div>
@@ -113,6 +114,7 @@
     <p><b>Técnico de Campo</b><br><span class="muted">Coleta de campo, equipamentos, evidências e conclusão conforme o fluxo operacional.</span></p>
     <p><b>Consulta</b><br><span class="muted">Somente leitura de dashboard e informações. Não cadastra, edita, conclui ou reabre registros.</span></p>
     <p><b>RH</b><br><span class="muted">Visualiza equipes e administra usuários. Não acessa lançamentos de campo nem funções gerenciais do inventário.</span></p>
+    <p><b>Dispatcher</b><br><span class="muted">Acesso operacional somente a Dashboard, Equipes, Meu perfil e Sobre. Sem cadastro, edição ou exclusão administrativa.</span></p>
     <div class="notice">
       <b>Privacidade:</b> coletamos apenas os dados necessários para o acesso e a operação. CPF não faz parte deste cadastro.
     </div>
@@ -169,6 +171,7 @@
             {% if u.role == "manager" %}Gestor
             {% elif u.role == "consultation" %}Consulta
             {% elif u.role == "hr" %}RH
+            {% elif u.role == "dispatcher" %}Dispatcher
             {% else %}Técnico de Campo{% endif %}
           </td>
           <td>{{ u.job_title or "—" }}</td>
@@ -233,7 +236,7 @@
                     <select name="role" class="editRoleSelect" required>
                       <option value="technician" {% if u.role == "technician" %}selected{% endif %}>Técnico de Campo</option>
                       {% if can_assign_sensitive_roles %}<option value="manager" {% if u.role == "manager" %}selected{% endif %}>Gestor</option>
-                      <option value="consultation" {% if u.role == "consultation" %}selected{% endif %}>Consulta</option>{% elif u.role in ("manager","consultation") %}<option value="{{ u.role }}" selected disabled>{{ "Gestor" if u.role == "manager" else "Consulta" }}</option>{% endif %}
+                      <option value="consultation" {% if u.role == "consultation" %}selected{% endif %}>Consulta</option><option value="dispatcher" {% if u.role == "dispatcher" %}selected{% endif %}>Dispatcher</option>{% elif u.role in ("manager","consultation","dispatcher") %}<option value="{{ u.role }}" selected disabled>{{ {"manager":"Gestor","consultation":"Consulta","dispatcher":"Dispatcher"}.get(u.role,u.role) }}</option>{% endif %}
                       <option value="hr" {% if u.role == "hr" %}selected{% endif %}>RH</option>
                     </select>
                   </div>
@@ -397,7 +400,7 @@
 <section class="card archivedUsersPanel" id="archivedUsersPanel" hidden>
   <div class="sectionHead"><div><h2>Usuários arquivados</h2><p class="muted">Histórico separado da operação diária. Um colaborador que retornar deve ser reativado, preservando sua identidade histórica.</p></div><span class="tag">{{ archived_users|length }} arquivado(s)</span></div>
   <div class="tableWrap"><table><thead><tr><th>Usuário</th><th>Código</th><th>Perfil</th><th>Cargo</th><th>Empresa</th><th>Arquivado em</th><th>Ações</th></tr></thead><tbody>
-  {% for u in archived_users %}<tr><td><b>{{ u.name }}</b></td><td>{{ u.user_code or '—' }}</td><td>{{ {'manager':'Gestor','technician':'Técnico de Campo','consultation':'Consulta','hr':'RH'}.get(u.role,u.role) }}</td><td>{{ u.job_title or '—' }}</td><td>{{ u.company or '—' }}</td><td>{{ u.archived_at.strftime('%d/%m/%Y %H:%M') if u.archived_at else '—' }}</td><td><form method="post" action="/usuarios/{{u.id}}/reativar" onsubmit="return confirm('Reativar este colaborador preservando o histórico anterior?')"><button class="secondary" type="submit">Reativar</button></form></td></tr>{% endfor %}
+  {% for u in archived_users %}<tr><td><b>{{ u.name }}</b></td><td>{{ u.user_code or '—' }}</td><td>{{ {'manager':'Gestor','technician':'Técnico de Campo','consultation':'Consulta','hr':'RH','dispatcher':'Dispatcher'}.get(u.role,u.role) }}</td><td>{{ u.job_title or '—' }}</td><td>{{ u.company or '—' }}</td><td>{{ u.archived_at.strftime('%d/%m/%Y %H:%M') if u.archived_at else '—' }}</td><td><form method="post" action="/usuarios/{{u.id}}/reativar" onsubmit="return confirm('Reativar este colaborador preservando o histórico anterior?')"><button class="secondary" type="submit">Reativar</button></form></td></tr>{% endfor %}
   </tbody></table></div>
 </section>
 {% endif %}
