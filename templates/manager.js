@@ -1,4 +1,4 @@
-window.AUTOPASS_MANAGER_VERSION='dashboard-v23';
+window.AUTOPASS_MANAGER_VERSION='dashboard-v34-1';
 console.log('AUTOPASS Dashboard Executivo V25 carregado');
 let locations=[];
 let dashboardData=null;
@@ -406,7 +406,7 @@ function renderGpsMap(items){
     const techInitials=String(x.technician||'?').trim().split(/\s+/).slice(0,2).map(v=>v[0]||'').join('').toUpperCase();
     const markerIcon=L.divIcon({
       className:'',
-      html:`<div class="gpsTechAvatar" style="outline:3px solid ${color}">${x.technician_photo_url?`<img src="${esc(x.technician_photo_url)}?v=${encodeURIComponent(x.gps_captured_at||x.created_at||'v10')}" alt="">`:`<span>${esc(techInitials)}</span>`}</div>`,
+      html:`<div class="gpsTechAvatar" style="outline:3px solid ${color}">${x.technician_photo_url?`<img src="${esc(x.technician_photo_url)}" alt="">`:`<span>${esc(techInitials)}</span>`}</div>`,
       iconSize:[40,40],iconAnchor:[20,20]
     });
     const marker=L.marker([lat,lon],{icon:markerIcon}).addTo(gpsPointLayer);
@@ -720,8 +720,10 @@ function renderV21ExecutiveCharts(rows,type){
     return {...x,_missing:Math.max(0,exp-inv)};
   }).filter(x=>x._missing>0).sort((a,b)=>b._missing-a._missing).slice(0,6);
   const max=Math.max(1,...priorities.map(x=>x._missing));
-  $('v21PriorityBars').innerHTML=priorities.length?priorities.map((x,i)=>`<div class="v21PriorityRow"><span class="rank">${i+1}</span><div class="who"><b>${esc(x.location)}</b><small>${esc(x.company)} · ${esc(x.line)}</small><div class="v21PriorityTrack"><i style="width:${Math.round(x._missing/max*100)}%"></i></div></div><strong>${fmt(x._missing)}</strong></div>`).join(''):'<div class="muted">Nenhuma pendência no recorte atual.</div>';
+  $('v21PriorityBars').innerHTML=priorities.length?priorities.map((x,i)=>`<div class="v21PriorityRow"><span class="rank">${i+1}</span><div class="who"><b>${esc(x.location)}</b><small>${esc(x.company)} · ${esc(x.line)}</small><div class="v21PriorityTrack"><i style="width:${Math.round(x._missing/max*100)}%"></i></div></div><strong>${fmt(x._missing)}</strong></div>`).join(''):'<div class="muted">Nenhuma pendência no recorte atual.</div>';  const overviewTypes=document.getElementById('v344TypeBars'); if(overviewTypes) overviewTypes.innerHTML=$('v21TypeBars').innerHTML;
+  const overviewPriorities=document.getElementById('v344PriorityBars'); if(overviewPriorities) overviewPriorities.innerHTML=$('v21PriorityBars').innerHTML;
 }
+
 
 function renderV22Cockpit(){
   if(!dashboardData||!$('v22ExecutiveCockpit')) return;
@@ -960,12 +962,14 @@ const V23_TV_VIEWS=['overview','execution','competition','quality','map','eviden
 function v23SetView(view){
   v23ActiveView=view||'overview';
   document.body.dataset.dashboardView=v23ActiveView;
+  document.body.dataset.dashboardView=v23ActiveView;
   document.querySelectorAll('.v23Panel').forEach(el=>{
-    const visible=String(el.dataset.v23Panel||'').split(/\s+/).includes(v23ActiveView);
-    el.style.setProperty('display', visible ? '' : 'none', 'important');
+    const active=String(el.dataset.v23Panel||'').split(/\s+/).includes(v23ActiveView);
+    el.classList.toggle('v23PanelActive',active);
+    el.hidden=!active;
   });
   document.querySelectorAll('.v23Nav').forEach(btn=>btn.classList.toggle('active',btn.dataset.v23View===v23ActiveView));
-  if(v23ActiveView==='map' && gpsMap) setTimeout(()=>gpsMap.invalidateSize(),100);
+  if(v23ActiveView==='map' && gpsMap) setTimeout(()=>gpsMap.invalidateSize(),140);
   window.scrollTo({top:0,behavior:document.body.classList.contains('v23TvMode')?'auto':'smooth'});
 }
 function v343SyncTv(){
@@ -999,10 +1003,7 @@ function v23StartTv(){
 }
 function initV23DashboardNav(){
   document.querySelectorAll('.v23Nav').forEach(btn=>btn.addEventListener('click',()=>v23SetView(btn.dataset.v23View)));
-  $('v23TvBtn')?.addEventListener('click',()=>{
-    if(document.body.classList.contains('v23TvMode')){v23StopTv();if(document.fullscreenElement)document.exitFullscreen?.();}
-    else v23StartTv();
-  });
+  $('v23TvBtn')?.addEventListener('click',()=>{ window.open('/gerencial/tv','_blank','noopener'); });
   document.addEventListener('fullscreenchange',()=>{if(!document.fullscreenElement && document.body.classList.contains('v23TvMode'))v23StopTv();});
   v23SetView('overview');
 }
@@ -1029,3 +1030,54 @@ function renderV29CommandCenter(){
  if(div||ino) headline+=` Atenção: ${fmt(div)} divergência(s) e ${fmt(ino)} inoperante(s).`;
  if($('v29Headline'))$('v29Headline').textContent=headline;
 }
+
+
+// V30 — gestão contratual ATM
+async function loadV30Contracts(){
+  const box=document.getElementById('v30ContractBars'); if(!box) return;
+  const company=document.getElementById('execCompany')?.value||'';
+  const line=document.getElementById('execLine')?.value||'';
+  const contract=document.getElementById('v30Contract')?.value||'';
+  const horizon=document.getElementById('v30Horizon')?.value||'';
+  try{
+    const r=await fetch(`/api/v30/atm-contracts?company=${encodeURIComponent(company)}&line=${encodeURIComponent(line)}&contract=${encodeURIComponent(contract)}&horizon=${encodeURIComponent(horizon)}`,{cache:'no-store'});
+    const d=await r.json(); if(!r.ok) throw new Error(d.error||'Falha');
+    const sel=document.getElementById('v30Contract'); const before=sel.value;
+    const opts=['<option value="">Todos</option>',...(d.contracts||[]).map(x=>`<option value="${esc(x)}">${esc(x)}</option>`)]; sel.innerHTML=opts.join(''); if([...sel.options].some(o=>o.value===before))sel.value=before;
+    document.getElementById('v30ContractCount').textContent=fmt(d.count||0);
+    const risk=(d.assets||[]).filter(x=>['VENCIDO','ATÉ 30 DIAS','31–60 DIAS','61–90 DIAS'].includes(x.contract_status)).length;
+    document.getElementById('v30ContractRisk').textContent=fmt(risk);
+    const groups={}; (d.assets||[]).forEach(x=>groups[x.contract_status]=(groups[x.contract_status]||0)+1); const max=Math.max(1,...Object.values(groups));
+    box.innerHTML=Object.entries(groups).map(([k,v])=>`<div class="v30ContractRow"><span>${esc(k)}</span><div><i style="width:${Math.round(v/max*100)}%"></i></div><b>${fmt(v)}</b></div>`).join('')||'<span class="muted">Nenhum ATM no recorte.</span>';
+  }catch(err){box.innerHTML='<span class="muted">Não foi possível carregar contratos ATM.</span>'}
+}
+['v30Contract','v30Horizon'].forEach(id=>document.getElementById(id)?.addEventListener('change',loadV30Contracts));
+['execCompany','execLine'].forEach(id=>document.getElementById(id)?.addEventListener('change',()=>setTimeout(loadV30Contracts,50)));
+document.getElementById('v30ContractExport')?.addEventListener('click',()=>{
+ const p=new URLSearchParams({company:document.getElementById('execCompany')?.value||'',line:document.getElementById('execLine')?.value||'',contract:document.getElementById('v30Contract')?.value||'',horizon:document.getElementById('v30Horizon')?.value||''}); location.href='/api/v30/atm-contracts/export?'+p.toString();
+});
+setTimeout(loadV30Contracts,800);
+
+
+// V34 — Intelligence Wall / atenção gerencial
+function renderV34Intelligence(){
+  if(!dashboardData||!document.getElementById('v34Radial'))return;
+  const t=dashboardData.totals||{}, inv=dashboardData.inventory||{};
+  const exp=Number(t.expected||0), done=Number(inv.official_inventoried||0), pct=exp?Math.min(100,done/exp*100):0;
+  document.getElementById('v34Radial').style.setProperty('--pct',pct.toFixed(1)+'%');
+  document.getElementById('v34RadialPct').textContent=pct.toFixed(1).replace('.',',')+'%';
+  document.getElementById('v34RadialText').textContent=`${fmt(done)} de ${fmt(exp)} ativos oficiais`;
+  const trend=dashboardData.trend_14d||[], max=Math.max(1,...trend.map(x=>Number(x.count||0)));
+  document.getElementById('v34Trend').innerHTML=trend.map((x,i)=>`<i style="height:${Math.max(5,Math.round(Number(x.count||0)/max*100))}%"><span>${fmt(x.count||0)}</span><small>${String(x.date||'').slice(8)}</small></i>`).join('');
+  const comps=(dashboardData.by_company||[]).slice().sort((a,b)=>Number(b.total||0)-Number(a.total||0)).slice(0,10);
+  document.getElementById('v34Heatmap').innerHTML=comps.map(x=>{const p=Number(x.total)?Math.round(Number(x.completed||0)/Number(x.total)*100):0;let c=p>=80?'hot5':p>=60?'hot4':p>=40?'hot3':p>=20?'hot2':'hot1';return `<div class="${c}" title="${esc(x.company||'—')} · ${p}%"><b>${esc((x.company||'—').slice(0,12))}</b><span>${p}%</span></div>`}).join('');
+  const e=dashboardData.evidence||{}; const alerts=[
+    [Number(inv.divergences||0),'Divergências com a base','quality'],
+    [Number(inv.inoperative||0),'Equipamentos inoperantes','quality'],
+    [Number(e.review||0),'Evidências aguardando revisão','evidence'],
+    [Number(e.unresolved_visits||0),'Visitas sem localidade vinculada','evidence'],
+    [Number(t.pending||0),'Localidades ainda não iniciadas','ranking']
+  ].sort((a,b)=>b[0]-a[0]);
+  document.getElementById('v34Attention').innerHTML=alerts.map(([n,label,view],i)=>`<button type="button" onclick="v23SetView('${view}')"><em>${i+1}</em><span>${esc(label)}</span><b>${fmt(n)}</b></button>`).join('');
+}
+const _v34UpdateExecutiveView=updateExecutiveView; updateExecutiveView=function(){_v34UpdateExecutiveView();renderV34Intelligence();};

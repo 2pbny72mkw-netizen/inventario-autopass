@@ -43,7 +43,7 @@
   <article class="kpi dangerKpi"><span>Inoperantes</span><b id="inoperative">0</b><small>Encontrados em campo</small></article>
 </section>
 
-<section class="equipmentBigNumbers v23Panel" data-v23-panel="overview">
+<section class="equipmentBigNumbers v23Panel" data-v23-panel="execution">
   <article class="equipmentBig atm" data-type="ATM"><span>ATM</span><b id="typeATM">0</b><small id="typeATMDetail">0 / 0 · 0%</small></article>
   <article class="equipmentBig val" data-type="VALIDADOR"><span>Recarga</span><b id="typeVALIDADOR">0</b><small id="typeVALIDADORDetail">0 / 0 · 0%</small></article>
   <article class="equipmentBig pos" data-type="POS"><span>POS</span><b id="typePOS">0</b><small id="typePOSDetail">0 / 0 · 0%</small></article>
@@ -52,7 +52,7 @@
   <article class="equipmentBig outro" data-type="OUTRO"><span>Outro</span><b id="typeOUTRO">0</b><small id="typeOUTRODetail">Encontrados fora da base</small></article>
 </section>
 
-<section class="v29CommandDeck v23Panel" data-v23-panel="overview execution">
+<section class="v29CommandDeck v23Panel" data-v23-panel="execution">
   <article class="v29ProgressHero"><span>PROGRESSO GERAL</span><b id="v29Progress">0%</b><div class="v29MegaTrack"><i id="v29ProgressBar"></i></div><small id="v29ProgressText">0 de 0 ativos oficiais conciliados</small></article>
   <article class="v29Pulse"><span>RITMO · 7 DIAS</span><b id="v29Pace">0/dia</b><small id="v29PaceDelta">Sem histórico suficiente</small></article>
   <article class="v29Pulse"><span>TENDÊNCIA</span><b id="v29Trend">—</b><small>7 dias atuais × 7 anteriores</small></article>
@@ -170,17 +170,22 @@
 </section>
 
 
-<section class="v34IntelligenceWall v23Panel" data-v23-panel="overview">
-  <article class="v34RadialCard"><div class="v34Radial" id="v34Radial"><b id="v34RadialPct">0%</b><small>conclusão</small></div><div><span class="eyebrow">COBERTURA</span><h2>Parque conciliado</h2><p id="v34RadialText">0 de 0 ativos</p></div></article>
-  <article class="v34TrendCard"><div class="v34CardHead"><b>Evolução · 14 dias</b><small>ritmo diário</small></div><div id="v34Trend" class="v34Trend"></div></article>
-  <article class="v34HeatCard"><div class="v34CardHead"><b>Heatmap de execução</b><small>empresas / localidades</small></div><div id="v34Heatmap" class="v34Heatmap"></div></article>
-  <article class="v34AttentionCard"><div class="v34CardHead"><b>O que precisa da minha atenção hoje?</b><span class="v34Live">LIVE</span></div><div id="v34Attention" class="v34Attention"></div></article>
+<section class="v344OverviewWall v23Panel" data-v23-panel="overview">
+  <article class="v344Panel v344Coverage">
+    <div class="v344PanelHead"><div><span>COBERTURA DO PARQUE</span><b>Execução consolidada</b></div><small>previsto × realizado</small></div>
+    <div class="v344CoverageBody"><div class="v34Radial" id="v34Radial"><b id="v34RadialPct">0%</b><small>conclusão</small></div><div class="v344CoverageCopy"><strong id="v34RadialText">0 de 0 ativos oficiais</strong><div class="v344Legend"><i class="ok"></i>Inventariado <i class="miss"></i>Pendente</div></div></div>
+  </article>
+  <article class="v344Panel v344TrendPanel"><div class="v344PanelHead"><div><span>EVOLUÇÃO</span><b>Últimos 14 dias</b></div><small>ritmo diário</small></div><div id="v34Trend" class="v34Trend"></div></article>
+  <article class="v344Panel v344TypesPanel"><div class="v344PanelHead"><div><span>COMPOSIÇÃO</span><b>Previsto × realizado por tipo</b></div><small>cobertura</small></div><div id="v344TypeBars" class="v344TypeBars"></div></article>
+  <article class="v344Panel v344HeatPanel"><div class="v344PanelHead"><div><span>HEATMAP</span><b>Execução por empresa</b></div><small>cobertura</small></div><div id="v34Heatmap" class="v34Heatmap"></div></article>
+  <article class="v344Panel v344PriorityPanel"><div class="v344PanelHead"><div><span>PRIORIDADES</span><b>Maior volume faltante</b></div><small>localidades</small></div><div id="v344PriorityBars" class="v344PriorityBars"></div></article>
+  <article class="v344Panel v344AttentionPanel"><div class="v344PanelHead"><div><span>ATENÇÃO HOJE</span><b>Ações do gestor</b></div><span class="v34Live">LIVE</span></div><div id="v34Attention" class="v34Attention"></div></article>
 </section>
 
-<section class="card v21ExecutiveCharts v23Panel" data-v23-panel="overview execution" id="v21ExecutiveCharts">
+<section class="card v21ExecutiveCharts v23Panel" data-v23-panel="execution" id="v21ExecutiveCharts">
   <div class="sectionHead">
     <div><h2>Painel executivo do recorte</h2><p class="muted">Leitura visual de execução, pendência e prioridades para apresentação gerencial.</p></div>
-    <span class="tag">V34.3 · INTELLIGENCE WALL</span>
+    <span class="tag">V34.4 · EXECUÇÃO</span>
   </div>
   <div class="v21ChartGrid">
     <article class="v21ChartPanel">
@@ -202,7 +207,7 @@
 <section class="card v22ExecutiveCockpit v23Panel" data-v23-panel="execution" id="v22ExecutiveCockpit">
   <div class="sectionHead">
     <div><h2>Cockpit executivo</h2><p class="muted">Ritmo de execução, produtividade recente e qualidade das evidências para decisão gerencial.</p></div>
-    <span class="tag">V34.3 · LIVE</span>
+    <span class="tag">V34.4 · LIVE</span>
   </div>
   <div class="v22CockpitGrid">
     <article class="v22Panel"><div class="v21ChartTitle"><span>Evolução diária</span><small>inventários registrados</small></div><div id="v22Trend" class="v22Trend"></div></article>
@@ -362,8 +367,8 @@
     <article class="v343TvPanel"><div class="v343TvPanelHead"><b>Execução por tipo</b><span>COBERTURA</span></div><div id="v343TvTypes" class="v343TvClone"></div></article>
     <article class="v343TvPanel"><div class="v343TvPanelHead"><b>Prioridades</b><span>ATENÇÃO</span></div><div id="v343TvPriority" class="v343TvClone"></div></article>
   </div>
-  <div class="v343TvFooter"><span id="v343TvHeadline">Monitoramento executivo do inventário.</span><span>SUPORTE A CAMPO · V34.3</span></div>
+  <div class="v343TvFooter"><span id="v343TvHeadline">Monitoramento executivo do inventário.</span><span>SUPORTE A CAMPO · V34.4</span></div>
 </div>
 
-<script src="{{url_for('static',filename='manager.js')}}?v=dashboard-v34-3"></script>
+<script src="{{url_for('static',filename='manager.js')}}?v=dashboard-v34-4"></script>
 {% endblock %}

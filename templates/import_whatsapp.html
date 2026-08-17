@@ -135,7 +135,7 @@
     Esta etapa é <b>idempotente</b>: mensagens, visitas, itens e mídias repetidos são ignorados.
     O histórico completo pode ser reimportado no futuro sem duplicar os dados.
   </p>
-  <form method="post" class="waTrackedForm">
+  <form method="post" class="waBatchImportForm" data-staging-key="{{ staging_key }}">
     <input type="hidden" name="action" value="import">
     <input type="hidden" name="staging_key" value="{{ staging_key }}">
     <div class="actions">
@@ -148,5 +148,24 @@
 {% endif %}
 {% endif %}
 <div id="waProgress" class="waProgressOverlay" hidden><div class="waProgressBox"><b id="waProgressTitle">Processando arquivo…</b><div class="waProgressTrack"><i id="waProgressBar"></i></div><strong id="waProgressPct">0%</strong><small>Não feche esta página durante o processamento.</small></div></div>
-<script>(()=>{document.querySelectorAll('.waTrackedForm').forEach(f=>f.addEventListener('submit',()=>{const o=document.getElementById('waProgress'),b=document.getElementById('waProgressBar'),p=document.getElementById('waProgressPct'),t=document.getElementById('waProgressTitle');o.hidden=false;let n=4;const timer=setInterval(()=>{n=Math.min(94,n+Math.max(1,Math.round((96-n)/9)));b.style.width=n+'%';p.textContent=n+'%';if(n>70)t.textContent='Processando mídias e gravando em lotes…';if(n>=94){t.textContent='Finalizando e confirmando gravações…';clearInterval(timer)}},450)}));{% if summary %}setTimeout(()=>document.querySelector('.waAnalysisDone')?.scrollIntoView({behavior:'smooth',block:'start'}),120);{% endif %}})();</script>
+<script>(()=>{
+const overlay=document.getElementById('waProgress'),bar=document.getElementById('waProgressBar'),pct=document.getElementById('waProgressPct'),title=document.getElementById('waProgressTitle');
+document.querySelectorAll('.waTrackedForm').forEach(f=>f.addEventListener('submit',()=>{overlay.hidden=false;bar.style.width='12%';pct.textContent='12%';title.textContent='Analisando ZIP e confrontando com a base…'}));
+const batchForm=document.querySelector('.waBatchImportForm');
+if(batchForm) batchForm.addEventListener('submit',async e=>{
+  e.preventDefault(); if(!confirm('Gravar agora as evidências e mídias para futura consulta?'))return;
+  overlay.hidden=false; let offset=0,total=1,agg={inserted_visits:0,updated_visits:0,inserted_items:0,skipped_items:0,media_uploaded:0,media_repaired:0,media_failed:0};
+  const key=batchForm.dataset.stagingKey;
+  try{
+    while(offset<total){
+      title.textContent=`Processando lote · visitas ${offset+1}…`; const r=await fetch('/api/importar-whatsapp/lote',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({staging_key:key,offset,limit:3})}); const d=await r.json(); if(!r.ok||!d.ok)throw new Error(d.error||('HTTP '+r.status));
+      total=d.total||total; offset=d.next_offset||total; Object.keys(agg).forEach(k=>agg[k]+=Number((d.counters||{})[k]||0)); const n=Math.max(1,Math.min(100,Math.round(d.progress||offset/total*100))); bar.style.width=n+'%';pct.textContent=n+'%';title.textContent=d.done?'Importação concluída ✓':`Importando evidências · ${offset} de ${total} visitas`;
+      if(d.done)break;
+    }
+    bar.style.width='100%';pct.textContent='100%';title.textContent='Importação concluída ✓';
+    setTimeout(()=>{overlay.hidden=true; alert(`Importação concluída.\nVisitas novas: ${agg.inserted_visits}\nItens novos: ${agg.inserted_items}\nMídias novas: ${agg.media_uploaded}\nDuplicadas/itens ignorados: ${agg.skipped_items}\nFalhas de mídia: ${agg.media_failed}`); location.href='/evidencias-campo';},700);
+  }catch(err){ overlay.hidden=true; alert('Falha na importação: '+err.message+'\nA carga pode ser retomada analisando o mesmo ZIP novamente; registros já gravados não serão duplicados.'); }
+});
+{% if summary %}setTimeout(()=>document.querySelector('.waAnalysisDone')?.scrollIntoView({behavior:'smooth',block:'start'}),120);{% endif %}
+})();</script>
 {% endblock %}
