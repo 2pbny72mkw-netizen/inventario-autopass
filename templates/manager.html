@@ -216,8 +216,14 @@
 
 <section class="card v21ExecutiveCharts v23Panel" data-v23-panel="execution" id="v21ExecutiveCharts">
   <div class="sectionHead">
-    <div><h2>Painel executivo do recorte</h2><p class="muted">Leitura visual de execução, pendência e prioridades para apresentação gerencial.</p></div>
-    <span class="tag">V35 · EXECUÇÃO</span>
+    <div><h2>Painel executivo do recorte</h2><p class="muted">Leitura visual de execução, pendência, produtividade e prioridades para apresentação gerencial.</p></div>
+    <span class="tag">V36 · EXECUÇÃO</span>
+  </div>
+  <div class="v36ProductivityStrip" id="v36ProductivityStrip">
+    <article><span>Produção · 14 dias</span><b id="v36Prod14">0</b><small>lançamentos registrados</small></article>
+    <article><span>Ritmo · 7 dias</span><b id="v36Pace7">0/dia</b><small>média recente</small></article>
+    <article><span>Técnicos ativos</span><b id="v36ActiveTechs">0</b><small>com produção em 14 dias</small></article>
+    <article><span>Destaque de produção</span><b id="v36TopTech">—</b><small id="v36TopTechDetail">sem produção recente</small></article>
   </div>
   <div class="v21ChartGrid">
     <article class="v21ChartPanel">
@@ -399,8 +405,8 @@
     <article class="v343TvPanel"><div class="v343TvPanelHead"><b>Execução por tipo</b><span>COBERTURA</span></div><div id="v343TvTypes" class="v343TvClone"></div></article>
     <article class="v343TvPanel"><div class="v343TvPanelHead"><b>Prioridades</b><span>ATENÇÃO</span></div><div id="v343TvPriority" class="v343TvClone"></div></article>
   </div>
-  <div class="v343TvFooter"><span id="v343TvHeadline">Monitoramento executivo do inventário.</span><span>SUPORTE A CAMPO · V35</span></div>
+  <div class="v343TvFooter"><span id="v343TvHeadline">Monitoramento executivo do inventário.</span><span>SUPORTE A CAMPO · V35.2</span></div>
 </div>
 
-<script src="{{url_for('static',filename='manager.js')}}?v=dashboard-v35-1"></script>
+<script src="{{url_for('static',filename='manager.js')}}?v=dashboard-v36-0"></script>
 {% endblock %}
