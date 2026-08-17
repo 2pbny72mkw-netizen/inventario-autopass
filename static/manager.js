@@ -1,4 +1,4 @@
-window.AUTOPASS_MANAGER_VERSION='dashboard-v35-1';
+window.AUTOPASS_MANAGER_VERSION='dashboard-v36-0';
 console.log('AUTOPASS Dashboard Executivo V25 carregado');
 let locations=[];
 let dashboardData=null;
@@ -12,6 +12,14 @@ const OFFICIAL_EXEC_TYPES=['ATM','VALIDADOR','POS','BLOQUEIO'];
 const DASHBOARD_DISPLAY_TYPES=['ATM','VALIDADOR','POS','TDI','BLOQUEIO','OUTRO'];
 function typeLabel(type){
   return type==='VALIDADOR'?'Recarga':type==='BLOQUEIO'?'Bloqueio':type==='OUTRO'?'Outro':type;
+}
+function technicalTdiExpected(){
+  return Number(
+    dashboardData?.technical_tdi?.expected ??
+    dashboardData?.official_park?.technical_tdi ??
+    (dashboardData?.by_type||[]).find(x=>x.type==='TDI')?.expected ??
+    80
+  );
 }
 function sumObjectValues(obj){return Object.values(obj||{}).reduce((a,b)=>a+Number(b||0),0)}
 function filteredLocationMetrics(rows,type=''){
@@ -32,6 +40,11 @@ function filteredLocationMetrics(rows,type=''){
   if(type){
     result.expected=result.byType[type]?.e||0;
     result.inventoried=result.byType[type]?.i||0;
+    // V36: TDI técnico tem uma única fonte executiva (80 por padrão),
+    // independentemente de quantos TDI estejam distribuídos por localidade na base detalhada.
+    if(type==='TDI' && !($('execCompany')?.value||'') && !($('execLine')?.value||'')){
+      result.expected=technicalTdiExpected();
+    }
   }else{
     result.expected=OFFICIAL_EXEC_TYPES.reduce((a,t)=>a+(result.byType[t]?.e||0),0);
     result.inventoried=OFFICIAL_EXEC_TYPES.reduce((a,t)=>a+(result.byType[t]?.i||0),0);
@@ -477,21 +490,51 @@ function renderGpsMap(items){
 }
 
 
-function setMapFullscreen(on){
-  const mapEl=$('gpsMap');
-  const btn=$('toggleMapFullscreenBtn');
-  if(!mapEl) return;
-
-  mapEl.classList.toggle('gpsMapFullscreen',!!on);
-  document.body.classList.toggle('mapFullscreenOpen',!!on);
-  if(btn) btn.textContent=on?'Sair da tela cheia':'⛶ Tela cheia';
+async function setMapFullscreen(on){
+  const mapEl=$('gpsMap'); if(!mapEl)return;
+  const root=document.documentElement;
+  if(on){
+    mapEl.classList.add('gpsMapFullscreen');
+    document.body.classList.add('mapFullscreenOpen');
+    try{
+      if(!document.fullscreenElement && !document.webkitFullscreenElement){
+        if(root.requestFullscreen) await root.requestFullscreen();
+        else if(root.webkitRequestFullscreen) await root.webkitRequestFullscreen();
+      }
+    }catch(_e){
+      // O overlay fixo continua funcional mesmo se o navegador bloquear a Fullscreen API.
+    }
+  }else{
+    try{
+      if(document.fullscreenElement && document.exitFullscreen) await document.exitFullscreen();
+      else if(document.webkitFullscreenElement && document.webkitExitFullscreen) await document.webkitExitFullscreen();
+    }catch(_e){}
+    mapEl.classList.remove('gpsMapFullscreen');
+    document.body.classList.remove('mapFullscreenOpen');
+  }
+  const active=mapEl.classList.contains('gpsMapFullscreen');
+  const text=active?'✕ Sair da tela cheia':'⛶ Tela cheia';
+  if($('toggleMapFullscreenBtn')) $('toggleMapFullscreenBtn').textContent=text;
   const leafletBtn=document.querySelector('.autopassMapFullscreenBtn');
-  if(leafletBtn) leafletBtn.innerHTML=on?'✕ <span>Sair da tela cheia</span>':'⛶ <span>Tela cheia</span>';
-
-  setTimeout(()=>{
-    try{ gpsMap?.invalidateSize(); }catch(_e){}
-  },80);
+  if(leafletBtn) leafletBtn.innerHTML=active?'✕ <span>Sair da tela cheia</span>':'⛶ <span>Tela cheia</span>';
+  requestAnimationFrame(()=>setTimeout(()=>{try{gpsMap?.invalidateSize()}catch(_e){}},80));
 }
+
+function syncMapFullscreenState(){
+  const mapEl=$('gpsMap'); if(!mapEl)return;
+  const nativeActive=!!(document.fullscreenElement||document.webkitFullscreenElement);
+  if(!nativeActive && mapEl.classList.contains('gpsMapFullscreen')){
+    mapEl.classList.remove('gpsMapFullscreen');
+    document.body.classList.remove('mapFullscreenOpen');
+  }
+  const active=mapEl.classList.contains('gpsMapFullscreen');
+  const leafletBtn=document.querySelector('.autopassMapFullscreenBtn');
+  if(leafletBtn) leafletBtn.innerHTML=active?'✕ <span>Sair da tela cheia</span>':'⛶ <span>Tela cheia</span>';
+  if($('toggleMapFullscreenBtn')) $('toggleMapFullscreenBtn').textContent=active?'✕ Sair da tela cheia':'⛶ Tela cheia';
+  requestAnimationFrame(()=>setTimeout(()=>{try{gpsMap?.invalidateSize()}catch(_e){}},80));
+}
+document.addEventListener('fullscreenchange',syncMapFullscreenState);
+document.addEventListener('webkitfullscreenchange',syncMapFullscreenState);
 
 if($('toggleMapFullscreenBtn')){
   $('toggleMapFullscreenBtn').addEventListener('click',()=>{
@@ -771,6 +814,23 @@ function renderV22Cockpit(){
   $('v22EvidenceQuality').innerHTML=`<div class="v22EvidenceHero"><b>${conf}%</b><span>itens conciliados</span></div><div class="v22EvidenceRows"><span>Visitas <b>${fmt(e.visits||0)}</b></span><span>Itens <b>${fmt(total)}</b></span><span>Revisar <b>${fmt(review)}</b></span><span>Fotos/vídeos <b>${fmt(media)}</b></span></div>`;
 }
 
+function renderV36Productivity(){
+  if(!dashboardData||!$('v36ProductivityStrip')) return;
+  const trend=dashboardData.trend_14d||[];
+  const total14=trend.reduce((a,x)=>a+Number(x.count||0),0);
+  const last7=trend.slice(-7);
+  const total7=last7.reduce((a,x)=>a+Number(x.count||0),0);
+  const pace=last7.length?total7/last7.length:0;
+  const tech=dashboardData.top_technicians_14d||[];
+  const top=tech[0]||null;
+  if($('v36Prod14')) $('v36Prod14').textContent=fmt(total14);
+  if($('v36Pace7')) $('v36Pace7').textContent=`${pace.toFixed(1).replace('.',',')}/dia`;
+  if($('v36ActiveTechs')) $('v36ActiveTechs').textContent=fmt(tech.length);
+  if($('v36TopTech')) $('v36TopTech').textContent=top?top.name:'—';
+  if($('v36TopTechDetail')) $('v36TopTechDetail').textContent=top?`${fmt(top.count)} lançamento(s) nos últimos 14 dias`:'sem produção recente';
+}
+
+
 function renderV25ExecutiveBI(){
   if(!dashboardData||!$('v25BiArena')) return;
   const trend=dashboardData.trend_14d||[], max=Math.max(1,...trend.map(x=>Number(x.count||0)));
@@ -862,6 +922,7 @@ function updateExecutiveView(){
   renderCriticalLocations();
   renderLocations();
   renderV22Cockpit();
+  renderV36Productivity();
 }
 
 function renderCriticalLocations(){
@@ -1102,6 +1163,17 @@ function renderV35Overview(){
   const company=document.getElementById('execCompany')?.value||'';
   const line=document.getElementById('execLine')?.value||'';
   const metrics=filteredLocationMetrics(rows,type);
+  const noGeoFilters=!company&&!line;
+  // V36: TDI técnico usa a fonte única exposta pela API do dashboard.
+  if(noGeoFilters && type==='TDI'){
+    const tdiExpected=technicalTdiExpected();
+    const tdiInventoried=Number(dashboardData?.technical_tdi?.inventoried ?? (dashboardData.by_type||[]).find(x=>x.type==='TDI')?.inventoried ?? metrics.inventoried ?? 0);
+    metrics.expected=tdiExpected;
+    metrics.inventoried=tdiInventoried;
+    metrics.missing=Math.max(0,tdiExpected-tdiInventoried);
+    metrics.byType.TDI.e=tdiExpected;
+    metrics.byType.TDI.i=tdiInventoried;
+  }
 
   // Cobertura: usa exatamente o mesmo recorte dos Big Numbers.
   const exp=Number(metrics.expected||0), done=Number(metrics.inventoried||0);
@@ -1125,13 +1197,13 @@ function renderV35Overview(){
 
   // Mix do parque — quando não há recorte geográfico usa os mesmos denominadores oficiais
   // dos Big Numbers. TDI e Outro não compõem o parque oficial de 3.801 ativos.
-  const noGeoFilters=!company&&!line;
   const officialMap={}; (dashboardData.by_type||[]).forEach(x=>officialMap[x.type]=Number(x.expected||0));
   let mix=[];
   if(noGeoFilters){
     const officialTypes=['ATM','VALIDADOR','POS','BLOQUEIO'];
     if(type && officialTypes.includes(type)) mix=[{type,value:Number(officialMap[type]||0)}];
-    else if(type==='TDI'||type==='OUTRO'){ const z=metrics.byType[type]||{i:0}; mix=[{type,value:Number(z.i||0),outsideOfficial:true}]; }
+    else if(type==='TDI'){ mix=[{type,value:technicalTdiExpected(),outsideOfficial:true}]; }
+    else if(type==='OUTRO'){ const z=metrics.byType.OUTRO||{i:0}; mix=[{type,value:Number(z.i||0),outsideOfficial:true}]; }
     else mix=officialTypes.map(t=>({type:t,value:Number(officialMap[t]||0)})).filter(x=>x.value>0);
   }else{
     const mixTypes=type?[type]:['ATM','VALIDADOR','POS','BLOQUEIO'];

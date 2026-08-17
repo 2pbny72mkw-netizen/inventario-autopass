@@ -1253,3 +1253,81 @@ body.mapFullscreenOpen #gpsMap .autopassMapFullscreenControl{visibility:visible!
   body[data-dashboard-view="overview"] .v35CoveragePanel .v34Radial{width:132px!important;height:132px!important;flex-basis:132px!important}
   body[data-dashboard-view="overview"] .v35PanelHead b{font-size:17px!important}
 }
+
+/* ===========================================================
+   V35.2 — TDI coerente, fullscreen nativo e administração Equipamentos
+   =========================================================== */
+#gpsMap:fullscreen,#gpsMap:-webkit-full-screen{
+  width:100vw!important;height:100vh!important;min-height:100vh!important;max-height:100vh!important;
+  margin:0!important;border:0!important;border-radius:0!important;background:#fff!important;
+}
+#gpsMap:fullscreen .leaflet-container,#gpsMap:-webkit-full-screen .leaflet-container{width:100%!important;height:100%!important}
+body.mapFullscreenOpen #gpsMap{bottom:0!important;right:0!important;box-sizing:border-box!important}
+
+.v352SearchInventory{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:stretch;margin:7px 0;padding:0;border:1px solid #dce7f0;border-radius:10px;background:#fff;overflow:hidden}
+.v352SearchInventory.outside{border-left:4px solid #f4a126;background:#fffaf0}
+.v352SearchInventory .v352SearchOpen{margin:0!important;border:0!important;border-radius:0!important;text-align:left!important;width:100%!important}
+.v352SearchInventory .v352SearchOpen b,.v352SearchInventory .v352SearchOpen small{display:block}.v352SearchInventory .v352SearchOpen small{margin-top:3px;color:#60778d}.v352SearchInventory .v352SearchOpen strong{color:#123c67}
+.v352SearchActions{display:flex;gap:6px;align-items:center;padding:8px}.v352SearchActions button{white-space:nowrap}
+.v352EditPanel{width:min(880px,94vw)!important}.v352EditGrid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.v352EditGrid>div{display:grid;gap:5px}.v352EditGrid label{font-size:11px;font-weight:800;color:#27445f}.v352EditGrid input,.v352EditGrid textarea{width:100%;box-sizing:border-box;border:1px solid #cfdce8;border-radius:9px;padding:10px 11px;font:inherit}.v352EditGrid .span2{grid-column:1/-1}.v352EditActions{display:flex!important;justify-content:flex-end!important}
+.v30RowActions{display:flex!important;gap:7px!important;flex-wrap:wrap!important}
+@media(max-width:720px){.v352SearchInventory{grid-template-columns:1fr}.v352SearchActions{padding-top:0}.v352EditGrid{grid-template-columns:1fr}.v352EditGrid .span2{grid-column:auto}}
+
+
+/* ===========================================================
+   V36.0 — consolidação executiva: TDI único + fullscreen real
+   =========================================================== */
+body.mapFullscreenOpen{
+  overflow:hidden!important;
+  width:100vw!important;
+  height:100dvh!important;
+  margin:0!important;
+  padding:0!important;
+  background:#fff!important;
+}
+body.mapFullscreenOpen #gpsMap.gpsMapFullscreen{
+  position:fixed!important;
+  inset:0!important;
+  top:0!important;
+  right:0!important;
+  bottom:0!important;
+  left:0!important;
+  width:100vw!important;
+  height:100dvh!important;
+  min-height:100dvh!important;
+  max-height:100dvh!important;
+  z-index:2147483646!important;
+  margin:0!important;
+  padding:0!important;
+  border:0!important;
+  border-radius:0!important;
+  box-sizing:border-box!important;
+  background:#fff!important;
+}
+html:fullscreen body.mapFullscreenOpen #gpsMap.gpsMapFullscreen,
+html:-webkit-full-screen body.mapFullscreenOpen #gpsMap.gpsMapFullscreen{
+  width:100vw!important;
+  height:100dvh!important;
+}
+body.mapFullscreenOpen #gpsMap .leaflet-map-pane,
+body.mapFullscreenOpen #gpsMap .leaflet-control-container{visibility:visible!important}
+body.mapFullscreenOpen #gpsMap .autopassMapFullscreenControl{
+  visibility:visible!important;
+  position:relative!important;
+  z-index:2147483647!important;
+}
+
+.v36ProductivityStrip{
+  display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:0 0 12px;
+}
+.v36ProductivityStrip article{
+  background:linear-gradient(145deg,#0f3d68,#14578a);color:#fff;border-radius:14px;
+  padding:13px 15px;min-height:78px;box-shadow:0 7px 18px #001b3326;border-bottom:4px solid #25c7ff;
+}
+.v36ProductivityStrip article:nth-child(2){border-color:#18c58f}
+.v36ProductivityStrip article:nth-child(3){border-color:#8a63d2}
+.v36ProductivityStrip article:nth-child(4){border-color:#ffab2e}
+.v36ProductivityStrip span{display:block;font-size:10px;font-weight:900;letter-spacing:.8px;color:#bfe8ff;text-transform:uppercase}
+.v36ProductivityStrip b{display:block;font-size:25px;line-height:1.05;margin:5px 0 4px}
+.v36ProductivityStrip small{display:block;color:#d5e9f7;font-size:10px}
+@media(max-width:1000px){.v36ProductivityStrip{grid-template-columns:repeat(2,minmax(0,1fr))}}
