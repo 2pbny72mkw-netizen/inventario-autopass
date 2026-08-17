@@ -33,9 +33,9 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V35.0"
-DASHBOARD_RELEASE = "dashboard-v35"
-TEAMS_RELEASE = "teams-v35"
+APP_RELEASE = "V35.1"
+DASHBOARD_RELEASE = "dashboard-v35-1"
+TEAMS_RELEASE = "teams-v35-1"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
 FIELD_GPS_GOOD_ACCURACY_M = float(os.getenv("FIELD_GPS_GOOD_ACCURACY_M", "30"))
 FIELD_GPS_MAX_ACCURACY_M = float(os.getenv("FIELD_GPS_MAX_ACCURACY_M", "80"))
@@ -4722,6 +4722,71 @@ def associate_evidence_visit(visit_id):
     db.session.commit()
     flash(f"Evidência associada a {loc.location}.")
     return redirect(url_for("field_evidence_page", visit=visit.id))
+
+
+@app.post("/evidencias-campo/visita/<int:visit_id>/excluir")
+@manager_required
+def delete_evidence_visit(visit_id):
+    """V35.1: exclusão administrativa de uma visita importada e suas mídias, sem afetar a base oficial."""
+    visit = db.session.get(FieldEvidenceVisit, visit_id)
+    if not visit:
+        flash("Visita de evidência não encontrada.")
+        return redirect(url_for("field_evidence_page"))
+
+    try:
+        media_rows = FieldEvidenceMedia.query.filter_by(visit_id=visit.id).all()
+        for media in media_rows:
+            try:
+                if media.storage_kind == "r2" and media.storage_key:
+                    r2_client().delete_object(Bucket=os.environ["R2_BUCKET_NAME"], Key=media.storage_key)
+                elif media.storage_key:
+                    local_path = UPLOAD_DIR / "field_evidence" / media.storage_key
+                    if local_path.exists():
+                        local_path.unlink()
+            except Exception:
+                # A exclusão do registro não deve ser impedida por uma mídia histórica indisponível.
+                pass
+            db.session.delete(media)
+
+        FieldEvidenceItem.query.filter_by(visit_id=visit.id).delete(synchronize_session=False)
+        db.session.delete(visit)
+        db.session.commit()
+        flash("Visita de evidência excluída. A base oficial e a referência da estação foram preservadas.")
+    except Exception as exc:
+        db.session.rollback()
+        flash(f"Não foi possível excluir a visita: {exc}")
+    return redirect(url_for("field_evidence_page"))
+
+
+@app.post("/api/admin/cleanup-test-gps")
+@manager_required
+def cleanup_test_gps():
+    """V35.1: remove somente coordenadas de registros de teste, preservando o cadastro do equipamento.
+
+    Por segurança, a limpeza automática considera apenas usuários/logins claramente de teste.
+    O administrador principal não é incluído automaticamente.
+    """
+    test_users = User.query.filter(
+        db.or_(
+            func.lower(User.username).in_(("adil_tst", "adil_teste", "teste", "test")),
+            func.lower(User.user_code).in_(("tst", "test")),
+            func.lower(User.name).like("%teste%")
+        )
+    ).all()
+    ids = [u.id for u in test_users]
+    if not ids:
+        return jsonify({"ok": True, "updated": 0, "message": "Nenhum usuário de teste encontrado."})
+    rows = Inventory.query.filter(Inventory.technician_id.in_(ids)).all()
+    updated = 0
+    for inv in rows:
+        if inv.latitude is not None or inv.longitude is not None:
+            inv.latitude = None
+            inv.longitude = None
+            inv.gps_accuracy = None
+            inv.gps_captured_at = None
+            updated += 1
+    db.session.commit()
+    return jsonify({"ok": True, "updated": updated, "users": [u.username for u in test_users]})
 
 
 def migrate_base_asset_columns():
