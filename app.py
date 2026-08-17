@@ -33,7 +33,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V36.0"
+APP_RELEASE = "V37.1"
 DASHBOARD_RELEASE = "dashboard-v36-0"
 TEAMS_RELEASE = "teams-v36-0"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -98,6 +98,33 @@ class User(db.Model):
     personnel_status = db.Column(db.String(30), nullable=False, default="ATIVO")
     personnel_status_note = db.Column(db.String(240))
 
+
+
+class OperationalAction(db.Model):
+    __tablename__ = "operational_actions"
+    id = db.Column(db.Integer, primary_key=True)
+    action_key = db.Column(db.String(220), nullable=False, unique=True, index=True)
+    category = db.Column(db.String(60), nullable=False, index=True)
+    title = db.Column(db.String(240), nullable=False)
+    detail = db.Column(db.Text)
+    severity = db.Column(db.String(20), nullable=False, default="MEDIA", index=True)
+    status = db.Column(db.String(30), nullable=False, default="NOVO", index=True)
+    owner_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
+    due_date = db.Column(db.Date)
+    source_url = db.Column(db.String(500))
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime)
+
+
+class AuditEvent(db.Model):
+    __tablename__ = "audit_events"
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
+    event_type = db.Column(db.String(80), nullable=False, index=True)
+    entity_type = db.Column(db.String(80), nullable=False, index=True)
+    entity_id = db.Column(db.String(80), index=True)
+    detail = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
 
 
 class TeamScheduleProfile(db.Model):
@@ -2495,13 +2522,17 @@ def get_inventory_admin(inventory_id):
 
 
 @app.route("/api/inventory/<int:inventory_id>", methods=["PUT", "PATCH"])
-@manager_required
+@field_required
 def update_inventory(inventory_id):
-    if not _current_user_is_superadmin():
-        return jsonify({"ok": False, "error": "Edição disponível somente para o administrador principal."}), 403
     inv = db.session.get(Inventory, inventory_id)
     if not inv:
         return jsonify({"ok": False, "error": "Registro não encontrado."}), 404
+
+    # V37.1: técnico pode corrigir somente o cadastro que ele próprio criou.
+    # O administrador principal mantém permissão global de edição.
+    current_uid = session.get("user_id")
+    if not _current_user_is_superadmin() and inv.technician_id != current_uid:
+        return jsonify({"ok": False, "error": "Você só pode alterar cadastros realizados pelo seu próprio usuário."}), 403
 
     location_id = request.form.get("location_id", type=int) or inv.location_id
     equipment_type = request.form.get("equipment_type", inv.equipment_type or "").strip()
@@ -2897,6 +2928,27 @@ def dashboard():
     except Exception as exc:
         app.logger.exception("V22.1: falha não crítica ao montar KPIs de evidências: %s", exc)
 
+    # V37 — produtividade operacional por técnico, com volume, localidades e qualidade.
+    productivity_37 = []
+    try:
+        start_dt = datetime.combine(start_14, datetime.min.time())
+        rows37 = (db.session.query(
+            Inventory.technician_id.label("uid"),
+            func.count(Inventory.id).label("items"),
+            func.count(func.distinct(Inventory.location_id)).label("locations"),
+            func.count(func.distinct(func.date(Inventory.created_at))).label("days"),
+            func.sum(case((Inventory.operational_status == "Inoperante", 1), else_=0)).label("inoperative"),
+            func.sum(case((and_(Inventory.divergence.isnot(None), ~Inventory.divergence.in_(("", "Não", "Nao"))), 1), else_=0)).label("divergences"),
+        ).filter(Inventory.created_at >= start_dt).group_by(Inventory.technician_id).all())
+        uids=[r.uid for r in rows37 if r.uid]
+        names={u.id:u.name for u in User.query.filter(User.id.in_(uids or [-1])).all()}
+        for r in rows37:
+            days=max(1,int(r.days or 0)); items=int(r.items or 0)
+            productivity_37.append({"user_id":r.uid,"name":names.get(r.uid,f"Usuário {r.uid}"),"items":items,"locations":int(r.locations or 0),"active_days":int(r.days or 0),"avg_day":round(items/days,1),"divergences":int(r.divergences or 0),"inoperative":int(r.inoperative or 0)})
+        productivity_37.sort(key=lambda x:(-x["items"],x["name"]))
+    except Exception as exc:
+        app.logger.exception("V37: falha não crítica na produtividade detalhada: %s", exc)
+
     return jsonify({
         "release": DASHBOARD_RELEASE,
         "official_park": {
@@ -2930,6 +2982,7 @@ def dashboard():
         "by_type": by_type,
         "trend_14d": [{"date": d, "count": c} for d, c in daily_counts.items()],
         "top_technicians_14d": top_technicians,
+        "productivity_v37": productivity_37,
         "evidence": evidence_kpis,
         "by_company": [{
             "company": x.company,
@@ -2940,6 +2993,52 @@ def dashboard():
         } for x in companies],
     })
 
+
+
+def _v37_action_payload():
+    actions=[]
+    divs=Inventory.query.filter(Inventory.divergence.isnot(None), ~Inventory.divergence.in_(("", "Não", "Nao"))).order_by(Inventory.created_at.desc()).limit(25).all()
+    for x in divs:
+        loc=db.session.get(Location,x.location_id)
+        actions.append({"key":f"DIV:{x.id}","category":"DIVERGENCIA","severity":"ALTA","title":f"Divergência · {x.asset_identifier}","detail":f"{loc.location if loc else 'Localidade'} · {x.divergence}","source_url":"/patrimonio"})
+    stalled=Location.query.filter(Location.survey_status=="EM ANDAMENTO", Location.started_at.isnot(None), Location.started_at < datetime.utcnow()-timedelta(days=2)).order_by(Location.started_at).limit(20).all()
+    for x in stalled:
+        days=max(0,(datetime.utcnow()-x.started_at).days)
+        actions.append({"key":f"PARADA:{x.id}","category":"LOCALIDADE_PARADA","severity":"MEDIA","title":f"Localidade em andamento há {days}d", "detail":f"{x.location} · {x.company} · {x.line}","source_url":"/gerencial"})
+    return actions
+
+@app.get("/api/v37/actions")
+@dashboard_required
+def v37_actions():
+    generated=_v37_action_payload()
+    keys=[x["key"] for x in generated]
+    saved={x.action_key:x for x in OperationalAction.query.filter(OperationalAction.action_key.in_(keys or ["-"])).all()}
+    out=[]
+    for g in generated:
+        row=saved.get(g["key"])
+        out.append({**g,"status":row.status if row else "NOVO","owner_user_id":row.owner_user_id if row else None,"due_date":row.due_date.isoformat() if row and row.due_date else None})
+    order={"NOVO":0,"EM ANALISE":1,"CORRIGIR EM CAMPO":2,"APROVADO":3,"DESCARTADO":4}
+    out.sort(key=lambda x:(order.get(x["status"],9), 0 if x["severity"]=="ALTA" else 1))
+    return jsonify({"ok":True,"items":out,"counts":{k:sum(1 for x in out if x["status"]==k) for k in order}})
+
+@app.post("/api/v37/actions/update")
+@dashboard_required
+def v37_action_update():
+    data=request.get_json(silent=True) or {}
+    key=(data.get("key") or "")[:220]
+    status=(data.get("status") or "NOVO").upper()
+    allowed={"NOVO","EM ANALISE","CORRIGIR EM CAMPO","APROVADO","DESCARTADO"}
+    if not key or status not in allowed: return jsonify({"ok":False,"error":"Dados inválidos"}),400
+    gen=next((x for x in _v37_action_payload() if x["key"]==key),None)
+    row=OperationalAction.query.filter_by(action_key=key).first()
+    if not row:
+        if not gen: return jsonify({"ok":False,"error":"Ação não encontrada"}),404
+        row=OperationalAction(action_key=key,category=gen["category"],title=gen["title"],detail=gen["detail"],severity=gen["severity"],source_url=gen.get("source_url"))
+        db.session.add(row)
+    row.status=status; row.updated_at=datetime.utcnow()
+    db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="ACTION_STATUS",entity_type="OperationalAction",entity_id=key,detail=f"Status alterado para {status}"))
+    db.session.commit()
+    return jsonify({"ok":True})
 
 
 @app.get("/api/export/excel")
