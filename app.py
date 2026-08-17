@@ -33,9 +33,9 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V34.3"
-DASHBOARD_RELEASE = "dashboard-v34-3"
-TEAMS_RELEASE = "teams-v34-3"
+APP_RELEASE = "V34.4"
+DASHBOARD_RELEASE = "dashboard-v34-4"
+TEAMS_RELEASE = "teams-v34-4"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
 FIELD_GPS_GOOD_ACCURACY_M = float(os.getenv("FIELD_GPS_GOOD_ACCURACY_M", "30"))
 FIELD_GPS_MAX_ACCURACY_M = float(os.getenv("FIELD_GPS_MAX_ACCURACY_M", "80"))
@@ -577,6 +577,11 @@ def technician():
 @dashboard_required
 def manager():
     return render_template("manager.html")
+
+@app.route("/gerencial/tv")
+@dashboard_required
+def manager_tv():
+    return render_template("manager_tv.html", app_release=APP_RELEASE)
 
 
 
@@ -4080,18 +4085,16 @@ def _r2_available():
 
 
 def _wa_stage_archive(raw, filename):
+    # V34.4: o ZIP-fonte fica temporariamente no disco do worker durante a importação.
+    # As mídias definitivas continuam no Cloudflare R2. Isso evita centenas de downloads
+    # repetidos do ZIP e permite processar a carga em pequenos lotes HTTP.
     batch_id = uuid.uuid4().hex
     safe_name = secure_filename(filename) or "whatsapp.zip"
-    if _r2_available():
-        key = f"whatsapp/fontes/{batch_id}/{safe_name}"
-        _r2_put_bytes(key, raw, "application/zip")
-        return f"r2:{key}", batch_id, "R2"
-
     staging_dir = UPLOAD_DIR / "whatsapp_staging"
     staging_dir.mkdir(parents=True, exist_ok=True)
     path = staging_dir / f"{batch_id}_{safe_name}"
     path.write_bytes(raw)
-    return f"local:{path.name}", batch_id, "LOCAL TEMPORÁRIO"
+    return f"local:{path.name}", batch_id, "R2 (mídias) · staging local"
 
 
 def _wa_load_staged(staging_key):
@@ -4316,6 +4319,72 @@ def import_excel_v34():
         db.session.rollback(); error=f'{type(exc).__name__}: {exc}'
     return render_template('import_excel.html',preview=preview,error=error,filename=filename,staging_key=staging_key,import_result=import_result,app_release=APP_RELEASE)
 
+
+
+@app.post("/api/importar-whatsapp/lote")
+@manager_required
+def import_whatsapp_batch_v344():
+    """V34.4 — processa poucas visitas por chamada para não estourar RAM/timeout do Render."""
+    payload = request.get_json(silent=True) or {}
+    staging_key = str(payload.get("staging_key") or "").strip()
+    offset = max(0, int(payload.get("offset") or 0))
+    limit = min(5, max(1, int(payload.get("limit") or 3)))
+    if not staging_key:
+        return jsonify({"ok": False, "error": "Arquivo de origem não encontrado."}), 400
+    if not _r2_available():
+        return jsonify({"ok": False, "error": "Cloudflare R2 não configurado."}), 503
+    temp_created = False
+    try:
+        if staging_key.startswith("local:"):
+            zip_path = UPLOAD_DIR / "whatsapp_staging" / staging_key[6:]
+            if not zip_path.exists():
+                return jsonify({"ok": False, "error": "Arquivo temporário expirou. Analise o ZIP novamente."}), 410
+        else:
+            zip_path = _wa_materialize_staged(staging_key); temp_created = True
+        preview, summary = _wa_analyze_archive(zip_path)
+        total = len(preview)
+        batch_id = re.sub(r'[^a-f0-9]', '', Path(staging_key.split(':',1)[-1]).name.lower())[:16] or uuid.uuid4().hex[:16]
+        counters = {"inserted_visits":0,"updated_visits":0,"inserted_items":0,"skipped_items":0,"media_uploaded":0,"media_repaired":0,"media_failed":0}
+        with zipfile.ZipFile(zip_path) as z:
+            names=set(z.namelist())
+            for visit in preview[offset:offset+limit]:
+                row=FieldEvidenceVisit.query.filter_by(source_key=visit["source_key"]).first()
+                report_text="\n\n".join(f'[{m["date"]} {m["time"]}] {m["author"]}: {m["text"]}' for m in visit["messages"])
+                if not row:
+                    row=FieldEvidenceVisit(source_key=visit["source_key"],source_batch=batch_id,source_date=visit["date"],source_time=visit["time"],author=visit["author"],station_raw=visit["station_raw"],line_raw=visit["line_raw"],location_id=visit["location_id"],match_confidence=visit["confidence"],match_score=visit["match_score"],report_text=report_text,competition_text=visit["competition_text"],storage_source="R2")
+                    db.session.add(row); db.session.flush(); counters["inserted_visits"]+=1
+                else:
+                    row.location_id=visit["location_id"]; row.match_confidence=visit["confidence"]; row.match_score=visit["match_score"]; row.report_text=report_text; row.competition_text=visit["competition_text"]; counters["updated_visits"]+=1
+                for eq in visit["equipment"]:
+                    exists=FieldEvidenceItem.query.filter_by(visit_id=row.id,equipment_type=eq["type"],identifier=eq["identifier"]).first()
+                    if exists: counters["skipped_items"]+=1; continue
+                    db.session.add(FieldEvidenceItem(visit_id=row.id,equipment_type=eq["type"],identifier=eq["identifier"],model=eq.get("model",""),serial=eq.get("serial",""),patrimony=eq.get("patrimony",""),operational_status=eq.get("status",""),source_line=eq.get("source_line",""),base_asset_id=eq.get("base_asset_id"),inventory_id=eq.get("inventory_id"),audit_status=eq.get("audit_status","PENDENTE"),audit_detail=f'Base: {eq.get("base_status","")}. Inventário: {eq.get("inventory_status","")}.' )); counters["inserted_items"]+=1
+                for media_name in visit["attachments"]:
+                    if media_name not in names: continue
+                    try:
+                        with z.open(media_name) as fh: data=fh.read()
+                        media_obj,is_new,was_repaired=_evidence_store_media(data,media_name,batch_id)
+                        if not media_obj.visit_id: media_obj.visit_id=row.id
+                        if is_new: db.session.add(media_obj); counters["media_uploaded"]+=1
+                        elif was_repaired: counters["media_repaired"]+=1
+                        del data
+                    except Exception as media_exc:
+                        counters["media_failed"]+=1
+                        app.logger.warning("Falha mídia WhatsApp %s: %s", media_name, media_exc)
+                db.session.commit(); db.session.expire_all()
+        next_offset=min(total,offset+limit)
+        done=next_offset>=total
+        if done and staging_key.startswith("local:"):
+            try: zip_path.unlink(missing_ok=True)
+            except Exception: pass
+        return jsonify({"ok":True,"offset":offset,"next_offset":next_offset,"total":total,"done":done,"progress":round(next_offset/max(1,total)*100,1),"counters":counters,"summary":{"visits":summary.get("visits",total),"media_total":summary.get("media_total",0)}})
+    except Exception as exc:
+        db.session.rollback(); app.logger.exception("Falha lote WhatsApp V34.4")
+        return jsonify({"ok":False,"error":f"{type(exc).__name__}: {exc}","offset":offset}),500
+    finally:
+        if temp_created:
+            try: zip_path.unlink(missing_ok=True)
+            except Exception: pass
 
 @app.route("/importar-whatsapp", methods=["GET", "POST"])
 @manager_required

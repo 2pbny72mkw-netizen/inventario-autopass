@@ -720,8 +720,10 @@ function renderV21ExecutiveCharts(rows,type){
     return {...x,_missing:Math.max(0,exp-inv)};
   }).filter(x=>x._missing>0).sort((a,b)=>b._missing-a._missing).slice(0,6);
   const max=Math.max(1,...priorities.map(x=>x._missing));
-  $('v21PriorityBars').innerHTML=priorities.length?priorities.map((x,i)=>`<div class="v21PriorityRow"><span class="rank">${i+1}</span><div class="who"><b>${esc(x.location)}</b><small>${esc(x.company)} · ${esc(x.line)}</small><div class="v21PriorityTrack"><i style="width:${Math.round(x._missing/max*100)}%"></i></div></div><strong>${fmt(x._missing)}</strong></div>`).join(''):'<div class="muted">Nenhuma pendência no recorte atual.</div>';
+  $('v21PriorityBars').innerHTML=priorities.length?priorities.map((x,i)=>`<div class="v21PriorityRow"><span class="rank">${i+1}</span><div class="who"><b>${esc(x.location)}</b><small>${esc(x.company)} · ${esc(x.line)}</small><div class="v21PriorityTrack"><i style="width:${Math.round(x._missing/max*100)}%"></i></div></div><strong>${fmt(x._missing)}</strong></div>`).join(''):'<div class="muted">Nenhuma pendência no recorte atual.</div>';  const overviewTypes=document.getElementById('v344TypeBars'); if(overviewTypes) overviewTypes.innerHTML=$('v21TypeBars').innerHTML;
+  const overviewPriorities=document.getElementById('v344PriorityBars'); if(overviewPriorities) overviewPriorities.innerHTML=$('v21PriorityBars').innerHTML;
 }
+
 
 function renderV22Cockpit(){
   if(!dashboardData||!$('v22ExecutiveCockpit')) return;
@@ -1001,10 +1003,7 @@ function v23StartTv(){
 }
 function initV23DashboardNav(){
   document.querySelectorAll('.v23Nav').forEach(btn=>btn.addEventListener('click',()=>v23SetView(btn.dataset.v23View)));
-  $('v23TvBtn')?.addEventListener('click',()=>{
-    if(document.body.classList.contains('v23TvMode')){v23StopTv();if(document.fullscreenElement)document.exitFullscreen?.();}
-    else v23StartTv();
-  });
+  $('v23TvBtn')?.addEventListener('click',()=>{ window.open('/gerencial/tv','_blank','noopener'); });
   document.addEventListener('fullscreenchange',()=>{if(!document.fullscreenElement && document.body.classList.contains('v23TvMode'))v23StopTv();});
   v23SetView('overview');
 }
