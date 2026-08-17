@@ -1,4 +1,4 @@
-window.AUTOPASS_MANAGER_VERSION='dashboard-v35';
+window.AUTOPASS_MANAGER_VERSION='dashboard-v35-1';
 console.log('AUTOPASS Dashboard Executivo V25 carregado');
 let locations=[];
 let dashboardData=null;
@@ -126,6 +126,20 @@ const railNamesByNumber={
   '1':'Azul','2':'Verde','3':'Vermelha','4':'Amarela','5':'Lilás','6':'Laranja',
   '7':'Rubi','8':'Diamante','9':'Esmeralda','10':'Turquesa','11':'Coral',
   '12':'Safira','13':'Jade','15':'Prata','17':'Ouro'
+};
+
+// V35.1 — geometria de contingência para linhas que ainda não possuem referências
+// geográficas suficientes cadastradas no banco. É usada somente para desenho da linha.
+const railFallbackGeometry={
+  '4':[
+    [-23.5362,-46.6335],[-23.5441,-46.6422],[-23.5489,-46.6520],[-23.5553,-46.6620],
+    [-23.5608,-46.6719],[-23.5662,-46.6840],[-23.5673,-46.6930],[-23.5669,-46.7012],
+    [-23.5718,-46.7080],[-23.5864,-46.7230],[-23.5944,-46.7330]
+  ],
+  '17':[
+    [-23.6217,-46.7012],[-23.6222,-46.6947],[-23.6209,-46.6878],[-23.6201,-46.6800],
+    [-23.6210,-46.6732],[-23.6241,-46.6670],[-23.6288,-46.6633],[-23.6328,-46.6603]
+  ]
 };
 
 function normalizeRailText(value){
@@ -323,13 +337,17 @@ function renderRailLines(){
     (groups[n]??=[]).push(loc);
   });
 
-  Object.entries(groups).forEach(([number,stations])=>{
-    if(stations.length<2) return;
+  // Garante que 4-Amarela e 17-Ouro sejam desenhadas mesmo antes de todas as referências
+  // oficiais dessas estações serem cadastradas no banco.
+  ['4','17'].forEach(number=>{ if(!groups[number]) groups[number]=[]; });
 
-    const sequence=buildRailSequence(stations);
-    const coordinates=sequence.map(x=>[
+  Object.entries(groups).forEach(([number,stations])=>{
+    const sequence=stations.length>=2?buildRailSequence(stations):[];
+    const fallback=railFallbackGeometry[number]||[];
+    const coordinates=sequence.length>=2?sequence.map(x=>[
       Number(x.reference_latitude),Number(x.reference_longitude)
-    ]);
+    ]):fallback;
+    if(coordinates.length<2) return;
     const color=railColorsByNumber[number]||'#64748b';
 
     // Halo branco: aumenta contraste sobre o mapa-base.
@@ -341,18 +359,20 @@ function renderRailLines(){
       color,weight:7,opacity:1,lineCap:'round',lineJoin:'round'
     }).addTo(railLineLayer);
 
-    polyline.bindPopup(`<b>${esc(railDisplayName(sequence[0]?.line))}</b><br>${stations.length} estação(ões) com referência geográfica`);
+    polyline.bindPopup(`<b>Linha ${esc(number)} — ${esc(railNamesByNumber[number]||'')}</b><br>${stations.length} estação(ões) com referência geográfica${sequence.length<2?' · traçado de contingência':''}`);
 
     // Número da linha nas duas pontas do traçado.
-    [sequence[0],sequence[sequence.length-1]].forEach(endpoint=>{
-      if(!endpoint) return;
+    const endpoints=sequence.length>=2
+      ? [[Number(sequence[0].reference_latitude),Number(sequence[0].reference_longitude)],[Number(sequence[sequence.length-1].reference_latitude),Number(sequence[sequence.length-1].reference_longitude)]]
+      : [coordinates[0],coordinates[coordinates.length-1]];
+    endpoints.forEach(point=>{
+      if(!point) return;
       const icon=L.divIcon({
         className:'rail-line-end-icon',
         html:`<div class="rail-line-number" style="background:${color}">${esc(number)}</div>`,
         iconSize:[30,30],iconAnchor:[15,15]
       });
-      L.marker([Number(endpoint.reference_latitude),Number(endpoint.reference_longitude)],{icon,interactive:false})
-        .addTo(railLineLayer);
+      L.marker(point,{icon,interactive:false}).addTo(railLineLayer);
     });
   });
 }
@@ -1103,9 +1123,20 @@ function renderV35Overview(){
   const doneBar=document.getElementById('v35StatusDone'), progBar=document.getElementById('v35StatusProgress'), pendBar=document.getElementById('v35StatusPending');
   if(doneBar)doneBar.style.width=cp+'%'; if(progBar)progBar.style.width=pp+'%'; if(pendBar)pendBar.style.width=pendp+'%';
 
-  // Mix do parque — composição do esperado; OUTRO entra pelo inventariado fora da base.
-  const mixTypes=['ATM','VALIDADOR','POS','TDI','BLOQUEIO','OUTRO'];
-  const mix=mixTypes.map(t=>{const z=metrics.byType[t]||{e:0,i:0};return {type:t,value:t==='OUTRO'?Number(z.i||0):Number(z.e||0)}}).filter(x=>x.value>0);
+  // Mix do parque — quando não há recorte geográfico usa os mesmos denominadores oficiais
+  // dos Big Numbers. TDI e Outro não compõem o parque oficial de 3.801 ativos.
+  const noGeoFilters=!company&&!line;
+  const officialMap={}; (dashboardData.by_type||[]).forEach(x=>officialMap[x.type]=Number(x.expected||0));
+  let mix=[];
+  if(noGeoFilters){
+    const officialTypes=['ATM','VALIDADOR','POS','BLOQUEIO'];
+    if(type && officialTypes.includes(type)) mix=[{type,value:Number(officialMap[type]||0)}];
+    else if(type==='TDI'||type==='OUTRO'){ const z=metrics.byType[type]||{i:0}; mix=[{type,value:Number(z.i||0),outsideOfficial:true}]; }
+    else mix=officialTypes.map(t=>({type:t,value:Number(officialMap[t]||0)})).filter(x=>x.value>0);
+  }else{
+    const mixTypes=type?[type]:['ATM','VALIDADOR','POS','BLOQUEIO'];
+    mix=mixTypes.map(t=>{const z=metrics.byType[t]||{e:0,i:0};return {type:t,value:Number(z.e||0)}}).filter(x=>x.value>0);
+  }
   const mixTotal=mix.reduce((a,x)=>a+x.value,0);
   const colors={ATM:'#2878d8',VALIDADOR:'#16b98e',POS:'#ff9f2e',TDI:'#8a63d2',BLOQUEIO:'#16b8b0',OUTRO:'#f4c64d'};
   let cursor=0, stops=[];

@@ -1197,3 +1197,59 @@ body[data-dashboard-view="overview"] .v35PriorityPanel .v344PriorityBars{height:
 body.mapFullscreenOpen .autopassMapFullscreenControl{position:fixed!important;right:16px!important;top:14px!important;z-index:100001!important}
 
 @media(max-width:1500px) and (min-width:1000px){body[data-dashboard-view="overview"] .v35OverviewWall{grid-template-columns:1fr 1.4fr 1.15fr!important;gap:11px!important}.v35MixBody{grid-template-columns:130px 1fr}.v35MixDonut{width:125px;height:125px}.v35Status b{font-size:29px}}
+
+/* ===========================================================
+   V35.1 — compactação 16:9, fullscreen real e ações admin
+   =========================================================== */
+body[data-dashboard-view="overview"] .v35OverviewWall{
+  min-height:0!important;
+  height:calc(100vh - 278px)!important;
+  max-height:690px!important;
+  grid-template-rows:minmax(230px,.95fr) minmax(205px,.85fr)!important;
+  gap:10px!important;
+}
+body[data-dashboard-view="overview"] .v35Panel{padding:14px!important;border-radius:14px!important;overflow:hidden!important}
+body[data-dashboard-view="overview"] .v35PanelHead{margin-bottom:8px!important}
+body[data-dashboard-view="overview"] .v35CoveragePanel .v34Radial{width:150px!important;height:150px!important;flex-basis:150px!important}
+body[data-dashboard-view="overview"] .v35CoveragePanel .v34Radial b{font-size:34px!important}
+body[data-dashboard-view="overview"] .v35StatusCards{gap:8px!important}
+body[data-dashboard-view="overview"] .v35Status{padding:12px 12px!important}
+body[data-dashboard-view="overview"] .v35Status b{font-size:30px!important;margin:6px 0 3px!important}
+body[data-dashboard-view="overview"] .v35StatusTrack{margin:12px 0 8px!important;height:12px!important}
+body[data-dashboard-view="overview"] .v35MixBody{grid-template-columns:135px 1fr!important;gap:12px!important}
+body[data-dashboard-view="overview"] .v35MixDonut{width:128px!important;height:128px!important}
+body[data-dashboard-view="overview"] .v35MixDonut:after{inset:26px!important}
+body[data-dashboard-view="overview"] .v35CompanyBars{max-height:none!important;height:calc(100% - 42px)!important;overflow:auto!important;gap:8px!important}
+body[data-dashboard-view="overview"] .v35PriorityPanel .v344PriorityBars,
+body[data-dashboard-view="overview"] .v35AttentionPanel .v34Attention{max-height:none!important;height:calc(100% - 42px)!important;overflow:auto!important}
+
+/* Fullscreen do mapa cobre inclusive rodapé/menu TV. */
+body.mapFullscreenOpen{overflow:hidden!important}
+#gpsMap.gpsMapFullscreen{
+  position:fixed!important;
+  inset:0!important;
+  width:100vw!important;
+  height:100vh!important;
+  min-height:100vh!important;
+  max-height:none!important;
+  z-index:2147483000!important;
+  margin:0!important;
+  border:0!important;
+  border-radius:0!important;
+}
+body.mapFullscreenOpen .v23Sidebar,
+body.mapFullscreenOpen .siteHeader,
+body.mapFullscreenOpen .topbar,
+body.mapFullscreenOpen .mapFullscreenAction{visibility:hidden!important}
+body.mapFullscreenOpen #gpsMap .leaflet-control-container{visibility:visible!important}
+body.mapFullscreenOpen #gpsMap .autopassMapFullscreenControl{visibility:visible!important;z-index:2147483640!important}
+
+.evidenceDetailActions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end}
+.dangerButton{border:1px solid #ef4444;background:#fff1f2;color:#b91c1c;border-radius:9px;padding:9px 12px;font-weight:800;cursor:pointer}
+.dangerButton:hover{background:#fee2e2}
+
+@media(max-height:800px) and (min-width:1100px){
+  body[data-dashboard-view="overview"] .v35OverviewWall{height:calc(100vh - 250px)!important;grid-template-rows:minmax(205px,.95fr) minmax(185px,.85fr)!important}
+  body[data-dashboard-view="overview"] .v35CoveragePanel .v34Radial{width:132px!important;height:132px!important;flex-basis:132px!important}
+  body[data-dashboard-view="overview"] .v35PanelHead b{font-size:17px!important}
+}
