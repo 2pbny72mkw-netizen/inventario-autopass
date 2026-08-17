@@ -170,22 +170,54 @@
 </section>
 
 
-<section class="v344OverviewWall v23Panel" data-v23-panel="overview">
-  <article class="v344Panel v344Coverage">
-    <div class="v344PanelHead"><div><span>COBERTURA DO PARQUE</span><b>Execução consolidada</b></div><small>previsto × realizado</small></div>
-    <div class="v344CoverageBody"><div class="v34Radial" id="v34Radial"><b id="v34RadialPct">0%</b><small>conclusão</small></div><div class="v344CoverageCopy"><strong id="v34RadialText">0 de 0 ativos oficiais</strong><div class="v344Legend"><i class="ok"></i>Inventariado <i class="miss"></i>Pendente</div></div></div>
+<section class="v35OverviewWall v23Panel" data-v23-panel="overview">
+  <article class="v35Panel v35CoveragePanel">
+    <div class="v35PanelHead"><div><span>COBERTURA DO PARQUE</span><b>Execução consolidada</b></div><small>recorte atual</small></div>
+    <div class="v35CoverageBody">
+      <div class="v34Radial" id="v34Radial"><b id="v34RadialPct">0%</b><small>conclusão</small></div>
+      <div class="v35CoverageCopy"><strong id="v34RadialText">0 de 0 ativos oficiais</strong><div class="v35Legend"><i class="ok"></i>Inventariado <i class="miss"></i>Pendente</div></div>
+    </div>
   </article>
-  <article class="v344Panel v344TrendPanel"><div class="v344PanelHead"><div><span>EVOLUÇÃO</span><b>Últimos 14 dias</b></div><small>ritmo diário</small></div><div id="v34Trend" class="v34Trend"></div></article>
-  <article class="v344Panel v344TypesPanel"><div class="v344PanelHead"><div><span>COMPOSIÇÃO</span><b>Previsto × realizado por tipo</b></div><small>cobertura</small></div><div id="v344TypeBars" class="v344TypeBars"></div></article>
-  <article class="v344Panel v344HeatPanel"><div class="v344PanelHead"><div><span>HEATMAP</span><b>Execução por empresa</b></div><small>cobertura</small></div><div id="v34Heatmap" class="v34Heatmap"></div></article>
-  <article class="v344Panel v344PriorityPanel"><div class="v344PanelHead"><div><span>PRIORIDADES</span><b>Maior volume faltante</b></div><small>localidades</small></div><div id="v344PriorityBars" class="v344PriorityBars"></div></article>
-  <article class="v344Panel v344AttentionPanel"><div class="v344PanelHead"><div><span>ATENÇÃO HOJE</span><b>Ações do gestor</b></div><span class="v34Live">LIVE</span></div><div id="v34Attention" class="v34Attention"></div></article>
+
+  <article class="v35Panel v35StatusPanel">
+    <div class="v35PanelHead"><div><span>STATUS DAS LOCALIDADES</span><b>Concluídas · andamento · pendentes</b></div><small id="v35StatusContext">filtros atuais</small></div>
+    <div class="v35StatusCards">
+      <button type="button" class="v35Status completed" data-status="CONCLUIDA"><span>Concluídas</span><b id="v35Completed">0</b><small id="v35CompletedPct">0%</small></button>
+      <button type="button" class="v35Status progress" data-status="EM ANDAMENTO"><span>Em andamento</span><b id="v35Progress">0</b><small id="v35ProgressPct">0%</small></button>
+      <button type="button" class="v35Status pending" data-status="PENDENTE"><span>Pendentes</span><b id="v35Pending">0</b><small id="v35PendingPct">0%</small></button>
+    </div>
+    <div class="v35StatusTrack" aria-label="Distribuição do status"><i id="v35StatusDone"></i><i id="v35StatusProgress"></i><i id="v35StatusPending"></i></div>
+    <div class="v35StatusFoot"><span id="v35LocationsTotal">0 localidades no recorte</span><span>Clique em um status para abrir a execução</span></div>
+  </article>
+
+  <article class="v35Panel v35MixPanel">
+    <div class="v35PanelHead"><div><span>MIX DO PARQUE</span><b>Composição por tipo</b></div><small>recorte atual</small></div>
+    <div class="v35MixBody">
+      <div class="v35MixDonut" id="v35MixDonut"><div><b id="v35MixTotal">0</b><small>ativos</small></div></div>
+      <div class="v35MixLegend" id="v35MixLegend"></div>
+    </div>
+  </article>
+
+  <article class="v35Panel v35CompanyPanel">
+    <div class="v35PanelHead"><div><span>EXECUÇÃO POR EMPRESA</span><b>Evolução operacional</b></div><small>concluído · andamento · pendente</small></div>
+    <div class="v35CompanyBars" id="v35CompanyBars"></div>
+  </article>
+
+  <article class="v35Panel v35PriorityPanel">
+    <div class="v35PanelHead"><div><span>PRIORIDADES</span><b>Maior volume faltante</b></div><small>localidades</small></div>
+    <div id="v344PriorityBars" class="v344PriorityBars"></div>
+  </article>
+
+  <article class="v35Panel v35AttentionPanel">
+    <div class="v35PanelHead"><div><span>ATENÇÃO HOJE</span><b>Ações do gestor</b></div><span class="v34Live">LIVE</span></div>
+    <div id="v34Attention" class="v34Attention"></div>
+  </article>
 </section>
 
 <section class="card v21ExecutiveCharts v23Panel" data-v23-panel="execution" id="v21ExecutiveCharts">
   <div class="sectionHead">
     <div><h2>Painel executivo do recorte</h2><p class="muted">Leitura visual de execução, pendência e prioridades para apresentação gerencial.</p></div>
-    <span class="tag">V34.4 · EXECUÇÃO</span>
+    <span class="tag">V35 · EXECUÇÃO</span>
   </div>
   <div class="v21ChartGrid">
     <article class="v21ChartPanel">
@@ -367,8 +399,8 @@
     <article class="v343TvPanel"><div class="v343TvPanelHead"><b>Execução por tipo</b><span>COBERTURA</span></div><div id="v343TvTypes" class="v343TvClone"></div></article>
     <article class="v343TvPanel"><div class="v343TvPanelHead"><b>Prioridades</b><span>ATENÇÃO</span></div><div id="v343TvPriority" class="v343TvClone"></div></article>
   </div>
-  <div class="v343TvFooter"><span id="v343TvHeadline">Monitoramento executivo do inventário.</span><span>SUPORTE A CAMPO · V34.5</span></div>
+  <div class="v343TvFooter"><span id="v343TvHeadline">Monitoramento executivo do inventário.</span><span>SUPORTE A CAMPO · V35</span></div>
 </div>
 
-<script src="{{url_for('static',filename='manager.js')}}?v=dashboard-v34-5"></script>
+<script src="{{url_for('static',filename='manager.js')}}?v=dashboard-v35"></script>
 {% endblock %}
