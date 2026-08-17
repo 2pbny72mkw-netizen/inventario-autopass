@@ -676,10 +676,11 @@ function renderExecutiveFilters(){
   if([...line.options].some(o=>o.value===oldL))line.value=oldL;
 }
 function executiveFilteredLocations(){
-  const c=$('execCompany')?.value||'',line=$('execLine')?.value||'',type=$('execType')?.value||'';
+  const c=$('execCompany')?.value||'',line=$('execLine')?.value||'',type=$('execType')?.value||'',status=$('execStatus')?.value||'';
   return locations.filter(x=>
     (!c||x.company===c)&&
     (!line||x.line===line)&&
+    (!status || (status==='SEM REGISTRO' ? Number(x.inventoried||0)===0 : x.survey_status===status))&&
     (!type||Number((x.expected_by_type||{})[type]||0)>0||Number((x.inventoried_by_type||{})[type]||0)>0)
   );
 }
@@ -919,6 +920,7 @@ if($('execReset')) $('execReset').onclick=()=>{
   renderExecutiveFilters();
   $('execLine').value='';
   $('execType').value='';
+  if($('execStatus')) $('execStatus').value='';
   document.querySelectorAll('.equipmentBig').forEach(x=>x.classList.remove('active'));
   applyExecutiveFilterToTable();
 };
@@ -951,14 +953,14 @@ async function loadFieldEvidenceSummary(){
     if($('evItems')) $('evItems').textContent=fmt(d.items||0);
     if($('evMatched')) $('evMatched').textContent=fmt(d.matched||0);
     if($('evReview')) $('evReview').textContent=fmt(d.review||0);
-    if($('evMedia')) $('evMedia').textContent=fmt(d.media||0);
+    if($('evMedia')) $('evMedia').textContent=fmt(d.media||0); if($('evUnresolved')) $('evUnresolved').textContent=fmt(d.unresolved_visits||0);
   }catch(_err){}
 }
 
 // V23 — navegação lateral e primeiro Modo TV
 let v23ActiveView='overview';
 let v23TvTimer=null;
-const V23_TV_VIEWS=['overview','execution','competition','quality','map','evidence','ranking'];
+const V23_TV_VIEWS=['overview','execution','quality','map','evidence','journal','ranking','competition'];
 function v23SetView(view){
   v23ActiveView=view||'overview';
   document.body.dataset.dashboardView=v23ActiveView;
@@ -1081,3 +1083,10 @@ function renderV34Intelligence(){
   document.getElementById('v34Attention').innerHTML=alerts.map(([n,label,view],i)=>`<button type="button" onclick="v23SetView('${view}')"><em>${i+1}</em><span>${esc(label)}</span><b>${fmt(n)}</b></button>`).join('');
 }
 const _v34UpdateExecutiveView=updateExecutiveView; updateExecutiveView=function(){_v34UpdateExecutiveView();renderV34Intelligence();};
+
+// V38 — filtros e Diário de bordo
+['execStatus'].forEach(id=>document.getElementById(id)?.addEventListener('change',()=>{ updateExecutiveView(); applyExecutiveFilterToTable(); }));
+let v38JournalMap=null,v38JournalLayer=null;
+async function v38LoadJournalUsers(){try{const d=await fetch('/api/v38/diario-bordo?days=7').then(r=>r.json());const el=$('v38JournalUser');if(el&&d.users)el.innerHTML='<option value="">Selecione o colaborador</option>'+d.users.map(u=>`<option value="${u.id}">${esc(u.name)}</option>`).join('')}catch(e){}}
+async function v38LoadJournal(){const uid=$('v38JournalUser')?.value,days=$('v38JournalDays')?.value||7;if(!uid)return;const d=await fetch(`/api/v38/diario-bordo?user_id=${uid}&days=${days}`,{cache:'no-store'}).then(r=>r.json());$('v38JGps').textContent=fmt(d.summary?.gps||0);$('v38JEquip').textContent=fmt(d.summary?.equipment||0);$('v38JLoc').textContent=fmt(d.summary?.locations||0);const box=$('v38JournalTimeline');box.innerHTML=(d.events||[]).slice().reverse().slice(0,150).map(e=>`<div><b>${esc(e.kind)}</b><span>${new Date(e.at).toLocaleString('pt-BR')} · ${esc(e.location||e.detail||'')}</span></div>`).join('')||'<p class="muted">Sem registros no período.</p>';if(!v38JournalMap){v38JournalMap=L.map('v38JournalMap').setView([-23.55,-46.63],10);L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap contributors'}).addTo(v38JournalMap);v38JournalLayer=L.layerGroup().addTo(v38JournalMap)}v38JournalLayer.clearLayers();const pts=(d.events||[]).filter(e=>e.latitude!=null&&e.longitude!=null).map(e=>[e.latitude,e.longitude]);if(pts.length){L.polyline(pts).addTo(v38JournalLayer);pts.forEach((pt,i)=>L.circleMarker(pt,{radius:i===pts.length-1?7:3}).addTo(v38JournalLayer));v38JournalMap.fitBounds(L.latLngBounds(pts).pad(.15),{maxZoom:15})}setTimeout(()=>v38JournalMap.invalidateSize(),100)}
+$('v38JournalLoad')?.addEventListener('click',v38LoadJournal);v38LoadJournalUsers();
