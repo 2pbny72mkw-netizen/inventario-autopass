@@ -1010,3 +1010,154 @@ body[data-dashboard-view="overview"] .executiveFilterBar{padding:8px 10px!import
 .v344HeatPanel .v34Heatmap{grid-template-columns:repeat(5,1fr)!important;gap:6px!important;height:calc(100% - 30px);align-content:start}.v344HeatPanel .v34Heatmap div{height:52px!important;border-radius:10px!important;padding:8px!important}.v344HeatPanel .v34Heatmap b{font-size:8px!important}.v344HeatPanel .v34Heatmap span{font-size:15px!important}.v344AttentionPanel .v34Attention{display:grid;gap:5px}.v344AttentionPanel .v34Attention button{padding:7px 8px!important;min-height:34px!important;border-radius:8px!important}.v344AttentionPanel .v34Attention em{font-size:9px!important}.v344AttentionPanel .v34Attention span{font-size:9px!important}.v344AttentionPanel .v34Attention b{font-size:12px!important}
 body[data-dashboard-view="map"] .dashboardKpis,body[data-dashboard-view="map"] .equipmentBigNumbers,body[data-dashboard-view="map"] .v29CommandDeck,body[data-dashboard-view="map"] .dashHero{display:none!important}body[data-dashboard-view="map"] .executiveFilterBar{margin-top:0!important}body[data-dashboard-view="map"] .mapFullscreenAction{position:static!important;display:flex!important;justify-content:flex-end!important;margin:-42px 12px 8px 0!important;z-index:5!important}body[data-dashboard-view="map"] #gpsMap{height:calc(100vh - 205px)!important;min-height:560px!important}
 @media(max-width:1450px){.v344OverviewWall{grid-template-columns:1fr 1.35fr 1.2fr}.v23DashboardShell{grid-template-columns:190px minmax(0,1fr)!important}.v23Nav,.v23TvBtn{font-size:14px!important}}
+
+/* ===========================================================
+   V34.5 — proporção, legibilidade e correção do grid executivo
+   =========================================================== */
+@media (min-width: 1200px){
+  /* Recupera margens laterais e impede o dashboard de ficar esticado. */
+  main.wrap{
+    width:calc(100% - 72px)!important;
+    max-width:1600px!important;
+    margin:0 auto!important;
+    padding:14px 0 22px!important;
+  }
+  .v34CommandCenter{
+    width:100%!important;
+    max-width:1600px!important;
+    margin:0 auto!important;
+    min-height:calc(100vh - 96px)!important;
+  }
+  .v23DashboardShell{
+    grid-template-columns:205px minmax(0,1fr)!important;
+    gap:18px!important;
+  }
+  .v23DashboardContent{
+    width:100%!important;
+    min-width:0!important;
+    padding-right:0!important;
+  }
+
+  /* Menu lateral: leitura confortável sem dominar a tela. */
+  .v23Sidebar{
+    width:auto!important;
+    min-width:0!important;
+    padding:18px 13px!important;
+  }
+  .v23SidebarBrand b{font-size:18px!important;line-height:1.05!important}
+  .v23SidebarBrand small{font-size:11px!important;line-height:1.35!important}
+  .v23Nav,.v23TvBtn{font-size:15px!important;padding:13px 14px!important;line-height:1.2!important}
+
+  /* Cabeçalho mais legível, preservando espaço útil. */
+  .topbar .wrap.nav{
+    width:calc(100% - 72px)!important;
+    max-width:1600px!important;
+    margin:0 auto!important;
+  }
+  .topbar .brand img{width:132px!important}
+  .topbar .brandtext b{font-size:15px!important}
+  .topbar nav a{font-size:14px!important;padding:10px 9px!important}
+}
+
+/* Qualquer painel ativo precisa ocupar toda a largura do grid de 12 colunas. */
+.v34CommandCenter .v23DashboardContent > .v23Panel.v23PanelActive,
+.v34CommandCenter .v23DashboardContent > .v23Shared{
+  grid-column:1 / -1!important;
+  width:100%!important;
+  min-width:0!important;
+}
+
+/* CORREÇÃO PRINCIPAL: a parede V34.4 estava caindo em uma única coluna do grid pai. */
+body[data-dashboard-view="overview"] .v344OverviewWall{
+  grid-column:1 / -1!important;
+  width:100%!important;
+  min-width:0!important;
+  display:grid!important;
+  grid-template-columns:1.05fr 1.5fr 1.25fr!important;
+  grid-template-rows:minmax(230px,1.08fr) minmax(185px,.92fr)!important;
+  grid-template-areas:
+    "coverage trend types"
+    "heat priority attention"!important;
+  gap:14px!important;
+  height:calc(100vh - 315px)!important;
+  min-height:500px!important;
+  max-height:680px!important;
+  margin:0!important;
+}
+body[data-dashboard-view="overview"] .v344Panel{
+  width:auto!important;
+  min-width:0!important;
+  padding:18px!important;
+  border-radius:16px!important;
+}
+body[data-dashboard-view="overview"] .v344PanelHead span{font-size:10px!important}
+body[data-dashboard-view="overview"] .v344PanelHead b{font-size:18px!important;line-height:1.2!important}
+body[data-dashboard-view="overview"] .v344PanelHead small{font-size:10px!important}
+body[data-dashboard-view="overview"] .v344Coverage .v34Radial{
+  width:170px!important;height:170px!important;flex-basis:170px!important
+}
+body[data-dashboard-view="overview"] .v344Coverage .v34Radial b{font-size:38px!important}
+body[data-dashboard-view="overview"] .v344CoverageCopy strong{font-size:14px!important}
+body[data-dashboard-view="overview"] .v344Legend{font-size:11px!important}
+body[data-dashboard-view="overview"] .v344TrendPanel .v34Trend{padding:16px 10px!important}
+body[data-dashboard-view="overview"] .v344TypeBars .v21BarRow{font-size:12px!important;grid-template-columns:105px 1fr 42px!important;gap:9px!important}
+body[data-dashboard-view="overview"] .v344TypeBars .v21BarRow b{font-size:12px!important}
+body[data-dashboard-view="overview"] .v344TypeBars .v21BarRow span{font-size:9px!important}
+body[data-dashboard-view="overview"] .v344PriorityBars .v21PriorityRow{font-size:11px!important}
+body[data-dashboard-view="overview"] .v344PriorityBars .v21PriorityRow .who b{font-size:11px!important}
+body[data-dashboard-view="overview"] .v344PriorityBars .v21PriorityRow .who small{font-size:9px!important}
+body[data-dashboard-view="overview"] .v344HeatPanel .v34Heatmap div{height:58px!important;padding:9px!important}
+body[data-dashboard-view="overview"] .v344HeatPanel .v34Heatmap b{font-size:9px!important}
+body[data-dashboard-view="overview"] .v344HeatPanel .v34Heatmap span{font-size:17px!important}
+body[data-dashboard-view="overview"] .v344AttentionPanel .v34Attention button{padding:9px 10px!important;min-height:40px!important}
+body[data-dashboard-view="overview"] .v344AttentionPanel .v34Attention span,
+body[data-dashboard-view="overview"] .v344AttentionPanel .v34Attention em{font-size:10px!important}
+body[data-dashboard-view="overview"] .v344AttentionPanel .v34Attention b{font-size:14px!important}
+
+/* KPIs/filtros: deixam de parecer miniatura em monitor Full HD. */
+body[data-dashboard-view="overview"] .dashboardKpis{gap:10px!important;margin-bottom:10px!important}
+body[data-dashboard-view="overview"] .v34CommandCenter .dashboardKpis .kpi{min-height:86px!important;padding:13px 15px!important}
+body[data-dashboard-view="overview"] .v34CommandCenter .dashboardKpis .kpi span{font-size:11px!important}
+body[data-dashboard-view="overview"] .v34CommandCenter .dashboardKpis .kpi b{font-size:30px!important}
+body[data-dashboard-view="overview"] .v34CommandCenter .dashboardKpis .kpi small{font-size:10px!important}
+.executiveFilterBar label{font-size:11px!important}
+.executiveFilterBar select,.executiveFilterBar button{font-size:13px!important;min-height:39px!important}
+.filterContext{font-size:10px!important}
+
+/* O bloco legado de evidências nunca aparece fora da aba Evidências. */
+body:not([data-dashboard-view="evidence"]) #evidenceExecutiveStrip{display:none!important}
+
+/* Mapa: vence a regra antiga que escondia todos os divs auxiliares. */
+body[data-dashboard-view="map"] .v34CommandCenter [data-v23-panel="map"] > .mapFullscreenAction{
+  display:flex!important;
+  position:absolute!important;
+  right:14px!important;
+  top:14px!important;
+  z-index:1600!important;
+  margin:0!important;
+}
+body[data-dashboard-view="map"] .v34CommandCenter [data-v23-panel="map"] > .mapFullscreenAction #toggleMapFullscreenBtn{
+  display:inline-flex!important;
+  align-items:center!important;
+  gap:6px!important;
+  background:#103f6e!important;
+  color:#fff!important;
+  border:1px solid #66c8ff!important;
+  box-shadow:0 8px 22px #001c3540!important;
+  font-size:13px!important;
+  font-weight:800!important;
+  padding:10px 15px!important;
+  border-radius:10px!important;
+}
+
+/* O overlay legado jamais ocupa fluxo normal da página. */
+#v343TvOverlay:not(.active){display:none!important;position:fixed!important;inset:0!important}
+
+@media (max-width: 1500px) and (min-width: 1000px){
+  main.wrap,.topbar .wrap.nav{width:calc(100% - 40px)!important}
+  .v23DashboardShell{grid-template-columns:185px minmax(0,1fr)!important}
+  body[data-dashboard-view="overview"] .v344OverviewWall{
+    grid-template-columns:1fr 1.35fr 1.15fr!important;
+    gap:11px!important;
+  }
+}
