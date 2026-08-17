@@ -2,7 +2,7 @@
 {% block title %}Equipamentos | Inventário SP{% endblock %}
 {% block content %}
 <section class="dashHero">
-  <div><span class="eyebrow">V35.1 · EQUIPAMENTOS, QUALIDADE E INTELIGÊNCIA</span><h1>Equipamentos</h1>
+  <div><span class="eyebrow">V35.3 · EQUIPAMENTOS, QUALIDADE E INTELIGÊNCIA</span><h1>Equipamentos</h1>
   <p>Pesquisa única da base prevista, inventário realizado, itens encontrados fora da base e evidências de campo.</p></div>
 </section>
 
@@ -13,14 +13,14 @@
 </section>
 
 <section class="card v251Filters">
-  <div class="sectionHead"><div><h2>Filtros do Patrimônio</h2><p class="muted">Refine todas as visões por empresa, linha, localidade e tipo.</p></div><button class="secondary" id="v251ClearFilters">Limpar filtros</button></div>
+  <div class="sectionHead"><div><h2>Filtros de Equipamentos</h2><p class="muted">Refine todas as visões por empresa, linha, localidade e tipo.</p></div><button class="secondary" id="v251ClearFilters">Limpar filtros</button></div>
   <div class="grid4">
     <div><label>Empresa</label><select id="v251Company"><option value="">Todas</option></select></div>
     <div><label>Linha</label><select id="v251Line"><option value="">Todas</option></select></div>
     <div><label>Localidade</label><select id="v251Location"><option value="">Todas</option></select></div>
     <div><label>Tipo</label><select id="v251Type"><option value="">Todos</option><option>ATM</option><option value="VALIDADOR">Recarga</option><option>POS</option><option>TDI</option><option>BLOQUEIO</option><option>OUTRO</option></select></div>
   </div>
-  <div class="v30AtmFilters" id="v30AtmFilters"><div><label>Contrato ATM</label><select id="v30PatContract"><option value="">Todos</option></select></div><div><label>Vencimento</label><select id="v30PatHorizon"><option value="">Todos</option><option value="30">Até 30 dias</option><option value="60">Até 60 dias</option><option value="90">Até 90 dias</option><option value="expired">Vencidos</option></select></div><button class="secondary" id="v30PatExport" type="button">Exportar ATM</button></div><div id="v251FilterContext" class="filterContext">Todas empresas · Todas linhas · Todas localidades · Todos os tipos</div>
+  <div class="v30AtmFilters" id="v30AtmFilters"><div><label>Contrato ATM</label><select id="v30PatContract"><option value="">Todos</option></select></div><div><label>Vencimento</label><select id="v30PatHorizon"><option value="">Todos</option><option value="30">Até 30 dias</option><option value="60">Até 60 dias</option><option value="90">Até 90 dias</option><option value="expired">Vencidos</option></select></div><button class="secondary" id="v30PatExport" type="button">Exportar equipamentos</button></div><div id="v251FilterContext" class="filterContext">Todas empresas · Todas linhas · Todas localidades · Todos os tipos</div>
 </section>
 
 <section class="card v14Executive">
@@ -43,5 +43,22 @@
 </section>
 
 <div id="v7DetailModal" class="scheduleModal hidden"><div class="scheduleModalPanel v251LocationModal"><div class="sectionHead"><h2 id="v7DetailTitle">Ficha da Localidade</h2><button class="secondary" id="v7Close">Fechar</button></div><div id="v7Detail"></div></div></div>
-<script src="{{ url_for('static',filename='patrimonio.js') }}?v=v30"></script>
+
+<div id="v352EditModal" class="scheduleModal hidden"><div class="scheduleModalPanel v352EditPanel">
+  <div class="sectionHead"><div><h2>Editar equipamento</h2><p class="muted" id="v352EditContext"></p></div><button class="secondary" id="v352EditClose" type="button">Fechar</button></div>
+  <form id="v352EditForm" class="v352EditGrid">
+    <input type="hidden" id="v352EditId">
+    <div><label>Tipo</label><input id="v352EditType" name="equipment_type" required></div>
+    <div><label>Identificação / patrimônio</label><input id="v352EditIdentifier" name="asset_identifier" required></div>
+    <div><label>Número de série</label><input id="v352EditSerial" name="serial"></div>
+    <div><label>Fabricante / fornecedor</label><input id="v352EditSupplier" name="supplier"></div>
+    <div><label>Modelo</label><input id="v352EditModel" name="model"></div>
+    <div><label>Status operacional</label><input id="v352EditStatus" name="operational_status"></div>
+    <div><label>Consta na base?</label><input id="v352EditInBase" name="in_base"></div>
+    <div><label>Divergência</label><input id="v352EditDivergence" name="divergence"></div>
+    <div class="span2"><label>Observações</label><textarea id="v352EditNotes" name="notes" rows="4"></textarea></div>
+    <div class="span2 v352EditActions"><button type="submit" class="primary">Salvar alterações</button></div>
+  </form>
+</div></div>
+<script src="{{ url_for('static',filename='patrimonio.js') }}?v=v35-3"></script>
 {% endblock %}
