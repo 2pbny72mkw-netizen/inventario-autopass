@@ -747,7 +747,15 @@ $('base_asset_id').onchange = () => {
   $('asset_identifier').value=a.terminal_number||a.top_id||a.qrcode_id||a.serial||a.asset_key||'';
   $('serial').value=a.serial||''; $('supplier').value=a.supplier||''; $('model').value=a.model||'';
   if($('mount') && a.mount) $('mount').value=a.mount;
-  if($('application')) $('application').value=a.application||a.installation_type||'';
+  if($('application')){
+    let av=(a.application||a.installation_type||'').trim();
+    const key=av.toUpperCase().replace(/\s+/g,'');
+    const aliases={'BOM/BU/TOP':'BOM / TOP / BU','BOM/TOP/BU':'BOM / TOP / BU','BOM/TOP':'BOM / TOP','BU/TOP':'BU / TOP','BU/QRCODE/TOP':'BU / QRCODE / TOP','BU/TOP/PIX':'BU / TOP / PIX','QRCODE/PRAJA':'QRCODE / PRAJA','QRCODE/TOP':'QRCODE / TOP','TOP/PIX':'TOP / PIX'};
+    av=aliases[key]||av;
+    const sel=$('application');
+    if(av && ![...sel.options].some(o=>o.value===av)){const o=document.createElement('option');o.value=av;o.textContent=av;sel.appendChild(o);}
+    sel.value=av;
+  }
   if($('bom_id')) $('bom_id').value=a.bom_id||'';
   if($('bu_id')) $('bu_id').value=a.bu_id||'';
   if($('validator_top_id')) $('validator_top_id').value=a.top_id||a.terminal_number||'';
@@ -944,8 +952,12 @@ $('invForm').onsubmit = async e => {
   if(editingInventoryId){
     try{
       const fd=new FormData(e.target);
-      const r=await fetch(`/api/inventory/${editingInventoryId}`,{method:'PATCH',body:fd});
-      const j=await r.json().catch(()=>({ok:false,error:'Resposta inválida do servidor.'}));
+      const r=await fetch(`/api/inventory/${editingInventoryId}`,{method:'PATCH',body:fd,headers:{'Accept':'application/json'}});
+      const ct=(r.headers.get('content-type')||'').toLowerCase();
+      if(r.redirected || !ct.includes('application/json')){
+        showMsg('Sua sessão ou permissão não permite alterar este cadastro. Atualize a página e tente novamente.',false);return;
+      }
+      const j=await r.json().catch(()=>({ok:false,error:'O servidor retornou uma resposta inválida.'}));
       if(!r.ok){showMsg(j.error||'Não foi possível atualizar o cadastro.',false);return;}
       showMsg('Cadastro atualizado com sucesso.',true);
       editingInventoryId=null; e.target.reset(); resetFieldWorkflowAfterSave(); $('location_id').value=current.id; clearGpsFields(); updateEquipmentTypeUI(); renderSelectedBaseInfo(null);
