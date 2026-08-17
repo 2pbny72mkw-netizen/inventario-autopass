@@ -1331,3 +1331,6 @@ body.mapFullscreenOpen #gpsMap .autopassMapFullscreenControl{
 .v36ProductivityStrip b{display:block;font-size:25px;line-height:1.05;margin:5px 0 4px}
 .v36ProductivityStrip small{display:block;color:#d5e9f7;font-size:10px}
 @media(max-width:1000px){.v36ProductivityStrip{grid-template-columns:repeat(2,minmax(0,1fr))}}
+/* V38 */
+.v38JournalFilters{display:grid;grid-template-columns:2fr 1fr auto;gap:10px;align-items:end}.v38Timeline{max-height:300px;overflow:auto}.v38Timeline>div{display:grid;grid-template-columns:110px 1fr;gap:12px;padding:9px 4px;border-bottom:1px solid #e5edf5}.v38Timeline b{color:#0d365e}.v38Timeline span{font-size:13px}.v38Journal{min-height:650px}@media(max-width:760px){.v38JournalFilters{grid-template-columns:1fr}.v38Timeline>div{grid-template-columns:1fr}}
+@media(min-width:1100px){.executiveFilterBar .grid4{grid-template-columns:repeat(5,minmax(0,1fr))}}

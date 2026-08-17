@@ -1214,7 +1214,7 @@ function setTeamLocationStatus(text, ok=false){
 async function sendTeamLocation(position){
   applyGpsPosition(position);
   const now=Date.now();
-  if(now-teamLocationLastSent<90000) return;
+  if(now-teamLocationLastSent<(window.__v38GpsInterval||300000)) return;
   teamLocationLastSent=now;
   try{
     const r=await fetch('/api/tecnico/position',{
@@ -1375,3 +1375,18 @@ const _v32ProgressObserver=new MutationObserver(updateFieldProgressMeter);
 const _v32ProgressTarget=document.getElementById('locationPendingSummary');
 if(_v32ProgressTarget)_v32ProgressObserver.observe(_v32ProgressTarget,{childList:true,subtree:true,characterData:true});
 updateFieldProgressMeter();
+
+// V38 — GPS operacional automático durante a sessão autenticada.
+(async function v38AutoGps(){
+  try{
+    const cfg=await fetch('/api/v38/gps-config',{cache:'no-store'}).then(r=>r.json());
+    if(!cfg?.enabled) return;
+    const interval=Math.max(60000,Number(cfg.interval_seconds||300)*1000);
+    // sendTeamLocation já valida e persiste; o limitador passa a respeitar o intervalo ADM.
+    const originalSend=sendTeamLocation;
+    teamLocationLastSent=Date.now()-interval;
+    window.__v38GpsInterval=interval;
+    startTeamLocation();
+    setTeamLocationStatus(`Localização operacional ativa automaticamente · envio periódico a cada ${Math.round(interval/60000)} min.`,true);
+  }catch(_e){ startTeamLocation(); }
+})();
