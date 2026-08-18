@@ -16,11 +16,12 @@ from zoneinfo import ZoneInfo
 import time
 import tempfile
 import shutil
+import html as html_lib
 from functools import wraps
 
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify, flash, send_from_directory, Response, send_file
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import UniqueConstraint, Index, func, case, text
+from sqlalchemy import UniqueConstraint, Index, func, case, text, or_
 from sqlalchemy.exc import IntegrityError
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -33,9 +34,9 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V38.1"
-DASHBOARD_RELEASE = "dashboard-v36-0"
-TEAMS_RELEASE = "teams-v38-1"
+APP_RELEASE = "V39.0"
+DASHBOARD_RELEASE = "dashboard-v39-0"
+TEAMS_RELEASE = "teams-v39-0"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
 FIELD_GPS_GOOD_ACCURACY_M = float(os.getenv("FIELD_GPS_GOOD_ACCURACY_M", "30"))
 FIELD_GPS_MAX_ACCURACY_M = float(os.getenv("FIELD_GPS_MAX_ACCURACY_M", "80"))
@@ -171,6 +172,70 @@ class TechnicianCheckin(db.Model):
     accuracy = db.Column(db.Float)
     distance_m = db.Column(db.Float)
     status = db.Column(db.String(40), nullable=False, default="REGISTRADO", index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+
+
+
+class SessionEvent(db.Model):
+    __tablename__ = "session_events"
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    event_type = db.Column(db.String(30), nullable=False, index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+
+class TopDeskTicket(db.Model):
+    __tablename__ = "topdesk_tickets"
+    id = db.Column(db.Integer, primary_key=True)
+    ticket_number = db.Column(db.String(120), nullable=False, unique=True, index=True)
+    object_id = db.Column(db.String(260), index=True)
+    category = db.Column(db.String(180), index=True)
+    subcategory = db.Column(db.String(220), index=True)
+    incident_type = db.Column(db.String(120), index=True)
+    status = db.Column(db.String(120), index=True)
+    operator = db.Column(db.String(180))
+    created_at_text = db.Column(db.String(120))
+    sla_target_text = db.Column(db.String(120))
+    requester = db.Column(db.String(220))
+    request_text = db.Column(db.Text)
+    action_text = db.Column(db.Text)
+    attachments_text = db.Column(db.Text)
+    source_file = db.Column(db.String(300))
+    source_kind = db.Column(db.String(40), nullable=False, default="TOPDESK_EXCEL")
+    equipment_type = db.Column(db.String(80), index=True)
+    location_id = db.Column(db.Integer, db.ForeignKey("locations.id"), index=True)
+    assigned_technician_id = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
+    work_status = db.Column(db.String(60), nullable=False, default="RECEBIDO", index=True)
+    priority = db.Column(db.String(40), nullable=False, default="NORMAL", index=True)
+    imported_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    last_import_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+
+class TopDeskActivity(db.Model):
+    __tablename__ = "topdesk_activities"
+    id = db.Column(db.Integer, primary_key=True)
+    ticket_id = db.Column(db.Integer, db.ForeignKey("topdesk_tickets.id", ondelete="CASCADE"), nullable=False, index=True)
+    technician_id = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
+    actor_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
+    event_type = db.Column(db.String(60), nullable=False, index=True)
+    status = db.Column(db.String(60))
+    note = db.Column(db.Text)
+    latitude = db.Column(db.Float)
+    longitude = db.Column(db.Float)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+
+class TopDeskImportBatch(db.Model):
+    __tablename__ = "topdesk_import_batches"
+    id = db.Column(db.Integer, primary_key=True)
+    filename = db.Column(db.String(300), nullable=False)
+    imported_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    row_count = db.Column(db.Integer, nullable=False, default=0)
+    inserted_count = db.Column(db.Integer, nullable=False, default=0)
+    updated_count = db.Column(db.Integer, nullable=False, default=0)
+    error_count = db.Column(db.Integer, nullable=False, default=0)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
 
 
@@ -490,7 +555,7 @@ def manager_required(fn):
 
 
 def dashboard_required(fn):
-    """Permite acesso ao painel para Gestor e Consulta."""
+    """Permite acesso ao painel para Gestor, Consulta e Dispatcher."""
     @wraps(fn)
     def inner(*args, **kwargs):
         if not session.get("user_id"):
@@ -504,13 +569,27 @@ def dashboard_required(fn):
 
 
 def teams_view_required(fn):
-    """Visualização de equipes: Gestor, Consulta e RH."""
+    """Visualização de equipes: Gestor, Consulta, RH e Dispatcher."""
     @wraps(fn)
     def inner(*args, **kwargs):
         if not session.get("user_id"):
             return redirect(url_for("login"))
         if session.get("role") not in ("manager", "consultation", "hr", "dispatcher"):
             return redirect(url_for("technician"))
+        return fn(*args, **kwargs)
+    return inner
+
+
+def topdesk_required(fn):
+    """TopDesk: Gestor e Dispatcher."""
+    @wraps(fn)
+    def inner(*args, **kwargs):
+        if not session.get("user_id"):
+            return redirect(url_for("login"))
+        if session.get("role") not in ("manager", "dispatcher"):
+            if request.path.startswith("/api/"):
+                return jsonify({"ok": False, "error": "Sem permissão para operação TopDesk."}), 403
+            return redirect(url_for("manager" if session.get("role") == "consultation" else "technician_work"))
         return fn(*args, **kwargs)
     return inner
 
@@ -570,7 +649,7 @@ def index():
     role = session.get("role")
     if role == "hr":
         return redirect(url_for("teams_page"))
-    return redirect(url_for("manager" if role in ("manager", "consultation", "dispatcher") else "technician"))
+    return redirect(url_for("manager" if role in ("manager", "consultation", "dispatcher") else "technician_work"))
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -582,17 +661,35 @@ def login():
         if user and check_password_hash(user.password_hash, password):
             session.clear()
             session.update(user_id=user.id, name=user.name, role=user.role)
+            try:
+                db.session.add(SessionEvent(user_id=user.id, event_type="LOGIN"))
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
             if user.role == "hr":
                 return redirect(url_for("teams_page"))
-            return redirect(url_for("manager" if user.role in ("manager", "consultation", "dispatcher") else "technician"))
+            return redirect(url_for("manager" if user.role in ("manager", "consultation", "dispatcher") else "technician_work"))
         flash("Usuário ou senha inválidos.")
     return render_template("login.html")
 
 
 @app.route("/logout")
 def logout():
+    uid = session.get("user_id")
+    if uid:
+        try:
+            db.session.add(SessionEvent(user_id=uid, event_type="LOGOUT"))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
     session.clear()
     return redirect(url_for("login"))
+
+
+@app.route("/trabalho")
+@field_required
+def technician_work():
+    return render_template("technician_work.html", app_release=APP_RELEASE)
 
 
 @app.route("/tecnico")
@@ -1138,7 +1235,7 @@ def teams_profiles_api():
     users = User.query.filter(User.active.is_(True)).order_by(User.name).all()
     return jsonify({
         "ok": True,
-        "profiles": [_profile_to_dict(p) for p in profiles],
+        "profiles": [_profile_to_dict(p) for p in profiles if not (session.get("role")=="dispatcher" and p.user_id and (db.session.get(User,p.user_id) and db.session.get(User,p.user_id).role in ("manager","hr")))],
         "users": [
             {
                 "id": u.id,
@@ -1321,7 +1418,7 @@ def teams_profile_remove_api(profile_id):
 
 
 @app.get("/api/equipes/export/excel")
-@teams_view_required
+@dashboard_required
 def teams_export_excel_api():
     _ensure_team_schedule_profiles()
     start_raw = request.args.get("start", "").strip()
@@ -1490,7 +1587,7 @@ def v7_locations_api():
     query=Location.query
     if q:
         like=f"%{q}%"
-        query=query.filter(db.or_(
+        query=query.filter(or_(
             Location.location.ilike(like), Location.line.ilike(like), Location.company.ilike(like)
         ))
     rows=query.order_by(Location.company,Location.line,Location.location).limit(500).all()
@@ -1508,11 +1605,11 @@ def v7_location_detail_api(location_id):
 
 def _asset_360_payload(asset):
     inventories=Inventory.query.filter(
-        db.or_(Inventory.base_asset_id==asset.id,
+        or_(Inventory.base_asset_id==asset.id,
                Inventory.serial==asset.serial if asset.serial else db.false())
     ).order_by(Inventory.created_at.desc()).all()
     evidence=FieldEvidenceItem.query.filter(
-        db.or_(FieldEvidenceItem.base_asset_id==asset.id,
+        or_(FieldEvidenceItem.base_asset_id==asset.id,
                FieldEvidenceItem.serial==asset.serial if asset.serial else db.false())
     ).order_by(FieldEvidenceItem.id.desc()).all()
     latest=inventories[0] if inventories else None
@@ -1559,16 +1656,16 @@ def v7_global_search_api():
     if len(q)<2:
         return jsonify({"ok":True,"query":q,"locations":[],"assets":[],"inventory":[]})
     like=f"%{q}%"
-    locations=Location.query.filter(db.or_(
+    locations=Location.query.filter(or_(
         Location.location.ilike(like),Location.line.ilike(like),Location.company.ilike(like)
     )).limit(15).all()
-    assets=BaseAsset.query.filter(db.or_(
+    assets=BaseAsset.query.filter(or_(
         BaseAsset.serial.ilike(like),BaseAsset.asset_key.ilike(like),
         BaseAsset.qrcode_id.ilike(like),BaseAsset.top_id.ilike(like),
         BaseAsset.locality.ilike(like),BaseAsset.description.ilike(like)
     )).limit(25).all()
     matching_location_ids=[x.id for x in locations]
-    creator_rows=User.query.filter(db.or_(User.name.ilike(like),User.username.ilike(like),User.user_code.ilike(like))).limit(50).all()
+    creator_rows=User.query.filter(or_(User.name.ilike(like),User.username.ilike(like),User.user_code.ilike(like))).limit(50).all()
     creator_ids=[u.id for u in creator_rows]
     inventory_filters=[
         Inventory.serial.ilike(like),Inventory.asset_identifier.ilike(like),
@@ -1579,7 +1676,7 @@ def v7_global_search_api():
         inventory_filters.append(Inventory.technician_id.in_(creator_ids))
     if matching_location_ids:
         inventory_filters.append(Inventory.location_id.in_(matching_location_ids))
-    inventory=Inventory.query.filter(db.or_(*inventory_filters)).order_by(Inventory.created_at.desc()).limit(50).all()
+    inventory=Inventory.query.filter(or_(*inventory_filters)).order_by(Inventory.created_at.desc()).limit(50).all()
     creator_map={u.id:u for u in User.query.filter(User.id.in_([x.technician_id for x in inventory] or [-1])).all()}
     return jsonify({
         "ok":True,"query":q,"can_admin":_current_user_is_superadmin(),
@@ -2072,7 +2169,7 @@ def _observed_reference_stats(location_id):
             Inventory.location_id == location_id,
             Inventory.latitude.isnot(None),
             Inventory.longitude.isnot(None),
-            db.or_(Inventory.gps_accuracy.is_(None), Inventory.gps_accuracy <= 80),
+            or_(Inventory.gps_accuracy.is_(None), Inventory.gps_accuracy <= 80),
         )
         .order_by(Inventory.created_at.desc())
         .limit(200)
@@ -3503,7 +3600,7 @@ def edit_user(user_id):
         flash("Perfil de acesso inválido.")
         return redirect(url_for("users_page"))
     if not _role_assignment_allowed(role):
-        flash("Somente o Administrador principal pode atribuir os perfis Gestor, Consulta ou Dispatcher.")
+        flash("Somente o Administrador principal pode atribuir os perfis Gestor ou Consulta.")
         return redirect(url_for("users_page"))
 
     allowed_personnel_status = {"ATIVO", "FERIAS", "AFASTADO", "LICENCA", "FOLGA_PROGRAMADA", "OUTRO"}
@@ -3720,7 +3817,7 @@ def reactivate_user(user_id):
         flash("Usuário arquivado não encontrado.")
         return redirect(url_for("users_page"))
     # RH não pode restaurar diretamente um perfil sensível.
-    if user.role in ("manager", "consultation", "dispatcher") and not _current_user_is_superadmin():
+    if user.role in ("manager", "consultation") and not _current_user_is_superadmin():
         flash("Somente o Administrador principal pode reativar usuários Gestor ou Consulta.")
         return redirect(url_for("users_page"))
     base_login = normalize(user.name).lower().replace(" ", ".")[:60] or f"usuario{user.id}"
@@ -3752,7 +3849,7 @@ def export_users_excel():
         c.font = Font(bold=True, color="FFFFFF")
         c.fill = PatternFill("solid", fgColor="17345D")
         c.alignment = Alignment(horizontal="center")
-    role_label={"manager":"Gestor","technician":"Técnico de Campo","consultation":"Consulta","hr":"RH","dispatcher":"Dispatcher"}
+    role_label={"manager":"Gestor","technician":"Técnico de Campo","consultation":"Consulta","hr":"RH"}
     for u in User.query.order_by(User.name).all():
         status = "ARQUIVADO" if u.archived_at else ("ATIVO" if u.active else "INATIVO")
         ws.append([
@@ -4734,6 +4831,241 @@ def import_whatsapp():
 
 
 
+def _topdesk_equipment_type(row):
+    textv = normalize(" ".join(str(row.get(k) or "") for k in ("ID do objeto","Categoria","Subcategoria","Pedido")))
+    if "ATM" in textv: return "ATM"
+    if "BLOQ" in textv or "BLOQUEIO" in textv: return "BLOQUEIO"
+    if "VALID" in textv or "RECARG" in textv: return "VALIDADOR"
+    if "POS" in textv: return "POS"
+    if "TDI" in textv: return "TDI"
+    if "RACK" in textv: return "RACK"
+    return "OUTRO"
+
+
+def _topdesk_demand_type(ticket):
+    t = normalize((ticket.incident_type or "") + " " + (ticket.category or ""))
+    return "INCIDENTE" if "INCIDENT" in t or "FALHA" in t else "SOLICITACAO"
+
+
+def _topdesk_match_location(row):
+    raw = " ".join(str(row.get(k) or "") for k in ("ID do objeto","Pedido","Ação","Subcategoria"))
+    nraw = normalize(raw)
+    if not nraw: return None
+    # Prioriza código de estação/localidade quando existe no ID do objeto.
+    locs = Location.query.all()
+    best=None; bestscore=0
+    for loc in locs:
+        candidates=[normalize(loc.location), normalize(getattr(loc,"line","") or "")]
+        name=candidates[0]
+        if name and len(name)>=4 and name in nraw:
+            score=100+len(name)
+        else:
+            tokens=[x for x in name.split() if len(x)>=4]
+            score=sum(8 for x in tokens if x in nraw)
+        if score>bestscore:
+            bestscore=score; best=loc
+    return best if bestscore>=8 else None
+
+
+def _cell_text_xml(cell):
+    m=re.search(r"<t[^>]*>(.*?)</t>",cell,re.S)
+    if m: return html_lib.unescape(re.sub(r"<.*?>","",m.group(1)))
+    m=re.search(r"<v>(.*?)</v>",cell,re.S)
+    return html_lib.unescape(m.group(1)) if m else ""
+
+
+def _read_topdesk_xlsx(stream):
+    data=stream.read()
+    rows=[]
+    try:
+        wb=load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+        ws=wb.active
+        allrows=list(ws.iter_rows(values_only=True))
+        if not allrows: return []
+        headers=[str(x or "").strip() for x in allrows[0]]
+        for values in allrows[1:]:
+            row={headers[i]: values[i] if i<len(values) else None for i in range(len(headers))}
+            if any(v not in (None,"") for v in row.values()): rows.append(row)
+        return rows
+    except Exception:
+        pass
+    # Alguns exports TopDesk trazem XML Excel com caracteres inválidos para parsers estritos.
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        xml=z.read("xl/worksheets/sheet1.xml").decode("utf-8","replace")
+    rawrows=re.findall(r"<row\b[^>]*>(.*?)</row>",xml,re.S)
+    matrix=[]
+    for rr in rawrows:
+        vals=[]
+        cells=re.findall(r"<c\b[^>]*>.*?</c>",rr,re.S)
+        for c in cells: vals.append(_cell_text_xml(c))
+        matrix.append(vals)
+    if not matrix: return []
+    headers=[str(x or "").strip() for x in matrix[0]]
+    for vals in matrix[1:]:
+        row={headers[i]: vals[i] if i<len(vals) else None for i in range(len(headers))}
+        if any(v not in (None,"") for v in row.values()): rows.append(row)
+    return rows
+
+
+def _ticket_open(ticket):
+    s=normalize(ticket.status or "")
+    return not any(x in s for x in ("RESOLVID","FECHAD","CANCEL"))
+
+
+def _topdesk_suggestions(ticket, limit=5):
+    techs=User.query.filter(User.active.is_(True), User.role=="technician").order_by(User.name).all()
+    loc=db.session.get(Location,ticket.location_id) if ticket.location_id else None
+    latest={}
+    if techs:
+        ids=[u.id for u in techs]
+        for p in TechnicianPosition.query.filter(TechnicianPosition.user_id.in_(ids)).order_by(TechnicianPosition.captured_at.desc()).all():
+            latest.setdefault(p.user_id,p)
+    out=[]
+    for u in techs:
+        active=TopDeskTicket.query.filter(TopDeskTicket.assigned_technician_id==u.id).all()
+        load=sum(1 for t in active if _ticket_open(t) and t.work_status!="CONCLUIDO")
+        p=latest.get(u.id); dist=None
+        if p and loc and loc.reference_latitude is not None and loc.reference_longitude is not None:
+            dist=_haversine_m(p.latitude,p.longitude,loc.reference_latitude,loc.reference_longitude)
+        score=(dist if dist is not None else 999999)+(load*5000)
+        out.append({"id":u.id,"name":u.name,"distance_m":round(dist) if dist is not None else None,"active":load,"score":score})
+    out.sort(key=lambda x:(x["score"],x["name"]))
+    return out[:limit]
+
+
+@app.route("/topdesk", methods=["GET"])
+@topdesk_required
+def topdesk_page():
+    technicians=User.query.filter(User.active.is_(True),User.role=="technician").order_by(User.name).all()
+    return render_template("topdesk.html", technicians=technicians, app_release=APP_RELEASE)
+
+
+@app.post("/topdesk/import")
+@topdesk_required
+def topdesk_import():
+    f=request.files.get("file")
+    if not f or not f.filename:
+        return jsonify({"ok":False,"error":"Selecione o arquivo exportado do TopDesk."}),400
+    if not f.filename.lower().endswith((".xlsx",".xlsm")):
+        return jsonify({"ok":False,"error":"Use arquivo XLSX exportado do TopDesk."}),400
+    try:
+        rows=_read_topdesk_xlsx(f.stream)
+        required="Número do incidente"
+        if rows and required not in rows[0]:
+            return jsonify({"ok":False,"error":"Formato não reconhecido: coluna Número do incidente não encontrada."}),400
+        inserted=updated=errors=0
+        for row in rows:
+            num=str(row.get("Número do incidente") or "").strip()
+            if not num: errors+=1; continue
+            t=TopDeskTicket.query.filter_by(ticket_number=num).first()
+            is_new=t is None
+            if is_new: t=TopDeskTicket(ticket_number=num); db.session.add(t)
+            t.object_id=str(row.get("ID do objeto") or "").strip()
+            t.category=str(row.get("Categoria") or "").strip()
+            t.subcategory=str(row.get("Subcategoria") or "").strip()
+            t.incident_type=str(row.get("Tipo de incidente") or "").strip()
+            t.status=str(row.get("Status") or "").strip()
+            t.operator=str(row.get("Operador") or "").strip()
+            t.created_at_text=str(row.get("Dia/hora da criação") or "").strip()
+            t.sla_target_text=str(row.get("Data alvo do SLA") or "").strip()
+            t.requester=str(row.get("Nome do solicitante") or "").strip()
+            t.request_text=str(row.get("Pedido") or "").strip()
+            t.action_text=str(row.get("Ação") or "").strip()
+            t.attachments_text=str(row.get("Anexos") or "").strip()
+            t.source_file=secure_filename(f.filename)[:300]
+            t.equipment_type=_topdesk_equipment_type(row)
+            if not t.location_id:
+                loc=_topdesk_match_location(row); t.location_id=loc.id if loc else None
+            t.priority="ALTA" if _topdesk_demand_type(t)=="INCIDENTE" else "NORMAL"
+            t.last_import_at=datetime.utcnow(); t.updated_at=datetime.utcnow()
+            if is_new: inserted+=1
+            else: updated+=1
+        batch=TopDeskImportBatch(filename=secure_filename(f.filename),imported_by=session["user_id"],row_count=len(rows),inserted_count=inserted,updated_count=updated,error_count=errors)
+        db.session.add(batch); db.session.commit()
+        return jsonify({"ok":True,"rows":len(rows),"inserted":inserted,"updated":updated,"errors":errors})
+    except Exception as exc:
+        db.session.rollback(); return jsonify({"ok":False,"error":f"{type(exc).__name__}: {exc}"}),500
+
+
+@app.get("/api/topdesk/tickets")
+@topdesk_required
+def topdesk_tickets_api():
+    q=TopDeskTicket.query
+    status=request.args.get("status","").strip(); eq=request.args.get("equipment_type","").strip(); assigned=request.args.get("assigned","").strip(); search=request.args.get("q","").strip()
+    if status: q=q.filter(TopDeskTicket.status==status)
+    if eq: q=q.filter(TopDeskTicket.equipment_type==eq)
+    if assigned=="unassigned": q=q.filter(TopDeskTicket.assigned_technician_id.is_(None))
+    if search:
+        like=f"%{search}%"; q=q.filter(or_(TopDeskTicket.ticket_number.ilike(like),TopDeskTicket.object_id.ilike(like),TopDeskTicket.request_text.ilike(like),TopDeskTicket.category.ilike(like)))
+    rows=q.order_by(TopDeskTicket.last_import_at.desc()).limit(1000).all()
+    users={u.id:u for u in User.query.filter(User.id.in_([x.assigned_technician_id for x in rows if x.assigned_technician_id] or [-1])).all()}
+    locs={l.id:l for l in Location.query.filter(Location.id.in_([x.location_id for x in rows if x.location_id] or [-1])).all()}
+    return jsonify({"ok":True,"tickets":[{
+      "id":t.id,"number":t.ticket_number,"object_id":t.object_id,"category":t.category,"subcategory":t.subcategory,"incident_type":t.incident_type,"demand_type":_topdesk_demand_type(t),"status":t.status,"work_status":t.work_status,"priority":t.priority,"equipment_type":t.equipment_type,"operator":t.operator,"created_at":t.created_at_text,"sla":t.sla_target_text,"requester":t.requester,"request":t.request_text,"action":t.action_text,"assigned_id":t.assigned_technician_id,"assigned":users.get(t.assigned_technician_id).name if users.get(t.assigned_technician_id) else None,"location_id":t.location_id,"location":locs.get(t.location_id).location if locs.get(t.location_id) else None,"line":locs.get(t.location_id).line if locs.get(t.location_id) else None,"suggestions":_topdesk_suggestions(t,3)
+    } for t in rows]})
+
+
+@app.post("/api/topdesk/tickets/<int:ticket_id>/assign")
+@topdesk_required
+def topdesk_assign(ticket_id):
+    t=db.session.get(TopDeskTicket,ticket_id)
+    if not t: return jsonify({"ok":False,"error":"Chamado não encontrado."}),404
+    data=request.get_json(silent=True) or {}; tech_id=data.get("technician_id")
+    u=db.session.get(User,int(tech_id)) if tech_id not in (None,"") else None
+    if u and (not u.active or u.role!="technician"): return jsonify({"ok":False,"error":"Técnico inválido."}),400
+    old=t.assigned_technician_id; t.assigned_technician_id=u.id if u else None; t.work_status="RECEBIDO" if u else "NAO_ATRIBUIDO"; t.updated_at=datetime.utcnow()
+    db.session.add(TopDeskActivity(ticket_id=t.id,technician_id=t.assigned_technician_id,actor_user_id=session.get("user_id"),event_type="REATRIBUIDO" if old else "ATRIBUIDO",status=t.work_status,note=f"{db.session.get(User,old).name if old and db.session.get(User,old) else 'Sem técnico'} → {u.name if u else 'Sem técnico'}"))
+    db.session.commit(); return jsonify({"ok":True,"assigned":u.name if u else None})
+
+
+@app.get("/api/topdesk/dashboard")
+@dashboard_required
+def topdesk_dashboard_api():
+    tickets=TopDeskTicket.query.all(); total=len(tickets); openrows=[t for t in tickets if _ticket_open(t)]; resolved=total-len(openrows)
+    by_status={}; by_type={}; by_location={}; assigned=0
+    for t in tickets:
+        by_status[t.status or "Sem status"]=by_status.get(t.status or "Sem status",0)+1
+        by_type[t.equipment_type or "OUTRO"]=by_type.get(t.equipment_type or "OUTRO",0)+1
+        if t.assigned_technician_id: assigned+=1
+        if t.location_id:
+            loc=db.session.get(Location,t.location_id); key=loc.location if loc else "Não vinculada"; by_location[key]=by_location.get(key,0)+1
+    top_locations=sorted(by_location.items(),key=lambda x:x[1],reverse=True)[:12]
+    return jsonify({"ok":True,"total":total,"open":len(openrows),"resolved":resolved,"assigned":assigned,"unassigned":total-assigned,"by_status":by_status,"by_type":by_type,"top_locations":[{"name":k,"count":v} for k,v in top_locations]})
+
+
+@app.get("/topdesk/export.xlsx")
+@topdesk_required
+def topdesk_export():
+    rows=TopDeskTicket.query.order_by(TopDeskTicket.id).all(); wb=Workbook(); ws=wb.active; ws.title="Chamados TopDesk"
+    ws.append(["Número","Tipo","Status TopDesk","Status Campo","Prioridade","Equipamento","Objeto","Categoria","Subcategoria","Operador","Criação","SLA","Localidade","Técnico","Pedido","Ação"])
+    for t in rows:
+        loc=db.session.get(Location,t.location_id) if t.location_id else None; tech=db.session.get(User,t.assigned_technician_id) if t.assigned_technician_id else None
+        ws.append([t.ticket_number,_topdesk_demand_type(t),t.status,t.work_status,t.priority,t.equipment_type,t.object_id,t.category,t.subcategory,t.operator,t.created_at_text,t.sla_target_text,loc.location if loc else "",tech.name if tech else "",t.request_text,t.action_text])
+    bio=io.BytesIO(); wb.save(bio); bio.seek(0); return send_file(bio,as_attachment=True,download_name=f"topdesk_suporte_campo_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+@app.get("/api/minhas-atividades")
+@field_required
+def my_work_api():
+    uid=session.get("user_id"); q=TopDeskTicket.query.filter(TopDeskTicket.assigned_technician_id==uid)
+    rows=q.order_by(case((TopDeskTicket.priority=="ALTA",0),else_=1),TopDeskTicket.id.desc()).all()
+    locs={l.id:l for l in Location.query.filter(Location.id.in_([x.location_id for x in rows if x.location_id] or [-1])).all()}
+    return jsonify({"ok":True,"tickets":[{"id":t.id,"number":t.ticket_number,"demand_type":_topdesk_demand_type(t),"priority":t.priority,"status":t.status,"work_status":t.work_status,"equipment_type":t.equipment_type,"object_id":t.object_id,"location":locs.get(t.location_id).location if locs.get(t.location_id) else "Não vinculada","line":locs.get(t.location_id).line if locs.get(t.location_id) else "","request":t.request_text,"sla":t.sla_target_text} for t in rows]})
+
+
+@app.post("/api/minhas-atividades/<int:ticket_id>/status")
+@field_required
+def my_work_status(ticket_id):
+    t=db.session.get(TopDeskTicket,ticket_id); uid=session.get("user_id")
+    if not t or (session.get("role")!="manager" and t.assigned_technician_id!=uid): return jsonify({"ok":False,"error":"Atividade não encontrada para este técnico."}),404
+    data=request.get_json(silent=True) or {}; status=normalize(data.get("status"))
+    allowed={"ACEITO","EM DESLOCAMENTO","NO LOCAL","EM ATENDIMENTO","PAUSADO","CONCLUIDO"}
+    if status not in allowed: return jsonify({"ok":False,"error":"Status inválido."}),400
+    lat=data.get("latitude"); lon=data.get("longitude"); t.work_status=status; t.updated_at=datetime.utcnow()
+    db.session.add(TopDeskActivity(ticket_id=t.id,technician_id=t.assigned_technician_id,actor_user_id=uid,event_type="STATUS",status=status,note=str(data.get("note") or ""),latitude=float(lat) if lat not in (None,"") else None,longitude=float(lon) if lon not in (None,"") else None))
+    db.session.commit(); return jsonify({"ok":True,"status":status})
+
+
 @app.get("/api/v38/gps-config")
 @login_required
 def v38_gps_config():
@@ -4745,12 +5077,13 @@ def v38_diario_bordo():
     days = max(1, min(request.args.get("days", 7, type=int) or 7, 30))
     user_id = request.args.get("user_id", type=int)
     since = datetime.utcnow() - timedelta(days=days)
-    uq = User.query.filter(User.active.is_(True), ~User.role.in_(("manager","hr")))
-    users = uq.order_by(User.name).all()
+    uq = User.query.filter(User.active.is_(True))
+    users = uq.filter(~User.role.in_(("manager", "hr"))).order_by(User.name).all()
     if not user_id:
         return jsonify({"ok": True, "days": days, "users": [{"id":u.id,"name":u.name,"role":u.role} for u in users], "events": [], "summary": {}})
     u = db.session.get(User, user_id)
-    if not u: return jsonify({"ok":False,"error":"Colaborador não encontrado"}),404
+    if not u or (session.get("role")=="dispatcher" and u.role in ("manager","hr")):
+        return jsonify({"ok":False,"error":"Colaborador não disponível para este perfil"}),404
     positions = TechnicianPosition.query.filter(TechnicianPosition.user_id==user_id, TechnicianPosition.captured_at>=since).order_by(TechnicianPosition.captured_at).all()
     inventories = Inventory.query.filter(Inventory.technician_id==user_id, Inventory.created_at>=since).order_by(Inventory.created_at).all()
     locids={x.location_id for x in inventories}; locmap={x.id:x for x in Location.query.filter(Location.id.in_(locids)).all()} if locids else {}
@@ -4758,6 +5091,12 @@ def v38_diario_bordo():
     for x in positions: events.append({"kind":"GPS","at":x.captured_at.isoformat()+"Z","latitude":x.latitude,"longitude":x.longitude,"accuracy":x.accuracy,"detail":"Posição automática"})
     for x in inventories:
         loc=locmap.get(x.location_id); events.append({"kind":"ATIVIDADE","at":x.created_at.isoformat()+"Z","latitude":x.latitude,"longitude":x.longitude,"detail":f"{x.equipment_type} · {x.asset_identifier}","location":loc.location if loc else ""})
+    for x in SessionEvent.query.filter(SessionEvent.user_id==user_id, SessionEvent.created_at>=since).order_by(SessionEvent.created_at).all():
+        events.append({"kind":"SESSAO","at":x.created_at.isoformat()+"Z","detail":x.event_type})
+    acts=TopDeskActivity.query.filter(TopDeskActivity.technician_id==user_id, TopDeskActivity.created_at>=since).order_by(TopDeskActivity.created_at).all()
+    for a in acts:
+        t=db.session.get(TopDeskTicket,a.ticket_id); loc=db.session.get(Location,t.location_id) if t and t.location_id else None
+        events.append({"kind":"CHAMADO","at":a.created_at.isoformat()+"Z","latitude":a.latitude,"longitude":a.longitude,"detail":f"{t.ticket_number if t else a.ticket_id} · {a.status or a.event_type}","location":loc.location if loc else ""})
     events.sort(key=lambda x:x['at'])
     return jsonify({"ok":True,"days":days,"user":{"id":u.id,"name":u.name},"events":events,"summary":{"gps":len(positions),"equipment":len(inventories),"locations":len(locids),"first":events[0]['at'] if events else None,"last":events[-1]['at'] if events else None}})
 
@@ -5014,7 +5353,7 @@ def cleanup_test_gps():
     O administrador principal não é incluído automaticamente.
     """
     test_users = User.query.filter(
-        db.or_(
+        or_(
             func.lower(User.username).in_(("adil_tst", "adil_teste", "teste", "test")),
             func.lower(User.user_code).in_(("tst", "test")),
             func.lower(User.name).like("%teste%")
