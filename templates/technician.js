@@ -203,8 +203,9 @@ function captureGpsForSubmission() {
 }
 
 const DB_NAME = 'inventario-autopass-offline';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_QUEUE = 'queue';
+const STORE_QUEUE_META = 'queue_meta';
 const STORE_CACHE = 'cache';
 const LOCAL_MODE_KEY = 'inventario-autopass-local-mode';
 
@@ -230,6 +231,11 @@ function openDB() {
         q.createIndex('created_at', 'created_at');
         q.createIndex('location_id', 'location_id');
       }
+      if (!db.objectStoreNames.contains(STORE_QUEUE_META)) {
+        const qm = db.createObjectStore(STORE_QUEUE_META, { keyPath: 'local_id' });
+        qm.createIndex('created_at', 'created_at');
+        qm.createIndex('location_id', 'location_id');
+      }
       if (!db.objectStoreNames.contains(STORE_CACHE)) {
         db.createObjectStore(STORE_CACHE, { keyPath: 'key' });
       }
@@ -240,11 +246,25 @@ function openDB() {
   });
 }
 
+function queueMetaFromRecord(value){
+  const x=value||{};
+  return {
+    local_id:x.local_id,
+    created_at:x.created_at,
+    location_id:x.location_id,
+    location_name:x.location_name,
+    fields:x.fields||{},
+    file_count:Array.isArray(x.files)?x.files.length:0
+  };
+}
+
 async function idbPut(storeName, value) {
   const db = await openDB();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(storeName, 'readwrite');
+    const stores = storeName === STORE_QUEUE ? [STORE_QUEUE, STORE_QUEUE_META] : [storeName];
+    const tx = db.transaction(stores, 'readwrite');
     tx.objectStore(storeName).put(value);
+    if(storeName === STORE_QUEUE) tx.objectStore(STORE_QUEUE_META).put(queueMetaFromRecord(value));
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
@@ -283,24 +303,35 @@ async function idbCount(storeName) {
   });
 }
 
+async function backfillQueueMetaIfNeeded(){
+  const db=await openDB();
+  const [queueCount,metaCount]=await Promise.all([
+    new Promise((resolve,reject)=>{const tx=db.transaction(STORE_QUEUE,'readonly');const r=tx.objectStore(STORE_QUEUE).count();r.onsuccess=()=>resolve(r.result||0);r.onerror=()=>reject(r.error);}),
+    new Promise((resolve,reject)=>{const tx=db.transaction(STORE_QUEUE_META,'readonly');const r=tx.objectStore(STORE_QUEUE_META).count();r.onsuccess=()=>resolve(r.result||0);r.onerror=()=>reject(r.error);})
+  ]);
+  if(!queueCount || metaCount>=queueCount) return;
+  const keys=await idbQueueIdsByCreatedAt();
+  for(const key of keys){
+    const meta=await idbGet(STORE_QUEUE_META,key);
+    if(meta) continue;
+    let record=await idbGet(STORE_QUEUE,key);
+    if(record){ await idbPut(STORE_QUEUE_META,queueMetaFromRecord(record)); }
+    record=null;
+    await new Promise(r=>setTimeout(r,0));
+  }
+}
+
 async function idbQueueSummaries() {
+  await backfillQueueMetaIfNeeded();
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const out = [];
-    const tx = db.transaction(STORE_QUEUE, 'readonly');
-    const req = tx.objectStore(STORE_QUEUE).index('created_at').openCursor();
+    const tx = db.transaction(STORE_QUEUE_META, 'readonly');
+    const req = tx.objectStore(STORE_QUEUE_META).index('created_at').openCursor();
     req.onsuccess = () => {
       const cursor = req.result;
       if (!cursor) return resolve(out);
-      const x = cursor.value || {};
-      out.push({
-        local_id: x.local_id,
-        created_at: x.created_at,
-        location_id: x.location_id,
-        location_name: x.location_name,
-        fields: x.fields || {},
-        file_count: Array.isArray(x.files) ? x.files.length : 0
-      });
+      out.push(cursor.value || {});
       cursor.continue();
     };
     req.onerror = () => reject(req.error);
@@ -340,12 +371,13 @@ async function idbQueueIdsByCreatedAt() {
 }
 
 async function idbHasQueueDuplicate(record) {
+  await backfillQueueMetaIfNeeded();
   const db = await openDB();
   const type = String(record.fields.equipment_type || '').trim().toUpperCase();
   const identifier = String(record.fields.asset_identifier || '').trim().toUpperCase();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_QUEUE, 'readonly');
-    const req = tx.objectStore(STORE_QUEUE).openCursor();
+    const tx = db.transaction(STORE_QUEUE_META, 'readonly');
+    const req = tx.objectStore(STORE_QUEUE_META).openCursor();
     req.onsuccess = () => {
       const cursor = req.result;
       if (!cursor) return resolve(false);
@@ -363,8 +395,10 @@ async function idbHasQueueDuplicate(record) {
 async function idbDelete(storeName, key) {
   const db = await openDB();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(storeName, 'readwrite');
+    const stores = storeName === STORE_QUEUE ? [STORE_QUEUE, STORE_QUEUE_META] : [storeName];
+    const tx = db.transaction(stores, 'readwrite');
     tx.objectStore(storeName).delete(key);
+    if(storeName === STORE_QUEUE) tx.objectStore(STORE_QUEUE_META).delete(key);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
@@ -928,7 +962,7 @@ async function sendRecord(record) {
   fd.append('client_uuid', record.local_id);
 
   (record.files || []).forEach(f => {
-    fd.append(f.field || 'attachments', new File([f.blob], f.name, { type: f.type }));
+    fd.append(f.field || 'attachments', f.blob, f.name || 'evidencia');
   });
 
   const r = await fetch('/api/inventory', { method: 'POST', body: fd });
@@ -993,7 +1027,8 @@ async function syncQueue({ silent = false } = {}) {
       break;
     }
 
-    await refreshConnectionUI();
+    // V39.5: não redesenha a fila a cada envio; isso evita reabrir metadados enquanto a foto atual ainda está na RAM.
+    await new Promise(r=>setTimeout(r,0));
   }
 
   await refreshConnectionUI();
@@ -1358,7 +1393,7 @@ function updateFieldHeroConnection(){
 }
 window.addEventListener('online',updateFieldHeroConnection); window.addEventListener('offline',updateFieldHeroConnection); updateFieldHeroConnection();
 document.getElementById('equipment_type')?.addEventListener('change',()=>{if(document.getElementById('equipment_type').value)document.getElementById('fieldStep2')?.classList.add('done');});
-// V39.4 — captura de evidências otimizada para aparelhos móveis.
+// V39.5 — captura/fila com proteção contra pico de memória em Android.
 // Reduz a foto logo após a captura e libera recursos temporários (ImageBitmap/ObjectURL/canvas).
 const EVIDENCE_MAX_SIDE = 1920;
 const EVIDENCE_JPEG_QUALITY = 0.82;
@@ -1391,6 +1426,10 @@ async function imageSourceFromFile(file){
 
 async function optimizeEvidenceImage(file){
   if(!file || !String(file.type||'').startsWith('image/')) return file;
+  const mobileAndroid=/Android/i.test(navigator.userAgent||'');
+  // V39.5: em Android, a câmera pode entregar JPEGs de 50/200 MP. Decodificar esse arquivo em canvas
+  // causa pico de memória antes mesmo da redução. Mantemos o arquivo nativo e evitamos a decodificação JS.
+  if(mobileAndroid) return file;
   // Imagens já pequenas não precisam ser decodificadas novamente.
   if(file.size && file.size <= 900*1024) return file;
   let decoded=null, canvas=null;
