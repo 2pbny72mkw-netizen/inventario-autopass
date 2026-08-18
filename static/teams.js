@@ -1,4 +1,4 @@
-window.AUTOPASS_TEAMS_VERSION="teams-v39-7-3";
+window.AUTOPASS_TEAMS_VERSION="teams-v39-7-5";
 
 console.log('AUTOPASS Central Operacional V26 carregada');
 
@@ -483,6 +483,12 @@ function v391Sequence(a){if(a.length<3)return [...a];const pool=[...a], seq=[poo
 async function v391BuildRails(){
   if(!teamMap||!v391RailLines)return;
   v391RailLines.clearLayers();v391Stations.clearLayers();v391StationNames.clearLayers();
+  // V39.7.5: desenha a malha de contingência imediatamente. Assim as linhas aparecem mesmo se a API falhar.
+  Object.entries(V391_FALLBACK).forEach(([n,pts])=>{
+    if(pts.length<2)return;
+    L.polyline(pts,{pane:'railLinesPane',color:'#fff',weight:12,opacity:.98,interactive:false}).addTo(v391RailLines);
+    L.polyline(pts,{pane:'railLinesPane',color:V391_COLORS[n]||'#64748b',weight:7,opacity:1}).bindPopup(`<b>Linha ${n} — ${V391_NAMES[n]||''}</b>`).addTo(v391RailLines);
+  });
   try{
     const r=await fetch('/api/equipes/rail-network',{cache:'no-store'}); if(!r.ok)throw new Error('HTTP '+r.status); const locs=await r.json(); const groups={};
     (locs||[]).forEach(x=>{if(x.reference_latitude==null||x.reference_longitude==null)return;const n=v391LineNo(x.line);if(!n)return;(groups[n]??=[]).push(x);const pt=[+x.reference_latitude,+x.reference_longitude];L.circleMarker(pt,{pane:'railStationsPane',radius:5,color:'#fff',weight:2,fillColor:V391_COLORS[n]||'#64748b',fillOpacity:1}).bindTooltip(String(x.location||''),{direction:'top'}).addTo(v391Stations);L.marker(pt,{interactive:false,icon:L.divIcon({className:'stationLabelIcon',html:`<span>${esc(x.location||'')}</span>`,iconSize:null})}).addTo(v391StationNames)});

@@ -1396,3 +1396,6 @@ body.mapFullscreenOpen #gpsMap .autopassMapFullscreenControl{
 .v23Panel[data-v23-panel="ranking"] .typeProgressList span,
 .v23Panel[data-v23-panel="ranking"] .typeProgressList b,
 .v23Panel[data-v23-panel="ranking"] .typeProgressList strong{color:#173252!important}
+
+/* V39.7.5 */
+.chipPhotoActions{display:flex;gap:10px;flex-wrap:wrap;margin:6px 0}.chipPhotoBtn{cursor:pointer;display:inline-flex;align-items:center}.chipSelectedFiles{font-size:12px;color:#52657d;margin:4px 0 8px}.chipOpRow{display:grid;grid-template-columns:minmax(110px,180px) 1fr 120px;gap:10px;align-items:center;margin:9px 0}.chipOpTrack{height:10px;background:#e8edf3;border-radius:99px;overflow:hidden}.chipOpTrack i{display:block;height:100%;background:#16824b;border-radius:99px}@media(max-width:700px){.chipOpRow{grid-template-columns:100px 1fr}.chipOpRow span{grid-column:2}}
