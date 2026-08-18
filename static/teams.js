@@ -1,4 +1,4 @@
-window.AUTOPASS_TEAMS_VERSION="teams-v39-6";
+window.AUTOPASS_TEAMS_VERSION="teams-v39-7-3";
 
 console.log('AUTOPASS Central Operacional V26 carregada');
 
@@ -468,15 +468,15 @@ async function v391BuildRails(){
   if(!teamMap||!v391RailLines)return;
   v391RailLines.clearLayers();v391Stations.clearLayers();v391StationNames.clearLayers();
   try{
-    const r=await fetch('/api/locations',{cache:'no-store'}); const locs=await r.json(); const groups={};
-    (locs||[]).forEach(x=>{if(x.reference_latitude==null||x.reference_longitude==null)return;const n=v391LineNo(x.line);if(!n)return;(groups[n]??=[]).push(x);const pt=[+x.reference_latitude,+x.reference_longitude];L.circleMarker(pt,{radius:4,color:'#fff',weight:2,fillColor:V391_COLORS[n]||'#64748b',fillOpacity:1}).bindTooltip(String(x.location||''),{direction:'top'}).addTo(v391Stations);L.marker(pt,{interactive:false,icon:L.divIcon({className:'stationLabelIcon',html:`<span>${esc(x.location||'')}</span>`,iconSize:null})}).addTo(v391StationNames)});
+    const r=await fetch('/api/equipes/rail-network',{cache:'no-store'}); if(!r.ok)throw new Error('HTTP '+r.status); const locs=await r.json(); const groups={};
+    (locs||[]).forEach(x=>{if(x.reference_latitude==null||x.reference_longitude==null)return;const n=v391LineNo(x.line);if(!n)return;(groups[n]??=[]).push(x);const pt=[+x.reference_latitude,+x.reference_longitude];L.circleMarker(pt,{pane:'railStationsPane',radius:5,color:'#fff',weight:2,fillColor:V391_COLORS[n]||'#64748b',fillOpacity:1}).bindTooltip(String(x.location||''),{direction:'top'}).addTo(v391Stations);L.marker(pt,{interactive:false,icon:L.divIcon({className:'stationLabelIcon',html:`<span>${esc(x.location||'')}</span>`,iconSize:null})}).addTo(v391StationNames)});
     ['4','17'].forEach(n=>{if(!groups[n])groups[n]=[]});
-    Object.entries(groups).forEach(([n,arr])=>{const seq=v391Sequence(arr);const pts=seq.length>=2?seq.map(x=>[+x.reference_latitude,+x.reference_longitude]):(V391_FALLBACK[n]||[]);if(pts.length<2)return;L.polyline(pts,{color:'#fff',weight:10,opacity:.94,interactive:false}).addTo(v391RailLines);L.polyline(pts,{color:V391_COLORS[n]||'#64748b',weight:6,opacity:1}).bindPopup(`<b>Linha ${n} — ${V391_NAMES[n]||''}</b>`).addTo(v391RailLines)});
+    Object.entries(groups).forEach(([n,arr])=>{const seq=v391Sequence(arr);const pts=seq.length>=2?seq.map(x=>[+x.reference_latitude,+x.reference_longitude]):(V391_FALLBACK[n]||[]);if(pts.length<2)return;L.polyline(pts,{pane:'railLinesPane',color:'#fff',weight:11,opacity:.96,interactive:false}).addTo(v391RailLines);L.polyline(pts,{pane:'railLinesPane',color:V391_COLORS[n]||'#64748b',weight:6,opacity:1}).bindPopup(`<b>Linha ${n} — ${V391_NAMES[n]||''}</b>`).addTo(v391RailLines)});
   }catch(e){console.warn('V39.1 mapa equipes',e)}
 }
 function v391SetupTeamMap(){
   if(!teamMap||v391RailLines)return;
-  v391RailLines=L.layerGroup().addTo(teamMap);v391Stations=L.layerGroup().addTo(teamMap);v391StationNames=L.layerGroup();v391TechLayer=L.layerGroup().addTo(teamMap);v391Accuracy=L.layerGroup();
+  if(!teamMap.getPane('railLinesPane'))teamMap.createPane('railLinesPane');teamMap.getPane('railLinesPane').style.zIndex=430;if(!teamMap.getPane('railStationsPane'))teamMap.createPane('railStationsPane');teamMap.getPane('railStationsPane').style.zIndex=440;v391RailLines=L.layerGroup().addTo(teamMap);v391Stations=L.layerGroup().addTo(teamMap);v391StationNames=L.layerGroup();v391TechLayer=L.layerGroup().addTo(teamMap);v391Accuracy=L.layerGroup();
   v391LayerControl=L.control.layers(null,{'Linhas':v391RailLines,'Estações':v391Stations,'Nomes das estações':v391StationNames,'Técnicos (GPS)':v391TechLayer,'Precisão GPS (auditoria)':v391Accuracy},{collapsed:false,position:'bottomright'}).addTo(teamMap);
   v391Legend=L.control({position:'topleft'});v391Legend.onAdd=()=>{const d=L.DomUtil.create('div','autopass-rail-legend');d.innerHTML='<h4>Linhas Metroferroviárias</h4>'+Object.keys(V391_COLORS).map(n=>`<div class="row"><span class="swatch" style="background:${V391_COLORS[n]}"></span><b>${n}</b><span>${V391_NAMES[n]}</span></div>`).join('');L.DomEvent.disableClickPropagation(d);L.DomEvent.disableScrollPropagation(d);return d};v391Legend.addTo(teamMap);
   v391BuildRails();
