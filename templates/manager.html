@@ -298,8 +298,14 @@
     <article class="kpi primaryKpi"><span>Progresso</span><b id="chipDashPct">0%</b></article>
   </div>
   <div class="chipDashProgress"><i id="chipDashBar" style="width:0%"></i></div>
-  <div class="chipStatusChart" id="chipStatusChart" aria-label="Distribuição do status"><i class="done" id="chipChartDone" style="width:0%"></i><i class="progress" id="chipChartProgress" style="width:0%"></i><i class="pending" id="chipChartPending" style="width:0%"></i></div>
-  <div class="chipChartLegend"><span><i class="done"></i> Concluídos <b id="chipLegendDone">0</b></span><span><i class="progress"></i> Em andamento <b id="chipLegendProgress">0</b></span><span><i class="pending"></i> Pendentes <b id="chipLegendPending">0</b></span></div>
+  <div class="chipDashVisualRow">
+    <div class="chipDonutWrap"><div class="chipDonut" id="chipDashDonut"><div><b id="chipDonutPct">0%</b><span>concluído</span><small id="chipDonutTotal">0 total</small></div></div></div>
+    <div class="chipDashVisualInfo">
+      <div class="chipStatusChart" id="chipStatusChart" aria-label="Distribuição do status"><i class="done" id="chipChartDone" style="width:0%"></i><i class="progress" id="chipChartProgress" style="width:0%"></i><i class="pending" id="chipChartPending" style="width:0%"></i></div>
+      <div class="chipChartLegend"><span><i class="done"></i> Concluídos <b id="chipLegendDone">0</b></span><span><i class="progress"></i> Em andamento <b id="chipLegendProgress">0</b></span><span><i class="pending"></i> Pendentes <b id="chipLegendPending">0</b></span></div>
+      <button type="button" class="secondary" id="chipDashExport">Exportar troca de chips (CSV)</button>
+    </div>
+  </div>
   <div class="grid4" style="margin-top:16px"><div><label>Operação</label><select id="chipDashOperation"><option value="">Todos</option></select></div><div><label>Empresa</label><select id="chipDashCompany"><option value="">Todas</option></select></div><div><label>Linha</label><select id="chipDashLine"><option value="">Todas</option></select></div><div><label>Localidade</label><select id="chipDashLocation"><option value="">Todas</option></select></div></div>
   <div class="dashboardGrid" style="margin-top:16px"><article class="v22Panel"><h3>Progresso por localidade</h3><div id="chipDashLocations"></div></article><article class="v22Panel"><h3>Produtividade por técnico</h3><div id="chipDashTechs"></div></article></div>
 </section>
@@ -437,5 +443,5 @@
   <div class="v343TvFooter"><span id="v343TvHeadline">Monitoramento executivo do inventário.</span><span>SUPORTE A CAMPO · V35.2</span></div>
 </div>
 
-<script src="{{url_for('static',filename='manager.js')}}?v=dashboard-v39-7-3"></script>
+<script src="{{url_for('static',filename='manager.js')}}?v=dashboard-v39-7-4"></script>
 {% endblock %}
