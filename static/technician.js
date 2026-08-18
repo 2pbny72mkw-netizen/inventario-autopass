@@ -1201,7 +1201,7 @@ if($('refreshNearbyBtn')) $('refreshNearbyBtn').addEventListener('click',async()
 if($('gps_override_reason')) $('gps_override_reason').addEventListener('input',updateGpsValidation);
 
 const TEAM_LOCATION_KEY='autopass-team-location-enabled';
-let teamLocationWatchId=null;
+let teamLocationWatchId=null; let teamLocationTimer=null;
 let teamLocationLastSent=0;
 
 function setTeamLocationStatus(text, ok=false){
@@ -1214,7 +1214,7 @@ function setTeamLocationStatus(text, ok=false){
 async function sendTeamLocation(position){
   applyGpsPosition(position);
   const now=Date.now();
-  if(now-teamLocationLastSent<(window.__v38GpsInterval||300000)) return;
+  if(now-teamLocationLastSent<90000) return;
   teamLocationLastSent=now;
   try{
     const r=await fetch('/api/tecnico/position',{
@@ -1240,54 +1240,28 @@ async function sendTeamLocation(position){
 }
 
 function stopTeamLocation(){
-  if(teamLocationWatchId!==null && navigator.geolocation){
-    navigator.geolocation.clearWatch(teamLocationWatchId);
-  }
+  if(teamLocationTimer!==null){clearInterval(teamLocationTimer);teamLocationTimer=null;}
   teamLocationWatchId=null;
   localStorage.removeItem(TEAM_LOCATION_KEY);
-  if($('teamLocationToggle')) $('teamLocationToggle').textContent='Ativar localização';
-  setTeamLocationStatus('Localização da equipe desativada neste aparelho.');
+  if($('teamLocationToggle')) $('teamLocationToggle').textContent='Atualizar localização';
+  setTeamLocationStatus('A coleta automática ocorre somente durante a sessão ativa.');
 }
 
 function startTeamLocation(){
-  if(!navigator.geolocation){
-    setTeamLocationStatus('Geolocalização não disponível neste navegador/aparelho.',false);
-    return;
-  }
-  if(teamLocationWatchId!==null) return;
-
-  setTeamLocationStatus('Solicitando autorização de localização...');
-  teamLocationWatchId=navigator.geolocation.watchPosition(
+  if(!navigator.geolocation){setTeamLocationStatus('Geolocalização não disponível neste navegador/aparelho.',false);return;}
+  setTeamLocationStatus('Atualizando localização...');
+  navigator.geolocation.getCurrentPosition(
     position=>sendTeamLocation(position),
-    error=>{
-      const msg={
-        1:'Permissão de localização negada.',
-        2:'Localização indisponível neste momento.',
-        3:'Tempo esgotado ao obter localização.'
-      }[error.code]||'Não foi possível obter a localização.';
-      setTeamLocationStatus(msg,false);
-      if(error.code===1){
-        if(teamLocationWatchId!==null) navigator.geolocation.clearWatch(teamLocationWatchId);
-        teamLocationWatchId=null;
-        localStorage.removeItem(TEAM_LOCATION_KEY);
-        if($('teamLocationToggle')) $('teamLocationToggle').textContent='Ativar localização';
-      }
-    },
-    {enableHighAccuracy:true,maximumAge:30000,timeout:15000}
+    error=>setTeamLocationStatus(({1:'Permissão de localização negada.',2:'Localização indisponível neste momento.',3:'Tempo esgotado ao obter localização.'}[error.code]||'Não foi possível obter a localização.'),false),
+    {enableHighAccuracy:false,maximumAge:60000,timeout:10000}
   );
-  localStorage.setItem(TEAM_LOCATION_KEY,'1');
-  if($('teamLocationToggle')) $('teamLocationToggle').textContent='Desativar localização';
+  if($('teamLocationToggle')) $('teamLocationToggle').textContent='Atualizar localização';
 }
 
+localStorage.removeItem(TEAM_LOCATION_KEY);
 if($('teamLocationToggle')){
-  $('teamLocationToggle').addEventListener('click',()=>{
-    if(teamLocationWatchId!==null) stopTeamLocation();
-    else startTeamLocation();
-  });
-
-  if(localStorage.getItem(TEAM_LOCATION_KEY)==='1'){
-    startTeamLocation();
-  }
+  $('teamLocationToggle').textContent='Atualizar localização';
+  $('teamLocationToggle').addEventListener('click',startTeamLocation);
 }
 
 
@@ -1375,18 +1349,3 @@ const _v32ProgressObserver=new MutationObserver(updateFieldProgressMeter);
 const _v32ProgressTarget=document.getElementById('locationPendingSummary');
 if(_v32ProgressTarget)_v32ProgressObserver.observe(_v32ProgressTarget,{childList:true,subtree:true,characterData:true});
 updateFieldProgressMeter();
-
-// V38 — GPS operacional automático durante a sessão autenticada.
-(async function v38AutoGps(){
-  try{
-    const cfg=await fetch('/api/v38/gps-config',{cache:'no-store'}).then(r=>r.json());
-    if(!cfg?.enabled) return;
-    const interval=Math.max(60000,Number(cfg.interval_seconds||300)*1000);
-    // sendTeamLocation já valida e persiste; o limitador passa a respeitar o intervalo ADM.
-    const originalSend=sendTeamLocation;
-    teamLocationLastSent=Date.now()-interval;
-    window.__v38GpsInterval=interval;
-    startTeamLocation();
-    setTeamLocationStatus(`Localização operacional ativa automaticamente · envio periódico a cada ${Math.round(interval/60000)} min.`,true);
-  }catch(_e){ startTeamLocation(); }
-})();
