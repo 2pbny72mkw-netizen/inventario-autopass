@@ -34,9 +34,9 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V39.7.4"
-DASHBOARD_RELEASE = "dashboard-v39-0"
-TEAMS_RELEASE = "teams-v39-0"
+APP_RELEASE = "V39.7.5"
+DASHBOARD_RELEASE = "dashboard-v39-7-5"
+TEAMS_RELEASE = "teams-v39-7-5"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
 FIELD_GPS_GOOD_ACCURACY_M = float(os.getenv("FIELD_GPS_GOOD_ACCURACY_M", "30"))
 FIELD_GPS_MAX_ACCURACY_M = float(os.getenv("FIELD_GPS_MAX_ACCURACY_M", "80"))
@@ -5971,6 +5971,27 @@ def _chip_swap_asset_label(a):
     # V39.7.4: TERMINAL é a identificação operacional principal do Validador de Recarga.
     return (f"Terminal {a.terminal_number}" if a.terminal_number else None) or a.description or a.asset_key or a.serial or f"Validador #{a.id}"
 
+
+def _chip_swap_asset_matches_location(asset, loc):
+    """V39.7.5: casa Validador de Recarga pela linha + estação/sigla.
+    O estabelecimento/empresa da planilha não bloqueia o vínculo, pois a base histórica
+    pode trazer METRO/CPTM enquanto a operação atual usa outro nome de empresa.
+    """
+    if not asset or not loc:
+        return False
+    if _canonical_equipment_type(asset.equipment_type) != "VALIDADOR":
+        return False
+    if _normalize_line_key(asset.line) != _normalize_line_key(loc.line):
+        return False
+    station_text = normalize(loc.location)
+    station_name = normalize(asset.locality)
+    code = normalize(asset.location_code or asset.station_code)
+    if code and (station_text.startswith(code + " ") or (" " + code + " ") in (" " + station_text + " ")):
+        return True
+    if station_name and (station_name == station_text or station_name in station_text or station_text.endswith(station_name)):
+        return True
+    return False
+
 _chip_swap_tables_ready = False
 _chip_swap_payload_cache = {"at": 0.0, "data": None}
 CHIP_SWAP_CACHE_TTL_SECONDS = 20
@@ -6020,16 +6041,8 @@ def _chip_swap_locations_payload(force=False):
         candidates = by_line.get(_normalize_line_key(asset.line), ())
         if not candidates:
             continue
-        ac = normalize(asset.company)
-        station_name = normalize(asset.locality)
-        code = normalize(asset.location_code or asset.station_code)
         for loc in candidates:
-            lc = normalize(loc.company)
-            if ac and lc and lc not in ac and ac not in lc:
-                continue
-            station_text = normalize(loc.location)
-            if ((station_name and (station_name in station_text or station_text.endswith(station_name)))
-                    or (code and station_text.startswith(code + " "))):
+            if _chip_swap_asset_matches_location(asset, loc):
                 assets_by_loc[loc.id].append(asset)
                 break
 
@@ -6098,7 +6111,7 @@ def chip_swap_save_api(location_id, base_asset_id):
     _ensure_chip_swap_tables()
     loc = db.session.get(Location, location_id)
     asset = db.session.get(BaseAsset, base_asset_id)
-    if not loc or not asset or _canonical_equipment_type(asset.equipment_type) != "VALIDADOR" or not _base_asset_matches_location(asset, loc):
+    if not loc or not asset or _canonical_equipment_type(asset.equipment_type) != "VALIDADOR" or not _chip_swap_asset_matches_location(asset, loc):
         return jsonify({"ok": False, "error": "Validador de recarga não encontrado nesta localidade."}), 404
     lat = _optional_float(request.form.get("latitude"))
     lon = _optional_float(request.form.get("longitude"))
@@ -6155,6 +6168,38 @@ def chip_swap_dashboard_api():
         "locations": rows,
         "technicians": sorted(tech.values(), key=lambda x: (-x["concluded"], x["name"])),
     })
+
+
+@app.get("/api/chip-swaps/export.xlsx")
+@login_required
+def chip_swap_export_xlsx():
+    rows = _chip_swap_locations_payload()
+    operation = (request.args.get("operation") or "").strip()
+    company = (request.args.get("company") or "").strip()
+    line = (request.args.get("line") or "").strip()
+    location = (request.args.get("location") or "").strip()
+    def op_name(c):
+        t = normalize(c)
+        if "CPTM" in t: return "CPTM"
+        if "METRO" in t: return "Metrô"
+        if "VIA MOBILIDADE" in t: return "Via Mobilidade"
+        if "VIAQUATRO" in t or "VIA QUATRO" in t: return "ViaQuatro"
+        return c or "Outros"
+    rows=[x for x in rows if (not operation or op_name(x["company"])==operation) and (not company or x["company"]==company) and (not line or x["line"]==line) and (not location or x["location"]==location)]
+    total=sum(x["total"] for x in rows); done=sum(x["concluded"] for x in rows); prog=sum(x["in_progress"] for x in rows); pend=sum(x["pending"] for x in rows)
+    wb=Workbook(); ws=wb.active; ws.title="Resumo"
+    ws.append(["Troca de Chips - Validadores de Recarga"]); ws["A1"].font=Font(bold=True,size=14)
+    ws.append(["Operação",operation or "Todos"]); ws.append(["Empresa",company or "Todas"]); ws.append(["Linha",line or "Todas"]); ws.append(["Localidade",location or "Todas"]); ws.append([])
+    ws.append(["Total previsto","Concluídos","Em andamento","Pendentes","Progresso %"]); ws.append([total,done,prog,pend,round(done/total*100,1) if total else 0])
+    det=wb.create_sheet("Detalhamento"); det.append(["Operação","Empresa","Linha","Localidade","Terminal / ativo","Modelo","Série","Status","Técnico","Fotos"])
+    for x in rows:
+        for v in x.get("validators",[]):
+            det.append([op_name(x["company"]),x["company"],x["line"],x["location"],v.get("label") or v.get("base_asset_id"),v.get("model","") ,v.get("serial","") ,v.get("status","PENDENTE"),v.get("technician","") ,v.get("photo_count",0)])
+    for sh in wb.worksheets:
+        for cell in sh[1]: cell.font=Font(bold=True)
+        for col in range(1,sh.max_column+1): sh.column_dimensions[get_column_letter(col)].width=min(42,max(12,max((len(str(sh.cell(r,col).value or "")) for r in range(1,sh.max_row+1)),default=12)+2))
+    bio=io.BytesIO(); wb.save(bio); bio.seek(0)
+    return send_file(bio,as_attachment=True,download_name="troca_chips.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
 @app.get("/visao-panoramica")
