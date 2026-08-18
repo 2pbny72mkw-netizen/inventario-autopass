@@ -34,9 +34,9 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V39.7.5"
-DASHBOARD_RELEASE = "dashboard-v39-7-5"
-TEAMS_RELEASE = "teams-v39-7-5"
+APP_RELEASE = "V39.7.6"
+DASHBOARD_RELEASE = "dashboard-v39-7-6"
+TEAMS_RELEASE = "teams-v39-7-6"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
 FIELD_GPS_GOOD_ACCURACY_M = float(os.getenv("FIELD_GPS_GOOD_ACCURACY_M", "30"))
 FIELD_GPS_MAX_ACCURACY_M = float(os.getenv("FIELD_GPS_MAX_ACCURACY_M", "80"))
@@ -919,93 +919,29 @@ def _schedule_default_anchor(group, schedule):
 
 
 def _ensure_team_schedule_profiles():
-    """Idempotent seed: technicians + supervisors (12x36) + support (5x2)."""
-    schedule = _load_technician_schedule()
-    users = User.query.filter(User.active.is_(True)).all()
-    users_by_name = {normalize(u.name): u for u in users}
-    existing = {normalize(p.name): p for p in TeamScheduleProfile.query.all()}
-
-    # Technicians from the Excel-derived plan.
-    for item in schedule.get("technicians", []):
-        name = (item.get("name") or "").strip()
-        if not name:
+    """V39.7.6: sincroniza a escala exclusivamente com usuários ativos cadastrados."""
+    users = User.query.filter(User.active.is_(True)).order_by(User.name).all()
+    valid_ids=set()
+    for u in users:
+        if normalize(u.personnel_status or "ATIVO") != "ATIVO":
             continue
-        key = normalize(name)
-        if key in existing:
-            row = existing[key]
-            # Preserve manager changes, but link to an existing user when possible.
-            user = users_by_name.get(key)
-            if user and not row.user_id:
-                row.user_id = user.id
+        if u.role not in ("technician", "dispatcher", "manager"):
             continue
-
-        days = item.get("days") or []
-        try:
-            anchor = datetime.strptime(days[0], "%Y-%m-%d").date()
-        except Exception:
-            continue
-
-        user = users_by_name.get(key)
-        row = TeamScheduleProfile(
-            user_id=user.id if user else None,
-            name=name,
-            active=True,
-            category="TECNICO",
-            schedule_type="12x36",
-            shift=item.get("shift") or "05:00-17:00",
-            supervision=item.get("supervision") or "",
-            entry=item.get("entry") or "",
-            lines_json=json.dumps(item.get("lines") or [], ensure_ascii=False),
-            anchor_date=anchor,
-        )
-        db.session.add(row)
-        db.session.flush()
-        existing[key] = row
-
-    # Support sheet: DIS = supervisors 12x36; LOG = support 5x2 08h-18h.
-    for item in schedule.get("support", []):
-        name = (item.get("name") or "").strip()
-        if not name:
-            continue
-        key = normalize(name)
-        user = users_by_name.get(key)
-        team = normalize(item.get("team"))
-        category = "SUPERVISOR" if team == "DIS" else "APOIO"
-        schedule_type = "12x36" if category == "SUPERVISOR" else "5x2"
-        shift = item.get("shift") or ("08:00-18:00" if category == "APOIO" else "05:00-17:00")
-        if category == "APOIO":
-            shift = "08:00-18:00"
-        anchor = _schedule_default_anchor(item.get("day_group"), schedule)
-
-        if key in existing:
-            row = existing[key]
-            if user and not row.user_id:
-                row.user_id = user.id
-            # Upgrade only entries originally outside the technician list.
-            if normalize(row.category or "") in ("", "TECNICO") and key not in {
-                normalize(t.get("name")) for t in schedule.get("technicians", [])
-            }:
-                row.category = category
-                row.schedule_type = schedule_type
-                row.shift = shift
-            continue
-
-        row = TeamScheduleProfile(
-            user_id=user.id if user else None,
-            name=name,
-            active=True,
-            category=category,
-            schedule_type=schedule_type,
-            shift=shift,
-            supervision="",
-            entry=item.get("entry") or "",
-            lines_json="[]",
-            anchor_date=anchor,
-        )
-        db.session.add(row)
-        db.session.flush()
-        existing[key] = row
-
+        valid_ids.add(u.id)
+        row=TeamScheduleProfile.query.filter_by(user_id=u.id).first()
+        sched=(u.work_schedule_type or "12x36").strip()
+        shift=(u.work_shift or ("08:00-18:00" if normalize(sched)=="5X2" else "05:00-17:00")).strip()
+        anchor=u.work_anchor_date or datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+        jt=normalize(u.job_title or "")
+        category="SUPERVISOR" if ("SUPERV" in jt or u.role=="dispatcher") else ("APOIO" if "APOIO" in jt else "TECNICO")
+        if row is None:
+            row=TeamScheduleProfile(user_id=u.id,name=u.name,active=True,category=category,schedule_type=sched,shift=shift,supervision="",entry="",lines_json="[]",anchor_date=anchor)
+            db.session.add(row)
+        else:
+            row.name=u.name; row.active=True; row.category=category; row.schedule_type=sched; row.shift=shift; row.anchor_date=anchor
+    for row in TeamScheduleProfile.query.all():
+        if not row.user_id or row.user_id not in valid_ids:
+            row.active=False
     db.session.commit()
 
 
@@ -5085,23 +5021,33 @@ def topdesk_import():
         return jsonify({"ok":False,"error":"Use arquivo XLSX exportado do TopDesk."}),400
     try:
         rows=_read_topdesk_xlsx(f.stream)
-        required="Número do incidente"
-        if rows and required not in rows[0]:
-            return jsonify({"ok":False,"error":"Formato não reconhecido: coluna Número do incidente não encontrada."}),400
+        if not rows:
+            return jsonify({"ok":False,"error":"Arquivo sem registros válidos."}),400
+        headers=set(rows[0].keys())
+        novo_padrao={"Dia/hora da criação","Status","ID do objeto","Categoria","Subcategoria","Operador","Nível","Pedido","Ação","Anexos"}
+        padrao_antigo="Número do incidente" in headers
+        if not padrao_antigo and len(novo_padrao.intersection(headers)) < 6:
+            return jsonify({"ok":False,"error":"Formato TopDesk não reconhecido. Use o padrão Campo - Dogma."}),400
         inserted=updated=errors=0
-        for row in rows:
+        for idx,row in enumerate(rows, start=2):
+            obj=str(row.get("ID do objeto") or "").strip()
+            created=str(row.get("Dia/hora da criação") or "").strip()
             num=str(row.get("Número do incidente") or "").strip()
-            if not num: errors+=1; continue
+            if not num:
+                stable="|".join([obj,created,str(row.get("Categoria") or ""),str(row.get("Subcategoria") or "")])
+                num="TD-"+hashlib.sha1(stable.encode("utf-8","ignore")).hexdigest()[:16].upper()
+            if not obj and not str(row.get("Pedido") or "").strip():
+                errors+=1; continue
             t=TopDeskTicket.query.filter_by(ticket_number=num).first()
             is_new=t is None
             if is_new: t=TopDeskTicket(ticket_number=num); db.session.add(t)
-            t.object_id=str(row.get("ID do objeto") or "").strip()
+            t.object_id=obj
             t.category=str(row.get("Categoria") or "").strip()
             t.subcategory=str(row.get("Subcategoria") or "").strip()
-            t.incident_type=str(row.get("Tipo de incidente") or "").strip()
+            t.incident_type=str(row.get("Tipo de incidente") or row.get("Nível") or "").strip()
             t.status=str(row.get("Status") or "").strip()
             t.operator=str(row.get("Operador") or "").strip()
-            t.created_at_text=str(row.get("Dia/hora da criação") or "").strip()
+            t.created_at_text=created
             t.sla_target_text=str(row.get("Data alvo do SLA") or "").strip()
             t.requester=str(row.get("Nome do solicitante") or "").strip()
             t.request_text=str(row.get("Pedido") or "").strip()
@@ -5109,15 +5055,15 @@ def topdesk_import():
             t.attachments_text=str(row.get("Anexos") or "").strip()
             t.source_file=secure_filename(f.filename)[:300]
             t.equipment_type=_topdesk_equipment_type(row)
-            if not t.location_id:
-                loc=_topdesk_match_location(row); t.location_id=loc.id if loc else None
+            loc=_topdesk_match_location(row)
+            if loc: t.location_id=loc.id
             t.priority="ALTA" if _topdesk_demand_type(t)=="INCIDENTE" else "NORMAL"
             t.last_import_at=datetime.utcnow(); t.updated_at=datetime.utcnow()
             if is_new: inserted+=1
             else: updated+=1
         batch=TopDeskImportBatch(filename=secure_filename(f.filename),imported_by=session["user_id"],row_count=len(rows),inserted_count=inserted,updated_count=updated,error_count=errors)
         db.session.add(batch); db.session.commit()
-        return jsonify({"ok":True,"rows":len(rows),"inserted":inserted,"updated":updated,"errors":errors})
+        return jsonify({"ok":True,"rows":len(rows),"inserted":inserted,"updated":updated,"errors":errors,"format":"Campo - Dogma" if not padrao_antigo else "TopDesk legado"})
     except Exception as exc:
         db.session.rollback(); return jsonify({"ok":False,"error":f"{type(exc).__name__}: {exc}"}),500
 
