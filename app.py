@@ -6083,6 +6083,7 @@ def _chip_swap_locations_payload(force=False):
                 "technician": tech.name if tech else "",
                 "completed_at": sw.completed_at.isoformat()+"Z" if sw and sw.completed_at else None,
                 "photo_count": len(photos),
+                "notes": sw.notes if sw else "",
                 "photos": [{"id": ph.id, "url": "/uploads/"+ph.stored_name, "name": ph.original_name} for ph in photos],
             })
         total = max(len(items), int(loc.expected_validator or 0))
@@ -6144,6 +6145,34 @@ def chip_swap_save_api(location_id, base_asset_id):
     db.session.commit()
     _invalidate_chip_swap_cache()
     return jsonify({"ok": True, "status": sw.status, "photo_count": photo_count})
+
+
+@app.post("/api/chip-swaps/<int:location_id>/new-asset")
+@field_required
+def chip_swap_new_asset_api(location_id):
+    loc = db.session.get(Location, location_id)
+    if not loc:
+        return jsonify({"ok": False, "error": "Localidade não encontrada."}), 404
+    terminal = (request.form.get("terminal_number") or "").strip()
+    if not terminal:
+        return jsonify({"ok": False, "error": "Informe o terminal do Validador de Recarga."}), 400
+    existing = BaseAsset.query.filter(
+        func.upper(func.coalesce(BaseAsset.equipment_type, '')).like('%VALID%'),
+        func.upper(func.coalesce(BaseAsset.line, '')) == (loc.line or '').upper(),
+        func.upper(func.coalesce(BaseAsset.terminal_number, '')) == terminal.upper()
+    ).first()
+    if existing and _chip_swap_asset_matches_location(existing, loc):
+        return jsonify({"ok": True, "base_asset_id": existing.id, "existing": True})
+    asset = BaseAsset(
+        company=loc.company, line=loc.line, locality=loc.location, equipment_type="VALIDADOR",
+        terminal_number=terminal, asset_key=f"FIELD-{loc.id}-{terminal}-{secrets.token_hex(3)}", serial=(request.form.get("serial") or "").strip() or None,
+        model=(request.form.get("model") or "").strip() or None, base_status="ATIVO",
+        base_notes="Cadastrado em campo pela atividade Troca de Chips V39.7.6"
+    )
+    db.session.add(asset); db.session.flush()
+    db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="CHIP_SWAP_NEW_ASSET", entity_type="base_asset", entity_id=str(asset.id), detail=f"{loc.location} · Terminal {terminal} · cadastrado em campo"))
+    db.session.commit(); _invalidate_chip_swap_cache()
+    return jsonify({"ok": True, "base_asset_id": asset.id, "existing": False})
 
 @app.get("/api/chip-swaps/dashboard")
 @login_required
@@ -6220,7 +6249,7 @@ def _panorama_payload():
             total += len(photos)
             p_out.append({"id":pt.id,"name":pt.point_name,"notes":pt.notes or "","status":"CONCLUÍDA" if photos else "EM ANDAMENTO","photos":[{"id":ph.id,"url":"/uploads/"+ph.stored_name,"name":ph.original_name,"uploaded_by":(db.session.get(User,ph.uploaded_by).name if db.session.get(User,ph.uploaded_by) else "—"),"created_at":ph.created_at.isoformat()+"Z","latitude":ph.latitude,"longitude":ph.longitude} for ph in photos]})
         status="PENDENTE" if not points else ("CONCLUÍDA" if points and all(x["photos"] for x in p_out) else "EM ANDAMENTO")
-        rows.append({"id":loc.id,"company":loc.company,"line":loc.line,"location":loc.location,"status":status,"photo_count":total,"points":p_out})
+        rows.append({"id":loc.id,"company":loc.company,"line":loc.line,"location":loc.location,"reference_latitude":loc.reference_latitude,"reference_longitude":loc.reference_longitude,"status":status,"photo_count":total,"points":p_out})
     return rows
 
 @app.get("/api/panoramas")
