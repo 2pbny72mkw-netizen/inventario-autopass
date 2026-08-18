@@ -45,6 +45,15 @@
       <button class="secondary" id="teamMapFull" type="button">Expandir mapa</button>
     </div>
   </div>
+
+    <div class="v381TeamMapControls">
+      <label><input type="checkbox" id="teamShowLines" checked> Linhas</label>
+      <label><input type="checkbox" id="teamShowStations" checked> Estações</label>
+      <label><input type="checkbox" id="teamShowNames"> Nomes das estações</label>
+      <label><input type="checkbox" id="teamShowTechs" checked> Técnicos (GPS)</label>
+      <span class="muted">Precisão GPS: última posição válida</span>
+    </div>
+    <div id="teamRailLegend" class="v381RailLegend"></div>
   <div id="teamMapWrap" class="teamMapWrap">
     <div id="teamMap" class="teamMap"></div>
     <button id="teamMapExit" type="button" class="secondary teamMapExit">Sair da tela cheia</button>
@@ -196,5 +205,5 @@
 {% endif %}
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="{{ url_for('static', filename='teams.js') }}?v=teams-v38"></script>
+<script src="{{ url_for('static', filename='teams.js') }}?v=teams-v39-1"></script>
 {% endblock %}
