@@ -1,4 +1,4 @@
-window.AUTOPASS_TEAMS_VERSION="teams-v39-7-6";
+window.AUTOPASS_TEAMS_VERSION="teams-v39-7-8";
 
 console.log('AUTOPASS Central Operacional V26 carregada');
 
@@ -24,7 +24,7 @@ function createTeamMap(){
   if(teamMap) return;
   teamMap=L.map('teamMap',{
     scrollWheelZoom:true,
-    preferCanvas:true,
+    preferCanvas:false,
     zoomControl:true
   }).setView([-23.5505,-46.6333],10);
 
@@ -231,6 +231,7 @@ async function loadProfiles(){
   const active=profilesCache.filter(p=>p.active).length;
   $('linkSummary').textContent=`${linked}/${active} com usuário vinculado`;
   renderProfiles();
+  refreshCargoFilter();
 }
 function renderProfiles(){
   const q=String($('scheduleSearch')?.value||'').toUpperCase();
@@ -420,7 +421,22 @@ if($('openScheduleAdmin')){
   });
   $('scheduleUser').addEventListener('change',()=>{
     const u=usersCache.find(x=>String(x.id)===$('scheduleUser').value);
-    if(u) $('scheduleName').value=u.name;
+    if(!u) return;
+    $('scheduleName').value=u.name||'';
+    if(u.job_title){
+      const title=String(u.job_title).toUpperCase();
+      if(title.includes('SUPERV')) $('scheduleCategory').value='SUPERVISOR';
+      else if(title.includes('APOIO')) $('scheduleCategory').value='APOIO';
+      else $('scheduleCategory').value='TECNICO';
+    }
+    const active=profilesCache.find(p=>String(p.user_id)===String(u.id)&&p.active);
+    if(active){
+      $('scheduleType').value=active.schedule_type||$('scheduleType').value;
+      $('scheduleShift').value=active.shift||$('scheduleShift').value;
+      $('scheduleEntry').value=active.entry||'';
+      $('scheduleLines').value=(active.lines||[]).join(', ');
+      $('scheduleSupervision').value=active.supervision||'';
+    }
   });
 }
 
@@ -444,14 +460,40 @@ function bindTeamCollapsible(buttonId, contentId){
 bindTeamCollapsible('toggleTodayOperational','todayOperationalContent');
 bindTeamCollapsible('toggleExpectedTeam','expectedTeamContent');
 
-// V39.6 — autocomplete de colaborador ligado ao cadastro de usuários.
-async function v396LoadCollaborators(){try{const r=await fetch('/api/equipes/colaboradores',{cache:'no-store'});const d=await r.json();const dl=$('v396Collaborators');if(dl&&d.ok)dl.innerHTML=(d.users||[]).map(u=>`<option value="${esc(u.name)}"></option>`).join('')}catch(e){console.warn('autocomplete colaboradores',e)}}
+// V39.7.8 — autocomplete de colaborador com preenchimento automático pelo cadastro.
+let v3978Collaborators=[];
+async function v396LoadCollaborators(){
+  try{
+    const r=await fetch('/api/equipes/colaboradores',{cache:'no-store'}); const d=await r.json();
+    v3978Collaborators=d.ok?(d.users||[]):[];
+    const dl=$('v396Collaborators');
+    if(dl) dl.innerHTML=v3978Collaborators.map(u=>`<option value="${esc(u.name)}">${esc([u.job_title,u.company,u.shift].filter(Boolean).join(' · '))}</option>`).join('');
+    const cargo=$('v38TeamCategory');
+    if(cargo){
+      const keep=cargo.value;
+      const cargos=[...new Set(v3978Collaborators.map(u=>String(u.job_title||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'pt-BR'));
+      cargo.innerHTML='<option value="">Todos os cargos</option>'+cargos.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('');
+      if(cargos.includes(keep)) cargo.value=keep;
+    }
+  }catch(e){console.warn('autocomplete colaboradores',e)}
+}
+function v3978ApplySelectedCollaborator(){
+  const q=String($('v38TeamSearch')?.value||'').trim();
+  const u=v3978Collaborators.find(x=>String(x.name||'').localeCompare(q,'pt-BR',{sensitivity:'base'})===0);
+  const box=$('v3978CollaboratorInfo');
+  if(!u){ if(box){box.classList.add('hidden');box.innerHTML='';} return; }
+  if($('v38TeamCategory')&&u.job_title) $('v38TeamCategory').value=u.job_title;
+  if(box){
+    box.classList.remove('hidden');
+    box.innerHTML=`<b>${esc(u.name)}</b><span>Cargo: ${esc(u.job_title||'—')}</span><span>Empresa: ${esc(u.company||'—')}</span><span>Escala: ${esc(u.schedule_type||'—')}</span><span>Turno: ${esc(u.shift||'—')}</span><span>Entrada: ${esc(u.entry||'—')}</span>${u.lines?.length?`<span>Linhas: ${esc(u.lines.join(' / '))}</span>`:''}`;
+  }
+}
 v396LoadCollaborators();
 
 // V38 — malha metroferroviária também no mapa de equipes
 async function v38DrawRailNetwork(){try{const locs=await fetch('/api/locations',{cache:'no-store'}).then(r=>r.json());const colors={'1':'#005ca9','2':'#008c5a','3':'#ee3338','4':'#f4b800','5':'#7651a2','6':'#f28c00','7':'#9b0058','8':'#8b8b8b','9':'#008c7d','10':'#00a5b5','11':'#e94b24','12':'#1455a0','13':'#008b68','15':'#9a9a9a','17':'#8a7627'};const groups={};(locs||[]).forEach(x=>{if(x.reference_latitude==null||x.reference_longitude==null)return;const m=String(x.line||'').match(/(?:^|\D)(1[0-7]|[1-9])(?:\D|$)/);if(!m)return;(groups[m[1]]??=[]).push(x)});Object.entries(groups).forEach(([n,a])=>{if(a.length<2)return;const pts=a.map(x=>[Number(x.reference_latitude),Number(x.reference_longitude)]);L.polyline(pts,{color:colors[n]||'#64748b',weight:5,opacity:.85}).addTo(teamMap)})}catch(e){console.warn('V38 trilhos equipes',e)}}
 function v38ApplyTeamFilter(){const q=String($('v38TeamSearch')?.value||'').toLowerCase(),cat=$('v38TeamCategory')?.value||'',gps=$('v38TeamGps')?.value||'';document.querySelectorAll('#todayTeamTable tr').forEach(tr=>{const txt=tr.textContent.toLowerCase();tr.style.display=(!q||txt.includes(q))&&(!cat||txt.includes(cat.toLowerCase()))&&(!gps||txt.includes(gps.toLowerCase()))?'':'none'});document.querySelectorAll('#teamCards > *').forEach(el=>{const txt=el.textContent.toLowerCase();el.style.display=(!q||txt.includes(q))&&(!cat||txt.includes(cat.toLowerCase()))&&(!gps||txt.includes(gps.toLowerCase()))?'':'none'})}
-['v38TeamSearch','v38TeamCategory','v38TeamGps'].forEach(id=>$(id)?.addEventListener(id==='v38TeamSearch'?'input':'change',v38ApplyTeamFilter));$('v38ClearTeam')?.addEventListener('click',()=>{['v38TeamSearch','v38TeamCategory','v38TeamGps'].forEach(id=>$(id).value='');v38ApplyTeamFilter()});
+['v38TeamSearch','v38TeamCategory','v38TeamGps'].forEach(id=>$(id)?.addEventListener(id==='v38TeamSearch'?'input':'change',()=>{if(id==='v38TeamSearch')v3978ApplySelectedCollaborator();v38ApplyTeamFilter();}));$('v38ClearTeam')?.addEventListener('click',()=>{['v38TeamSearch','v38TeamCategory','v38TeamGps'].forEach(id=>$(id).value='');v38ApplyTeamFilter()});
 
 
 // V39.1 substitui os controles V38.1 por controles nativos Leaflet.
@@ -480,34 +522,50 @@ const V391_FALLBACK={
 function v391LineNo(v){const t=String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase();const m=t.match(/(?:^|\D)(1[0-7]|[1-9])(?:\D|$)/);if(m)return String(Number(m[1]));const a={AZUL:'1',VERDE:'2',VERMELHA:'3',AMARELA:'4',LILAS:'5',LARANJA:'6',RUBI:'7',DIAMANTE:'8',ESMERALDA:'9',TURQUESA:'10',CORAL:'11',SAFIRA:'12',JADE:'13',PRATA:'15',OURO:'17'};return Object.entries(a).find(([k])=>t.includes(k))?.[1]||''}
 function v391Dist(a,b){const R=6371000,p=x=>x*Math.PI/180,dlat=p(+b.reference_latitude-+a.reference_latitude),dlon=p(+b.reference_longitude-+a.reference_longitude),x=Math.sin(dlat/2)**2+Math.cos(p(+a.reference_latitude))*Math.cos(p(+b.reference_latitude))*Math.sin(dlon/2)**2;return 2*R*Math.asin(Math.sqrt(x))}
 function v391Sequence(a){if(a.length<3)return [...a];const pool=[...a], seq=[pool.shift()];while(pool.length){const last=seq[seq.length-1];let bi=0,bd=Infinity;pool.forEach((c,i)=>{const d=v391Dist(last,c);if(d<bd){bd=d;bi=i}});seq.push(pool.splice(bi,1)[0])}return seq}
-async function v391BuildRails(){
-  if(!teamMap||!v391RailLines)return;
-  v391RailLines.clearLayers();v391Stations.clearLayers();v391StationNames.clearLayers();
-  // V39.7.5: desenha a malha de contingência imediatamente. Assim as linhas aparecem mesmo se a API falhar.
-  Object.entries(V391_FALLBACK).forEach(([n,pts])=>{
-    if(pts.length<2)return;
-    L.polyline(pts,{pane:'railLinesPane',renderer:v391RailRenderer,color:'#fff',weight:12,opacity:.98,interactive:false}).addTo(v391RailLines);
-    L.polyline(pts,{pane:'railLinesPane',renderer:v391RailRenderer,color:V391_COLORS[n]||'#64748b',weight:7,opacity:1}).bindPopup(`<b>Linha ${n} — ${V391_NAMES[n]||''}</b>`).addTo(v391RailLines);
-  });
-  try{
-    const r=await fetch('/api/equipes/rail-network',{cache:'no-store'}); if(!r.ok)throw new Error('HTTP '+r.status); const locs=await r.json(); const groups={};
-    (locs||[]).forEach(x=>{if(x.reference_latitude==null||x.reference_longitude==null)return;const n=v391LineNo(x.line);if(!n)return;(groups[n]??=[]).push(x);const pt=[+x.reference_latitude,+x.reference_longitude];L.circleMarker(pt,{pane:'railStationsPane',radius:5,color:'#fff',weight:2,fillColor:V391_COLORS[n]||'#64748b',fillOpacity:1}).bindTooltip(String(x.location||''),{direction:'top'}).addTo(v391Stations);L.marker(pt,{interactive:false,icon:L.divIcon({className:'stationLabelIcon',html:`<span>${esc(x.location||'')}</span>`,iconSize:null})}).addTo(v391StationNames)});
-    Object.keys(V391_FALLBACK).forEach(n=>{if(!groups[n])groups[n]=[]});
-    Object.entries(groups).forEach(([n,arr])=>{const seq=v391Sequence(arr);const pts=seq.length>=2?seq.map(x=>[+x.reference_latitude,+x.reference_longitude]):(V391_FALLBACK[n]||[]);if(pts.length<2)return;L.polyline(pts,{pane:'railLinesPane',renderer:v391RailRenderer,color:'#fff',weight:11,opacity:.96,interactive:false}).addTo(v391RailLines);L.polyline(pts,{pane:'railLinesPane',renderer:v391RailRenderer,color:V391_COLORS[n]||'#64748b',weight:6,opacity:1}).bindPopup(`<b>Linha ${n} — ${V391_NAMES[n]||''}</b>`).addTo(v391RailLines)});
-  }catch(e){console.warn('V39.1 mapa equipes',e)}
-  const cb=$('teamShowLines'); if(!cb || cb.checked){ if(!teamMap.hasLayer(v391RailLines)) teamMap.addLayer(v391RailLines); }
-  if(teamMap && v391RailLines){ v391RailLines.eachLayer(l=>{ if(l.bringToFront) l.bringToFront(); }); }
+let v3978RailSource={},v3978RailSvg=null,v3978RailPointCount=0;
+function v3978RailDiag(msg,ok=true){const e=$('teamRailDiag');if(!e)return;e.textContent=msg;e.classList.toggle('railDiagError',!ok)}
+function v3978EnsureSvg(){
+  const host=$('teamMap'); if(!host)return null;
+  if(!v3978RailSvg){
+    v3978RailSvg=document.createElementNS('http://www.w3.org/2000/svg','svg');
+    v3978RailSvg.id='teamRailSvgOverlay';v3978RailSvg.setAttribute('aria-hidden','true');host.appendChild(v3978RailSvg);
+  }
+  return v3978RailSvg;
 }
-
+function v3978DrawSvgRails(){
+  if(!teamMap)return; const svg=v3978EnsureSvg(); if(!svg)return;
+  const cb=$('teamShowLines'); svg.style.display=(cb&& !cb.checked)?'none':'block';
+  const size=teamMap.getSize();svg.setAttribute('viewBox',`0 0 ${size.x} ${size.y}`);svg.innerHTML='';
+  let lines=0,points=0;
+  Object.entries(v3978RailSource).forEach(([n,pts])=>{
+    if(!Array.isArray(pts)||pts.length<2)return;
+    const xy=pts.map(p=>teamMap.latLngToContainerPoint(L.latLng(+p[0],+p[1]))).filter(p=>Number.isFinite(p.x)&&Number.isFinite(p.y));
+    if(xy.length<2)return; lines++; points+=xy.length;
+    const str=xy.map(p=>`${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
+    const halo=document.createElementNS('http://www.w3.org/2000/svg','polyline');halo.setAttribute('points',str);halo.setAttribute('class','teamRailHalo');svg.appendChild(halo);
+    const rail=document.createElementNS('http://www.w3.org/2000/svg','polyline');rail.setAttribute('points',str);rail.setAttribute('class','teamRailLine');rail.setAttribute('stroke',V391_COLORS[n]||'#334155');rail.dataset.line=n;svg.appendChild(rail);
+  });
+  v3978RailPointCount=points;v3978RailDiag(`Trilhos: ${lines} linha(s) / ${points} pontos`,lines>0);
+}
+async function v391BuildRails(){
+  if(!teamMap)return;
+  v391RailSource=Object.fromEntries(Object.entries(V391_FALLBACK).map(([n,pts])=>[n,pts.map(p=>[+p[0],+p[1]])]));
+  v3978DrawSvgRails();
+  try{
+    const r=await fetch('/api/equipes/rail-network',{cache:'no-store'});if(!r.ok)throw new Error('HTTP '+r.status);const locs=await r.json();const groups={};
+    (locs||[]).forEach(x=>{if(x.reference_latitude==null||x.reference_longitude==null)return;const n=v391LineNo(x.line);if(!n)return;(groups[n]??=[]).push(x);const pt=[+x.reference_latitude,+x.reference_longitude];L.circleMarker(pt,{radius:4,color:'#fff',weight:2,fillColor:V391_COLORS[n]||'#64748b',fillOpacity:1}).bindTooltip(String(x.location||''),{direction:'top'}).addTo(v391Stations);L.marker(pt,{interactive:false,icon:L.divIcon({className:'stationLabelIcon',html:`<span>${esc(x.location||'')}</span>`,iconSize:null})}).addTo(v391StationNames)});
+    Object.entries(groups).forEach(([n,arr])=>{const seq=v391Sequence(arr);if(seq.length>=2)v3978RailSource[n]=seq.map(x=>[+x.reference_latitude,+x.reference_longitude])});
+    v3978DrawSvgRails();
+  }catch(e){console.warn('V39.7.8 rail API; usando fallback',e);v3978RailDiag(`Trilhos: fallback ativo / ${v3978RailPointCount} pontos`,true)}
+}
 function v391SetupTeamMap(){
   if(!teamMap||v391RailLines)return;
-  if(!teamMap.getPane('railLinesPane'))teamMap.createPane('railLinesPane');teamMap.getPane('railLinesPane').style.zIndex=650;teamMap.getPane('railLinesPane').style.pointerEvents='auto';if(!teamMap.getPane('railStationsPane'))teamMap.createPane('railStationsPane');teamMap.getPane('railStationsPane').style.zIndex=660;v391RailRenderer=L.svg({pane:'railLinesPane',padding:.5});v391RailLines=L.layerGroup().addTo(teamMap);v391Stations=L.layerGroup().addTo(teamMap);v391StationNames=L.layerGroup();v391TechLayer=L.layerGroup().addTo(teamMap);v391Accuracy=L.layerGroup();
-  v391LayerControl=L.control.layers(null,{'Linhas':v391RailLines,'Estações':v391Stations,'Nomes das estações':v391StationNames,'Técnicos (GPS)':v391TechLayer,'Precisão GPS (auditoria)':v391Accuracy},{collapsed:false,position:'bottomright'}).addTo(teamMap);
-  v391Legend=L.control({position:'topleft'});v391Legend.onAdd=()=>{const d=L.DomUtil.create('div','autopass-rail-legend');d.innerHTML='<h4>Linhas Metroferroviárias</h4>'+Object.keys(V391_COLORS).map(n=>`<div class="row"><span class="swatch" style="background:${V391_COLORS[n]}"></span><b>${n}</b><span>${V391_NAMES[n]}</span></div>`).join('');L.DomEvent.disableClickPropagation(d);L.DomEvent.disableScrollPropagation(d);return d};v391Legend.addTo(teamMap);
-  v391BuildRails(); setTimeout(v391BuildRails,900);
+  v391RailLines=L.layerGroup().addTo(teamMap);v391Stations=L.layerGroup().addTo(teamMap);v391StationNames=L.layerGroup();v391TechLayer=L.layerGroup().addTo(teamMap);v391Accuracy=L.layerGroup();
+  v391BuildRails();
+  ['zoomend','moveend','resize'].forEach(evt=>teamMap.on(evt,()=>requestAnimationFrame(v3978DrawSvgRails)));
+  setTimeout(()=>{teamMap.invalidateSize({pan:false});v3978DrawSvgRails()},250);
 }
 
-
 // V39.6 — compatibilidade dos checkboxes visíveis com as camadas Leaflet.
-function v396SyncRailChecks(){const map=teamMap;if(!map)return;[['teamShowLines',v391RailLines],['teamShowStations',v391Stations],['teamShowNames',v391StationNames],['teamShowTechs',v391TechLayer]].forEach(([id,layer])=>{const el=$(id);if(!el||!layer)return;const sync=()=>{if(el.checked&&!map.hasLayer(layer))map.addLayer(layer);if(!el.checked&&map.hasLayer(layer))map.removeLayer(layer)};el.addEventListener('change',sync);sync()});v391BuildRails()}
+function v396SyncRailChecks(){const map=teamMap;if(!map)return;[['teamShowStations',v391Stations],['teamShowNames',v391StationNames],['teamShowTechs',v391TechLayer]].forEach(([id,layer])=>{const el=$(id);if(!el||!layer)return;const sync=()=>{if(el.checked&&!map.hasLayer(layer))map.addLayer(layer);if(!el.checked&&map.hasLayer(layer))map.removeLayer(layer)};el.addEventListener('change',sync);sync()});const lines=$('teamShowLines');if(lines)lines.addEventListener('change',v3978DrawSvgRails);v391BuildRails()}
 setTimeout(v396SyncRailChecks,500);

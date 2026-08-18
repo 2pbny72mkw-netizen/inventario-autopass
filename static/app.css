@@ -1404,3 +1404,22 @@ body.mapFullscreenOpen #gpsMap .autopassMapFullscreenControl{
 .leaflet-railLinesPane svg{overflow:visible!important;pointer-events:auto!important}.leaflet-railLinesPane path{stroke-linecap:round;stroke-linejoin:round}
 .chipValidatorGrid{gap:10px!important}.chipValidatorCard{padding:12px!important}.chipValidatorCard h3{margin:2px 0!important;font-size:17px!important}.chipValidatorCard p{margin:2px 0 6px!important}.chipValidatorHead{margin-bottom:6px!important}.chipForm textarea{min-height:38px!important}.chipPhotoActions{gap:6px!important}.chipPhotoBtn{padding:7px 9px!important}.chipForm button{padding:8px 10px!important}.chipEvidence img{height:70px!important;width:92px!important;object-fit:cover}.chipNewAssetFields{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin:7px 0}.chipNewAssetFields input{min-width:0}.panTools{margin-top:10px;align-items:center}.panProgressCard{margin:12px 0}.panoramaLocationGrid.hidden{display:none!important}
 @media(max-width:760px){.chipNewAssetFields{grid-template-columns:1fr}.chipValidatorGrid{grid-template-columns:1fr!important}}
+
+/* V39.7.6 revisão — histórico compacto */
+.historyDetails{margin-top:12px;border:1px solid #d8e2ee;border-radius:12px;background:#f8fbff}
+.historyDetails summary{cursor:pointer;font-weight:800;padding:12px 14px;color:#15345b}
+.historyScroll{max-height:320px;overflow:auto;padding:0 12px 12px}
+.aboutHistoryCompact .historyRow{display:grid;grid-template-columns:90px 1fr;gap:14px;padding:10px 8px;border-bottom:1px solid #e7edf5}
+#panCollapsedPicker{margin-top:12px;padding:12px}
+#panCollapsedPicker select{width:100%}
+
+/* V39.7.8 — trilhos garantidos por SVG independente do renderer Leaflet */
+#teamMap{position:relative}
+#teamRailSvgOverlay{position:absolute;inset:0;width:100%;height:100%;z-index:450;pointer-events:none;overflow:hidden}
+#teamRailSvgOverlay .teamRailHalo{fill:none;stroke:#fff;stroke-width:10;stroke-linecap:round;stroke-linejoin:round;opacity:.94}
+#teamRailSvgOverlay .teamRailLine{fill:none;stroke-width:6;stroke-linecap:round;stroke-linejoin:round;opacity:1}
+.teamRailDiag{display:inline-flex;align-items:center;padding:3px 8px;border-radius:999px;background:#e7f6ee;color:#146c43;font-weight:800;font-size:11px;margin-left:8px}
+.teamRailDiag.railDiagError{background:#fff0f0;color:#b42318}
+.teamSelectedInfo{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;padding:9px 12px;border:1px solid #d8e3ef;border-radius:10px;background:#f7fafc;color:#17345d;font-size:12px}.teamSelectedInfo b{font-size:13px}.teamSelectedInfo.hidden{display:none}
+#v39TopdeskPanel .v25CompanyRow span,#v39TopdeskPanel .v25CompanyRow b,#v39TopdeskPanel .v22Panel h3{color:#17345d!important;opacity:1!important}
+#v39TopdeskPanel .v25CompanyTrack{background:#e7edf4!important}
