@@ -1,5 +1,6 @@
 {% extends "base.html" %}
-{% block title %}Evidências de Campo | Inventário SP{% endblock %}
+{% block title %}Evidências de Campo | Inventário SP<script>document.addEventListener('DOMContentLoaded',()=>{const b=document.getElementById('toggleEvidenceVisits'),g=document.getElementById('evidenceVisitGrid');if(b&&g)b.addEventListener('click',()=>{const h=g.classList.toggle('hidden');b.textContent=h?'Mostrar visitas':'Recolher visitas'});});</script>
+{% endblock %}
 {% block content %}
 <section class="dashHero">
   <div>
@@ -143,9 +144,9 @@
       <h2>Visitas importadas</h2>
       <p class="muted">Clique em uma visita para abrir relatório, confronto e galeria.</p>
     </div>
-    <span class="tag">{{ visit_cards|length }} exibida(s)</span>
+    <div class="heroActions"><span class="tag">{{ visit_cards|length }} exibida(s)</span><button type="button" class="secondary" id="toggleEvidenceVisits">Recolher visitas</button></div>
   </div>
-  <div class="evidenceVisitGrid">
+  <div class="evidenceVisitGrid" id="evidenceVisitGrid">
   {% for card in visit_cards %}
     <a class="evidenceVisitCard {% if card.review %}needsReview{% endif %}" href="?visit={{ card.visit.id }}{% if q %}&q={{ q }}{% endif %}{% if audit %}&audit={{ audit }}{% endif %}">
       <div class="evTop">
@@ -165,4 +166,5 @@
   {% endfor %}
   </div>
 </section>
+<script>document.addEventListener('DOMContentLoaded',()=>{const b=document.getElementById('toggleEvidenceVisits'),g=document.getElementById('evidenceVisitGrid');if(b&&g)b.addEventListener('click',()=>{const h=g.classList.toggle('hidden');b.textContent=h?'Mostrar visitas':'Recolher visitas'});});</script>
 {% endblock %}
