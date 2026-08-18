@@ -1,0 +1,14 @@
+{
+  "version": "39.6",
+  "date": "2026-08-18",
+  "type": "functional",
+  "changes": [
+    "panorama",
+    "dashboard panorama",
+    "teams rails",
+    "collaborator autocomplete",
+    "collaborative editing",
+    "manager deletion",
+    "audit"
+  ]
+}

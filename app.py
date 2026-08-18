@@ -364,6 +364,29 @@ class Attachment(db.Model):
     mime_type = db.Column(db.String(180))
 
 
+class PanoramaPoint(db.Model):
+    __tablename__ = "panorama_points"
+    id = db.Column(db.Integer, primary_key=True)
+    location_id = db.Column(db.Integer, db.ForeignKey("locations.id", ondelete="CASCADE"), nullable=False, index=True)
+    point_name = db.Column(db.String(220), nullable=False, default="Visão geral")
+    notes = db.Column(db.Text)
+    created_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime)
+    __table_args__ = (UniqueConstraint("location_id", "point_name", name="uq_panorama_location_point"),)
+
+class PanoramaPhoto(db.Model):
+    __tablename__ = "panorama_photos"
+    id = db.Column(db.Integer, primary_key=True)
+    point_id = db.Column(db.Integer, db.ForeignKey("panorama_points.id", ondelete="CASCADE"), nullable=False, index=True)
+    original_name = db.Column(db.String(300), nullable=False)
+    stored_name = db.Column(db.String(700), nullable=False)
+    mime_type = db.Column(db.String(180))
+    uploaded_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    latitude = db.Column(db.Float)
+    longitude = db.Column(db.Float)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+
 Index("idx_inventory_location", Inventory.location_id)
 
 
@@ -1136,6 +1159,8 @@ def teams_status_api():
         else:
             freshness = "ATRASADO"
 
+        last_checkin = TechnicianCheckin.query.filter_by(user_id=user.id).order_by(TechnicianCheckin.created_at.desc()).first() if user else None
+        checkin_loc = db.session.get(Location, last_checkin.location_id) if last_checkin else None
         rows.append({
             **member,
             "photo_url": (f"/usuarios/{user.id}/foto" if user and user.photo_url else None),
@@ -1146,6 +1171,7 @@ def teams_status_api():
             "captured_at": (pos.captured_at.isoformat() + "Z") if pos else None,
             "minutes_since": minutes,
             "freshness": freshness,
+            "current_location": checkin_loc.location if checkin_loc else None,
         })
 
     counts = {}
@@ -1160,6 +1186,13 @@ def teams_status_api():
         "counts_by_category": counts,
         "technicians": rows,
     })
+
+
+@app.get("/api/equipes/colaboradores")
+@teams_view_required
+def teams_collaborators_api():
+    users=User.query.filter(User.active.is_(True)).order_by(User.name).all()
+    return jsonify({"ok":True,"users":[{"id":u.id,"name":u.name,"role":u.role} for u in users if normalize(u.personnel_status or "ATIVO")=="ATIVO"]})
 
 
 @app.get("/api/equipes/calendario")
@@ -1564,7 +1597,7 @@ def _location_360_payload(loc):
         "divergences":divergences, "inoperative":inoperative,
         "visits":len(visits), "media":media_count, "outside_base":outside_base,
         "latitude":loc.reference_latitude, "longitude":loc.reference_longitude,
-        "can_manage": _current_user_is_superadmin(),
+        "can_manage": session.get("role") == "manager",
         "equipment":[{
             "id":x.id, "type":x.equipment_type, "identifier":x.asset_identifier,
             "serial":x.serial, "model":x.model, "supplier":x.supplier,
@@ -2317,7 +2350,7 @@ def api_location_inventory(location_id):
             "gps_captured_at": inv.gps_captured_at.isoformat(timespec="seconds") if inv.gps_captured_at else None,
             "technician": technician_name,
             "attachments_count": attachment_count,
-            "can_manage": _current_user_is_superadmin(),
+            "can_manage": session.get("role") == "manager",
         })
     return jsonify(out)
 
@@ -2636,11 +2669,8 @@ def update_inventory(inventory_id):
     if not inv:
         return jsonify({"ok": False, "error": "Registro não encontrado."}), 404
 
-    # V37.1: técnico pode corrigir somente o cadastro que ele próprio criou.
-    # O administrador principal mantém permissão global de edição.
-    current_uid = session.get("user_id")
-    if not _current_user_is_superadmin() and inv.technician_id != current_uid:
-        return jsonify({"ok": False, "error": "Você só pode alterar cadastros realizados pelo seu próprio usuário."}), 403
+    # V39.6: edição colaborativa. Técnico ou Gestor pode corrigir qualquer registro.
+    # A autoria original permanece em technician_id e a alteração é auditada abaixo.
 
     location_id = request.form.get("location_id", type=int) or inv.location_id
     equipment_type = request.form.get("equipment_type", inv.equipment_type or "").strip()
@@ -2700,6 +2730,22 @@ def update_inventory(inventory_id):
         inv.gps_captured_at = _optional_iso_datetime(request.form.get("gps_captured_at"))
 
     inv.updated_at = datetime.utcnow()
+    added_photos = 0
+    for f in request.files.getlist("attachments"):
+        if not f or not f.filename:
+            continue
+        safe = secure_filename(f.filename) or f"evidencia_{secrets.token_hex(4)}.jpg"
+        stored = f"{inv.id}_{secrets.token_hex(6)}_{safe}"
+        if _r2_available():
+            data = f.read()
+            key = f"inventory/{datetime.utcnow().strftime('%Y/%m')}/{stored}"
+            _r2_put_bytes(key, data, f.mimetype or "application/octet-stream")
+            stored = "r2__" + key
+        else:
+            f.save(UPLOAD_DIR / stored)
+        db.session.add(Attachment(inventory_id=inv.id, original_name=f.filename, stored_name=stored, mime_type=f.mimetype))
+        added_photos += 1
+    db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="INVENTORY_EDIT", entity_type="inventory", entity_id=str(inv.id), detail=f"Registro editado por {session.get('name','usuário')}; {added_photos} nova(s) evidência(s)"))
 
     try:
         db.session.commit()
@@ -2715,8 +2761,6 @@ def update_inventory(inventory_id):
 @app.delete("/api/inventory/<int:inventory_id>")
 @manager_required
 def delete_inventory(inventory_id):
-    if not _current_user_is_superadmin():
-        return jsonify({"ok": False, "error": "Exclusão disponível somente para o administrador principal."}), 403
     inv = db.session.get(Inventory, inventory_id)
     if not inv:
         return jsonify({"ok": False, "error": "Registro não encontrado."}), 404
@@ -2734,6 +2778,7 @@ def delete_inventory(inventory_id):
                 pass
             db.session.delete(attachment)
 
+        db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="INVENTORY_DELETE", entity_type="inventory", entity_id=str(inv.id), detail=f"Exclusão por {session.get('name','Gestor')}: {inv.equipment_type} · {inv.asset_identifier}"))
         db.session.delete(inv)
         db.session.flush()
 
@@ -5849,6 +5894,72 @@ def cleanup_v352_test_reference():
     if changed:
         db.session.commit()
     return changed
+
+
+@app.get("/visao-panoramica")
+@login_required
+def panorama_page():
+    if session.get("role") == "hr":
+        return redirect(url_for("teams_page"))
+    return render_template("panorama.html")
+
+
+def _panorama_payload():
+    rows=[]
+    for loc in Location.query.order_by(Location.company, Location.line, Location.location).all():
+        points=PanoramaPoint.query.filter_by(location_id=loc.id).order_by(PanoramaPoint.point_name).all()
+        p_out=[]; total=0
+        for pt in points:
+            photos=PanoramaPhoto.query.filter_by(point_id=pt.id).order_by(PanoramaPhoto.created_at).all()
+            total += len(photos)
+            p_out.append({"id":pt.id,"name":pt.point_name,"notes":pt.notes or "","status":"CONCLUÍDA" if photos else "EM ANDAMENTO","photos":[{"id":ph.id,"url":"/uploads/"+ph.stored_name,"name":ph.original_name,"uploaded_by":(db.session.get(User,ph.uploaded_by).name if db.session.get(User,ph.uploaded_by) else "—"),"created_at":ph.created_at.isoformat()+"Z","latitude":ph.latitude,"longitude":ph.longitude} for ph in photos]})
+        status="PENDENTE" if not points else ("CONCLUÍDA" if points and all(x["photos"] for x in p_out) else "EM ANDAMENTO")
+        rows.append({"id":loc.id,"company":loc.company,"line":loc.line,"location":loc.location,"status":status,"photo_count":total,"points":p_out})
+    return rows
+
+@app.get("/api/panoramas")
+@login_required
+def panorama_list_api():
+    return jsonify({"ok":True,"locations":_panorama_payload()})
+
+@app.post("/api/panoramas/<int:location_id>/points")
+@field_required
+def panorama_upload_api(location_id):
+    loc=db.session.get(Location,location_id)
+    if not loc: return jsonify({"ok":False,"error":"Localidade não encontrada."}),404
+    point_name=(request.form.get("point_name") or "Visão geral").strip()
+    if not point_name: point_name="Visão geral"
+    pt=PanoramaPoint.query.filter(func.lower(PanoramaPoint.point_name)==point_name.lower(),PanoramaPoint.location_id==location_id).first()
+    if not pt:
+        pt=PanoramaPoint(location_id=location_id,point_name=point_name,notes=(request.form.get("notes") or "").strip(),created_by=session["user_id"])
+        db.session.add(pt); db.session.flush()
+    files=[f for f in request.files.getlist("photos") if f and f.filename]
+    if not files:
+        db.session.commit(); return jsonify({"ok":True,"point_id":pt.id,"message":"Ponto iniciado."})
+    lat=_optional_float(request.form.get("latitude")); lon=_optional_float(request.form.get("longitude"))
+    for f in files:
+        safe=secure_filename(f.filename) or f"panorama_{secrets.token_hex(4)}.jpg"
+        stored=f"pan_{pt.id}_{secrets.token_hex(6)}_{safe}"
+        if _r2_available():
+            data=f.read(); key=f"panorama/{datetime.utcnow().strftime('%Y/%m')}/{stored}"; _r2_put_bytes(key,data,f.mimetype or "application/octet-stream"); stored="r2__"+key
+        else: f.save(UPLOAD_DIR/stored)
+        db.session.add(PanoramaPhoto(point_id=pt.id,original_name=f.filename,stored_name=stored,mime_type=f.mimetype,uploaded_by=session["user_id"],latitude=lat,longitude=lon))
+    pt.updated_at=datetime.utcnow()
+    db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="PANORAMA_UPLOAD",entity_type="location",entity_id=str(location_id),detail=f"{point_name}: {len(files)} foto(s)"))
+    db.session.commit(); return jsonify({"ok":True,"point_id":pt.id,"photos_added":len(files)})
+
+@app.delete("/api/panoramas/photos/<int:photo_id>")
+@manager_required
+def panorama_delete_photo_api(photo_id):
+    ph=db.session.get(PanoramaPhoto,photo_id)
+    if not ph: return jsonify({"ok":False,"error":"Foto não encontrada."}),404
+    try:
+        if ph.stored_name and not ph.stored_name.startswith("r2__"):
+            fp=UPLOAD_DIR/ph.stored_name
+            if fp.exists(): fp.unlink()
+    except Exception: pass
+    db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="PANORAMA_DELETE",entity_type="panorama_photo",entity_id=str(photo_id),detail=ph.original_name))
+    db.session.delete(ph); db.session.commit(); return jsonify({"ok":True})
 
 with app.app_context():
     migrate_location_reference_columns()
