@@ -34,7 +34,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V39.2"
+APP_RELEASE = "V39.3"
 DASHBOARD_RELEASE = "dashboard-v39-0"
 TEAMS_RELEASE = "teams-v39-0"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -66,6 +66,10 @@ app.secret_key = os.environ.get("INVENTARIO_SECRET_KEY", "chave-local-apenas-par
 app.config["SQLALCHEMY_DATABASE_URI"] = database_url
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.config["MAX_CONTENT_LENGTH"] = 160 * 1024 * 1024
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=12)
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"] = os.getenv("RENDER", "").lower() in ("true","1","yes")
 
 # Mantém conexões saudáveis em hospedagens gerenciadas.
 app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
@@ -623,9 +627,15 @@ def _current_user_is_superadmin():
 
 def _role_assignment_allowed(role):
     role = (role or "").strip()
+    # RH administra somente perfis operacionais. Perfis sensíveis ficam restritos ao ADM.
+    if session.get("role") == "hr":
+        return role == "technician"
     if role in ("manager", "consultation", "dispatcher"):
         return _current_user_is_superadmin()
     return role in ("technician", "hr")
+
+def _hr_target_allowed(user):
+    return bool(user) and (session.get("role") != "hr" or user.role == "technician")
 
 
 def field_required(fn):
@@ -660,6 +670,7 @@ def login():
         user = User.query.filter(func.lower(User.username) == username, User.active.is_(True)).first()
         if user and check_password_hash(user.password_hash, password):
             session.clear()
+            session.permanent = True
             session.update(user_id=user.id, name=user.name, role=user.role)
             try:
                 db.session.add(SessionEvent(user_id=user.id, event_type="LOGIN"))
@@ -3372,13 +3383,19 @@ def attachments(inventory_id):
 @app.route("/usuarios")
 @user_admin_required
 def users_page():
-    active_users = User.query.filter(User.archived_at.is_(None)).order_by(User.active.desc(), User.name).all()
-    archived_users = User.query.filter(User.archived_at.isnot(None)).order_by(User.archived_at.desc(), User.name).all()
+    active_q = User.query.filter(User.archived_at.is_(None))
+    archived_q = User.query.filter(User.archived_at.isnot(None))
+    if session.get("role") == "hr":
+        active_q = active_q.filter(User.role == "technician")
+        archived_q = archived_q.filter(User.role == "technician")
+    active_users = active_q.order_by(User.active.desc(), User.name).all()
+    archived_users = archived_q.order_by(User.archived_at.desc(), User.name).all()
     return render_template(
         "users.html",
         users=active_users,
         archived_users=archived_users,
         can_assign_sensitive_roles=_current_user_is_superadmin(),
+        is_hr_admin=session.get("role") == "hr",
     )
 
 
@@ -3521,6 +3538,8 @@ def user_photo(user_id):
     user = db.session.get(User, user_id)
     if not user or not user.photo_url:
         return "", 404
+    if session.get("role") == "hr" and user.role != "technician":
+        return "", 404
 
     try:
         obj = r2_client().get_object(
@@ -3550,6 +3569,9 @@ def toggle_user(user_id):
     if not user:
         flash("Usuário não encontrado.")
         return redirect(url_for("users_page"))
+    if not _hr_target_allowed(user):
+        flash("RH pode administrar somente perfis operacionais autorizados.")
+        return redirect(url_for("users_page"))
 
     if user.id == session.get("user_id"):
         flash("Você não pode desativar o próprio usuário enquanto está conectado.")
@@ -3571,6 +3593,9 @@ def edit_user(user_id):
     user = db.session.get(User, user_id)
     if not user:
         flash("Usuário não encontrado.")
+        return redirect(url_for("users_page"))
+    if not _hr_target_allowed(user):
+        flash("RH pode administrar somente perfis operacionais autorizados.")
         return redirect(url_for("users_page"))
 
     name = request.form.get("name", "").strip()
@@ -3816,8 +3841,11 @@ def reactivate_user(user_id):
     if not user or not user.archived_at:
         flash("Usuário arquivado não encontrado.")
         return redirect(url_for("users_page"))
+    if not _hr_target_allowed(user):
+        flash("RH pode administrar somente perfis operacionais autorizados.")
+        return redirect(url_for("users_page"))
     # RH não pode restaurar diretamente um perfil sensível.
-    if user.role in ("manager", "consultation") and not _current_user_is_superadmin():
+    if user.role in ("manager", "consultation", "dispatcher", "hr") and not _current_user_is_superadmin():
         flash("Somente o Administrador principal pode reativar usuários Gestor ou Consulta.")
         return redirect(url_for("users_page"))
     base_login = normalize(user.name).lower().replace(" ", ".")[:60] or f"usuario{user.id}"
@@ -3849,8 +3877,8 @@ def export_users_excel():
         c.font = Font(bold=True, color="FFFFFF")
         c.fill = PatternFill("solid", fgColor="17345D")
         c.alignment = Alignment(horizontal="center")
-    role_label={"manager":"Gestor","technician":"Técnico de Campo","consultation":"Consulta","hr":"RH"}
-    for u in User.query.order_by(User.name).all():
+    role_label={"manager":"Gestor","technician":"Técnico de Campo","consultation":"Consulta","hr":"RH","dispatcher":"Dispatcher"}
+    for u in (User.query.filter(User.role == "technician") if session.get("role") == "hr" else User.query).order_by(User.name).all():
         status = "ARQUIVADO" if u.archived_at else ("ATIVO" if u.active else "INATIVO")
         ws.append([
             u.user_code or "",u.name,u.username,role_label.get(u.role,u.role),u.job_title or "",u.company or "",u.email or "",u.phone or "",
