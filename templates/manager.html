@@ -17,6 +17,7 @@
     <button class="v23Nav" data-v23-view="map">⌖ <span>Mapa</span></button>
     <button class="v23Nav" data-v23-view="evidence">▣ <span>Evidências</span></button>
     <button class="v23Nav" data-v23-view="panorama">▤ <span>Visões panorâmicas</span></button>
+    <button class="v23Nav" data-v23-view="chips">▣ <span>Troca de Chips</span></button>
     <button class="v23Nav" data-v23-view="ranking">↗ <span>Ranking</span></button>
     <button class="v23Nav" data-v23-view="competition">◉ <span>Concorrência</span></button>
     <div class="v23SidebarSpacer"></div>
@@ -286,6 +287,21 @@
 
 
 <section class="card v23Panel" data-v23-panel="panorama"><div class="sectionHead"><div><span class="eyebrow">ACERVO VISUAL</span><h2>Visões panorâmicas</h2><p class="muted">Escolha uma localidade para abrir as fotos organizadas por ponto.</p></div><a class="secondary buttonLink" href="/visao-panoramica">Abrir tela completa</a></div><div class="grid3"><div><label>Empresa</label><select id="dashPanCompany"><option value="">Todas</option></select></div><div><label>Linha</label><select id="dashPanLine"><option value="">Todas</option></select></div><div><label>Localidade</label><select id="dashPanLocation"><option value="">Selecione</option></select></div></div><div id="dashPanGallery" class="panGallery" style="margin-top:16px"><p class="muted">Selecione uma localidade.</p></div></section>
+
+<section class="card v23Panel" data-v23-panel="chips" id="chipDashPanel">
+  <div class="sectionHead"><div><span class="eyebrow">PRODUTIVIDADE · TROCA DE CHIPS</span><h2>Evolução e progresso</h2><p class="muted">Acompanhamento dos Validadores de Recarga por localidade e técnico.</p></div><a class="secondary buttonLink" href="/troca-chips">Abrir atividade</a></div>
+  <div class="kpis dashboardKpis">
+    <article class="kpi"><span>Total previsto</span><b id="chipDashTotal">0</b></article>
+    <article class="kpi successKpi"><span>Concluídos</span><b id="chipDashDone">0</b></article>
+    <article class="kpi warningKpi"><span>Em andamento</span><b id="chipDashProgressN">0</b></article>
+    <article class="kpi dangerKpi"><span>Pendentes</span><b id="chipDashPending">0</b></article>
+    <article class="kpi primaryKpi"><span>Progresso</span><b id="chipDashPct">0%</b></article>
+  </div>
+  <div class="chipDashProgress"><i id="chipDashBar" style="width:0%"></i></div>
+  <div class="grid3" style="margin-top:16px"><div><label>Empresa</label><select id="chipDashCompany"><option value="">Todas</option></select></div><div><label>Linha</label><select id="chipDashLine"><option value="">Todas</option></select></div><div><label>Localidade</label><select id="chipDashLocation"><option value="">Todas</option></select></div></div>
+  <div class="dashboardGrid" style="margin-top:16px"><article class="v22Panel"><h3>Progresso por localidade</h3><div id="chipDashLocations"></div></article><article class="v22Panel"><h3>Produtividade por técnico</h3><div id="chipDashTechs"></div></article></div>
+</section>
+
 <section class="card evidenceExecutiveStrip v23Panel" data-v23-panel="evidence" id="evidenceExecutiveStrip">
   <div class="sectionHead">
     <div>
@@ -419,5 +435,5 @@
   <div class="v343TvFooter"><span id="v343TvHeadline">Monitoramento executivo do inventário.</span><span>SUPORTE A CAMPO · V35.2</span></div>
 </div>
 
-<script src="{{url_for('static',filename='manager.js')}}?v=dashboard-v39-6"></script>
+<script src="{{url_for('static',filename='manager.js')}}?v=dashboard-v39-7"></script>
 {% endblock %}

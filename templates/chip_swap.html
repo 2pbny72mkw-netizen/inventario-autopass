@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Troca de Chips | Inventário Autopass{% endblock %}
+{% block content %}
+<section class="card chipSwapPage">
+  <div class="sectionHead"><div><span class="eyebrow">ATIVIDADE DE CAMPO</span><h1>Troca de Chips · Validadores de Recarga</h1><p class="muted">Selecione a estação, escolha o validador, registre a troca e anexe a evidência.</p></div><span class="tag" id="chipGpsStatus">GPS aguardando</span></div>
+  <div class="grid4 chipFilters">
+    <div><label>Empresa</label><select id="chipCompany"><option value="">Todas</option></select></div>
+    <div><label>Linha</label><select id="chipLine"><option value="">Todas</option></select></div>
+    <div><label>Localidade</label><select id="chipLocation"><option value="">Selecione</option></select></div>
+    <div><label>Status</label><select id="chipStatus"><option value="">Todos</option><option>PENDENTE</option><option>EM ANDAMENTO</option><option>CONCLUÍDA</option></select></div>
+  </div>
+  <div id="chipLocationInfo" class="notice" style="margin-top:12px">Ative o GPS e selecione uma localidade.</div>
+</section>
+<section class="kpis chipSwapKpis">
+  <article class="kpi"><span>Validadores</span><b id="chipKTotal">0</b></article>
+  <article class="kpi successKpi"><span>Concluídos</span><b id="chipKDone">0</b></article>
+  <article class="kpi warningKpi"><span>Em andamento</span><b id="chipKProgress">0</b></article>
+  <article class="kpi dangerKpi"><span>Pendentes</span><b id="chipKPending">0</b></article>
+</section>
+<section class="card"><div class="sectionHead"><div><h2>Validadores da localidade</h2><p class="muted">Uma foto anexada conclui automaticamente a troca daquele equipamento.</p></div></div><div id="chipValidators" class="chipValidatorGrid"><p class="muted">Selecione uma localidade.</p></div></section>
+{% endblock %}
+{% block scripts %}<script src="{{url_for('static',filename='chip_swap.js')}}?v=v39-7"></script>{% endblock %}
