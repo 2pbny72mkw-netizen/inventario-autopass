@@ -34,9 +34,9 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V39.7.6"
-DASHBOARD_RELEASE = "dashboard-v39-7-6"
-TEAMS_RELEASE = "teams-v39-7-6"
+APP_RELEASE = "V39.7.8"
+DASHBOARD_RELEASE = "dashboard-v39-7-8"
+TEAMS_RELEASE = "teams-v39-7-8"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
 FIELD_GPS_GOOD_ACCURACY_M = float(os.getenv("FIELD_GPS_GOOD_ACCURACY_M", "30"))
 FIELD_GPS_MAX_ACCURACY_M = float(os.getenv("FIELD_GPS_MAX_ACCURACY_M", "80"))
@@ -1157,7 +1157,19 @@ def teams_status_api():
 @teams_view_required
 def teams_collaborators_api():
     users=User.query.filter(User.active.is_(True)).order_by(User.name).all()
-    return jsonify({"ok":True,"users":[{"id":u.id,"name":u.name,"role":u.role} for u in users if normalize(u.personnel_status or "ATIVO")=="ATIVO"]})
+    profile_by_user = {p.user_id: p for p in TeamScheduleProfile.query.filter(TeamScheduleProfile.user_id.isnot(None), TeamScheduleProfile.active.is_(True)).all()}
+    out=[]
+    for u in users:
+        if normalize(u.personnel_status or "ATIVO")!="ATIVO":
+            continue
+        p=profile_by_user.get(u.id)
+        out.append({
+            "id":u.id,"name":u.name,"role":u.role,"job_title":u.job_title or "",
+            "company":u.company or "","schedule_type": (p.schedule_type if p else ""),
+            "shift": (p.shift if p else ""),"entry": (p.entry if p else ""),
+            "lines": (p.lines if p else []),"profile_id": (p.id if p else None)
+        })
+    return jsonify({"ok":True,"users":out})
 
 
 @app.get("/api/equipes/calendario")
@@ -1252,6 +1264,8 @@ def teams_profiles_api():
                 "role": u.role,
                 "user_code": u.user_code or "",
                 "company": u.company or "",
+                "job_title": u.job_title or "",
+                "personnel_status": u.personnel_status or "ATIVO",
             }
             for u in users
         ],
