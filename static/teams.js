@@ -460,7 +460,23 @@ function v38ApplyTeamFilter(){const q=String($('v38TeamSearch')?.value||'').toLo
 let v391RailLines=null,v391Stations=null,v391StationNames=null,v391TechLayer=null,v391Accuracy=null,v391LayerControl=null,v391Legend=null;
 const V391_COLORS={'1':'#0054A6','2':'#008C5A','3':'#E6332A','4':'#F4C300','5':'#7A3E9D','6':'#F28C18','7':'#A60055','8':'#8C8C8C','9':'#00A092','10':'#00A5B5','11':'#F04B23','12':'#164F9C','13':'#009B62','15':'#9B9DA0','17':'#9A7A24'};
 const V391_NAMES={'1':'Azul','2':'Verde','3':'Vermelha','4':'Amarela','5':'Lilás','6':'Laranja','7':'Rubi','8':'Diamante','9':'Esmeralda','10':'Turquesa','11':'Coral','12':'Safira','13':'Jade','15':'Prata','17':'Ouro'};
-const V391_FALLBACK={'4':[[-23.5362,-46.6335],[-23.5441,-46.6422],[-23.5553,-46.6620],[-23.5662,-46.6840],[-23.5718,-46.7080],[-23.5944,-46.7330]],'17':[[-23.6217,-46.7012],[-23.6209,-46.6878],[-23.6210,-46.6732],[-23.6328,-46.6603]]};
+const V391_FALLBACK={
+'1':[[-23.4799,-46.6024],[-23.4923,-46.6072],[-23.5091,-46.6245],[-23.5255,-46.6407],[-23.5441,-46.6358],[-23.5688,-46.6399],[-23.5983,-46.6369],[-23.6261,-46.6401],[-23.6592,-46.6388]],
+'2':[[-23.5895,-46.6350],[-23.5812,-46.6458],[-23.5703,-46.6585],[-23.5632,-46.6548],[-23.5581,-46.6607],[-23.5508,-46.6719],[-23.5451,-46.6904],[-23.5444,-46.7066]],
+'3':[[-23.5423,-46.4714],[-23.5364,-46.4903],[-23.5281,-46.5180],[-23.5262,-46.5558],[-23.5292,-46.5747],[-23.5356,-46.6072],[-23.5421,-46.6177],[-23.5453,-46.6388],[-23.5495,-46.6535],[-23.5487,-46.6875]],
+'4':[[-23.5362,-46.6335],[-23.5441,-46.6422],[-23.5489,-46.6520],[-23.5553,-46.6620],[-23.5608,-46.6719],[-23.5662,-46.6840],[-23.5673,-46.6930],[-23.5669,-46.7012],[-23.5718,-46.7080],[-23.5864,-46.7230],[-23.5944,-46.7330]],
+'5':[[-23.6491,-46.7588],[-23.6401,-46.7503],[-23.6262,-46.7418],[-23.6125,-46.7228],[-23.5977,-46.7191],[-23.5858,-46.7061],[-23.5730,-46.6936],[-23.5673,-46.6828],[-23.5663,-46.6520]],
+'6':[[-23.5450,-46.6320],[-23.5480,-46.6200],[-23.5520,-46.6030],[-23.5560,-46.5850],[-23.5580,-46.5660],[-23.5600,-46.5480]],
+'7':[[-23.5454,-46.6380],[-23.5327,-46.6550],[-23.5204,-46.7020],[-23.5110,-46.7480],[-23.5030,-46.7890],[-23.4940,-46.8330],[-23.4860,-46.8760],[-23.4690,-46.9400],[-23.4210,-46.9650],[-23.3020,-46.9870],[-23.1850,-46.8840]],
+'8':[[-23.5250,-46.6680],[-23.5320,-46.7010],[-23.5420,-46.7280],[-23.5550,-46.7560],[-23.5700,-46.7870],[-23.5890,-46.8200],[-23.6040,-46.8400],[-23.6370,-46.8660],[-23.6840,-46.8930],[-23.7160,-46.9010]],
+'9':[[-23.7630,-46.7100],[-23.7220,-46.7000],[-23.6860,-46.6930],[-23.6480,-46.6910],[-23.6180,-46.6900],[-23.5950,-46.6890],[-23.5750,-46.6900],[-23.5550,-46.6870],[-23.5360,-46.6810],[-23.5190,-46.6650]],
+'10':[[-23.5450,-46.6380],[-23.5310,-46.6150],[-23.5220,-46.5920],[-23.5150,-46.5730],[-23.5070,-46.5480],[-23.5000,-46.5200],[-23.4950,-46.5000],[-23.4820,-46.4760],[-23.4710,-46.4480]],
+'11':[[-23.5450,-46.6380],[-23.5430,-46.6160],[-23.5400,-46.5960],[-23.5370,-46.5760],[-23.5320,-46.5540],[-23.5250,-46.5300],[-23.5180,-46.5080],[-23.5070,-46.4770],[-23.4980,-46.4490]],
+'12':[[-23.5450,-46.6380],[-23.5290,-46.6490],[-23.5120,-46.6640],[-23.4920,-46.6800],[-23.4740,-46.6980],[-23.4560,-46.7160],[-23.4370,-46.7290]],
+'13':[[-23.4850,-46.4920],[-23.4630,-46.4930],[-23.4420,-46.5000],[-23.4230,-46.5070],[-23.4040,-46.5200],[-23.3830,-46.5360],[-23.3630,-46.5530]],
+'15':[[-23.6460,-46.6420],[-23.6320,-46.6410],[-23.6170,-46.6400],[-23.6040,-46.6390],[-23.5900,-46.6380],[-23.5760,-46.6360]],
+'17':[[-23.6217,-46.7012],[-23.6222,-46.6947],[-23.6209,-46.6878],[-23.6201,-46.6800],[-23.6210,-46.6732],[-23.6241,-46.6670],[-23.6288,-46.6633],[-23.6328,-46.6603]]
+}
 function v391LineNo(v){const t=String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase();const m=t.match(/(?:^|\D)(1[0-7]|[1-9])(?:\D|$)/);if(m)return String(Number(m[1]));const a={AZUL:'1',VERDE:'2',VERMELHA:'3',AMARELA:'4',LILAS:'5',LARANJA:'6',RUBI:'7',DIAMANTE:'8',ESMERALDA:'9',TURQUESA:'10',CORAL:'11',SAFIRA:'12',JADE:'13',PRATA:'15',OURO:'17'};return Object.entries(a).find(([k])=>t.includes(k))?.[1]||''}
 function v391Dist(a,b){const R=6371000,p=x=>x*Math.PI/180,dlat=p(+b.reference_latitude-+a.reference_latitude),dlon=p(+b.reference_longitude-+a.reference_longitude),x=Math.sin(dlat/2)**2+Math.cos(p(+a.reference_latitude))*Math.cos(p(+b.reference_latitude))*Math.sin(dlon/2)**2;return 2*R*Math.asin(Math.sqrt(x))}
 function v391Sequence(a){if(a.length<3)return [...a];const pool=[...a], seq=[pool.shift()];while(pool.length){const last=seq[seq.length-1];let bi=0,bd=Infinity;pool.forEach((c,i)=>{const d=v391Dist(last,c);if(d<bd){bd=d;bi=i}});seq.push(pool.splice(bi,1)[0])}return seq}
@@ -470,16 +486,16 @@ async function v391BuildRails(){
   try{
     const r=await fetch('/api/equipes/rail-network',{cache:'no-store'}); if(!r.ok)throw new Error('HTTP '+r.status); const locs=await r.json(); const groups={};
     (locs||[]).forEach(x=>{if(x.reference_latitude==null||x.reference_longitude==null)return;const n=v391LineNo(x.line);if(!n)return;(groups[n]??=[]).push(x);const pt=[+x.reference_latitude,+x.reference_longitude];L.circleMarker(pt,{pane:'railStationsPane',radius:5,color:'#fff',weight:2,fillColor:V391_COLORS[n]||'#64748b',fillOpacity:1}).bindTooltip(String(x.location||''),{direction:'top'}).addTo(v391Stations);L.marker(pt,{interactive:false,icon:L.divIcon({className:'stationLabelIcon',html:`<span>${esc(x.location||'')}</span>`,iconSize:null})}).addTo(v391StationNames)});
-    ['4','17'].forEach(n=>{if(!groups[n])groups[n]=[]});
+    Object.keys(V391_FALLBACK).forEach(n=>{if(!groups[n])groups[n]=[]});
     Object.entries(groups).forEach(([n,arr])=>{const seq=v391Sequence(arr);const pts=seq.length>=2?seq.map(x=>[+x.reference_latitude,+x.reference_longitude]):(V391_FALLBACK[n]||[]);if(pts.length<2)return;L.polyline(pts,{pane:'railLinesPane',color:'#fff',weight:11,opacity:.96,interactive:false}).addTo(v391RailLines);L.polyline(pts,{pane:'railLinesPane',color:V391_COLORS[n]||'#64748b',weight:6,opacity:1}).bindPopup(`<b>Linha ${n} — ${V391_NAMES[n]||''}</b>`).addTo(v391RailLines)});
   }catch(e){console.warn('V39.1 mapa equipes',e)}
 }
 function v391SetupTeamMap(){
   if(!teamMap||v391RailLines)return;
-  if(!teamMap.getPane('railLinesPane'))teamMap.createPane('railLinesPane');teamMap.getPane('railLinesPane').style.zIndex=430;if(!teamMap.getPane('railStationsPane'))teamMap.createPane('railStationsPane');teamMap.getPane('railStationsPane').style.zIndex=440;v391RailLines=L.layerGroup().addTo(teamMap);v391Stations=L.layerGroup().addTo(teamMap);v391StationNames=L.layerGroup();v391TechLayer=L.layerGroup().addTo(teamMap);v391Accuracy=L.layerGroup();
+  if(!teamMap.getPane('railLinesPane'))teamMap.createPane('railLinesPane');teamMap.getPane('railLinesPane').style.zIndex=460;if(!teamMap.getPane('railStationsPane'))teamMap.createPane('railStationsPane');teamMap.getPane('railStationsPane').style.zIndex=470;v391RailLines=L.layerGroup().addTo(teamMap);v391Stations=L.layerGroup().addTo(teamMap);v391StationNames=L.layerGroup();v391TechLayer=L.layerGroup().addTo(teamMap);v391Accuracy=L.layerGroup();
   v391LayerControl=L.control.layers(null,{'Linhas':v391RailLines,'Estações':v391Stations,'Nomes das estações':v391StationNames,'Técnicos (GPS)':v391TechLayer,'Precisão GPS (auditoria)':v391Accuracy},{collapsed:false,position:'bottomright'}).addTo(teamMap);
   v391Legend=L.control({position:'topleft'});v391Legend.onAdd=()=>{const d=L.DomUtil.create('div','autopass-rail-legend');d.innerHTML='<h4>Linhas Metroferroviárias</h4>'+Object.keys(V391_COLORS).map(n=>`<div class="row"><span class="swatch" style="background:${V391_COLORS[n]}"></span><b>${n}</b><span>${V391_NAMES[n]}</span></div>`).join('');L.DomEvent.disableClickPropagation(d);L.DomEvent.disableScrollPropagation(d);return d};v391Legend.addTo(teamMap);
-  v391BuildRails();
+  v391BuildRails(); setTimeout(v391BuildRails,900);
 }
 
 

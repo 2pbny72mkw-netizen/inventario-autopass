@@ -631,9 +631,12 @@ function renderAssets(){
   const sel=$('base_asset_id'); if(!sel) return;
   sel.innerHTML='<option value="">Novo / não selecionar</option>';
   assets.forEach(a=>{
+    const type=normalizedEquipmentType(a.equipment_type||'');
     const id=a.terminal_number||a.top_id||a.qrcode_id||a.serial||a.asset_key;
     const o=document.createElement('option'); o.value=a.id; o.disabled=a.already_inventoried;
-    o.textContent=`${a.already_inventoried?'✓ JÁ FEITO — ':''}${a.asset_key||id||'Ativo'} | ${a.model||'-'} | ${id||'-'}`;
+    // V39.7.4: para Validador de Recarga, TERMINAL é a identificação principal da base.
+    const primary=type==='Validador de Recarga' ? `Terminal ${a.terminal_number||id||a.id}` : (a.asset_key||id||'Ativo');
+    o.textContent=`${a.already_inventoried?'✓ JÁ FEITO — ':''}${primary} | ${a.model||'-'}${type==='Validador de Recarga'&&a.asset_key?` | ${a.asset_key}`:` | ${id||'-'}`}`;
     sel.appendChild(o);
   });
   const type=normalizedEquipmentType($('equipment_type').value||'');
