@@ -34,37 +34,40 @@
 </section>
 
 {% if session.get('role') != 'technician' %}
-<section class="card">
-  <h2>Histórico recente</h2>
-  <div class="historyRow"><b>V39.7.6</b><span>Versão de testes: trilhos reforçados no mapa de Equipes, Troca de Chips com edição e cadastro de terminal fora da base, tela compacta e Visão Panorâmica com progresso, recolhimento e GPS.</span></div><div class="versionTimeline">
-    <div><b>V39.7.5</b><span>Consolidação da Troca de Chips: terminais pela base da localidade, evidências por câmera/galeria, Excel, gráfico por operação, trilhos resilientes em Equipes e ajustes de performance.</span></div>
-    <div><b>V34.3</b><span>Correção executiva: Big Numbers exclusivos da Visão Geral, Mapa dedicado, Modo TV seguro e importação WhatsApp otimizada em lotes.</span></div>
-    <div><b>V34.0</b><span>Consolidação Operacional: Intelligence Wall, desempenho, perfil com troca de senha e importações assistidas.</span></div>
-    <div><b>V32.0</b><span>Suporte a Campo + BI executivo redesenhado, PWA homologado, progresso local no campo, importação WhatsApp auditável e gestão avançada de usuários.</span></div>
-    <div><b>V30.0</b><span>Command Center executivo, PWA offline reforçado, auditoria GPS recolhível, gestão contratual ATM e controles administrativos do Patrimônio 360.</span></div>
-    <div><b>V24.0</b><span>Gestão de Pessoas + UX de Campo + BI/TV refinado: Cargo separado do Perfil, Empresa e situação do colaborador, escala 12x36 pelo cadastro, 5x2 simplificado, exceção GPS auditável e avanço automático do fluxo mobile.</span></div>
-    <div><b>V21.0</b><span>BI Executivo e preparação para reimportação das evidências: consolidação visual, escala dinâmica validável, limpeza de usuários inativos das visões operacionais e indicadores executivos ampliados.</span></div>
-    <div><b>V20.0</b><span>Consolidação executiva: correções estruturais da V19, identificação real dos Bloqueios, configuração de rede por prefixo, escala dinâmica 7/14/21 dias e evolução da inteligência do parque.</span></div>
-    <div><b>V18.0</b><span>BI Executivo + enriquecimento técnico: gráficos gerenciais reforçados, configuração técnica de Bloqueios e sinalização inicial de integridade geográfica da sessão.</span></div>
-    <div><b>V17.0</b><span>Visão Analítica Executiva: gráficos vinculados aos filtros, UX de campo por disponibilidade real de equipamentos, limpeza de campos por troca de tipo e consolidação operacional de Equipes.</span></div>
-    
-    <div><b>V16.0</b><span>Conciliação e fechamento inteligente: conclusão bloqueada até reconciliar a previsão e anexar evidências; tabela operacional de equipes; editor de foto com zoom e reposicionamento; base de Bloqueios integrada.</span></div>
-    <div><b>V15.0</b><span>Inventário Assistido + App de Campo: experiência mobile guiada, posição atual única por técnico no Dashboard, acabamento das camadas do mapa e base para conciliação assistida.</span></div>
-    <div><b>V14.0</b><span>Gestão, Qualidade e Inteligência Executiva: visão consolidada do parque, prioridades, criticidade, UX global de modais e mapa executivo mais limpo.</span></div>
-    <div><b>V12.0</b><span>Inteligência do Parque + Ciclo de Vida: score de confiabilidade, conciliação operacional, criticidade por localidade, histórico de eventos do ativo e Meu Perfil.</span></div>
-    <div><b>V10.0</b><span>Campo Inteligente: check-in geográfico, filtro real de 3 km, estação integrada/multilinhas, qualidade GPS, avatar unificado e cache PWA corrigido.</span></div>
-    <div><b>V9.3</b><span>Fechamento da fundação: mapa de equipes, avatar/cache de foto, raio de 3 km, indicadores de localização e versões unificadas.</span></div>
-    <div><b>V9.2</b><span>Consolidação funcional: avatar robusto, estações integradas/multilinhas, proximidade e validação GPS preparadas para o Campo Inteligente.</span></div>
-    <div><b>V9.1</b><span>Consolidação visual da V9, avatar compacto no mapa, versões unificadas e UX operacional de campo.</span></div>
-    <div><b>V9.0</b><span>Localização inteligente, perfil RH, estações próximas e preparação para validação geográfica.</span></div>
-    <div><b>V8.0</b><span>PWA de campo, operação offline, fila local e sincronização automática com o servidor.</span></div>
-    <div><b>V7.0</b><span>Patrimônio 360 para confronto de localidades, equipamentos, inventário e evidências.</span></div>
-    <div><b>V6.0</b><span>Gestão de escala, tabela por dias, alteração de turno, correção do mapa fullscreen e cores executivas.</span></div>
-    <div><b>V5.1</b><span>Central de Equipes, escala 12x36, localização e mapa operacional.</span></div>
-    <div><b>V4.2</b><span>Auditoria segura das evidências e ações específicas por situação.</span></div>
-    <div><b>V4.1</b><span>Centro de Evidências, WhatsApp, fotos/vídeos e confronto com base/inventário.</span></div>
-    <div><b>V3.1</b><span>Dashboard rápido, filtros globais, Excel e Big Numbers oficiais.</span></div>
-  </div>
+<section class="card aboutHistoryCompact">
+  <div class="sectionHead"><div><h2>Histórico recente</h2><p class="muted">Últimas versões em destaque. Abra o histórico completo para consultar versões antigas.</p></div></div>
+  <div class="historyRow"><b>V39.7.6</b><span>Versão de testes consolidada: Visão Panorâmica, TopDesk padrão Campo - Dogma, escala por usuários cadastrados e reforço do mapa metroferroviário.</span></div>
+  <div class="historyRow"><b>V39.7.5</b><span>Consolidação da Troca de Chips: terminais pela base, evidências, Excel, gráfico por operação e ajustes de performance.</span></div>
+  <details class="historyDetails">
+    <summary>Ver versões anteriores</summary>
+    <div class="versionTimeline historyScroll">
+      <div><b>V34.3</b><span>Correção executiva: Big Numbers exclusivos da Visão Geral, Mapa dedicado, Modo TV seguro e importação WhatsApp otimizada em lotes.</span></div>
+      <div><b>V34.0</b><span>Consolidação Operacional: Intelligence Wall, desempenho, perfil com troca de senha e importações assistidas.</span></div>
+      <div><b>V32.0</b><span>Suporte a Campo + BI executivo redesenhado, PWA homologado, progresso local no campo, importação WhatsApp auditável e gestão avançada de usuários.</span></div>
+      <div><b>V30.0</b><span>Command Center executivo, PWA offline reforçado, auditoria GPS recolhível, gestão contratual ATM e controles administrativos do Patrimônio 360.</span></div>
+      <div><b>V24.0</b><span>Gestão de Pessoas + UX de Campo + BI/TV refinado: Cargo separado do Perfil, Empresa e situação do colaborador, escala 12x36 pelo cadastro, 5x2 simplificado, exceção GPS auditável e avanço automático do fluxo mobile.</span></div>
+      <div><b>V21.0</b><span>BI Executivo e preparação para reimportação das evidências: consolidação visual, escala dinâmica validável, limpeza de usuários inativos das visões operacionais e indicadores executivos ampliados.</span></div>
+      <div><b>V20.0</b><span>Consolidação executiva: correções estruturais da V19, identificação real dos Bloqueios, configuração de rede por prefixo, escala dinâmica 7/14/21 dias e evolução da inteligência do parque.</span></div>
+      <div><b>V18.0</b><span>BI Executivo + enriquecimento técnico: gráficos gerenciais reforçados, configuração técnica de Bloqueios e sinalização inicial de integridade geográfica da sessão.</span></div>
+      <div><b>V17.0</b><span>Visão Analítica Executiva: gráficos vinculados aos filtros, UX de campo por disponibilidade real de equipamentos, limpeza de campos por troca de tipo e consolidação operacional de Equipes.</span></div>
+      <div><b>V16.0</b><span>Conciliação e fechamento inteligente: conclusão bloqueada até reconciliar a previsão e anexar evidências; tabela operacional de equipes; editor de foto com zoom e reposicionamento; base de Bloqueios integrada.</span></div>
+      <div><b>V15.0</b><span>Inventário Assistido + App de Campo: experiência mobile guiada, posição atual única por técnico no Dashboard, acabamento das camadas do mapa e base para conciliação assistida.</span></div>
+      <div><b>V14.0</b><span>Gestão, Qualidade e Inteligência Executiva: visão consolidada do parque, prioridades, criticidade, UX global de modais e mapa executivo mais limpo.</span></div>
+      <div><b>V12.0</b><span>Inteligência do Parque + Ciclo de Vida: score de confiabilidade, conciliação operacional, criticidade por localidade, histórico de eventos do ativo e Meu Perfil.</span></div>
+      <div><b>V10.0</b><span>Campo Inteligente: check-in geográfico, filtro real de 3 km, estação integrada/multilinhas, qualidade GPS, avatar unificado e cache PWA corrigido.</span></div>
+      <div><b>V9.3</b><span>Fechamento da fundação: mapa de equipes, avatar/cache de foto, raio de 3 km, indicadores de localização e versões unificadas.</span></div>
+      <div><b>V9.2</b><span>Consolidação funcional: avatar robusto, estações integradas/multilinhas, proximidade e validação GPS preparadas para o Campo Inteligente.</span></div>
+      <div><b>V9.1</b><span>Consolidação visual da V9, avatar compacto no mapa, versões unificadas e UX operacional de campo.</span></div>
+      <div><b>V9.0</b><span>Localização inteligente, perfil RH, estações próximas e preparação para validação geográfica.</span></div>
+      <div><b>V8.0</b><span>PWA de campo, operação offline, fila local e sincronização automática com o servidor.</span></div>
+      <div><b>V7.0</b><span>Patrimônio 360 para confronto de localidades, equipamentos, inventário e evidências.</span></div>
+      <div><b>V6.0</b><span>Gestão de escala, tabela por dias, alteração de turno, correção do mapa fullscreen e cores executivas.</span></div>
+      <div><b>V5.1</b><span>Central de Equipes, escala 12x36, localização e mapa operacional.</span></div>
+      <div><b>V4.2</b><span>Auditoria segura das evidências e ações específicas por situação.</span></div>
+      <div><b>V4.1</b><span>Centro de Evidências, WhatsApp, fotos/vídeos e confronto com base/inventário.</span></div>
+      <div><b>V3.1</b><span>Dashboard rápido, filtros globais, Excel e Big Numbers oficiais.</span></div>
+    </div>
+  </details>
 </section>
 {% endif %}
 
