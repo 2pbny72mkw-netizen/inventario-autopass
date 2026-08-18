@@ -34,7 +34,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V39.7"
+APP_RELEASE = "V39.7.2"
 DASHBOARD_RELEASE = "dashboard-v39-0"
 TEAMS_RELEASE = "teams-v39-0"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -5937,69 +5937,190 @@ def chip_swap_page():
 def _chip_swap_asset_label(a):
     return a.description or a.terminal_number or a.asset_key or a.serial or f"Validador #{a.id}"
 
-def _chip_swap_locations_payload():
-    swaps={(x.location_id,x.base_asset_id):x for x in ChipSwap.query.all()}
-    rows=[]
-    for loc in Location.query.order_by(Location.company,Location.line,Location.location).all():
-        assets=[a for a in BaseAsset.query.all() if _canonical_equipment_type(a.equipment_type)=="VALIDADOR" and _base_asset_matches_location(a,loc)]
-        if not assets and int(loc.expected_validator or 0)<=0:
+_chip_swap_tables_ready = False
+_chip_swap_payload_cache = {"at": 0.0, "data": None}
+CHIP_SWAP_CACHE_TTL_SECONDS = 20
+
+def _ensure_chip_swap_tables():
+    """Verifica/cria as tabelas uma única vez por processo do Gunicorn."""
+    global _chip_swap_tables_ready
+    if _chip_swap_tables_ready:
+        return
+    ChipSwap.__table__.create(bind=db.engine, checkfirst=True)
+    ChipSwapPhoto.__table__.create(bind=db.engine, checkfirst=True)
+    _chip_swap_tables_ready = True
+
+def _invalidate_chip_swap_cache():
+    _chip_swap_payload_cache["at"] = 0.0
+    _chip_swap_payload_cache["data"] = None
+
+def _chip_swap_locations_payload(force=False):
+    """Monta o progresso da troca de chips sem fazer produto cartesiano localidade x ativo.
+
+    V39.7.2:
+    - DDL é verificado uma única vez por worker;
+    - ativos são associados às localidades em uma única passagem, indexados por linha;
+    - fotos e usuários são carregados em lote;
+    - payload é reutilizado por poucos segundos e invalidado após gravação.
+    """
+    _ensure_chip_swap_tables()
+    now = time.monotonic()
+    if (not force and _chip_swap_payload_cache.get("data") is not None
+            and now - float(_chip_swap_payload_cache.get("at") or 0) < CHIP_SWAP_CACHE_TTL_SECONDS):
+        return _chip_swap_payload_cache["data"]
+
+    locations = Location.query.order_by(Location.company, Location.line, Location.location).all()
+    loc_by_id = {loc.id: loc for loc in locations}
+    by_line = {}
+    for loc in locations:
+        by_line.setdefault(_normalize_line_key(loc.line), []).append(loc)
+
+    assets_by_loc = {loc.id: [] for loc in locations}
+    validator_assets = BaseAsset.query.filter(
+        func.upper(func.coalesce(BaseAsset.equipment_type, '')).like('%VALID%')
+    ).all()
+
+    for asset in validator_assets:
+        if _canonical_equipment_type(asset.equipment_type) != "VALIDADOR" or "INATIVO" in normalize(asset.base_status):
             continue
-        items=[]
+        candidates = by_line.get(_normalize_line_key(asset.line), ())
+        if not candidates:
+            continue
+        ac = normalize(asset.company)
+        station_name = normalize(asset.locality)
+        code = normalize(asset.location_code or asset.station_code)
+        for loc in candidates:
+            lc = normalize(loc.company)
+            if ac and lc and lc not in ac and ac not in lc:
+                continue
+            station_text = normalize(loc.location)
+            if ((station_name and (station_name in station_text or station_text.endswith(station_name)))
+                    or (code and station_text.startswith(code + " "))):
+                assets_by_loc[loc.id].append(asset)
+                break
+
+    swaps_list = ChipSwap.query.all()
+    swaps = {(x.location_id, x.base_asset_id): x for x in swaps_list}
+    swap_ids = [x.id for x in swaps_list]
+    photo_map = {}
+    if swap_ids:
+        photos = ChipSwapPhoto.query.filter(
+            ChipSwapPhoto.chip_swap_id.in_(swap_ids)
+        ).order_by(ChipSwapPhoto.created_at).all()
+        for ph in photos:
+            photo_map.setdefault(ph.chip_swap_id, []).append(ph)
+
+    user_ids = {x.technician_id for x in swaps_list if x.technician_id}
+    users = {u.id: u for u in User.query.filter(User.id.in_(user_ids)).all()} if user_ids else {}
+
+    rows = []
+    for loc in locations:
+        assets = assets_by_loc.get(loc.id, [])
+        if not assets and int(loc.expected_validator or 0) <= 0:
+            continue
+        items = []
         for a in assets:
-            sw=swaps.get((loc.id,a.id)); photos=[]
-            if sw:
-                photos=ChipSwapPhoto.query.filter_by(chip_swap_id=sw.id).order_by(ChipSwapPhoto.created_at).all()
-            status=(sw.status if sw else "PENDENTE")
-            if photos and status!="CONCLUÍDA": status="CONCLUÍDA"
-            tech=db.session.get(User,sw.technician_id) if sw else None
-            items.append({"base_asset_id":a.id,"label":_chip_swap_asset_label(a),"serial":a.serial or "","model":a.model or "","status":status,"swap_id":sw.id if sw else None,"technician":tech.name if tech else "","completed_at":sw.completed_at.isoformat()+"Z" if sw and sw.completed_at else None,"photo_count":len(photos),"photos":[{"id":ph.id,"url":"/uploads/"+ph.stored_name,"name":ph.original_name} for ph in photos]})
-        total=max(len(items),int(loc.expected_validator or 0)); concluded=sum(1 for i in items if i["status"]=="CONCLUÍDA"); progress=sum(1 for i in items if i["status"]=="EM ANDAMENTO"); pending=max(total-concluded-progress,0)
-        rows.append({"id":loc.id,"company":loc.company,"line":loc.line,"location":loc.location,"reference_latitude":loc.reference_latitude,"reference_longitude":loc.reference_longitude,"total":total,"concluded":concluded,"in_progress":progress,"pending":pending,"percent":round((concluded/total*100),1) if total else 0,"validators":items})
+            sw = swaps.get((loc.id, a.id))
+            photos = photo_map.get(sw.id, []) if sw else []
+            status = sw.status if sw else "PENDENTE"
+            if photos and status != "CONCLUÍDA":
+                status = "CONCLUÍDA"
+            tech = users.get(sw.technician_id) if sw else None
+            items.append({
+                "base_asset_id": a.id,
+                "label": _chip_swap_asset_label(a),
+                "serial": a.serial or "",
+                "model": a.model or "",
+                "status": status,
+                "swap_id": sw.id if sw else None,
+                "technician": tech.name if tech else "",
+                "completed_at": sw.completed_at.isoformat()+"Z" if sw and sw.completed_at else None,
+                "photo_count": len(photos),
+                "photos": [{"id": ph.id, "url": "/uploads/"+ph.stored_name, "name": ph.original_name} for ph in photos],
+            })
+        total = max(len(items), int(loc.expected_validator or 0))
+        concluded = sum(1 for i in items if i["status"] == "CONCLUÍDA")
+        progress = sum(1 for i in items if i["status"] == "EM ANDAMENTO")
+        pending = max(total - concluded - progress, 0)
+        rows.append({
+            "id": loc.id, "company": loc.company, "line": loc.line, "location": loc.location,
+            "reference_latitude": loc.reference_latitude, "reference_longitude": loc.reference_longitude,
+            "total": total, "concluded": concluded, "in_progress": progress, "pending": pending,
+            "percent": round((concluded/total*100), 1) if total else 0, "validators": items,
+        })
+
+    _chip_swap_payload_cache["at"] = now
+    _chip_swap_payload_cache["data"] = rows
     return rows
 
 @app.get("/api/chip-swaps")
 @login_required
 def chip_swap_list_api():
-    return jsonify({"ok":True,"locations":_chip_swap_locations_payload()})
+    return jsonify({"ok": True, "locations": _chip_swap_locations_payload()})
 
 @app.post("/api/chip-swaps/<int:location_id>/<int:base_asset_id>")
 @field_required
-def chip_swap_save_api(location_id,base_asset_id):
-    loc=db.session.get(Location,location_id); asset=db.session.get(BaseAsset,base_asset_id)
-    if not loc or not asset or _canonical_equipment_type(asset.equipment_type)!="VALIDADOR" or not _base_asset_matches_location(asset,loc):
-        return jsonify({"ok":False,"error":"Validador de recarga não encontrado nesta localidade."}),404
-    lat=_optional_float(request.form.get("latitude")); lon=_optional_float(request.form.get("longitude")); acc=_optional_float(request.form.get("gps_accuracy"))
-    sw=ChipSwap.query.filter_by(location_id=location_id,base_asset_id=base_asset_id).first()
+def chip_swap_save_api(location_id, base_asset_id):
+    _ensure_chip_swap_tables()
+    loc = db.session.get(Location, location_id)
+    asset = db.session.get(BaseAsset, base_asset_id)
+    if not loc or not asset or _canonical_equipment_type(asset.equipment_type) != "VALIDADOR" or not _base_asset_matches_location(asset, loc):
+        return jsonify({"ok": False, "error": "Validador de recarga não encontrado nesta localidade."}), 404
+    lat = _optional_float(request.form.get("latitude"))
+    lon = _optional_float(request.form.get("longitude"))
+    acc = _optional_float(request.form.get("gps_accuracy"))
+    sw = ChipSwap.query.filter_by(location_id=location_id, base_asset_id=base_asset_id).first()
     if not sw:
-        sw=ChipSwap(location_id=location_id,base_asset_id=base_asset_id,technician_id=session["user_id"],status="EM ANDAMENTO",started_at=datetime.utcnow())
-        db.session.add(sw); db.session.flush()
-    sw.technician_id=session["user_id"]; sw.notes=(request.form.get("notes") or sw.notes or "").strip(); sw.latitude=lat; sw.longitude=lon; sw.gps_accuracy=acc; sw.updated_at=datetime.utcnow()
-    files=[f for f in request.files.getlist("photos") if f and f.filename]
+        sw = ChipSwap(location_id=location_id, base_asset_id=base_asset_id, technician_id=session["user_id"], status="EM ANDAMENTO", started_at=datetime.utcnow())
+        db.session.add(sw)
+        db.session.flush()
+    sw.technician_id = session["user_id"]
+    sw.notes = (request.form.get("notes") or sw.notes or "").strip()
+    sw.latitude = lat; sw.longitude = lon; sw.gps_accuracy = acc; sw.updated_at = datetime.utcnow()
+    files = [f for f in request.files.getlist("photos") if f and f.filename]
     for f in files:
-        safe=secure_filename(f.filename) or f"chip_{secrets.token_hex(4)}.jpg"; stored=f"chip_{sw.id}_{secrets.token_hex(6)}_{safe}"
+        safe = secure_filename(f.filename) or f"chip_{secrets.token_hex(4)}.jpg"
+        stored = f"chip_{sw.id}_{secrets.token_hex(6)}_{safe}"
         if _r2_available():
-            data=f.read(); key=f"chip-swaps/{datetime.utcnow().strftime('%Y/%m')}/{stored}"; _r2_put_bytes(key,data,f.mimetype or "application/octet-stream"); stored="r2__"+key
-        else: f.save(UPLOAD_DIR/stored)
-        db.session.add(ChipSwapPhoto(chip_swap_id=sw.id,original_name=f.filename,stored_name=stored,mime_type=f.mimetype,uploaded_by=session["user_id"]))
+            data = f.read(); key = f"chip-swaps/{datetime.utcnow().strftime('%Y/%m')}/{stored}"
+            _r2_put_bytes(key, data, f.mimetype or "application/octet-stream"); stored = "r2__" + key
+        else:
+            f.save(UPLOAD_DIR/stored)
+        db.session.add(ChipSwapPhoto(chip_swap_id=sw.id, original_name=f.filename, stored_name=stored, mime_type=f.mimetype, uploaded_by=session["user_id"]))
     db.session.flush()
-    photo_count=ChipSwapPhoto.query.filter_by(chip_swap_id=sw.id).count()
-    if photo_count>0:
-        sw.status="CONCLUÍDA"; sw.completed_at=sw.completed_at or datetime.utcnow()
+    photo_count = ChipSwapPhoto.query.filter_by(chip_swap_id=sw.id).count()
+    if photo_count > 0:
+        sw.status = "CONCLUÍDA"; sw.completed_at = sw.completed_at or datetime.utcnow()
     else:
-        sw.status="EM ANDAMENTO"
-    db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="CHIP_SWAP_UPDATE",entity_type="base_asset",entity_id=str(base_asset_id),detail=f"{loc.location} · {_chip_swap_asset_label(asset)} · {sw.status} · {photo_count} foto(s)"))
-    db.session.commit(); return jsonify({"ok":True,"status":sw.status,"photo_count":photo_count})
+        sw.status = "EM ANDAMENTO"
+    db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="CHIP_SWAP_UPDATE", entity_type="base_asset", entity_id=str(base_asset_id), detail=f"{loc.location} · {_chip_swap_asset_label(asset)} · {sw.status} · {photo_count} foto(s)"))
+    db.session.commit()
+    _invalidate_chip_swap_cache()
+    return jsonify({"ok": True, "status": sw.status, "photo_count": photo_count})
 
 @app.get("/api/chip-swaps/dashboard")
 @login_required
 def chip_swap_dashboard_api():
-    rows=_chip_swap_locations_payload(); total=sum(x["total"] for x in rows); done=sum(x["concluded"] for x in rows); progress=sum(x["in_progress"] for x in rows); pending=sum(x["pending"] for x in rows)
-    tech={}
-    for sw in ChipSwap.query.order_by(ChipSwap.updated_at.desc()).all():
-        u=db.session.get(User,sw.technician_id); name=u.name if u else "—"
-        t=tech.setdefault(name,{"name":name,"concluded":0,"in_progress":0,"total":0})
-        t["total"]+=1; t["concluded"]+=1 if sw.status=="CONCLUÍDA" else 0; t["in_progress"]+=1 if sw.status=="EM ANDAMENTO" else 0
-    return jsonify({"ok":True,"summary":{"total":total,"concluded":done,"in_progress":progress,"pending":pending,"percent":round(done/total*100,1) if total else 0},"locations":rows,"technicians":sorted(tech.values(),key=lambda x:(-x["concluded"],x["name"]))})
+    rows = _chip_swap_locations_payload()
+    total = sum(x["total"] for x in rows); done = sum(x["concluded"] for x in rows)
+    progress = sum(x["in_progress"] for x in rows); pending = sum(x["pending"] for x in rows)
+
+    swaps = ChipSwap.query.order_by(ChipSwap.updated_at.desc()).all()
+    user_ids = {sw.technician_id for sw in swaps if sw.technician_id}
+    users = {u.id: u for u in User.query.filter(User.id.in_(user_ids)).all()} if user_ids else {}
+    tech = {}
+    for sw in swaps:
+        u = users.get(sw.technician_id); name = u.name if u else "—"
+        t = tech.setdefault(name, {"name": name, "concluded": 0, "in_progress": 0, "total": 0})
+        t["total"] += 1
+        t["concluded"] += 1 if sw.status == "CONCLUÍDA" else 0
+        t["in_progress"] += 1 if sw.status == "EM ANDAMENTO" else 0
+    return jsonify({
+        "ok": True,
+        "summary": {"total": total, "concluded": done, "in_progress": progress, "pending": pending, "percent": round(done/total*100, 1) if total else 0},
+        "locations": rows,
+        "technicians": sorted(tech.values(), key=lambda x: (-x["concluded"], x["name"])),
+    })
 
 
 @app.get("/visao-panoramica")
@@ -6069,7 +6190,9 @@ def panorama_delete_photo_api(photo_id):
 
 with app.app_context():
     migrate_location_reference_columns()
-    db.create_all()
+    # V39.7.1: não deixa a criação das novas tabelas de Troca de Chips bloquear o startup.
+    core_tables=[t for t in db.metadata.sorted_tables if t.name not in ("chip_swaps","chip_swap_photos")]
+    db.metadata.create_all(bind=db.engine, tables=core_tables, checkfirst=True)
     migrate_team_schedule_columns()
     migrate_inventory_sync_uuid()
     migrate_user_archive_column()
