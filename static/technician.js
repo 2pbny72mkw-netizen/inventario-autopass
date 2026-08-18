@@ -532,18 +532,13 @@ function resetEquipmentFieldsForTypeChange(){
   renderSelectedBaseInfo(null);
 }
 function refreshAvailableEquipmentTypes(){
-  const sel=$('equipment_type'); if(!sel || !current) return;
-  const available=new Set(allLocationAssets.map(a=>normalizedEquipmentType(a.equipment_type||'ATM')));
-  if(Number(current.expected_atm||0)>0) available.add('ATM');
-  if(Number(current.expected_validator||0)>0) available.add('Validador de Recarga');
-  if(Number(current.expected_pos||0)>0) available.add('POS de Bilheteria');
+  const sel=$('equipment_type'); if(!sel) return;
+  // V39.2: o técnico sempre deve ter todas as famílias disponíveis.
+  // A localidade filtra apenas os ativos da base, nunca os tipos de equipamento.
   [...sel.options].forEach(o=>{
     if(!o.value) return;
-    // Outro permanece como exceção controlada para ativo encontrado fora da base.
-    const show=o.value==='Outro' || available.has(normalizedEquipmentType(o.value));
-    o.hidden=!show; o.disabled=!show; o.classList.toggle('fieldTypeUnavailable',!show);
+    o.hidden=false; o.disabled=false; o.classList.remove('fieldTypeUnavailable');
   });
-  if(sel.value && sel.selectedOptions[0]?.disabled) sel.value='';
 }
 function normalizedEquipmentType(value) {
   const v = String(value || '').trim().toUpperCase();
@@ -1330,7 +1325,7 @@ async function v30MaybeSync(reason='heartbeat'){
 window.addEventListener('pageshow',()=>setTimeout(()=>v30MaybeSync('pageshow'),700));
 window.addEventListener('focus',()=>setTimeout(()=>v30MaybeSync('focus'),700));
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')setTimeout(()=>v30MaybeSync('visible'),700)});
-setInterval(()=>v30MaybeSync('heartbeat'),20000);
+setInterval(()=>{if(document.visibilityState==='visible')v30MaybeSync('heartbeat')},120000);
 
 
 // V32 — progresso compacto da localidade atual para o técnico
