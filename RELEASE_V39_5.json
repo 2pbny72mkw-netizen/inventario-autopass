@@ -1,0 +1,12 @@
+{
+  "release": "V39.5",
+  "base": "V39.4",
+  "focus": "android_camera_memory",
+  "changes": [
+    "queue_metadata_without_blob_reads",
+    "duplicate_check_without_photo_deserialization",
+    "android_camera_skip_heavy_canvas_decode",
+    "formdata_blob_without_file_copy",
+    "single_refresh_after_queue_sync"
+  ]
+}
