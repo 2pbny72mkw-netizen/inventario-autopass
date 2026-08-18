@@ -270,6 +270,96 @@ async function idbGetAll(storeName) {
   });
 }
 
+
+// V39.4 — helpers de fila com baixo uso de memória.
+// Evitam carregar, de uma só vez, todos os Blobs/fotos pendentes do IndexedDB.
+async function idbCount(storeName) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, 'readonly');
+    const req = tx.objectStore(storeName).count();
+    req.onsuccess = () => resolve(req.result || 0);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function idbQueueSummaries() {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const out = [];
+    const tx = db.transaction(STORE_QUEUE, 'readonly');
+    const req = tx.objectStore(STORE_QUEUE).index('created_at').openCursor();
+    req.onsuccess = () => {
+      const cursor = req.result;
+      if (!cursor) return resolve(out);
+      const x = cursor.value || {};
+      out.push({
+        local_id: x.local_id,
+        created_at: x.created_at,
+        location_id: x.location_id,
+        location_name: x.location_name,
+        fields: x.fields || {},
+        file_count: Array.isArray(x.files) ? x.files.length : 0
+      });
+      cursor.continue();
+    };
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function idbQueueForLocationSummaries(locationId) {
+  const all = await idbQueueSummaries();
+  return all.filter(x => Number(x.location_id) === Number(locationId));
+}
+
+async function idbGetOldestQueueRecord() {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_QUEUE, 'readonly');
+    const req = tx.objectStore(STORE_QUEUE).index('created_at').openCursor();
+    req.onsuccess = () => resolve(req.result ? req.result.value : null);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+
+async function idbQueueIdsByCreatedAt() {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const out = [];
+    const tx = db.transaction(STORE_QUEUE, 'readonly');
+    const req = tx.objectStore(STORE_QUEUE).index('created_at').openKeyCursor();
+    req.onsuccess = () => {
+      const cursor = req.result;
+      if (!cursor) return resolve(out);
+      out.push(cursor.primaryKey);
+      cursor.continue();
+    };
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function idbHasQueueDuplicate(record) {
+  const db = await openDB();
+  const type = String(record.fields.equipment_type || '').trim().toUpperCase();
+  const identifier = String(record.fields.asset_identifier || '').trim().toUpperCase();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_QUEUE, 'readonly');
+    const req = tx.objectStore(STORE_QUEUE).openCursor();
+    req.onsuccess = () => {
+      const cursor = req.result;
+      if (!cursor) return resolve(false);
+      const x = cursor.value || {};
+      const same = Number(x.location_id) === Number(record.location_id) &&
+        String(x.fields?.equipment_type || '').trim().toUpperCase() === type &&
+        String(x.fields?.asset_identifier || '').trim().toUpperCase() === identifier;
+      if (same) return resolve(true);
+      cursor.continue();
+    };
+    req.onerror = () => reject(req.error);
+  });
+}
+
 async function idbDelete(storeName, key) {
   const db = await openDB();
   return new Promise((resolve, reject) => {
@@ -294,15 +384,16 @@ function connectionText() {
 }
 
 async function refreshConnectionUI() {
-  const queue = await idbGetAll(STORE_QUEUE);
+  const count = await idbCount(STORE_QUEUE);
   $('connectionStatus').textContent = connectionText();
-  $('syncSummary').textContent = queue.length
-    ? `${queue.length} registro(s) aguardando sincronização.`
+  $('syncSummary').textContent = count
+    ? `${count} registro(s) aguardando sincronização.`
     : 'Tudo sincronizado neste aparelho.';
-  $('pendingCount').textContent = `${queue.length} pendente(s)`;
-  $('syncBtn').disabled = !navigator.onLine || queue.length === 0;
+  $('pendingCount').textContent = `${count} pendente(s)`;
+  $('syncBtn').disabled = !navigator.onLine || count === 0;
   setLocalMode(isLocalMode());
-  renderPending(queue);
+  const summaries = count ? await idbQueueSummaries() : [];
+  renderPending(summaries);
 }
 
 function renderPending(queue) {
@@ -314,7 +405,7 @@ function renderPending(queue) {
   const ordered = [...queue].sort((a, b) => a.created_at - b.created_at);
   $('pendingList').innerHTML = ordered.map(x => {
     const dt = new Date(x.created_at).toLocaleString('pt-BR');
-    const files = x.files?.length || 0;
+    const files = x.file_count ?? x.files?.length ?? 0;
     const gps = x.fields.latitude && x.fields.longitude
       ? ` • GPS ${Number(x.fields.gps_accuracy || 0).toFixed(0)} m`
       : ' • GPS indisponível';
@@ -413,8 +504,7 @@ function showInfo() {
 }
 
 async function queuedForLocation(locationId) {
-  const queue = await idbGetAll(STORE_QUEUE);
-  return queue.filter(x => Number(x.location_id) === Number(locationId));
+  return idbQueueForLocationSummaries(locationId);
 }
 
 async function loadAlready() {
@@ -532,18 +622,13 @@ function resetEquipmentFieldsForTypeChange(){
   renderSelectedBaseInfo(null);
 }
 function refreshAvailableEquipmentTypes(){
-  const sel=$('equipment_type'); if(!sel || !current) return;
-  const available=new Set(allLocationAssets.map(a=>normalizedEquipmentType(a.equipment_type||'ATM')));
-  if(Number(current.expected_atm||0)>0) available.add('ATM');
-  if(Number(current.expected_validator||0)>0) available.add('Validador de Recarga');
-  if(Number(current.expected_pos||0)>0) available.add('POS de Bilheteria');
+  const sel=$('equipment_type'); if(!sel) return;
+  // V39.2: o técnico sempre deve ter todas as famílias disponíveis.
+  // A localidade filtra apenas os ativos da base, nunca os tipos de equipamento.
   [...sel.options].forEach(o=>{
     if(!o.value) return;
-    // Outro permanece como exceção controlada para ativo encontrado fora da base.
-    const show=o.value==='Outro' || available.has(normalizedEquipmentType(o.value));
-    o.hidden=!show; o.disabled=!show; o.classList.toggle('fieldTypeUnavailable',!show);
+    o.hidden=false; o.disabled=false; o.classList.remove('fieldTypeUnavailable');
   });
-  if(sel.value && sel.selectedOptions[0]?.disabled) sel.value='';
 }
 function normalizedEquipmentType(value) {
   const v = String(value || '').trim().toUpperCase();
@@ -640,7 +725,12 @@ function updateEquipmentTypeUI(){
     else if(type==='Bloqueio') title.textContent='Dados específicos do Bloqueio';
   }
   const isBlock=type==='Bloqueio';
-  ['fieldBom','fieldBu','fieldTop'].forEach(id=>{if($(id)) $(id).style.display=isBlock?'none':'block';});
+  const isValidator=type==='Validador de Recarga';
+  // V37.2: no Validador, Aplicação passa a ser a informação padronizada.
+  // BOM/BU/TOP permanecem no banco/base histórica, mas não são mais exibidos para novo preenchimento.
+  ['fieldBom','fieldBu','fieldTop'].forEach(id=>{if($(id)) $(id).style.display=(isBlock||isValidator)?'none':'block';});
+  // V37.2: IP/rede/SIM não é solicitado no formulário de Validador.
+  if($('fieldNetwork')) $('fieldNetwork').style.display=isValidator?'none':'block';
   if($('applicationLabel')) $('applicationLabel').textContent=isBlock?'Instalação':'Aplicação';
 }
 
@@ -747,7 +837,15 @@ $('base_asset_id').onchange = () => {
   $('asset_identifier').value=a.terminal_number||a.top_id||a.qrcode_id||a.serial||a.asset_key||'';
   $('serial').value=a.serial||''; $('supplier').value=a.supplier||''; $('model').value=a.model||'';
   if($('mount') && a.mount) $('mount').value=a.mount;
-  if($('application')) $('application').value=a.application||a.installation_type||'';
+  if($('application')){
+    let av=(a.application||a.installation_type||'').trim();
+    const key=av.toUpperCase().replace(/\s+/g,'');
+    const aliases={'BOM/BU/TOP':'BOM / TOP / BU','BOM/TOP/BU':'BOM / TOP / BU','BOM/TOP':'BOM / TOP','BU/TOP':'BU / TOP','BU/QRCODE/TOP':'BU / QRCODE / TOP','BU/TOP/PIX':'BU / TOP / PIX','QRCODE/PRAJA':'QRCODE / PRAJA','QRCODE/TOP':'QRCODE / TOP','TOP/PIX':'TOP / PIX'};
+    av=aliases[key]||av;
+    const sel=$('application');
+    if(av && ![...sel.options].some(o=>o.value===av)){const o=document.createElement('option');o.value=av;o.textContent=av;sel.appendChild(o);}
+    sel.value=av;
+  }
   if($('bom_id')) $('bom_id').value=a.bom_id||'';
   if($('bu_id')) $('bu_id').value=a.bu_id||'';
   if($('validator_top_id')) $('validator_top_id').value=a.top_id||a.terminal_number||'';
@@ -795,15 +893,7 @@ async function formToOfflineRecord(form) {
 }
 
 async function hasLocalDuplicate(record) {
-  const queue = await idbGetAll(STORE_QUEUE);
-  const type = String(record.fields.equipment_type || '').trim().toUpperCase();
-  const identifier = String(record.fields.asset_identifier || '').trim().toUpperCase();
-
-  return queue.some(x =>
-    Number(x.location_id) === Number(record.location_id) &&
-    String(x.fields.equipment_type || '').trim().toUpperCase() === type &&
-    String(x.fields.asset_identifier || '').trim().toUpperCase() === identifier
-  );
+  return idbHasQueueDuplicate(record);
 }
 
 function resetFieldWorkflowAfterSave(){
@@ -862,8 +952,8 @@ async function syncQueue({ silent = false } = {}) {
     return;
   }
 
-  const queue = (await idbGetAll(STORE_QUEUE)).sort((a, b) => a.created_at - b.created_at);
-  if (!queue.length) {
+  const initialCount = await idbCount(STORE_QUEUE);
+  if (!initialCount) {
     await refreshConnectionUI();
     if (!silent) showMsg('Não há registros pendentes.', true);
     return;
@@ -875,7 +965,11 @@ async function syncQueue({ silent = false } = {}) {
   let synced = 0;
   let duplicates = 0;
 
-  for (const record of queue) {
+  // V39.4: carregamos apenas os IDs da fila; cada registro (e suas fotos) entra na RAM individualmente.
+  const queueIds = await idbQueueIdsByCreatedAt();
+  for (const localId of queueIds) {
+    const record = await idbGet(STORE_QUEUE, localId);
+    if (!record) continue;
     try {
       const result = await sendRecord(record);
 
@@ -924,7 +1018,7 @@ async function syncQueue({ silent = false } = {}) {
   }
 
   if (!silent) {
-    const remaining = (await idbGetAll(STORE_QUEUE)).length;
+    const remaining = await idbCount(STORE_QUEUE);
     if (!remaining) {
       showMsg(
         duplicates
@@ -941,11 +1035,20 @@ async function syncQueue({ silent = false } = {}) {
 $('invForm').onsubmit = async e => {
   e.preventDefault();
 
+  if(evidenceProcessingCount>0){
+    showMsg('Aguarde a foto terminar de ser processada antes de salvar.',false);
+    return;
+  }
+
   if(editingInventoryId){
     try{
       const fd=new FormData(e.target);
-      const r=await fetch(`/api/inventory/${editingInventoryId}`,{method:'PATCH',body:fd});
-      const j=await r.json().catch(()=>({ok:false,error:'Resposta inválida do servidor.'}));
+      const r=await fetch(`/api/inventory/${editingInventoryId}`,{method:'PATCH',body:fd,headers:{'Accept':'application/json'}});
+      const ct=(r.headers.get('content-type')||'').toLowerCase();
+      if(r.redirected || !ct.includes('application/json')){
+        showMsg('Sua sessão ou permissão não permite alterar este cadastro. Atualize a página e tente novamente.',false);return;
+      }
+      const j=await r.json().catch(()=>({ok:false,error:'O servidor retornou uma resposta inválida.'}));
       if(!r.ok){showMsg(j.error||'Não foi possível atualizar o cadastro.',false);return;}
       showMsg('Cadastro atualizado com sucesso.',true);
       editingInventoryId=null; e.target.reset(); resetFieldWorkflowAfterSave(); $('location_id').value=current.id; clearGpsFields(); updateEquipmentTypeUI(); renderSelectedBaseInfo(null);
@@ -1064,8 +1167,8 @@ let autoSyncRetryMs = 15000;
 
 async function autoSyncQueue(reason='auto'){
   if(autoSyncRunning || !navigator.onLine) return;
-  const queue = await idbGetAll(STORE_QUEUE);
-  if(!queue.length){
+  const queueCount = await idbCount(STORE_QUEUE);
+  if(!queueCount){
     await refreshConnectionUI();
     return;
   }
@@ -1073,16 +1176,16 @@ async function autoSyncQueue(reason='auto'){
   autoSyncRunning = true;
   try{
     $('connectionStatus').textContent = `🔵 Sincronizando automaticamente...`;
-    showMsg(`Conexão disponível. Sincronizando ${queue.length} registro(s) automaticamente...`, true);
+    showMsg(`Conexão disponível. Sincronizando ${queueCount} registro(s) automaticamente...`, true);
 
     await syncQueue({silent:true});
 
-    const remaining = await idbGetAll(STORE_QUEUE);
-    if(!remaining.length){
+    const remaining = await idbCount(STORE_QUEUE);
+    if(!remaining){
       autoSyncRetryMs = 15000;
       showMsg('Sincronização automática concluída. Tudo enviado ao servidor.', true);
     }else{
-      showMsg(`${remaining.length} registro(s) continuam pendentes. Nova tentativa automática será realizada.`, false);
+      showMsg(`${remaining} registro(s) continuam pendentes. Nova tentativa automática será realizada.`, false);
       scheduleAutoSyncRetry();
     }
   }catch(err){
@@ -1114,9 +1217,9 @@ function triggerAutoSyncSoon(delay=2500){
 
 window.addEventListener('online', async () => {
   await refreshConnectionUI();
-  const queue = await idbGetAll(STORE_QUEUE);
-  if (queue.length) {
-    showMsg(`Conexão restabelecida. ${queue.length} registro(s) serão sincronizados automaticamente.`, true);
+  const queueCount = await idbCount(STORE_QUEUE);
+  if (queueCount) {
+    showMsg(`Conexão restabelecida. ${queueCount} registro(s) serão sincronizados automaticamente.`, true);
     triggerAutoSyncSoon(2500);
   }
 });
@@ -1134,12 +1237,12 @@ $('localMode').addEventListener('change', async e => {
   if (e.target.checked) {
     showMsg('Modo coleta local ativado. Os registros ficam no aparelho durante a coleta e serão sincronizados automaticamente quando o modo local for desativado ou a aplicação retomar o fluxo online.', true);
   } else {
-    const queue = await idbGetAll(STORE_QUEUE);
-    if (queue.length && navigator.onLine) {
-      showMsg(`${queue.length} registro(s) pendentes. Iniciando sincronização automática...`, true);
+    const queueCount = await idbCount(STORE_QUEUE);
+    if (queueCount && navigator.onLine) {
+      showMsg(`${queueCount} registro(s) pendentes. Iniciando sincronização automática...`, true);
       triggerAutoSyncSoon(1200);
-    } else if (queue.length) {
-      showMsg(`${queue.length} registro(s) aguardando conexão para sincronização automática.`, true);
+    } else if (queueCount) {
+      showMsg(`${queueCount} registro(s) aguardando conexão para sincronização automática.`, true);
     } else {
       showMsg('Modo coleta local desativado.', true);
     }
@@ -1160,9 +1263,9 @@ function showMsg(t, ok) {
 
     setLocalMode(isLocalMode());
 
-    const startupQueue = await idbGetAll(STORE_QUEUE);
-    if(navigator.onLine && startupQueue.length && !isLocalMode()){
-      showMsg(`${startupQueue.length} registro(s) pendentes encontrados. Sincronização automática será iniciada.`, true);
+    const startupQueueCount = await idbCount(STORE_QUEUE);
+    if(navigator.onLine && startupQueueCount && !isLocalMode()){
+      showMsg(`${startupQueueCount} registro(s) pendentes encontrados. Sincronização automática será iniciada.`, true);
       triggerAutoSyncSoon(1800);
     }
   } catch (err) {
@@ -1184,7 +1287,7 @@ if($('refreshNearbyBtn')) $('refreshNearbyBtn').addEventListener('click',async()
 if($('gps_override_reason')) $('gps_override_reason').addEventListener('input',updateGpsValidation);
 
 const TEAM_LOCATION_KEY='autopass-team-location-enabled';
-let teamLocationWatchId=null;
+let teamLocationWatchId=null; let teamLocationTimer=null;
 let teamLocationLastSent=0;
 
 function setTeamLocationStatus(text, ok=false){
@@ -1223,54 +1326,28 @@ async function sendTeamLocation(position){
 }
 
 function stopTeamLocation(){
-  if(teamLocationWatchId!==null && navigator.geolocation){
-    navigator.geolocation.clearWatch(teamLocationWatchId);
-  }
+  if(teamLocationTimer!==null){clearInterval(teamLocationTimer);teamLocationTimer=null;}
   teamLocationWatchId=null;
   localStorage.removeItem(TEAM_LOCATION_KEY);
-  if($('teamLocationToggle')) $('teamLocationToggle').textContent='Ativar localização';
-  setTeamLocationStatus('Localização da equipe desativada neste aparelho.');
+  if($('teamLocationToggle')) $('teamLocationToggle').textContent='Atualizar localização';
+  setTeamLocationStatus('A coleta automática ocorre somente durante a sessão ativa.');
 }
 
 function startTeamLocation(){
-  if(!navigator.geolocation){
-    setTeamLocationStatus('Geolocalização não disponível neste navegador/aparelho.',false);
-    return;
-  }
-  if(teamLocationWatchId!==null) return;
-
-  setTeamLocationStatus('Solicitando autorização de localização...');
-  teamLocationWatchId=navigator.geolocation.watchPosition(
+  if(!navigator.geolocation){setTeamLocationStatus('Geolocalização não disponível neste navegador/aparelho.',false);return;}
+  setTeamLocationStatus('Atualizando localização...');
+  navigator.geolocation.getCurrentPosition(
     position=>sendTeamLocation(position),
-    error=>{
-      const msg={
-        1:'Permissão de localização negada.',
-        2:'Localização indisponível neste momento.',
-        3:'Tempo esgotado ao obter localização.'
-      }[error.code]||'Não foi possível obter a localização.';
-      setTeamLocationStatus(msg,false);
-      if(error.code===1){
-        if(teamLocationWatchId!==null) navigator.geolocation.clearWatch(teamLocationWatchId);
-        teamLocationWatchId=null;
-        localStorage.removeItem(TEAM_LOCATION_KEY);
-        if($('teamLocationToggle')) $('teamLocationToggle').textContent='Ativar localização';
-      }
-    },
-    {enableHighAccuracy:true,maximumAge:30000,timeout:15000}
+    error=>setTeamLocationStatus(({1:'Permissão de localização negada.',2:'Localização indisponível neste momento.',3:'Tempo esgotado ao obter localização.'}[error.code]||'Não foi possível obter a localização.'),false),
+    {enableHighAccuracy:false,maximumAge:60000,timeout:10000}
   );
-  localStorage.setItem(TEAM_LOCATION_KEY,'1');
-  if($('teamLocationToggle')) $('teamLocationToggle').textContent='Desativar localização';
+  if($('teamLocationToggle')) $('teamLocationToggle').textContent='Atualizar localização';
 }
 
+localStorage.removeItem(TEAM_LOCATION_KEY);
 if($('teamLocationToggle')){
-  $('teamLocationToggle').addEventListener('click',()=>{
-    if(teamLocationWatchId!==null) stopTeamLocation();
-    else startTeamLocation();
-  });
-
-  if(localStorage.getItem(TEAM_LOCATION_KEY)==='1'){
-    startTeamLocation();
-  }
+  $('teamLocationToggle').textContent='Atualizar localização';
+  $('teamLocationToggle').addEventListener('click',startTeamLocation);
 }
 
 
@@ -1281,39 +1358,126 @@ function updateFieldHeroConnection(){
 }
 window.addEventListener('online',updateFieldHeroConnection); window.addEventListener('offline',updateFieldHeroConnection); updateFieldHeroConnection();
 document.getElementById('equipment_type')?.addEventListener('change',()=>{if(document.getElementById('equipment_type').value)document.getElementById('fieldStep2')?.classList.add('done');});
+// V39.4 — captura de evidências otimizada para aparelhos móveis.
+// Reduz a foto logo após a captura e libera recursos temporários (ImageBitmap/ObjectURL/canvas).
+const EVIDENCE_MAX_SIDE = 1920;
+const EVIDENCE_JPEG_QUALITY = 0.82;
+let evidenceProcessingCount = 0;
+
+function evidenceFileCount(){
+  return [...document.querySelectorAll('input[name="attachments"]')]
+    .reduce((n,x)=>n+(x.files?.length||0),0);
+}
+
 function updateEvidencePicker(){
-  const inputs=[...document.querySelectorAll('input[name="attachments"]')];
-  const count=inputs.reduce((n,x)=>n+(x.files?.length||0),0);
-  const box=document.getElementById('evidenceCount'); if(box)box.textContent=count?`${count} mídia(s) selecionada(s). Você pode adicionar mais.`:'Nenhuma mídia selecionada.';
+  const count=evidenceFileCount();
+  const box=document.getElementById('evidenceCount');
+  if(box)box.textContent=count?`${count} mídia(s) selecionada(s). Você pode adicionar mais.`:'Nenhuma mídia selecionada.';
   if(count)document.getElementById('fieldStep3')?.classList.add('done');
 }
+
+async function imageSourceFromFile(file){
+  if('createImageBitmap' in window){
+    try{
+      const bitmap=await createImageBitmap(file,{imageOrientation:'from-image'});
+      return {source:bitmap,width:bitmap.width,height:bitmap.height,cleanup:()=>{try{bitmap.close()}catch(_){}}};
+    }catch(_e){}
+  }
+  const url=URL.createObjectURL(file);
+  const img=new Image();
+  await new Promise((resolve,reject)=>{img.onload=resolve;img.onerror=reject;img.src=url;});
+  return {source:img,width:img.naturalWidth||img.width,height:img.naturalHeight||img.height,cleanup:()=>{URL.revokeObjectURL(url);img.src='';}};
+}
+
+async function optimizeEvidenceImage(file){
+  if(!file || !String(file.type||'').startsWith('image/')) return file;
+  // Imagens já pequenas não precisam ser decodificadas novamente.
+  if(file.size && file.size <= 900*1024) return file;
+  let decoded=null, canvas=null;
+  try{
+    decoded=await imageSourceFromFile(file);
+    const scale=Math.min(1,EVIDENCE_MAX_SIDE/Math.max(decoded.width,decoded.height));
+    const width=Math.max(1,Math.round(decoded.width*scale));
+    const height=Math.max(1,Math.round(decoded.height*scale));
+    canvas=document.createElement('canvas');
+    canvas.width=width; canvas.height=height;
+    const ctx=canvas.getContext('2d',{alpha:false});
+    ctx.drawImage(decoded.source,0,0,width,height);
+    const blob=await new Promise((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error('Falha ao otimizar a foto.')),'image/jpeg',EVIDENCE_JPEG_QUALITY));
+    const base=(file.name||'foto').replace(/\.[^.]+$/,'');
+    return new File([blob],`${base}-v394.jpg`,{type:'image/jpeg',lastModified:Date.now()});
+  }finally{
+    if(decoded) decoded.cleanup();
+    if(canvas){
+      const ctx=canvas.getContext('2d');
+      try{ctx?.clearRect(0,0,canvas.width,canvas.height)}catch(_e){}
+      canvas.width=1; canvas.height=1; canvas=null;
+    }
+  }
+}
+
+async function optimizeInputFiles(input){
+  const files=[...(input.files||[])];
+  if(!files.length) return;
+  evidenceProcessingCount++;
+  input.disabled=true;
+  const saveBtn=document.getElementById('saveBtn');
+  if(saveBtn) saveBtn.disabled=true;
+  const label=input.closest('.evidenceAction');
+  const oldText=label?.firstChild?.textContent;
+  if(label?.firstChild) label.firstChild.textContent='⏳ Processando mídia... ';
+  try{
+    const dt=new DataTransfer();
+    for(const file of files){
+      if(String(file.type||'').startsWith('image/')) dt.items.add(await optimizeEvidenceImage(file));
+      else dt.items.add(file);
+    }
+    input.files=dt.files;
+  }finally{
+    input.disabled=false;
+    evidenceProcessingCount=Math.max(0,evidenceProcessingCount-1);
+    if(saveBtn && evidenceProcessingCount===0) saveBtn.disabled=false;
+    if(label?.firstChild && oldText) label.firstChild.textContent=oldText;
+  }
+}
+
+function spawnNextCameraInput(input){
+  if(!input.matches('[data-evidence-camera]') || !input.files?.length || input.dataset.spawned) return;
+  input.dataset.spawned='1';
+  const label=input.closest('.cameraAction');
+  if(!label)return;
+  label.classList.add('selectedEvidence');
+  if(label.firstChild) label.firstChild.textContent='✅ Foto adicionada ';
+  const clone=label.cloneNode(true);
+  clone.classList.remove('selectedEvidence');
+  const cloneInput=clone.querySelector('input');
+  cloneInput.value='';
+  delete cloneInput.dataset.boundEvidence;
+  delete cloneInput.dataset.spawned;
+  if(clone.firstChild) clone.firstChild.textContent='📷 Tirar outra foto ';
+  label.insertAdjacentElement('afterend',clone);
+  bindEvidenceInputs();
+}
+
 function bindEvidenceInputs(){
   document.querySelectorAll('input[name="attachments"]').forEach(input=>{
-    if(input.dataset.boundEvidence)return; input.dataset.boundEvidence='1';
-    input.addEventListener('change',()=>{
-      if(input.matches('[data-evidence-camera]') && input.files?.length && !input.dataset.spawned){
-        input.dataset.spawned='1';
-        const label=input.closest('.cameraAction');
-        if(label){
-          label.classList.add('selectedEvidence');
-          if(label.firstChild) label.firstChild.textContent='✅ Foto adicionada ';
-          const clone=label.cloneNode(true);
-          clone.classList.remove('selectedEvidence');
-          const cloneInput=clone.querySelector('input');
-          cloneInput.value='';
-          delete cloneInput.dataset.boundEvidence;
-          delete cloneInput.dataset.spawned;
-          if(clone.firstChild) clone.firstChild.textContent='📷 Tirar outra foto ';
-          label.insertAdjacentElement('afterend',clone);
-          bindEvidenceInputs();
-        }
+    if(input.dataset.boundEvidence)return;
+    input.dataset.boundEvidence='1';
+    input.addEventListener('change',async()=>{
+      try{
+        await optimizeInputFiles(input);
+        spawnNextCameraInput(input);
+        updateEvidencePicker();
+      }catch(err){
+        console.error('Falha ao processar evidência:',err);
+        try{input.value=''}catch(_e){}
+        showMsg('Não foi possível processar esta foto. Feche outros aplicativos e tente novamente.',false);
+        updateEvidencePicker();
       }
-      updateEvidencePicker();
     });
   });
 }
 bindEvidenceInputs();
-document.querySelectorAll('input[name="attachments"]').forEach(x=>x.addEventListener('change',updateEvidencePicker));
 
 function resetEvidencePickerUI(){
   const inputs=[...document.querySelectorAll('input[name="attachments"]')];
@@ -1331,15 +1495,15 @@ function resetEvidencePickerUI(){
 async function v30MaybeSync(reason='heartbeat'){
   if(!navigator.onLine) return;
   try{
-    const q=await idbGetAll(STORE_QUEUE);
-    if(!q.length) return;
+    const qCount=await idbCount(STORE_QUEUE);
+    if(!qCount) return;
     await autoSyncQueue(reason);
   }catch(err){ console.warn('V30 auto-sync:',err); }
 }
 window.addEventListener('pageshow',()=>setTimeout(()=>v30MaybeSync('pageshow'),700));
 window.addEventListener('focus',()=>setTimeout(()=>v30MaybeSync('focus'),700));
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')setTimeout(()=>v30MaybeSync('visible'),700)});
-setInterval(()=>v30MaybeSync('heartbeat'),20000);
+setInterval(()=>{if(document.visibilityState==='visible')v30MaybeSync('heartbeat')},120000);
 
 
 // V32 — progresso compacto da localidade atual para o técnico
