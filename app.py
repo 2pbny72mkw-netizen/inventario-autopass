@@ -34,7 +34,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V39.5"
+APP_RELEASE = "V39.7"
 DASHBOARD_RELEASE = "dashboard-v39-0"
 TEAMS_RELEASE = "teams-v39-0"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -362,6 +362,35 @@ class Attachment(db.Model):
     original_name = db.Column(db.String(300), nullable=False)
     stored_name = db.Column(db.String(400), nullable=False)
     mime_type = db.Column(db.String(180))
+
+
+
+
+class ChipSwap(db.Model):
+    __tablename__ = "chip_swaps"
+    id = db.Column(db.Integer, primary_key=True)
+    location_id = db.Column(db.Integer, db.ForeignKey("locations.id", ondelete="CASCADE"), nullable=False, index=True)
+    base_asset_id = db.Column(db.Integer, db.ForeignKey("base_assets.id"), nullable=False, index=True)
+    technician_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    status = db.Column(db.String(40), nullable=False, default="EM ANDAMENTO", index=True)
+    notes = db.Column(db.Text)
+    latitude = db.Column(db.Float)
+    longitude = db.Column(db.Float)
+    gps_accuracy = db.Column(db.Float)
+    started_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    completed_at = db.Column(db.DateTime, index=True)
+    updated_at = db.Column(db.DateTime)
+    __table_args__ = (UniqueConstraint("location_id", "base_asset_id", name="uq_chip_swap_location_asset"),)
+
+class ChipSwapPhoto(db.Model):
+    __tablename__ = "chip_swap_photos"
+    id = db.Column(db.Integer, primary_key=True)
+    chip_swap_id = db.Column(db.Integer, db.ForeignKey("chip_swaps.id", ondelete="CASCADE"), nullable=False, index=True)
+    original_name = db.Column(db.String(300), nullable=False)
+    stored_name = db.Column(db.String(700), nullable=False)
+    mime_type = db.Column(db.String(180))
+    uploaded_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
 
 
 class PanoramaPoint(db.Model):
@@ -5894,6 +5923,83 @@ def cleanup_v352_test_reference():
     if changed:
         db.session.commit()
     return changed
+
+
+
+
+@app.get("/troca-chips")
+@login_required
+def chip_swap_page():
+    if session.get("role") not in ("manager", "technician", "consultation", "dispatcher"):
+        return redirect(url_for("teams_page"))
+    return render_template("chip_swap.html")
+
+def _chip_swap_asset_label(a):
+    return a.description or a.terminal_number or a.asset_key or a.serial or f"Validador #{a.id}"
+
+def _chip_swap_locations_payload():
+    swaps={(x.location_id,x.base_asset_id):x for x in ChipSwap.query.all()}
+    rows=[]
+    for loc in Location.query.order_by(Location.company,Location.line,Location.location).all():
+        assets=[a for a in BaseAsset.query.all() if _canonical_equipment_type(a.equipment_type)=="VALIDADOR" and _base_asset_matches_location(a,loc)]
+        if not assets and int(loc.expected_validator or 0)<=0:
+            continue
+        items=[]
+        for a in assets:
+            sw=swaps.get((loc.id,a.id)); photos=[]
+            if sw:
+                photos=ChipSwapPhoto.query.filter_by(chip_swap_id=sw.id).order_by(ChipSwapPhoto.created_at).all()
+            status=(sw.status if sw else "PENDENTE")
+            if photos and status!="CONCLUÍDA": status="CONCLUÍDA"
+            tech=db.session.get(User,sw.technician_id) if sw else None
+            items.append({"base_asset_id":a.id,"label":_chip_swap_asset_label(a),"serial":a.serial or "","model":a.model or "","status":status,"swap_id":sw.id if sw else None,"technician":tech.name if tech else "","completed_at":sw.completed_at.isoformat()+"Z" if sw and sw.completed_at else None,"photo_count":len(photos),"photos":[{"id":ph.id,"url":"/uploads/"+ph.stored_name,"name":ph.original_name} for ph in photos]})
+        total=max(len(items),int(loc.expected_validator or 0)); concluded=sum(1 for i in items if i["status"]=="CONCLUÍDA"); progress=sum(1 for i in items if i["status"]=="EM ANDAMENTO"); pending=max(total-concluded-progress,0)
+        rows.append({"id":loc.id,"company":loc.company,"line":loc.line,"location":loc.location,"reference_latitude":loc.reference_latitude,"reference_longitude":loc.reference_longitude,"total":total,"concluded":concluded,"in_progress":progress,"pending":pending,"percent":round((concluded/total*100),1) if total else 0,"validators":items})
+    return rows
+
+@app.get("/api/chip-swaps")
+@login_required
+def chip_swap_list_api():
+    return jsonify({"ok":True,"locations":_chip_swap_locations_payload()})
+
+@app.post("/api/chip-swaps/<int:location_id>/<int:base_asset_id>")
+@field_required
+def chip_swap_save_api(location_id,base_asset_id):
+    loc=db.session.get(Location,location_id); asset=db.session.get(BaseAsset,base_asset_id)
+    if not loc or not asset or _canonical_equipment_type(asset.equipment_type)!="VALIDADOR" or not _base_asset_matches_location(asset,loc):
+        return jsonify({"ok":False,"error":"Validador de recarga não encontrado nesta localidade."}),404
+    lat=_optional_float(request.form.get("latitude")); lon=_optional_float(request.form.get("longitude")); acc=_optional_float(request.form.get("gps_accuracy"))
+    sw=ChipSwap.query.filter_by(location_id=location_id,base_asset_id=base_asset_id).first()
+    if not sw:
+        sw=ChipSwap(location_id=location_id,base_asset_id=base_asset_id,technician_id=session["user_id"],status="EM ANDAMENTO",started_at=datetime.utcnow())
+        db.session.add(sw); db.session.flush()
+    sw.technician_id=session["user_id"]; sw.notes=(request.form.get("notes") or sw.notes or "").strip(); sw.latitude=lat; sw.longitude=lon; sw.gps_accuracy=acc; sw.updated_at=datetime.utcnow()
+    files=[f for f in request.files.getlist("photos") if f and f.filename]
+    for f in files:
+        safe=secure_filename(f.filename) or f"chip_{secrets.token_hex(4)}.jpg"; stored=f"chip_{sw.id}_{secrets.token_hex(6)}_{safe}"
+        if _r2_available():
+            data=f.read(); key=f"chip-swaps/{datetime.utcnow().strftime('%Y/%m')}/{stored}"; _r2_put_bytes(key,data,f.mimetype or "application/octet-stream"); stored="r2__"+key
+        else: f.save(UPLOAD_DIR/stored)
+        db.session.add(ChipSwapPhoto(chip_swap_id=sw.id,original_name=f.filename,stored_name=stored,mime_type=f.mimetype,uploaded_by=session["user_id"]))
+    db.session.flush()
+    photo_count=ChipSwapPhoto.query.filter_by(chip_swap_id=sw.id).count()
+    if photo_count>0:
+        sw.status="CONCLUÍDA"; sw.completed_at=sw.completed_at or datetime.utcnow()
+    else:
+        sw.status="EM ANDAMENTO"
+    db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="CHIP_SWAP_UPDATE",entity_type="base_asset",entity_id=str(base_asset_id),detail=f"{loc.location} · {_chip_swap_asset_label(asset)} · {sw.status} · {photo_count} foto(s)"))
+    db.session.commit(); return jsonify({"ok":True,"status":sw.status,"photo_count":photo_count})
+
+@app.get("/api/chip-swaps/dashboard")
+@login_required
+def chip_swap_dashboard_api():
+    rows=_chip_swap_locations_payload(); total=sum(x["total"] for x in rows); done=sum(x["concluded"] for x in rows); progress=sum(x["in_progress"] for x in rows); pending=sum(x["pending"] for x in rows)
+    tech={}
+    for sw in ChipSwap.query.order_by(ChipSwap.updated_at.desc()).all():
+        u=db.session.get(User,sw.technician_id); name=u.name if u else "—"
+        t=tech.setdefault(name,{"name":name,"concluded":0,"in_progress":0,"total":0})
+        t["total"]+=1; t["concluded"]+=1 if sw.status=="CONCLUÍDA" else 0; t["in_progress"]+=1 if sw.status=="EM ANDAMENTO" else 0
+    return jsonify({"ok":True,"summary":{"total":total,"concluded":done,"in_progress":progress,"pending":pending,"percent":round(done/total*100,1) if total else 0},"locations":rows,"technicians":sorted(tech.values(),key=lambda x:(-x["concluded"],x["name"]))})
 
 
 @app.get("/visao-panoramica")
