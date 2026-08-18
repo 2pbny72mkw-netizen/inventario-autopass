@@ -34,7 +34,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V39.7.2"
+APP_RELEASE = "V39.7.3"
 DASHBOARD_RELEASE = "dashboard-v39-0"
 TEAMS_RELEASE = "teams-v39-0"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -2075,6 +2075,31 @@ def v8_operation_api():
             "server_queue": 0
         }
     })
+
+
+@app.get("/api/equipes/rail-network")
+@teams_view_required
+def teams_rail_network_api():
+    """V39.7.3 — payload leve e dedicado ao mapa de Equipes.
+
+    Evita usar /api/locations, que também calcula inventário, divergências e referências
+    observadas. Aqui enviamos apenas os campos necessários para trilhos/estações.
+    """
+    rows = (
+        db.session.query(
+            Location.id, Location.company, Location.line, Location.location,
+            Location.reference_latitude, Location.reference_longitude
+        )
+        .filter(Location.reference_latitude.isnot(None), Location.reference_longitude.isnot(None))
+        .order_by(Location.line, Location.location)
+        .all()
+    )
+    return jsonify([{
+        "id": r.id, "company": r.company or "", "line": r.line or "",
+        "location": r.location or "",
+        "reference_latitude": float(r.reference_latitude),
+        "reference_longitude": float(r.reference_longitude),
+    } for r in rows])
 
 
 @app.get("/equipes")
