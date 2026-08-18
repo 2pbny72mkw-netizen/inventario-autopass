@@ -33,10 +33,10 @@
           <label>Perfil *</label>
           <select name="role" id="roleSelect" required>
             <option value="technician">Técnico de Campo</option>
-            <option value="manager">Gestor</option>
+            {% if not is_hr_admin %}<option value="manager">Gestor</option>
             <option value="consultation">Consulta</option>
             {% if can_assign_sensitive_roles %}<option value="dispatcher">Dispatcher</option>{% endif %}
-            <option value="hr">RH</option>
+            <option value="hr">RH</option>{% endif %}
           </select>
         </div>
         <div class="fieldExtended">
@@ -113,8 +113,8 @@
     <p><b>Gestor</b><br><span class="muted">Dashboard, consultas, usuários, edição, conclusão/reabertura e funções administrativas.</span></p>
     <p><b>Técnico de Campo</b><br><span class="muted">Coleta de campo, equipamentos, evidências e conclusão conforme o fluxo operacional.</span></p>
     <p><b>Consulta</b><br><span class="muted">Somente leitura de dashboard e informações. Não cadastra, edita, conclui ou reabre registros.</span></p>
-    <p><b>RH</b><br><span class="muted">Visualiza equipes e administra usuários. Não acessa lançamentos de campo nem funções gerenciais do inventário.</span></p>
-    <p><b>Dispatcher</b><br><span class="muted">Acesso operacional somente a Dashboard, Equipes, Meu perfil e Sobre. Sem cadastro, edição ou exclusão administrativa.</span></p>
+    <p><b>RH</b><br><span class="muted">Visualiza equipes e administra usuários. Não acessa lançamentos de campo nem funções gerenciais.</span></p>
+    <p><b>Dispatcher</b><br><span class="muted">Dashboard e Equipes em modo operacional. Não acessa Equipamentos, Evidências, Lançamento ou Usuários.</span></p>
     <div class="notice">
       <b>Privacidade:</b> coletamos apenas os dados necessários para o acesso e a operação. CPF não faz parte deste cadastro.
     </div>
@@ -235,9 +235,9 @@
                     <label>Perfil *</label>
                     <select name="role" class="editRoleSelect" required>
                       <option value="technician" {% if u.role == "technician" %}selected{% endif %}>Técnico de Campo</option>
-                      {% if can_assign_sensitive_roles %}<option value="manager" {% if u.role == "manager" %}selected{% endif %}>Gestor</option>
+                      {% if not is_hr_admin %}{% if can_assign_sensitive_roles %}<option value="manager" {% if u.role == "manager" %}selected{% endif %}>Gestor</option>
                       <option value="consultation" {% if u.role == "consultation" %}selected{% endif %}>Consulta</option><option value="dispatcher" {% if u.role == "dispatcher" %}selected{% endif %}>Dispatcher</option>{% elif u.role in ("manager","consultation","dispatcher") %}<option value="{{ u.role }}" selected disabled>{{ {"manager":"Gestor","consultation":"Consulta","dispatcher":"Dispatcher"}.get(u.role,u.role) }}</option>{% endif %}
-                      <option value="hr" {% if u.role == "hr" %}selected{% endif %}>RH</option>
+                      <option value="hr" {% if u.role == "hr" %}selected{% endif %}>RH</option>{% endif %}
                     </select>
                   </div>
                   <div class="editExtended">

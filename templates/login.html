@@ -1,20 +1,24 @@
-
-{% extends "base.html" %}
-{% block title %}Login{% endblock %}
-
-{% block content %}
-<div class="loginbox card">
-    <h1>Sistema de Gestão Suporte a Campo</h1>
-    <p>Metrô • CPTM • Motiva / ViaQuatro / ViaMobilidade</p>
-
-    <form method="post">
-        <label>Usuário</label>
-        <input name="username" required autocomplete="username">
-
-        <label>Senha</label>
-        <input name="password" type="password" required autocomplete="current-password">
-
-        <button class="primary">Entrar</button>
-    </form>
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>Login · Sistema de Gestão Suporte a Campo</title>
+<meta name="theme-color" content="#17345d">
+<style>
+*{box-sizing:border-box}html,body{margin:0;min-height:100%;font-family:Arial,Helvetica,sans-serif;background:#f2f6fa;color:#102b4c}body{min-height:100vh;display:grid;place-items:center;padding:24px}.loginbox{width:min(100%,520px);background:#fff;border:1px solid #dce6ef;border-radius:22px;padding:30px;box-shadow:0 12px 34px rgba(18,48,78,.10)}h1{font-size:34px;line-height:1.08;margin:0 0 16px}p{font-size:18px;line-height:1.45;margin:0 0 26px;color:#334155}label{display:block;font-weight:700;margin:16px 0 7px}input{width:100%;font-size:18px;padding:15px 14px;border:1px solid #cfd9e3;border-radius:12px;background:#fff}button{width:100%;margin-top:20px;padding:15px;border:0;border-radius:12px;background:#214f83;color:#fff;font-size:18px;font-weight:700}.alert{margin-bottom:16px;padding:12px 14px;border-radius:10px;background:#fff4d6;color:#6b4e00}@media(max-width:600px){body{padding:16px}.loginbox{padding:22px}h1{font-size:30px}}
+</style>
+</head>
+<body>
+<div class="loginbox">
+  {% with msgs=get_flashed_messages() %}{% for m in msgs %}<div class="alert">{{m}}</div>{% endfor %}{% endwith %}
+  <h1>Sistema de Gestão<br>Suporte a Campo</h1>
+  <p>Metrô • CPTM • Motiva / ViaQuatro / ViaMobilidade</p>
+  <form method="post" autocomplete="on">
+    <label>Usuário</label><input name="username" required autocomplete="username">
+    <label>Senha</label><input name="password" type="password" required autocomplete="current-password">
+    <button type="submit">Entrar</button>
+  </form>
 </div>
-{% endblock %}
+</body>
+</html>

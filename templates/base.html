@@ -5,7 +5,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{% block title %}Sistema de Gestão Suporte a Campo{% endblock %}</title>
-<link rel="stylesheet" href="{{url_for('static',filename='app.css')}}?v=v39-2">
+<link rel="stylesheet" href="{{url_for('static',filename='app.css')}}?v=v39-3">
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#17345d">
 </head>
@@ -44,7 +44,7 @@
 </main>
 {% block scripts %}{% endblock %}
 <script>
-// V39.2 estabilidade mobile: remove Service Workers/caches antigos.
+// V39.3 estabilidade mobile: remove Service Workers/caches antigos.
 // O modo offline será reativado após homologação desta correção.
 if('serviceWorker' in navigator){
   window.addEventListener('load', async ()=>{
@@ -61,7 +61,7 @@ if('serviceWorker' in navigator){
 </script>
 
 {% if session.get('role') == 'technician' %}
-<script src="{{ url_for('static', filename='session_gps.js') }}?v=v39-2" defer></script>
+<script src="{{ url_for('static', filename='session_gps.js') }}?v=v39-3" defer></script>
 {% endif %}
 </body>
 </html>
