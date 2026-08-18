@@ -34,7 +34,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V39.7.3"
+APP_RELEASE = "V39.7.4"
 DASHBOARD_RELEASE = "dashboard-v39-0"
 TEAMS_RELEASE = "teams-v39-0"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -2169,8 +2169,12 @@ def _base_asset_matches_location(asset, loc):
     if asset_line != loc_line:
         return False
     ac, lc = normalize(asset.company), normalize(loc.company)
-    if ac and lc and lc not in ac and ac not in lc:
-        return False
+    # V39.7.4: a base histórica de Validadores pode manter o operador anterior
+    # (ex.: CPTM) mesmo quando a localidade hoje pertence à Via Mobilidade.
+    # Para VALIDADORES, linha + estação/sigla são a referência operacional.
+    if _canonical_equipment_type(asset.equipment_type) != "VALIDADOR":
+        if ac and lc and lc not in ac and ac not in lc:
+            return False
     station_text = normalize(loc.location)
     station_name = normalize(asset.locality)
     code = normalize(asset.location_code or asset.station_code)
@@ -2231,8 +2235,8 @@ def _expected_assets_by_location(force=False):
 
         for loc in candidates:
             lc = normalize(loc.company)
-            if ac and lc and lc not in ac and ac not in lc:
-                continue
+            # V39.7.4: para Validadores, a referência da base é o TERMINAL
+            # associado à linha/estação; não excluir por divergência de operador histórico.
             station_text = normalize(loc.location)
             matched = bool(
                 (station_name and (station_name in station_text or station_text.endswith(station_name)))
@@ -2484,8 +2488,12 @@ def api_assets(location_id):
         line_cmp = re.sub(r"^L(?=\d{2}\s*-)", "", line)
         if asset_line_cmp != line_cmp:
             continue
-        if company not in asset_company and asset_company not in company:
-            continue
+        # V39.7.4: Validadores são vinculados pela linha + estação/sigla.
+        # Não bloquear por empresa porque a planilha de terminais pode conservar
+        # o operador histórico enquanto a estação já está sob nova concessão.
+        if asset_type != "VALIDADOR":
+            if company not in asset_company and asset_company not in company:
+                continue
 
         station_name = normalize(a.locality)
         code = normalize(a.location_code or a.station_code)
@@ -5960,7 +5968,8 @@ def chip_swap_page():
     return render_template("chip_swap.html")
 
 def _chip_swap_asset_label(a):
-    return a.description or a.terminal_number or a.asset_key or a.serial or f"Validador #{a.id}"
+    # V39.7.4: TERMINAL é a identificação operacional principal do Validador de Recarga.
+    return (f"Terminal {a.terminal_number}" if a.terminal_number else None) or a.description or a.asset_key or a.serial or f"Validador #{a.id}"
 
 _chip_swap_tables_ready = False
 _chip_swap_payload_cache = {"at": 0.0, "data": None}
