@@ -5,7 +5,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{% block title %}Sistema de Gestão Suporte a Campo{% endblock %}</title>
-<link rel="stylesheet" href="{{url_for('static',filename='app.css')}}?v=v39-5">
+<link rel="stylesheet" href="{{url_for('static',filename='app.css')}}?v=v39-6">
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#17345d">
 </head>
@@ -26,7 +26,7 @@
       {% if session.get('role') == 'technician' %}<a href="/trabalho">Central de Trabalho</a>{% endif %}
       {% if session.get('role') in ('manager','consultation') %}<a href="/patrimonio">Equipamentos</a>{% endif %}
       {% if session.get('role') in ('manager','consultation') %}<a href="/evidencias-campo">Evidências</a>{% endif %}
-      {% if session.get('role') in ('manager','technician') %}<a href="/tecnico">Lançamento</a>{% endif %}
+      {% if session.get('role') in ('manager','technician') %}<a href="/tecnico">Lançamento</a><a href="/visao-panoramica">Visão panorâmica</a>{% elif session.get('role') in ('consultation','dispatcher') %}<a href="/visao-panoramica">Visão panorâmica</a>{% endif %}
       {% if session.get('role') in ('manager','consultation','hr','dispatcher') %}<a href="/equipes">Equipes</a>{% endif %}
       {% if session.get('role') in ('manager','hr') %}<a href="/usuarios">Usuários</a>{% endif %}
       <a href="/meu-perfil" class="navProfile">Meu perfil</a>
@@ -61,7 +61,7 @@ if('serviceWorker' in navigator){
 </script>
 
 {% if session.get('role') == 'technician' %}
-<script src="{{ url_for('static', filename='session_gps.js') }}?v=v39-5" defer></script>
+<script src="{{ url_for('static', filename='session_gps.js') }}?v=v39-6" defer></script>
 {% endif %}
 </body>
 </html>

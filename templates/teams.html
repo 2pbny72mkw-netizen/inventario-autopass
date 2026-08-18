@@ -27,7 +27,7 @@
   <article class="kpi supportKpi"><span>Apoio</span><b id="kSupport">0</b><small>5x2 · 08h–18h</small></article>
 </section>
 
-<section class="card"><div class="sectionHead"><div><h2>Filtros de equipes</h2><p class="muted">Refine a visualização e a exportação dos cadastros.</p></div></div><div class="grid4"><div><label>Buscar colaborador</label><input id="v38TeamSearch" placeholder="Nome do colaborador"></div><div><label>Cargo</label><select id="v38TeamCategory"><option value="">Todos</option><option value="TECNICO">Técnico</option><option value="SUPERVISOR">Supervisor</option><option value="APOIO">Apoio</option></select></div><div><label>Situação GPS</label><select id="v38TeamGps"><option value="">Todas</option><option value="ATUAL">Atual</option><option value="ATENÇÃO">Atenção</option><option value="ATRASADO">Atrasado</option><option value="SEM SINAL">Sem sinal</option></select></div><div style="display:flex;align-items:end"><button class="secondary" id="v38ClearTeam">Limpar filtros</button></div></div></section>
+<section class="card"><div class="sectionHead"><div><h2>Filtros de equipes</h2><p class="muted">Refine a visualização e a exportação dos cadastros.</p></div></div><div class="grid4"><div><label>Buscar colaborador</label><input id="v38TeamSearch" list="v396Collaborators" autocomplete="off" placeholder="Nome do colaborador"><datalist id="v396Collaborators"></datalist></div><div><label>Cargo</label><select id="v38TeamCategory"><option value="">Todos</option><option value="TECNICO">Técnico</option><option value="SUPERVISOR">Supervisor</option><option value="APOIO">Apoio</option></select></div><div><label>Situação GPS</label><select id="v38TeamGps"><option value="">Todas</option><option value="ATUAL">Atual</option><option value="ATENÇÃO">Atenção</option><option value="ATRASADO">Atrasado</option><option value="SEM SINAL">Sem sinal</option></select></div><div style="display:flex;align-items:end"><button class="secondary" id="v38ClearTeam">Limpar filtros</button></div></div></section>
 <section class="card teamMapCard">
   <div class="sectionHead">
     <div>
@@ -205,5 +205,5 @@
 {% endif %}
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="{{ url_for('static', filename='teams.js') }}?v=teams-v39-1"></script>
+<script src="{{ url_for('static', filename='teams.js') }}?v=teams-v39-6"></script>
 {% endblock %}

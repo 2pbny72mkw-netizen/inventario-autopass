@@ -1,4 +1,4 @@
-window.AUTOPASS_MANAGER_VERSION='dashboard-v34-1';
+window.AUTOPASS_MANAGER_VERSION='dashboard-v36-0';
 console.log('AUTOPASS Dashboard Executivo V25 carregado');
 let locations=[];
 let dashboardData=null;
@@ -12,6 +12,14 @@ const OFFICIAL_EXEC_TYPES=['ATM','VALIDADOR','POS','BLOQUEIO'];
 const DASHBOARD_DISPLAY_TYPES=['ATM','VALIDADOR','POS','TDI','BLOQUEIO','OUTRO'];
 function typeLabel(type){
   return type==='VALIDADOR'?'Recarga':type==='BLOQUEIO'?'Bloqueio':type==='OUTRO'?'Outro':type;
+}
+function technicalTdiExpected(){
+  return Number(
+    dashboardData?.technical_tdi?.expected ??
+    dashboardData?.official_park?.technical_tdi ??
+    (dashboardData?.by_type||[]).find(x=>x.type==='TDI')?.expected ??
+    80
+  );
 }
 function sumObjectValues(obj){return Object.values(obj||{}).reduce((a,b)=>a+Number(b||0),0)}
 function filteredLocationMetrics(rows,type=''){
@@ -32,6 +40,11 @@ function filteredLocationMetrics(rows,type=''){
   if(type){
     result.expected=result.byType[type]?.e||0;
     result.inventoried=result.byType[type]?.i||0;
+    // V36: TDI técnico tem uma única fonte executiva (80 por padrão),
+    // independentemente de quantos TDI estejam distribuídos por localidade na base detalhada.
+    if(type==='TDI' && !($('execCompany')?.value||'') && !($('execLine')?.value||'')){
+      result.expected=technicalTdiExpected();
+    }
   }else{
     result.expected=OFFICIAL_EXEC_TYPES.reduce((a,t)=>a+(result.byType[t]?.e||0),0);
     result.inventoried=OFFICIAL_EXEC_TYPES.reduce((a,t)=>a+(result.byType[t]?.i||0),0);
@@ -126,6 +139,20 @@ const railNamesByNumber={
   '1':'Azul','2':'Verde','3':'Vermelha','4':'Amarela','5':'Lilás','6':'Laranja',
   '7':'Rubi','8':'Diamante','9':'Esmeralda','10':'Turquesa','11':'Coral',
   '12':'Safira','13':'Jade','15':'Prata','17':'Ouro'
+};
+
+// V35.1 — geometria de contingência para linhas que ainda não possuem referências
+// geográficas suficientes cadastradas no banco. É usada somente para desenho da linha.
+const railFallbackGeometry={
+  '4':[
+    [-23.5362,-46.6335],[-23.5441,-46.6422],[-23.5489,-46.6520],[-23.5553,-46.6620],
+    [-23.5608,-46.6719],[-23.5662,-46.6840],[-23.5673,-46.6930],[-23.5669,-46.7012],
+    [-23.5718,-46.7080],[-23.5864,-46.7230],[-23.5944,-46.7330]
+  ],
+  '17':[
+    [-23.6217,-46.7012],[-23.6222,-46.6947],[-23.6209,-46.6878],[-23.6201,-46.6800],
+    [-23.6210,-46.6732],[-23.6241,-46.6670],[-23.6288,-46.6633],[-23.6328,-46.6603]
+  ]
 };
 
 function normalizeRailText(value){
@@ -268,6 +295,19 @@ function ensureGpsMap(){
     'Precisão GPS (auditoria)':gpsAccuracyLayer
   },{collapsed:false,position:'bottomright'}).addTo(gpsMap);
 
+  // V35 — controle nativo do Leaflet: permanece visível mesmo quando o cabeçalho do mapa é ocultado.
+  const fullscreenControl=L.control({position:'topright'});
+  fullscreenControl.onAdd=()=>{
+    const wrap=L.DomUtil.create('div','leaflet-bar autopassMapFullscreenControl');
+    const btn=L.DomUtil.create('button','autopassMapFullscreenBtn',wrap);
+    btn.type='button'; btn.title='Abrir mapa em tela cheia'; btn.setAttribute('aria-label','Abrir mapa em tela cheia');
+    btn.innerHTML='⛶ <span>Tela cheia</span>';
+    L.DomEvent.disableClickPropagation(wrap);
+    L.DomEvent.on(btn,'click',ev=>{L.DomEvent.stop(ev);setMapFullscreen(!$('gpsMap')?.classList.contains('gpsMapFullscreen'));});
+    return wrap;
+  };
+  fullscreenControl.addTo(gpsMap);
+
   gpsMap.on('click', async e=>{
     if(!referenceMode) return;
     const locationId=Number($('mapLocationSelect').value);
@@ -310,13 +350,17 @@ function renderRailLines(){
     (groups[n]??=[]).push(loc);
   });
 
-  Object.entries(groups).forEach(([number,stations])=>{
-    if(stations.length<2) return;
+  // Garante que 4-Amarela e 17-Ouro sejam desenhadas mesmo antes de todas as referências
+  // oficiais dessas estações serem cadastradas no banco.
+  ['4','17'].forEach(number=>{ if(!groups[number]) groups[number]=[]; });
 
-    const sequence=buildRailSequence(stations);
-    const coordinates=sequence.map(x=>[
+  Object.entries(groups).forEach(([number,stations])=>{
+    const sequence=stations.length>=2?buildRailSequence(stations):[];
+    const fallback=railFallbackGeometry[number]||[];
+    const coordinates=sequence.length>=2?sequence.map(x=>[
       Number(x.reference_latitude),Number(x.reference_longitude)
-    ]);
+    ]):fallback;
+    if(coordinates.length<2) return;
     const color=railColorsByNumber[number]||'#64748b';
 
     // Halo branco: aumenta contraste sobre o mapa-base.
@@ -328,18 +372,20 @@ function renderRailLines(){
       color,weight:7,opacity:1,lineCap:'round',lineJoin:'round'
     }).addTo(railLineLayer);
 
-    polyline.bindPopup(`<b>${esc(railDisplayName(sequence[0]?.line))}</b><br>${stations.length} estação(ões) com referência geográfica`);
+    polyline.bindPopup(`<b>Linha ${esc(number)} — ${esc(railNamesByNumber[number]||'')}</b><br>${stations.length} estação(ões) com referência geográfica${sequence.length<2?' · traçado de contingência':''}`);
 
     // Número da linha nas duas pontas do traçado.
-    [sequence[0],sequence[sequence.length-1]].forEach(endpoint=>{
-      if(!endpoint) return;
+    const endpoints=sequence.length>=2
+      ? [[Number(sequence[0].reference_latitude),Number(sequence[0].reference_longitude)],[Number(sequence[sequence.length-1].reference_latitude),Number(sequence[sequence.length-1].reference_longitude)]]
+      : [coordinates[0],coordinates[coordinates.length-1]];
+    endpoints.forEach(point=>{
+      if(!point) return;
       const icon=L.divIcon({
         className:'rail-line-end-icon',
         html:`<div class="rail-line-number" style="background:${color}">${esc(number)}</div>`,
         iconSize:[30,30],iconAnchor:[15,15]
       });
-      L.marker([Number(endpoint.reference_latitude),Number(endpoint.reference_longitude)],{icon,interactive:false})
-        .addTo(railLineLayer);
+      L.marker(point,{icon,interactive:false}).addTo(railLineLayer);
     });
   });
 }
@@ -444,19 +490,51 @@ function renderGpsMap(items){
 }
 
 
-function setMapFullscreen(on){
-  const mapEl=$('gpsMap');
-  const btn=$('toggleMapFullscreenBtn');
-  if(!mapEl) return;
-
-  mapEl.classList.toggle('gpsMapFullscreen',!!on);
-  document.body.classList.toggle('mapFullscreenOpen',!!on);
-  if(btn) btn.textContent=on?'Sair da tela cheia':'⛶ Tela cheia';
-
-  setTimeout(()=>{
-    try{ gpsMap?.invalidateSize(); }catch(_e){}
-  },80);
+async function setMapFullscreen(on){
+  const mapEl=$('gpsMap'); if(!mapEl)return;
+  const root=document.documentElement;
+  if(on){
+    mapEl.classList.add('gpsMapFullscreen');
+    document.body.classList.add('mapFullscreenOpen');
+    try{
+      if(!document.fullscreenElement && !document.webkitFullscreenElement){
+        if(root.requestFullscreen) await root.requestFullscreen();
+        else if(root.webkitRequestFullscreen) await root.webkitRequestFullscreen();
+      }
+    }catch(_e){
+      // O overlay fixo continua funcional mesmo se o navegador bloquear a Fullscreen API.
+    }
+  }else{
+    try{
+      if(document.fullscreenElement && document.exitFullscreen) await document.exitFullscreen();
+      else if(document.webkitFullscreenElement && document.webkitExitFullscreen) await document.webkitExitFullscreen();
+    }catch(_e){}
+    mapEl.classList.remove('gpsMapFullscreen');
+    document.body.classList.remove('mapFullscreenOpen');
+  }
+  const active=mapEl.classList.contains('gpsMapFullscreen');
+  const text=active?'✕ Sair da tela cheia':'⛶ Tela cheia';
+  if($('toggleMapFullscreenBtn')) $('toggleMapFullscreenBtn').textContent=text;
+  const leafletBtn=document.querySelector('.autopassMapFullscreenBtn');
+  if(leafletBtn) leafletBtn.innerHTML=active?'✕ <span>Sair da tela cheia</span>':'⛶ <span>Tela cheia</span>';
+  requestAnimationFrame(()=>setTimeout(()=>{try{gpsMap?.invalidateSize()}catch(_e){}},80));
 }
+
+function syncMapFullscreenState(){
+  const mapEl=$('gpsMap'); if(!mapEl)return;
+  const nativeActive=!!(document.fullscreenElement||document.webkitFullscreenElement);
+  if(!nativeActive && mapEl.classList.contains('gpsMapFullscreen')){
+    mapEl.classList.remove('gpsMapFullscreen');
+    document.body.classList.remove('mapFullscreenOpen');
+  }
+  const active=mapEl.classList.contains('gpsMapFullscreen');
+  const leafletBtn=document.querySelector('.autopassMapFullscreenBtn');
+  if(leafletBtn) leafletBtn.innerHTML=active?'✕ <span>Sair da tela cheia</span>':'⛶ <span>Tela cheia</span>';
+  if($('toggleMapFullscreenBtn')) $('toggleMapFullscreenBtn').textContent=active?'✕ Sair da tela cheia':'⛶ Tela cheia';
+  requestAnimationFrame(()=>setTimeout(()=>{try{gpsMap?.invalidateSize()}catch(_e){}},80));
+}
+document.addEventListener('fullscreenchange',syncMapFullscreenState);
+document.addEventListener('webkitfullscreenchange',syncMapFullscreenState);
 
 if($('toggleMapFullscreenBtn')){
   $('toggleMapFullscreenBtn').addEventListener('click',()=>{
@@ -676,11 +754,10 @@ function renderExecutiveFilters(){
   if([...line.options].some(o=>o.value===oldL))line.value=oldL;
 }
 function executiveFilteredLocations(){
-  const c=$('execCompany')?.value||'',line=$('execLine')?.value||'',type=$('execType')?.value||'',status=$('execStatus')?.value||'';
+  const c=$('execCompany')?.value||'',line=$('execLine')?.value||'',type=$('execType')?.value||'';
   return locations.filter(x=>
     (!c||x.company===c)&&
     (!line||x.line===line)&&
-    (!status || (status==='SEM REGISTRO' ? Number(x.inventoried||0)===0 : x.survey_status===status))&&
     (!type||Number((x.expected_by_type||{})[type]||0)>0||Number((x.inventoried_by_type||{})[type]||0)>0)
   );
 }
@@ -736,6 +813,23 @@ function renderV22Cockpit(){
   const conf=total?Math.round(matched/total*100):0;
   $('v22EvidenceQuality').innerHTML=`<div class="v22EvidenceHero"><b>${conf}%</b><span>itens conciliados</span></div><div class="v22EvidenceRows"><span>Visitas <b>${fmt(e.visits||0)}</b></span><span>Itens <b>${fmt(total)}</b></span><span>Revisar <b>${fmt(review)}</b></span><span>Fotos/vídeos <b>${fmt(media)}</b></span></div>`;
 }
+
+function renderV36Productivity(){
+  if(!dashboardData||!$('v36ProductivityStrip')) return;
+  const trend=dashboardData.trend_14d||[];
+  const total14=trend.reduce((a,x)=>a+Number(x.count||0),0);
+  const last7=trend.slice(-7);
+  const total7=last7.reduce((a,x)=>a+Number(x.count||0),0);
+  const pace=last7.length?total7/last7.length:0;
+  const tech=dashboardData.top_technicians_14d||[];
+  const top=tech[0]||null;
+  if($('v36Prod14')) $('v36Prod14').textContent=fmt(total14);
+  if($('v36Pace7')) $('v36Pace7').textContent=`${pace.toFixed(1).replace('.',',')}/dia`;
+  if($('v36ActiveTechs')) $('v36ActiveTechs').textContent=fmt(tech.length);
+  if($('v36TopTech')) $('v36TopTech').textContent=top?top.name:'—';
+  if($('v36TopTechDetail')) $('v36TopTechDetail').textContent=top?`${fmt(top.count)} lançamento(s) nos últimos 14 dias`:'sem produção recente';
+}
+
 
 function renderV25ExecutiveBI(){
   if(!dashboardData||!$('v25BiArena')) return;
@@ -828,6 +922,7 @@ function updateExecutiveView(){
   renderCriticalLocations();
   renderLocations();
   renderV22Cockpit();
+  renderV36Productivity();
 }
 
 function renderCriticalLocations(){
@@ -920,7 +1015,6 @@ if($('execReset')) $('execReset').onclick=()=>{
   renderExecutiveFilters();
   $('execLine').value='';
   $('execType').value='';
-  if($('execStatus')) $('execStatus').value='';
   document.querySelectorAll('.equipmentBig').forEach(x=>x.classList.remove('active'));
   applyExecutiveFilterToTable();
 };
@@ -953,14 +1047,14 @@ async function loadFieldEvidenceSummary(){
     if($('evItems')) $('evItems').textContent=fmt(d.items||0);
     if($('evMatched')) $('evMatched').textContent=fmt(d.matched||0);
     if($('evReview')) $('evReview').textContent=fmt(d.review||0);
-    if($('evMedia')) $('evMedia').textContent=fmt(d.media||0); if($('evUnresolved')) $('evUnresolved').textContent=fmt(d.unresolved_visits||0);
+    if($('evMedia')) $('evMedia').textContent=fmt(d.media||0);
   }catch(_err){}
 }
 
 // V23 — navegação lateral e primeiro Modo TV
 let v23ActiveView='overview';
 let v23TvTimer=null;
-const V23_TV_VIEWS=['overview','execution','quality','map','evidence','journal','ranking','competition'];
+const V23_TV_VIEWS=['overview','execution','competition','quality','map','evidence','ranking'];
 function v23SetView(view){
   v23ActiveView=view||'overview';
   document.body.dataset.dashboardView=v23ActiveView;
@@ -1061,32 +1155,104 @@ document.getElementById('v30ContractExport')?.addEventListener('click',()=>{
 setTimeout(loadV30Contracts,800);
 
 
-// V34 — Intelligence Wall / atenção gerencial
-function renderV34Intelligence(){
-  if(!dashboardData||!document.getElementById('v34Radial'))return;
-  const t=dashboardData.totals||{}, inv=dashboardData.inventory||{};
-  const exp=Number(t.expected||0), done=Number(inv.official_inventoried||0), pct=exp?Math.min(100,done/exp*100):0;
+// V35 — visão geral operacional filtrável
+function renderV35Overview(){
+  if(!dashboardData||!document.getElementById('v34Radial')) return;
+  const rows=executiveFilteredLocations();
+  const type=document.getElementById('execType')?.value||'';
+  const company=document.getElementById('execCompany')?.value||'';
+  const line=document.getElementById('execLine')?.value||'';
+  const metrics=filteredLocationMetrics(rows,type);
+  const noGeoFilters=!company&&!line;
+  // V36: TDI técnico usa a fonte única exposta pela API do dashboard.
+  if(noGeoFilters && type==='TDI'){
+    const tdiExpected=technicalTdiExpected();
+    const tdiInventoried=Number(dashboardData?.technical_tdi?.inventoried ?? (dashboardData.by_type||[]).find(x=>x.type==='TDI')?.inventoried ?? metrics.inventoried ?? 0);
+    metrics.expected=tdiExpected;
+    metrics.inventoried=tdiInventoried;
+    metrics.missing=Math.max(0,tdiExpected-tdiInventoried);
+    metrics.byType.TDI.e=tdiExpected;
+    metrics.byType.TDI.i=tdiInventoried;
+  }
+
+  // Cobertura: usa exatamente o mesmo recorte dos Big Numbers.
+  const exp=Number(metrics.expected||0), done=Number(metrics.inventoried||0);
+  const pct=exp?Math.min(100,done/exp*100):0;
   document.getElementById('v34Radial').style.setProperty('--pct',pct.toFixed(1)+'%');
   document.getElementById('v34RadialPct').textContent=pct.toFixed(1).replace('.',',')+'%';
-  document.getElementById('v34RadialText').textContent=`${fmt(done)} de ${fmt(exp)} ativos oficiais`;
-  const trend=dashboardData.trend_14d||[], max=Math.max(1,...trend.map(x=>Number(x.count||0)));
-  document.getElementById('v34Trend').innerHTML=trend.map((x,i)=>`<i style="height:${Math.max(5,Math.round(Number(x.count||0)/max*100))}%"><span>${fmt(x.count||0)}</span><small>${String(x.date||'').slice(8)}</small></i>`).join('');
-  const comps=(dashboardData.by_company||[]).slice().sort((a,b)=>Number(b.total||0)-Number(a.total||0)).slice(0,10);
-  document.getElementById('v34Heatmap').innerHTML=comps.map(x=>{const p=Number(x.total)?Math.round(Number(x.completed||0)/Number(x.total)*100):0;let c=p>=80?'hot5':p>=60?'hot4':p>=40?'hot3':p>=20?'hot2':'hot1';return `<div class="${c}" title="${esc(x.company||'—')} · ${p}%"><b>${esc((x.company||'—').slice(0,12))}</b><span>${p}%</span></div>`}).join('');
+  document.getElementById('v34RadialText').textContent=`${fmt(done)} de ${fmt(exp)} ativos no recorte`;
+
+  // Status das localidades — responde aos filtros Empresa/Linha/Tipo.
+  const countStatus=status=>rows.filter(x=>String(x.survey_status||'').toUpperCase()===status).length;
+  const completed=countStatus('CONCLUIDA'), progress=countStatus('EM ANDAMENTO'), pending=countStatus('PENDENTE');
+  const total=rows.length||0, denominator=Math.max(1,total);
+  const cp=completed/denominator*100, pp=progress/denominator*100, pendp=pending/denominator*100;
+  const setText=(id,val)=>{const e=document.getElementById(id);if(e)e.textContent=val;};
+  setText('v35Completed',fmt(completed)); setText('v35Progress',fmt(progress)); setText('v35Pending',fmt(pending));
+  setText('v35CompletedPct',Math.round(cp)+'%'); setText('v35ProgressPct',Math.round(pp)+'%'); setText('v35PendingPct',Math.round(pendp)+'%');
+  setText('v35LocationsTotal',`${fmt(total)} localidade(s) no recorte`);
+  setText('v35StatusContext',[company||'Todas empresas',line||'Todas linhas',type?typeLabel(type):'Todos os tipos'].join(' · '));
+  const doneBar=document.getElementById('v35StatusDone'), progBar=document.getElementById('v35StatusProgress'), pendBar=document.getElementById('v35StatusPending');
+  if(doneBar)doneBar.style.width=cp+'%'; if(progBar)progBar.style.width=pp+'%'; if(pendBar)pendBar.style.width=pendp+'%';
+
+  // Mix do parque — quando não há recorte geográfico usa os mesmos denominadores oficiais
+  // dos Big Numbers. TDI e Outro não compõem o parque oficial de 3.801 ativos.
+  const officialMap={}; (dashboardData.by_type||[]).forEach(x=>officialMap[x.type]=Number(x.expected||0));
+  let mix=[];
+  if(noGeoFilters){
+    const officialTypes=['ATM','VALIDADOR','POS','BLOQUEIO'];
+    if(type && officialTypes.includes(type)) mix=[{type,value:Number(officialMap[type]||0)}];
+    else if(type==='TDI'){ mix=[{type,value:technicalTdiExpected(),outsideOfficial:true}]; }
+    else if(type==='OUTRO'){ const z=metrics.byType.OUTRO||{i:0}; mix=[{type,value:Number(z.i||0),outsideOfficial:true}]; }
+    else mix=officialTypes.map(t=>({type:t,value:Number(officialMap[t]||0)})).filter(x=>x.value>0);
+  }else{
+    const mixTypes=type?[type]:['ATM','VALIDADOR','POS','BLOQUEIO'];
+    mix=mixTypes.map(t=>{const z=metrics.byType[t]||{e:0,i:0};return {type:t,value:Number(z.e||0)}}).filter(x=>x.value>0);
+  }
+  const mixTotal=mix.reduce((a,x)=>a+x.value,0);
+  const colors={ATM:'#2878d8',VALIDADOR:'#16b98e',POS:'#ff9f2e',TDI:'#8a63d2',BLOQUEIO:'#16b8b0',OUTRO:'#f4c64d'};
+  let cursor=0, stops=[];
+  mix.forEach(x=>{const start=cursor;cursor+=mixTotal?x.value/mixTotal*100:0;stops.push(`${colors[x.type]} ${start.toFixed(2)}% ${cursor.toFixed(2)}%`)});
+  const donut=document.getElementById('v35MixDonut'); if(donut)donut.style.background=mixTotal?`conic-gradient(${stops.join(',')})`:'#dfe8f1';
+  setText('v35MixTotal',fmt(mixTotal));
+  const mixLegend=document.getElementById('v35MixLegend');
+  if(mixLegend)mixLegend.innerHTML=mix.length?mix.map(x=>`<div><i style="background:${colors[x.type]}"></i><span>${esc(typeLabel(x.type))}</span><b>${fmt(x.value)}</b><small>${mixTotal?Math.round(x.value/mixTotal*100):0}%</small></div>`).join(''):'<div class="muted">Sem ativos no recorte.</div>';
+
+  // Evolução por empresa — distribuição de status, não apenas um percentual isolado.
+  const groups={};
+  rows.forEach(x=>{const key=x.company||'Não informado';const g=groups[key]||(groups[key]={total:0,completed:0,progress:0,pending:0});g.total++;const st=String(x.survey_status||'').toUpperCase();if(st==='CONCLUIDA')g.completed++;else if(st==='EM ANDAMENTO')g.progress++;else g.pending++;});
+  const companies=Object.entries(groups).map(([name,g])=>({name,...g,pct:g.total?Math.round(g.completed/g.total*100):0})).sort((a,b)=>b.pct-a.pct||b.completed-a.completed||b.total-a.total).slice(0,8);
+  const companyBox=document.getElementById('v35CompanyBars');
+  if(companyBox)companyBox.innerHTML=companies.length?companies.map(g=>{const d=g.total?g.completed/g.total*100:0,pr=g.total?g.progress/g.total*100:0,p=g.total?g.pending/g.total*100:0;return `<div class="v35CompanyRow"><div class="v35CompanyTitle"><b>${esc(g.name)}</b><span>${g.pct}% concluído · ${fmt(g.completed)}/${fmt(g.total)}</span></div><div class="v35CompanyTrack"><i class="done" style="width:${d}%"></i><i class="progress" style="width:${pr}%"></i><i class="pending" style="width:${p}%"></i></div><div class="v35CompanyMeta"><span><i class="dot done"></i>${fmt(g.completed)} concluídas</span><span><i class="dot progress"></i>${fmt(g.progress)} andamento</span><span><i class="dot pending"></i>${fmt(g.pending)} pendentes</span></div></div>`}).join(''):'<div class="muted">Sem empresas no recorte atual.</div>';
+
+  // Atenção continua gerencial, mas as localidades não iniciadas respeitam o recorte.
   const e=dashboardData.evidence||{}; const alerts=[
-    [Number(inv.divergences||0),'Divergências com a base','quality'],
-    [Number(inv.inoperative||0),'Equipamentos inoperantes','quality'],
     [Number(e.review||0),'Evidências aguardando revisão','evidence'],
-    [Number(e.unresolved_visits||0),'Visitas sem localidade vinculada','evidence'],
-    [Number(t.pending||0),'Localidades ainda não iniciadas','ranking']
+    [pending,'Localidades pendentes no recorte','ranking'],
+    [progress,'Localidades em andamento','execution'],
+    [Number(metrics.divergences||0),'Divergências com a base','quality'],
+    [Number(metrics.inoperative||0),'Equipamentos inoperantes','quality']
   ].sort((a,b)=>b[0]-a[0]);
-  document.getElementById('v34Attention').innerHTML=alerts.map(([n,label,view],i)=>`<button type="button" onclick="v23SetView('${view}')"><em>${i+1}</em><span>${esc(label)}</span><b>${fmt(n)}</b></button>`).join('');
+  const att=document.getElementById('v34Attention');
+  if(att)att.innerHTML=alerts.map(([n,label,view],i)=>`<button type="button" onclick="v23SetView('${view}')"><em>${i+1}</em><span>${esc(label)}</span><b>${fmt(n)}</b></button>`).join('');
 }
+
+// Compatibilidade: módulos antigos chamam este nome.
+function renderV34Intelligence(){ renderV35Overview(); }
+
 const _v34UpdateExecutiveView=updateExecutiveView; updateExecutiveView=function(){_v34UpdateExecutiveView();renderV34Intelligence();};
 
-// V38 — filtros e Diário de bordo
-['execStatus'].forEach(id=>document.getElementById(id)?.addEventListener('change',()=>{ updateExecutiveView(); applyExecutiveFilterToTable(); }));
-let v38JournalMap=null,v38JournalLayer=null;
-async function v38LoadJournalUsers(){try{const d=await fetch('/api/v38/diario-bordo?days=7').then(r=>r.json());const el=$('v38JournalUser');if(el&&d.users)el.innerHTML='<option value="">Selecione o colaborador</option>'+d.users.map(u=>`<option value="${u.id}">${esc(u.name)}</option>`).join('')}catch(e){}}
-async function v38LoadJournal(){const uid=$('v38JournalUser')?.value,days=$('v38JournalDays')?.value||7;if(!uid)return;const d=await fetch(`/api/v38/diario-bordo?user_id=${uid}&days=${days}`,{cache:'no-store'}).then(r=>r.json());$('v38JGps').textContent=fmt(d.summary?.gps||0);$('v38JEquip').textContent=fmt(d.summary?.equipment||0);$('v38JLoc').textContent=fmt(d.summary?.locations||0);const box=$('v38JournalTimeline');box.innerHTML=(d.events||[]).slice().reverse().slice(0,150).map(e=>`<div><b>${esc(e.kind)}</b><span>${new Date(e.at).toLocaleString('pt-BR')} · ${esc(e.location||e.detail||'')}</span></div>`).join('')||'<p class="muted">Sem registros no período.</p>';if(!v38JournalMap){v38JournalMap=L.map('v38JournalMap').setView([-23.55,-46.63],10);L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap contributors'}).addTo(v38JournalMap);v38JournalLayer=L.layerGroup().addTo(v38JournalMap)}v38JournalLayer.clearLayers();const pts=(d.events||[]).filter(e=>e.latitude!=null&&e.longitude!=null).map(e=>[e.latitude,e.longitude]);if(pts.length){L.polyline(pts).addTo(v38JournalLayer);pts.forEach((pt,i)=>L.circleMarker(pt,{radius:i===pts.length-1?7:3}).addTo(v38JournalLayer));v38JournalMap.fitBounds(L.latLngBounds(pts).pad(.15),{maxZoom:15})}setTimeout(()=>v38JournalMap.invalidateSize(),100)}
-$('v38JournalLoad')?.addEventListener('click',v38LoadJournal);v38LoadJournalUsers();
+
+// V35 — clique nos status da Visão Geral abre a execução já filtrada por situação.
+document.querySelectorAll('.v35Status[data-status]').forEach(btn=>btn.addEventListener('click',()=>{
+  const target=btn.dataset.status||'';
+  if(document.getElementById('fs')) document.getElementById('fs').value=target;
+  try{syncChips();renderLocations();}catch(_e){}
+  v23SetView('execution');
+}));
+
+async function v39LoadTopdesk(){try{const r=await fetch('/api/topdesk/dashboard',{cache:'no-store'});if(!r.ok)return;const d=await r.json();if(!d.ok)return;const map={v39TdTotal:d.total,v39TdOpen:d.open,v39TdResolved:d.resolved,v39TdAssigned:d.assigned,v39TdUnassigned:d.unassigned};Object.entries(map).forEach(([id,v])=>{const e=document.getElementById(id);if(e)e.textContent=fmt(v)});const types=document.getElementById('v39TdTypes');if(types){const arr=Object.entries(d.by_type||{}).sort((a,b)=>b[1]-a[1]);const m=Math.max(1,...arr.map(x=>x[1]));types.innerHTML=arr.map(([k,v])=>`<div class="v25CompanyRow"><span>${esc(k)}</span><div class="v25CompanyTrack"><i style="width:${Math.round(v/m*100)}%"></i></div><b>${fmt(v)}</b></div>`).join('')||'<span class="muted">Sem chamados importados.</span>'}const loc=document.getElementById('v39TdLocations');if(loc){const arr=d.top_locations||[];const m=Math.max(1,...arr.map(x=>x.count));loc.innerHTML=arr.map(x=>`<div class="v25CompanyRow"><span>${esc(x.name)}</span><div class="v25CompanyTrack"><i style="width:${Math.round(x.count/m*100)}%"></i></div><b>${fmt(x.count)}</b></div>`).join('')||'<span class="muted">Sem localidades vinculadas.</span>'}}catch(e){console.warn('TopDesk dashboard',e)}}
+document.addEventListener('DOMContentLoaded',v39LoadTopdesk);
+
+// V39.6 — consulta rápida de visões panorâmicas no Dashboard.
+let dashPanData=[];async function v396LoadPanorama(){try{const d=await fetch('/api/panoramas',{cache:'no-store'}).then(r=>r.json());dashPanData=d.locations||[];const fill=(id,vals,label)=>{const e=document.getElementById(id);if(!e)return;e.innerHTML=`<option value="">${label}</option>`+[...new Set(vals.filter(Boolean))].sort().map(v=>`<option>${esc(v)}</option>`).join('')};fill('dashPanCompany',dashPanData.map(x=>x.company),'Todas');fill('dashPanLine',dashPanData.map(x=>x.line),'Todas');v396PanLocations()}catch(e){console.warn(e)}}function v396PanLocations(){const c=document.getElementById('dashPanCompany')?.value||'',l=document.getElementById('dashPanLine')?.value||'',el=document.getElementById('dashPanLocation');if(!el)return;const a=dashPanData.filter(x=>(!c||x.company===c)&&(!l||x.line===l));el.innerHTML='<option value="">Selecione</option>'+a.map(x=>`<option value="${x.id}">${esc(x.location)} · ${esc(x.status)}</option>`).join('');document.getElementById('dashPanGallery').innerHTML='<p class="muted">Selecione uma localidade.</p>'}function v396ShowPan(){const id=+document.getElementById('dashPanLocation').value,x=dashPanData.find(a=>a.id===id),g=document.getElementById('dashPanGallery');if(!x||!g)return;g.innerHTML=x.points.flatMap(p=>p.photos.map(ph=>`<figure><a href="${esc(ph.url)}" target="_blank"><img loading="lazy" src="${esc(ph.url)}"></a><figcaption><b>${esc(p.name)}</b><br>${esc(ph.uploaded_by)} · ${new Date(ph.created_at).toLocaleString('pt-BR')}</figcaption></figure>`)).join('')||'<p class="muted">Nenhuma foto nesta localidade.</p>'}document.getElementById('dashPanCompany')?.addEventListener('change',v396PanLocations);document.getElementById('dashPanLine')?.addEventListener('change',v396PanLocations);document.getElementById('dashPanLocation')?.addEventListener('change',v396ShowPan);v396LoadPanorama();

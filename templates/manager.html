@@ -16,6 +16,7 @@
     <button class="v23Nav" data-v23-view="quality">◆ <span>Qualidade</span></button>
     <button class="v23Nav" data-v23-view="map">⌖ <span>Mapa</span></button>
     <button class="v23Nav" data-v23-view="evidence">▣ <span>Evidências</span></button>
+    <button class="v23Nav" data-v23-view="panorama">▤ <span>Visões panorâmicas</span></button>
     <button class="v23Nav" data-v23-view="ranking">↗ <span>Ranking</span></button>
     <button class="v23Nav" data-v23-view="competition">◉ <span>Concorrência</span></button>
     <div class="v23SidebarSpacer"></div>
@@ -283,6 +284,8 @@
 <section class="card v23Panel" data-v23-panel="topdesk" id="v39TopdeskPanel"><div class="sectionHead"><div><span class="eyebrow">SUPORTE A CAMPO</span><h2>Chamados TopDesk</h2><p class="muted">Visão operacional da carga importada e distribuída aos técnicos.</p></div><a href="/topdesk" class="secondary buttonLink">Abrir operação</a></div><div class="topdeskKpis"><article><small>Total</small><b id="v39TdTotal">0</b></article><article><small>Em aberto</small><b id="v39TdOpen">0</b></article><article><small>Resolvidos</small><b id="v39TdResolved">0</b></article><article><small>Atribuídos</small><b id="v39TdAssigned">0</b></article><article><small>Sem técnico</small><b id="v39TdUnassigned">0</b></article></div><div class="dashboardGrid"><article class="v22Panel"><h3>Chamados por equipamento</h3><div id="v39TdTypes" class="barList"></div></article><article class="v22Panel"><h3>Localidades com mais chamados</h3><div id="v39TdLocations" class="barList"></div></article></div></section>
 <section class="card v23Panel v38Journal" data-v23-panel="journal"><div class="sectionHead"><div><span class="eyebrow">PRODUTIVIDADE DE CAMPO</span><h2>Diário de bordo</h2><p class="muted">Atividades e posições GPS do colaborador no período.</p></div></div><div class="v38JournalFilters"><select id="v38JournalUser"><option value="">Selecione o colaborador</option></select><select id="v38JournalDays"><option value="7">7 dias</option><option value="14">14 dias</option><option value="30">30 dias</option></select><button class="secondary" id="v38JournalLoad">Consultar</button></div><div class="evidenceMiniKpis"><span><small>Registros GPS</small><b id="v38JGps">0</b></span><span><small>Equipamentos</small><b id="v38JEquip">0</b></span><span><small>Localidades</small><b id="v38JLoc">0</b></span></div><div id="v38JournalMap" style="height:330px;border-radius:14px;margin:14px 0"></div><div id="v38JournalTimeline" class="v38Timeline"></div></section>
 
+
+<section class="card v23Panel" data-v23-panel="panorama"><div class="sectionHead"><div><span class="eyebrow">ACERVO VISUAL</span><h2>Visões panorâmicas</h2><p class="muted">Escolha uma localidade para abrir as fotos organizadas por ponto.</p></div><a class="secondary buttonLink" href="/visao-panoramica">Abrir tela completa</a></div><div class="grid3"><div><label>Empresa</label><select id="dashPanCompany"><option value="">Todas</option></select></div><div><label>Linha</label><select id="dashPanLine"><option value="">Todas</option></select></div><div><label>Localidade</label><select id="dashPanLocation"><option value="">Selecione</option></select></div></div><div id="dashPanGallery" class="panGallery" style="margin-top:16px"><p class="muted">Selecione uma localidade.</p></div></section>
 <section class="card evidenceExecutiveStrip v23Panel" data-v23-panel="evidence" id="evidenceExecutiveStrip">
   <div class="sectionHead">
     <div>
@@ -416,5 +419,5 @@
   <div class="v343TvFooter"><span id="v343TvHeadline">Monitoramento executivo do inventário.</span><span>SUPORTE A CAMPO · V35.2</span></div>
 </div>
 
-<script src="{{url_for('static',filename='manager.js')}}?v=dashboard-v38-0"></script>
+<script src="{{url_for('static',filename='manager.js')}}?v=dashboard-v39-6"></script>
 {% endblock %}
