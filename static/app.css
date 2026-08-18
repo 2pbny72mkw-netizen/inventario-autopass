@@ -1399,3 +1399,8 @@ body.mapFullscreenOpen #gpsMap .autopassMapFullscreenControl{
 
 /* V39.7.5 */
 .chipPhotoActions{display:flex;gap:10px;flex-wrap:wrap;margin:6px 0}.chipPhotoBtn{cursor:pointer;display:inline-flex;align-items:center}.chipSelectedFiles{font-size:12px;color:#52657d;margin:4px 0 8px}.chipOpRow{display:grid;grid-template-columns:minmax(110px,180px) 1fr 120px;gap:10px;align-items:center;margin:9px 0}.chipOpTrack{height:10px;background:#e8edf3;border-radius:99px;overflow:hidden}.chipOpTrack i{display:block;height:100%;background:#16824b;border-radius:99px}@media(max-width:700px){.chipOpRow{grid-template-columns:100px 1fr}.chipOpRow span{grid-column:2}}
+
+/* V39.7.6 - compactação e validação operacional */
+.leaflet-railLinesPane svg{overflow:visible!important;pointer-events:auto!important}.leaflet-railLinesPane path{stroke-linecap:round;stroke-linejoin:round}
+.chipValidatorGrid{gap:10px!important}.chipValidatorCard{padding:12px!important}.chipValidatorCard h3{margin:2px 0!important;font-size:17px!important}.chipValidatorCard p{margin:2px 0 6px!important}.chipValidatorHead{margin-bottom:6px!important}.chipForm textarea{min-height:38px!important}.chipPhotoActions{gap:6px!important}.chipPhotoBtn{padding:7px 9px!important}.chipForm button{padding:8px 10px!important}.chipEvidence img{height:70px!important;width:92px!important;object-fit:cover}.chipNewAssetFields{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin:7px 0}.chipNewAssetFields input{min-width:0}.panTools{margin-top:10px;align-items:center}.panProgressCard{margin:12px 0}.panoramaLocationGrid.hidden{display:none!important}
+@media(max-width:760px){.chipNewAssetFields{grid-template-columns:1fr}.chipValidatorGrid{grid-template-columns:1fr!important}}
