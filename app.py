@@ -21,7 +21,7 @@ from functools import wraps
 
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify, flash, send_from_directory, Response, send_file
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import UniqueConstraint, Index, func, case, text, or_
+from sqlalchemy import UniqueConstraint, Index, func, case, text
 from sqlalchemy.exc import IntegrityError
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -34,7 +34,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V39.0"
+APP_RELEASE = "V39.1"
 DASHBOARD_RELEASE = "dashboard-v39-0"
 TEAMS_RELEASE = "teams-v39-0"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -1587,7 +1587,7 @@ def v7_locations_api():
     query=Location.query
     if q:
         like=f"%{q}%"
-        query=query.filter(or_(
+        query=query.filter(db.or_(
             Location.location.ilike(like), Location.line.ilike(like), Location.company.ilike(like)
         ))
     rows=query.order_by(Location.company,Location.line,Location.location).limit(500).all()
@@ -1605,11 +1605,11 @@ def v7_location_detail_api(location_id):
 
 def _asset_360_payload(asset):
     inventories=Inventory.query.filter(
-        or_(Inventory.base_asset_id==asset.id,
+        db.or_(Inventory.base_asset_id==asset.id,
                Inventory.serial==asset.serial if asset.serial else db.false())
     ).order_by(Inventory.created_at.desc()).all()
     evidence=FieldEvidenceItem.query.filter(
-        or_(FieldEvidenceItem.base_asset_id==asset.id,
+        db.or_(FieldEvidenceItem.base_asset_id==asset.id,
                FieldEvidenceItem.serial==asset.serial if asset.serial else db.false())
     ).order_by(FieldEvidenceItem.id.desc()).all()
     latest=inventories[0] if inventories else None
@@ -1656,16 +1656,16 @@ def v7_global_search_api():
     if len(q)<2:
         return jsonify({"ok":True,"query":q,"locations":[],"assets":[],"inventory":[]})
     like=f"%{q}%"
-    locations=Location.query.filter(or_(
+    locations=Location.query.filter(db.or_(
         Location.location.ilike(like),Location.line.ilike(like),Location.company.ilike(like)
     )).limit(15).all()
-    assets=BaseAsset.query.filter(or_(
+    assets=BaseAsset.query.filter(db.or_(
         BaseAsset.serial.ilike(like),BaseAsset.asset_key.ilike(like),
         BaseAsset.qrcode_id.ilike(like),BaseAsset.top_id.ilike(like),
         BaseAsset.locality.ilike(like),BaseAsset.description.ilike(like)
     )).limit(25).all()
     matching_location_ids=[x.id for x in locations]
-    creator_rows=User.query.filter(or_(User.name.ilike(like),User.username.ilike(like),User.user_code.ilike(like))).limit(50).all()
+    creator_rows=User.query.filter(db.or_(User.name.ilike(like),User.username.ilike(like),User.user_code.ilike(like))).limit(50).all()
     creator_ids=[u.id for u in creator_rows]
     inventory_filters=[
         Inventory.serial.ilike(like),Inventory.asset_identifier.ilike(like),
@@ -1676,7 +1676,7 @@ def v7_global_search_api():
         inventory_filters.append(Inventory.technician_id.in_(creator_ids))
     if matching_location_ids:
         inventory_filters.append(Inventory.location_id.in_(matching_location_ids))
-    inventory=Inventory.query.filter(or_(*inventory_filters)).order_by(Inventory.created_at.desc()).limit(50).all()
+    inventory=Inventory.query.filter(db.or_(*inventory_filters)).order_by(Inventory.created_at.desc()).limit(50).all()
     creator_map={u.id:u for u in User.query.filter(User.id.in_([x.technician_id for x in inventory] or [-1])).all()}
     return jsonify({
         "ok":True,"query":q,"can_admin":_current_user_is_superadmin(),
@@ -2169,7 +2169,7 @@ def _observed_reference_stats(location_id):
             Inventory.location_id == location_id,
             Inventory.latitude.isnot(None),
             Inventory.longitude.isnot(None),
-            or_(Inventory.gps_accuracy.is_(None), Inventory.gps_accuracy <= 80),
+            db.or_(Inventory.gps_accuracy.is_(None), Inventory.gps_accuracy <= 80),
         )
         .order_by(Inventory.created_at.desc())
         .limit(200)
@@ -4996,7 +4996,7 @@ def topdesk_tickets_api():
     if eq: q=q.filter(TopDeskTicket.equipment_type==eq)
     if assigned=="unassigned": q=q.filter(TopDeskTicket.assigned_technician_id.is_(None))
     if search:
-        like=f"%{search}%"; q=q.filter(or_(TopDeskTicket.ticket_number.ilike(like),TopDeskTicket.object_id.ilike(like),TopDeskTicket.request_text.ilike(like),TopDeskTicket.category.ilike(like)))
+        like=f"%{search}%"; q=q.filter(db.or_(TopDeskTicket.ticket_number.ilike(like),TopDeskTicket.object_id.ilike(like),TopDeskTicket.request_text.ilike(like),TopDeskTicket.category.ilike(like)))
     rows=q.order_by(TopDeskTicket.last_import_at.desc()).limit(1000).all()
     users={u.id:u for u in User.query.filter(User.id.in_([x.assigned_technician_id for x in rows if x.assigned_technician_id] or [-1])).all()}
     locs={l.id:l for l in Location.query.filter(Location.id.in_([x.location_id for x in rows if x.location_id] or [-1])).all()}
@@ -5353,7 +5353,7 @@ def cleanup_test_gps():
     O administrador principal não é incluído automaticamente.
     """
     test_users = User.query.filter(
-        or_(
+        db.or_(
             func.lower(User.username).in_(("adil_tst", "adil_teste", "teste", "test")),
             func.lower(User.user_code).in_(("tst", "test")),
             func.lower(User.name).like("%teste%")
