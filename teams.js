@@ -1,4 +1,5 @@
-window.AUTOPASS_TEAMS_VERSION='teams-v26';
+window.AUTOPASS_TEAMS_VERSION="teams-v39-7-6";
+
 console.log('AUTOPASS Central Operacional V26 carregada');
 
 const $=id=>document.getElementById(id);
@@ -35,6 +36,7 @@ function createTeamMap(){
     keepBuffer:4,
     attribution:'&copy; OpenStreetMap contributors'
   }).addTo(teamMap);
+  v391SetupTeamMap();
 
   const container=$('teamMap');
   if('ResizeObserver' in window){
@@ -108,7 +110,7 @@ async function loadTeams(){
   $('kSupport').textContent=d.counts_by_category?.APOIO||0;
 
   let current=0,attention=0,noSignal=0;
-  markers.forEach(m=>teamMap.removeLayer(m));
+  markers.forEach(m=>{try{(v391TechLayer||teamMap).removeLayer(m)}catch(_e){}});
   markers=[];
 
   $('teamCards').innerHTML='';
@@ -138,13 +140,14 @@ async function loadTeams(){
 
     if(t.latitude!=null&&t.longitude!=null){
       const m=L.marker([Number(t.latitude),Number(t.longitude)],{icon:markerIcon(t)})
-        .addTo(teamMap)
+        .addTo(v391TechLayer||teamMap)
         .bindPopup(`
           <div class="teamMapPopup">
             <b>${esc(t.name)}</b><br>
             ${esc(t.category)} · ${esc(t.shift||'')}<br>
             Entrada: ${esc(t.entry||'—')}<br>
             ${t.accuracy!=null?`Precisão GPS: ${Math.round(Number(t.accuracy))} m<br>`:''}
+            <b>Localidade:</b> ${esc(t.current_location||'—')}<br>
             ${esc(freshnessText(t))}
           </div>
         `,{maxWidth:260,closeButton:true});
@@ -440,3 +443,71 @@ function bindTeamCollapsible(buttonId, contentId){
 }
 bindTeamCollapsible('toggleTodayOperational','todayOperationalContent');
 bindTeamCollapsible('toggleExpectedTeam','expectedTeamContent');
+
+// V39.6 — autocomplete de colaborador ligado ao cadastro de usuários.
+async function v396LoadCollaborators(){try{const r=await fetch('/api/equipes/colaboradores',{cache:'no-store'});const d=await r.json();const dl=$('v396Collaborators');if(dl&&d.ok)dl.innerHTML=(d.users||[]).map(u=>`<option value="${esc(u.name)}"></option>`).join('')}catch(e){console.warn('autocomplete colaboradores',e)}}
+v396LoadCollaborators();
+
+// V38 — malha metroferroviária também no mapa de equipes
+async function v38DrawRailNetwork(){try{const locs=await fetch('/api/locations',{cache:'no-store'}).then(r=>r.json());const colors={'1':'#005ca9','2':'#008c5a','3':'#ee3338','4':'#f4b800','5':'#7651a2','6':'#f28c00','7':'#9b0058','8':'#8b8b8b','9':'#008c7d','10':'#00a5b5','11':'#e94b24','12':'#1455a0','13':'#008b68','15':'#9a9a9a','17':'#8a7627'};const groups={};(locs||[]).forEach(x=>{if(x.reference_latitude==null||x.reference_longitude==null)return;const m=String(x.line||'').match(/(?:^|\D)(1[0-7]|[1-9])(?:\D|$)/);if(!m)return;(groups[m[1]]??=[]).push(x)});Object.entries(groups).forEach(([n,a])=>{if(a.length<2)return;const pts=a.map(x=>[Number(x.reference_latitude),Number(x.reference_longitude)]);L.polyline(pts,{color:colors[n]||'#64748b',weight:5,opacity:.85}).addTo(teamMap)})}catch(e){console.warn('V38 trilhos equipes',e)}}
+function v38ApplyTeamFilter(){const q=String($('v38TeamSearch')?.value||'').toLowerCase(),cat=$('v38TeamCategory')?.value||'',gps=$('v38TeamGps')?.value||'';document.querySelectorAll('#todayTeamTable tr').forEach(tr=>{const txt=tr.textContent.toLowerCase();tr.style.display=(!q||txt.includes(q))&&(!cat||txt.includes(cat.toLowerCase()))&&(!gps||txt.includes(gps.toLowerCase()))?'':'none'});document.querySelectorAll('#teamCards > *').forEach(el=>{const txt=el.textContent.toLowerCase();el.style.display=(!q||txt.includes(q))&&(!cat||txt.includes(cat.toLowerCase()))&&(!gps||txt.includes(gps.toLowerCase()))?'':'none'})}
+['v38TeamSearch','v38TeamCategory','v38TeamGps'].forEach(id=>$(id)?.addEventListener(id==='v38TeamSearch'?'input':'change',v38ApplyTeamFilter));$('v38ClearTeam')?.addEventListener('click',()=>{['v38TeamSearch','v38TeamCategory','v38TeamGps'].forEach(id=>$(id).value='');v38ApplyTeamFilter()});
+
+
+// V39.1 substitui os controles V38.1 por controles nativos Leaflet.
+
+// V39.1 — mapa de Equipes alinhado ao Dashboard: legenda + camadas clicáveis + menor uso de memória.
+let v391RailLines=null,v391Stations=null,v391StationNames=null,v391TechLayer=null,v391Accuracy=null,v391LayerControl=null,v391Legend=null,v391RailRenderer=null;
+const V391_COLORS={'1':'#0054A6','2':'#008C5A','3':'#E6332A','4':'#F4C300','5':'#7A3E9D','6':'#F28C18','7':'#A60055','8':'#8C8C8C','9':'#00A092','10':'#00A5B5','11':'#F04B23','12':'#164F9C','13':'#009B62','15':'#9B9DA0','17':'#9A7A24'};
+const V391_NAMES={'1':'Azul','2':'Verde','3':'Vermelha','4':'Amarela','5':'Lilás','6':'Laranja','7':'Rubi','8':'Diamante','9':'Esmeralda','10':'Turquesa','11':'Coral','12':'Safira','13':'Jade','15':'Prata','17':'Ouro'};
+const V391_FALLBACK={
+'1':[[-23.4799,-46.6024],[-23.4923,-46.6072],[-23.5091,-46.6245],[-23.5255,-46.6407],[-23.5441,-46.6358],[-23.5688,-46.6399],[-23.5983,-46.6369],[-23.6261,-46.6401],[-23.6592,-46.6388]],
+'2':[[-23.5895,-46.6350],[-23.5812,-46.6458],[-23.5703,-46.6585],[-23.5632,-46.6548],[-23.5581,-46.6607],[-23.5508,-46.6719],[-23.5451,-46.6904],[-23.5444,-46.7066]],
+'3':[[-23.5423,-46.4714],[-23.5364,-46.4903],[-23.5281,-46.5180],[-23.5262,-46.5558],[-23.5292,-46.5747],[-23.5356,-46.6072],[-23.5421,-46.6177],[-23.5453,-46.6388],[-23.5495,-46.6535],[-23.5487,-46.6875]],
+'4':[[-23.5362,-46.6335],[-23.5441,-46.6422],[-23.5489,-46.6520],[-23.5553,-46.6620],[-23.5608,-46.6719],[-23.5662,-46.6840],[-23.5673,-46.6930],[-23.5669,-46.7012],[-23.5718,-46.7080],[-23.5864,-46.7230],[-23.5944,-46.7330]],
+'5':[[-23.6491,-46.7588],[-23.6401,-46.7503],[-23.6262,-46.7418],[-23.6125,-46.7228],[-23.5977,-46.7191],[-23.5858,-46.7061],[-23.5730,-46.6936],[-23.5673,-46.6828],[-23.5663,-46.6520]],
+'6':[[-23.5450,-46.6320],[-23.5480,-46.6200],[-23.5520,-46.6030],[-23.5560,-46.5850],[-23.5580,-46.5660],[-23.5600,-46.5480]],
+'7':[[-23.5454,-46.6380],[-23.5327,-46.6550],[-23.5204,-46.7020],[-23.5110,-46.7480],[-23.5030,-46.7890],[-23.4940,-46.8330],[-23.4860,-46.8760],[-23.4690,-46.9400],[-23.4210,-46.9650],[-23.3020,-46.9870],[-23.1850,-46.8840]],
+'8':[[-23.5250,-46.6680],[-23.5320,-46.7010],[-23.5420,-46.7280],[-23.5550,-46.7560],[-23.5700,-46.7870],[-23.5890,-46.8200],[-23.6040,-46.8400],[-23.6370,-46.8660],[-23.6840,-46.8930],[-23.7160,-46.9010]],
+'9':[[-23.7630,-46.7100],[-23.7220,-46.7000],[-23.6860,-46.6930],[-23.6480,-46.6910],[-23.6180,-46.6900],[-23.5950,-46.6890],[-23.5750,-46.6900],[-23.5550,-46.6870],[-23.5360,-46.6810],[-23.5190,-46.6650]],
+'10':[[-23.5450,-46.6380],[-23.5310,-46.6150],[-23.5220,-46.5920],[-23.5150,-46.5730],[-23.5070,-46.5480],[-23.5000,-46.5200],[-23.4950,-46.5000],[-23.4820,-46.4760],[-23.4710,-46.4480]],
+'11':[[-23.5450,-46.6380],[-23.5430,-46.6160],[-23.5400,-46.5960],[-23.5370,-46.5760],[-23.5320,-46.5540],[-23.5250,-46.5300],[-23.5180,-46.5080],[-23.5070,-46.4770],[-23.4980,-46.4490]],
+'12':[[-23.5450,-46.6380],[-23.5290,-46.6490],[-23.5120,-46.6640],[-23.4920,-46.6800],[-23.4740,-46.6980],[-23.4560,-46.7160],[-23.4370,-46.7290]],
+'13':[[-23.4850,-46.4920],[-23.4630,-46.4930],[-23.4420,-46.5000],[-23.4230,-46.5070],[-23.4040,-46.5200],[-23.3830,-46.5360],[-23.3630,-46.5530]],
+'15':[[-23.6460,-46.6420],[-23.6320,-46.6410],[-23.6170,-46.6400],[-23.6040,-46.6390],[-23.5900,-46.6380],[-23.5760,-46.6360]],
+'17':[[-23.6217,-46.7012],[-23.6222,-46.6947],[-23.6209,-46.6878],[-23.6201,-46.6800],[-23.6210,-46.6732],[-23.6241,-46.6670],[-23.6288,-46.6633],[-23.6328,-46.6603]]
+}
+function v391LineNo(v){const t=String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase();const m=t.match(/(?:^|\D)(1[0-7]|[1-9])(?:\D|$)/);if(m)return String(Number(m[1]));const a={AZUL:'1',VERDE:'2',VERMELHA:'3',AMARELA:'4',LILAS:'5',LARANJA:'6',RUBI:'7',DIAMANTE:'8',ESMERALDA:'9',TURQUESA:'10',CORAL:'11',SAFIRA:'12',JADE:'13',PRATA:'15',OURO:'17'};return Object.entries(a).find(([k])=>t.includes(k))?.[1]||''}
+function v391Dist(a,b){const R=6371000,p=x=>x*Math.PI/180,dlat=p(+b.reference_latitude-+a.reference_latitude),dlon=p(+b.reference_longitude-+a.reference_longitude),x=Math.sin(dlat/2)**2+Math.cos(p(+a.reference_latitude))*Math.cos(p(+b.reference_latitude))*Math.sin(dlon/2)**2;return 2*R*Math.asin(Math.sqrt(x))}
+function v391Sequence(a){if(a.length<3)return [...a];const pool=[...a], seq=[pool.shift()];while(pool.length){const last=seq[seq.length-1];let bi=0,bd=Infinity;pool.forEach((c,i)=>{const d=v391Dist(last,c);if(d<bd){bd=d;bi=i}});seq.push(pool.splice(bi,1)[0])}return seq}
+async function v391BuildRails(){
+  if(!teamMap||!v391RailLines)return;
+  v391RailLines.clearLayers();v391Stations.clearLayers();v391StationNames.clearLayers();
+  // V39.7.5: desenha a malha de contingência imediatamente. Assim as linhas aparecem mesmo se a API falhar.
+  Object.entries(V391_FALLBACK).forEach(([n,pts])=>{
+    if(pts.length<2)return;
+    L.polyline(pts,{color:'#fff',weight:12,opacity:.98,interactive:false}).addTo(v391RailLines);
+    L.polyline(pts,{color:V391_COLORS[n]||'#64748b',weight:7,opacity:1}).bindPopup(`<b>Linha ${n} — ${V391_NAMES[n]||''}</b>`).addTo(v391RailLines);
+  });
+  try{
+    const r=await fetch('/api/equipes/rail-network',{cache:'no-store'}); if(!r.ok)throw new Error('HTTP '+r.status); const locs=await r.json(); const groups={};
+    (locs||[]).forEach(x=>{if(x.reference_latitude==null||x.reference_longitude==null)return;const n=v391LineNo(x.line);if(!n)return;(groups[n]??=[]).push(x);const pt=[+x.reference_latitude,+x.reference_longitude];L.circleMarker(pt,{radius:5,color:'#fff',weight:2,fillColor:V391_COLORS[n]||'#64748b',fillOpacity:1}).bindTooltip(String(x.location||''),{direction:'top'}).addTo(v391Stations);L.marker(pt,{interactive:false,icon:L.divIcon({className:'stationLabelIcon',html:`<span>${esc(x.location||'')}</span>`,iconSize:null})}).addTo(v391StationNames)});
+    Object.keys(V391_FALLBACK).forEach(n=>{if(!groups[n])groups[n]=[]});
+    Object.entries(groups).forEach(([n,arr])=>{const seq=v391Sequence(arr);const pts=seq.length>=2?seq.map(x=>[+x.reference_latitude,+x.reference_longitude]):(V391_FALLBACK[n]||[]);if(pts.length<2)return;L.polyline(pts,{color:'#fff',weight:11,opacity:.96,interactive:false}).addTo(v391RailLines);L.polyline(pts,{color:V391_COLORS[n]||'#64748b',weight:6,opacity:1}).bindPopup(`<b>Linha ${n} — ${V391_NAMES[n]||''}</b>`).addTo(v391RailLines)});
+  }catch(e){console.warn('V39.1 mapa equipes',e)}
+  const cb=$('teamShowLines'); if(!cb || cb.checked){ if(!teamMap.hasLayer(v391RailLines)) teamMap.addLayer(v391RailLines); }
+  if(teamMap && v391RailLines){ v391RailLines.eachLayer(l=>{ if(l.bringToFront) l.bringToFront(); }); }
+}
+
+function v391SetupTeamMap(){
+  if(!teamMap||v391RailLines)return;
+  if(!teamMap.getPane('railLinesPane'))teamMap.createPane('railLinesPane');teamMap.getPane('railLinesPane').style.zIndex=650;teamMap.getPane('railLinesPane').style.pointerEvents='auto';if(!teamMap.getPane('railStationsPane'))teamMap.createPane('railStationsPane');teamMap.getPane('railStationsPane').style.zIndex=660;v391RailLines=L.layerGroup().addTo(teamMap);v391Stations=L.layerGroup().addTo(teamMap);v391StationNames=L.layerGroup();v391TechLayer=L.layerGroup().addTo(teamMap);v391Accuracy=L.layerGroup();
+  v391LayerControl=L.control.layers(null,{'Linhas':v391RailLines,'Estações':v391Stations,'Nomes das estações':v391StationNames,'Técnicos (GPS)':v391TechLayer,'Precisão GPS (auditoria)':v391Accuracy},{collapsed:false,position:'bottomright'}).addTo(teamMap);
+  v391Legend=L.control({position:'topleft'});v391Legend.onAdd=()=>{const d=L.DomUtil.create('div','autopass-rail-legend');d.innerHTML='<h4>Linhas Metroferroviárias</h4>'+Object.keys(V391_COLORS).map(n=>`<div class="row"><span class="swatch" style="background:${V391_COLORS[n]}"></span><b>${n}</b><span>${V391_NAMES[n]}</span></div>`).join('');L.DomEvent.disableClickPropagation(d);L.DomEvent.disableScrollPropagation(d);return d};v391Legend.addTo(teamMap);
+  v391BuildRails(); setTimeout(v391BuildRails,900);
+}
+
+
+// V39.6 — compatibilidade dos checkboxes visíveis com as camadas Leaflet.
+function v396SyncRailChecks(){const map=teamMap;if(!map)return;[['teamShowLines',v391RailLines],['teamShowStations',v391Stations],['teamShowNames',v391StationNames],['teamShowTechs',v391TechLayer]].forEach(([id,layer])=>{const el=$(id);if(!el||!layer)return;const sync=()=>{if(el.checked&&!map.hasLayer(layer))map.addLayer(layer);if(!el.checked&&map.hasLayer(layer))map.removeLayer(layer)};el.addEventListener('change',sync);sync()});v391BuildRails()}
+setTimeout(v396SyncRailChecks,500);
