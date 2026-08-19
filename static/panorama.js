@@ -22,8 +22,8 @@ $('panForm')&&($('panForm').onsubmit=async e=>{
   e.preventDefault();
   const form=e.currentTarget, btn=$('panSaveBtn'), locationId=$('panLocationId')?.value, files=panoramaFiles();
   if(!locationId){panStatus('Localidade não identificada. Feche e abra a estação novamente.');return}
-  if(!form.reportValidity())return;
   if(!files.length){panStatus('Selecione ou tire pelo menos uma foto.');return}
+  if(!form.reportValidity())return;
   const oldText=btn?.textContent||'Salvar fotos';
   try{
     if(btn){btn.disabled=true;btn.textContent='Salvando...'}
