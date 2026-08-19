@@ -1255,10 +1255,43 @@ document.querySelectorAll('.v35Status[data-status]').forEach(btn=>btn.addEventLi
 async function v39LoadTopdesk(){try{const r=await fetch('/api/topdesk/dashboard',{cache:'no-store'});if(!r.ok)return;const d=await r.json();if(!d.ok)return;const map={v39TdTotal:d.total,v39TdOpen:d.open,v39TdResolved:d.resolved,v39TdAssigned:d.assigned,v39TdUnassigned:d.unassigned};Object.entries(map).forEach(([id,v])=>{const e=document.getElementById(id);if(e)e.textContent=fmt(v)});const types=document.getElementById('v39TdTypes');if(types){const arr=Object.entries(d.by_type||{}).sort((a,b)=>b[1]-a[1]);const m=Math.max(1,...arr.map(x=>x[1]));types.innerHTML=arr.map(([k,v])=>`<div class="v25CompanyRow"><span>${esc(k)}</span><div class="v25CompanyTrack"><i style="width:${Math.round(v/m*100)}%"></i></div><b>${fmt(v)}</b></div>`).join('')||'<span class="muted">Sem chamados importados.</span>'}const loc=document.getElementById('v39TdLocations');if(loc){const arr=d.top_locations||[];const m=Math.max(1,...arr.map(x=>x.count));loc.innerHTML=arr.map(x=>`<div class="v25CompanyRow"><span>${esc(x.name)}</span><div class="v25CompanyTrack"><i style="width:${Math.round(x.count/m*100)}%"></i></div><b>${fmt(x.count)}</b></div>`).join('')||'<span class="muted">Sem localidades vinculadas.</span>'}}catch(e){console.warn('TopDesk dashboard',e)}}
 document.addEventListener('DOMContentLoaded',v39LoadTopdesk);
 
-// V39.6 — consulta rápida de visões panorâmicas no Dashboard.
-let dashPanData=[];async function v396LoadPanorama(){try{const d=await fetch('/api/panoramas',{cache:'no-store'}).then(r=>r.json());dashPanData=d.locations||[];const fill=(id,vals,label)=>{const e=document.getElementById(id);if(!e)return;e.innerHTML=`<option value="">${label}</option>`+[...new Set(vals.filter(Boolean))].sort().map(v=>`<option>${esc(v)}</option>`).join('')};fill('dashPanCompany',dashPanData.map(x=>x.company),'Todas');fill('dashPanLine',dashPanData.map(x=>x.line),'Todas');v396PanLocations()}catch(e){console.warn(e)}}function v396PanLocations(){const c=document.getElementById('dashPanCompany')?.value||'',l=document.getElementById('dashPanLine')?.value||'',el=document.getElementById('dashPanLocation');if(!el)return;const a=dashPanData.filter(x=>(!c||x.company===c)&&(!l||x.line===l));el.innerHTML='<option value="">Selecione</option>'+a.map(x=>`<option value="${x.id}">${esc(x.location)} · ${esc(x.status)}</option>`).join('');document.getElementById('dashPanGallery').innerHTML='<p class="muted">Selecione uma localidade.</p>'}function v396ShowPan(){const id=+document.getElementById('dashPanLocation').value,x=dashPanData.find(a=>a.id===id),g=document.getElementById('dashPanGallery');if(!x||!g)return;g.innerHTML=x.points.flatMap(p=>p.photos.map(ph=>`<figure><a href="${esc(ph.url)}" target="_blank"><img loading="lazy" src="${esc(ph.url)}"></a><figcaption><b>${esc(p.name)}</b><br>${esc(ph.uploaded_by)} · ${new Date(ph.created_at).toLocaleString('pt-BR')}</figcaption></figure>`)).join('')||'<p class="muted">Nenhuma foto nesta localidade.</p>'}document.getElementById('dashPanCompany')?.addEventListener('change',v396PanLocations);document.getElementById('dashPanLine')?.addEventListener('change',v396PanLocations);document.getElementById('dashPanLocation')?.addEventListener('change',v396ShowPan);v396LoadPanorama();
+// V40.1.3 — Visões panorâmicas com status, progresso e filtros no Dashboard.
+let dashPanData=[];
+const dashPanEsc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
+function dashPanFiltered(includeStatus=true){
+  const c=document.getElementById('dashPanCompany')?.value||'';
+  const l=document.getElementById('dashPanLine')?.value||'';
+  const st=document.getElementById('dashPanStatus')?.value||'';
+  return dashPanData.filter(x=>(!c||x.company===c)&&(!l||x.line===l)&&(!includeStatus||!st||x.status===st));
+}
+function dashPanFill(id,vals,label){const e=document.getElementById(id);if(!e)return;const cur=e.value;e.innerHTML=`<option value="">${label}</option>`+[...new Set(vals.filter(Boolean))].sort((a,b)=>String(a).localeCompare(String(b),'pt-BR')).map(v=>`<option value="${dashPanEsc(v)}">${dashPanEsc(v)}</option>`).join('');if([...e.options].some(o=>o.value===cur))e.value=cur}
+function dashPanRenderSummary(){
+  const a=dashPanFiltered(true), total=a.length;
+  const done=a.filter(x=>x.status==='CONCLUÍDA').length;
+  const progress=a.filter(x=>x.status==='EM ANDAMENTO').length;
+  const pending=a.filter(x=>x.status==='PENDENTE').length;
+  const photos=a.reduce((n,x)=>n+Number(x.photo_count||0),0);
+  const pct=n=>total?Math.round(n*1000/total)/10:0;
+  const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v};
+  set('dashPanTotal',total);set('dashPanPending',pending);set('dashPanInProgress',progress);set('dashPanDone',done);set('dashPanPhotos',photos);
+  set('dashPanPendingPct',pct(pending)+'%');set('dashPanInProgressPct',pct(progress)+'%');set('dashPanDonePct',pct(done)+'%');set('dashPanPct',pct(done)+'%');
+  set('dashPanLegendDone',done);set('dashPanLegendProgress',progress);set('dashPanLegendPending',pending);
+  set('dashPanProgressText',`${done} de ${total} localidades concluídas · ${photos} foto(s) registradas.`);
+  const donut=document.getElementById('dashPanDonut');if(donut){const d=pct(done),p=pct(progress);donut.style.background=`conic-gradient(#20945b 0 ${d}%, #d58a12 ${d}% ${Math.min(100,d+p)}%, #c93c3c ${Math.min(100,d+p)}% 100%)`}
+  const bd=document.getElementById('dashPanBarDone'),bp=document.getElementById('dashPanBarProgress'),bn=document.getElementById('dashPanBarPending');
+  if(bd)bd.style.width=pct(done)+'%';if(bp)bp.style.width=pct(progress)+'%';if(bn)bn.style.width=pct(pending)+'%';
+}
+function dashPanLocations(){
+  const a=dashPanFiltered(true),el=document.getElementById('dashPanLocation');if(!el)return;
+  const cur=el.value;el.innerHTML='<option value="">Selecione</option>'+a.map(x=>`<option value="${x.id}">${dashPanEsc(x.location)} · ${dashPanEsc(x.status)}</option>`).join('');if([...el.options].some(o=>o.value===cur))el.value=cur;
+  if(!el.value){const g=document.getElementById('dashPanGallery');if(g)g.innerHTML='<p class="muted">Selecione uma localidade para visualizar as fotos.</p>'}
+  dashPanRenderSummary();
+}
+function dashPanShow(){const id=+document.getElementById('dashPanLocation')?.value,x=dashPanData.find(a=>a.id===id),g=document.getElementById('dashPanGallery');if(!g)return;if(!x){g.innerHTML='<p class="muted">Selecione uma localidade para visualizar as fotos.</p>';return}const photos=(x.points||[]).flatMap(p=>(p.photos||[]).map(ph=>`<figure><a href="${dashPanEsc(ph.url)}" target="_blank"><img loading="lazy" src="${dashPanEsc(ph.url)}"></a><figcaption><b>${dashPanEsc(p.name)}</b><br>${dashPanEsc(ph.uploaded_by)} · ${new Date(ph.created_at).toLocaleString('pt-BR')}</figcaption></figure>`));g.innerHTML=photos.join('')||`<div class="dashPanEmpty"><b>${dashPanEsc(x.location)}</b><span>${dashPanEsc(x.status)} · nenhuma foto registrada.</span></div>`}
+async function dashPanLoad(){try{const r=await fetch('/api/panoramas',{cache:'no-store'});if(!r.ok)throw new Error('HTTP '+r.status);const d=await r.json();dashPanData=d.locations||[];dashPanFill('dashPanCompany',dashPanData.map(x=>x.company),'Todas');dashPanFill('dashPanLine',dashPanData.map(x=>x.line),'Todas');dashPanLocations()}catch(e){console.warn('panorama dashboard',e);const g=document.getElementById('dashPanGallery');if(g)g.innerHTML='<p class="muted">Não foi possível carregar o progresso das visões panorâmicas.</p>'}}
+document.getElementById('dashPanCompany')?.addEventListener('change',()=>{const c=document.getElementById('dashPanCompany')?.value||'';dashPanFill('dashPanLine',dashPanData.filter(x=>!c||x.company===c).map(x=>x.line),'Todas');dashPanLocations()});
+document.getElementById('dashPanLine')?.addEventListener('change',dashPanLocations);document.getElementById('dashPanStatus')?.addEventListener('change',dashPanLocations);document.getElementById('dashPanLocation')?.addEventListener('change',dashPanShow);dashPanLoad();
 
-/* V39.7 · Dashboard Troca de Chips */
 let chipDashData={locations:[],technicians:[],summary:{}};
 function chipDashEsc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function chipDashOperation(company){const t=String(company||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase();if(t.includes('CPTM'))return 'CPTM';if(t.includes('METRO'))return 'Metrô';if(t.includes('VIA MOBILIDADE'))return 'Via Mobilidade';if(t.includes('VIAQUATRO')||t.includes('VIA QUATRO'))return 'ViaQuatro';return company||'Outros'}

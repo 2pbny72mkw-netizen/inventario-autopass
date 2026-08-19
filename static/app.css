@@ -1453,3 +1453,17 @@ body.mapFullscreenOpen #gpsMap .autopassMapFullscreenControl{
 .panoramaLocationGrid{grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:9px}
 .panoramaLocation{padding:12px!important;gap:5px!important}.panoramaLocation b{font-size:16px!important}
 .kpi.successKpi{background:#eef9f2}.kpi.warningKpi{background:#fff7e8}.kpi.dangerKpi{background:#fff0f0}
+
+/* V40.1.3 — Dashboard / Visões panorâmicas */
+.dashPanExecutive{overflow:hidden}
+.dashPanKpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin:16px 0}
+.dashPanKpis article{background:#f8fbff;border:1px solid #dce6f0;border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;gap:3px;min-height:92px;border-left:4px solid #6f8296}
+.dashPanKpis article small{font-weight:700;color:#526174}.dashPanKpis article b{font-size:28px;line-height:1;color:#102d54}.dashPanKpis article span{font-size:12px;color:#67778c}
+.dashPanKpis .dashPanPending{border-left-color:#c93c3c}.dashPanKpis .dashPanProgress{border-left-color:#d58a12}.dashPanKpis .dashPanDone{border-left-color:#20945b}.dashPanKpis .dashPanPhotos{border-left-color:#6a4bb6}
+.dashPanVisuals{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}.dashPanVisuals .v22Panel{min-height:190px}
+.dashPanDonutRow{display:flex;align-items:center;gap:24px;padding:10px 4px}.dashPanDonut{width:132px;height:132px;border-radius:50%;display:grid;place-items:center;background:#e6ebf1;position:relative;flex:0 0 auto}.dashPanDonut:after{content:"";position:absolute;inset:20px;background:#fff;border-radius:50%}.dashPanDonut>div{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center}.dashPanDonut b{font-size:24px;color:#12325a}.dashPanDonut small{color:#637286}
+.dashPanLegend{display:flex;flex-direction:column;gap:10px;min-width:190px}.dashPanLegend span{display:grid;grid-template-columns:12px 1fr auto;align-items:center;gap:8px;color:#24364b}.dashPanLegend i{width:10px;height:10px;border-radius:50%}.dashPanLegend .done{background:#20945b}.dashPanLegend .progress{background:#d58a12}.dashPanLegend .pending{background:#c93c3c}
+.dashPanProgressBar{height:20px;background:#e8edf3;border-radius:999px;overflow:hidden;display:flex;margin:34px 0 16px}.dashPanProgressBar i{display:block;height:100%;transition:width .25s ease}.dashPanProgressBar .done{background:#20945b}.dashPanProgressBar .progress{background:#d58a12}.dashPanProgressBar .pending{background:#c93c3c}
+.dashPanEmpty{padding:18px;border:1px dashed #ccd7e4;border-radius:12px;display:flex;flex-direction:column;gap:4px}.dashPanEmpty span{color:#657589}
+@media(max-width:900px){.dashPanKpis{grid-template-columns:repeat(2,minmax(0,1fr))}.dashPanVisuals{grid-template-columns:1fr}.dashPanFilters{grid-template-columns:1fr 1fr!important}}
+@media(max-width:560px){.dashPanKpis{grid-template-columns:1fr 1fr}.dashPanDonutRow{align-items:flex-start;gap:14px}.dashPanDonut{width:110px;height:110px}.dashPanLegend{min-width:0}.dashPanFilters{grid-template-columns:1fr!important}}
