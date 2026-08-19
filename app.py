@@ -34,9 +34,9 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V40.0"
-DASHBOARD_RELEASE = "dashboard-v40-0"
-TEAMS_RELEASE = "teams-v40-0"
+APP_RELEASE = "V40.1"
+DASHBOARD_RELEASE = "dashboard-v40-1"
+TEAMS_RELEASE = "teams-v40-1"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
 FIELD_GPS_GOOD_ACCURACY_M = float(os.getenv("FIELD_GPS_GOOD_ACCURACY_M", "30"))
 FIELD_GPS_MAX_ACCURACY_M = float(os.getenv("FIELD_GPS_MAX_ACCURACY_M", "80"))
@@ -6301,28 +6301,81 @@ def panorama_list_api():
 @app.post("/api/panoramas/<int:location_id>/points")
 @field_required
 def panorama_upload_api(location_id):
-    loc=db.session.get(Location,location_id)
-    if not loc: return jsonify({"ok":False,"error":"Localidade não encontrada."}),404
-    point_name=(request.form.get("point_name") or "Visão geral").strip()
-    if not point_name: point_name="Visão geral"
-    pt=PanoramaPoint.query.filter(func.lower(PanoramaPoint.point_name)==point_name.lower(),PanoramaPoint.location_id==location_id).first()
-    if not pt:
-        pt=PanoramaPoint(location_id=location_id,point_name=point_name,notes=(request.form.get("notes") or "").strip(),created_by=session["user_id"])
-        db.session.add(pt); db.session.flush()
-    files=[f for f in request.files.getlist("photos") if f and f.filename]
-    if not files:
-        db.session.commit(); return jsonify({"ok":True,"point_id":pt.id,"message":"Ponto iniciado."})
-    lat=_optional_float(request.form.get("latitude")); lon=_optional_float(request.form.get("longitude"))
-    for f in files:
-        safe=secure_filename(f.filename) or f"panorama_{secrets.token_hex(4)}.jpg"
-        stored=f"pan_{pt.id}_{secrets.token_hex(6)}_{safe}"
-        if _r2_available():
-            data=f.read(); key=f"panorama/{datetime.utcnow().strftime('%Y/%m')}/{stored}"; _r2_put_bytes(key,data,f.mimetype or "application/octet-stream"); stored="r2__"+key
-        else: f.save(UPLOAD_DIR/stored)
-        db.session.add(PanoramaPhoto(point_id=pt.id,original_name=f.filename,stored_name=stored,mime_type=f.mimetype,uploaded_by=session["user_id"],latitude=lat,longitude=lon))
-    pt.updated_at=datetime.utcnow()
-    db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="PANORAMA_UPLOAD",entity_type="location",entity_id=str(location_id),detail=f"{point_name}: {len(files)} foto(s)"))
-    db.session.commit(); return jsonify({"ok":True,"point_id":pt.id,"photos_added":len(files)})
+    # V40.1: upload panorâmico com resposta JSON garantida para o mobile.
+    # Antes, qualquer falha de storage/R2 escapava como HTML 500 e o JavaScript
+    # ficava sem feedback ao tocar em "Salvar fotos".
+    try:
+        loc=db.session.get(Location,location_id)
+        if not loc:
+            return jsonify({"ok":False,"error":"Localidade não encontrada."}),404
+
+        point_name=(request.form.get("point_name") or "Visão geral").strip() or "Visão geral"
+        files=[f for f in request.files.getlist("photos") if f and f.filename]
+        if not files:
+            return jsonify({"ok":False,"error":"Selecione ou tire pelo menos uma foto antes de salvar."}),400
+
+        # Limite individual evita estouro de memória em aparelhos móveis e no servidor.
+        max_file_bytes=25*1024*1024
+        for f in files:
+            try:
+                pos=f.stream.tell()
+                f.stream.seek(0,2); size=f.stream.tell(); f.stream.seek(pos)
+            except Exception:
+                size=0
+            if size and size>max_file_bytes:
+                return jsonify({"ok":False,"error":f"A foto {f.filename} excede 25 MB. Reduza a resolução e tente novamente."}),413
+
+        pt=PanoramaPoint.query.filter(
+            func.lower(PanoramaPoint.point_name)==point_name.lower(),
+            PanoramaPoint.location_id==location_id
+        ).first()
+        if not pt:
+            pt=PanoramaPoint(
+                location_id=location_id,point_name=point_name,
+                notes=(request.form.get("notes") or "").strip(),
+                created_by=session["user_id"]
+            )
+            db.session.add(pt); db.session.flush()
+        elif request.form.get("notes") is not None:
+            pt.notes=(request.form.get("notes") or "").strip()
+
+        lat=_optional_float(request.form.get("latitude")); lon=_optional_float(request.form.get("longitude"))
+        added=0
+        for f in files:
+            safe=secure_filename(f.filename) or f"panorama_{secrets.token_hex(4)}.jpg"
+            stored=f"pan_{pt.id}_{secrets.token_hex(6)}_{safe}"
+            mime=f.mimetype or "application/octet-stream"
+            if _r2_available():
+                data=f.read()
+                if not data:
+                    continue
+                key=f"panorama/{datetime.utcnow().strftime('%Y/%m')}/{stored}"
+                _r2_put_bytes(key,data,mime)
+                stored="r2__"+key
+            else:
+                f.save(UPLOAD_DIR/stored)
+            db.session.add(PanoramaPhoto(
+                point_id=pt.id,original_name=f.filename,stored_name=stored,mime_type=mime,
+                uploaded_by=session["user_id"],latitude=lat,longitude=lon
+            ))
+            added+=1
+
+        if not added:
+            db.session.rollback()
+            return jsonify({"ok":False,"error":"Nenhuma foto válida foi recebida pelo servidor."}),400
+
+        pt.updated_at=datetime.utcnow()
+        db.session.add(AuditEvent(
+            user_id=session.get("user_id"),event_type="PANORAMA_UPLOAD",
+            entity_type="location",entity_id=str(location_id),
+            detail=f"{point_name}: {added} foto(s)"
+        ))
+        db.session.commit()
+        return jsonify({"ok":True,"point_id":pt.id,"photos_added":added,"message":f"{added} foto(s) salva(s) com sucesso."})
+    except Exception as exc:
+        db.session.rollback()
+        app.logger.exception("Falha no upload panorâmico da localidade %s", location_id)
+        return jsonify({"ok":False,"error":"Não foi possível salvar as fotos. Tente novamente. Se persistir, informe o horário do erro.","detail":str(exc)[:180]}),500
 
 @app.post("/api/panoramas/import-whatsapp")
 @manager_required
