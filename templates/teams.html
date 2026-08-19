@@ -5,7 +5,7 @@
 
 <section class="dashHero teamsHero">
   <div>
-    <span class="eyebrow">V30 · CENTRAL OPERACIONAL</span>
+    <span class="eyebrow">V40 · CENTRAL OPERACIONAL</span>
     <h1>Equipes em Campo</h1>
     <p>Técnicos, supervisores e apoio: escala, entrada, vínculo com usuários e última localização autorizada.</p>
   </div>
@@ -67,9 +67,7 @@
       <p class="muted">Fonte principal: cadastro de usuários. 12x36 usa a referência individual; 5x2 segue segunda a sexta. Situações como férias/licença sobrepõem a jornada.</p>
     </div>
     <div class="calendarControls">
-      <label>Cargo
-        <select id="calendarCategory"><option value="">Todos os cargos</option></select>
-      </label>
+      <div class="cargoMulti"><label>Cargo</label><details id="calendarCargoDetails"><summary id="calendarCargoSummary">Todos os cargos</summary><div class="cargoMultiPanel"><div class="cargoMultiActions"><button type="button" class="secondary" id="cargoAll">Selecionar todos</button><button type="button" class="secondary" id="cargoClear">Limpar</button></div><div id="calendarCargoOptions"></div></div></details></div>
       <label>Início <input type="date" id="calendarStart"></label>
       <label>Dias
         <select id="calendarDays">
@@ -205,5 +203,6 @@
 {% endif %}
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="{{ url_for('static', filename='teams.js') }}?v=teams-v39-7-10"></script>
+<script src="{{ url_for('static', filename='shared_rail_map.js') }}?v=v40-0"></script>
+<script src="{{ url_for('static', filename='teams.js') }}?v=teams-v40-0"></script>
 {% endblock %}

@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}Atividades | Inventário SP{% endblock %}
+{% block content %}
+<section class="dashHero"><div><span class="eyebrow">V40 · CAMPO</span><h1>Atividades</h1><p>Escolha uma atividade para iniciar ou continuar o trabalho de campo.</p></div></section>
+<section class="card"><div class="sectionHead"><div><h2>Minhas atividades</h2><p class="muted">O estado é compartilhado: outro técnico autorizado pode continuar uma atividade já iniciada.</p></div></div><div id="activityGrid" class="activityGrid"><p class="muted">Carregando...</p></div></section>
+{% endblock %}
+{% block scripts %}<script src="{{url_for('static',filename='activities.js')}}?v=v40-0"></script>{% endblock %}
