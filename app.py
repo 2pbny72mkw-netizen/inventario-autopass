@@ -34,9 +34,9 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V39.7.9"
-DASHBOARD_RELEASE = "dashboard-v39-7-8"
-TEAMS_RELEASE = "teams-v39-7-8"
+APP_RELEASE = "V39.7.10"
+DASHBOARD_RELEASE = "dashboard-v39-7-10"
+TEAMS_RELEASE = "teams-v39-7-10"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
 FIELD_GPS_GOOD_ACCURACY_M = float(os.getenv("FIELD_GPS_GOOD_ACCURACY_M", "30"))
 FIELD_GPS_MAX_ACCURACY_M = float(os.getenv("FIELD_GPS_MAX_ACCURACY_M", "80"))
@@ -6150,7 +6150,7 @@ def chip_swap_new_asset_api(location_id):
         company=loc.company, line=loc.line, locality=loc.location, equipment_type="VALIDADOR",
         terminal_number=terminal, asset_key=f"FIELD-{loc.id}-{terminal}-{secrets.token_hex(3)}", serial=(request.form.get("serial") or "").strip() or None,
         model=(request.form.get("model") or "").strip() or None, base_status="ATIVO",
-        base_notes="Cadastrado em campo pela atividade Troca de Chips V39.7.9"
+        base_notes="Cadastrado em campo pela atividade Troca de Chips V39.7.10"
     )
     db.session.add(asset); db.session.flush()
     db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="CHIP_SWAP_NEW_ASSET", entity_type="base_asset", entity_id=str(asset.id), detail=f"{loc.location} · Terminal {terminal} · cadastrado em campo"))
