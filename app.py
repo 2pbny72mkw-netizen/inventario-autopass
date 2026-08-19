@@ -703,13 +703,13 @@ def _role_assignment_allowed(role):
     role = (role or "").strip()
     # RH administra somente perfis operacionais. Perfis sensíveis ficam restritos ao ADM.
     if session.get("role") == "hr":
-        return role == "technician"
+        return role in ("technician", "technician_implantation")
     if role in ("manager", "consultation", "dispatcher"):
         return _current_user_is_superadmin()
-    return role in ("technician", "hr")
+    return role in ("technician", "technician_implantation", "hr")
 
 def _hr_target_allowed(user):
-    return bool(user) and (session.get("role") != "hr" or user.role == "technician")
+    return bool(user) and (session.get("role") != "hr" or user.role in ("technician", "technician_implantation"))
 
 
 def field_required(fn):
@@ -718,7 +718,7 @@ def field_required(fn):
     def inner(*args, **kwargs):
         if not session.get("user_id"):
             return redirect(url_for("login"))
-        if session.get("role") not in ("manager", "technician"):
+        if session.get("role") not in ("manager", "technician", "technician_implantation"):
             if request.path.startswith("/api/"):
                 return jsonify({"ok": False, "error": "Perfil Consulta possui acesso somente leitura."}), 403
             return redirect(url_for("manager"))
@@ -947,7 +947,7 @@ def _ensure_team_schedule_profiles():
     for u in users:
         if normalize(u.personnel_status or "ATIVO") != "ATIVO":
             continue
-        if u.role not in ("technician", "dispatcher", "manager"):
+        if u.role not in ("technician", "technician_implantation", "dispatcher", "manager"):
             continue
         valid_ids.add(u.id)
         row=TeamScheduleProfile.query.filter_by(user_id=u.id).first()
@@ -3514,8 +3514,8 @@ def users_page():
     active_q = User.query.filter(User.archived_at.is_(None))
     archived_q = User.query.filter(User.archived_at.isnot(None))
     if session.get("role") == "hr":
-        active_q = active_q.filter(User.role == "technician")
-        archived_q = archived_q.filter(User.role == "technician")
+        active_q = active_q.filter(User.role.in_(("technician", "technician_implantation")))
+        archived_q = archived_q.filter(User.role.in_(("technician", "technician_implantation")))
     active_users = active_q.order_by(User.active.desc(), User.name).all()
     archived_users = archived_q.order_by(User.archived_at.desc(), User.name).all()
     return render_template(
@@ -3540,6 +3540,7 @@ def _normalize_optional_phone(value):
 def _next_user_code(role):
     prefixes = {
         "technician": "T",
+        "technician_implantation": "TI",
         "manager": "G",
         "consultation": "C",
         "hr": "RH",
@@ -3585,7 +3586,7 @@ def create_user():
         flash("Nome, usuário e senha são obrigatórios.")
         return redirect(url_for("users_page"))
 
-    if role not in ("manager", "technician", "consultation", "hr", "dispatcher"):
+    if role not in ("manager", "technician", "technician_implantation", "consultation", "hr", "dispatcher"):
         flash("Perfil de acesso inválido.")
         return redirect(url_for("users_page"))
     if not _role_assignment_allowed(role):
@@ -3626,14 +3627,14 @@ def create_user():
         job_title=job_title,
         personnel_status=personnel_status,
         personnel_status_note=personnel_status_note,
-        work_schedule_type=work_schedule_type if role == "technician" else None,
-        work_shift=work_shift if role == "technician" else None,
-        work_anchor_date=work_anchor_date if role == "technician" and work_schedule_type == "12x36" else None,
-        work_anchor_status=work_anchor_status if role == "technician" and work_schedule_type == "12x36" else None,
+        work_schedule_type=work_schedule_type if role in ("technician", "technician_implantation") else None,
+        work_shift=work_shift if role in ("technician", "technician_implantation") else None,
+        work_anchor_date=work_anchor_date if role in ("technician", "technician_implantation") and work_schedule_type == "12x36" else None,
+        work_anchor_status=work_anchor_status if role in ("technician", "technician_implantation") and work_schedule_type == "12x36" else None,
     )
 
     photo = request.files.get("photo")
-    if photo and photo.filename and role in ("manager", "technician", "hr"):
+    if photo and photo.filename and role in ("manager", "technician", "technician_implantation", "hr"):
         if not (photo.mimetype or "").startswith("image/"):
             flash("A foto do usuário deve ser uma imagem.")
             return redirect(url_for("users_page"))
@@ -3749,7 +3750,7 @@ def edit_user(user_id):
         flash("Nome e usuário são obrigatórios.")
         return redirect(url_for("users_page"))
 
-    if role not in ("manager", "technician", "consultation", "hr", "dispatcher"):
+    if role not in ("manager", "technician", "technician_implantation", "consultation", "hr", "dispatcher"):
         flash("Perfil de acesso inválido.")
         return redirect(url_for("users_page"))
     if not _role_assignment_allowed(role):
@@ -3839,7 +3840,7 @@ def edit_user(user_id):
     user.job_title = job_title
     user.personnel_status = personnel_status
     user.personnel_status_note = personnel_status_note
-    if role == "technician":
+    if role in ("technician", "technician_implantation"):
         user.work_schedule_type = work_schedule_type
         user.work_shift = work_shift
         user.work_anchor_date = work_anchor_date if work_schedule_type == "12x36" else None
@@ -4005,7 +4006,7 @@ def export_users_excel():
         c.font = Font(bold=True, color="FFFFFF")
         c.fill = PatternFill("solid", fgColor="17345D")
         c.alignment = Alignment(horizontal="center")
-    role_label={"manager":"Gestor","technician":"Técnico de Campo","consultation":"Consulta","hr":"RH","dispatcher":"Dispatcher"}
+    role_label={"manager":"Gestor","technician":"Técnico de Campo","technician_implantation":"Técnico Implantação","consultation":"Consulta","hr":"RH","dispatcher":"Dispatcher"}
     for u in (User.query.filter(User.role == "technician") if session.get("role") == "hr" else User.query).order_by(User.name).all():
         status = "ARQUIVADO" if u.archived_at else ("ATIVO" if u.active else "INATIVO")
         ws.append([
@@ -6474,7 +6475,7 @@ def emv_chip_save(terminal):
         if _r2_available(): data=f.read();key=f"emv-chip-swaps/{datetime.utcnow().strftime('%Y/%m')}/{stored}";_r2_put_bytes(key,data,f.mimetype or "application/octet-stream");stored="r2__"+key
         else: f.save(UPLOAD_DIR/stored)
         db.session.add(EmvChipSwapPhoto(swap_id=sw.id,original_name=f.filename,stored_name=stored,mime_type=f.mimetype,uploaded_by=session["user_id"]))
-    db.session.flush(); photos=EmvChipSwapPhoto.query.filter_by(swap_id=sw.id).count();sw.status="CONCLUÍDA" if photos else "EM ANDAMENTO";sw.completed_at=datetime.utcnow() if photos else None;db.session.commit()
+    db.session.flush(); photos=EmvChipSwapPhoto.query.filter_by(swap_id=sw.id).count();sw.status="CONCLUÍDA" if photos else "PENDENTE";sw.completed_at=datetime.utcnow() if photos else None;db.session.commit()
     return jsonify({"ok":True,"status":sw.status,"photo_count":photos})
 
 @app.delete("/api/emv-chip-swaps/photos/<int:photo_id>")
