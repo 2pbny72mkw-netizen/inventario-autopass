@@ -18,6 +18,7 @@
     <button class="v23Nav" data-v23-view="evidence">▣ <span>Evidências</span></button>
     <button class="v23Nav" data-v23-view="panorama">▤ <span>Visões panorâmicas</span></button>
     <button class="v23Nav" data-v23-view="chips">▣ <span>Troca de Chips</span></button>
+    <button class="v23Nav" data-v23-view="emv">▣ <span>Troca Chips EMV</span></button>
     <button class="v23Nav" data-v23-view="ranking">↗ <span>Ranking</span></button>
     <button class="v23Nav" data-v23-view="competition">◉ <span>Concorrência</span></button>
     <div class="v23SidebarSpacer"></div>
@@ -287,7 +288,7 @@
 
 
 <section class="card v23Panel dashPanExecutive" data-v23-panel="panorama">
-  <div class="sectionHead"><div><span class="eyebrow">ACERVO VISUAL</span><h2>Visões panorâmicas</h2><p class="muted">Progresso das localidades e acesso às fotos organizadas por ponto.</p></div><a class="secondary buttonLink" href="/visao-panoramica">Abrir tela completa</a></div>
+  <div class="sectionHead"><div><span class="eyebrow">ACERVO VISUAL</span><h2>Visões panorâmicas</h2><p class="muted">Progresso das localidades e acesso às fotos organizadas por ponto.</p></div><div><a class="secondary buttonLink" href="/api/panoramas/export.xlsx">Exportar Excel</a> <a class="secondary buttonLink" href="/visao-panoramica">Abrir tela completa</a></div></div>
   <div class="grid4 dashPanFilters">
     <div><label>Empresa</label><select id="dashPanCompany"><option value="">Todas</option></select></div>
     <div><label>Linha</label><select id="dashPanLine"><option value="">Todas</option></select></div>
@@ -308,6 +309,7 @@
   <div id="dashPanGallery" class="panGallery" style="margin-top:16px"><p class="muted">Selecione uma localidade para visualizar as fotos.</p></div>
 </section>
 
+<section class="card v23Panel" data-v23-panel="emv"><div class="sectionHead"><div><span class="eyebrow">TRILHOS · EMV</span><h2>Troca de Chips EMV</h2><p class="muted">Pendências e evolução dos bloqueios por operadora, linha e estação.</p></div><div><a class="secondary buttonLink" href="/api/emv-chip-swaps/export.xlsx">Exportar Excel</a> <a class="secondary buttonLink" href="/troca-chips-emv">Abrir atividade</a></div></div><div class="dashPanKpis"><article><small>Base prevista</small><b>308</b><span>bloqueios da carga</span></article><article class="dashPanPending"><small>Status</small><b>EMV</b><span>acompanhar na atividade</span></article></div></section>
 <section class="card v23Panel" data-v23-panel="chips" id="chipDashPanel">
   <div class="sectionHead"><div><span class="eyebrow">PRODUTIVIDADE · TROCA DE CHIPS</span><h2>Evolução e progresso</h2><p class="muted">Acompanhamento dos Validadores de Recarga por localidade e técnico.</p></div><a class="secondary buttonLink" href="/troca-chips">Abrir atividade</a></div>
   <div class="kpis dashboardKpis">

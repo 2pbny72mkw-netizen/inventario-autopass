@@ -1,0 +1,5 @@
+{% extends "base.html" %}{% block content %}
+<div class="pageHead"><span class="eyebrow">V41 · ATIVIDADE</span><h1>Troca de Chips EMV · Trilhos</h1><p>Selecione operadora e linha. As pendências da estação são exibidas com os dados técnicos do bloqueio.</p></div>
+<section class="card"><div class="grid3"><div><label>Operadora</label><select id="emvCompany"><option value="">Todas</option></select></div><div><label>Linha</label><select id="emvLine"><option value="">Todas</option></select></div><div><label>Estação</label><select id="emvStation"><option value="">Todas</option></select></div></div><div class="chipDashProgress" style="margin-top:14px"><i id="emvBar" style="width:0%"></i></div><p id="emvSummary" class="muted"></p><a class="secondary buttonLink" href="/api/emv-chip-swaps/export.xlsx">Exportar Excel</a></section>
+<section class="card"><h2>Bloqueios / pendências</h2><div id="emvRows" class="emvRows"></div></section>
+<script src="{{url_for('static',filename='emv_chip_swap.js')}}?v=v41"></script>{% endblock %}
