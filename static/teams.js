@@ -1,4 +1,4 @@
-window.AUTOPASS_TEAMS_VERSION="teams-v39-7-8";
+window.AUTOPASS_TEAMS_VERSION="teams-v39-7-10";
 
 console.log('AUTOPASS Central Operacional V26 carregada');
 
@@ -522,50 +522,71 @@ const V391_FALLBACK={
 function v391LineNo(v){const t=String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase();const m=t.match(/(?:^|\D)(1[0-7]|[1-9])(?:\D|$)/);if(m)return String(Number(m[1]));const a={AZUL:'1',VERDE:'2',VERMELHA:'3',AMARELA:'4',LILAS:'5',LARANJA:'6',RUBI:'7',DIAMANTE:'8',ESMERALDA:'9',TURQUESA:'10',CORAL:'11',SAFIRA:'12',JADE:'13',PRATA:'15',OURO:'17'};return Object.entries(a).find(([k])=>t.includes(k))?.[1]||''}
 function v391Dist(a,b){const R=6371000,p=x=>x*Math.PI/180,dlat=p(+b.reference_latitude-+a.reference_latitude),dlon=p(+b.reference_longitude-+a.reference_longitude),x=Math.sin(dlat/2)**2+Math.cos(p(+a.reference_latitude))*Math.cos(p(+b.reference_latitude))*Math.sin(dlon/2)**2;return 2*R*Math.asin(Math.sqrt(x))}
 function v391Sequence(a){if(a.length<3)return [...a];const pool=[...a], seq=[pool.shift()];while(pool.length){const last=seq[seq.length-1];let bi=0,bd=Infinity;pool.forEach((c,i)=>{const d=v391Dist(last,c);if(d<bd){bd=d;bi=i}});seq.push(pool.splice(bi,1)[0])}return seq}
-let v3978RailSource={},v3978RailSvg=null,v3978RailPointCount=0;
+let v3978RailSource={},v3978RailPointCount=0;
 function v3978RailDiag(msg,ok=true){const e=$('teamRailDiag');if(!e)return;e.textContent=msg;e.classList.toggle('railDiagError',!ok)}
-function v3978EnsureSvg(){
-  const host=$('teamMap'); if(!host)return null;
-  if(!v3978RailSvg){
-    v3978RailSvg=document.createElementNS('http://www.w3.org/2000/svg','svg');
-    v3978RailSvg.id='teamRailSvgOverlay';v3978RailSvg.setAttribute('aria-hidden','true');host.appendChild(v3978RailSvg);
-  }
-  return v3978RailSvg;
-}
-function v3978DrawSvgRails(){
-  if(!teamMap)return; const svg=v3978EnsureSvg(); if(!svg)return;
-  const cb=$('teamShowLines'); svg.style.display=(cb&& !cb.checked)?'none':'block';
-  const size=teamMap.getSize();svg.setAttribute('viewBox',`0 0 ${size.x} ${size.y}`);svg.innerHTML='';
+function v39710DrawLeafletRails(sourceLabel='fallback local'){
+  if(!teamMap||!v391RailLines)return;
+  v391RailLines.clearLayers();
   let lines=0,points=0;
   Object.entries(v3978RailSource).forEach(([n,pts])=>{
     if(!Array.isArray(pts)||pts.length<2)return;
-    const xy=pts.map(p=>teamMap.latLngToContainerPoint(L.latLng(+p[0],+p[1]))).filter(p=>Number.isFinite(p.x)&&Number.isFinite(p.y));
-    if(xy.length<2)return; lines++; points+=xy.length;
-    const str=xy.map(p=>`${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
-    const halo=document.createElementNS('http://www.w3.org/2000/svg','polyline');halo.setAttribute('points',str);halo.setAttribute('class','teamRailHalo');svg.appendChild(halo);
-    const rail=document.createElementNS('http://www.w3.org/2000/svg','polyline');rail.setAttribute('points',str);rail.setAttribute('class','teamRailLine');rail.setAttribute('stroke',V391_COLORS[n]||'#334155');rail.dataset.line=n;svg.appendChild(rail);
+    const clean=pts.map(p=>[+p[0],+p[1]]).filter(p=>Number.isFinite(p[0])&&Number.isFinite(p[1]));
+    if(clean.length<2)return;
+    lines++;points+=clean.length;
+    L.polyline(clean,{color:'#fff',weight:8,opacity:.9,interactive:false,lineCap:'round',lineJoin:'round'}).addTo(v391RailLines);
+    L.polyline(clean,{color:V391_COLORS[n]||'#334155',weight:5,opacity:.96,interactive:false,lineCap:'round',lineJoin:'round'}).bindTooltip(`Linha ${n} - ${V391_NAMES[n]||''}`,{sticky:true}).addTo(v391RailLines);
   });
-  v3978RailPointCount=points;v3978RailDiag(`Trilhos: ${lines} linha(s) / ${points} pontos`,lines>0);
+  v3978RailPointCount=points;
+  v3978RailDiag(`Trilhos: ${sourceLabel} / ${lines} linha(s) / ${points} pontos`,lines>0);
+}
+function v39710ApproxStationPoint(points,index,total){
+  if(!points?.length)return null;if(points.length===1)return points[0];
+  const t=total<=1?.5:index/(total-1), pos=t*(points.length-1), a=Math.floor(pos), b=Math.min(points.length-1,a+1), f=pos-a;
+  return [points[a][0]+(points[b][0]-points[a][0])*f,points[a][1]+(points[b][1]-points[a][1])*f];
+}
+function v39710RenderStations(rows){
+  if(!v391Stations||!v391StationNames)return;
+  v391Stations.clearLayers();v391StationNames.clearLayers();
+  const byLine={};(rows||[]).forEach(x=>{const n=v391LineNo(x.line);if(n)(byLine[n]??=[]).push(x)});
+  let count=0;
+  Object.entries(byLine).forEach(([n,items])=>{
+    const real=items.filter(x=>Number.isFinite(+x.reference_latitude)&&Number.isFinite(+x.reference_longitude));
+    const usable=real.length?real:items;
+    usable.forEach((x,i)=>{
+      let pt=real.length?[+x.reference_latitude,+x.reference_longitude]:v39710ApproxStationPoint(v3978RailSource[n],i,usable.length);
+      if(!pt||!Number.isFinite(+pt[0])||!Number.isFinite(+pt[1]))return;
+      count++;
+      L.circleMarker(pt,{radius:5,color:'#fff',weight:2,fillColor:V391_COLORS[n]||'#334155',fillOpacity:1,interactive:true})
+       .bindTooltip(`${x.location||'Estação'}${real.length?'':' · posição aproximada'}`,{direction:'top'})
+       .addTo(v391Stations);
+      L.marker(pt,{interactive:false,icon:L.divIcon({className:'stationLabelIcon',html:`<span>${esc(x.location||'Estação')}</span>`,iconSize:null})}).addTo(v391StationNames);
+    });
+  });
+  return count;
 }
 async function v391BuildRails(){
   if(!teamMap)return;
   v3978RailSource=Object.fromEntries(Object.entries(V391_FALLBACK).map(([n,pts])=>[n,pts.map(p=>[+p[0],+p[1]])]));
-  v3978DrawSvgRails();
+  v39710DrawLeafletRails('fallback local');
   try{
-    const r=await fetch('/api/equipes/rail-network',{cache:'no-store'});if(!r.ok)throw new Error('HTTP '+r.status);const locs=await r.json();const groups={};
-    (locs||[]).forEach(x=>{if(x.reference_latitude==null||x.reference_longitude==null)return;const n=v391LineNo(x.line);if(!n)return;(groups[n]??=[]).push(x);const pt=[+x.reference_latitude,+x.reference_longitude];L.circleMarker(pt,{radius:4,color:'#fff',weight:2,fillColor:V391_COLORS[n]||'#64748b',fillOpacity:1}).bindTooltip(String(x.location||''),{direction:'top'}).addTo(v391Stations);L.marker(pt,{interactive:false,icon:L.divIcon({className:'stationLabelIcon',html:`<span>${esc(x.location||'')}</span>`,iconSize:null})}).addTo(v391StationNames)});
-    Object.entries(groups).forEach(([n,arr])=>{const seq=v391Sequence(arr);if(seq.length>=2)v3978RailSource[n]=seq.map(x=>[+x.reference_latitude,+x.reference_longitude])});
-    v3978DrawSvgRails();
-  }catch(e){console.warn('V39.7.9 rail API; usando fallback local',e);v3978DrawSvgRails();v3978RailDiag(`Trilhos: fallback local / ${Object.keys(v3978RailSource).length} linha(s) / ${v3978RailPointCount} pontos`,v3978RailPointCount>0)}
+    let locs=[];
+    const r=await fetch('/api/equipes/rail-network',{cache:'no-store'});if(r.ok)locs=await r.json();
+    // Se a API leve não possui coordenadas, usamos /api/locations apenas para obter nomes/linhas e distribuir os marcadores sobre a malha local.
+    if(!Array.isArray(locs)||!locs.length){const rr=await fetch('/api/locations',{cache:'no-store'});if(rr.ok)locs=await rr.json();}
+    const groups={};
+    (locs||[]).forEach(x=>{if(x.reference_latitude==null||x.reference_longitude==null)return;const n=v391LineNo(x.line);if(!n)return;(groups[n]??=[]).push(x)});
+    let realLines=0;
+    Object.entries(groups).forEach(([n,arr])=>{const seq=v391Sequence(arr);if(seq.length>=2){v3978RailSource[n]=seq.map(x=>[+x.reference_latitude,+x.reference_longitude]);realLines++}});
+    v39710DrawLeafletRails(realLines?'base geográfica':'fallback local');
+    const stations=v39710RenderStations(locs||[]);
+    if(stations) v3978RailDiag(`${$('teamRailDiag')?.textContent||''} · ${stations} estação(ões)`,true);
+  }catch(e){console.warn('V39.7.10 rail/stations API; usando fallback local',e);v39710DrawLeafletRails('fallback local')}
 }
 function v391SetupTeamMap(){
   if(!teamMap||v391RailLines)return;
   v391RailLines=L.layerGroup().addTo(teamMap);v391Stations=L.layerGroup().addTo(teamMap);v391StationNames=L.layerGroup();v391TechLayer=L.layerGroup().addTo(teamMap);v391Accuracy=L.layerGroup();
   v391BuildRails();
-  ['zoomend','moveend','resize'].forEach(evt=>teamMap.on(evt,()=>requestAnimationFrame(v3978DrawSvgRails)));
-  setTimeout(()=>{teamMap.invalidateSize({pan:false});v3978DrawSvgRails()},250);
 }
-
 // V39.6 — compatibilidade dos checkboxes visíveis com as camadas Leaflet.
-function v396SyncRailChecks(){const map=teamMap;if(!map)return;[['teamShowStations',v391Stations],['teamShowNames',v391StationNames],['teamShowTechs',v391TechLayer]].forEach(([id,layer])=>{const el=$(id);if(!el||!layer)return;const sync=()=>{if(el.checked&&!map.hasLayer(layer))map.addLayer(layer);if(!el.checked&&map.hasLayer(layer))map.removeLayer(layer)};el.addEventListener('change',sync);sync()});const lines=$('teamShowLines');if(lines)lines.addEventListener('change',v3978DrawSvgRails);v391BuildRails()}
+function v396SyncRailChecks(){const map=teamMap;if(!map)return;[['teamShowStations',v391Stations],['teamShowNames',v391StationNames],['teamShowTechs',v391TechLayer]].forEach(([id,layer])=>{const el=$(id);if(!el||!layer)return;const sync=()=>{if(el.checked&&!map.hasLayer(layer))map.addLayer(layer);if(!el.checked&&map.hasLayer(layer))map.removeLayer(layer)};el.addEventListener('change',sync);sync()});const lines=$('teamShowLines');if(lines){const sync=()=>{if(lines.checked&&!map.hasLayer(v391RailLines))map.addLayer(v391RailLines);if(!lines.checked&&map.hasLayer(v391RailLines))map.removeLayer(v391RailLines)};lines.addEventListener('change',sync);sync()}v391BuildRails()}
 setTimeout(v396SyncRailChecks,500);

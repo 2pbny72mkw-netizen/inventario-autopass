@@ -1425,3 +1425,12 @@ body.mapFullscreenOpen #gpsMap .autopassMapFullscreenControl{
 #v39TopdeskPanel .v25CompanyTrack{background:#e7edf4!important}
 /* V39.7.9 — resultado pós-troca e pendências */
 .grid5{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}.chipTestResultKpis{display:flex;gap:12px;margin:10px 0 14px}.chipTestResultKpis>span{border:1px solid #dbe5ee;border-radius:12px;padding:10px 14px;min-width:150px}.chipTestResultKpis small{display:block;color:#53657a}.chipTestResultKpis b{font-size:24px;color:#0d294d}.chipTestResultChart{display:grid;gap:9px}.chipResultRow{display:grid;grid-template-columns:190px 1fr 44px;align-items:center;gap:10px}.chipResultRow>div{height:9px;background:#e8eef4;border-radius:999px;overflow:hidden}.chipResultRow i{display:block;height:100%;background:#1f6fb2;border-radius:999px}.chipTechnicalPendingList{margin-top:14px;max-height:300px;overflow:auto}@media(max-width:900px){.grid5{grid-template-columns:1fr 1fr}.chipResultRow{grid-template-columns:150px 1fr 36px}}@media(max-width:560px){.grid5{grid-template-columns:1fr}}
+
+/* V39.7.10 — mapa Leaflet nativo + chips */
+#teamRailSvgOverlay{display:none!important}
+.teamMap .stationLabelIcon{z-index:650!important}
+.chipNewAssetCard{border-style:dashed;background:#fbfdff}
+.chipNewAssetForm{display:grid;grid-template-columns:1fr 1fr;gap:8px 10px;margin-top:10px}
+.chipNewAssetForm label,.chipNewAssetForm button,.chipNewAssetForm .chipMsg{grid-column:1/-1}
+.chipNewAssetForm input{width:100%;min-width:0}
+@media(max-width:700px){.chipNewAssetForm{grid-template-columns:1fr}}

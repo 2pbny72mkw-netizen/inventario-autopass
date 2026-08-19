@@ -1065,6 +1065,7 @@ function v23SetView(view){
     el.hidden=!active;
   });
   document.querySelectorAll('.v23Nav').forEach(btn=>btn.classList.toggle('active',btn.dataset.v23View===v23ActiveView));
+  document.querySelectorAll('.executiveFilterBar.v23Shared').forEach(el=>{el.hidden=(v23ActiveView==='chips');});
   if(v23ActiveView==='map' && gpsMap) setTimeout(()=>gpsMap.invalidateSize(),140);
   window.scrollTo({top:0,behavior:document.body.classList.contains('v23TvMode')?'auto':'smooth'});
 }
