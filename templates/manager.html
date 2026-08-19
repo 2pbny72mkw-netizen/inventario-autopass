@@ -286,7 +286,27 @@
 <section class="card v23Panel v38Journal" data-v23-panel="journal"><div class="sectionHead"><div><span class="eyebrow">PRODUTIVIDADE DE CAMPO</span><h2>Diário de bordo</h2><p class="muted">Atividades e posições GPS do colaborador no período.</p></div></div><div class="v38JournalFilters"><select id="v38JournalUser"><option value="">Selecione o colaborador</option></select><select id="v38JournalDays"><option value="7">7 dias</option><option value="14">14 dias</option><option value="30">30 dias</option></select><button class="secondary" id="v38JournalLoad">Consultar</button></div><div class="evidenceMiniKpis"><span><small>Registros GPS</small><b id="v38JGps">0</b></span><span><small>Equipamentos</small><b id="v38JEquip">0</b></span><span><small>Localidades</small><b id="v38JLoc">0</b></span></div><div id="v38JournalMap" style="height:330px;border-radius:14px;margin:14px 0"></div><div id="v38JournalTimeline" class="v38Timeline"></div></section>
 
 
-<section class="card v23Panel" data-v23-panel="panorama"><div class="sectionHead"><div><span class="eyebrow">ACERVO VISUAL</span><h2>Visões panorâmicas</h2><p class="muted">Escolha uma localidade para abrir as fotos organizadas por ponto.</p></div><a class="secondary buttonLink" href="/visao-panoramica">Abrir tela completa</a></div><div class="grid3"><div><label>Empresa</label><select id="dashPanCompany"><option value="">Todas</option></select></div><div><label>Linha</label><select id="dashPanLine"><option value="">Todas</option></select></div><div><label>Localidade</label><select id="dashPanLocation"><option value="">Selecione</option></select></div></div><div id="dashPanGallery" class="panGallery" style="margin-top:16px"><p class="muted">Selecione uma localidade.</p></div></section>
+<section class="card v23Panel dashPanExecutive" data-v23-panel="panorama">
+  <div class="sectionHead"><div><span class="eyebrow">ACERVO VISUAL</span><h2>Visões panorâmicas</h2><p class="muted">Progresso das localidades e acesso às fotos organizadas por ponto.</p></div><a class="secondary buttonLink" href="/visao-panoramica">Abrir tela completa</a></div>
+  <div class="grid4 dashPanFilters">
+    <div><label>Empresa</label><select id="dashPanCompany"><option value="">Todas</option></select></div>
+    <div><label>Linha</label><select id="dashPanLine"><option value="">Todas</option></select></div>
+    <div><label>Status</label><select id="dashPanStatus"><option value="">Todos</option><option value="PENDENTE">Pendentes</option><option value="EM ANDAMENTO">Em andamento</option><option value="CONCLUÍDA">Concluídas</option></select></div>
+    <div><label>Localidade</label><select id="dashPanLocation"><option value="">Selecione</option></select></div>
+  </div>
+  <div class="dashPanKpis">
+    <article><small>Localidades</small><b id="dashPanTotal">0</b><span>no recorte</span></article>
+    <article class="dashPanPending"><small>Pendentes</small><b id="dashPanPending">0</b><span id="dashPanPendingPct">0%</span></article>
+    <article class="dashPanProgress"><small>Em andamento</small><b id="dashPanInProgress">0</b><span id="dashPanInProgressPct">0%</span></article>
+    <article class="dashPanDone"><small>Concluídas</small><b id="dashPanDone">0</b><span id="dashPanDonePct">0%</span></article>
+    <article class="dashPanPhotos"><small>Fotos</small><b id="dashPanPhotos">0</b><span>registradas</span></article>
+  </div>
+  <div class="dashPanVisuals">
+    <article class="v22Panel"><h3>Status das localidades</h3><div class="dashPanDonutRow"><div class="dashPanDonut" id="dashPanDonut"><div><b id="dashPanPct">0%</b><small>concluído</small></div></div><div class="dashPanLegend"><span><i class="done"></i>Concluídas <b id="dashPanLegendDone">0</b></span><span><i class="progress"></i>Em andamento <b id="dashPanLegendProgress">0</b></span><span><i class="pending"></i>Pendentes <b id="dashPanLegendPending">0</b></span></div></div></article>
+    <article class="v22Panel"><h3>Progresso</h3><div class="dashPanProgressBar"><i class="done" id="dashPanBarDone"></i><i class="progress" id="dashPanBarProgress"></i><i class="pending" id="dashPanBarPending"></i></div><p class="muted" id="dashPanProgressText">0 de 0 localidades concluídas.</p></article>
+  </div>
+  <div id="dashPanGallery" class="panGallery" style="margin-top:16px"><p class="muted">Selecione uma localidade para visualizar as fotos.</p></div>
+</section>
 
 <section class="card v23Panel" data-v23-panel="chips" id="chipDashPanel">
   <div class="sectionHead"><div><span class="eyebrow">PRODUTIVIDADE · TROCA DE CHIPS</span><h2>Evolução e progresso</h2><p class="muted">Acompanhamento dos Validadores de Recarga por localidade e técnico.</p></div><a class="secondary buttonLink" href="/troca-chips">Abrir atividade</a></div>
@@ -444,5 +464,5 @@
   <div class="v343TvFooter"><span id="v343TvHeadline">Monitoramento executivo do inventário.</span><span>SUPORTE A CAMPO · V35.2</span></div>
 </div>
 
-<script src="{{url_for('static',filename='manager.js')}}?v=dashboard-v39-7-10"></script>
+<script src="{{url_for('static',filename='manager.js')}}?v=dashboard-v40-1-3"></script>
 {% endblock %}
