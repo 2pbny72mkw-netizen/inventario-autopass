@@ -34,9 +34,9 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V41.1"
-DASHBOARD_RELEASE = "dashboard-v41"
-TEAMS_RELEASE = "teams-v41"
+APP_RELEASE = "V41.3"
+DASHBOARD_RELEASE = "dashboard-v41-3"
+TEAMS_RELEASE = "teams-v41-3"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
 FIELD_GPS_GOOD_ACCURACY_M = float(os.getenv("FIELD_GPS_GOOD_ACCURACY_M", "30"))
 FIELD_GPS_MAX_ACCURACY_M = float(os.getenv("FIELD_GPS_MAX_ACCURACY_M", "80"))
@@ -6505,8 +6505,14 @@ def emv_chip_delete(terminal):
 @login_required
 def emv_chip_export():
     _ensure_emv_tables(); swaps={x.terminal:x for x in EmvChipSwap.query.all()}; wb=Workbook();ws=wb.active;ws.title="Troca EMV";headers=["Operadora","Linha","Estação","Terminal","Versão","IP","Máscara","Gateway","DNS 1","DNS 2","Grupo","Status","Resultado","Observação"];ws.append(headers)
+    company=(request.args.get("company") or "").strip(); line=(request.args.get("line") or "").strip(); station=(request.args.get("station") or "").strip(); status_filter=(request.args.get("status") or "").strip()
     for r in _v41_emv_rows():
-        sw=swaps.get(r["terminal"]);ws.append([r["company"],r["line"],r["station"],r["terminal"],r["version"],r["ip"],r["mask"],r["gateway"],r["dns1"],r["dns2"],r["group"],sw.status if sw else "PENDENTE",sw.test_result if sw else "",sw.notes if sw else ""])
+        sw=swaps.get(r["terminal"]); status=sw.status if sw else "PENDENTE"
+        if company and r["company"] != company: continue
+        if line and r["line"] != line: continue
+        if station and r["station"] != station: continue
+        if status_filter and status != status_filter: continue
+        ws.append([r["company"],r["line"],r["station"],r["terminal"],r["version"],r["ip"],r["mask"],r["gateway"],r["dns1"],r["dns2"],r["group"],status,sw.test_result if sw else "",sw.notes if sw else ""])
     bio=io.BytesIO();wb.save(bio);bio.seek(0);return send_file(bio,as_attachment=True,download_name="troca_chips_emv.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 @app.get("/api/panoramas/export.xlsx")
