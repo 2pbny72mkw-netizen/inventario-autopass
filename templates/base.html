@@ -17,7 +17,7 @@
       <img src="{{url_for('static',filename='autopass-logo.png')}}" alt="Autopass">
       <div class="brandtext">
         <b>Sistema de Gestão Suporte a Campo</b>
-        <small>{{session.get('name')}} • {{ {'manager':'Gestor','technician':'Técnico de Campo','consultation':'Consulta','hr':'RH','dispatcher':'Dispatcher'}.get(session.get('role'),'Usuário') }}</small>
+        <small>{{session.get('name')}} • {{ {'manager':'Gestor','technician':'Técnico de Campo','technician_implantation':'Técnico Implantação','consultation':'Consulta','hr':'RH','dispatcher':'Dispatcher'}.get(session.get('role'),'Usuário') }}</small>
       </div>
     </div>
     <nav>
@@ -63,5 +63,11 @@ if('serviceWorker' in navigator){
 {% if session.get('role') == 'technician' %}
 <script src="{{ url_for('static', filename='session_gps.js') }}?v=v39-5" defer></script>
 {% endif %}
+<script>
+(function(){
+ function addImplantRole(){document.querySelectorAll('select[name="role"]').forEach(function(s){if(![...s.options].some(o=>o.value==='technician_implantation')){const o=document.createElement('option');o.value='technician_implantation';o.textContent='Técnico Implantação';const tech=[...s.options].find(x=>x.value==='technician');if(tech&&tech.nextSibling)s.insertBefore(o,tech.nextSibling);else s.appendChild(o);}})}
+ document.addEventListener('DOMContentLoaded',addImplantRole); setTimeout(addImplantRole,300);
+})();
+</script>
 </body>
 </html>
