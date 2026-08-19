@@ -1,5 +1,33 @@
 {% extends "base.html" %}{% block content %}
-<div class="pageHead"><span class="eyebrow">V41.2 · ATIVIDADE</span><h1>Troca de Chips EMV · Trilhos</h1><p>Selecione operadora e linha. As pendências da estação são exibidas com os dados técnicos do bloqueio.</p></div>
-<section class="card"><div class="grid4"><div><label>Operadora</label><select id="emvCompany"><option value="">Todas</option></select></div><div><label>Linha</label><select id="emvLine"><option value="">Todas</option></select></div><div><label>Estação</label><select id="emvStation"><option value="">Todas</option></select></div><div><label>Status</label><select id="emvStatusFilter"><option value="">Todos</option><option value="PENDENTE">Pendente</option><option value="EM ANDAMENTO">Em andamento</option><option value="CONCLUÍDA">Concluído</option></select></div></div><div class="chipDashProgress" style="margin-top:14px"><i id="emvBar" style="width:0%"></i></div><p id="emvSummary" class="muted"></p><div style="display:flex;gap:8px;flex-wrap:wrap"><a class="secondary buttonLink" href="/api/emv-chip-swaps/export.xlsx">Exportar Excel</a><button type="button" class="secondary" id="emvToggleRows">Recolher bloqueios</button></div></section>
+<div class="pageHead"><span class="eyebrow">V41.3 · ATIVIDADE</span><h1>Troca de Chips EMV · Trilhos</h1><p>Selecione operadora e linha. As pendências da estação são exibidas com os dados técnicos do bloqueio.</p></div>
+<section class="card">
+  <div class="grid4">
+    <div><label>Operadora</label><select id="emvCompany"><option value="">Todas</option></select></div>
+    <div><label>Linha</label><select id="emvLine"><option value="">Todas</option></select></div>
+    <div><label>Estação</label><select id="emvStation"><option value="">Todas</option></select></div>
+    <div><label>Status</label><select id="emvStatusFilter"><option value="">Todos</option><option value="PENDENTE">Pendente</option><option value="EM ANDAMENTO">Em andamento</option><option value="CONCLUÍDA">Concluído</option></select></div>
+  </div>
+
+  <div class="emvActivityKpis">
+    <article><small>Previstos</small><b id="emvKpiTotal">0</b></article>
+    <article class="done"><small>Concluídos</small><b id="emvKpiDone">0</b></article>
+    <article class="progress"><small>Em andamento</small><b id="emvKpiProgress">0</b></article>
+    <article class="pending"><small>Pendentes</small><b id="emvKpiPending">0</b></article>
+    <article class="pct"><small>Progresso</small><b id="emvKpiPct">0%</b></article>
+  </div>
+
+  <div class="emvActivityVisual">
+    <div class="emvActivityDonut" id="emvActivityDonut"><div><b id="emvDonutPct">0%</b><span>concluído</span></div></div>
+    <div class="emvActivityBars">
+      <div><span>Concluídos</span><div><i class="done" id="emvActivityDoneBar"></i></div><b id="emvActivityDoneN">0</b></div>
+      <div><span>Em andamento</span><div><i class="progress" id="emvActivityProgressBar"></i></div><b id="emvActivityProgressN">0</b></div>
+      <div><span>Pendentes</span><div><i class="pending" id="emvActivityPendingBar"></i></div><b id="emvActivityPendingN">0</b></div>
+    </div>
+  </div>
+
+  <div class="chipDashProgress" style="margin-top:14px"><i id="emvBar" style="width:0%"></i></div>
+  <p id="emvSummary" class="muted"></p>
+  <div style="display:flex;gap:8px;flex-wrap:wrap"><a class="secondary buttonLink" href="/api/emv-chip-swaps/export.xlsx" id="emvExport">Exportar Excel</a><button type="button" class="secondary" id="emvToggleRows">Recolher bloqueios</button></div>
+</section>
 <section class="card" id="emvRowsSection"><h2>Bloqueios / pendências</h2><div id="emvRows" class="emvRows"></div></section>
-<script src="{{url_for('static',filename='emv_chip_swap.js')}}?v=v41-2"></script>{% endblock %}
+<script src="{{url_for('static',filename='emv_chip_swap.js')}}?v=v41-3"></script>{% endblock %}
