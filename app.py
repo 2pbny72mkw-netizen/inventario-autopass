@@ -34,9 +34,9 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V39.7.10"
-DASHBOARD_RELEASE = "dashboard-v39-7-10"
-TEAMS_RELEASE = "teams-v39-7-10"
+APP_RELEASE = "V40.0"
+DASHBOARD_RELEASE = "dashboard-v40-0"
+TEAMS_RELEASE = "teams-v40-0"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
 FIELD_GPS_GOOD_ACCURACY_M = float(os.getenv("FIELD_GPS_GOOD_ACCURACY_M", "30"))
 FIELD_GPS_MAX_ACCURACY_M = float(os.getenv("FIELD_GPS_MAX_ACCURACY_M", "80"))
@@ -713,7 +713,7 @@ def index():
     role = session.get("role")
     if role == "hr":
         return redirect(url_for("teams_page"))
-    return redirect(url_for("manager" if role in ("manager", "consultation", "dispatcher") else "technician_work"))
+    return redirect(url_for("manager" if role in ("manager", "consultation", "dispatcher") else "activities_page"))
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -733,7 +733,7 @@ def login():
                 db.session.rollback()
             if user.role == "hr":
                 return redirect(url_for("teams_page"))
-            return redirect(url_for("manager" if user.role in ("manager", "consultation", "dispatcher") else "technician_work"))
+            return redirect(url_for("manager" if user.role in ("manager", "consultation", "dispatcher") else "activities_page"))
         flash("Usuário ou senha inválidos.")
     return render_template("login.html")
 
@@ -1183,7 +1183,7 @@ def teams_calendar_api():
         start_raw = request.args.get("start", "").strip()
         days = max(1, min(31, request.args.get("days", type=int) or 14))
         category = normalize(request.args.get("category", ""))
-        cargo = (request.args.get("cargo", "") or "").strip().casefold()
+        cargos = {(x or "").strip().casefold() for x in (request.args.get("cargo", "") or "").split(",") if (x or "").strip()}
 
         try:
             start_date = (
@@ -1205,9 +1205,9 @@ def teams_calendar_api():
                     continue
             if category and normalize(p.category) != category:
                 continue
-            if cargo:
+            if cargos:
                 u = db.session.get(User, p.user_id) if p.user_id else None
-                if not u or (u.job_title or "").strip().casefold() != cargo:
+                if not u or (u.job_title or "").strip().casefold() not in cargos:
                     continue
             active_profiles.append(p)
 
@@ -5922,6 +5922,28 @@ def cleanup_v352_test_reference():
 
 
 
+@app.get("/atividades")
+@login_required
+def activities_page():
+    if session.get("role") not in ("technician", "manager"):
+        return redirect(url_for("manager" if session.get("role") in ("consultation", "dispatcher") else "teams_page"))
+    return render_template("activities.html")
+
+
+@app.get("/api/atividades/resumo")
+@login_required
+def activities_summary_api():
+    uid=session.get("user_id")
+    inv_today=Inventory.query.filter(Inventory.technician_id==uid, func.date(Inventory.created_at)==datetime.utcnow().date()).count()
+    swaps=ChipSwap.query.filter_by(technician_id=uid).all()
+    chip_done=sum(1 for x in swaps if x.status=="CONCLUÍDO")
+    pan=PanoramaPoint.query.filter_by(created_by=uid).count()
+    return jsonify({"ok":True,"activities":[
+        {"key":"inventory","title":"Inventário / Lançamento","href":"/tecnico","done":inv_today,"label":"lançamentos hoje"},
+        {"key":"chips","title":"Troca de Chips","href":"/troca-chips","done":chip_done,"label":"concluídos"},
+        {"key":"panorama","title":"Visão Panorâmica","href":"/visao-panoramica","done":pan,"label":"pontos registrados"}]})
+
+
 @app.get("/troca-chips")
 @login_required
 def chip_swap_page():
@@ -6301,6 +6323,49 @@ def panorama_upload_api(location_id):
     pt.updated_at=datetime.utcnow()
     db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="PANORAMA_UPLOAD",entity_type="location",entity_id=str(location_id),detail=f"{point_name}: {len(files)} foto(s)"))
     db.session.commit(); return jsonify({"ok":True,"point_id":pt.id,"photos_added":len(files)})
+
+@app.post("/api/panoramas/import-whatsapp")
+@manager_required
+def panorama_import_whatsapp_api():
+    zf=request.files.get("zip")
+    if not zf or not zf.filename.lower().endswith(".zip"):
+        return jsonify({"ok":False,"error":"Selecione um arquivo ZIP exportado do WhatsApp."}),400
+    raw=zf.read()
+    if len(raw)>150*1024*1024: return jsonify({"ok":False,"error":"ZIP acima do limite de 150 MB."}),413
+    locs=Location.query.all(); aliases=[]
+    def nrm(v): return re.sub(r"[^A-Z0-9]+"," ",unicodedata.normalize("NFD",str(v or "")).encode("ascii","ignore").decode().upper()).strip()
+    for loc in locs: aliases.append((loc,nrm(loc.location)))
+    imported=[]; unresolved=[]; duplicates=0
+    try:
+        with zipfile.ZipFile(io.BytesIO(raw)) as z:
+            names=z.namelist(); text=""
+            for n in names:
+                if n.lower().endswith(".txt"):
+                    try: text += "\n"+z.read(n).decode("utf-8",errors="ignore")
+                    except Exception: pass
+            for name in names:
+                ext=Path(name).suffix.lower()
+                if ext not in (".jpg",".jpeg",".png",".webp",".heic"): continue
+                base=nrm(Path(name).stem); context=nrm(text[max(0,text.upper().find(Path(name).name.upper())-350):text.upper().find(Path(name).name.upper())+350]) if Path(name).name.upper() in text.upper() else ""
+                hay=base+" "+context; matches=[(len(a),loc) for loc,a in aliases if a and a in hay]
+                if not matches: unresolved.append(name); continue
+                loc=max(matches,key=lambda x:x[0])[1]
+                data=z.read(name); digest=hashlib.sha256(data).hexdigest()[:20]
+                original=Path(name).name
+                if PanoramaPhoto.query.filter_by(original_name=original).first(): duplicates+=1; continue
+                pt=PanoramaPoint.query.filter_by(location_id=loc.id,point_name="Importado do WhatsApp").first()
+                if not pt:
+                    pt=PanoramaPoint(location_id=loc.id,point_name="Importado do WhatsApp",notes="Importação ZIP WhatsApp",created_by=session["user_id"]);db.session.add(pt);db.session.flush()
+                stored=f"pan_{pt.id}_{digest}_{secure_filename(original)}"
+                if _r2_available():
+                    key=f"panorama/{datetime.utcnow().strftime('%Y/%m')}/{stored}";_r2_put_bytes(key,data,mimetypes.guess_type(original)[0] or "application/octet-stream");stored="r2__"+key
+                else: (UPLOAD_DIR/stored).write_bytes(data)
+                db.session.add(PanoramaPhoto(point_id=pt.id,original_name=original,stored_name=stored,mime_type=mimetypes.guess_type(original)[0],uploaded_by=session["user_id"]))
+                imported.append({"file":original,"location":loc.location})
+        db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="PANORAMA_WHATSAPP_IMPORT",entity_type="panorama",entity_id="zip",detail=f"{len(imported)} importadas; {len(unresolved)} não identificadas; {duplicates} duplicadas"));db.session.commit()
+    except zipfile.BadZipFile: return jsonify({"ok":False,"error":"Arquivo ZIP inválido."}),400
+    return jsonify({"ok":True,"imported":imported,"unresolved":unresolved,"duplicates":duplicates})
+
 
 @app.delete("/api/panoramas/photos/<int:photo_id>")
 @manager_required
