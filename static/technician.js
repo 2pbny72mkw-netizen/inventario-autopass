@@ -573,7 +573,7 @@ async function loadAlready() {
       <td>${x._pending?'<span class="muted">Aguardando sincronização</span>':`
         <div style="display:flex;gap:6px;flex-wrap:wrap">
           <button type="button" class="secondary editInventoryBtn" data-id="${x.id}">Editar</button>
-          ${window.CURRENT_USER_ROLE==='manager'?`<button type="button" class="secondary deleteInventoryBtn" data-id="${x.id}" style="color:#b42318;border-color:#f0b4b4">Excluir</button>`:''}
+          <button type="button" class="secondary deleteInventoryBtn" data-id="${x.id}" style="color:#b42318;border-color:#f0b4b4">Excluir</button>
         </div>`}</td>
     </tr>`).join('') : '<tr><td colspan="7">Nenhum equipamento registrado ainda.</td></tr>';
 
@@ -631,12 +631,9 @@ function renderAssets(){
   const sel=$('base_asset_id'); if(!sel) return;
   sel.innerHTML='<option value="">Novo / não selecionar</option>';
   assets.forEach(a=>{
-    const type=normalizedEquipmentType(a.equipment_type||'');
     const id=a.terminal_number||a.top_id||a.qrcode_id||a.serial||a.asset_key;
     const o=document.createElement('option'); o.value=a.id; o.disabled=a.already_inventoried;
-    // V39.7.4: para Validador de Recarga, TERMINAL é a identificação principal da base.
-    const primary=type==='Validador de Recarga' ? `Terminal ${a.terminal_number||id||a.id}` : (a.asset_key||id||'Ativo');
-    o.textContent=`${a.already_inventoried?'✓ JÁ FEITO — ':''}${primary} | ${a.model||'-'}${type==='Validador de Recarga'&&a.asset_key?` | ${a.asset_key}`:` | ${id||'-'}`}`;
+    o.textContent=`${a.already_inventoried?'✓ JÁ FEITO — ':''}${a.asset_key||id||'Ativo'} | ${a.model||'-'} | ${id||'-'}`;
     sel.appendChild(o);
   });
   const type=normalizedEquipmentType($('equipment_type').value||'');
@@ -810,6 +807,7 @@ function renderSelectedBaseInfo(a){
     add('Fixação',a.mount);
     add('Leasing',a.leasing_status);
     add('Vencimento contrato',formatBaseDate(a.contract_end));
+    const cfg=a.technical_config||{}; add('IP',cfg.ip); add('Máscara',cfg.mask); add('Gateway',cfg.gateway); add('DNS 1',cfg.dns1); add('DNS 2',cfg.dns2); add('Grupo',cfg.group); add('Prefixo',cfg.prefix||cfg.blocking_number);
   }else if(type==='Validador de Recarga'){
     if(title) title.textContent='Dados da base — Validador';
     add('Aplicação',a.application);
