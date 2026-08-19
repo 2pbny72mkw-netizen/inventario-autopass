@@ -549,14 +549,14 @@ function v3978DrawSvgRails(){
 }
 async function v391BuildRails(){
   if(!teamMap)return;
-  v391RailSource=Object.fromEntries(Object.entries(V391_FALLBACK).map(([n,pts])=>[n,pts.map(p=>[+p[0],+p[1]])]));
+  v3978RailSource=Object.fromEntries(Object.entries(V391_FALLBACK).map(([n,pts])=>[n,pts.map(p=>[+p[0],+p[1]])]));
   v3978DrawSvgRails();
   try{
     const r=await fetch('/api/equipes/rail-network',{cache:'no-store'});if(!r.ok)throw new Error('HTTP '+r.status);const locs=await r.json();const groups={};
     (locs||[]).forEach(x=>{if(x.reference_latitude==null||x.reference_longitude==null)return;const n=v391LineNo(x.line);if(!n)return;(groups[n]??=[]).push(x);const pt=[+x.reference_latitude,+x.reference_longitude];L.circleMarker(pt,{radius:4,color:'#fff',weight:2,fillColor:V391_COLORS[n]||'#64748b',fillOpacity:1}).bindTooltip(String(x.location||''),{direction:'top'}).addTo(v391Stations);L.marker(pt,{interactive:false,icon:L.divIcon({className:'stationLabelIcon',html:`<span>${esc(x.location||'')}</span>`,iconSize:null})}).addTo(v391StationNames)});
     Object.entries(groups).forEach(([n,arr])=>{const seq=v391Sequence(arr);if(seq.length>=2)v3978RailSource[n]=seq.map(x=>[+x.reference_latitude,+x.reference_longitude])});
     v3978DrawSvgRails();
-  }catch(e){console.warn('V39.7.8 rail API; usando fallback',e);v3978RailDiag(`Trilhos: fallback ativo / ${v3978RailPointCount} pontos`,true)}
+  }catch(e){console.warn('V39.7.9 rail API; usando fallback local',e);v3978DrawSvgRails();v3978RailDiag(`Trilhos: fallback local / ${Object.keys(v3978RailSource).length} linha(s) / ${v3978RailPointCount} pontos`,v3978RailPointCount>0)}
 }
 function v391SetupTeamMap(){
   if(!teamMap||v391RailLines)return;
