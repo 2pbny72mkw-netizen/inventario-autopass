@@ -173,7 +173,7 @@ async function loadCalendar(){
     start:$('calendarStart').value,
     days:$('calendarDays').value
   });
-  if($('calendarCategory').value) params.set('cargo',$('calendarCategory').value);
+  const cargos=v40SelectedCargos(); if(cargos.length) params.set('cargo',cargos.join(','));
 
   const r=await fetch(`/api/equipes/calendario?${params.toString()}`,{cache:'no-store',headers:{'Accept':'application/json'}});
   const contentType=String(r.headers.get('content-type')||'');
@@ -346,7 +346,7 @@ function exportScale(){
     start:$('calendarStart').value,
     days:$('calendarDays').value
   });
-  if($('calendarCategory').value) params.set('cargo',$('calendarCategory').value);
+  const cargos=v40SelectedCargos(); if(cargos.length) params.set('cargo',cargos.join(','));
   window.location.href=`/api/equipes/export/excel?${params.toString()}`;
 }
 
@@ -375,12 +375,14 @@ function syncFullscreenButtons(){
 }
 document.addEventListener('fullscreenchange',syncFullscreenButtons);
 
+function v40SelectedCargos(){return [...document.querySelectorAll('#calendarCargoOptions input:checked')].map(x=>x.value)}
+function v40CargoSummary(){const a=v40SelectedCargos(),all=document.querySelectorAll('#calendarCargoOptions input').length;const el=$('calendarCargoSummary');if(el)el.textContent=!a.length||a.length===all?'Todos os cargos':a.length===1?a[0]:`${a.length} cargos selecionados`}
 function refreshCargoFilter(){
-  const sel=$('calendarCategory'); if(!sel) return;
-  const keep=sel.value;
+  const box=$('calendarCargoOptions'); if(!box) return;
+  const keep=new Set(v40SelectedCargos());
   const cargos=[...new Set(profilesCache.map(p=>String(p.job_title||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'pt-BR'));
-  sel.innerHTML='<option value="">Todos os cargos</option>'+cargos.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('');
-  if(cargos.includes(keep)) sel.value=keep;
+  box.innerHTML=cargos.map(c=>`<label class="cargoCheck"><input type="checkbox" value="${esc(c)}" ${!keep.size||keep.has(c)?'checked':''}> <span>${esc(c)}</span></label>`).join('');
+  box.querySelectorAll('input').forEach(x=>x.addEventListener('change',()=>{v40CargoSummary();reloadCalendarVisible()}));v40CargoSummary();
 }
 async function refreshAll(){
   await Promise.allSettled([loadTeams(),loadCalendar(),loadProfiles()]);
@@ -390,7 +392,7 @@ $('refreshTeams').addEventListener('click',refreshAll);
 $('exportScale').addEventListener('click',exportScale);
 const reloadCalendarVisible=()=>{ if($('calendarRangeSummary')) $('calendarRangeSummary').textContent='Atualizando período...'; loadCalendar().catch(err=>{console.error(err); if($('calendarRangeSummary')) $('calendarRangeSummary').innerHTML=`<b>Erro:</b> ${esc(err.message)}`;}); };
 $('reloadCalendar').addEventListener('click',reloadCalendarVisible);
-$('calendarCategory').addEventListener('change',reloadCalendarVisible);
+$('cargoAll')?.addEventListener('click',()=>{document.querySelectorAll('#calendarCargoOptions input').forEach(x=>x.checked=true);v40CargoSummary();reloadCalendarVisible()});$('cargoClear')?.addEventListener('click',()=>{document.querySelectorAll('#calendarCargoOptions input').forEach(x=>x.checked=false);v40CargoSummary();reloadCalendarVisible()});
 $('calendarDays').addEventListener('change',reloadCalendarVisible);
 $('calendarStart').addEventListener('change',reloadCalendarVisible);
 
@@ -590,3 +592,7 @@ function v391SetupTeamMap(){
 // V39.6 — compatibilidade dos checkboxes visíveis com as camadas Leaflet.
 function v396SyncRailChecks(){const map=teamMap;if(!map)return;[['teamShowStations',v391Stations],['teamShowNames',v391StationNames],['teamShowTechs',v391TechLayer]].forEach(([id,layer])=>{const el=$(id);if(!el||!layer)return;const sync=()=>{if(el.checked&&!map.hasLayer(layer))map.addLayer(layer);if(!el.checked&&map.hasLayer(layer))map.removeLayer(layer)};el.addEventListener('change',sync);sync()});const lines=$('teamShowLines');if(lines){const sync=()=>{if(lines.checked&&!map.hasLayer(v391RailLines))map.addLayer(v391RailLines);if(!lines.checked&&map.hasLayer(v391RailLines))map.removeLayer(v391RailLines)};lines.addEventListener('change',sync);sync()}v391BuildRails()}
 setTimeout(v396SyncRailChecks,500);
+
+// V40: Equipes reutiliza o componente metroferroviário compartilhado.
+async function v40AttachSharedRail(){if(!teamMap||!window.AutopassRailMap)return;try{const locs=await fetch('/api/locations',{cache:'no-store'}).then(r=>r.json());[v391RailLines,v391Stations,v391StationNames].forEach(l=>{try{if(l&&teamMap.hasLayer(l))teamMap.removeLayer(l)}catch(_){}});const sh=window.AutopassRailMap.attach(teamMap,locs||[]);if(!sh)return;v391RailLines=sh.lines;v391Stations=sh.stations;v391StationNames=sh.labels;const bind=(id,key)=>{const el=$(id),layer=sh[key];if(!el||!layer)return;const sync=()=>el.checked?(!teamMap.hasLayer(layer)&&teamMap.addLayer(layer)):(teamMap.hasLayer(layer)&&teamMap.removeLayer(layer));el.addEventListener('change',sync);sync()};bind('teamShowLines','lines');bind('teamShowStations','stations');bind('teamShowNames','labels');v3978RailDiag(`V40 · mapa compartilhado · ${(locs||[]).filter(x=>x.reference_latitude!=null&&x.reference_longitude!=null).length} estações georreferenciadas`,true)}catch(e){console.error('V40 mapa compartilhado',e);v3978RailDiag('V40 · falha ao carregar mapa compartilhado',false)}}
+setTimeout(v40AttachSharedRail,900);
