@@ -34,7 +34,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V39.7.8"
+APP_RELEASE = "V39.7.9"
 DASHBOARD_RELEASE = "dashboard-v39-7-8"
 TEAMS_RELEASE = "teams-v39-7-8"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -377,6 +377,8 @@ class ChipSwap(db.Model):
     latitude = db.Column(db.Float)
     longitude = db.Column(db.Float)
     gps_accuracy = db.Column(db.Float)
+    test_result = db.Column(db.String(80), index=True)
+    test_notes = db.Column(db.Text)
     started_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
     completed_at = db.Column(db.DateTime, index=True)
     updated_at = db.Column(db.DateTime)
@@ -5963,6 +5965,16 @@ def _ensure_chip_swap_tables():
         return
     ChipSwap.__table__.create(bind=db.engine, checkfirst=True)
     ChipSwapPhoto.__table__.create(bind=db.engine, checkfirst=True)
+    # V39.7.9: adiciona resultado do teste sem exigir migration manual.
+    try:
+        cols = {c["name"] for c in db.inspect(db.engine).get_columns("chip_swaps")}
+        with db.engine.begin() as conn:
+            if "test_result" not in cols:
+                conn.execute(text("ALTER TABLE chip_swaps ADD COLUMN test_result VARCHAR(80)"))
+            if "test_notes" not in cols:
+                conn.execute(text("ALTER TABLE chip_swaps ADD COLUMN test_notes TEXT"))
+    except Exception as exc:
+        app.logger.warning("V39.7.9 chip swap migration: %s", exc)
     _chip_swap_tables_ready = True
 
 def _invalidate_chip_swap_cache():
@@ -6044,6 +6056,8 @@ def _chip_swap_locations_payload(force=False):
                 "completed_at": sw.completed_at.isoformat()+"Z" if sw and sw.completed_at else None,
                 "photo_count": len(photos),
                 "notes": sw.notes if sw else "",
+                "test_result": sw.test_result if sw else "",
+                "test_notes": sw.test_notes if sw else "",
                 "photos": [{"id": ph.id, "url": "/uploads/"+ph.stored_name, "name": ph.original_name} for ph in photos],
             })
         total = max(len(items), int(loc.expected_validator or 0))
@@ -6084,6 +6098,15 @@ def chip_swap_save_api(location_id, base_asset_id):
         db.session.flush()
     sw.technician_id = session["user_id"]
     sw.notes = (request.form.get("notes") or sw.notes or "").strip()
+    test_result = (request.form.get("test_result") or "").strip()
+    allowed_results = {"TESTADO_OK", "TESTADO_COM_DEFEITO", "NAO_FOI_POSSIVEL_TESTAR", "EQUIPAMENTO_INOPERANTE", "OUTRO"}
+    if test_result not in allowed_results:
+        return jsonify({"ok": False, "error": "Informe o resultado do teste após a troca."}), 400
+    test_notes = (request.form.get("test_notes") or "").strip()
+    if test_result != "TESTADO_OK" and not test_notes and not sw.notes:
+        return jsonify({"ok": False, "error": "Para resultado com pendência, informe uma observação."}), 400
+    sw.test_result = test_result
+    sw.test_notes = test_notes or None
     sw.latitude = lat; sw.longitude = lon; sw.gps_accuracy = acc; sw.updated_at = datetime.utcnow()
     files = [f for f in request.files.getlist("photos") if f and f.filename]
     for f in files:
@@ -6101,7 +6124,7 @@ def chip_swap_save_api(location_id, base_asset_id):
         sw.status = "CONCLUÍDA"; sw.completed_at = sw.completed_at or datetime.utcnow()
     else:
         sw.status = "EM ANDAMENTO"
-    db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="CHIP_SWAP_UPDATE", entity_type="base_asset", entity_id=str(base_asset_id), detail=f"{loc.location} · {_chip_swap_asset_label(asset)} · {sw.status} · {photo_count} foto(s)"))
+    db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="CHIP_SWAP_UPDATE", entity_type="base_asset", entity_id=str(base_asset_id), detail=f"{loc.location} · {_chip_swap_asset_label(asset)} · {sw.status} · teste {sw.test_result or '—'} · {photo_count} foto(s)"))
     db.session.commit()
     _invalidate_chip_swap_cache()
     return jsonify({"ok": True, "status": sw.status, "photo_count": photo_count})
@@ -6127,12 +6150,21 @@ def chip_swap_new_asset_api(location_id):
         company=loc.company, line=loc.line, locality=loc.location, equipment_type="VALIDADOR",
         terminal_number=terminal, asset_key=f"FIELD-{loc.id}-{terminal}-{secrets.token_hex(3)}", serial=(request.form.get("serial") or "").strip() or None,
         model=(request.form.get("model") or "").strip() or None, base_status="ATIVO",
-        base_notes="Cadastrado em campo pela atividade Troca de Chips V39.7.6"
+        base_notes="Cadastrado em campo pela atividade Troca de Chips V39.7.9"
     )
     db.session.add(asset); db.session.flush()
     db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="CHIP_SWAP_NEW_ASSET", entity_type="base_asset", entity_id=str(asset.id), detail=f"{loc.location} · Terminal {terminal} · cadastrado em campo"))
     db.session.commit(); _invalidate_chip_swap_cache()
     return jsonify({"ok": True, "base_asset_id": asset.id, "existing": False})
+
+
+def _chip_operation_name(company):
+    t = normalize(company)
+    if "CPTM" in t: return "CPTM"
+    if "METRO" in t: return "Metrô"
+    if "VIA MOBILIDADE" in t: return "Via Mobilidade"
+    if "VIAQUATRO" in t or "VIA QUATRO" in t: return "ViaQuatro"
+    return company or "Outros"
 
 @app.get("/api/chip-swaps/dashboard")
 @login_required
@@ -6151,9 +6183,36 @@ def chip_swap_dashboard_api():
         t["total"] += 1
         t["concluded"] += 1 if sw.status == "CONCLUÍDA" else 0
         t["in_progress"] += 1 if sw.status == "EM ANDAMENTO" else 0
+    result_labels = {
+        "TESTADO_OK": "Testado - OK",
+        "TESTADO_COM_DEFEITO": "Testado - com defeito",
+        "NAO_FOI_POSSIVEL_TESTAR": "Não foi possível testar",
+        "EQUIPAMENTO_INOPERANTE": "Equipamento inoperante",
+        "OUTRO": "Outro",
+        "SEM_RESULTADO": "Sem resultado",
+    }
+    result_counts = {k: 0 for k in result_labels}
+    technical_pending = []
+    for x in rows:
+        for v in x.get("validators", []):
+            if not v.get("swap_id"):
+                continue
+            r = v.get("test_result") or "SEM_RESULTADO"
+            result_counts[r] = result_counts.get(r, 0) + 1
+            if r != "TESTADO_OK":
+                technical_pending.append({
+                    "operation": _chip_operation_name(x.get("company")),
+                    "company": x.get("company"), "line": x.get("line"), "location": x.get("location"),
+                    "terminal": v.get("label"), "base_asset_id": v.get("base_asset_id"),
+                    "technician": v.get("technician"), "completed_at": v.get("completed_at"),
+                    "test_result": r, "test_result_label": result_labels.get(r, "Sem resultado"),
+                    "notes": v.get("test_notes") or v.get("notes") or "", "photo_count": v.get("photo_count", 0),
+                })
     return jsonify({
         "ok": True,
         "summary": {"total": total, "concluded": done, "in_progress": progress, "pending": pending, "percent": round(done/total*100, 1) if total else 0},
+        "test_results": {"counts": result_counts, "labels": result_labels, "technical_pending": len(technical_pending)},
+        "technical_pending": technical_pending,
         "locations": rows,
         "technicians": sorted(tech.values(), key=lambda x: (-x["concluded"], x["name"])),
     })
@@ -6167,23 +6226,23 @@ def chip_swap_export_xlsx():
     company = (request.args.get("company") or "").strip()
     line = (request.args.get("line") or "").strip()
     location = (request.args.get("location") or "").strip()
-    def op_name(c):
-        t = normalize(c)
-        if "CPTM" in t: return "CPTM"
-        if "METRO" in t: return "Metrô"
-        if "VIA MOBILIDADE" in t: return "Via Mobilidade"
-        if "VIAQUATRO" in t or "VIA QUATRO" in t: return "ViaQuatro"
-        return c or "Outros"
-    rows=[x for x in rows if (not operation or op_name(x["company"])==operation) and (not company or x["company"]==company) and (not line or x["line"]==line) and (not location or x["location"]==location)]
+    test_result = (request.args.get("test_result") or "").strip()
+    pending_only = (request.args.get("pending_only") or "").strip().lower() in ("1", "true", "yes")
+    rows=[x for x in rows if (not operation or _chip_operation_name(x["company"])==operation) and (not company or x["company"]==company) and (not line or x["line"]==line) and (not location or x["location"]==location)]
     total=sum(x["total"] for x in rows); done=sum(x["concluded"] for x in rows); prog=sum(x["in_progress"] for x in rows); pend=sum(x["pending"] for x in rows)
     wb=Workbook(); ws=wb.active; ws.title="Resumo"
     ws.append(["Troca de Chips - Validadores de Recarga"]); ws["A1"].font=Font(bold=True,size=14)
     ws.append(["Operação",operation or "Todos"]); ws.append(["Empresa",company or "Todas"]); ws.append(["Linha",line or "Todas"]); ws.append(["Localidade",location or "Todas"]); ws.append([])
     ws.append(["Total previsto","Concluídos","Em andamento","Pendentes","Progresso %"]); ws.append([total,done,prog,pend,round(done/total*100,1) if total else 0])
-    det=wb.create_sheet("Detalhamento"); det.append(["Operação","Empresa","Linha","Localidade","Terminal / ativo","Modelo","Série","Status","Técnico","Fotos"])
+    det=wb.create_sheet("Detalhamento"); det.append(["Operação","Empresa","Linha","Localidade","Terminal / ativo","Modelo","Série","Status","Resultado pós-troca","Observação do teste","Técnico","Data/hora conclusão","Fotos"])
     for x in rows:
         for v in x.get("validators",[]):
-            det.append([op_name(x["company"]),x["company"],x["line"],x["location"],v.get("label") or v.get("base_asset_id"),v.get("model","") ,v.get("serial","") ,v.get("status","PENDENTE"),v.get("technician","") ,v.get("photo_count",0)])
+            vr = v.get("test_result") or ""
+            if test_result and vr != test_result:
+                continue
+            if pending_only and (not v.get("swap_id") or vr == "TESTADO_OK"):
+                continue
+            det.append([_chip_operation_name(x["company"]),x["company"],x["line"],x["location"],v.get("label") or v.get("base_asset_id"),v.get("model","") ,v.get("serial","") ,v.get("status","PENDENTE"),vr,v.get("test_notes") or v.get("notes") or "",v.get("technician","") ,v.get("completed_at") or "",v.get("photo_count",0)])
     for sh in wb.worksheets:
         for cell in sh[1]: cell.font=Font(bold=True)
         for col in range(1,sh.max_column+1): sh.column_dimensions[get_column_letter(col)].width=min(42,max(12,max((len(str(sh.cell(r,col).value or "")) for r in range(1,sh.max_row+1)),default=12)+2))
