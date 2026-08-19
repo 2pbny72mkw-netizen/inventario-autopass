@@ -34,9 +34,9 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V40.1.1"
-DASHBOARD_RELEASE = "dashboard-v40-1-1"
-TEAMS_RELEASE = "teams-v40-1-1"
+APP_RELEASE = "V40.1.2"
+DASHBOARD_RELEASE = "dashboard-v40-1-2"
+TEAMS_RELEASE = "teams-v40-1-2"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
 FIELD_GPS_GOOD_ACCURACY_M = float(os.getenv("FIELD_GPS_GOOD_ACCURACY_M", "30"))
 FIELD_GPS_MAX_ACCURACY_M = float(os.getenv("FIELD_GPS_MAX_ACCURACY_M", "80"))
@@ -6152,6 +6152,77 @@ def chip_swap_save_api(location_id, base_asset_id):
     return jsonify({"ok": True, "status": sw.status, "photo_count": photo_count})
 
 
+
+def _delete_stored_media(stored_name):
+    if not stored_name:
+        return
+    try:
+        if stored_name.startswith("r2__"):
+            key=stored_name[4:]
+            if key and _r2_available():
+                r2_client().delete_object(Bucket=os.environ["R2_BUCKET_NAME"],Key=key)
+        else:
+            fp=UPLOAD_DIR/stored_name
+            if fp.exists():
+                fp.unlink()
+    except Exception:
+        app.logger.exception("Falha ao excluir mídia %s", stored_name)
+
+@app.delete("/api/chip-swaps/photos/<int:photo_id>")
+@field_required
+def chip_swap_delete_photo_api(photo_id):
+    ph=db.session.get(ChipSwapPhoto,photo_id)
+    if not ph:
+        return jsonify({"ok":False,"error":"Foto não encontrada."}),404
+    sw=db.session.get(ChipSwap,ph.chip_swap_id)
+    if not sw:
+        return jsonify({"ok":False,"error":"Troca de chip não encontrada."}),404
+    old_name=ph.original_name
+    _delete_stored_media(ph.stored_name)
+    db.session.delete(ph)
+    db.session.flush()
+    remaining=ChipSwapPhoto.query.filter_by(chip_swap_id=sw.id).count()
+    sw.status="CONCLUÍDA" if remaining else "EM ANDAMENTO"
+    if not remaining:
+        sw.completed_at=None
+    sw.updated_at=datetime.utcnow()
+    db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="CHIP_SWAP_PHOTO_DELETE",entity_type="chip_swap",entity_id=str(sw.id),detail=f"Foto {old_name} excluída · {remaining} restante(s)"))
+    db.session.commit();_invalidate_chip_swap_cache()
+    return jsonify({"ok":True,"remaining":remaining,"status":sw.status})
+
+@app.post("/api/chip-swaps/photos/<int:photo_id>/replace")
+@field_required
+def chip_swap_replace_photo_api(photo_id):
+    ph=db.session.get(ChipSwapPhoto,photo_id)
+    if not ph:
+        return jsonify({"ok":False,"error":"Foto não encontrada."}),404
+    sw=db.session.get(ChipSwap,ph.chip_swap_id)
+    f=request.files.get("photo")
+    if not f or not f.filename:
+        return jsonify({"ok":False,"error":"Selecione a nova foto."}),400
+    safe=secure_filename(f.filename) or f"chip_{secrets.token_hex(4)}.jpg"
+    stored=f"chip_{sw.id}_{secrets.token_hex(6)}_{safe}"
+    try:
+        if _r2_available():
+            data=f.read()
+            if not data:
+                return jsonify({"ok":False,"error":"Arquivo vazio."}),400
+            key=f"chip-swaps/{datetime.utcnow().strftime('%Y/%m')}/{stored}"
+            _r2_put_bytes(key,data,f.mimetype or "application/octet-stream")
+            stored="r2__"+key
+        else:
+            f.save(UPLOAD_DIR/stored)
+        old_stored=ph.stored_name
+        ph.original_name=f.filename;ph.stored_name=stored;ph.mime_type=f.mimetype;ph.uploaded_by=session["user_id"];ph.created_at=datetime.utcnow()
+        sw.status="CONCLUÍDA";sw.completed_at=sw.completed_at or datetime.utcnow();sw.updated_at=datetime.utcnow()
+        db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="CHIP_SWAP_PHOTO_REPLACE",entity_type="chip_swap",entity_id=str(sw.id),detail=f"Foto substituída por {f.filename}"))
+        db.session.commit();_delete_stored_media(old_stored);_invalidate_chip_swap_cache()
+        return jsonify({"ok":True,"photo_id":ph.id,"status":sw.status})
+    except Exception as exc:
+        db.session.rollback();_delete_stored_media(stored)
+        app.logger.exception("Falha ao substituir foto da troca %s", sw.id if sw else "—")
+        return jsonify({"ok":False,"error":"Não foi possível substituir a foto.","detail":str(exc)[:160]}),500
+
 @app.post("/api/chip-swaps/<int:location_id>/new-asset")
 @field_required
 def chip_swap_new_asset_api(location_id):
@@ -6424,14 +6495,25 @@ def panorama_import_whatsapp_api():
 @manager_required
 def panorama_delete_photo_api(photo_id):
     ph=db.session.get(PanoramaPhoto,photo_id)
-    if not ph: return jsonify({"ok":False,"error":"Foto não encontrada."}),404
-    try:
-        if ph.stored_name and not ph.stored_name.startswith("r2__"):
-            fp=UPLOAD_DIR/ph.stored_name
-            if fp.exists(): fp.unlink()
-    except Exception: pass
-    db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="PANORAMA_DELETE",entity_type="panorama_photo",entity_id=str(photo_id),detail=ph.original_name))
-    db.session.delete(ph); db.session.commit(); return jsonify({"ok":True})
+    if not ph:
+        return jsonify({"ok":False,"error":"Foto não encontrada."}),404
+    pt=db.session.get(PanoramaPoint,ph.point_id)
+    location_id=pt.location_id if pt else None
+    original=ph.original_name
+    _delete_stored_media(ph.stored_name)
+    db.session.delete(ph)
+    db.session.flush()
+    point_removed=False
+    if pt and PanoramaPhoto.query.filter_by(point_id=pt.id).count()==0:
+        db.session.delete(pt);point_removed=True
+    db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="PANORAMA_DELETE",entity_type="panorama_photo",entity_id=str(photo_id),detail=f"{original} · ponto vazio removido: {'sim' if point_removed else 'não'}"))
+    db.session.commit()
+    status="PENDENTE"
+    if location_id:
+        locrow=next((x for x in _panorama_payload() if x["id"]==location_id),None)
+        if locrow:
+            status=locrow["status"]
+    return jsonify({"ok":True,"location_id":location_id,"status":status,"point_removed":point_removed})
 
 with app.app_context():
     migrate_location_reference_columns()
