@@ -1437,3 +1437,19 @@ body.mapFullscreenOpen #gpsMap .autopassMapFullscreenControl{
 /* V40 — UX de atividades e campo */
 .activityGrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.activityCard{display:flex;min-height:170px;padding:20px;border-radius:18px;text-decoration:none;color:#fff;justify-content:space-between;align-items:flex-end}.activityCard h2{margin:6px 0}.activityCard p{margin:0;opacity:.92}.activityTone1{background:#2457a7}.activityTone2{background:#16824b}.activityTone3{background:#7a3e9d}.activityGo{font-weight:700}.autopass-rail-legend{background:rgba(255,255,255,.96);padding:10px 12px;border-radius:12px;box-shadow:0 2px 12px #0002;max-height:260px;overflow:auto}.autopass-rail-legend h4{margin:0 0 7px}.autopass-rail-legend .row{display:flex;align-items:center;gap:7px;margin:3px 0;font-size:12px;color:#24344d}.autopass-rail-legend .swatch{width:24px;height:5px;border-radius:4px}.panUnresolved{display:grid;gap:4px;margin-top:10px}.successText{color:#16824b;font-weight:600}@media(max-width:760px){.activityGrid{grid-template-columns:1fr}.activityCard{min-height:130px}}
 .cargoMulti details{position:relative}.cargoMulti summary{min-width:190px;border:1px solid #cbd5e1;border-radius:10px;padding:9px 12px;background:#fff;cursor:pointer}.cargoMultiPanel{position:absolute;z-index:1200;top:42px;right:0;min-width:280px;max-height:330px;overflow:auto;background:#fff;border:1px solid #dbe2ea;border-radius:12px;padding:10px;box-shadow:0 12px 30px #0002}.cargoMultiActions{display:flex;gap:6px;margin-bottom:8px}.cargoCheck{display:flex;align-items:center;gap:8px;padding:7px 4px}.cargoCheck input{width:18px;height:18px}
+
+/* V40.1.2 — contraste, evidências editáveis e progresso panorâmico */
+.activityCard{box-shadow:0 8px 22px rgba(10,35,70,.13);border:1px solid rgba(255,255,255,.28)}
+.activityCard,.activityCard h2,.activityCard b,.activityCard p,.activityCard .activityGo{color:#fff!important}
+.activityCard small,.activityCard .eyebrow{color:rgba(255,255,255,.88)!important}
+.activityTone1{background:#1f5db8}.activityTone2{background:#168a50}.activityTone3{background:#7c43a3}
+.chipEvidenceItem{margin:0;flex:0 0 auto;border:1px solid #dce6f0;border-radius:10px;padding:4px;background:#f8fbfe}
+.chipEvidenceItem img{display:block}
+.chipEvidenceActions{display:flex;gap:4px;margin-top:4px}
+.chipEvidenceActions button{width:auto!important;min-height:30px;padding:5px 8px!important;font-size:11px}
+.panSegmentedProgress{display:flex;height:10px;border-radius:999px;overflow:hidden;background:#e8edf3;margin-top:8px}
+.panSegmentedProgress i{display:block;height:100%;transition:width .2s ease}
+.panSegmentedProgress .done{background:#16824b}.panSegmentedProgress .inprogress{background:#d18718}.panSegmentedProgress .pending{background:#cf3d3d}
+.panoramaLocationGrid{grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:9px}
+.panoramaLocation{padding:12px!important;gap:5px!important}.panoramaLocation b{font-size:16px!important}
+.kpi.successKpi{background:#eef9f2}.kpi.warningKpi{background:#fff7e8}.kpi.dangerKpi{background:#fff0f0}
