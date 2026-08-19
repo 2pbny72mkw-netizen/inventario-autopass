@@ -34,9 +34,9 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V40.1.2"
-DASHBOARD_RELEASE = "dashboard-v40-1-2"
-TEAMS_RELEASE = "teams-v40-1-2"
+APP_RELEASE = "V41"
+DASHBOARD_RELEASE = "dashboard-v41"
+TEAMS_RELEASE = "teams-v41"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
 FIELD_GPS_GOOD_ACCURACY_M = float(os.getenv("FIELD_GPS_GOOD_ACCURACY_M", "30"))
 FIELD_GPS_MAX_ACCURACY_M = float(os.getenv("FIELD_GPS_MAX_ACCURACY_M", "80"))
@@ -394,6 +394,26 @@ class ChipSwapPhoto(db.Model):
     uploaded_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
 
+
+class EmvChipSwap(db.Model):
+    __tablename__ = "emv_chip_swaps"
+    id = db.Column(db.Integer, primary_key=True)
+    terminal = db.Column(db.String(120), nullable=False, unique=True, index=True)
+    technician_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    status = db.Column(db.String(40), nullable=False, default="EM ANDAMENTO", index=True)
+    test_result = db.Column(db.String(80), index=True)
+    notes = db.Column(db.Text)
+    latitude = db.Column(db.Float); longitude = db.Column(db.Float); gps_accuracy = db.Column(db.Float)
+    started_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    completed_at = db.Column(db.DateTime); updated_at = db.Column(db.DateTime)
+
+class EmvChipSwapPhoto(db.Model):
+    __tablename__ = "emv_chip_swap_photos"
+    id = db.Column(db.Integer, primary_key=True)
+    swap_id = db.Column(db.Integer, db.ForeignKey("emv_chip_swaps.id", ondelete="CASCADE"), nullable=False, index=True)
+    original_name = db.Column(db.String(300), nullable=False); stored_name = db.Column(db.String(700), nullable=False)
+    mime_type = db.Column(db.String(180)); uploaded_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
 class PanoramaPoint(db.Model):
     __tablename__ = "panorama_points"
@@ -2487,7 +2507,7 @@ def api_assets(location_id):
             "contract_end": a.contract_end,
             "installation_type": a.installation_type,
             "installation_date": a.installation_date,
-            "technical_config": _block_technical_config(a.terminal_number or a.top_id or a.qrcode_id) if asset_type == "BLOQUEIO" else {},
+            "technical_config": _block_technical_config(a.terminal_number or a.top_id or a.qrcode_id or a.asset_key) if asset_type in ("BLOQUEIO","ATM") else {},
             "already_inventoried": a.id in already,
         })
 
@@ -5941,6 +5961,7 @@ def activities_summary_api():
     return jsonify({"ok":True,"activities":[
         {"key":"inventory","title":"Inventário / Lançamento","href":"/tecnico","done":inv_today,"label":"lançamentos hoje"},
         {"key":"chips","title":"Troca de Chips","href":"/troca-chips","done":chip_done,"label":"concluídos"},
+        {"key":"emv","title":"Troca de Chips EMV - Trilhos","href":"/troca-chips-emv","done":EmvChipSwap.query.filter_by(status="CONCLUÍDA").count(),"label":"concluídos"},
         {"key":"panorama","title":"Visão Panorâmica","href":"/visao-panoramica","done":pan,"label":"pontos registrados"}]})
 
 
@@ -6342,6 +6363,66 @@ def chip_swap_export_xlsx():
     bio=io.BytesIO(); wb.save(bio); bio.seek(0)
     return send_file(bio,as_attachment=True,download_name="troca_chips.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
+
+def _v41_emv_rows():
+    path = BASE_DIR / "data_emv.xlsx"
+    if not path.exists(): return []
+    wb=load_workbook(path,read_only=True,data_only=True); ws=wb.active
+    headers=[str(x or "").strip().lower() for x in next(ws.iter_rows(values_only=True))]
+    rows=[]
+    for vals in ws.iter_rows(values_only=True):
+        d=dict(zip(headers,vals)); terminal=str(d.get("terminal") or "").split('.')[0]
+        if not terminal: continue
+        cfg=_block_technical_config(terminal)
+        rows.append({"tp_id":d.get("tp_id"),"company":d.get("empresa") or "","terminal":terminal,"version":d.get("versão") or "","ip":d.get("ip") or cfg.get("ip") or "","station":d.get("estação") or "","line":d.get("linha") or "","mask":cfg.get("mask") or "","gateway":cfg.get("gateway") or "","dns1":cfg.get("dns1") or "","dns2":cfg.get("dns2") or "","group":cfg.get("group") or "","blocking_number":cfg.get("blocking_number") or terminal[-2:]})
+    return rows
+
+def _ensure_emv_tables():
+    EmvChipSwap.__table__.create(bind=db.engine,checkfirst=True); EmvChipSwapPhoto.__table__.create(bind=db.engine,checkfirst=True)
+
+@app.get("/troca-chips-emv")
+@field_required
+def emv_chip_page(): return render_template("emv_chip_swap.html",app_release=APP_RELEASE)
+
+@app.get("/api/emv-chip-swaps")
+@login_required
+def emv_chip_list():
+    _ensure_emv_tables(); swaps={x.terminal:x for x in EmvChipSwap.query.all()}; rows=[]
+    for r in _v41_emv_rows():
+        sw=swaps.get(r["terminal"]); d=dict(r); d.update({"status":sw.status if sw else "PENDENTE","test_result":sw.test_result if sw else None,"notes":sw.notes if sw else "","swap_id":sw.id if sw else None}); rows.append(d)
+    return jsonify({"ok":True,"rows":rows})
+
+@app.post("/api/emv-chip-swaps/<terminal>")
+@field_required
+def emv_chip_save(terminal):
+    _ensure_emv_tables(); base=next((x for x in _v41_emv_rows() if x["terminal"]==terminal),None)
+    if not base: return jsonify({"ok":False,"error":"Bloqueio EMV não encontrado na base."}),404
+    sw=EmvChipSwap.query.filter_by(terminal=terminal).first()
+    if not sw: sw=EmvChipSwap(terminal=terminal,technician_id=session["user_id"]);db.session.add(sw);db.session.flush()
+    sw.technician_id=session["user_id"];sw.test_result=(request.form.get("test_result") or "").strip();sw.notes=(request.form.get("notes") or "").strip();sw.latitude=_optional_float(request.form.get("latitude"));sw.longitude=_optional_float(request.form.get("longitude"));sw.gps_accuracy=_optional_float(request.form.get("gps_accuracy"));sw.updated_at=datetime.utcnow()
+    if sw.test_result and sw.test_result!="TESTADO_OK" and not sw.notes: return jsonify({"ok":False,"error":"Para resultado diferente de OK, a observação é obrigatória."}),400
+    for f in [x for x in request.files.getlist("photos") if x and x.filename]:
+        safe=secure_filename(f.filename) or f"emv_{secrets.token_hex(4)}.jpg";stored=f"emv_{sw.id}_{secrets.token_hex(6)}_{safe}"
+        if _r2_available(): data=f.read();key=f"emv-chip-swaps/{datetime.utcnow().strftime('%Y/%m')}/{stored}";_r2_put_bytes(key,data,f.mimetype or "application/octet-stream");stored="r2__"+key
+        else: f.save(UPLOAD_DIR/stored)
+        db.session.add(EmvChipSwapPhoto(swap_id=sw.id,original_name=f.filename,stored_name=stored,mime_type=f.mimetype,uploaded_by=session["user_id"]))
+    db.session.flush(); photos=EmvChipSwapPhoto.query.filter_by(swap_id=sw.id).count();sw.status="CONCLUÍDA" if photos else "EM ANDAMENTO";sw.completed_at=datetime.utcnow() if photos else None;db.session.commit()
+    return jsonify({"ok":True,"status":sw.status,"photo_count":photos})
+
+@app.get("/api/emv-chip-swaps/export.xlsx")
+@login_required
+def emv_chip_export():
+    _ensure_emv_tables(); swaps={x.terminal:x for x in EmvChipSwap.query.all()}; wb=Workbook();ws=wb.active;ws.title="Troca EMV";headers=["Operadora","Linha","Estação","Terminal","Versão","IP","Máscara","Gateway","DNS 1","DNS 2","Grupo","Status","Resultado","Observação"];ws.append(headers)
+    for r in _v41_emv_rows():
+        sw=swaps.get(r["terminal"]);ws.append([r["company"],r["line"],r["station"],r["terminal"],r["version"],r["ip"],r["mask"],r["gateway"],r["dns1"],r["dns2"],r["group"],sw.status if sw else "PENDENTE",sw.test_result if sw else "",sw.notes if sw else ""])
+    bio=io.BytesIO();wb.save(bio);bio.seek(0);return send_file(bio,as_attachment=True,download_name="troca_chips_emv.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+@app.get("/api/panoramas/export.xlsx")
+@login_required
+def panorama_export():
+    wb=Workbook();ws=wb.active;ws.title="Visões Panorâmicas";ws.append(["Empresa","Linha","Localidade","Status","Pontos","Fotos"])
+    for x in _panorama_payload(): ws.append([x.get("company"),x.get("line"),x.get("location"),x.get("status"),x.get("point_count",0),x.get("photo_count",0)])
+    bio=io.BytesIO();wb.save(bio);bio.seek(0);return send_file(bio,as_attachment=True,download_name="visoes_panoramicas.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 @app.get("/visao-panoramica")
 @login_required
