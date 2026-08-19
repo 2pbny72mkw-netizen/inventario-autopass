@@ -34,7 +34,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V41"
+APP_RELEASE = "V41.1"
 DASHBOARD_RELEASE = "dashboard-v41"
 TEAMS_RELEASE = "teams-v41"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -2385,17 +2385,66 @@ def api_location_inventory(location_id):
     return jsonify(out)
 
 
+_station_network_cache = None
+
+def _load_station_network_rows():
+    """V41.1: carrega uma vez a Tabela Estações usada nos dados técnicos de rede."""
+    global _station_network_cache
+    if _station_network_cache is not None:
+        return _station_network_cache
+    rows=[]
+    path = BASE_DIR / "stations_network.xlsx"
+    if not path.exists():
+        _station_network_cache=[]
+        return []
+    try:
+        wb=load_workbook(path, read_only=True, data_only=True); ws=wb.active
+        it=ws.iter_rows(values_only=True); headers=[normalize(str(x or "")) for x in next(it)]
+        for vals in it:
+            d=dict(zip(headers, vals)); station=str(d.get("ESTACAO") or "").strip()
+            if not station or not d.get("IP"):
+                continue
+            prefix=re.sub(r"\D", "", str(d.get("PREFIXO") or ""))
+            line_logic=re.sub(r"\D", "", str(d.get("LINHA") or ""))
+            rows.append({
+                "station":station,"station_norm":normalize(station),"ip":str(d.get("IP") or ""),
+                "mask":str(d.get("MASK") or ""),"gateway":str(d.get("GETAWAY") or d.get("GATEWAY") or ""),
+                "dns1":str(d.get("DNS 1") or ""),"dns2":str(d.get("DNS 2") or ""),
+                "group":str(d.get("GRUPO") or ""),"line_logic":line_logic,"prefix":prefix,
+                "blocking_number":prefix[-2:] if len(prefix)>=2 else ""
+            })
+    except Exception:
+        app.logger.exception("Falha ao ler stations_network.xlsx")
+        rows=[]
+    _station_network_cache=rows
+    return rows
+
+def _station_technical_config(loc):
+    if not loc: return {}
+    txt=normalize(loc.location); code=normalize(getattr(loc,'location_code',None) or getattr(loc,'station_code',None) or '')
+    for r in _load_station_network_rows():
+        st=r['station_norm']; st_code=st.split(' - ',1)[0].strip() if ' - ' in st else ''
+        st_name=st.split(' - ',1)[1].strip() if ' - ' in st else st
+        if (code and st_code and code==st_code) or (st_name and (st_name in txt or txt.endswith(st_name))) or (st_code and (txt.startswith(st_code+' ') or txt.startswith(st_code+' -'))):
+            return dict(r)
+    return {}
+
 def _block_technical_config(prefix):
-    """V20: retorna configuração de rede do bloqueio pelo prefixo/terminal."""
+    """Retorna configuração pelo prefixo; usa a Tabela Estações como fallback."""
     key = re.sub(r"\D", "", str(prefix or ""))
     if not key:
         return {}
     try:
         source = DATA_DIR / "block_config_v18.json"
         payload = json.loads(source.read_text(encoding="utf-8")) if source.exists() else {}
-        return (payload.get("by_prefix") or {}).get(key, {}) or {}
+        hit=(payload.get("by_prefix") or {}).get(key, {}) or {}
+        if hit: return hit
     except Exception:
-        return {}
+        pass
+    for r in _load_station_network_rows():
+        if r.get("prefix")==key:
+            return dict(r)
+    return {}
 
 
 def _v20_block_asset_key(asset):
@@ -2507,7 +2556,7 @@ def api_assets(location_id):
             "contract_end": a.contract_end,
             "installation_type": a.installation_type,
             "installation_date": a.installation_date,
-            "technical_config": _block_technical_config(a.terminal_number or a.top_id or a.qrcode_id or a.asset_key) if asset_type in ("BLOQUEIO","ATM") else {},
+            "technical_config": ({**_station_technical_config(loc), **_block_technical_config(a.terminal_number or a.top_id or a.qrcode_id or a.asset_key)} if asset_type in ("BLOQUEIO","ATM") else {}),
             "already_inventoried": a.id in already,
         })
 
@@ -6364,9 +6413,13 @@ def chip_swap_export_xlsx():
     return send_file(bio,as_attachment=True,download_name="troca_chips.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
+_emv_base_rows_cache = None
 def _v41_emv_rows():
+    global _emv_base_rows_cache
+    if _emv_base_rows_cache is not None:
+        return _emv_base_rows_cache
     path = BASE_DIR / "data_emv.xlsx"
-    if not path.exists(): return []
+    if not path.exists(): _emv_base_rows_cache=[]; return []
     wb=load_workbook(path,read_only=True,data_only=True); ws=wb.active
     headers=[str(x or "").strip().lower() for x in next(ws.iter_rows(values_only=True))]
     rows=[]
@@ -6375,6 +6428,7 @@ def _v41_emv_rows():
         if not terminal: continue
         cfg=_block_technical_config(terminal)
         rows.append({"tp_id":d.get("tp_id"),"company":d.get("empresa") or "","terminal":terminal,"version":d.get("versão") or "","ip":d.get("ip") or cfg.get("ip") or "","station":d.get("estação") or "","line":d.get("linha") or "","mask":cfg.get("mask") or "","gateway":cfg.get("gateway") or "","dns1":cfg.get("dns1") or "","dns2":cfg.get("dns2") or "","group":cfg.get("group") or "","blocking_number":cfg.get("blocking_number") or terminal[-2:]})
+    _emv_base_rows_cache=rows
     return rows
 
 def _ensure_emv_tables():
@@ -6388,8 +6442,22 @@ def emv_chip_page(): return render_template("emv_chip_swap.html",app_release=APP
 @login_required
 def emv_chip_list():
     _ensure_emv_tables(); swaps={x.terminal:x for x in EmvChipSwap.query.all()}; rows=[]
+    network_rows=_load_station_network_rows()
     for r in _v41_emv_rows():
-        sw=swaps.get(r["terminal"]); d=dict(r); d.update({"status":sw.status if sw else "PENDENTE","test_result":sw.test_result if sw else None,"notes":sw.notes if sw else "","swap_id":sw.id if sw else None}); rows.append(d)
+        sw=swaps.get(r["terminal"]); d=dict(r)
+        # Ex.: 701-EST => EST - Estudantes
+        station_code=str(r.get("station") or "").split('-')[-1].strip().upper()
+        station_name=""
+        for nr in network_rows:
+            sn=str(nr.get("station") or "")
+            if sn.upper().startswith(station_code+" -"):
+                station_name=sn.split(" - ",1)[1]; break
+        photos=[]
+        if sw:
+            for ph in EmvChipSwapPhoto.query.filter_by(swap_id=sw.id).order_by(EmvChipSwapPhoto.created_at).all():
+                photos.append({"id":ph.id,"name":ph.original_name,"url":url_for("uploaded",name=ph.stored_name),"created_at":ph.created_at.isoformat() if ph.created_at else None})
+        d.update({"status":sw.status if sw else "PENDENTE","test_result":sw.test_result if sw else None,"notes":sw.notes if sw else "","swap_id":sw.id if sw else None,"station_name":station_name,"photos":photos,"completed_at":sw.completed_at.isoformat() if sw and sw.completed_at else None,"updated_at":sw.updated_at.isoformat() if sw and sw.updated_at else None})
+        rows.append(d)
     return jsonify({"ok":True,"rows":rows})
 
 @app.post("/api/emv-chip-swaps/<terminal>")
@@ -6408,6 +6476,29 @@ def emv_chip_save(terminal):
         db.session.add(EmvChipSwapPhoto(swap_id=sw.id,original_name=f.filename,stored_name=stored,mime_type=f.mimetype,uploaded_by=session["user_id"]))
     db.session.flush(); photos=EmvChipSwapPhoto.query.filter_by(swap_id=sw.id).count();sw.status="CONCLUÍDA" if photos else "EM ANDAMENTO";sw.completed_at=datetime.utcnow() if photos else None;db.session.commit()
     return jsonify({"ok":True,"status":sw.status,"photo_count":photos})
+
+@app.delete("/api/emv-chip-swaps/photos/<int:photo_id>")
+@field_required
+def emv_chip_delete_photo(photo_id):
+    _ensure_emv_tables(); ph=db.session.get(EmvChipSwapPhoto,photo_id)
+    if not ph: return jsonify({"ok":False,"error":"Foto não encontrada."}),404
+    sw=db.session.get(EmvChipSwap,ph.swap_id)
+    _delete_stored_media(ph.stored_name); db.session.delete(ph); db.session.flush()
+    remaining=EmvChipSwapPhoto.query.filter_by(swap_id=sw.id).count() if sw else 0
+    if sw and remaining==0:
+        sw.status="PENDENTE"; sw.completed_at=None; sw.updated_at=datetime.utcnow()
+    db.session.commit()
+    return jsonify({"ok":True,"remaining":remaining,"status":sw.status if sw else "PENDENTE"})
+
+@app.delete("/api/emv-chip-swaps/<terminal>")
+@field_required
+def emv_chip_delete(terminal):
+    _ensure_emv_tables(); sw=EmvChipSwap.query.filter_by(terminal=terminal).first()
+    if not sw: return jsonify({"ok":False,"error":"Registro não encontrado."}),404
+    for ph in EmvChipSwapPhoto.query.filter_by(swap_id=sw.id).all():
+        _delete_stored_media(ph.stored_name); db.session.delete(ph)
+    db.session.delete(sw); db.session.commit()
+    return jsonify({"ok":True})
 
 @app.get("/api/emv-chip-swaps/export.xlsx")
 @login_required
