@@ -34,9 +34,9 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V41.3"
-DASHBOARD_RELEASE = "dashboard-v41-3"
-TEAMS_RELEASE = "teams-v41-3"
+APP_RELEASE = "V42"
+DASHBOARD_RELEASE = "dashboard-v42"
+TEAMS_RELEASE = "teams-v42"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
 FIELD_GPS_GOOD_ACCURACY_M = float(os.getenv("FIELD_GPS_GOOD_ACCURACY_M", "30"))
 FIELD_GPS_MAX_ACCURACY_M = float(os.getenv("FIELD_GPS_MAX_ACCURACY_M", "80"))
@@ -415,6 +415,57 @@ class EmvChipSwapPhoto(db.Model):
     mime_type = db.Column(db.String(180)); uploaded_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
+class HardwareFieldVisit(db.Model):
+    __tablename__ = "hardware_field_visits"
+    id = db.Column(db.Integer, primary_key=True)
+    report_code = db.Column(db.String(40), unique=True, index=True)
+    client = db.Column(db.String(180), nullable=False, index=True)
+    project = db.Column(db.String(180), nullable=False, index=True)
+    requester = db.Column(db.String(180))
+    has_topdesk = db.Column(db.Boolean, nullable=False, default=False)
+    topdesk_ticket = db.Column(db.String(80), index=True)
+    location_type = db.Column(db.String(80))
+    location_name = db.Column(db.String(180), nullable=False, index=True)
+    city = db.Column(db.String(120), index=True)
+    state = db.Column(db.String(10))
+    address = db.Column(db.String(300))
+    latitude = db.Column(db.Float)
+    longitude = db.Column(db.Float)
+    gps_accuracy = db.Column(db.Float)
+    visit_date = db.Column(db.Date, nullable=False, index=True)
+    start_time = db.Column(db.String(10))
+    end_time = db.Column(db.String(10))
+    reason = db.Column(db.String(120), index=True)
+    activities = db.Column(db.Text)
+    activity_notes = db.Column(db.Text)
+    technical_details = db.Column(db.Text)
+    conclusion_status = db.Column(db.String(60), nullable=False, default="EM ANDAMENTO", index=True)
+    conclusion = db.Column(db.Text)
+    pending_items = db.Column(db.Text)
+    client_contact = db.Column(db.String(180))
+    client_company = db.Column(db.String(180))
+    client_role = db.Column(db.String(120))
+    client_email = db.Column(db.String(180))
+    client_phone = db.Column(db.String(40))
+    client_observations = db.Column(db.Text)
+    client_accepted = db.Column(db.Boolean, nullable=False, default=False)
+    signature_file = db.Column(db.String(500))
+    signed_at = db.Column(db.DateTime)
+    technician_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    status = db.Column(db.String(40), nullable=False, default="RASCUNHO", index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+class HardwareFieldVisitPhoto(db.Model):
+    __tablename__ = "hardware_field_visit_photos"
+    id = db.Column(db.Integer, primary_key=True)
+    visit_id = db.Column(db.Integer, db.ForeignKey("hardware_field_visits.id"), nullable=False, index=True)
+    stored_name = db.Column(db.String(500), nullable=False)
+    original_name = db.Column(db.String(255))
+    category = db.Column(db.String(80))
+    description = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
 class PanoramaPoint(db.Model):
     __tablename__ = "panorama_points"
     id = db.Column(db.Integer, primary_key=True)
@@ -711,6 +762,19 @@ def _role_assignment_allowed(role):
 def _hr_target_allowed(user):
     return bool(user) and (session.get("role") != "hr" or user.role in ("technician", "technician_implantation"))
 
+
+def hardware_implantation_required(fn):
+    """Implantação de Hardware: somente Gestor e Técnico Implantação."""
+    @wraps(fn)
+    def inner(*args, **kwargs):
+        if not session.get("user_id"):
+            return redirect(url_for("login"))
+        if session.get("role") not in ("manager", "technician_implantation"):
+            if request.path.startswith("/api/"):
+                return jsonify({"ok": False, "error": "Acesso restrito à Implantação de Hardware."}), 403
+            return redirect(url_for("manager" if session.get("role") in ("manager","consultation","dispatcher") else "activities_page"))
+        return fn(*args, **kwargs)
+    return inner
 
 def field_required(fn):
     """Permite gravação de campo apenas para Gestor e Técnico."""
@@ -2080,6 +2144,88 @@ def teams_page():
     return render_template("teams.html")
 
 
+
+@app.get("/implantacao-hardware")
+@hardware_implantation_required
+def hardware_implantation_page():
+    return render_template("hardware_implantation.html", app_release=APP_RELEASE)
+
+@app.get("/implantacao-hardware/visita-campo")
+@hardware_implantation_required
+def hardware_field_visit_page():
+    return render_template("hardware_field_visit.html", app_release=APP_RELEASE)
+
+@app.get("/implantacao-hardware/dashboard")
+@hardware_implantation_required
+def hardware_implantation_dashboard_page():
+    return render_template("hardware_implantation_dashboard.html", app_release=APP_RELEASE)
+
+@app.get("/api/implantacao-hardware/visitas")
+@hardware_implantation_required
+def hardware_field_visits_api():
+    q=HardwareFieldVisit.query
+    for field,col in (("client",HardwareFieldVisit.client),("project",HardwareFieldVisit.project),("status",HardwareFieldVisit.status),("conclusion_status",HardwareFieldVisit.conclusion_status)):
+        v=(request.args.get(field) or "").strip()
+        if v: q=q.filter(col==v)
+    rows=q.order_by(HardwareFieldVisit.created_at.desc()).limit(500).all()
+    return jsonify({"ok":True,"visits":[{"id":x.id,"report_code":x.report_code,"client":x.client,"project":x.project,"location_name":x.location_name,"city":x.city,"visit_date":x.visit_date.isoformat(),"reason":x.reason,"status":x.status,"conclusion_status":x.conclusion_status,"client_accepted":x.client_accepted,"topdesk_ticket":x.topdesk_ticket} for x in rows]})
+
+@app.get("/api/implantacao-hardware/resumo")
+@hardware_implantation_required
+def hardware_implantation_summary_api():
+    rows=HardwareFieldVisit.query.all(); total=len(rows)
+    by_status={}
+    by_client={}
+    for x in rows:
+        k=x.conclusion_status or x.status or "PENDENTE"; by_status[k]=by_status.get(k,0)+1
+        by_client[x.client]=by_client.get(x.client,0)+1
+    return jsonify({"ok":True,"total":total,"finalized":sum(1 for x in rows if x.status=="FINALIZADO"),"in_progress":sum(1 for x in rows if x.status in ("RASCUNHO","PAUSADO")),"accepted":sum(1 for x in rows if x.client_accepted),"with_pending":sum(1 for x in rows if x.conclusion_status=="CONCLUÍDA COM PENDÊNCIAS"),"by_status":by_status,"by_client":by_client})
+
+@app.post("/api/implantacao-hardware/visitas")
+@hardware_implantation_required
+def hardware_field_visit_save_api():
+    f=request.form
+    required=("client","project","location_name","visit_date","reason")
+    missing=[k for k in required if not (f.get(k) or "").strip()]
+    if missing: return jsonify({"ok":False,"error":"Preencha os campos obrigatórios: "+", ".join(missing)}),400
+    try: visit_date=datetime.strptime(f.get("visit_date"),"%Y-%m-%d").date()
+    except Exception: return jsonify({"ok":False,"error":"Data inválida."}),400
+    visit=HardwareFieldVisit(
+      report_code="VIS-"+datetime.utcnow().strftime("%Y%m%d-%H%M%S")+"-"+secrets.token_hex(2).upper(),
+      client=f.get("client").strip(), project=f.get("project").strip(), requester=f.get("requester"),
+      has_topdesk=f.get("has_topdesk")=="1", topdesk_ticket=f.get("topdesk_ticket"), location_type=f.get("location_type"),
+      location_name=f.get("location_name").strip(), city=f.get("city"), state=f.get("state"), address=f.get("address"),
+      latitude=float(f.get("latitude")) if f.get("latitude") else None, longitude=float(f.get("longitude")) if f.get("longitude") else None,
+      gps_accuracy=float(f.get("gps_accuracy")) if f.get("gps_accuracy") else None, visit_date=visit_date,start_time=f.get("start_time"),end_time=f.get("end_time"),
+      reason=f.get("reason"), activities=f.get("activities"), activity_notes=f.get("activity_notes"), technical_details=f.get("technical_details"),
+      conclusion_status=f.get("conclusion_status") or "EM ANDAMENTO", conclusion=f.get("conclusion"), pending_items=f.get("pending_items"),
+      client_contact=f.get("client_contact"),client_company=f.get("client_company"),client_role=f.get("client_role"),client_email=f.get("client_email"),client_phone=f.get("client_phone"),
+      client_observations=f.get("client_observations"),client_accepted=f.get("client_accepted")=="1",technician_id=session["user_id"],status=f.get("save_mode") or "RASCUNHO")
+    db.session.add(visit); db.session.flush()
+    sig=f.get("signature_data") or ""
+    if sig.startswith("data:image/") and "," in sig:
+        import base64
+        try:
+            raw=base64.b64decode(sig.split(",",1)[1]); name=f"visit_sig_{visit.id}_{uuid.uuid4().hex[:8]}.png"; (UPLOAD_DIR/name).write_bytes(raw); visit.signature_file=name; visit.signed_at=datetime.utcnow()
+        except Exception: pass
+    if visit.status=="FINALIZADO" and not (visit.client_accepted and visit.signature_file):
+        db.session.rollback(); return jsonify({"ok":False,"error":"Para finalizar, registre o aceite e a assinatura do cliente."}),400
+    for ph in request.files.getlist("photos"):
+        if not ph or not ph.filename: continue
+        ext=Path(secure_filename(ph.filename)).suffix.lower() or ".jpg"; name=f"visit_{visit.id}_{uuid.uuid4().hex}{ext}"; ph.save(UPLOAD_DIR/name)
+        db.session.add(HardwareFieldVisitPhoto(visit_id=visit.id,stored_name=name,original_name=ph.filename,category="EVIDÊNCIA"))
+    db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="HARDWARE_FIELD_VISIT_SAVE",entity_type="hardware_field_visit",entity_id=str(visit.id),detail=f"{visit.report_code} · {visit.status}"))
+    db.session.commit()
+    return jsonify({"ok":True,"id":visit.id,"report_code":visit.report_code,"status":visit.status})
+
+@app.get("/implantacao-hardware/visitas/<int:visit_id>/relatorio")
+@hardware_implantation_required
+def hardware_field_visit_report(visit_id):
+    v=db.session.get(HardwareFieldVisit,visit_id)
+    if not v: return "Relatório não encontrado",404
+    photos=HardwareFieldVisitPhoto.query.filter_by(visit_id=v.id).all()
+    tech=db.session.get(User,v.technician_id)
+    return render_template("hardware_field_visit_report.html",v=v,photos=photos,tech=tech)
 
 @app.get("/sobre")
 @login_required
@@ -5995,7 +6141,7 @@ def cleanup_v352_test_reference():
 @app.get("/atividades")
 @login_required
 def activities_page():
-    if session.get("role") not in ("technician", "manager"):
+    if session.get("role") not in ("technician", "technician_implantation", "manager"):
         return redirect(url_for("manager" if session.get("role") in ("consultation", "dispatcher") else "teams_page"))
     return render_template("activities.html")
 
@@ -6008,11 +6154,18 @@ def activities_summary_api():
     swaps=ChipSwap.query.filter_by(technician_id=uid).all()
     chip_done=sum(1 for x in swaps if x.status=="CONCLUÍDO")
     pan=PanoramaPoint.query.filter_by(created_by=uid).count()
-    return jsonify({"ok":True,"activities":[
-        {"key":"inventory","title":"Inventário / Lançamento","href":"/tecnico","done":inv_today,"label":"lançamentos hoje"},
-        {"key":"chips","title":"Troca de Chips","href":"/troca-chips","done":chip_done,"label":"concluídos"},
-        {"key":"emv","title":"Troca de Chips EMV - Trilhos","href":"/troca-chips-emv","done":EmvChipSwap.query.filter_by(status="CONCLUÍDA").count(),"label":"concluídos"},
-        {"key":"panorama","title":"Visão Panorâmica","href":"/visao-panoramica","done":pan,"label":"pontos registrados"}]})
+    role=session.get("role")
+    activities=[]
+    if role in ("technician","manager"):
+        activities += [
+          {"key":"inventory","title":"Inventário / Lançamento","href":"/tecnico","done":inv_today,"label":"lançamentos hoje"},
+          {"key":"chips","title":"Troca de Chips","href":"/troca-chips","done":chip_done,"label":"concluídos"},
+          {"key":"emv","title":"Troca de Chips EMV - Trilhos","href":"/troca-chips-emv","done":EmvChipSwap.query.filter_by(status="CONCLUÍDA").count(),"label":"concluídos"},
+          {"key":"panorama","title":"Visão Panorâmica","href":"/visao-panoramica","done":pan,"label":"pontos registrados"}]
+    if role in ("manager","technician_implantation"):
+        done=HardwareFieldVisit.query.filter_by(status="FINALIZADO").count()
+        activities.append({"key":"implantation","title":"Implantação de Hardware","href":"/implantacao-hardware","done":done,"label":"visitas finalizadas"})
+    return jsonify({"ok":True,"activities":activities})
 
 
 @app.get("/troca-chips")
