@@ -34,9 +34,9 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V42.1"
-DASHBOARD_RELEASE = "dashboard-v42-1"
-TEAMS_RELEASE = "teams-v42-1"
+APP_RELEASE = "V42.2"
+DASHBOARD_RELEASE = "dashboard-v42-2"
+TEAMS_RELEASE = "teams-v42-2"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
 FIELD_GPS_GOOD_ACCURACY_M = float(os.getenv("FIELD_GPS_GOOD_ACCURACY_M", "30"))
 FIELD_GPS_MAX_ACCURACY_M = float(os.getenv("FIELD_GPS_MAX_ACCURACY_M", "80"))
@@ -691,7 +691,7 @@ def dashboard_required(fn):
     def inner(*args, **kwargs):
         if not session.get("user_id"):
             return redirect(url_for("login"))
-        if session.get("role") not in ("manager", "consultation", "dispatcher"):
+        if session.get("role") not in ("manager", "manager_field", "consultation", "dispatcher"):
             if session.get("role") == "hr":
                 return redirect(url_for("teams_page"))
             return redirect(url_for("technician"))
@@ -757,7 +757,7 @@ def _role_assignment_allowed(role):
     # RH administra somente perfis operacionais. Perfis sensíveis ficam restritos ao ADM.
     if session.get("role") == "hr":
         return role in ("technician", "technician_implantation")
-    if role in ("manager", "consultation", "dispatcher"):
+    if role in ("manager", "manager_field", "consultation", "dispatcher"):
         return _current_user_is_superadmin()
     return role in ("technician", "technician_implantation", "hr")
 
@@ -798,7 +798,7 @@ def field_required(fn):
     def inner(*args, **kwargs):
         if not session.get("user_id"):
             return redirect(url_for("login"))
-        if session.get("role") not in ("manager", "technician"):
+        if session.get("role") not in ("manager", "manager_field", "technician"):
             if request.path.startswith("/api/"):
                 return jsonify({"ok": False, "error": "Acesso restrito ao Técnico Field."}), 403
             return redirect(url_for("activities_page"))
@@ -813,7 +813,7 @@ def index():
     role = session.get("role")
     if role == "hr":
         return redirect(url_for("teams_page"))
-    return redirect(url_for("manager" if role in ("manager", "consultation", "dispatcher") else "activities_page"))
+    return redirect(url_for("manager" if role in ("manager", "manager_field", "consultation", "dispatcher") else "activities_page"))
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -833,7 +833,7 @@ def login():
                 db.session.rollback()
             if user.role == "hr":
                 return redirect(url_for("teams_page"))
-            return redirect(url_for("manager" if user.role in ("manager", "consultation", "dispatcher") else "activities_page"))
+            return redirect(url_for("manager" if user.role in ("manager", "manager_field", "consultation", "dispatcher") else "activities_page"))
         flash("Usuário ou senha inválidos.")
     return render_template("login.html")
 
@@ -2181,10 +2181,26 @@ def hardware_implantation_dashboard_page():
 def hardware_field_visits_api():
     q=HardwareFieldVisit.query
     for field,col in (("client",HardwareFieldVisit.client),("project",HardwareFieldVisit.project),("status",HardwareFieldVisit.status),("conclusion_status",HardwareFieldVisit.conclusion_status)):
-        v=(request.args.get(field) or "").strip()
-        if v: q=q.filter(col==v)
+        value=(request.args.get(field) or "").strip()
+        if value: q=q.filter(col==value)
+    date_from=(request.args.get("date_from") or "").strip(); date_to=(request.args.get("date_to") or "").strip(); technician=(request.args.get("technician") or "").strip()
+    try:
+        if date_from: q=q.filter(HardwareFieldVisit.visit_date >= datetime.strptime(date_from,"%Y-%m-%d").date())
+        if date_to: q=q.filter(HardwareFieldVisit.visit_date <= datetime.strptime(date_to,"%Y-%m-%d").date())
+    except ValueError: return jsonify({"ok":False,"error":"Período inválido."}),400
+    if technician:
+        try: q=q.filter(HardwareFieldVisit.technician_id == int(technician))
+        except ValueError: return jsonify({"ok":False,"error":"Técnico inválido."}),400
     rows=q.order_by(HardwareFieldVisit.created_at.desc()).limit(500).all()
-    return jsonify({"ok":True,"visits":[{"id":x.id,"report_code":f"RV-{x.id:06d}","client":x.client,"project":x.project,"location_name":x.location_name,"city":x.city,"visit_date":x.visit_date.isoformat(),"reason":x.reason,"status":x.status,"conclusion_status":x.conclusion_status,"client_accepted":x.client_accepted,"topdesk_ticket":x.topdesk_ticket,"report_group":x.report_group or "AUTOPASS"} for x in rows]})
+    ids={x.technician_id for x in rows if x.technician_id}; tech_map={u.id:u.name for u in User.query.filter(User.id.in_(ids)).all()} if ids else {}
+    return jsonify({"ok":True,"visits":[{"id":x.id,"report_code":f"RV-{x.id:06d}","client":x.client,"project":x.project,"location_name":x.location_name,"city":x.city,"visit_date":x.visit_date.isoformat(),"reason":x.reason,"status":x.status,"conclusion_status":x.conclusion_status,"client_accepted":x.client_accepted,"topdesk_ticket":x.topdesk_ticket,"report_group":x.report_group or "AUTOPASS","technician_id":x.technician_id,"technician_name":tech_map.get(x.technician_id,"—")} for x in rows]})
+
+@app.get("/api/implantacao-hardware/tecnicos")
+@hardware_implantation_required
+def hardware_implantation_technicians_api():
+    ids=[r[0] for r in db.session.query(HardwareFieldVisit.technician_id).distinct().all() if r[0]]
+    rows=User.query.filter(User.id.in_(ids)).order_by(User.name).all() if ids else []
+    return jsonify({"ok":True,"technicians":[{"id":u.id,"name":u.name} for u in rows]})
 
 @app.get("/api/implantacao-hardware/resumo")
 @hardware_implantation_required
@@ -2234,6 +2250,32 @@ def hardware_field_visit_save_api():
     db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="HARDWARE_FIELD_VISIT_SAVE",entity_type="hardware_field_visit",entity_id=str(visit.id),detail=f"{visit.report_code} · {visit.status}"))
     db.session.commit()
     return jsonify({"ok":True,"id":visit.id,"report_code":f"RV-{visit.id:06d}","status":visit.status})
+
+@app.post("/api/implantacao-hardware/visitas/<int:visit_id>/editar")
+@manager_required
+def hardware_field_visit_edit_api(visit_id):
+    v=db.session.get(HardwareFieldVisit,visit_id)
+    if not v: return jsonify({"ok":False,"error":"Relatório não encontrado."}),404
+    f=request.form; before=f"{v.client} | {v.project} | {v.status} | {v.conclusion_status}"
+    for key in ("client","project","requester","topdesk_ticket","location_name","city","state","address","reason","activities","activity_notes","technical_details","conclusion_status","conclusion","pending_items","client_contact","client_company","client_role","client_email","client_phone","client_observations"):
+        if key in f: setattr(v,key,(f.get(key) or "").strip() or None)
+    if f.get("visit_date"):
+        try: v.visit_date=datetime.strptime(f.get("visit_date"),"%Y-%m-%d").date()
+        except ValueError: return jsonify({"ok":False,"error":"Data inválida."}),400
+    db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="HARDWARE_FIELD_VISIT_EDIT",entity_type="hardware_field_visit",entity_id=str(v.id),detail=f"RV-{v.id:06d} | antes: {before} | revisão administrativa")); db.session.commit()
+    return jsonify({"ok":True,"id":v.id,"report_code":f"RV-{v.id:06d}"})
+
+@app.post("/api/implantacao-hardware/visitas/<int:visit_id>/excluir")
+@manager_required
+def hardware_field_visit_delete_api(visit_id):
+    v=db.session.get(HardwareFieldVisit,visit_id)
+    if not v: return jsonify({"ok":False,"error":"Relatório não encontrado."}),404
+    reason=(request.form.get("reason") or "").strip()
+    if len(reason)<3: return jsonify({"ok":False,"error":"Informe o motivo da exclusão."}),400
+    report=f"RV-{v.id:06d}"; detail=f"{report} | cliente={v.client} | projeto={v.project} | motivo={reason}"
+    for ph in HardwareFieldVisitPhoto.query.filter_by(visit_id=v.id).all(): db.session.delete(ph)
+    db.session.delete(v); db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="HARDWARE_FIELD_VISIT_DELETE",entity_type="hardware_field_visit",entity_id=str(visit_id),detail=detail)); db.session.commit()
+    return jsonify({"ok":True,"deleted":report})
 
 @app.get("/implantacao-hardware/visitas/<int:visit_id>/relatorio")
 @hardware_implantation_required
@@ -3707,6 +3749,7 @@ def _next_user_code(role):
     prefixes = {
         "technician": "T",
         "technician_implantation": "TI",
+        "manager_field": "GF",
         "manager": "G",
         "consultation": "C",
         "hr": "RH",
@@ -3752,7 +3795,7 @@ def create_user():
         flash("Nome, usuário e senha são obrigatórios.")
         return redirect(url_for("users_page"))
 
-    if role not in ("manager", "technician", "technician_implantation", "consultation", "hr", "dispatcher"):
+    if role not in ("manager", "manager_field", "technician", "technician_implantation", "consultation", "hr", "dispatcher"):
         flash("Perfil de acesso inválido.")
         return redirect(url_for("users_page"))
     if not _role_assignment_allowed(role):
@@ -3793,14 +3836,14 @@ def create_user():
         job_title=job_title,
         personnel_status=personnel_status,
         personnel_status_note=personnel_status_note,
-        work_schedule_type=work_schedule_type if role in ("technician", "technician_implantation") else None,
-        work_shift=work_shift if role in ("technician", "technician_implantation") else None,
-        work_anchor_date=work_anchor_date if role in ("technician", "technician_implantation") and work_schedule_type == "12x36" else None,
-        work_anchor_status=work_anchor_status if role in ("technician", "technician_implantation") and work_schedule_type == "12x36" else None,
+        work_schedule_type=work_schedule_type if role in ("technician", "technician_implantation", "manager_field") else None,
+        work_shift=work_shift if role in ("technician", "technician_implantation", "manager_field") else None,
+        work_anchor_date=work_anchor_date if role in ("technician", "technician_implantation", "manager_field") and work_schedule_type == "12x36" else None,
+        work_anchor_status=work_anchor_status if role in ("technician", "technician_implantation", "manager_field") and work_schedule_type == "12x36" else None,
     )
 
     photo = request.files.get("photo")
-    if photo and photo.filename and role in ("manager", "technician", "technician_implantation", "hr"):
+    if photo and photo.filename and role in ("manager", "manager_field", "technician", "technician_implantation", "hr"):
         if not (photo.mimetype or "").startswith("image/"):
             flash("A foto do usuário deve ser uma imagem.")
             return redirect(url_for("users_page"))
@@ -3916,7 +3959,7 @@ def edit_user(user_id):
         flash("Nome e usuário são obrigatórios.")
         return redirect(url_for("users_page"))
 
-    if role not in ("manager", "technician", "technician_implantation", "consultation", "hr", "dispatcher"):
+    if role not in ("manager", "manager_field", "technician", "technician_implantation", "consultation", "hr", "dispatcher"):
         flash("Perfil de acesso inválido.")
         return redirect(url_for("users_page"))
     if not _role_assignment_allowed(role):
@@ -4006,7 +4049,7 @@ def edit_user(user_id):
     user.job_title = job_title
     user.personnel_status = personnel_status
     user.personnel_status_note = personnel_status_note
-    if role in ("technician", "technician_implantation"):
+    if role in ("technician", "technician_implantation", "manager_field"):
         user.work_schedule_type = work_schedule_type
         user.work_shift = work_shift
         user.work_anchor_date = work_anchor_date if work_schedule_type == "12x36" else None
@@ -4172,7 +4215,7 @@ def export_users_excel():
         c.font = Font(bold=True, color="FFFFFF")
         c.fill = PatternFill("solid", fgColor="17345D")
         c.alignment = Alignment(horizontal="center")
-    role_label={"manager":"Gestor","technician":"Técnico de Campo","technician_implantation":"Técnico Implantação","consultation":"Consulta","hr":"RH","dispatcher":"Dispatcher"}
+    role_label={"manager":"Gestor","technician":"Técnico de Campo","technician_implantation":"Técnico Implantação","manager_field":"Gestor Field","consultation":"Consulta","hr":"RH","dispatcher":"Dispatcher"}
     for u in (User.query.filter(User.role == "technician") if session.get("role") == "hr" else User.query).order_by(User.name).all():
         status = "ARQUIVADO" if u.archived_at else ("ATIVO" if u.active else "INATIVO")
         ws.append([
@@ -6173,7 +6216,7 @@ def cleanup_v352_test_reference():
 @app.get("/atividades")
 @login_required
 def activities_page():
-    if session.get("role") not in ("technician", "technician_implantation", "manager"):
+    if session.get("role") not in ("technician", "technician_implantation", "manager", "manager_field"):
         return redirect(url_for("manager" if session.get("role") in ("consultation", "dispatcher") else "teams_page"))
     return render_template("activities.html")
 
@@ -6184,7 +6227,7 @@ def activities_summary_api():
     uid=session.get("user_id")
     role=session.get("role")
     activities=[]
-    if role in ("technician","manager"):
+    if role in ("technician","manager","manager_field"):
         inv_today=Inventory.query.filter(Inventory.technician_id==uid, func.date(Inventory.created_at)==datetime.utcnow().date()).count()
         swaps=ChipSwap.query.filter_by(technician_id=uid).all()
         chip_done=sum(1 for x in swaps if x.status=="CONCLUÍDO")
@@ -6204,7 +6247,7 @@ def activities_summary_api():
 @app.get("/troca-chips")
 @login_required
 def chip_swap_page():
-    if session.get("role") not in ("manager", "technician", "consultation", "dispatcher"):
+    if session.get("role") not in ("manager", "manager_field", "technician", "consultation", "dispatcher"):
         return redirect(url_for("teams_page"))
     return render_template("chip_swap.html")
 
@@ -6711,7 +6754,7 @@ def panorama_export():
 @app.get("/visao-panoramica")
 @login_required
 def panorama_page():
-    if session.get("role") not in ("manager", "technician", "consultation"):
+    if session.get("role") not in ("manager", "manager_field", "technician", "consultation"):
         return redirect(url_for("activities_page" if session.get("role") == "technician_implantation" else "teams_page"))
     return render_template("panorama.html")
 
