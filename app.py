@@ -38,8 +38,8 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V42.3"
-DASHBOARD_RELEASE = "dashboard-v42-3"
+APP_RELEASE = "V42.2.3.1"
+DASHBOARD_RELEASE = "dashboard-v42-2-3-1"
 TEAMS_RELEASE = "teams-v42-3"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
 FIELD_GPS_GOOD_ACCURACY_M = float(os.getenv("FIELD_GPS_GOOD_ACCURACY_M", "30"))
@@ -6802,7 +6802,7 @@ def panorama_export_pptx():
             for j,(pt,ph) in enumerate(batch):
                 x,y,w,h=positions[j]
                 if ph:
-                    raw=_panorama_media_bytes(next((p.stored_name for p in PanoramaPhoto.query.filter_by(id=ph['id']).all()),''))
+                    raw=_panorama_media_bytes(ph.get('stored_name'))
                     if raw:
                         try:
                             bio=io.BytesIO(raw); pic=sl.shapes.add_picture(bio,Inches(x),Inches(y),width=Inches(w),height=Inches(h-0.32))
@@ -6821,17 +6821,27 @@ def panorama_page():
 
 
 def _panorama_payload():
+    # V42.2.3.1 PERFORMANCE — elimina consultas N+1.
+    locations = Location.query.order_by(Location.company, Location.line, Location.location).all()
+    if not locations: return []
+    loc_ids=[x.id for x in locations]
+    points=(PanoramaPoint.query.filter(PanoramaPoint.location_id.in_(loc_ids)).order_by(PanoramaPoint.location_id,PanoramaPoint.point_name).all())
+    point_ids=[x.id for x in points]
+    photos=((PanoramaPhoto.query.filter(PanoramaPhoto.point_id.in_(point_ids)).order_by(PanoramaPhoto.point_id,PanoramaPhoto.created_at).all()) if point_ids else [])
+    user_ids={x.created_by for x in points if x.created_by}; user_ids.update(x.uploaded_by for x in photos if x.uploaded_by)
+    users=({u.id:u.name for u in User.query.filter(User.id.in_(user_ids)).all()} if user_ids else {})
+    photos_by_point={}
+    for ph in photos: photos_by_point.setdefault(ph.point_id,[]).append(ph)
+    points_by_location={}
+    for pt in points: points_by_location.setdefault(pt.location_id,[]).append(pt)
     rows=[]
-    for loc in Location.query.order_by(Location.company, Location.line, Location.location).all():
-        points=PanoramaPoint.query.filter_by(location_id=loc.id).order_by(PanoramaPoint.point_name).all()
+    for loc in locations:
         p_out=[]; total=0
-        for pt in points:
-            photos=PanoramaPhoto.query.filter_by(point_id=pt.id).order_by(PanoramaPhoto.created_at).all()
-            total += len(photos)
-            creator=db.session.get(User,pt.created_by)
-            p_out.append({"id":pt.id,"name":pt.point_name,"notes":pt.notes or "","technician":creator.name if creator else "—","status":"CONCLUÍDA" if photos else "EM ANDAMENTO","photos":[{"id":ph.id,"url":"/uploads/"+ph.stored_name,"name":ph.original_name,"uploaded_by":(db.session.get(User,ph.uploaded_by).name if db.session.get(User,ph.uploaded_by) else "—"),"created_at":ph.created_at.isoformat()+"Z","latitude":ph.latitude,"longitude":ph.longitude} for ph in photos]})
-        status="PENDENTE" if not points else ("CONCLUÍDA" if points and all(x["photos"] for x in p_out) else "EM ANDAMENTO")
-        techs=sorted({x.get("technician") for x in p_out if x.get("technician") and x.get("technician")!="—"})
+        for pt in points_by_location.get(loc.id,[]):
+            pp=photos_by_point.get(pt.id,[]); total+=len(pp); creator=users.get(pt.created_by,"—")
+            p_out.append({"id":pt.id,"name":pt.point_name,"notes":pt.notes or "","technician":creator,"status":"CONCLUÍDA" if pp else "EM ANDAMENTO","photos":[{"id":ph.id,"url":"/uploads/"+ph.stored_name,"name":ph.original_name,"stored_name":ph.stored_name,"uploaded_by":users.get(ph.uploaded_by,"—"),"created_at":ph.created_at.isoformat()+"Z" if ph.created_at else None,"latitude":ph.latitude,"longitude":ph.longitude} for ph in pp]})
+        status="PENDENTE" if not p_out else ("CONCLUÍDA" if all(x["photos"] for x in p_out) else "EM ANDAMENTO")
+        techs=sorted({x["technician"] for x in p_out if x.get("technician") and x["technician"]!="—"})
         rows.append({"id":loc.id,"company":loc.company,"line":loc.line,"location":loc.location,"reference_latitude":loc.reference_latitude,"reference_longitude":loc.reference_longitude,"status":status,"photo_count":total,"technicians":techs,"points":p_out})
     return rows
 
