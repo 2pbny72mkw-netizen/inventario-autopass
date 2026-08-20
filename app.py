@@ -39,7 +39,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V42.4"
+APP_RELEASE = "V42.4.1"
 DASHBOARD_RELEASE = "dashboard-v42-4"
 TEAMS_RELEASE = "teams-v42-4"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -1985,29 +1985,29 @@ def _parse_contract_date(value):
 def inventory_atm_dashboard_api():
     if session.get("role")=="technician":
         return jsonify({"ok":False,"error":"Dashboard ATM restrita à gestão."}),403
-    q=BaseAsset.query.filter(func.upper(func.coalesce(BaseAsset.equipment_type,""))=="ATM")
+    # V42.4.1: a Dashboard ATM usa a planilha oficial 08/2026 como universo mestre.
+    # Base oficial: 590 alocados + 12 estoque = 602 ATMs. Levantamentos de campo não alteram esse universo.
+    official_path=DATA_DIR / "atm_official_082026.json"
+    try:
+        all_rows=json.loads(official_path.read_text(encoding="utf-8"))
+    except Exception:
+        all_rows=[]
     filters={k:(request.args.get(k) or "").strip() for k in ("company","line","locality","model","contract","ownership","status")}
-    if filters["company"]: q=q.filter(BaseAsset.company==filters["company"])
-    if filters["line"]: q=q.filter(BaseAsset.line==filters["line"])
-    if filters["locality"]: q=q.filter(BaseAsset.locality==filters["locality"])
-    if filters["model"]: q=q.filter(BaseAsset.model==filters["model"])
-    if filters["contract"]: q=q.filter(BaseAsset.contract_name==filters["contract"])
-    if filters["ownership"]: q=q.filter(BaseAsset.ownership_type==filters["ownership"])
-    if filters["status"]: q=q.filter(BaseAsset.base_status==filters["status"])
-    rows=q.order_by(BaseAsset.company,BaseAsset.line,BaseAsset.locality,BaseAsset.asset_key).all()
+    field_map={"company":"company","line":"line","locality":"locality","model":"model","contract":"contract","ownership":"ownership","status":"status"}
+    rows=[x for x in all_rows if all(not filters[k] or str(x.get(field_map[k],""))==filters[k] for k in filters)]
     def agg(attr):
         out={}
         for a in rows:
-            v=(getattr(a,attr,None) or "Não informado").strip() or "Não informado"
+            v=(str(a.get(attr) or "Não informado")).strip() or "Não informado"
             out[v]=out.get(v,0)+1
         return out
-    assets=[]
-    for a in rows:
-        ip=a.ip_address or ""
-        assets.append({"id":a.id,"asset_key":a.asset_key,"company":a.company or "","line":a.line or "","locality":a.locality or "","model":a.model or "","supplier":a.supplier or "","serial":a.serial or "","status":a.base_status or "","contract":a.contract_name or "SEM CONTRATO","ownership":a.ownership_type or "Não informado","teamviewer":a.teamviewer_enabled or "","teamviewer_id":a.teamviewer_id or "","ip":ip,"application":a.application or ""})
-    allq=BaseAsset.query.filter(func.upper(func.coalesce(BaseAsset.equipment_type,""))=="ATM").all()
-    options=lambda attr:sorted({(getattr(a,attr,None) or "").strip() for a in allq if (getattr(a,attr,None) or "").strip()},key=lambda x:x.casefold())
-    return jsonify({"ok":True,"release":APP_RELEASE,"total":len(rows),"operators":agg("company"),"models":agg("model"),"contracts":agg("contract_name"),"ownership":agg("ownership_type"),"locations":agg("locality"),"assets":assets,"options":{"companies":options("company"),"lines":options("line"),"localities":options("locality"),"models":options("model"),"contracts":options("contract_name"),"ownership":options("ownership_type"),"statuses":options("base_status")}})
+    def options(attr):
+        return sorted({str(a.get(attr) or "").strip() for a in all_rows if str(a.get(attr) or "").strip()},key=lambda x:x.casefold())
+    return jsonify({"ok":True,"release":APP_RELEASE,"source":"INVENTARIO AUTOPASS - EQUIPAMENTOS DE CAMPO - 082026.xlsm / aba ATM",
+        "official_total":602,"official_allocated":590,"official_stock":12,"total":len(rows),
+        "allocated":sum(1 for x in rows if not x.get("stock")),"stock":sum(1 for x in rows if x.get("stock")),
+        "operators":agg("company"),"models":agg("model"),"contracts":agg("contract"),"ownership":agg("ownership"),"locations":agg("locality"),"assets":rows,
+        "options":{"companies":options("company"),"lines":options("line"),"localities":options("locality"),"models":options("model"),"contracts":options("contract"),"ownership":options("ownership"),"statuses":options("status")}})
 
 @app.get("/api/v30/atm-contracts")
 @dashboard_required

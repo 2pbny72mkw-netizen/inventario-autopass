@@ -1,0 +1,9 @@
+{
+  "release": "V42.4.1",
+  "date": "2026-08-20",
+  "changes": [
+    "Dashboard ATM passa a respeitar a planilha oficial 08/2026",
+    "Universo oficial: 602 ATMs = 590 alocados + 12 estoque",
+    "Filtros, gráficos e detalhamento calculados sobre a base oficial"
+  ]
+}
