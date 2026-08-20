@@ -39,7 +39,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V42.4.1"
+APP_RELEASE = "V43.0"
 DASHBOARD_RELEASE = "dashboard-v42-4"
 TEAMS_RELEASE = "teams-v42-4"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -2006,7 +2006,10 @@ def inventory_atm_dashboard_api():
     return jsonify({"ok":True,"release":APP_RELEASE,"source":"INVENTARIO AUTOPASS - EQUIPAMENTOS DE CAMPO - 082026.xlsm / aba ATM",
         "official_total":602,"official_allocated":590,"official_stock":12,"total":len(rows),
         "allocated":sum(1 for x in rows if not x.get("stock")),"stock":sum(1 for x in rows if x.get("stock")),
-        "operators":agg("company"),"models":agg("model"),"contracts":agg("contract"),"ownership":agg("ownership"),"locations":agg("locality"),"assets":rows,
+        "operators":agg("company"),"models":agg("model"),"contracts":agg("contract"),"ownership":agg("ownership"),"locations":agg("locality"),"lines":agg("line"),
+        "cptm_stations":len({str(x.get("locality") or "").strip() for x in rows if str(x.get("company") or "").upper()=="CPTM" and str(x.get("locality") or "").strip()}),
+        "metro_stations":len({str(x.get("locality") or "").strip() for x in rows if str(x.get("company") or "").upper() in ("METRÔ","METRO") and str(x.get("locality") or "").strip()}),
+        "teamviewer_count":sum(1 for x in rows if str(x.get("teamviewer_id") or "").strip()),"assets":rows,
         "options":{"companies":options("company"),"lines":options("line"),"localities":options("locality"),"models":options("model"),"contracts":options("contract"),"ownership":options("ownership"),"statuses":options("status")}})
 
 @app.get("/api/v30/atm-contracts")
