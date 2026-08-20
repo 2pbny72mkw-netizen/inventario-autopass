@@ -34,9 +34,9 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V42"
-DASHBOARD_RELEASE = "dashboard-v42"
-TEAMS_RELEASE = "teams-v42"
+APP_RELEASE = "V42.1"
+DASHBOARD_RELEASE = "dashboard-v42-1"
+TEAMS_RELEASE = "teams-v42-1"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
 FIELD_GPS_GOOD_ACCURACY_M = float(os.getenv("FIELD_GPS_GOOD_ACCURACY_M", "30"))
 FIELD_GPS_MAX_ACCURACY_M = float(os.getenv("FIELD_GPS_MAX_ACCURACY_M", "80"))
@@ -321,6 +321,7 @@ class Inventory(db.Model):
     operational_status = db.Column(db.String(120), nullable=False)
     connectivity = db.Column(db.String(120))
     network_id = db.Column(db.String(220))
+    teamviewer_id = db.Column(db.String(120))
     label_status = db.Column(db.String(80))
     in_base = db.Column(db.String(80))
     divergence = db.Column(db.String(180))
@@ -421,6 +422,7 @@ class HardwareFieldVisit(db.Model):
     report_code = db.Column(db.String(40), unique=True, index=True)
     client = db.Column(db.String(180), nullable=False, index=True)
     project = db.Column(db.String(180), nullable=False, index=True)
+    report_group = db.Column(db.String(40), nullable=False, default="AUTOPASS", index=True)
     requester = db.Column(db.String(180))
     has_topdesk = db.Column(db.Boolean, nullable=False, default=False)
     topdesk_ticket = db.Column(db.String(80), index=True)
@@ -565,7 +567,7 @@ def seed_data():
                 active=True
             ),
             User(
-                name="Técnico de Campo",
+                name="Técnico Field",
                 username="tecnico",
                 password_hash=generate_password_hash("Tecnico@123"),
                 role="technician",
@@ -776,16 +778,30 @@ def hardware_implantation_required(fn):
         return fn(*args, **kwargs)
     return inner
 
-def field_required(fn):
-    """Permite gravação de campo apenas para Gestor e Técnico."""
+def emv_field_required(fn):
+    """Troca de Chips EMV: Gestor e Técnico Implantação."""
     @wraps(fn)
     def inner(*args, **kwargs):
         if not session.get("user_id"):
             return redirect(url_for("login"))
-        if session.get("role") not in ("manager", "technician", "technician_implantation"):
+        if session.get("role") not in ("manager", "technician_implantation"):
             if request.path.startswith("/api/"):
-                return jsonify({"ok": False, "error": "Perfil Consulta possui acesso somente leitura."}), 403
-            return redirect(url_for("manager"))
+                return jsonify({"ok": False, "error": "Acesso restrito à equipe de Implantação."}), 403
+            return redirect(url_for("activities_page"))
+        return fn(*args, **kwargs)
+    return inner
+
+
+def field_required(fn):
+    """Operação Field: somente Gestor e Técnico Field."""
+    @wraps(fn)
+    def inner(*args, **kwargs):
+        if not session.get("user_id"):
+            return redirect(url_for("login"))
+        if session.get("role") not in ("manager", "technician"):
+            if request.path.startswith("/api/"):
+                return jsonify({"ok": False, "error": "Acesso restrito ao Técnico Field."}), 403
+            return redirect(url_for("activities_page"))
         return fn(*args, **kwargs)
     return inner
 
@@ -2168,7 +2184,7 @@ def hardware_field_visits_api():
         v=(request.args.get(field) or "").strip()
         if v: q=q.filter(col==v)
     rows=q.order_by(HardwareFieldVisit.created_at.desc()).limit(500).all()
-    return jsonify({"ok":True,"visits":[{"id":x.id,"report_code":x.report_code,"client":x.client,"project":x.project,"location_name":x.location_name,"city":x.city,"visit_date":x.visit_date.isoformat(),"reason":x.reason,"status":x.status,"conclusion_status":x.conclusion_status,"client_accepted":x.client_accepted,"topdesk_ticket":x.topdesk_ticket} for x in rows]})
+    return jsonify({"ok":True,"visits":[{"id":x.id,"report_code":f"RV-{x.id:06d}","client":x.client,"project":x.project,"location_name":x.location_name,"city":x.city,"visit_date":x.visit_date.isoformat(),"reason":x.reason,"status":x.status,"conclusion_status":x.conclusion_status,"client_accepted":x.client_accepted,"topdesk_ticket":x.topdesk_ticket,"report_group":x.report_group or "AUTOPASS"} for x in rows]})
 
 @app.get("/api/implantacao-hardware/resumo")
 @hardware_implantation_required
@@ -2192,7 +2208,8 @@ def hardware_field_visit_save_api():
     except Exception: return jsonify({"ok":False,"error":"Data inválida."}),400
     visit=HardwareFieldVisit(
       report_code="VIS-"+datetime.utcnow().strftime("%Y%m%d-%H%M%S")+"-"+secrets.token_hex(2).upper(),
-      client=f.get("client").strip(), project=f.get("project").strip(), requester=f.get("requester"),
+      client=f.get("client").strip(), project=f.get("project").strip(), report_group=(f.get("report_group") or "AUTOPASS").strip().upper(),
+      requester=f.get("requester"),
       has_topdesk=f.get("has_topdesk")=="1", topdesk_ticket=f.get("topdesk_ticket"), location_type=f.get("location_type"),
       location_name=f.get("location_name").strip(), city=f.get("city"), state=f.get("state"), address=f.get("address"),
       latitude=float(f.get("latitude")) if f.get("latitude") else None, longitude=float(f.get("longitude")) if f.get("longitude") else None,
@@ -2216,7 +2233,7 @@ def hardware_field_visit_save_api():
         db.session.add(HardwareFieldVisitPhoto(visit_id=visit.id,stored_name=name,original_name=ph.filename,category="EVIDÊNCIA"))
     db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="HARDWARE_FIELD_VISIT_SAVE",entity_type="hardware_field_visit",entity_id=str(visit.id),detail=f"{visit.report_code} · {visit.status}"))
     db.session.commit()
-    return jsonify({"ok":True,"id":visit.id,"report_code":visit.report_code,"status":visit.status})
+    return jsonify({"ok":True,"id":visit.id,"report_code":f"RV-{visit.id:06d}","status":visit.status})
 
 @app.get("/implantacao-hardware/visitas/<int:visit_id>/relatorio")
 @hardware_implantation_required
@@ -2820,6 +2837,7 @@ def create_inventory():
         operational_status=request.form.get("operational_status", ""),
         connectivity=request.form.get("connectivity", ""),
         network_id=request.form.get("network_id", ""),
+        teamviewer_id=request.form.get("teamviewer_id", ""),
         label_status=request.form.get("label_status", ""),
         in_base=request.form.get("in_base", ""),
         divergence=request.form.get("divergence", ""),
@@ -2885,6 +2903,7 @@ def get_inventory_admin(inventory_id):
         "company": loc.company if loc else "", "line": loc.line if loc else "",
         "equipment_type": inv.equipment_type, "asset_identifier": inv.asset_identifier,
         "serial": inv.serial or "", "supplier": inv.supplier or "", "model": inv.model or "",
+        "teamviewer_id": inv.teamviewer_id or "",
         "operational_status": inv.operational_status or "", "in_base": inv.in_base or "",
         "divergence": inv.divergence or "", "notes": inv.notes or "",
         "creator": user.name if user else "—", "creator_username": user.username if user else ""
@@ -2944,6 +2963,7 @@ def update_inventory(inventory_id):
     inv.operational_status = request.form.get("operational_status", inv.operational_status or "")
     inv.connectivity = request.form.get("connectivity", inv.connectivity or "")
     inv.network_id = request.form.get("network_id", inv.network_id or "")
+    inv.teamviewer_id = request.form.get("teamviewer_id", inv.teamviewer_id or "")
     inv.label_status = request.form.get("label_status", inv.label_status or "")
     inv.in_base = request.form.get("in_base", inv.in_base or "")
     inv.divergence = request.form.get("divergence", inv.divergence or "")
@@ -5715,6 +5735,18 @@ def migrate_base_asset_columns():
         """))
 
 
+def migrate_v421_columns():
+    """V42.1: TeamViewer no inventário e grupo visual do relatório de visita."""
+    inspector=db.inspect(db.engine)
+    with db.engine.begin() as conn:
+        inv_cols={c["name"] for c in inspector.get_columns("inventory")}
+        if "teamviewer_id" not in inv_cols:
+            conn.execute(db.text("ALTER TABLE inventory ADD COLUMN teamviewer_id VARCHAR(120)"))
+        visit_cols={c["name"] for c in inspector.get_columns("hardware_field_visits")} if inspector.has_table("hardware_field_visits") else set()
+        if visit_cols and "report_group" not in visit_cols:
+            conn.execute(db.text("ALTER TABLE hardware_field_visits ADD COLUMN report_group VARCHAR(40) DEFAULT 'AUTOPASS'"))
+
+
 def migrate_inventory_validator_columns():
     with db.engine.begin() as conn:
         statements = [
@@ -6150,19 +6182,20 @@ def activities_page():
 @login_required
 def activities_summary_api():
     uid=session.get("user_id")
-    inv_today=Inventory.query.filter(Inventory.technician_id==uid, func.date(Inventory.created_at)==datetime.utcnow().date()).count()
-    swaps=ChipSwap.query.filter_by(technician_id=uid).all()
-    chip_done=sum(1 for x in swaps if x.status=="CONCLUÍDO")
-    pan=PanoramaPoint.query.filter_by(created_by=uid).count()
     role=session.get("role")
     activities=[]
     if role in ("technician","manager"):
+        inv_today=Inventory.query.filter(Inventory.technician_id==uid, func.date(Inventory.created_at)==datetime.utcnow().date()).count()
+        swaps=ChipSwap.query.filter_by(technician_id=uid).all()
+        chip_done=sum(1 for x in swaps if x.status=="CONCLUÍDO")
+        pan=PanoramaPoint.query.filter_by(created_by=uid).count()
         activities += [
           {"key":"inventory","title":"Inventário / Lançamento","href":"/tecnico","done":inv_today,"label":"lançamentos hoje"},
-          {"key":"chips","title":"Troca de Chips","href":"/troca-chips","done":chip_done,"label":"concluídos"},
-          {"key":"emv","title":"Troca de Chips EMV - Trilhos","href":"/troca-chips-emv","done":EmvChipSwap.query.filter_by(status="CONCLUÍDA").count(),"label":"concluídos"},
+          {"key":"chips","title":"Troca de Chip Recarga","href":"/troca-chips","done":chip_done,"label":"concluídos"},
           {"key":"panorama","title":"Visão Panorâmica","href":"/visao-panoramica","done":pan,"label":"pontos registrados"}]
     if role in ("manager","technician_implantation"):
+        emv_done=EmvChipSwap.query.filter_by(status="CONCLUÍDA").count()
+        activities.append({"key":"emv","title":"Troca de Chips EMV - Trilhos","href":"/troca-chips-emv","done":emv_done,"label":"concluídos"})
         done=HardwareFieldVisit.query.filter_by(status="FINALIZADO").count()
         activities.append({"key":"implantation","title":"Implantação de Hardware","href":"/implantacao-hardware","done":done,"label":"visitas finalizadas"})
     return jsonify({"ok":True,"activities":activities})
@@ -6589,7 +6622,7 @@ def _ensure_emv_tables():
     EmvChipSwap.__table__.create(bind=db.engine,checkfirst=True); EmvChipSwapPhoto.__table__.create(bind=db.engine,checkfirst=True)
 
 @app.get("/troca-chips-emv")
-@field_required
+@emv_field_required
 def emv_chip_page(): return render_template("emv_chip_swap.html",app_release=APP_RELEASE)
 
 @app.get("/api/emv-chip-swaps")
@@ -6615,7 +6648,7 @@ def emv_chip_list():
     return jsonify({"ok":True,"rows":rows})
 
 @app.post("/api/emv-chip-swaps/<terminal>")
-@field_required
+@emv_field_required
 def emv_chip_save(terminal):
     _ensure_emv_tables(); base=next((x for x in _v41_emv_rows() if x["terminal"]==terminal),None)
     if not base: return jsonify({"ok":False,"error":"Bloqueio EMV não encontrado na base."}),404
@@ -6632,7 +6665,7 @@ def emv_chip_save(terminal):
     return jsonify({"ok":True,"status":sw.status,"photo_count":photos})
 
 @app.delete("/api/emv-chip-swaps/photos/<int:photo_id>")
-@field_required
+@emv_field_required
 def emv_chip_delete_photo(photo_id):
     _ensure_emv_tables(); ph=db.session.get(EmvChipSwapPhoto,photo_id)
     if not ph: return jsonify({"ok":False,"error":"Foto não encontrada."}),404
@@ -6645,7 +6678,7 @@ def emv_chip_delete_photo(photo_id):
     return jsonify({"ok":True,"remaining":remaining,"status":sw.status if sw else "PENDENTE"})
 
 @app.delete("/api/emv-chip-swaps/<terminal>")
-@field_required
+@emv_field_required
 def emv_chip_delete(terminal):
     _ensure_emv_tables(); sw=EmvChipSwap.query.filter_by(terminal=terminal).first()
     if not sw: return jsonify({"ok":False,"error":"Registro não encontrado."}),404
@@ -6678,8 +6711,8 @@ def panorama_export():
 @app.get("/visao-panoramica")
 @login_required
 def panorama_page():
-    if session.get("role") == "hr":
-        return redirect(url_for("teams_page"))
+    if session.get("role") not in ("manager", "technician", "consultation"):
+        return redirect(url_for("activities_page" if session.get("role") == "technician_implantation" else "teams_page"))
     return render_template("panorama.html")
 
 
@@ -6691,9 +6724,11 @@ def _panorama_payload():
         for pt in points:
             photos=PanoramaPhoto.query.filter_by(point_id=pt.id).order_by(PanoramaPhoto.created_at).all()
             total += len(photos)
-            p_out.append({"id":pt.id,"name":pt.point_name,"notes":pt.notes or "","status":"CONCLUÍDA" if photos else "EM ANDAMENTO","photos":[{"id":ph.id,"url":"/uploads/"+ph.stored_name,"name":ph.original_name,"uploaded_by":(db.session.get(User,ph.uploaded_by).name if db.session.get(User,ph.uploaded_by) else "—"),"created_at":ph.created_at.isoformat()+"Z","latitude":ph.latitude,"longitude":ph.longitude} for ph in photos]})
+            creator=db.session.get(User,pt.created_by)
+            p_out.append({"id":pt.id,"name":pt.point_name,"notes":pt.notes or "","technician":creator.name if creator else "—","status":"CONCLUÍDA" if photos else "EM ANDAMENTO","photos":[{"id":ph.id,"url":"/uploads/"+ph.stored_name,"name":ph.original_name,"uploaded_by":(db.session.get(User,ph.uploaded_by).name if db.session.get(User,ph.uploaded_by) else "—"),"created_at":ph.created_at.isoformat()+"Z","latitude":ph.latitude,"longitude":ph.longitude} for ph in photos]})
         status="PENDENTE" if not points else ("CONCLUÍDA" if points and all(x["photos"] for x in p_out) else "EM ANDAMENTO")
-        rows.append({"id":loc.id,"company":loc.company,"line":loc.line,"location":loc.location,"reference_latitude":loc.reference_latitude,"reference_longitude":loc.reference_longitude,"status":status,"photo_count":total,"points":p_out})
+        techs=sorted({x.get("technician") for x in p_out if x.get("technician") and x.get("technician")!="—"})
+        rows.append({"id":loc.id,"company":loc.company,"line":loc.line,"location":loc.location,"reference_latitude":loc.reference_latitude,"reference_longitude":loc.reference_longitude,"status":status,"photo_count":total,"technicians":techs,"points":p_out})
     return rows
 
 @app.get("/api/panoramas")
@@ -6858,6 +6893,7 @@ with app.app_context():
     migrate_user_v23_columns()
     migrate_base_asset_columns()
     migrate_inventory_validator_columns()
+    migrate_v421_columns()
     seed_data()
     sync_base_assets_1408(force=False)
     cleanup_v352_test_reference()
