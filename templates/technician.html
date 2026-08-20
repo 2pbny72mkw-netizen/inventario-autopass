@@ -229,6 +229,19 @@
         </select>
       </div>
 
+      {% if session.get('role') == 'manager' %}
+      <div id="adminSurveyStatusWrap">
+        <label>Status do levantamento <span class="tag">ADM</span></label>
+        <select name="location_survey_status" id="location_survey_status">
+          <option value="">Manter status atual</option>
+          <option value="PENDENTE">Pendente</option>
+          <option value="EM ANDAMENTO">Em andamento</option>
+          <option value="CONCLUIDA">Concluída</option>
+        </select>
+        <small>ADM pode corrigir o status da localidade mesmo após conclusão. A alteração fica registrada em auditoria.</small>
+      </div>
+      {% endif %}
+
       <div>
         <label>Conectividade</label>
         <select name="connectivity">

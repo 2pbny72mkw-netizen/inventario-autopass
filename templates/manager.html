@@ -8,9 +8,10 @@
 
 <div class="v23DashboardShell v24Executive v30Executive v31CommandCenter v32CommandCenter v33CommandCenter v34CommandCenter" id="v23DashboardShell">
   <aside class="v23Sidebar" id="v23Sidebar">
-    <div class="v23SidebarBrand"><b>GESTÃO DE CAMPO</b><small>Autopass · V42.2.3.2</small></div>
+    <div class="v23SidebarBrand"><b>GESTÃO DE CAMPO</b><small>Autopass · V42.4</small></div>
     <div class="v42SideGroup">VISÃO GERAL</div><button class="v23Nav active" data-v23-view="overview">▦ <span>Visão Geral</span></button><div class="v42SideGroup">ATIVIDADES</div>
     <button class="v23Nav" data-v23-view="execution">▥ <span>Inventário</span></button>
+    <button class="v23Nav" data-v23-view="atm-inventory">▦ <span>Dashboard ATM</span></button>
     <button class="v23Nav" data-v23-view="journal">◷ <span>Diário de bordo</span></button>
     <button class="v23Nav" data-v23-view="topdesk">⚡ <span>Chamados</span></button>
     <button class="v23Nav" data-v23-view="quality">◆ <span>Qualidade · Inventário</span></button>
@@ -66,6 +67,13 @@
 <section class="v29InsightRail v23Panel" data-v23-panel="overview">
  <div><span>FOCO EXECUTIVO</span><b id="v29Headline">Carregando leitura operacional...</b></div>
  <div class="v29Signal" id="v29Signal">LIVE</div>
+</section>
+<section class="v23Panel v424AtmDashboard" data-v23-panel="atm-inventory">
+  <div class="dashHero v424Hero"><div><span class="eyebrow">INVENTÁRIO · ATM</span><h1>Dashboard do Parque ATM</h1><p>Operadora, modelo, contrato, posse e distribuição das ATMs por localidade.</p></div><div class="heroActions"><button class="secondary" id="atmDashExport">Exportar CSV</button><button class="secondary" id="atmDashRefresh">Atualizar</button></div></div>
+  <section class="card v424FilterCard"><div class="v424Filters atmFilters"><select id="atmFCompany"><option value="">Todas operadoras</option></select><select id="atmFLine"><option value="">Todas linhas</option></select><select id="atmFLocation"><option value="">Todas localidades</option></select><select id="atmFModel"><option value="">Todos modelos</option></select><select id="atmFContract"><option value="">Todos contratos</option></select><select id="atmFOwnership"><option value="">Todo tipo de posse</option></select><select id="atmFStatus"><option value="">Todos status</option></select><button class="primary" id="atmApply">Aplicar</button><button class="secondary" id="atmClear">Limpar</button></div></section>
+  <section class="v424Kpis"><article class="kpi primaryKpi"><span>Total de ATMs</span><b id="atmKTotal">0</b><small>recorte selecionado</small></article><article class="kpi primaryKpi"><span>Operadoras</span><b id="atmKOperators">0</b><small>com ATM no recorte</small></article><article class="kpi primaryKpi"><span>Modelos</span><b id="atmKModels">0</b><small>MK, TCI, Miniwall e outros</small></article><article class="kpi successKpi"><span>Em contrato</span><b id="atmKContracts">0</b><small>contrato identificado</small></article><article class="kpi warningKpi"><span>Leasing</span><b id="atmKLeasing">0</b><small>tipo de posse</small></article><article class="kpi dangerKpi"><span>Sem contrato</span><b id="atmKNoContract">0</b><small>revisar classificação</small></article></section>
+  <div class="v424DashGrid"><section class="card"><h2>ATMs por operadora</h2><div id="atmByOperator" class="statusBars"></div></section><section class="card"><h2>ATMs por modelo</h2><div id="atmByModel" class="statusBars"></div></section><section class="card"><h2>ATMs por contrato</h2><div id="atmByContract" class="statusBars"></div></section><section class="card"><h2>Posse / leasing</h2><div id="atmByOwnership" class="statusBars"></div></section></div>
+  <section class="card"><div class="sectionHead"><div><h2>Distribuição do contrato / parque</h2><p class="muted">Operadora → linha → localidade → ATM. Clique nos gráficos para filtrar.</p></div><span class="tag" id="atmRowsTag">0 ATMs</span></div><div class="tableWrap"><table><thead><tr><th>Operadora</th><th>Linha</th><th>Localidade</th><th>ATM</th><th>Modelo</th><th>Contrato</th><th>Posse</th><th>TeamViewer</th><th>ID TeamViewer</th><th>IP</th><th>Status</th></tr></thead><tbody id="atmRows"></tbody></table></div></section>
 </section>
 <section class="card executiveFilterBar v23Shared">
   <div class="grid4">
@@ -463,8 +471,8 @@
     <article class="v343TvPanel"><div class="v343TvPanelHead"><b>Execução por tipo</b><span>COBERTURA</span></div><div id="v343TvTypes" class="v343TvClone"></div></article>
     <article class="v343TvPanel"><div class="v343TvPanelHead"><b>Prioridades</b><span>ATENÇÃO</span></div><div id="v343TvPriority" class="v343TvClone"></div></article>
   </div>
-  <div class="v343TvFooter"><span id="v343TvHeadline">Monitoramento executivo do inventário.</span><span>SUPORTE A CAMPO · V35.2</span></div>
+  <div class="v343TvFooter"><span id="v343TvHeadline">Monitoramento executivo do inventário.</span><span>SUPORTE A CAMPO · V42.4</span></div>
 </div>
 
-<script src="{{url_for('static',filename='manager.js')}}?v=dashboard-v40-1-3"></script>
+<script src="{{url_for('static',filename='manager.js')}}?v=dashboard-v42-4"></script>
 {% endblock %}
