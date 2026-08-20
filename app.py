@@ -33,13 +33,14 @@ from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.enum.text import PP_ALIGN
 from pptx.enum.shapes import MSO_SHAPE
+from PIL import Image, ImageOps
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V42.2.3.1"
-DASHBOARD_RELEASE = "dashboard-v42-2-3-1"
+APP_RELEASE = "V42.2.3.2"
+DASHBOARD_RELEASE = "dashboard-v42-2-3-2"
 TEAMS_RELEASE = "teams-v42-3"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
 FIELD_GPS_GOOD_ACCURACY_M = float(os.getenv("FIELD_GPS_GOOD_ACCURACY_M", "30"))
@@ -6766,6 +6767,32 @@ def _panorama_media_bytes(stored_name):
     except Exception:
         return None
 
+
+def _pptx_compact_image(raw, max_width=1280, max_height=900, quality=68):
+    """Reduz memória/tamanho do PPTX antes de inserir a imagem."""
+    if not raw:
+        return None
+    try:
+        source = io.BytesIO(raw)
+        with Image.open(source) as im:
+            im = ImageOps.exif_transpose(im)
+            im.thumbnail((max_width, max_height), Image.Resampling.LANCZOS)
+            if im.mode not in ("RGB", "L"):
+                bg = Image.new("RGB", im.size, "white")
+                if "A" in im.getbands():
+                    bg.paste(im, mask=im.getchannel("A"))
+                else:
+                    bg.paste(im)
+                im = bg
+            elif im.mode == "L":
+                im = im.convert("RGB")
+            out = io.BytesIO()
+            im.save(out, format="JPEG", quality=quality, optimize=True, progressive=True)
+            out.seek(0)
+            return out
+    except Exception:
+        return None
+
 @app.get("/api/panoramas/export.pptx")
 @login_required
 def panorama_export_pptx():
@@ -6805,9 +6832,27 @@ def panorama_export_pptx():
                     raw=_panorama_media_bytes(ph.get('stored_name'))
                     if raw:
                         try:
-                            bio=io.BytesIO(raw); pic=sl.shapes.add_picture(bio,Inches(x),Inches(y),width=Inches(w),height=Inches(h-0.32))
-                        except Exception: textbox(sl,x,y,w,h-0.3,"Imagem indisponível",12,False,dark,PP_ALIGN.CENTER)
-                    else: textbox(sl,x,y,w,h-0.3,"Imagem indisponível",12,False,dark,PP_ALIGN.CENTER)
+                            bio=_pptx_compact_image(raw)
+                            raw=None
+                            if bio is None:
+                                raise ValueError("Imagem inválida")
+                            # Insere a imagem compactada mantendo proporção e centralizando no quadro.
+                            with Image.open(bio) as im:
+                                iw,ih=im.size
+                            bio.seek(0)
+                            frame_w=w
+                            frame_h=h-0.32
+                            ratio=min(frame_w/max(iw,1), frame_h/max(ih,1))
+                            pic_w=max(0.1, iw*ratio)
+                            pic_h=max(0.1, ih*ratio)
+                            px=x+(frame_w-pic_w)/2
+                            py=y+(frame_h-pic_h)/2
+                            sl.shapes.add_picture(bio,Inches(px),Inches(py),width=Inches(pic_w),height=Inches(pic_h))
+                            bio.close()
+                        except Exception:
+                            textbox(sl,x,y,w,h-0.3,"Imagem indisponível",12,False,dark,PP_ALIGN.CENTER)
+                    else:
+                        textbox(sl,x,y,w,h-0.3,"Imagem indisponível",12,False,dark,PP_ALIGN.CENTER)
                     textbox(sl,x,y+h-.28,w,.25,(pt.get('name') if pt else 'Foto')+" · "+(ph.get('uploaded_by') or '—'),9,False,dark)
                 else: textbox(sl,x,y,w,h,"Nenhuma foto anexada nesta localidade.",13,False,dark,PP_ALIGN.CENTER)
     out=io.BytesIO(); prs.save(out); out.seek(0); return send_file(out,as_attachment=True,download_name=f"visao_panoramica_{datetime.now().strftime('%Y%m%d_%H%M')}.pptx",mimetype="application/vnd.openxmlformats-officedocument.presentationml.presentation")
