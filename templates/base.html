@@ -17,13 +17,13 @@
       <img src="{{url_for('static',filename='autopass-logo.png')}}" alt="Autopass">
       <div class="brandtext">
         <b>Sistema de Gestão Suporte a Campo</b>
-        <small>{{session.get('name')}} • {{ {'manager':'Gestor','technician':'Técnico Field','technician_implantation':'Técnico Implantação','consultation':'Consulta','hr':'RH','dispatcher':'Dispatcher'}.get(session.get('role'),'Usuário') }}</small>
+        <small>{{session.get('name')}} • {{ {'manager':'Gestor','technician':'Técnico Field','technician_implantation':'Técnico Implantação','manager_field':'Gestor Field','consultation':'Consulta','hr':'RH','dispatcher':'Dispatcher'}.get(session.get('role'),'Usuário') }}</small>
       </div>
     </div>
     <nav>
-      {% if session.get('role') in ('manager','consultation','dispatcher') %}<a href="/gerencial">Dashboard</a>{% endif %}
+      {% if session.get('role') in ('manager','manager_field','consultation','dispatcher') %}<a href="/gerencial">Dashboard</a>{% endif %}
       {% if session.get('role') in ('manager','dispatcher') %}<a href="/topdesk">Chamados</a>{% endif %}
-      {% if session.get('role') in ('technician','technician_implantation','manager') %}<a href="/atividades">Atividades</a>{% endif %}
+      {% if session.get('role') in ('technician','technician_implantation','manager','manager_field') %}<a href="/atividades">Atividades</a>{% endif %}
       {% if session.get('role') in ('manager','technician_implantation') %}<a href="/implantacao-hardware">Implantação de Hardware</a>{% endif %}
       {% if session.get('role') in ('manager','consultation') %}<a href="/patrimonio">Equipamentos</a>{% endif %}
       {% if session.get('role') in ('manager','consultation') %}<a href="/evidencias-campo">Evidências</a>{% endif %}
