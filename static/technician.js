@@ -602,7 +602,7 @@ async function loadAlready() {
       mount:row.mount,application:row.application,bom_id:row.bom_id,bu_id:row.bu_id,
       validator_top_id:row.validator_top_id,software_version:row.software_version};
     Object.entries(values).forEach(([id,v])=>{if($(id)) $(id).value=v||'';});
-    ['exact_position','operational_status','connectivity','network_id','label_status','in_base','divergence','notes'].forEach(name=>{
+    ['exact_position','operational_status','connectivity','network_id','teamviewer_id','label_status','in_base','divergence','notes'].forEach(name=>{
       const el=document.querySelector(`[name="${name}"]`); if(el) el.value=row[name]||'';
     });
     ['latitude','longitude','gps_accuracy','gps_captured_at'].forEach(id=>{if($(id)) $(id).value=row[id]??'';});
