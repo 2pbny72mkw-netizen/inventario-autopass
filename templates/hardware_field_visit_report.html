@@ -1,1 +1,38 @@
-<!doctype html><html><head><meta charset="utf-8"><title>{{v.report_code}}</title><style>body{font:14px Arial;margin:35px;color:#17233b}h1{color:#17345d}.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.box{border:1px solid #d8e0eb;border-radius:8px;padding:12px;margin:12px 0}.photos img{max-width:280px;max-height:220px;margin:6px}.sig{max-width:360px;border-bottom:1px solid #555} @media print{button{display:none}}</style></head><body><button onclick="print()">Imprimir / Salvar PDF</button><h1>Relatório de Visita a Campo</h1><b>{{v.report_code}}</b><div class="box grid"><div><b>Cliente:</b> {{v.client}}</div><div><b>Projeto:</b> {{v.project}}</div><div><b>Solicitante:</b> {{v.requester or '-'}}</div><div><b>TopDesk:</b> {{v.topdesk_ticket or 'Não informado'}}</div><div><b>Local:</b> {{v.location_name}} · {{v.city or ''}}/{{v.state or ''}}</div><div><b>Data:</b> {{v.visit_date.strftime('%d/%m/%Y')}}</div><div><b>Técnico:</b> {{tech.name if tech else '-'}}</div><div><b>GPS:</b> {{v.latitude or '-'}}, {{v.longitude or '-'}}</div></div><div class="box"><h3>Motivo / atividade</h3><p>{{v.reason}}</p><p>{{v.activities or ''}}</p><p>{{v.activity_notes or ''}}</p></div><div class="box"><h3>Conclusão</h3><b>{{v.conclusion_status}}</b><p>{{v.conclusion or ''}}</p><p><b>Pendências:</b> {{v.pending_items or 'Nenhuma registrada'}}</p></div><div class="box"><h3>Observações e aceite do cliente</h3><p>{{v.client_observations or 'Sem observações.'}}</p><p><b>Acompanhante:</b> {{v.client_contact or '-'}} · {{v.client_role or ''}}</p>{% if v.signature_file %}<img class="sig" src="/uploads/{{v.signature_file}}">{% endif %}<p>Aceite: {{'SIM' if v.client_accepted else 'NÃO'}} · {{v.signed_at.strftime('%d/%m/%Y %H:%M') if v.signed_at else ''}}</p></div><div class="box photos"><h3>Evidências</h3>{% for p in photos %}<img src="/uploads/{{p.stored_name}}">{% endfor %}</div></body></html>
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8">
+<title>Relatório de visita · RV-{{'%06d'|format(v.id)}}</title>
+<style>
+@page{size:A4;margin:14mm}*{box-sizing:border-box}body{font:13px Arial,Helvetica,sans-serif;margin:0;color:#111;background:#fff;line-height:1.45}
+.toolbar{display:flex;justify-content:flex-end;margin:0 0 14px}.toolbar button{border:0;background:#17345d;color:#fff;padding:10px 16px;border-radius:8px;font-weight:700}
+.header{display:flex;align-items:center;justify-content:space-between;border-bottom:3px solid #17345d;padding-bottom:12px;margin-bottom:16px}.header img{max-width:190px;max-height:64px;object-fit:contain}.headerText{text-align:right}.headerText h1{margin:0;color:#111;font-size:24px}.reportNo{font-size:16px;font-weight:800;color:#17345d}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 18px}.box{border:1px solid #d8e0eb;border-radius:10px;padding:14px;margin:12px 0;break-inside:avoid}.box h2{margin:0 0 10px;color:#111;font-size:16px;border-left:4px solid #27b3b3;padding-left:8px}.label{font-weight:700}.photos{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.photos figure{margin:0;border:1px solid #e4e8ef;border-radius:8px;padding:6px}.photos img{display:block;width:100%;height:210px;object-fit:cover;border-radius:6px}.photos figcaption{font-size:11px;margin-top:5px}.sig{max-width:330px;max-height:120px}.accept{border-top:1px solid #ddd;padding-top:8px}.footer{font-size:10px;color:#555;text-align:center;margin-top:18px}
+@media print{.toolbar{display:none}.box{break-inside:avoid}}
+</style></head><body>
+<div class="toolbar"><button onclick="print()">Imprimir / Salvar PDF</button></div>
+<header class="header">
+  <div>
+    {% if (v.report_group or 'AUTOPASS') == 'TECSOMOBI' %}<img src="{{url_for('static',filename='logo-tecsomobi.png')}}">
+    {% elif (v.report_group or 'AUTOPASS') == 'JAE' %}<img src="{{url_for('static',filename='logo-jae.png')}}">
+    {% else %}<img src="{{url_for('static',filename='autopass-logo.png')}}">{% endif %}
+  </div>
+  <div class="headerText"><h1>Relatório de visita</h1><div class="reportNo">RV-{{'%06d'|format(v.id)}}</div></div>
+</header>
+<section class="box"><h2>Dados da visita</h2><div class="grid">
+<div><span class="label">Grupo:</span> {{v.report_group or 'AUTOPASS'}}</div><div><span class="label">Cliente:</span> {{v.client}}</div>
+<div><span class="label">Projeto:</span> {{v.project}}</div><div><span class="label">Solicitante:</span> {{v.requester or '—'}}</div>
+<div><span class="label">Chamado TopDesk:</span> {{v.topdesk_ticket or 'Não'}}</div><div><span class="label">Data:</span> {{v.visit_date.strftime('%d/%m/%Y')}}</div>
+<div><span class="label">Local:</span> {{v.location_name}}</div><div><span class="label">Tipo:</span> {{v.location_type or '—'}}</div>
+<div><span class="label">Cidade/UF:</span> {{v.city or '—'}}{% if v.state %}/{{v.state}}{% endif %}</div><div><span class="label">Horário:</span> {{v.start_time or '—'}} a {{v.end_time or '—'}}</div>
+<div style="grid-column:1/-1"><span class="label">Endereço / referência:</span> {{v.address or '—'}}</div>
+<div><span class="label">Técnico responsável:</span> {{tech.name if tech else '—'}}</div>
+</div></section>
+<section class="box"><h2>Motivo e atividade executada</h2><p><span class="label">Motivo:</span> {{v.reason}}</p><p><span class="label">Atividade:</span> {{v.activities or '—'}}</p><p>{{v.activity_notes or ''}}</p>{% if v.technical_details %}<p><span class="label">Detalhes técnicos:</span><br>{{v.technical_details}}</p>{% endif %}</section>
+<section class="box"><h2>Conclusão</h2><p><span class="label">Resultado:</span> {{v.conclusion_status}}</p><p>{{v.conclusion or '—'}}</p><p><span class="label">Pendências / próxima ação:</span> {{v.pending_items or 'Nenhuma registrada'}}</p></section>
+<section class="box"><h2>Acompanhamento e aceite do cliente</h2>
+<div class="grid"><div><span class="label">Acompanhante:</span> {{v.client_contact or '—'}}</div><div><span class="label">Empresa:</span> {{v.client_company or '—'}}</div><div><span class="label">Cargo / função:</span> {{v.client_role or '—'}}</div><div><span class="label">Telefone:</span> {{v.client_phone or '—'}}</div><div><span class="label">E-mail:</span> {{v.client_email or '—'}}</div></div>
+<p><span class="label">Observações do cliente:</span><br>{{v.client_observations or 'Sem observações.'}}</p>
+<div class="accept">{% if v.signature_file %}<img class="sig" src="/uploads/{{v.signature_file}}">{% endif %}<p><b>Aceite:</b> {{'SIM' if v.client_accepted else 'NÃO'}}{% if v.signed_at %} · {{v.signed_at.strftime('%d/%m/%Y %H:%M')}}{% endif %}</p></div>
+</section>
+<section class="box"><h2>Evidências</h2><div class="photos">{% for p in photos %}<figure><img loading="lazy" src="/uploads/{{p.stored_name}}"><figcaption>{{p.description or p.original_name or 'Evidência'}}</figcaption></figure>{% endfor %}</div>{% if not photos %}<p>Nenhuma evidência anexada.</p>{% endif %}</section>
+<div class="footer">Plataforma de Gestão Operacional · Relatório de visita · RV-{{'%06d'|format(v.id)}}</div>
+</body></html>

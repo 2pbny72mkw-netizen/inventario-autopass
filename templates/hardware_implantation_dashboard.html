@@ -1,7 +1,12 @@
 {% extends "base.html" %}{% block content %}
-<div class="pageHead"><span class="eyebrow">V42 · GESTÃO EXECUTIVA</span><h1>Dashboard · Implantação de Hardware</h1><p>Visão de gestão da atividade Visita a Campo.</p></div>
+<div class="pageHead"><span class="eyebrow">V42.1 · GESTÃO EXECUTIVA</span><h1>Dashboard · Implantação de Hardware</h1><p>Visão executiva das visitas, aceite, pendências e evolução.</p></div>
 <div class="implantFilters card"><input id="fClient" placeholder="Cliente"><input id="fProject" placeholder="Projeto"><select id="fStatus"><option value="">Todos os status</option><option>RASCUNHO</option><option>PAUSADO</option><option>FINALIZADO</option></select><button class="btn" id="applyFilters">Aplicar</button><button class="btn" id="exportCsv">Exportar</button></div>
 <div class="implantKpis"><article><span>Total</span><b id="kTotal">0</b></article><article><span>Finalizadas</span><b id="kDone">0</b></article><article><span>Em andamento</span><b id="kProgress">0</b></article><article><span>Com pendências</span><b id="kPending">0</b></article><article><span>Aceites</span><b id="kAccepted">0</b></article></div>
-<div class="implantCharts"><section class="card"><h2>Status das visitas</h2><div id="statusBars" class="statusBars"></div></section><section class="card"><h2>Visitas por cliente</h2><div id="clientBars" class="statusBars"></div></section></div>
+<div class="implantVisualGrid">
+<section class="card"><h2>Distribuição de status</h2><div class="implantDonutWrap"><div id="statusDonut" class="implantDonut"><div><b id="donutPct">0%</b><small>finalizadas</small></div></div><div id="statusLegend" class="implantLegend"></div></div></section>
+<section class="card"><h2>Evolução das visitas</h2><div id="evolutionBars" class="implantEvolution"></div></section>
+<section class="card"><h2>Visitas por cliente</h2><div id="clientBars" class="statusBars"></div></section>
+<section class="card"><h2>Resultado das visitas</h2><div id="resultBars" class="statusBars"></div></section>
+</div>
 <section class="card"><div class="sectionHead"><div><h2>Visitas recentes</h2><p class="muted">Cliente → Projeto → Local → Resultado.</p></div></div><div class="tableWrap"><table><thead><tr><th>Relatório</th><th>Cliente</th><th>Projeto</th><th>Local</th><th>Data</th><th>Resultado</th><th>Status</th></tr></thead><tbody id="visitRows"></tbody></table></div></section>
-{% endblock %}{% block scripts %}<script src="{{url_for('static',filename='hardware_implantation_dashboard.js')}}?v=v42"></script>{% endblock %}
+{% endblock %}{% block scripts %}<script src="{{url_for('static',filename='hardware_implantation_dashboard.js')}}?v=v42-1"></script>{% endblock %}
