@@ -39,9 +39,9 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V42.2.3.2"
-DASHBOARD_RELEASE = "dashboard-v42-2-3-2"
-TEAMS_RELEASE = "teams-v42-3"
+APP_RELEASE = "V42.4"
+DASHBOARD_RELEASE = "dashboard-v42-4"
+TEAMS_RELEASE = "teams-v42-4"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
 FIELD_GPS_GOOD_ACCURACY_M = float(os.getenv("FIELD_GPS_GOOD_ACCURACY_M", "30"))
 FIELD_GPS_MAX_ACCURACY_M = float(os.getenv("FIELD_GPS_MAX_ACCURACY_M", "80"))
@@ -304,6 +304,19 @@ class BaseAsset(db.Model):
     contract_end = db.Column(db.String(80))
     installation_type = db.Column(db.String(180))
     installation_date = db.Column(db.String(80))
+    # V42.4 — complemento técnico/cadastral ATM. Identificadores são texto por definição.
+    teamviewer_enabled = db.Column(db.String(20))
+    teamviewer_id = db.Column(db.String(120), index=True)
+    address = db.Column(db.String(500))
+    ip_address = db.Column(db.String(120))
+    city_id = db.Column(db.String(120))
+    praja_id = db.Column(db.String(120))
+    cielo_code = db.Column(db.String(120))
+    printer_model = db.Column(db.String(180))
+    acceptor_model = db.Column(db.String(180))
+    motherboard = db.Column(db.String(220))
+    ownership_type = db.Column(db.String(80))
+    contract_name = db.Column(db.String(180), index=True)
 
 
 class Inventory(db.Model):
@@ -691,12 +704,12 @@ def manager_required(fn):
 
 
 def dashboard_required(fn):
-    """Permite acesso ao painel para Gestor, Consulta e Dispatcher."""
+    """Painel gerencial completo: Gestor, Gestor Field, Consulta e Dispatcher."""
     @wraps(fn)
     def inner(*args, **kwargs):
         if not session.get("user_id"):
             return redirect(url_for("login"))
-        if session.get("role") not in ("manager", "manager_field", "consultation", "dispatcher"):
+        if session.get("role") not in ("manager", "manager_field", "consultation", "dispatcher", "technician"):
             if session.get("role") == "hr":
                 return redirect(url_for("teams_page"))
             return redirect(url_for("technician"))
@@ -811,6 +824,37 @@ def field_required(fn):
     return inner
 
 
+def field_dashboard_required(fn):
+    """Dashboard Field: visão operacional para Técnico Field e visão ampla para gestores Field/ADM."""
+    @wraps(fn)
+    def inner(*args, **kwargs):
+        if not session.get("user_id"):
+            return redirect(url_for("login"))
+        if session.get("role") not in ("manager", "manager_field", "technician"):
+            if request.path.startswith("/api/"):
+                return jsonify({"ok": False, "error": "Sem permissão para a Dashboard Field."}), 403
+            return redirect(url_for("dashboard_landing"))
+        return fn(*args, **kwargs)
+    return inner
+
+
+@app.get("/dashboard")
+@login_required
+def dashboard_landing():
+    role=session.get("role")
+    if role=="technician_implantation":
+        return redirect(url_for("hardware_implantation_dashboard_page"))
+    if role=="technician":
+        return redirect(url_for("field_dashboard_page"))
+    if role=="manager_field":
+        return redirect(url_for("field_dashboard_page"))
+    if role in ("manager","consultation","dispatcher"):
+        return redirect(url_for("manager"))
+    if role=="hr":
+        return redirect(url_for("teams_page"))
+    return redirect(url_for("my_profile_page"))
+
+
 @app.route("/")
 def index():
     if not session.get("user_id"):
@@ -818,7 +862,9 @@ def index():
     role = session.get("role")
     if role == "hr":
         return redirect(url_for("teams_page"))
-    return redirect(url_for("manager" if role in ("manager", "manager_field", "consultation", "dispatcher") else "activities_page"))
+    if role in ("manager", "manager_field", "consultation", "dispatcher", "technician", "technician_implantation"):
+        return redirect(url_for("dashboard_landing"))
+    return redirect(url_for("my_profile_page"))
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -871,16 +917,51 @@ def technician():
 @app.route("/gerencial")
 @dashboard_required
 def manager():
+    if session.get("role")=="technician":
+        return redirect(url_for("field_dashboard_page"))
     return render_template("manager.html")
 
 @app.route("/gerencial/tv")
 @dashboard_required
 def manager_tv():
+    if session.get("role")=="technician":
+        return redirect(url_for("field_dashboard_page"))
     return render_template("manager_tv.html", app_release=APP_RELEASE)
 
 
+@app.get("/dashboard/field")
+@field_dashboard_required
+def field_dashboard_page():
+    return render_template("field_dashboard.html", app_release=APP_RELEASE)
 
 
+@app.get("/api/dashboard/field")
+@field_dashboard_required
+def field_dashboard_api():
+    uid=session.get("user_id")
+    role=session.get("role")
+    inv_q=Inventory.query
+    # Técnico Field enxerga seus números; gestores enxergam o consolidado da área.
+    if role=="technician": inv_q=inv_q.filter(Inventory.technician_id==uid)
+    inv=inv_q.all()
+    inv_total=len(inv)
+    by_type={}
+    for x in inv:
+        t=_canonical_equipment_type(x.equipment_type)
+        by_type[t]=by_type.get(t,0)+1
+    inop=sum(1 for x in inv if normalize(x.operational_status) in ("INOPERANTE","DEFEITO","FORA DE OPERACAO"))
+    div=sum(1 for x in inv if (x.divergence or "").strip())
+    # Chamados vinculados ao técnico quando aplicável.
+    tq=TopDeskTicket.query
+    if role=="technician": tq=tq.filter(TopDeskTicket.assigned_technician_id==uid)
+    tickets=tq.all()
+    open_tickets=sum(1 for x in tickets if normalize(x.work_status) not in ("CONCLUIDO","RESOLVIDO","FECHADO"))
+    # Troca de chips: usa apenas dados acessíveis da área; técnico vê seus registros.
+    cq=ChipSwap.query
+    if role=="technician" and hasattr(ChipSwap,"technician_id"): cq=cq.filter(ChipSwap.technician_id==uid)
+    chips=cq.all()
+    chip_done=sum(1 for x in chips if normalize(getattr(x,"status","") or "") in ("CONCLUIDO","CONCLUIDA"))
+    return jsonify({"ok":True,"inventory":{"total":inv_total,"inoperative":inop,"divergences":div,"by_type":by_type},"tickets":{"total":len(tickets),"open":open_tickets},"chips":{"total":len(chips),"done":chip_done}})
 
 
 
@@ -1026,30 +1107,48 @@ def _schedule_default_anchor(group, schedule):
 
 
 def _ensure_team_schedule_profiles():
-    """V39.7.6: sincroniza a escala exclusivamente com usuários ativos cadastrados."""
+    """V42.4: sincroniza escala por usuário com upsert seguro e saneia duplicidades legadas."""
     users = User.query.filter(User.active.is_(True)).order_by(User.name).all()
     valid_ids=set()
-    for u in users:
-        if normalize(u.personnel_status or "ATIVO") != "ATIVO":
-            continue
-        if u.role not in ("technician", "technician_implantation", "dispatcher", "manager"):
-            continue
-        valid_ids.add(u.id)
-        row=TeamScheduleProfile.query.filter_by(user_id=u.id).first()
-        sched=(u.work_schedule_type or "12x36").strip()
-        shift=(u.work_shift or ("08:00-18:00" if normalize(sched)=="5X2" else "05:00-17:00")).strip()
-        anchor=u.work_anchor_date or datetime.now(ZoneInfo("America/Sao_Paulo")).date()
-        jt=normalize(u.job_title or "")
-        category="SUPERVISOR" if ("SUPERV" in jt or u.role=="dispatcher") else ("APOIO" if "APOIO" in jt else "TECNICO")
-        if row is None:
-            row=TeamScheduleProfile(user_id=u.id,name=u.name,active=True,category=category,schedule_type=sched,shift=shift,supervision="",entry="",lines_json="[]",anchor_date=anchor)
-            db.session.add(row)
-        else:
-            row.name=u.name; row.active=True; row.category=category; row.schedule_type=sched; row.shift=shift; row.anchor_date=anchor
-    for row in TeamScheduleProfile.query.all():
-        if not row.user_id or row.user_id not in valid_ids:
-            row.active=False
-    db.session.commit()
+    try:
+        for u in users:
+            if normalize(u.personnel_status or "ATIVO") != "ATIVO":
+                continue
+            if u.role not in ("technician", "technician_implantation", "dispatcher", "manager"):
+                continue
+            valid_ids.add(u.id)
+            # Primeiro pelo ID; em bases legadas reaproveita o perfil com mesmo nome em vez de inserir outro.
+            row=TeamScheduleProfile.query.filter_by(user_id=u.id).first()
+            if row is None:
+                row=TeamScheduleProfile.query.filter(func.lower(TeamScheduleProfile.name)==(u.name or "").strip().lower()).order_by(TeamScheduleProfile.active.desc(),TeamScheduleProfile.id).first()
+            sched=(u.work_schedule_type or "12x36").strip()
+            shift=(u.work_shift or ("08:00-18:00" if normalize(sched)=="5X2" else "05:00-17:00")).strip()
+            anchor=u.work_anchor_date or datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+            jt=normalize(u.job_title or "")
+            category="SUPERVISOR" if ("SUPERV" in jt or u.role=="dispatcher") else ("APOIO" if "APOIO" in jt else "TECNICO")
+            if row is None:
+                row=TeamScheduleProfile(user_id=u.id,name=u.name,active=True,category=category,schedule_type=sched,shift=shift,supervision="",entry="",lines_json="[]",anchor_date=anchor)
+                db.session.add(row)
+                db.session.flush()
+            else:
+                row.user_id=u.id; row.name=u.name; row.active=True; row.category=category; row.schedule_type=sched; row.shift=shift; row.anchor_date=anchor; row.updated_at=datetime.utcnow()
+        # Desativa somente perfis sem vínculo válido; não cria registros durante consultas.
+        for row in TeamScheduleProfile.query.all():
+            if not row.user_id or row.user_id not in valid_ids:
+                row.active=False
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        # Recuperação controlada para legado com nome duplicado: associa o registro existente ao usuário.
+        for u in users:
+            if u.id not in valid_ids: continue
+            same=TeamScheduleProfile.query.filter(func.lower(TeamScheduleProfile.name)==(u.name or "").strip().lower()).order_by(TeamScheduleProfile.id).all()
+            if not same: continue
+            keep=next((x for x in same if x.user_id==u.id),same[0])
+            keep.user_id=u.id; keep.active=True; keep.name=u.name
+            for extra in same:
+                if extra.id!=keep.id: extra.active=False
+        db.session.commit()
 
 
 def _team_profile_is_scheduled(profile, target_date):
@@ -1105,15 +1204,18 @@ def _schedule_today_db(target_date=None):
     ]
 
 
-def _team_latest_position(user_id):
+def _team_latest_position(user_id, only_today=True):
     if not user_id:
         return None
-    return (
-        TechnicianPosition.query
-        .filter_by(user_id=user_id)
-        .order_by(TechnicianPosition.captured_at.desc())
-        .first()
-    )
+    q=TechnicianPosition.query.filter_by(user_id=user_id)
+    if only_today:
+        local_day=datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+        start_local=datetime.combine(local_day, datetime.min.time(), tzinfo=ZoneInfo("America/Sao_Paulo"))
+        end_local=start_local+timedelta(days=1)
+        start_utc=start_local.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+        end_utc=end_local.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+        q=q.filter(TechnicianPosition.captured_at>=start_utc,TechnicianPosition.captured_at<end_utc)
+    return q.order_by(TechnicianPosition.captured_at.desc()).first()
 
 
 @app.post("/api/tecnico/position")
@@ -1349,7 +1451,7 @@ def teams_calendar_api():
         return jsonify({
             "ok": False,
             "release": TEAMS_RELEASE,
-            "error": f"Falha ao montar escala por dias: {type(exc).__name__}: {exc}",
+            "error": "Não foi possível carregar a escala. Tente novamente.",
         }), 500
 
 
@@ -1878,6 +1980,35 @@ def _parse_contract_date(value):
             pass
     return None
 
+@app.get("/api/dashboard/inventory-atm")
+@dashboard_required
+def inventory_atm_dashboard_api():
+    if session.get("role")=="technician":
+        return jsonify({"ok":False,"error":"Dashboard ATM restrita à gestão."}),403
+    q=BaseAsset.query.filter(func.upper(func.coalesce(BaseAsset.equipment_type,""))=="ATM")
+    filters={k:(request.args.get(k) or "").strip() for k in ("company","line","locality","model","contract","ownership","status")}
+    if filters["company"]: q=q.filter(BaseAsset.company==filters["company"])
+    if filters["line"]: q=q.filter(BaseAsset.line==filters["line"])
+    if filters["locality"]: q=q.filter(BaseAsset.locality==filters["locality"])
+    if filters["model"]: q=q.filter(BaseAsset.model==filters["model"])
+    if filters["contract"]: q=q.filter(BaseAsset.contract_name==filters["contract"])
+    if filters["ownership"]: q=q.filter(BaseAsset.ownership_type==filters["ownership"])
+    if filters["status"]: q=q.filter(BaseAsset.base_status==filters["status"])
+    rows=q.order_by(BaseAsset.company,BaseAsset.line,BaseAsset.locality,BaseAsset.asset_key).all()
+    def agg(attr):
+        out={}
+        for a in rows:
+            v=(getattr(a,attr,None) or "Não informado").strip() or "Não informado"
+            out[v]=out.get(v,0)+1
+        return out
+    assets=[]
+    for a in rows:
+        ip=a.ip_address or ""
+        assets.append({"id":a.id,"asset_key":a.asset_key,"company":a.company or "","line":a.line or "","locality":a.locality or "","model":a.model or "","supplier":a.supplier or "","serial":a.serial or "","status":a.base_status or "","contract":a.contract_name or "SEM CONTRATO","ownership":a.ownership_type or "Não informado","teamviewer":a.teamviewer_enabled or "","teamviewer_id":a.teamviewer_id or "","ip":ip,"application":a.application or ""})
+    allq=BaseAsset.query.filter(func.upper(func.coalesce(BaseAsset.equipment_type,""))=="ATM").all()
+    options=lambda attr:sorted({(getattr(a,attr,None) or "").strip() for a in allq if (getattr(a,attr,None) or "").strip()},key=lambda x:x.casefold())
+    return jsonify({"ok":True,"release":APP_RELEASE,"total":len(rows),"operators":agg("company"),"models":agg("model"),"contracts":agg("contract_name"),"ownership":agg("ownership_type"),"locations":agg("locality"),"assets":assets,"options":{"companies":options("company"),"lines":options("line"),"localities":options("locality"),"models":options("model"),"contracts":options("contract_name"),"ownership":options("ownership_type"),"statuses":options("base_status")}})
+
 @app.get("/api/v30/atm-contracts")
 @dashboard_required
 def v30_atm_contracts():
@@ -2188,6 +2319,8 @@ def hardware_field_visits_api():
     for field,col in (("client",HardwareFieldVisit.client),("project",HardwareFieldVisit.project),("status",HardwareFieldVisit.status),("conclusion_status",HardwareFieldVisit.conclusion_status)):
         value=(request.args.get(field) or "").strip()
         if value: q=q.filter(col==value)
+    location=(request.args.get("location") or "").strip()
+    if location: q=q.filter(HardwareFieldVisit.location_name.ilike(f"%{location}%"))
     date_from=(request.args.get("date_from") or "").strip(); date_to=(request.args.get("date_to") or "").strip(); technician=(request.args.get("technician") or "").strip()
     try:
         if date_from: q=q.filter(HardwareFieldVisit.visit_date >= datetime.strptime(date_from,"%Y-%m-%d").date())
@@ -2198,7 +2331,10 @@ def hardware_field_visits_api():
         except ValueError: return jsonify({"ok":False,"error":"Técnico inválido."}),400
     rows=q.order_by(HardwareFieldVisit.created_at.desc()).limit(500).all()
     ids={x.technician_id for x in rows if x.technician_id}; tech_map={u.id:u.name for u in User.query.filter(User.id.in_(ids)).all()} if ids else {}
-    return jsonify({"ok":True,"visits":[{"id":x.id,"report_code":f"RV-{x.id:06d}","client":x.client,"project":x.project,"location_name":x.location_name,"city":x.city,"visit_date":x.visit_date.isoformat(),"reason":x.reason,"status":x.status,"conclusion_status":x.conclusion_status,"client_accepted":x.client_accepted,"topdesk_ticket":x.topdesk_ticket,"report_group":x.report_group or "AUTOPASS","technician_id":x.technician_id,"technician_name":tech_map.get(x.technician_id,"—")} for x in rows]})
+    visit_ids=[x.id for x in rows]; photo_counts={}
+    if visit_ids:
+        for vid,count in db.session.query(HardwareFieldVisitPhoto.visit_id,func.count(HardwareFieldVisitPhoto.id)).filter(HardwareFieldVisitPhoto.visit_id.in_(visit_ids)).group_by(HardwareFieldVisitPhoto.visit_id).all(): photo_counts[vid]=count
+    return jsonify({"ok":True,"visits":[{"id":x.id,"report_code":f"RV-{x.id:06d}","client":x.client,"project":x.project,"location_name":x.location_name,"city":x.city,"visit_date":x.visit_date.isoformat(),"reason":x.reason,"status":x.status,"conclusion_status":x.conclusion_status,"client_accepted":x.client_accepted,"has_signature":bool(x.signature_file),"photo_count":photo_counts.get(x.id,0),"topdesk_ticket":x.topdesk_ticket,"report_group":x.report_group or "AUTOPASS","technician_id":x.technician_id,"technician_name":tech_map.get(x.technician_id,"—")} for x in rows]})
 
 @app.get("/api/implantacao-hardware/tecnicos")
 @hardware_implantation_required
@@ -2244,13 +2380,21 @@ def hardware_field_visit_save_api():
     if sig.startswith("data:image/") and "," in sig:
         import base64
         try:
-            raw=base64.b64decode(sig.split(",",1)[1]); name=f"visit_sig_{visit.id}_{uuid.uuid4().hex[:8]}.png"; (UPLOAD_DIR/name).write_bytes(raw); visit.signature_file=name; visit.signed_at=datetime.utcnow()
-        except Exception: pass
+            raw=base64.b64decode(sig.split(",",1)[1]); name=f"visit_sig_{visit.id}_{uuid.uuid4().hex[:8]}.png"
+            if _r2_available():
+                key=f"hardware-visits/{datetime.utcnow().strftime('%Y/%m')}/{name}";_r2_put_bytes(key,raw,"image/png");name="r2__"+key
+            else: (UPLOAD_DIR/name).write_bytes(raw)
+            visit.signature_file=name; visit.signed_at=datetime.utcnow()
+        except Exception:
+            app.logger.exception("Falha ao persistir assinatura da visita %s",visit.id)
     if visit.status=="FINALIZADO" and not (visit.client_accepted and visit.signature_file):
         db.session.rollback(); return jsonify({"ok":False,"error":"Para finalizar, registre o aceite e a assinatura do cliente."}),400
     for ph in request.files.getlist("photos"):
         if not ph or not ph.filename: continue
-        ext=Path(secure_filename(ph.filename)).suffix.lower() or ".jpg"; name=f"visit_{visit.id}_{uuid.uuid4().hex}{ext}"; ph.save(UPLOAD_DIR/name)
+        ext=Path(secure_filename(ph.filename)).suffix.lower() or ".jpg"; name=f"visit_{visit.id}_{uuid.uuid4().hex}{ext}"
+        if _r2_available():
+            data=ph.read(); key=f"hardware-visits/{datetime.utcnow().strftime('%Y/%m')}/{name}";_r2_put_bytes(key,data,ph.mimetype or mimetypes.guess_type(name)[0] or "application/octet-stream");name="r2__"+key
+        else: ph.save(UPLOAD_DIR/name)
         db.session.add(HardwareFieldVisitPhoto(visit_id=visit.id,stored_name=name,original_name=ph.filename,category="EVIDÊNCIA"))
     db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="HARDWARE_FIELD_VISIT_SAVE",entity_type="hardware_field_visit",entity_id=str(visit.id),detail=f"{visit.report_code} · {visit.status}"))
     db.session.commit()
@@ -2282,14 +2426,33 @@ def hardware_field_visit_delete_api(visit_id):
     db.session.delete(v); db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="HARDWARE_FIELD_VISIT_DELETE",entity_type="hardware_field_visit",entity_id=str(visit_id),detail=detail)); db.session.commit()
     return jsonify({"ok":True,"deleted":report})
 
+def _visit_media_data_uri(stored_name):
+    if not stored_name: return None
+    try:
+        if stored_name.startswith("r2__"):
+            raw=_r2_get_bytes(stored_name[4:])
+            ext=Path(stored_name[4:]).suffix.lower()
+        else:
+            p=UPLOAD_DIR/stored_name
+            if not p.exists(): return None
+            raw=p.read_bytes();ext=p.suffix.lower()
+        mime={".jpg":"image/jpeg",".jpeg":"image/jpeg",".png":"image/png",".webp":"image/webp"}.get(ext,"image/jpeg")
+        import base64
+        return f"data:{mime};base64,"+base64.b64encode(raw).decode("ascii")
+    except Exception:
+        app.logger.exception("Falha ao carregar mídia do relatório: %s",stored_name)
+        return None
+
 @app.get("/implantacao-hardware/visitas/<int:visit_id>/relatorio")
 @hardware_implantation_required
 def hardware_field_visit_report(visit_id):
     v=db.session.get(HardwareFieldVisit,visit_id)
     if not v: return "Relatório não encontrado",404
     photos=HardwareFieldVisitPhoto.query.filter_by(visit_id=v.id).all()
+    photo_media=[{"row":p,"data_uri":_visit_media_data_uri(p.stored_name)} for p in photos]
+    signature_data_uri=_visit_media_data_uri(v.signature_file) if v.signature_file else None
     tech=db.session.get(User,v.technician_id)
-    return render_template("hardware_field_visit_report.html",v=v,photos=photos,tech=tech)
+    return render_template("hardware_field_visit_report.html",v=v,photos=photos,photo_media=photo_media,signature_data_uri=signature_data_uri,tech=tech)
 
 @app.get("/sobre")
 @login_required
@@ -2590,6 +2753,7 @@ def api_location_inventory(location_id):
             "gps_captured_at": inv.gps_captured_at.isoformat(timespec="seconds") if inv.gps_captured_at else None,
             "technician": technician_name,
             "attachments_count": attachment_count,
+            "location_survey_status": (db.session.get(Location, inv.location_id).survey_status if db.session.get(Location, inv.location_id) else ""),
             "can_manage": session.get("role") == "manager",
         })
     return jsonify(out)
@@ -3008,6 +3172,32 @@ def update_inventory(inventory_id):
     inv.exact_position = request.form.get("exact_position", inv.exact_position or "")
     inv.mount = request.form.get("mount", inv.mount or "")
     inv.operational_status = request.form.get("operational_status", inv.operational_status or "")
+
+    # V42.4: ADM pode corrigir também a situação do levantamento da localidade
+    # a partir da edição de qualquer registro. A alteração é preservada em auditoria.
+    requested_survey_status = (request.form.get("location_survey_status") or "").strip().upper()
+    survey_status_changed = False
+    old_survey_status = loc.survey_status if loc else None
+    if requested_survey_status and session.get("role") == "manager":
+        allowed_survey_status = {"PENDENTE", "EM ANDAMENTO", "CONCLUIDA"}
+        requested_survey_status = requested_survey_status.replace("CONCLUÍDA", "CONCLUIDA")
+        if requested_survey_status not in allowed_survey_status:
+            return jsonify({"ok": False, "error": "Status do levantamento inválido."}), 400
+        if loc.survey_status != requested_survey_status:
+            loc.survey_status = requested_survey_status
+            survey_status_changed = True
+            if requested_survey_status == "PENDENTE":
+                loc.started_at = None
+                loc.completed_at = None
+                loc.completed_by = None
+            elif requested_survey_status == "EM ANDAMENTO":
+                loc.started_at = loc.started_at or datetime.utcnow()
+                loc.completed_at = None
+                loc.completed_by = None
+            elif requested_survey_status == "CONCLUIDA":
+                loc.completed_at = loc.completed_at or datetime.utcnow()
+                loc.completed_by = session.get("user_id")
+
     inv.connectivity = request.form.get("connectivity", inv.connectivity or "")
     inv.network_id = request.form.get("network_id", inv.network_id or "")
     inv.teamviewer_id = request.form.get("teamviewer_id", inv.teamviewer_id or "")
@@ -3041,7 +3231,12 @@ def update_inventory(inventory_id):
             f.save(UPLOAD_DIR / stored)
         db.session.add(Attachment(inventory_id=inv.id, original_name=f.filename, stored_name=stored, mime_type=f.mimetype))
         added_photos += 1
-    db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="INVENTORY_EDIT", entity_type="inventory", entity_id=str(inv.id), detail=f"Registro editado por {session.get('name','usuário')}; {added_photos} nova(s) evidência(s)"))
+    detail = f"Registro editado por {session.get('name','usuário')}; {added_photos} nova(s) evidência(s)"
+    if survey_status_changed:
+        detail += f"; status da localidade: {old_survey_status or '—'} → {loc.survey_status}"
+    db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="INVENTORY_EDIT", entity_type="inventory", entity_id=str(inv.id), detail=detail))
+    if survey_status_changed:
+        db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="LOCATION_STATUS_OVERRIDE", entity_type="location", entity_id=str(loc.id), detail=f"ADM alterou status de {old_survey_status or '—'} para {loc.survey_status} a partir do inventário #{inv.id}."))
 
     try:
         db.session.commit()
@@ -3221,65 +3416,25 @@ def save_location_reference_position(location_id):
 @app.get("/api/gps/recent")
 @dashboard_required
 def api_recent_gps():
-    limit = request.args.get("limit", default=20, type=int) or 20
-    limit = max(1, min(limit, 100))
-
-    rows = (
-        db.session.query(
-            Inventory,
-            User.id.label("technician_user_id"),
-            User.name.label("technician_name"),
-            User.user_code.label("technician_code"),
-            Location.location.label("location_name"),
-            Location.company.label("company"),
-            Location.line.label("line")
-        )
-        .join(User, User.id == Inventory.technician_id)
-        .join(Location, Location.id == Inventory.location_id)
-        .filter(
-            Inventory.latitude.isnot(None),
-            Inventory.longitude.isnot(None),
-            User.active.is_(True)
-        )
-        .order_by(
-            func.coalesce(Inventory.gps_captured_at, Inventory.created_at).desc()
-        )
-        .limit(limit)
-        .all()
-    )
-
-    total_inventory = Inventory.query.count()
-    gps_inventory = Inventory.query.filter(
-        Inventory.latitude.isnot(None),
-        Inventory.longitude.isnot(None)
-    ).count()
-
-    return jsonify({
-        "summary": {
-            "total_inventory": total_inventory,
-            "with_gps": gps_inventory,
-            "without_gps": max(0, total_inventory - gps_inventory),
-            "coverage_pct": round((gps_inventory / total_inventory * 100), 1) if total_inventory else 0
-        },
-        "items": [{
-            "inventory_id": inv.id,
-            "location_id": inv.location_id,
-            "location_name": location_name,
-            "company": company,
-            "line": line,
-            "equipment_type": inv.equipment_type,
-            "asset_identifier": inv.asset_identifier,
-            "technician": technician_name,
-            "technician_code": technician_code,
-            "technician_user_id": technician_user_id,
-            "technician_photo_url": f"/usuarios/{technician_user_id}/foto" if technician_user_id else None,
-            "latitude": inv.latitude,
-            "longitude": inv.longitude,
-            "gps_accuracy": inv.gps_accuracy,
-            "gps_captured_at": inv.gps_captured_at.isoformat(timespec="seconds") if inv.gps_captured_at else None,
-            "created_at": inv.created_at.isoformat(timespec="seconds") if inv.created_at else None
-        } for inv, technician_user_id, technician_name, technician_code, location_name, company, line in rows]
-    })
+    """V42.4 — mapa gerencial: exatamente a última posição de cada técnico no dia atual."""
+    local_day=datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+    start_local=datetime.combine(local_day,datetime.min.time(),tzinfo=ZoneInfo("America/Sao_Paulo"))
+    end_local=start_local+timedelta(days=1)
+    start_utc=start_local.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+    end_utc=end_local.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+    users_q=User.query.filter(User.active.is_(True),User.role.in_(("technician","technician_implantation")))
+    if session.get("role")=="technician": users_q=users_q.filter(User.id==session.get("user_id"))
+    users=users_q.order_by(User.name).all()
+    items=[]
+    for u in users:
+        pos=(TechnicianPosition.query.filter(TechnicianPosition.user_id==u.id,TechnicianPosition.captured_at>=start_utc,TechnicianPosition.captured_at<end_utc).order_by(TechnicianPosition.captured_at.desc()).first())
+        if not pos: continue
+        checkin=TechnicianCheckin.query.filter(TechnicianCheckin.user_id==u.id,TechnicianCheckin.created_at>=start_utc,TechnicianCheckin.created_at<end_utc).order_by(TechnicianCheckin.created_at.desc()).first()
+        loc=db.session.get(Location,checkin.location_id) if checkin else None
+        items.append({"inventory_id":None,"location_id":loc.id if loc else None,"location_name":loc.location if loc else "Posição atual","company":loc.company if loc else (u.company or "Equipe de campo"),"line":loc.line if loc else "","equipment_type":"Última posição do dia","asset_identifier":"","technician":u.name,"technician_code":u.user_code or "","technician_user_id":u.id,"technician_photo_url":f"/usuarios/{u.id}/foto" if u.photo_url else None,"latitude":pos.latitude,"longitude":pos.longitude,"gps_accuracy":pos.accuracy,"gps_captured_at":pos.captured_at.isoformat(timespec="seconds")+"Z","created_at":pos.captured_at.isoformat(timespec="seconds")+"Z","_team_current":True})
+    items.sort(key=lambda x:x["gps_captured_at"],reverse=True)
+    total_inventory=Inventory.query.count();gps_inventory=Inventory.query.filter(Inventory.latitude.isnot(None),Inventory.longitude.isnot(None)).count()
+    return jsonify({"date":local_day.isoformat(),"summary":{"total_inventory":total_inventory,"with_gps":gps_inventory,"without_gps":max(0,total_inventory-gps_inventory),"coverage_pct":round((gps_inventory/total_inventory*100),1) if total_inventory else 0,"technicians_today":len(items)},"items":items})
 
 
 @app.get("/api/dashboard")
@@ -5772,7 +5927,21 @@ def migrate_base_asset_columns():
             "ALTER TABLE base_assets ADD COLUMN IF NOT EXISTS contract_end VARCHAR(80)",
             "ALTER TABLE base_assets ADD COLUMN IF NOT EXISTS installation_type VARCHAR(180)",
             "ALTER TABLE base_assets ADD COLUMN IF NOT EXISTS installation_date VARCHAR(80)",
+            "ALTER TABLE base_assets ADD COLUMN IF NOT EXISTS teamviewer_enabled VARCHAR(20)",
+            "ALTER TABLE base_assets ADD COLUMN IF NOT EXISTS teamviewer_id VARCHAR(120)",
+            "ALTER TABLE base_assets ADD COLUMN IF NOT EXISTS address VARCHAR(500)",
+            "ALTER TABLE base_assets ADD COLUMN IF NOT EXISTS ip_address VARCHAR(120)",
+            "ALTER TABLE base_assets ADD COLUMN IF NOT EXISTS city_id VARCHAR(120)",
+            "ALTER TABLE base_assets ADD COLUMN IF NOT EXISTS praja_id VARCHAR(120)",
+            "ALTER TABLE base_assets ADD COLUMN IF NOT EXISTS cielo_code VARCHAR(120)",
+            "ALTER TABLE base_assets ADD COLUMN IF NOT EXISTS printer_model VARCHAR(180)",
+            "ALTER TABLE base_assets ADD COLUMN IF NOT EXISTS acceptor_model VARCHAR(180)",
+            "ALTER TABLE base_assets ADD COLUMN IF NOT EXISTS motherboard VARCHAR(220)",
+            "ALTER TABLE base_assets ADD COLUMN IF NOT EXISTS ownership_type VARCHAR(80)",
+            "ALTER TABLE base_assets ADD COLUMN IF NOT EXISTS contract_name VARCHAR(180)",
             "CREATE INDEX IF NOT EXISTS ix_base_assets_equipment_type ON base_assets (equipment_type)",
+            "CREATE INDEX IF NOT EXISTS ix_base_assets_teamviewer_id ON base_assets (teamviewer_id)",
+            "CREATE INDEX IF NOT EXISTS ix_base_assets_contract_name ON base_assets (contract_name)",
         ]
         for statement in statements:
             conn.execute(db.text(statement))
@@ -5781,6 +5950,55 @@ def migrate_base_asset_columns():
             SET equipment_type = 'ATM'
             WHERE equipment_type IS NULL OR TRIM(equipment_type) = ''
         """))
+
+
+def sync_atm_complement_v424():
+    """Atualiza/insere a base ATM complementar sem importar versão de aplicação como dado mestre."""
+    source=DATA_DIR/"atm_complement_20260820.json"
+    if not source.exists(): return {"ok":False,"reason":"arquivo ausente"}
+    rows=json.loads(source.read_text(encoding="utf-8")); inserted=updated=0
+    def txt(v):
+        if v is None: return ""
+        return str(v).strip()
+    for x in rows:
+        key=txt(x.get("TOPDESK"))
+        if not key: continue
+        a=BaseAsset.query.filter_by(asset_key=key).first()
+        if not a:
+            a=BaseAsset(asset_key=key,equipment_type="ATM");db.session.add(a);inserted+=1
+        else: updated+=1
+        a.description=a.description or key
+        a.company=txt(x.get("EMPRESA")) or a.company
+        a.station_code=txt(x.get("SIGLAS")) or a.station_code
+        a.line=txt(x.get("LINHAS")) or a.line
+        a.locality=txt(x.get("LOCALIDADES")) or a.locality
+        a.top_id=txt(x.get("ID TOP")) or a.top_id
+        a.qrcode_id=txt(x.get("ID QRCODE")) or a.qrcode_id
+        a.city_id=txt(x.get("ID CITY"))
+        a.praja_id=txt(x.get("ID PRAJÁ"))
+        a.products=txt(x.get("PRODUTOS")) or a.products
+        a.serial=txt(x.get("Nº de Séries")) or a.serial
+        a.model=txt(x.get("TIPO ATM")) or a.model
+        a.supplier=txt(x.get("FORNECEDOR")) or a.supplier
+        a.address=txt(x.get("ENDEREÇO"))
+        a.transactions=txt(x.get("TRANSACIONA")) or a.transactions
+        a.application=txt(x.get("APLICAÇÃO")) or a.application
+        # V42.4: deliberadamente NÃO absorve VERSÃO DA APLICAÇÃO; é dado volátil.
+        a.cielo_code=txt(x.get("CÓD.  CIELO"))
+        a.mount=txt(x.get("FIXAÇÃO")) or a.mount
+        a.printer_model=txt(x.get("IMPRESSORAS"))
+        a.acceptor_model=txt(x.get("ACEITADOR"))
+        a.motherboard=txt(x.get("PLACA-MÃE"))
+        a.ip_address=txt(x.get("IP"))
+        a.base_status=txt(x.get("STATUS")) or a.base_status
+        a.quantity=int(float(txt(x.get("QTTD")) or "1")) if (txt(x.get("QTTD")) or "1").replace('.','',1).isdigit() else 1
+        a.teamviewer_enabled=txt(x.get("TEAMVIEWER"))
+        a.teamviewer_id=txt(x.get("ID TV"))
+        leasing=txt(x.get("LEASING")); contract=txt(x.get("CONTRATO GPN"))
+        a.ownership_type=("LEASING" if normalize(leasing) in ("SIM","LEASING") else ("PRÓPRIO" if normalize(leasing) in ("NAO","NÃO") else leasing))
+        a.contract_name=contract if normalize(contract) not in ("NAO","NÃO","N/A","#N/A") else "SEM CONTRATO"
+        a.leasing_status=a.contract_name
+    db.session.commit();return {"ok":True,"inserted":inserted,"updated":updated}
 
 
 def migrate_v421_columns():
@@ -7055,6 +7273,7 @@ with app.app_context():
     migrate_v421_columns()
     seed_data()
     sync_base_assets_1408(force=False)
+    sync_atm_complement_v424()
     cleanup_v352_test_reference()
 
 if __name__ == "__main__":

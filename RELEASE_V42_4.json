@@ -1,0 +1,15 @@
+{
+  "release": "V42.4",
+  "date": "2026-08-20",
+  "scope": [
+    "navigation",
+    "role_dashboards",
+    "atm_inventory_dashboard",
+    "atm_teamviewer_base",
+    "visit_report_media",
+    "latest_daily_technician_map",
+    "teams_schedule_upsert",
+    "implantation_dashboard_visual_refresh",
+    "admin_status_override"
+  ]
+}
