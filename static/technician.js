@@ -606,6 +606,7 @@ async function loadAlready() {
       const el=document.querySelector(`[name="${name}"]`); if(el) el.value=row[name]||'';
     });
     ['latitude','longitude','gps_accuracy','gps_captured_at'].forEach(id=>{if($(id)) $(id).value=row[id]??'';});
+    if($('location_survey_status')) $('location_survey_status').value=(row.location_survey_status||'').replace('CONCLUÍDA','CONCLUIDA');
     $('saveBtn').textContent='Salvar alterações';
     showMsg('Modo edição ativo. Faça as alterações e clique em Salvar alterações.',true);
     $('invForm').scrollIntoView({behavior:'smooth',block:'start'});
