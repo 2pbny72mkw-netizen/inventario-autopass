@@ -29,14 +29,18 @@ from botocore.exceptions import ClientError, BotoCoreError
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
+from pptx import Presentation
+from pptx.util import Inches, Pt
+from pptx.enum.text import PP_ALIGN
+from pptx.enum.shapes import MSO_SHAPE
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V42.2"
-DASHBOARD_RELEASE = "dashboard-v42-2"
-TEAMS_RELEASE = "teams-v42-2"
+APP_RELEASE = "V42.3"
+DASHBOARD_RELEASE = "dashboard-v42-3"
+TEAMS_RELEASE = "teams-v42-3"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
 FIELD_GPS_GOOD_ACCURACY_M = float(os.getenv("FIELD_GPS_GOOD_ACCURACY_M", "30"))
 FIELD_GPS_MAX_ACCURACY_M = float(os.getenv("FIELD_GPS_MAX_ACCURACY_M", "80"))
@@ -705,7 +709,7 @@ def teams_view_required(fn):
     def inner(*args, **kwargs):
         if not session.get("user_id"):
             return redirect(url_for("login"))
-        if session.get("role") not in ("manager", "consultation", "hr", "dispatcher"):
+        if session.get("role") not in ("manager", "manager_field", "consultation", "hr", "dispatcher"):
             return redirect(url_for("technician"))
         return fn(*args, **kwargs)
     return inner
@@ -6750,6 +6754,63 @@ def panorama_export():
     wb=Workbook();ws=wb.active;ws.title="Visões Panorâmicas";ws.append(["Empresa","Linha","Localidade","Status","Pontos","Fotos"])
     for x in _panorama_payload(): ws.append([x.get("company"),x.get("line"),x.get("location"),x.get("status"),x.get("point_count",0),x.get("photo_count",0)])
     bio=io.BytesIO();wb.save(bio);bio.seek(0);return send_file(bio,as_attachment=True,download_name="visoes_panoramicas.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+def _panorama_media_bytes(stored_name):
+    if not stored_name:
+        return None
+    try:
+        if stored_name.startswith("r2__"):
+            return _r2_get_bytes(stored_name[4:])
+        path=UPLOAD_DIR/stored_name
+        return path.read_bytes() if path.exists() else None
+    except Exception:
+        return None
+
+@app.get("/api/panoramas/export.pptx")
+@login_required
+def panorama_export_pptx():
+    if session.get("role") not in ("manager", "manager_field", "technician", "consultation"):
+        return redirect(url_for("activities_page"))
+    company=(request.args.get("company") or "").strip(); line=(request.args.get("line") or "").strip(); status=(request.args.get("status") or "").strip(); search=(request.args.get("search") or "").strip().lower()
+    rows=[x for x in _panorama_payload() if (not company or x.get("company")==company) and (not line or x.get("line")==line) and (not status or x.get("status")==status) and (not search or search in (x.get("location") or "").lower())]
+    prs=Presentation(); prs.slide_width=Inches(13.333); prs.slide_height=Inches(7.5)
+    navy=(18,52,93); teal=(51,190,190); dark=(25,38,58); light=(241,246,250)
+    def textbox(slide,x,y,w,h,text,size=18,bold=False,rgb=dark,align=PP_ALIGN.LEFT):
+        box=slide.shapes.add_textbox(Inches(x),Inches(y),Inches(w),Inches(h)); tf=box.text_frame; tf.clear(); p=tf.paragraphs[0]; p.text=str(text); p.alignment=align; run=p.runs[0]; run.font.size=Pt(size); run.font.bold=bold; run.font.name="Arial"; run.font.color.rgb=__import__('pptx').dml.color.RGBColor(*rgb); return box
+    def brand(slide):
+        logo=STATIC_DIR/'autopass-logo.png'
+        if logo.exists(): slide.shapes.add_picture(str(logo),Inches(.45),Inches(.28),width=Inches(1.65))
+        textbox(slide,10.7,.34,2.1,.3,"VISÃO PANORÂMICA",10,True,navy,PP_ALIGN.RIGHT)
+    # capa
+    sl=prs.slides.add_slide(prs.slide_layouts[6]); brand(sl); textbox(sl,.7,2.15,11.9,.7,"Visão Panorâmica das Estações",30,True,navy,PP_ALIGN.CENTER); textbox(sl,.8,3.0,11.7,.45,"Apresentação executiva do acervo fotográfico",17,False,dark,PP_ALIGN.CENTER)
+    recorte=" · ".join([x for x in [company or "Todas as empresas",line or "Todas as linhas",status or "Todos os status"] if x]); textbox(sl,.8,4.0,11.7,.35,recorte,12,False,dark,PP_ALIGN.CENTER); textbox(sl,.8,6.65,11.7,.3,datetime.now().strftime("Gerado em %d/%m/%Y %H:%M"),9,False,dark,PP_ALIGN.CENTER)
+    # resumo
+    sl=prs.slides.add_slide(prs.slide_layouts[6]); brand(sl); textbox(sl,.55,1.0,12,.45,"Resumo executivo",24,True,navy); total=len(rows); done=sum(x['status']=='CONCLUÍDA' for x in rows); prog=sum(x['status']=='EM ANDAMENTO' for x in rows); pend=sum(x['status']=='PENDENTE' for x in rows); photos=sum(x.get('photo_count',0) for x in rows)
+    vals=[("Localidades",total),("Concluídas",done),("Em andamento",prog),("Pendentes",pend),("Fotos",photos)]
+    for i,(lab,val) in enumerate(vals):
+        x=.55+i*2.5; sh=sl.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE,Inches(x),Inches(2.0),Inches(2.2),Inches(1.35)); sh.fill.solid(); sh.fill.fore_color.rgb=__import__('pptx').dml.color.RGBColor(*light); sh.line.color.rgb=__import__('pptx').dml.color.RGBColor(205,218,230); textbox(sl,x+.12,2.18,1.95,.28,lab,10,True,dark); textbox(sl,x+.12,2.55,1.95,.48,val,24,True,navy)
+    pct=round(done/total*100) if total else 0; textbox(sl,.65,4.25,12,.45,f"Progresso geral: {pct}%",20,True,teal)
+    # estações / fotos
+    for loc in rows:
+        photo_items=[]
+        for pt in loc.get('points',[]):
+            for ph in pt.get('photos',[]): photo_items.append((pt,ph))
+        if not photo_items: photo_items=[(None,None)]
+        for start in range(0,len(photo_items),4):
+            batch=photo_items[start:start+4]; sl=prs.slides.add_slide(prs.slide_layouts[6]); brand(sl); textbox(sl,.55,.88,12,.42,loc.get('location') or 'Localidade',23,True,navy); meta=f"{loc.get('company','—')} · {loc.get('line','—')} · {loc.get('status','—')}"; textbox(sl,.55,1.34,12,.3,meta,11,False,dark); tech=', '.join(loc.get('technicians') or []) or '—'; textbox(sl,.55,1.68,12,.25,f"Técnico(s): {tech}",10,False,dark)
+            positions=[(.55,2.15,6.0,2.05),(6.78,2.15,6.0,2.05),(.55,4.65,6.0,2.05),(6.78,4.65,6.0,2.05)]
+            for j,(pt,ph) in enumerate(batch):
+                x,y,w,h=positions[j]
+                if ph:
+                    raw=_panorama_media_bytes(next((p.stored_name for p in PanoramaPhoto.query.filter_by(id=ph['id']).all()),''))
+                    if raw:
+                        try:
+                            bio=io.BytesIO(raw); pic=sl.shapes.add_picture(bio,Inches(x),Inches(y),width=Inches(w),height=Inches(h-0.32))
+                        except Exception: textbox(sl,x,y,w,h-0.3,"Imagem indisponível",12,False,dark,PP_ALIGN.CENTER)
+                    else: textbox(sl,x,y,w,h-0.3,"Imagem indisponível",12,False,dark,PP_ALIGN.CENTER)
+                    textbox(sl,x,y+h-.28,w,.25,(pt.get('name') if pt else 'Foto')+" · "+(ph.get('uploaded_by') or '—'),9,False,dark)
+                else: textbox(sl,x,y,w,h,"Nenhuma foto anexada nesta localidade.",13,False,dark,PP_ALIGN.CENTER)
+    out=io.BytesIO(); prs.save(out); out.seek(0); return send_file(out,as_attachment=True,download_name=f"visao_panoramica_{datetime.now().strftime('%Y%m%d_%H%M')}.pptx",mimetype="application/vnd.openxmlformats-officedocument.presentationml.presentation")
 
 @app.get("/visao-panoramica")
 @login_required
