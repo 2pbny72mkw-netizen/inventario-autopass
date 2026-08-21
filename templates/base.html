@@ -5,7 +5,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{% block title %}Sistema de Gestão Suporte a Campo{% endblock %}</title>
-<link rel="stylesheet" href="{{url_for('static',filename='app.css')}}?v=v50-0">
+<link rel="stylesheet" href="{{url_for('static',filename='app.css')}}?v=v50-2">
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#17345d">
 </head>
@@ -58,7 +58,14 @@
 let v50InstallPrompt=null;
 window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();v50InstallPrompt=e;const b=document.getElementById('installPwa');if(b)b.hidden=false;});
 document.getElementById('installPwa')?.addEventListener('click',async()=>{if(!v50InstallPrompt)return;v50InstallPrompt.prompt();await v50InstallPrompt.userChoice;v50InstallPrompt=null;document.getElementById('installPwa').hidden=true;});
-if('serviceWorker' in navigator && (location.protocol==='https:' || location.hostname==='localhost')){window.addEventListener('load',()=>navigator.serviceWorker.register('/sw.js').catch(console.warn),{once:true});}
+if('serviceWorker' in navigator && (location.protocol==='https:' || location.hostname==='localhost')){
+  window.addEventListener('load',async()=>{
+    try{
+      const reg=await navigator.serviceWorker.register('/sw.js?v=v50-2',{scope:'/',updateViaCache:'none'});
+      await reg.update();
+    }catch(err){console.warn('Falha ao atualizar Service Worker',err);}
+  },{once:true});
+}
 async function v50LoadNotifications(){const badge=document.getElementById('notificationCount');if(!badge)return;try{const d=await fetch('/api/notificacoes').then(r=>r.json());badge.textContent=d.count||0;badge.hidden=!(d.count>0);const bell=document.getElementById('notificationBell');if(bell){bell.onclick=e=>{e.preventDefault();location.href='/gestao-360';};}}catch(_e){}}
 v50LoadNotifications();
 </script>
