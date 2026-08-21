@@ -1,20 +1,13 @@
 {
-  "name": "Inventário do Parque Instalado — SP",
-  "short_name": "Inventário SP",
-  "id": "/tecnico",
-  "start_url": "/tecnico",
+  "name": "Autopass Operations 360",
+  "short_name": "Autopass 360",
+  "id": "/",
+  "start_url": "/dashboard",
   "scope": "/",
   "display": "standalone",
   "orientation": "any",
   "background_color": "#f3f7fb",
-  "theme_color": "#071a32",
-  "description": "Inventário Autopass V34.1 — Suporte a Campo, BI Executivo, Patrimônio 360 e PWA offline-first com sincronização de múltiplas mídias.",
-  "icons": [
-    {
-      "src": "/static/autopass-logo.png",
-      "sizes": "any",
-      "type": "image/png",
-      "purpose": "any"
-    }
-  ]
+  "theme_color": "#17345d",
+  "description": "Plataforma Autopass para Field, Implantação, Inventário, Localidade/Ativo 360 e gestão operacional.",
+  "icons": [{"src":"/static/autopass-logo.png","sizes":"any","type":"image/png","purpose":"any"}]
 }

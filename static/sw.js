@@ -1,8 +1,11 @@
-const VERSION='suporte-campo-v39-2-cleanup';
-self.addEventListener('install',event=>event.waitUntil(self.skipWaiting()));
-self.addEventListener('activate',event=>event.waitUntil((async()=>{
-  try{for(const key of await caches.keys()) await caches.delete(key);}catch(_e){}
-  try{await self.registration.unregister();}catch(_e){}
-  try{const clients=await self.clients.matchAll({type:'window'});for(const c of clients)c.postMessage({type:'SW_DISABLED_V39_2'});}catch(_e){}
-})()));
-self.addEventListener('fetch',()=>{});
+const CACHE='autopass-v50-static';
+const STATIC=['/offline','/static/app.css','/static/autopass-logo.png'];
+self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(STATIC)).then(()=>self.skipWaiting())));
+self.addEventListener('activate',e=>e.waitUntil((async()=>{for(const k of await caches.keys())if(k!==CACHE)await caches.delete(k);await self.clients.claim();})()));
+self.addEventListener('fetch',e=>{
+  const r=e.request;if(r.method!=='GET')return;
+  const u=new URL(r.url);
+  if(u.origin!==location.origin)return;
+  if(u.pathname.startsWith('/static/')){e.respondWith(caches.match(r).then(c=>c||fetch(r).then(res=>{const copy=res.clone();caches.open(CACHE).then(x=>x.put(r,copy));return res;})));return;}
+  if(r.mode==='navigate'){e.respondWith(fetch(r).catch(()=>caches.match('/offline')));}
+});
