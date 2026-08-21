@@ -39,7 +39,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V52"
+APP_RELEASE = "V52.1"
 DASHBOARD_RELEASE = "dashboard-v47"
 TEAMS_RELEASE = "teams-v42-4"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -434,6 +434,7 @@ class ChipSwap(db.Model):
     test_notes = db.Column(db.Text)
     started_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
     completed_at = db.Column(db.DateTime, index=True)
+    completed_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
     updated_at = db.Column(db.DateTime)
     __table_args__ = (UniqueConstraint("location_id", "base_asset_id", name="uq_chip_swap_location_asset"),)
 
@@ -458,7 +459,7 @@ class EmvChipSwap(db.Model):
     notes = db.Column(db.Text)
     latitude = db.Column(db.Float); longitude = db.Column(db.Float); gps_accuracy = db.Column(db.Float)
     started_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
-    completed_at = db.Column(db.DateTime); updated_at = db.Column(db.DateTime)
+    completed_at = db.Column(db.DateTime); completed_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), index=True); updated_at = db.Column(db.DateTime)
 
 class EmvChipSwapPhoto(db.Model):
     __tablename__ = "emv_chip_swap_photos"
@@ -2091,7 +2092,18 @@ def atm_financial_dashboard_api():
         supplier_payload=json.loads(supplier_path.read_text(encoding="utf-8"))
     except Exception:
         supplier_payload={"suppliers":[],"totals":{}}
-    payload.update({"ok":True,"release":APP_RELEASE,"supplier_costs":supplier_payload})
+    competence=(request.args.get("competence") or "").strip()
+    q=FinancialMonthlyCost.query
+    if competence: q=q.filter_by(competence=competence)
+    dynamic=[]; allocated={"ATM":0.0,"POS":0.0,"RECARGA":0.0,"RACK":0.0,"OUTROS":0.0}
+    sups={x.id:x.name for x in FinancialSupplier.query.all()}; svcs={x.id:x.name for x in FinancialService.query.all()}
+    for x in q.order_by(FinancialMonthlyCost.competence.desc()).all():
+        try: alloc=json.loads(x.allocation_json or "{}")
+        except: alloc={}
+        for k,pct in alloc.items():
+            key=str(k).upper(); allocated[key]=allocated.get(key,0.0)+float(x.amount or 0)*float(pct or 0)/100.0
+        dynamic.append({"id":x.id,"competence":x.competence,"supplier":sups.get(x.supplier_id,""),"service":svcs.get(x.service_id,""),"amount":x.amount,"allocation":alloc})
+    payload.update({"ok":True,"release":APP_RELEASE,"supplier_costs":supplier_payload,"monthly_costs":dynamic,"monthly_allocated":allocated,"monthly_total":sum(float(x.get("amount") or 0) for x in dynamic)})
     return jsonify(payload)
 
 @app.get("/api/v30/atm-contracts")
@@ -2580,9 +2592,7 @@ def diagnostics_api():
 @app.get("/sobre")
 @login_required
 def about_page():
-    # V50.6: Técnico Implantação não acessa histórico/versionamento da aplicação.
-    if session.get("role") == "technician_implantation":
-        return Response("Acesso não autorizado para este perfil.", status=403, mimetype="text/plain")
+    # V52.1: Técnico Implantação acessa Sobre; o template oculta apenas o histórico de versões.
     return render_template(
         "about.html",
         app_release=APP_RELEASE,
@@ -6692,7 +6702,9 @@ def recent_audit_api():
     if session.get("role") not in ("manager","manager_field"):
         return jsonify({"ok":False,"error":"Sem permissão."}),403
     rows=AuditEvent.query.order_by(AuditEvent.created_at.desc()).limit(20).all()
-    return jsonify({"ok":True,"events":[{"id":x.id,"type":x.event_type,"entity":x.entity_type,"entity_id":x.entity_id,"detail":x.detail,"created_at":x.created_at.isoformat() if x.created_at else None} for x in rows]})
+    user_ids={x.user_id for x in rows if x.user_id}
+    users={u.id:u for u in User.query.filter(User.id.in_(user_ids)).all()} if user_ids else {}
+    return jsonify({"ok":True,"events":[{"id":x.id,"type":x.event_type,"entity":x.entity_type,"entity_id":x.entity_id,"detail":x.detail,"created_at":x.created_at.isoformat() if x.created_at else None,"user_id":x.user_id,"user":users.get(x.user_id).name if users.get(x.user_id) else "Responsável não identificado","user_role":users.get(x.user_id).role if users.get(x.user_id) else ""} for x in rows]})
 
 
 @app.get("/atividades")
@@ -6777,6 +6789,8 @@ def _ensure_chip_swap_tables():
                 conn.execute(text("ALTER TABLE chip_swaps ADD COLUMN test_result VARCHAR(80)"))
             if "test_notes" not in cols:
                 conn.execute(text("ALTER TABLE chip_swaps ADD COLUMN test_notes TEXT"))
+            if "completed_by_id" not in cols:
+                conn.execute(text("ALTER TABLE chip_swaps ADD COLUMN completed_by_id INTEGER"))
     except Exception as exc:
         app.logger.warning("V39.7.9 chip swap migration: %s", exc)
     _chip_swap_tables_ready = True
@@ -6833,7 +6847,7 @@ def _chip_swap_locations_payload(force=False):
         for ph in photos:
             photo_map.setdefault(ph.chip_swap_id, []).append(ph)
 
-    user_ids = {x.technician_id for x in swaps_list if x.technician_id}
+    user_ids = {uid for x in swaps_list for uid in (x.technician_id, getattr(x,"completed_by_id",None)) if uid}
     users = {u.id: u for u in User.query.filter(User.id.in_(user_ids)).all()} if user_ids else {}
 
     rows = []
@@ -6849,6 +6863,7 @@ def _chip_swap_locations_payload(force=False):
             if photos and status != "CONCLUÍDA":
                 status = "CONCLUÍDA"
             tech = users.get(sw.technician_id) if sw else None
+            completed_by = users.get(getattr(sw,"completed_by_id",None)) if sw else None
             items.append({
                 "base_asset_id": a.id,
                 "label": _chip_swap_asset_label(a),
@@ -6857,6 +6872,8 @@ def _chip_swap_locations_payload(force=False):
                 "status": status,
                 "swap_id": sw.id if sw else None,
                 "technician": tech.name if tech else "",
+                "completed_by": completed_by.name if completed_by else (tech.name if sw and sw.completed_at and tech else ""),
+                "completed_by_role": completed_by.role if completed_by else (tech.role if sw and sw.completed_at and tech else ""),
                 "completed_at": sw.completed_at.isoformat()+"Z" if sw and sw.completed_at else None,
                 "photo_count": len(photos),
                 "notes": sw.notes if sw else "",
@@ -6929,7 +6946,7 @@ def chip_swap_save_api(location_id, base_asset_id):
     db.session.flush()
     photo_count = ChipSwapPhoto.query.filter_by(chip_swap_id=sw.id).count()
     if photo_count > 0:
-        sw.status = "CONCLUÍDA"; sw.completed_at = sw.completed_at or datetime.utcnow()
+        sw.status = "CONCLUÍDA"; sw.completed_at = sw.completed_at or datetime.utcnow(); sw.completed_by_id = session.get("user_id")
     else:
         sw.status = "EM ANDAMENTO"
     db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="CHIP_SWAP_UPDATE", entity_type="base_asset", entity_id=str(base_asset_id), detail=f"{loc.location} · {_chip_swap_asset_label(asset)} · {sw.status} · teste {sw.test_result or '—'} · {photo_count} foto(s)"))
@@ -7176,6 +7193,12 @@ def _v41_emv_rows():
 
 def _ensure_emv_tables():
     EmvChipSwap.__table__.create(bind=db.engine,checkfirst=True); EmvChipSwapPhoto.__table__.create(bind=db.engine,checkfirst=True)
+    try:
+        cols={c["name"] for c in db.inspect(db.engine).get_columns("emv_chip_swaps")}
+        if "completed_by_id" not in cols:
+            with db.engine.begin() as conn: conn.execute(text("ALTER TABLE emv_chip_swaps ADD COLUMN completed_by_id INTEGER"))
+    except Exception as exc:
+        app.logger.warning("V52.1 EMV autoria migration: %s", exc)
 
 @app.get("/troca-chips-emv")
 @emv_field_required
@@ -7184,7 +7207,8 @@ def emv_chip_page(): return render_template("emv_chip_swap.html",app_release=APP
 @app.get("/api/emv-chip-swaps")
 @login_required
 def emv_chip_list():
-    _ensure_emv_tables(); swaps={x.terminal:x for x in EmvChipSwap.query.all()}; rows=[]
+    _ensure_emv_tables(); swap_rows=EmvChipSwap.query.all(); swaps={x.terminal:x for x in swap_rows}; rows=[]
+    user_ids={uid for x in swap_rows for uid in (x.technician_id,getattr(x,"completed_by_id",None)) if uid}; users={u.id:u for u in User.query.filter(User.id.in_(user_ids)).all()} if user_ids else {}
     network_rows=_load_station_network_rows()
     for r in _v41_emv_rows():
         sw=swaps.get(r["terminal"]); d=dict(r)
@@ -7199,7 +7223,8 @@ def emv_chip_list():
         if sw:
             for ph in EmvChipSwapPhoto.query.filter_by(swap_id=sw.id).order_by(EmvChipSwapPhoto.created_at).all():
                 photos.append({"id":ph.id,"name":ph.original_name,"url":url_for("uploaded",name=ph.stored_name),"created_at":ph.created_at.isoformat() if ph.created_at else None})
-        d.update({"status":sw.status if sw else "PENDENTE","test_result":sw.test_result if sw else None,"notes":sw.notes if sw else "","swap_id":sw.id if sw else None,"station_name":station_name,"photos":photos,"completed_at":sw.completed_at.isoformat() if sw and sw.completed_at else None,"updated_at":sw.updated_at.isoformat() if sw and sw.updated_at else None})
+        tech=users.get(sw.technician_id) if sw else None; completer=users.get(getattr(sw,"completed_by_id",None)) if sw else None
+        d.update({"status":sw.status if sw else "PENDENTE","test_result":sw.test_result if sw else None,"notes":sw.notes if sw else "","swap_id":sw.id if sw else None,"station_name":station_name,"photos":photos,"technician":tech.name if tech else "","completed_by":completer.name if completer else (tech.name if sw and sw.completed_at and tech else ""),"completed_by_role":completer.role if completer else (tech.role if sw and sw.completed_at and tech else ""),"completed_at":sw.completed_at.isoformat() if sw and sw.completed_at else None,"updated_at":sw.updated_at.isoformat() if sw and sw.updated_at else None})
         rows.append(d)
     return jsonify({"ok":True,"rows":rows})
 
@@ -7209,6 +7234,8 @@ def emv_chip_save(terminal):
     _ensure_emv_tables(); base=next((x for x in _v41_emv_rows() if x["terminal"]==terminal),None)
     if not base: return jsonify({"ok":False,"error":"Bloqueio EMV não encontrado na base."}),404
     sw=EmvChipSwap.query.filter_by(terminal=terminal).first()
+    if sw and (sw.status or "").upper().replace("CONCLUIDA","CONCLUÍDA")=="CONCLUÍDA" and session.get("role") in ("technician","technician_implantation"):
+        return jsonify({"ok":False,"error":"Registro concluído e bloqueado. Solicite ao Gestor/ADM a reabertura para EM ANDAMENTO."}),409
     if not sw: sw=EmvChipSwap(terminal=terminal,technician_id=session["user_id"]);db.session.add(sw);db.session.flush()
     sw.technician_id=session["user_id"];sw.test_result=(request.form.get("test_result") or "").strip();sw.notes=(request.form.get("notes") or "").strip();sw.latitude=_optional_float(request.form.get("latitude"));sw.longitude=_optional_float(request.form.get("longitude"));sw.gps_accuracy=_optional_float(request.form.get("gps_accuracy"));sw.updated_at=datetime.utcnow()
     if sw.test_result and sw.test_result!="TESTADO_OK" and not sw.notes: return jsonify({"ok":False,"error":"Para resultado diferente de OK, a observação é obrigatória."}),400
@@ -7217,8 +7244,22 @@ def emv_chip_save(terminal):
         if _r2_available(): data=f.read();key=f"emv-chip-swaps/{datetime.utcnow().strftime('%Y/%m')}/{stored}";_r2_put_bytes(key,data,f.mimetype or "application/octet-stream");stored="r2__"+key
         else: f.save(UPLOAD_DIR/stored)
         db.session.add(EmvChipSwapPhoto(swap_id=sw.id,original_name=f.filename,stored_name=stored,mime_type=f.mimetype,uploaded_by=session["user_id"]))
-    db.session.flush(); photos=EmvChipSwapPhoto.query.filter_by(swap_id=sw.id).count();sw.status="CONCLUÍDA" if photos else "PENDENTE";sw.completed_at=datetime.utcnow() if photos else None;db.session.commit()
+    db.session.flush(); photos=EmvChipSwapPhoto.query.filter_by(swap_id=sw.id).count();sw.status="CONCLUÍDA" if photos else "PENDENTE";sw.completed_at=datetime.utcnow() if photos else None;sw.completed_by_id=session.get("user_id") if photos else None
+    db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="EMV_CHIP_SWAP_UPDATE",entity_type="emv_chip_swap",entity_id=str(sw.id),detail=f"{terminal} · {sw.status} · teste {sw.test_result or '—'} · {photos} foto(s)"));db.session.commit()
     return jsonify({"ok":True,"status":sw.status,"photo_count":photos})
+
+@app.post("/api/emv-chip-swaps/<terminal>/admin-status")
+@login_required
+def emv_chip_admin_status(terminal):
+    if session.get("role") not in ("manager","manager_field"): return jsonify({"ok":False,"error":"Alteração administrativa restrita ao Gestor/ADM."}),403
+    _ensure_emv_tables(); sw=EmvChipSwap.query.filter_by(terminal=terminal).first(); d=request.get_json(silent=True) or {}; new=(d.get("status") or "").strip().upper().replace("CONCLUIDA","CONCLUÍDA"); reason=(d.get("reason") or "").strip()
+    if not sw: return jsonify({"ok":False,"error":"Registro não encontrado."}),404
+    if new not in {"PENDENTE","EM ANDAMENTO","CONCLUÍDA"}: return jsonify({"ok":False,"error":"Status inválido."}),400
+    if not reason: return jsonify({"ok":False,"error":"Informe o motivo da alteração."}),400
+    old=sw.status; sw.status=new; sw.updated_at=datetime.utcnow()
+    if new=="CONCLUÍDA": sw.completed_at=sw.completed_at or datetime.utcnow(); sw.completed_by_id=sw.completed_by_id or session.get("user_id")
+    else: sw.completed_at=None
+    db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="EMV_CHIP_SWAP_ADMIN_STATUS",entity_type="emv_chip_swap",entity_id=str(sw.id),detail=f"{terminal} · {old} -> {new} · motivo: {reason}"));db.session.commit();return jsonify({"ok":True,"status":new})
 
 @app.delete("/api/emv-chip-swaps/photos/<int:photo_id>")
 @emv_field_required
@@ -7262,7 +7303,25 @@ def emv_chip_export():
 def _financial_admin_allowed():
     return session.get("role") in ("manager", "atm_financial_admin")
 
+@app.get("/financeiro")
+@login_required
+def financial_home():
+    return redirect(url_for("financial_cost_management_page"))
+
+@app.get("/financeiro/implantacao")
+@login_required
+def financial_implantation_page():
+    if session.get("role") not in ("manager","manager_field","atm_financial_admin"): return redirect(url_for("dashboard_landing"))
+    return render_template("financial_area_placeholder.html", app_release=APP_RELEASE, area="Implantação")
+
+@app.get("/financeiro/assistencia-tecnica")
+@login_required
+def financial_assistance_page():
+    if session.get("role") not in ("manager","manager_field","atm_financial_admin"): return redirect(url_for("dashboard_landing"))
+    return render_template("financial_area_placeholder.html", app_release=APP_RELEASE, area="Assistência Técnica")
+
 @app.get("/financeiro-atm/gestao")
+@app.get("/financeiro/suporte-campo")
 @login_required
 def financial_cost_management_page():
     if not _financial_admin_allowed():
@@ -7323,6 +7382,22 @@ def financial_monthly_costs_api():
     if abs(total-100)>0.01: return jsonify({"ok":False,"error":f"O rateio deve totalizar 100%. Atual: {total:.2f}%."}),400
     row=FinancialMonthlyCost(competence=comp,supplier_id=sid,service_id=service_id,amount=amount,allocation_json=json.dumps(alloc,ensure_ascii=False),notes=(d.get("notes") or "").strip(),created_by=session.get("user_id"),updated_by=session.get("user_id"));db.session.add(row);db.session.flush()
     db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="FIN_MONTHLY_COST_CREATE",entity_type="financial_monthly_cost",entity_id=str(row.id),detail=f"{comp} · R$ {amount:.2f} · rateio {total:.2f}%"));db.session.commit();return jsonify({"ok":True,"id":row.id})
+
+@app.put("/api/financeiro/lancamentos/<int:row_id>")
+@login_required
+def financial_monthly_cost_update_api(row_id):
+    if not _financial_admin_allowed(): return jsonify({"ok":False,"error":"Sem permissão."}),403
+    row=db.session.get(FinancialMonthlyCost,row_id)
+    if not row: return jsonify({"ok":False,"error":"Lançamento não encontrado."}),404
+    d=request.get_json(silent=True) or {}
+    try: amount=float(d.get("amount",row.amount)); alloc={k:float(v or 0) for k,v in (d.get("allocation") or json.loads(row.allocation_json or "{}")).items()}
+    except: return jsonify({"ok":False,"error":"Valor/rateio inválido."}),400
+    total=round(sum(alloc.values()),4)
+    if abs(total-100)>0.01: return jsonify({"ok":False,"error":f"O rateio deve totalizar 100%. Atual: {total:.2f}%."}),400
+    before=f"{row.competence} · R$ {row.amount:.2f} · {row.allocation_json}"
+    row.amount=amount; row.allocation_json=json.dumps(alloc,ensure_ascii=False); row.notes=(d.get("notes",row.notes) or "").strip(); row.updated_by=session.get("user_id"); row.updated_at=datetime.utcnow()
+    db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="FIN_MONTHLY_COST_EDIT",entity_type="financial_monthly_cost",entity_id=str(row.id),detail=f"antes: {before} | depois: R$ {amount:.2f} · {row.allocation_json}"));db.session.commit()
+    return jsonify({"ok":True})
 
 @app.get("/api/panoramas/export.xlsx")
 @login_required
