@@ -1387,3 +1387,21 @@ function initAtmDashboardV503(){
   loadAtmDashboard(true);
 }
 initAtmDashboardV503();
+
+
+// V50.4 — restaura carregamento da Dashboard Financeiro ATM
+// V46.0 — Dashboard Financeiro ATM (ADM)
+(function(){
+ const panel=document.querySelector('[data-v23-panel="atm-financial"]'); if(!panel)return;
+ const brl=v=>Number(v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+ const esc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+ function bars(el,rows,valueKey,labelFn){const max=Math.max(1,...rows.map(x=>Number(x[valueKey]||0)));el.innerHTML=rows.map((x,i)=>`<button class="v460Bar"><span>${esc(x.model)}</span><i><b style="width:${Math.max(3,Number(x[valueKey]||0)/max*100)}%"></b></i><strong>${labelFn(x[valueKey])}</strong></button>`).join('')}
+ async function load(){const r=await fetch('/api/dashboard/atm-financial',{cache:'no-store'}),d=await r.json();if(!d.ok)return;
+  const t=d.totals||{};document.getElementById('finParkValue').textContent=brl(t.park_value);document.getElementById('finParkQty').textContent=`${t.park_qty} ATMs`;document.getElementById('finContractValue').textContent=brl(t.contract_value);document.getElementById('finContractQty').textContent=`${t.contract_qty} ATMs`;document.getElementById('finBilledValue').textContent=brl(t.billed_value);document.getElementById('finBilledQty').textContent=`${t.billed_qty} ATMs`;document.getElementById('finNotBilled').textContent=t.not_billed||0;
+  bars(document.getElementById('finModelBars'),d.models,'total_value',brl);bars(document.getElementById('finUnitBars'),d.models,'unit_value',brl);
+  const sum=(d.contracts||[]).reduce((a,x)=>a+Number(x.value||0),0)||1;let acc=0;const colors=['#1677ff','#16c784','#8a69ff','#ff9f1c'];const stops=(d.contracts||[]).map((x,i)=>{const a=acc/sum*100;acc+=Number(x.value||0);return `${colors[i%colors.length]} ${a}% ${acc/sum*100}%`}).join(',');document.getElementById('finContractDonut').innerHTML=`<div class="v460FinDonut" style="background:conic-gradient(${stops})"><div><b>${brl(sum)}</b><small>mensal</small></div></div><div class="v460FinLegend">${(d.contracts||[]).map((x,i)=>`<span><i style="background:${colors[i%colors.length]}"></i>${esc(x.contract)} <b>${x.qty}</b> · ${brl(x.value)}</span>`).join('')}</div>`;
+  document.getElementById('finCompare').innerHTML=(d.comparison||[]).map(x=>`<div><b>${esc(x.model)}</b><span>Parque <strong>${x.park_qty}</strong></span><span>Contrato <strong>${x.contract_qty}</strong></span><span>Faturado <strong>${x.billed_qty}</strong></span></div>`).join('');
+  document.getElementById('finRows').innerHTML=(d.models||[]).map(x=>`<tr><td><b>${esc(x.model)}</b></td><td>${x.leasing}</td><td>${x.non_leasing}</td><td>${x.stock}</td><td>${x.other}</td><td>${x.subtotal}</td><td>${brl(x.unit_value)}</td><td><b>${brl(x.total_value)}</b></td></tr>`).join('');
+ }
+ document.querySelector('[data-v23-view="atm-financial"]')?.addEventListener('click',load);load();
+})();
