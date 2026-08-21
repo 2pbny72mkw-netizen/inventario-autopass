@@ -39,7 +39,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V50.5"
+APP_RELEASE = "V50.6"
 DASHBOARD_RELEASE = "dashboard-v47"
 TEAMS_RELEASE = "teams-v42-4"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -2541,6 +2541,9 @@ def diagnostics_api():
 @app.get("/sobre")
 @login_required
 def about_page():
+    # V50.6: Técnico Implantação não acessa histórico/versionamento da aplicação.
+    if session.get("role") == "technician_implantation":
+        return Response("Acesso não autorizado para este perfil.", status=403, mimetype="text/plain")
     return render_template(
         "about.html",
         app_release=APP_RELEASE,
