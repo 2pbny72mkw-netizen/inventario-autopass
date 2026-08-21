@@ -1,0 +1,10 @@
+{
+  "release": "V50.3",
+  "scope": [
+    "Corrige inicialização da Dashboard ATM sem depender do antigo botão Aplicar",
+    "Exibe erro explícito quando a API ATM falhar, em vez de zeros silenciosos",
+    "Força Dashboard Implantação a usar rota dedicada /implantacao-hardware/dashboard",
+    "Desativa cache HTTP da Dashboard Implantação",
+    "Atualiza Service Worker/cache para V50.3"
+  ]
+}
