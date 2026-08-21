@@ -1,0 +1,9 @@
+{
+  "release": "V50.5",
+  "type": "hotfix",
+  "scope": [
+    "dashboard_implantacao_frontend",
+    "cache_busting",
+    "service_worker_version"
+  ]
+}
