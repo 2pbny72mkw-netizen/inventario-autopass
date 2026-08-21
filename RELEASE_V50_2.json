@@ -1,0 +1,8 @@
+{
+  "version": "V50.2",
+  "type": "hotfix",
+  "date": "2026-08-21",
+  "focus": "PWA cache / Service Worker / Manifest",
+  "atm_data_included": true,
+  "atm_official_count": 602
+}
