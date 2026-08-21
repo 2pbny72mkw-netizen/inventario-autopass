@@ -39,7 +39,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V49.1"
+APP_RELEASE = "V50.0"
 DASHBOARD_RELEASE = "dashboard-v47"
 TEAMS_RELEASE = "teams-v42-4"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -6566,6 +6566,10 @@ def global_search_api():
     locs=Location.query.filter(db.or_(Location.location.ilike(like),Location.line.ilike(like),Location.company.ilike(like))).limit(10).all()
     for x in locs:
         out.append({"type":"LOCALIDADE","domain":"360","title":x.location,"subtitle":" · ".join(y for y in [x.company,x.line] if y),"url":f"/localidade-360/{x.id}"})
+    # Pessoas / equipes
+    users=User.query.filter(db.or_(User.name.ilike(like),User.username.ilike(like))).limit(8).all()
+    for u in users:
+        out.append({"type":"USUÁRIO","domain":"EQUIPE","title":u.name or u.username,"subtitle":u.username or "","url":"/equipes"})
     # RV / IMPLANTAÇÃO
     visits=HardwareFieldVisit.query.filter(db.or_(HardwareFieldVisit.report_code.ilike(like),HardwareFieldVisit.location_name.ilike(like),HardwareFieldVisit.client.ilike(like),HardwareFieldVisit.project.ilike(like))).limit(10).all()
     for v in visits:
@@ -7430,6 +7434,119 @@ def panorama_delete_photo_api(photo_id):
         if locrow:
             status=locrow["status"]
     return jsonify({"ok":True,"location_id":location_id,"status":status,"point_removed":point_removed})
+
+
+# ===== V50.0 — Command Center 360 3.0 / Configuração ADM / Contratos 360 =====
+V50_SETTINGS_PATH = DATA_DIR / "v50_admin_settings.json"
+
+def _v50_settings():
+    defaults = {
+        "alert_activity_days": 7,
+        "alert_pending_days": 7,
+        "gps_radius_m": FIELD_NEARBY_RADIUS_M,
+        "dashboard_refresh_seconds": 60,
+    }
+    try:
+        if V50_SETTINGS_PATH.exists():
+            saved = json.loads(V50_SETTINGS_PATH.read_text(encoding="utf-8"))
+            defaults.update({k:v for k,v in saved.items() if k in defaults})
+    except Exception:
+        app.logger.exception("Falha ao carregar configurações V50")
+    return defaults
+
+@app.get("/configuracoes")
+@manager_required
+def v50_settings_page():
+    return render_template("admin_settings_v50.html", app_release=APP_RELEASE)
+
+@app.route("/api/configuracoes", methods=["GET","POST"])
+@manager_required
+def v50_settings_api():
+    if request.method == "GET":
+        return jsonify({"ok":True,"settings":_v50_settings(),"release":APP_RELEASE})
+    payload=request.get_json(silent=True) or {}
+    current=_v50_settings()
+    ranges={"alert_activity_days":(1,90),"alert_pending_days":(1,90),"gps_radius_m":(100,20000),"dashboard_refresh_seconds":(15,900)}
+    for key,(lo,hi) in ranges.items():
+        if key in payload:
+            try: val=int(payload[key])
+            except Exception: return jsonify({"ok":False,"error":f"Valor inválido para {key}."}),400
+            if not lo <= val <= hi: return jsonify({"ok":False,"error":f"{key} deve ficar entre {lo} e {hi}."}),400
+            current[key]=val
+    V50_SETTINGS_PATH.write_text(json.dumps(current,ensure_ascii=False,indent=2),encoding="utf-8")
+    db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="CONFIG_UPDATE",entity_type="settings",entity_id="v50",detail=json.dumps(current,ensure_ascii=False)))
+    db.session.commit()
+    return jsonify({"ok":True,"settings":current})
+
+@app.get("/api/command-center/hoje")
+@login_required
+def v50_command_center_today():
+    if session.get("role") not in ("manager","manager_field"):
+        return jsonify({"ok":False,"error":"Sem permissão."}),403
+    today=datetime.utcnow().date()
+    inv_today=Inventory.query.filter(func.date(Inventory.created_at)==today).count()
+    chip_today=ChipSwap.query.filter(func.date(ChipSwap.started_at)==today).count()
+    chip_done_today=ChipSwap.query.filter(func.date(ChipSwap.completed_at)==today).count()
+    visits_today=HardwareFieldVisit.query.filter(HardwareFieldVisit.visit_date==today).count()
+    visits_final_today=HardwareFieldVisit.query.filter(HardwareFieldVisit.visit_date==today,HardwareFieldVisit.status=="FINALIZADO").count()
+    emv_today=EmvChipSwap.query.filter(func.date(EmvChipSwap.started_at)==today).count()
+    emv_done_today=EmvChipSwap.query.filter(func.date(EmvChipSwap.completed_at)==today).count()
+    tech_today=db.session.query(TechnicianPosition.user_id).filter(func.date(TechnicianPosition.captured_at)==today).distinct().count()
+    return jsonify({"ok":True,"date":today.isoformat(),"field":{"inventory":inv_today,"chip_started":chip_today,"chip_done":chip_done_today,"technicians":tech_today},"implantation":{"visits":visits_today,"visits_finalized":visits_final_today,"emv_started":emv_today,"emv_done":emv_done_today}})
+
+@app.get("/api/notificacoes")
+@login_required
+def v50_notifications_api():
+    if session.get("role") not in ("manager","manager_field"):
+        return jsonify({"ok":True,"count":0,"items":[]})
+    # Notificações derivadas das exceções operacionais, sem duplicar uma nova tabela nesta versão.
+    atm_without_tv=BaseAsset.query.filter(func.upper(func.coalesce(BaseAsset.equipment_type,""))=="ATM",func.coalesce(BaseAsset.teamviewer_id,"")=="").count()
+    inv_div=Inventory.query.filter(func.coalesce(Inventory.divergence,"")!="").count()
+    visits=HardwareFieldVisit.query.all()
+    rv_pending=sum(1 for v in visits if 'PEND' in (v.conclusion_status or '').upper())
+    emv_pending=EmvChipSwap.query.filter(~func.upper(func.coalesce(EmvChipSwap.status,"" )).startswith("CONCLU")).count()
+    items=[
+      {"domain":"FIELD","severity":"ATENÇÃO","title":"ATMs sem TeamViewer","count":atm_without_tv,"url":"/dashboard/atm"},
+      {"domain":"FIELD","severity":"ATENÇÃO","title":"Divergências de inventário","count":inv_div,"url":"/dashboard/field"},
+      {"domain":"IMPLANTAÇÃO","severity":"ATENÇÃO","title":"Visitas com pendências","count":rv_pending,"url":"/implantacao-hardware/dashboard"},
+      {"domain":"IMPLANTAÇÃO","severity":"INFO","title":"EMV Trilhos pendentes","count":emv_pending,"url":"/implantacao-hardware/dashboard"},
+    ]
+    items=[x for x in items if x["count"]>0]
+    return jsonify({"ok":True,"count":sum(x["count"] for x in items),"items":items})
+
+@app.get("/dashboard/contratos-atm")
+@manager_required
+def v50_contracts_page():
+    return render_template("contracts_atm_v50.html", app_release=APP_RELEASE)
+
+@app.get("/api/dashboard/contratos-atm")
+@manager_required
+def v50_contracts_api():
+    official_path=DATA_DIR / "atm_official_082026.json"
+    financial_path=DATA_DIR / "atm_financial_082026.json"
+    try: assets=json.loads(official_path.read_text(encoding="utf-8"))
+    except Exception: assets=[]
+    try: financial=json.loads(financial_path.read_text(encoding="utf-8"))
+    except Exception: financial={"models":[],"contracts":[]}
+    unit={str(x.get("model") or "").upper():float(x.get("unit_value") or 0) for x in financial.get("models",[])}
+    by_contract={}
+    for a in assets:
+        contract=(a.get("contract") or "Sem contrato").strip() or "Sem contrato"
+        own=(a.get("ownership") or "Não informado").strip() or "Não informado"
+        model=(a.get("model") or "Não informado").strip() or "Não informado"
+        leasing="LEAS" in own.upper()
+        monthly=0.0 if leasing else unit.get(model.upper(),0.0)
+        row=by_contract.setdefault(contract,{"contract":contract,"qty":0,"leasing":0,"rental":0,"monthly":0.0,"locations":set(),"models":{}})
+        row["qty"]+=1; row["leasing"]+=1 if leasing else 0; row["rental"]+=0 if leasing else 1; row["monthly"]+=monthly
+        if a.get("locality"): row["locations"].add(a.get("locality"))
+        row["models"][model]=row["models"].get(model,0)+1
+    rows=[]
+    for row in by_contract.values():
+        row["location_count"]=len(row.pop("locations")); row["annual"]=row["monthly"]*12; rows.append(row)
+    rows.sort(key=lambda x:x["monthly"],reverse=True)
+    total_month=sum(x["monthly"] for x in rows)
+    return jsonify({"ok":True,"release":APP_RELEASE,"park_total":len(assets),"rental":sum(x["rental"] for x in rows),"leasing":sum(x["leasing"] for x in rows),"monthly":total_month,"annual":total_month*12,"contracts":rows})
+
 
 with app.app_context():
     migrate_location_reference_columns()

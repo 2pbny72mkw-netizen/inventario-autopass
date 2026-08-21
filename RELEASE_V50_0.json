@@ -1,0 +1,16 @@
+{
+  "release": "V50.0",
+  "type": "major",
+  "focus": "Command Center 360 3.0, PWA, Configurações ADM e Contratos ATM 360",
+  "includes_v49_2_hotfix": true,
+  "notes": [
+    "Incorpora o hotfix de navegação Dashboard Implantação da V49.2.",
+    "Command Center 360 passa a destacar operação do dia e gestão por exceção.",
+    "Busca Global passa a localizar também usuários/equipe.",
+    "Central de notificações derivada das exceções operacionais.",
+    "PWA instalável reativada com cache seguro de estáticos e fallback offline.",
+    "Configurações ADM iniciais sem alteração de código.",
+    "Contratos ATM 360 com custo mensal/anual e drill-down por modelos.",
+    "Field e Implantação permanecem domínios operacionais separados; EMV Trilhos pertence a Implantação."
+  ]
+}
