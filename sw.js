@@ -1,4 +1,4 @@
-const VERSION='autopass-v52-1';
+const VERSION='autopass-v52-2';
 const SHELL=`${VERSION}-shell`; const DATA=`${VERSION}-data`;
 const OFFLINE='/offline';
 const APP_SHELL=[OFFLINE,'/tecnico','/static/app.css?v=v34-1','/static/autopass-logo.png','/static/technician.js?v=v34-1'];

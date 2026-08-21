@@ -39,7 +39,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V52.1"
+APP_RELEASE = "V52.2"
 DASHBOARD_RELEASE = "dashboard-v47"
 TEAMS_RELEASE = "teams-v42-4"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -7319,6 +7319,13 @@ def financial_implantation_page():
 def financial_assistance_page():
     if session.get("role") not in ("manager","manager_field","atm_financial_admin"): return redirect(url_for("dashboard_landing"))
     return render_template("financial_area_placeholder.html", app_release=APP_RELEASE, area="Assistência Técnica")
+
+@app.get("/financeiro/suporte-campo/coleta-valores")
+@login_required
+def financial_cash_collection_page():
+    if session.get("role") not in ("manager", "manager_field", "atm_financial_admin"):
+        return redirect(url_for("dashboard_landing"))
+    return render_template("financial_cash_collection.html", app_release=APP_RELEASE)
 
 @app.get("/financeiro-atm/gestao")
 @app.get("/financeiro/suporte-campo")
