@@ -39,7 +39,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V45.0"
+APP_RELEASE = "V46.0"
 DASHBOARD_RELEASE = "dashboard-v44"
 TEAMS_RELEASE = "teams-v42-4"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -2024,6 +2024,20 @@ def inventory_atm_dashboard_api():
         "metro_stations":len({str(x.get("locality") or "").strip() for x in rows if str(x.get("company") or "").upper() in ("METRÔ","METRO") and str(x.get("locality") or "").strip()}),
         "teamviewer_count":sum(1 for x in rows if str(x.get("teamviewer_id") or "").strip()),"assets":rows,
         "options":{"companies":facet_options("company","company"),"lines":facet_options("line","line"),"localities":facet_options("locality","locality"),"models":facet_options("model","model"),"contracts":facet_options("contract","contract"),"ownership":facet_options("ownership","ownership"),"statuses":facet_options("status","status")}})
+
+@app.get("/api/dashboard/atm-financial")
+@dashboard_required
+def atm_financial_dashboard_api():
+    # V46: visão financeira restrita ao ADM/Gestor principal.
+    if session.get("role") != "manager":
+        return jsonify({"ok":False,"error":"Dashboard financeira restrita ao ADM."}),403
+    path=DATA_DIR / "atm_financial_082026.json"
+    try:
+        payload=json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return jsonify({"ok":False,"error":f"Base financeira ATM indisponível: {exc}"}),500
+    payload.update({"ok":True,"release":APP_RELEASE})
+    return jsonify(payload)
 
 @app.get("/api/v30/atm-contracts")
 @dashboard_required
