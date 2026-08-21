@@ -1,0 +1,10 @@
+{
+  "release": "V50.4",
+  "type": "stabilization_hotfix",
+  "fixes": [
+    "Importa make_response para Dashboard Implantação",
+    "Importa and_ para cálculos da Visão Geral",
+    "Restaura frontend da Dashboard Financeiro ATM",
+    "Atualiza cache PWA para V50.4"
+  ]
+}
