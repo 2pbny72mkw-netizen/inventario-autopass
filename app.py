@@ -39,8 +39,8 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V43.0"
-DASHBOARD_RELEASE = "dashboard-v42-4"
+APP_RELEASE = "V44.0"
+DASHBOARD_RELEASE = "dashboard-v44"
 TEAMS_RELEASE = "teams-v42-4"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
 FIELD_GPS_GOOD_ACCURACY_M = float(os.getenv("FIELD_GPS_GOOD_ACCURACY_M", "30"))
@@ -2001,8 +2001,21 @@ def inventory_atm_dashboard_api():
             v=(str(a.get(attr) or "Não informado")).strip() or "Não informado"
             out[v]=out.get(v,0)+1
         return out
-    def options(attr):
-        return sorted({str(a.get(attr) or "").strip() for a in all_rows if str(a.get(attr) or "").strip()},key=lambda x:x.casefold())
+    # V44.0: filtros facetados/bidirecionais. Cada combo oferece apenas valores
+    # compatíveis com os demais filtros ativos, como em uma ferramenta de BI.
+    def facet_options(filter_key, attr):
+        candidates=[]
+        for a in all_rows:
+            ok=True
+            for k,v in filters.items():
+                if k==filter_key or not v:
+                    continue
+                if str(a.get(field_map[k],"")).strip()!=v:
+                    ok=False; break
+            if ok:
+                val=str(a.get(attr) or "").strip()
+                if val: candidates.append(val)
+        return sorted(set(candidates),key=lambda x:x.casefold())
     return jsonify({"ok":True,"release":APP_RELEASE,"source":"INVENTARIO AUTOPASS - EQUIPAMENTOS DE CAMPO - 082026.xlsm / aba ATM",
         "official_total":602,"official_allocated":590,"official_stock":12,"total":len(rows),
         "allocated":sum(1 for x in rows if not x.get("stock")),"stock":sum(1 for x in rows if x.get("stock")),
@@ -2010,7 +2023,7 @@ def inventory_atm_dashboard_api():
         "cptm_stations":len({str(x.get("locality") or "").strip() for x in rows if str(x.get("company") or "").upper()=="CPTM" and str(x.get("locality") or "").strip()}),
         "metro_stations":len({str(x.get("locality") or "").strip() for x in rows if str(x.get("company") or "").upper() in ("METRÔ","METRO") and str(x.get("locality") or "").strip()}),
         "teamviewer_count":sum(1 for x in rows if str(x.get("teamviewer_id") or "").strip()),"assets":rows,
-        "options":{"companies":options("company"),"lines":options("line"),"localities":options("locality"),"models":options("model"),"contracts":options("contract"),"ownership":options("ownership"),"statuses":options("status")}})
+        "options":{"companies":facet_options("company","company"),"lines":facet_options("line","line"),"localities":facet_options("locality","locality"),"models":facet_options("model","model"),"contracts":facet_options("contract","contract"),"ownership":facet_options("ownership","ownership"),"statuses":facet_options("status","status")}})
 
 @app.get("/api/v30/atm-contracts")
 @dashboard_required
@@ -2456,6 +2469,21 @@ def hardware_field_visit_report(visit_id):
     signature_data_uri=_visit_media_data_uri(v.signature_file) if v.signature_file else None
     tech=db.session.get(User,v.technician_id)
     return render_template("hardware_field_visit_report.html",v=v,photos=photos,photo_media=photo_media,signature_data_uri=signature_data_uri,tech=tech)
+
+@app.get("/diagnostico")
+@manager_required
+def diagnostics_page():
+    return render_template("diagnostics.html", app_release=APP_RELEASE)
+
+@app.get("/api/diagnostico/resumo")
+@manager_required
+def diagnostics_api():
+    events=AuditEvent.query.order_by(AuditEvent.created_at.desc()).limit(150).all()
+    user_ids={e.user_id for e in events if e.user_id}
+    users={u.id:u.name for u in User.query.filter(User.id.in_(user_ids)).all()} if user_ids else {}
+    return jsonify({"ok":True,"release":APP_RELEASE,
+        "database":{"users":User.query.count(),"inventory":Inventory.query.count(),"field_visits":HardwareFieldVisit.query.count(),"audit_events":AuditEvent.query.count()},
+        "events":[{"id":e.id,"created_at":e.created_at.isoformat() if e.created_at else None,"user":users.get(e.user_id,"Sistema"),"event_type":e.event_type,"entity_type":e.entity_type,"entity_id":e.entity_id or "","detail":e.detail or ""} for e in events]})
 
 @app.get("/sobre")
 @login_required

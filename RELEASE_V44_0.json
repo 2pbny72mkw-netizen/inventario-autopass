@@ -1,0 +1,17 @@
+{
+  "release": "V44.0",
+  "title": "Plataforma 360° + Dashboard 2.0",
+  "date": "2026-08-20",
+  "changes": [
+    "Dashboard ATM 2.0 com filtros automáticos e facetados bidirecionais",
+    "Remoção do botão Aplicar: filtros atualizam toda a dashboard na seleção",
+    "Correção forte de contraste e legibilidade na Dashboard ATM",
+    "ATM 360° com ficha consolidada e ID TeamViewer copiável",
+    "Dashboard Field 2.0 com novas visualizações",
+    "Dashboard Implantação 2.0 com atualização automática dos filtros",
+    "Relatório de Visita com compartilhar e atalho de e-mail do acompanhante",
+    "Central ADM de Diagnóstico e auditoria recente",
+    "Refino mobile-first das dashboards"
+  ],
+  "deferred": ["Integrações TopDesk novas", "Portal do Cliente", "Integração automática WhatsApp Business", "Módulo completo de coleta de valores"]
+}

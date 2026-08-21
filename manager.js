@@ -1,4 +1,4 @@
-window.AUTOPASS_MANAGER_VERSION='dashboard-v34-1';
+window.AUTOPASS_MANAGER_VERSION='dashboard-v42-4';
 console.log('AUTOPASS Dashboard Executivo V25 carregado');
 let locations=[];
 let dashboardData=null;
@@ -12,6 +12,14 @@ const OFFICIAL_EXEC_TYPES=['ATM','VALIDADOR','POS','BLOQUEIO'];
 const DASHBOARD_DISPLAY_TYPES=['ATM','VALIDADOR','POS','TDI','BLOQUEIO','OUTRO'];
 function typeLabel(type){
   return type==='VALIDADOR'?'Recarga':type==='BLOQUEIO'?'Bloqueio':type==='OUTRO'?'Outro':type;
+}
+function technicalTdiExpected(){
+  return Number(
+    dashboardData?.technical_tdi?.expected ??
+    dashboardData?.official_park?.technical_tdi ??
+    (dashboardData?.by_type||[]).find(x=>x.type==='TDI')?.expected ??
+    80
+  );
 }
 function sumObjectValues(obj){return Object.values(obj||{}).reduce((a,b)=>a+Number(b||0),0)}
 function filteredLocationMetrics(rows,type=''){
@@ -32,6 +40,11 @@ function filteredLocationMetrics(rows,type=''){
   if(type){
     result.expected=result.byType[type]?.e||0;
     result.inventoried=result.byType[type]?.i||0;
+    // V36: TDI técnico tem uma única fonte executiva (80 por padrão),
+    // independentemente de quantos TDI estejam distribuídos por localidade na base detalhada.
+    if(type==='TDI' && !($('execCompany')?.value||'') && !($('execLine')?.value||'')){
+      result.expected=technicalTdiExpected();
+    }
   }else{
     result.expected=OFFICIAL_EXEC_TYPES.reduce((a,t)=>a+(result.byType[t]?.e||0),0);
     result.inventoried=OFFICIAL_EXEC_TYPES.reduce((a,t)=>a+(result.byType[t]?.i||0),0);
@@ -126,6 +139,20 @@ const railNamesByNumber={
   '1':'Azul','2':'Verde','3':'Vermelha','4':'Amarela','5':'Lilás','6':'Laranja',
   '7':'Rubi','8':'Diamante','9':'Esmeralda','10':'Turquesa','11':'Coral',
   '12':'Safira','13':'Jade','15':'Prata','17':'Ouro'
+};
+
+// V35.1 — geometria de contingência para linhas que ainda não possuem referências
+// geográficas suficientes cadastradas no banco. É usada somente para desenho da linha.
+const railFallbackGeometry={
+  '4':[
+    [-23.5362,-46.6335],[-23.5441,-46.6422],[-23.5489,-46.6520],[-23.5553,-46.6620],
+    [-23.5608,-46.6719],[-23.5662,-46.6840],[-23.5673,-46.6930],[-23.5669,-46.7012],
+    [-23.5718,-46.7080],[-23.5864,-46.7230],[-23.5944,-46.7330]
+  ],
+  '17':[
+    [-23.6217,-46.7012],[-23.6222,-46.6947],[-23.6209,-46.6878],[-23.6201,-46.6800],
+    [-23.6210,-46.6732],[-23.6241,-46.6670],[-23.6288,-46.6633],[-23.6328,-46.6603]
+  ]
 };
 
 function normalizeRailText(value){
@@ -268,6 +295,19 @@ function ensureGpsMap(){
     'Precisão GPS (auditoria)':gpsAccuracyLayer
   },{collapsed:false,position:'bottomright'}).addTo(gpsMap);
 
+  // V35 — controle nativo do Leaflet: permanece visível mesmo quando o cabeçalho do mapa é ocultado.
+  const fullscreenControl=L.control({position:'topright'});
+  fullscreenControl.onAdd=()=>{
+    const wrap=L.DomUtil.create('div','leaflet-bar autopassMapFullscreenControl');
+    const btn=L.DomUtil.create('button','autopassMapFullscreenBtn',wrap);
+    btn.type='button'; btn.title='Abrir mapa em tela cheia'; btn.setAttribute('aria-label','Abrir mapa em tela cheia');
+    btn.innerHTML='⛶ <span>Tela cheia</span>';
+    L.DomEvent.disableClickPropagation(wrap);
+    L.DomEvent.on(btn,'click',ev=>{L.DomEvent.stop(ev);setMapFullscreen(!$('gpsMap')?.classList.contains('gpsMapFullscreen'));});
+    return wrap;
+  };
+  fullscreenControl.addTo(gpsMap);
+
   gpsMap.on('click', async e=>{
     if(!referenceMode) return;
     const locationId=Number($('mapLocationSelect').value);
@@ -310,13 +350,17 @@ function renderRailLines(){
     (groups[n]??=[]).push(loc);
   });
 
-  Object.entries(groups).forEach(([number,stations])=>{
-    if(stations.length<2) return;
+  // Garante que 4-Amarela e 17-Ouro sejam desenhadas mesmo antes de todas as referências
+  // oficiais dessas estações serem cadastradas no banco.
+  ['4','17'].forEach(number=>{ if(!groups[number]) groups[number]=[]; });
 
-    const sequence=buildRailSequence(stations);
-    const coordinates=sequence.map(x=>[
+  Object.entries(groups).forEach(([number,stations])=>{
+    const sequence=stations.length>=2?buildRailSequence(stations):[];
+    const fallback=railFallbackGeometry[number]||[];
+    const coordinates=sequence.length>=2?sequence.map(x=>[
       Number(x.reference_latitude),Number(x.reference_longitude)
-    ]);
+    ]):fallback;
+    if(coordinates.length<2) return;
     const color=railColorsByNumber[number]||'#64748b';
 
     // Halo branco: aumenta contraste sobre o mapa-base.
@@ -328,18 +372,20 @@ function renderRailLines(){
       color,weight:7,opacity:1,lineCap:'round',lineJoin:'round'
     }).addTo(railLineLayer);
 
-    polyline.bindPopup(`<b>${esc(railDisplayName(sequence[0]?.line))}</b><br>${stations.length} estação(ões) com referência geográfica`);
+    polyline.bindPopup(`<b>Linha ${esc(number)} — ${esc(railNamesByNumber[number]||'')}</b><br>${stations.length} estação(ões) com referência geográfica${sequence.length<2?' · traçado de contingência':''}`);
 
     // Número da linha nas duas pontas do traçado.
-    [sequence[0],sequence[sequence.length-1]].forEach(endpoint=>{
-      if(!endpoint) return;
+    const endpoints=sequence.length>=2
+      ? [[Number(sequence[0].reference_latitude),Number(sequence[0].reference_longitude)],[Number(sequence[sequence.length-1].reference_latitude),Number(sequence[sequence.length-1].reference_longitude)]]
+      : [coordinates[0],coordinates[coordinates.length-1]];
+    endpoints.forEach(point=>{
+      if(!point) return;
       const icon=L.divIcon({
         className:'rail-line-end-icon',
         html:`<div class="rail-line-number" style="background:${color}">${esc(number)}</div>`,
         iconSize:[30,30],iconAnchor:[15,15]
       });
-      L.marker([Number(endpoint.reference_latitude),Number(endpoint.reference_longitude)],{icon,interactive:false})
-        .addTo(railLineLayer);
+      L.marker(point,{icon,interactive:false}).addTo(railLineLayer);
     });
   });
 }
@@ -444,19 +490,51 @@ function renderGpsMap(items){
 }
 
 
-function setMapFullscreen(on){
-  const mapEl=$('gpsMap');
-  const btn=$('toggleMapFullscreenBtn');
-  if(!mapEl) return;
-
-  mapEl.classList.toggle('gpsMapFullscreen',!!on);
-  document.body.classList.toggle('mapFullscreenOpen',!!on);
-  if(btn) btn.textContent=on?'Sair da tela cheia':'⛶ Tela cheia';
-
-  setTimeout(()=>{
-    try{ gpsMap?.invalidateSize(); }catch(_e){}
-  },80);
+async function setMapFullscreen(on){
+  const mapEl=$('gpsMap'); if(!mapEl)return;
+  const root=document.documentElement;
+  if(on){
+    mapEl.classList.add('gpsMapFullscreen');
+    document.body.classList.add('mapFullscreenOpen');
+    try{
+      if(!document.fullscreenElement && !document.webkitFullscreenElement){
+        if(root.requestFullscreen) await root.requestFullscreen();
+        else if(root.webkitRequestFullscreen) await root.webkitRequestFullscreen();
+      }
+    }catch(_e){
+      // O overlay fixo continua funcional mesmo se o navegador bloquear a Fullscreen API.
+    }
+  }else{
+    try{
+      if(document.fullscreenElement && document.exitFullscreen) await document.exitFullscreen();
+      else if(document.webkitFullscreenElement && document.webkitExitFullscreen) await document.webkitExitFullscreen();
+    }catch(_e){}
+    mapEl.classList.remove('gpsMapFullscreen');
+    document.body.classList.remove('mapFullscreenOpen');
+  }
+  const active=mapEl.classList.contains('gpsMapFullscreen');
+  const text=active?'✕ Sair da tela cheia':'⛶ Tela cheia';
+  if($('toggleMapFullscreenBtn')) $('toggleMapFullscreenBtn').textContent=text;
+  const leafletBtn=document.querySelector('.autopassMapFullscreenBtn');
+  if(leafletBtn) leafletBtn.innerHTML=active?'✕ <span>Sair da tela cheia</span>':'⛶ <span>Tela cheia</span>';
+  requestAnimationFrame(()=>setTimeout(()=>{try{gpsMap?.invalidateSize()}catch(_e){}},80));
 }
+
+function syncMapFullscreenState(){
+  const mapEl=$('gpsMap'); if(!mapEl)return;
+  const nativeActive=!!(document.fullscreenElement||document.webkitFullscreenElement);
+  if(!nativeActive && mapEl.classList.contains('gpsMapFullscreen')){
+    mapEl.classList.remove('gpsMapFullscreen');
+    document.body.classList.remove('mapFullscreenOpen');
+  }
+  const active=mapEl.classList.contains('gpsMapFullscreen');
+  const leafletBtn=document.querySelector('.autopassMapFullscreenBtn');
+  if(leafletBtn) leafletBtn.innerHTML=active?'✕ <span>Sair da tela cheia</span>':'⛶ <span>Tela cheia</span>';
+  if($('toggleMapFullscreenBtn')) $('toggleMapFullscreenBtn').textContent=active?'✕ Sair da tela cheia':'⛶ Tela cheia';
+  requestAnimationFrame(()=>setTimeout(()=>{try{gpsMap?.invalidateSize()}catch(_e){}},80));
+}
+document.addEventListener('fullscreenchange',syncMapFullscreenState);
+document.addEventListener('webkitfullscreenchange',syncMapFullscreenState);
 
 if($('toggleMapFullscreenBtn')){
   $('toggleMapFullscreenBtn').addEventListener('click',()=>{
@@ -736,6 +814,23 @@ function renderV22Cockpit(){
   $('v22EvidenceQuality').innerHTML=`<div class="v22EvidenceHero"><b>${conf}%</b><span>itens conciliados</span></div><div class="v22EvidenceRows"><span>Visitas <b>${fmt(e.visits||0)}</b></span><span>Itens <b>${fmt(total)}</b></span><span>Revisar <b>${fmt(review)}</b></span><span>Fotos/vídeos <b>${fmt(media)}</b></span></div>`;
 }
 
+function renderV36Productivity(){
+  if(!dashboardData||!$('v36ProductivityStrip')) return;
+  const trend=dashboardData.trend_14d||[];
+  const total14=trend.reduce((a,x)=>a+Number(x.count||0),0);
+  const last7=trend.slice(-7);
+  const total7=last7.reduce((a,x)=>a+Number(x.count||0),0);
+  const pace=last7.length?total7/last7.length:0;
+  const tech=dashboardData.top_technicians_14d||[];
+  const top=tech[0]||null;
+  if($('v36Prod14')) $('v36Prod14').textContent=fmt(total14);
+  if($('v36Pace7')) $('v36Pace7').textContent=`${pace.toFixed(1).replace('.',',')}/dia`;
+  if($('v36ActiveTechs')) $('v36ActiveTechs').textContent=fmt(tech.length);
+  if($('v36TopTech')) $('v36TopTech').textContent=top?top.name:'—';
+  if($('v36TopTechDetail')) $('v36TopTechDetail').textContent=top?`${fmt(top.count)} lançamento(s) nos últimos 14 dias`:'sem produção recente';
+}
+
+
 function renderV25ExecutiveBI(){
   if(!dashboardData||!$('v25BiArena')) return;
   const trend=dashboardData.trend_14d||[], max=Math.max(1,...trend.map(x=>Number(x.count||0)));
@@ -827,6 +922,7 @@ function updateExecutiveView(){
   renderCriticalLocations();
   renderLocations();
   renderV22Cockpit();
+  renderV36Productivity();
 }
 
 function renderCriticalLocations(){
@@ -969,6 +1065,7 @@ function v23SetView(view){
     el.hidden=!active;
   });
   document.querySelectorAll('.v23Nav').forEach(btn=>btn.classList.toggle('active',btn.dataset.v23View===v23ActiveView));
+  document.querySelectorAll('.executiveFilterBar.v23Shared').forEach(el=>{el.hidden=(v23ActiveView==='chips');});
   if(v23ActiveView==='map' && gpsMap) setTimeout(()=>gpsMap.invalidateSize(),140);
   window.scrollTo({top:0,behavior:document.body.classList.contains('v23TvMode')?'auto':'smooth'});
 }
@@ -1059,25 +1156,190 @@ document.getElementById('v30ContractExport')?.addEventListener('click',()=>{
 setTimeout(loadV30Contracts,800);
 
 
-// V34 — Intelligence Wall / atenção gerencial
-function renderV34Intelligence(){
-  if(!dashboardData||!document.getElementById('v34Radial'))return;
-  const t=dashboardData.totals||{}, inv=dashboardData.inventory||{};
-  const exp=Number(t.expected||0), done=Number(inv.official_inventoried||0), pct=exp?Math.min(100,done/exp*100):0;
+// V35 — visão geral operacional filtrável
+function renderV35Overview(){
+  if(!dashboardData||!document.getElementById('v34Radial')) return;
+  const rows=executiveFilteredLocations();
+  const type=document.getElementById('execType')?.value||'';
+  const company=document.getElementById('execCompany')?.value||'';
+  const line=document.getElementById('execLine')?.value||'';
+  const metrics=filteredLocationMetrics(rows,type);
+  const noGeoFilters=!company&&!line;
+  // V36: TDI técnico usa a fonte única exposta pela API do dashboard.
+  if(noGeoFilters && type==='TDI'){
+    const tdiExpected=technicalTdiExpected();
+    const tdiInventoried=Number(dashboardData?.technical_tdi?.inventoried ?? (dashboardData.by_type||[]).find(x=>x.type==='TDI')?.inventoried ?? metrics.inventoried ?? 0);
+    metrics.expected=tdiExpected;
+    metrics.inventoried=tdiInventoried;
+    metrics.missing=Math.max(0,tdiExpected-tdiInventoried);
+    metrics.byType.TDI.e=tdiExpected;
+    metrics.byType.TDI.i=tdiInventoried;
+  }
+
+  // Cobertura: usa exatamente o mesmo recorte dos Big Numbers.
+  const exp=Number(metrics.expected||0), done=Number(metrics.inventoried||0);
+  const pct=exp?Math.min(100,done/exp*100):0;
   document.getElementById('v34Radial').style.setProperty('--pct',pct.toFixed(1)+'%');
   document.getElementById('v34RadialPct').textContent=pct.toFixed(1).replace('.',',')+'%';
-  document.getElementById('v34RadialText').textContent=`${fmt(done)} de ${fmt(exp)} ativos oficiais`;
-  const trend=dashboardData.trend_14d||[], max=Math.max(1,...trend.map(x=>Number(x.count||0)));
-  document.getElementById('v34Trend').innerHTML=trend.map((x,i)=>`<i style="height:${Math.max(5,Math.round(Number(x.count||0)/max*100))}%"><span>${fmt(x.count||0)}</span><small>${String(x.date||'').slice(8)}</small></i>`).join('');
-  const comps=(dashboardData.by_company||[]).slice().sort((a,b)=>Number(b.total||0)-Number(a.total||0)).slice(0,10);
-  document.getElementById('v34Heatmap').innerHTML=comps.map(x=>{const p=Number(x.total)?Math.round(Number(x.completed||0)/Number(x.total)*100):0;let c=p>=80?'hot5':p>=60?'hot4':p>=40?'hot3':p>=20?'hot2':'hot1';return `<div class="${c}" title="${esc(x.company||'—')} · ${p}%"><b>${esc((x.company||'—').slice(0,12))}</b><span>${p}%</span></div>`}).join('');
+  document.getElementById('v34RadialText').textContent=`${fmt(done)} de ${fmt(exp)} ativos no recorte`;
+
+  // Status das localidades — responde aos filtros Empresa/Linha/Tipo.
+  const countStatus=status=>rows.filter(x=>String(x.survey_status||'').toUpperCase()===status).length;
+  const completed=countStatus('CONCLUIDA'), progress=countStatus('EM ANDAMENTO'), pending=countStatus('PENDENTE');
+  const total=rows.length||0, denominator=Math.max(1,total);
+  const cp=completed/denominator*100, pp=progress/denominator*100, pendp=pending/denominator*100;
+  const setText=(id,val)=>{const e=document.getElementById(id);if(e)e.textContent=val;};
+  setText('v35Completed',fmt(completed)); setText('v35Progress',fmt(progress)); setText('v35Pending',fmt(pending));
+  setText('v35CompletedPct',Math.round(cp)+'%'); setText('v35ProgressPct',Math.round(pp)+'%'); setText('v35PendingPct',Math.round(pendp)+'%');
+  setText('v35LocationsTotal',`${fmt(total)} localidade(s) no recorte`);
+  setText('v35StatusContext',[company||'Todas empresas',line||'Todas linhas',type?typeLabel(type):'Todos os tipos'].join(' · '));
+  const doneBar=document.getElementById('v35StatusDone'), progBar=document.getElementById('v35StatusProgress'), pendBar=document.getElementById('v35StatusPending');
+  if(doneBar)doneBar.style.width=cp+'%'; if(progBar)progBar.style.width=pp+'%'; if(pendBar)pendBar.style.width=pendp+'%';
+
+  // Mix do parque — quando não há recorte geográfico usa os mesmos denominadores oficiais
+  // dos Big Numbers. TDI e Outro não compõem o parque oficial de 3.801 ativos.
+  const officialMap={}; (dashboardData.by_type||[]).forEach(x=>officialMap[x.type]=Number(x.expected||0));
+  let mix=[];
+  if(noGeoFilters){
+    const officialTypes=['ATM','VALIDADOR','POS','BLOQUEIO'];
+    if(type && officialTypes.includes(type)) mix=[{type,value:Number(officialMap[type]||0)}];
+    else if(type==='TDI'){ mix=[{type,value:technicalTdiExpected(),outsideOfficial:true}]; }
+    else if(type==='OUTRO'){ const z=metrics.byType.OUTRO||{i:0}; mix=[{type,value:Number(z.i||0),outsideOfficial:true}]; }
+    else mix=officialTypes.map(t=>({type:t,value:Number(officialMap[t]||0)})).filter(x=>x.value>0);
+  }else{
+    const mixTypes=type?[type]:['ATM','VALIDADOR','POS','BLOQUEIO'];
+    mix=mixTypes.map(t=>{const z=metrics.byType[t]||{e:0,i:0};return {type:t,value:Number(z.e||0)}}).filter(x=>x.value>0);
+  }
+  const mixTotal=mix.reduce((a,x)=>a+x.value,0);
+  const colors={ATM:'#2878d8',VALIDADOR:'#16b98e',POS:'#ff9f2e',TDI:'#8a63d2',BLOQUEIO:'#16b8b0',OUTRO:'#f4c64d'};
+  let cursor=0, stops=[];
+  mix.forEach(x=>{const start=cursor;cursor+=mixTotal?x.value/mixTotal*100:0;stops.push(`${colors[x.type]} ${start.toFixed(2)}% ${cursor.toFixed(2)}%`)});
+  const donut=document.getElementById('v35MixDonut'); if(donut)donut.style.background=mixTotal?`conic-gradient(${stops.join(',')})`:'#dfe8f1';
+  setText('v35MixTotal',fmt(mixTotal));
+  const mixLegend=document.getElementById('v35MixLegend');
+  if(mixLegend)mixLegend.innerHTML=mix.length?mix.map(x=>`<div><i style="background:${colors[x.type]}"></i><span>${esc(typeLabel(x.type))}</span><b>${fmt(x.value)}</b><small>${mixTotal?Math.round(x.value/mixTotal*100):0}%</small></div>`).join(''):'<div class="muted">Sem ativos no recorte.</div>';
+
+  // Evolução por empresa — distribuição de status, não apenas um percentual isolado.
+  const groups={};
+  rows.forEach(x=>{const key=x.company||'Não informado';const g=groups[key]||(groups[key]={total:0,completed:0,progress:0,pending:0});g.total++;const st=String(x.survey_status||'').toUpperCase();if(st==='CONCLUIDA')g.completed++;else if(st==='EM ANDAMENTO')g.progress++;else g.pending++;});
+  const companies=Object.entries(groups).map(([name,g])=>({name,...g,pct:g.total?Math.round(g.completed/g.total*100):0})).sort((a,b)=>b.pct-a.pct||b.completed-a.completed||b.total-a.total).slice(0,8);
+  const companyBox=document.getElementById('v35CompanyBars');
+  if(companyBox)companyBox.innerHTML=companies.length?companies.map(g=>{const d=g.total?g.completed/g.total*100:0,pr=g.total?g.progress/g.total*100:0,p=g.total?g.pending/g.total*100:0;return `<div class="v35CompanyRow"><div class="v35CompanyTitle"><b>${esc(g.name)}</b><span>${g.pct}% concluído · ${fmt(g.completed)}/${fmt(g.total)}</span></div><div class="v35CompanyTrack"><i class="done" style="width:${d}%"></i><i class="progress" style="width:${pr}%"></i><i class="pending" style="width:${p}%"></i></div><div class="v35CompanyMeta"><span><i class="dot done"></i>${fmt(g.completed)} concluídas</span><span><i class="dot progress"></i>${fmt(g.progress)} andamento</span><span><i class="dot pending"></i>${fmt(g.pending)} pendentes</span></div></div>`}).join(''):'<div class="muted">Sem empresas no recorte atual.</div>';
+
+  // Atenção continua gerencial, mas as localidades não iniciadas respeitam o recorte.
   const e=dashboardData.evidence||{}; const alerts=[
-    [Number(inv.divergences||0),'Divergências com a base','quality'],
-    [Number(inv.inoperative||0),'Equipamentos inoperantes','quality'],
     [Number(e.review||0),'Evidências aguardando revisão','evidence'],
-    [Number(e.unresolved_visits||0),'Visitas sem localidade vinculada','evidence'],
-    [Number(t.pending||0),'Localidades ainda não iniciadas','ranking']
+    [pending,'Localidades pendentes no recorte','ranking'],
+    [progress,'Localidades em andamento','execution'],
+    [Number(metrics.divergences||0),'Divergências com a base','quality'],
+    [Number(metrics.inoperative||0),'Equipamentos inoperantes','quality']
   ].sort((a,b)=>b[0]-a[0]);
-  document.getElementById('v34Attention').innerHTML=alerts.map(([n,label,view],i)=>`<button type="button" onclick="v23SetView('${view}')"><em>${i+1}</em><span>${esc(label)}</span><b>${fmt(n)}</b></button>`).join('');
+  const att=document.getElementById('v34Attention');
+  if(att)att.innerHTML=alerts.map(([n,label,view],i)=>`<button type="button" onclick="v23SetView('${view}')"><em>${i+1}</em><span>${esc(label)}</span><b>${fmt(n)}</b></button>`).join('');
 }
+
+// Compatibilidade: módulos antigos chamam este nome.
+function renderV34Intelligence(){ renderV35Overview(); }
+
 const _v34UpdateExecutiveView=updateExecutiveView; updateExecutiveView=function(){_v34UpdateExecutiveView();renderV34Intelligence();};
+
+
+// V35 — clique nos status da Visão Geral abre a execução já filtrada por situação.
+document.querySelectorAll('.v35Status[data-status]').forEach(btn=>btn.addEventListener('click',()=>{
+  const target=btn.dataset.status||'';
+  if(document.getElementById('fs')) document.getElementById('fs').value=target;
+  try{syncChips();renderLocations();}catch(_e){}
+  v23SetView('execution');
+}));
+
+async function v39LoadTopdesk(){try{const r=await fetch('/api/topdesk/dashboard',{cache:'no-store'});if(!r.ok)return;const d=await r.json();if(!d.ok)return;const map={v39TdTotal:d.total,v39TdOpen:d.open,v39TdResolved:d.resolved,v39TdAssigned:d.assigned,v39TdUnassigned:d.unassigned};Object.entries(map).forEach(([id,v])=>{const e=document.getElementById(id);if(e)e.textContent=fmt(v)});const types=document.getElementById('v39TdTypes');if(types){const arr=Object.entries(d.by_type||{}).sort((a,b)=>b[1]-a[1]);const m=Math.max(1,...arr.map(x=>x[1]));types.innerHTML=arr.map(([k,v])=>`<div class="v25CompanyRow"><span>${esc(k)}</span><div class="v25CompanyTrack"><i style="width:${Math.round(v/m*100)}%"></i></div><b>${fmt(v)}</b></div>`).join('')||'<span class="muted">Sem chamados importados.</span>'}const loc=document.getElementById('v39TdLocations');if(loc){const arr=d.top_locations||[];const m=Math.max(1,...arr.map(x=>x.count));loc.innerHTML=arr.map(x=>`<div class="v25CompanyRow"><span>${esc(x.name)}</span><div class="v25CompanyTrack"><i style="width:${Math.round(x.count/m*100)}%"></i></div><b>${fmt(x.count)}</b></div>`).join('')||'<span class="muted">Sem localidades vinculadas.</span>'}}catch(e){console.warn('TopDesk dashboard',e)}}
+document.addEventListener('DOMContentLoaded',v39LoadTopdesk);
+
+// V40.1.3 — Visões panorâmicas com status, progresso e filtros no Dashboard.
+let dashPanData=[];
+const dashPanEsc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
+function dashPanFiltered(includeStatus=true){
+  const c=document.getElementById('dashPanCompany')?.value||'';
+  const l=document.getElementById('dashPanLine')?.value||'';
+  const st=document.getElementById('dashPanStatus')?.value||'';
+  return dashPanData.filter(x=>(!c||x.company===c)&&(!l||x.line===l)&&(!includeStatus||!st||x.status===st));
+}
+function dashPanFill(id,vals,label){const e=document.getElementById(id);if(!e)return;const cur=e.value;e.innerHTML=`<option value="">${label}</option>`+[...new Set(vals.filter(Boolean))].sort((a,b)=>String(a).localeCompare(String(b),'pt-BR')).map(v=>`<option value="${dashPanEsc(v)}">${dashPanEsc(v)}</option>`).join('');if([...e.options].some(o=>o.value===cur))e.value=cur}
+function dashPanRenderSummary(){
+  const a=dashPanFiltered(true), total=a.length;
+  const done=a.filter(x=>x.status==='CONCLUÍDA').length;
+  const progress=a.filter(x=>x.status==='EM ANDAMENTO').length;
+  const pending=a.filter(x=>x.status==='PENDENTE').length;
+  const photos=a.reduce((n,x)=>n+Number(x.photo_count||0),0);
+  const pct=n=>total?Math.round(n*1000/total)/10:0;
+  const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v};
+  set('dashPanTotal',total);set('dashPanPending',pending);set('dashPanInProgress',progress);set('dashPanDone',done);set('dashPanPhotos',photos);
+  set('dashPanPendingPct',pct(pending)+'%');set('dashPanInProgressPct',pct(progress)+'%');set('dashPanDonePct',pct(done)+'%');set('dashPanPct',pct(done)+'%');
+  set('dashPanLegendDone',done);set('dashPanLegendProgress',progress);set('dashPanLegendPending',pending);
+  set('dashPanProgressText',`${done} de ${total} localidades concluídas · ${photos} foto(s) registradas.`);
+  const donut=document.getElementById('dashPanDonut');if(donut){const d=pct(done),p=pct(progress);donut.style.background=`conic-gradient(#20945b 0 ${d}%, #d58a12 ${d}% ${Math.min(100,d+p)}%, #c93c3c ${Math.min(100,d+p)}% 100%)`}
+  const bd=document.getElementById('dashPanBarDone'),bp=document.getElementById('dashPanBarProgress'),bn=document.getElementById('dashPanBarPending');
+  if(bd)bd.style.width=pct(done)+'%';if(bp)bp.style.width=pct(progress)+'%';if(bn)bn.style.width=pct(pending)+'%';
+}
+function dashPanLocations(){
+  const a=dashPanFiltered(true),el=document.getElementById('dashPanLocation');if(!el)return;
+  const cur=el.value;el.innerHTML='<option value="">Selecione</option>'+a.map(x=>`<option value="${x.id}">${dashPanEsc(x.location)} · ${dashPanEsc(x.status)}</option>`).join('');if([...el.options].some(o=>o.value===cur))el.value=cur;
+  if(!el.value){const g=document.getElementById('dashPanGallery');if(g)g.innerHTML='<p class="muted">Selecione uma localidade para visualizar as fotos.</p>'}
+  dashPanRenderSummary();
+}
+function dashPanShow(){const id=+document.getElementById('dashPanLocation')?.value,x=dashPanData.find(a=>a.id===id),g=document.getElementById('dashPanGallery');if(!g)return;if(!x){g.innerHTML='<p class="muted">Selecione uma localidade para visualizar as fotos.</p>';return}const photos=(x.points||[]).flatMap(p=>(p.photos||[]).map(ph=>`<figure><a href="${dashPanEsc(ph.url)}" target="_blank"><img loading="lazy" src="${dashPanEsc(ph.url)}"></a><figcaption><b>${dashPanEsc(p.name)}</b><br>${dashPanEsc(ph.uploaded_by)} · ${new Date(ph.created_at).toLocaleString('pt-BR')}</figcaption></figure>`));g.innerHTML=photos.join('')||`<div class="dashPanEmpty"><b>${dashPanEsc(x.location)}</b><span>${dashPanEsc(x.status)} · nenhuma foto registrada.</span></div>`}
+async function dashPanLoad(){try{const r=await fetch('/api/panoramas',{cache:'no-store'});if(!r.ok)throw new Error('HTTP '+r.status);const d=await r.json();dashPanData=d.locations||[];dashPanFill('dashPanCompany',dashPanData.map(x=>x.company),'Todas');dashPanFill('dashPanLine',dashPanData.map(x=>x.line),'Todas');dashPanLocations()}catch(e){console.warn('panorama dashboard',e);const g=document.getElementById('dashPanGallery');if(g)g.innerHTML='<p class="muted">Não foi possível carregar o progresso das visões panorâmicas.</p>'}}
+document.getElementById('dashPanCompany')?.addEventListener('change',()=>{const c=document.getElementById('dashPanCompany')?.value||'';dashPanFill('dashPanLine',dashPanData.filter(x=>!c||x.company===c).map(x=>x.line),'Todas');dashPanLocations()});
+document.getElementById('dashPanLine')?.addEventListener('change',dashPanLocations);document.getElementById('dashPanStatus')?.addEventListener('change',dashPanLocations);document.getElementById('dashPanLocation')?.addEventListener('change',dashPanShow);dashPanLoad();
+
+let chipDashData={locations:[],technicians:[],summary:{}};
+function chipDashEsc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function chipDashOperation(company){const t=String(company||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase();if(t.includes('CPTM'))return 'CPTM';if(t.includes('METRO'))return 'Metrô';if(t.includes('VIA MOBILIDADE'))return 'Via Mobilidade';if(t.includes('VIAQUATRO')||t.includes('VIA QUATRO'))return 'ViaQuatro';return company||'Outros'}
+function chipDashFill(id,vals,label){const e=document.getElementById(id);if(!e)return;const cur=e.value;e.innerHTML=`<option value="">${label}</option>`+[...new Set(vals.filter(Boolean))].sort().map(v=>`<option>${chipDashEsc(v)}</option>`).join('');if([...e.options].some(o=>o.value===cur))e.value=cur}
+function v413Norm(s){return String(s??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/\b(LINHA|METRO|CPTM|VIA|MOBILIDADE|QUATRO)\b/g,' ').replace(/[^A-Z0-9]+/g,' ').replace(/\s+/g,' ').trim()}
+function v413LooseMatch(a,b){if(!a||!b)return true;const A=v413Norm(a),B=v413Norm(b);return A===B||A.includes(B)||B.includes(A)}
+function chipDashFilteredRows(){
+  const op=document.getElementById('chipDashOperation')?.value||'',c=document.getElementById('chipDashCompany')?.value||'',l=document.getElementById('chipDashLine')?.value||'',loc=document.getElementById('chipDashLocation')?.value||'',test=document.getElementById('chipDashTestResult')?.value||'';
+  const gc=document.getElementById('execCompany')?.value||'',gl=document.getElementById('execLine')?.value||'',gs=document.getElementById('execStatus')?.value||'',gt=document.getElementById('execType')?.value||'';
+  const base=(chipDashData.locations||[]).filter(x=>(!op||chipDashOperation(x.company)===op)&&(!gc||v413LooseMatch(x.company,gc))&&(!gl||v413LooseMatch(x.line,gl))&&(!gt||gt==='VALIDADOR'));
+  let rows=base.filter(x=>(!c||x.company===c)&&(!l||x.line===l)&&(!loc||x.location===loc));
+  if(gs){rows=rows.map(x=>{const validators=(x.validators||[]).filter(v=>gs==='CONCLUIDA'?v.status==='CONCLUÍDA':gs==='PENDENTE'?v.status==='PENDENTE':gs==='EM ANDAMENTO'?v.status==='EM ANDAMENTO':gs==='SEM REGISTRO'?!v.swap_id:true);return {...x,validators,total:validators.length,concluded:validators.filter(v=>v.status==='CONCLUÍDA').length,in_progress:validators.filter(v=>v.status==='EM ANDAMENTO').length,pending:validators.filter(v=>v.status==='PENDENTE').length,percent:validators.length?Math.round(validators.filter(v=>v.status==='CONCLUÍDA').length/validators.length*100):0}}).filter(x=>x.total)}
+  if(test)rows=rows.map(x=>({...x,validators:(x.validators||[]).filter(v=>(v.test_result||'SEM_RESULTADO')===test)})).filter(x=>x.validators.length);
+  return {op,c,l,loc,test,base,rows}
+}
+function chipDashRender(){const f=chipDashFilteredRows(),{c,l,base,rows}=f;chipDashFill('chipDashCompany',base.map(x=>x.company),'Todas');chipDashFill('chipDashLine',base.filter(x=>!c||x.company===c).map(x=>x.line),'Todas');chipDashFill('chipDashLocation',base.filter(x=>(!c||x.company===c)&&(!l||x.line===l)).map(x=>x.location),'Todas');const total=rows.reduce((a,x)=>a+x.total,0),done=rows.reduce((a,x)=>a+x.concluded,0),prog=rows.reduce((a,x)=>a+x.in_progress,0),pend=rows.reduce((a,x)=>a+x.pending,0),pct=total?Math.round(done/total*1000)/10:0;[['chipDashTotal',total],['chipDashDone',done],['chipDashProgressN',prog],['chipDashPending',pend],['chipDashPct',pct+'%'],['chipLegendDone',done],['chipLegendProgress',prog],['chipLegendPending',pend],['chipDonutPct',pct+'%'],['chipDonutTotal',total+' total']].forEach(([i,v])=>{const e=document.getElementById(i);if(e)e.textContent=v});const bar=document.getElementById('chipDashBar');if(bar)bar.style.width=Math.min(pct,100)+'%';[['chipChartDone',done],['chipChartProgress',prog],['chipChartPending',pend]].forEach(([id,n])=>{const e=document.getElementById(id);if(e)e.style.width=(total?(n/total*100):0)+'%'});const donut=document.getElementById('chipDashDonut');if(donut){const d=total?done/total*100:0,p=total?prog/total*100:0;donut.style.background=`conic-gradient(#16824b 0 ${d}%, #d98b00 ${d}% ${d+p}%, #c93b3b ${d+p}% 100%)`}const el=document.getElementById('chipDashLocations');if(el)el.innerHTML=`<table class="chipDashTable"><thead><tr><th>Localidade</th><th>Progresso</th><th>Concl.</th><th>And.</th><th>Pend.</th></tr></thead><tbody>${[...rows].sort((a,b)=>a.percent-b.percent).map(x=>`<tr><td>${chipDashEsc(x.line)} · ${chipDashEsc(x.location)}</td><td><b>${x.percent}%</b></td><td>${x.concluded}/${x.total}</td><td>${x.in_progress}</td><td>${x.pending}</td></tr>`).join('')||'<tr><td colspan="5">Sem dados.</td></tr>'}</tbody></table>`;const oe=document.getElementById('chipDashOperations');if(oe){const ops={};(chipDashData.locations||[]).forEach(x=>{const k=chipDashOperation(x.company),o=ops[k]??={total:0,done:0,prog:0,pend:0};o.total+=x.total;o.done+=x.concluded;o.prog+=x.in_progress;o.pend+=x.pending});oe.innerHTML=Object.entries(ops).sort((a,b)=>(b[1].done/(b[1].total||1))-(a[1].done/(a[1].total||1))).map(([k,o])=>{const pc=o.total?Math.round(o.done/o.total*1000)/10:0;return `<div class="chipOpRow"><b>${chipDashEsc(k)}</b><div class="chipOpTrack"><i style="width:${pc}%"></i></div><span>${pc}% · ${o.done}/${o.total}</span></div>`}).join('')}const tech={};rows.forEach(x=>(x.validators||[]).forEach(v=>{if(!v.technician)return;const t=tech[v.technician]??={name:v.technician,total:0,done:0};t.total++;if(v.status==='CONCLUÍDA')t.done++}));const te=document.getElementById('chipDashTechs');if(te)te.innerHTML=`<table class="chipDashTable"><thead><tr><th>Técnico</th><th>Concluídas</th><th>Atividades</th></tr></thead><tbody>${Object.values(tech).sort((a,b)=>b.done-a.done).map(t=>`<tr><td>${chipDashEsc(t.name)}</td><td><b>${t.done}</b></td><td>${t.total}</td></tr>`).join('')||'<tr><td colspan="3">Sem atividade registrada.</td></tr>'}</tbody></table>`;chipDashRenderTestResults(rows)}
+function chipDashRenderTestResults(rows){const labels={TESTADO_OK:'Testado - OK',TESTADO_COM_DEFEITO:'Testado - com defeito',NAO_FOI_POSSIVEL_TESTAR:'Não foi possível testar',EQUIPAMENTO_INOPERANTE:'Equipamento inoperante',OUTRO:'Outro',SEM_RESULTADO:'Sem resultado'};const counts={};let total=0,pending=[];rows.forEach(x=>(x.validators||[]).forEach(v=>{if(!v.swap_id)return;const r=v.test_result||'SEM_RESULTADO';counts[r]=(counts[r]||0)+1;total++;if(r!=='TESTADO_OK')pending.push({x,v,r})}));const ok=counts.TESTADO_OK||0;const okEl=document.getElementById('chipTestOk'),pe=document.getElementById('chipTestPending');if(okEl)okEl.textContent=ok;if(pe)pe.textContent=pending.length;const chart=document.getElementById('chipTestResultChart');if(chart)chart.innerHTML=Object.entries(labels).map(([k,label])=>{const n=counts[k]||0,pct=total?Math.round(n/total*100):0;return `<div class="chipResultRow"><span>${chipDashEsc(label)}</span><div><i style="width:${pct}%"></i></div><b>${n}</b></div>`}).join('');const list=document.getElementById('chipTechnicalPendingList');if(list)list.innerHTML=pending.length?`<table class="chipDashTable"><thead><tr><th>Localidade</th><th>Terminal</th><th>Resultado</th><th>Técnico</th></tr></thead><tbody>${pending.slice(0,50).map(({x,v,r})=>`<tr><td>${chipDashEsc(x.line)} · ${chipDashEsc(x.location)}</td><td>${chipDashEsc(v.label||v.base_asset_id||'')}</td><td>${chipDashEsc(labels[r]||r)}</td><td>${chipDashEsc(v.technician||'—')}</td></tr>`).join('')}</tbody></table>`:'<p class="muted">Nenhuma pendência técnica registrada.</p>'}
+function chipDashExportCsv(){const {rows,op,c,l,loc}=chipDashFilteredRows();const total=rows.reduce((a,x)=>a+x.total,0),done=rows.reduce((a,x)=>a+x.concluded,0),prog=rows.reduce((a,x)=>a+x.in_progress,0),pend=rows.reduce((a,x)=>a+x.pending,0),pct=total?Math.round(done/total*1000)/10:0;const q=v=>'"'+String(v??'').replace(/"/g,'""')+'"';const lines=[['RELATÓRIO TROCA DE CHIPS'],['Operação',op||'Todos'],['Empresa',c||'Todas'],['Linha',l||'Todas'],['Localidade',loc||'Todas'],[],['RESUMO'],['Total previsto','Concluídos','Em andamento','Pendentes','Progresso %'],[total,done,prog,pend,pct],[],['DETALHAMENTO'],['Operação','Empresa','Linha','Localidade','Terminal / ativo','Modelo','Status','Técnico']];rows.forEach(x=>(x.validators||[]).forEach(v=>lines.push([chipDashOperation(x.company),x.company,x.line,x.location,v.label||v.base_asset_id||'',v.model||'',v.status||'PENDENTE',v.technician||''])));const csv='\ufeff'+lines.map(r=>r.map(q).join(';')).join('\r\n');const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='troca_chips_'+new Date().toISOString().slice(0,10)+'.csv';document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url)}
+async function loadChipDashboard(){try{const j=await fetch('/api/chip-swaps/dashboard',{cache:'no-store'}).then(r=>r.json());if(!j.ok)return;chipDashData=j;chipDashFill('chipDashOperation',j.locations.map(x=>chipDashOperation(x.company)),'Todos');chipDashFill('chipDashCompany',j.locations.map(x=>x.company),'Todas');chipDashFill('chipDashLine',j.locations.map(x=>x.line),'Todas');chipDashFill('chipDashLocation',j.locations.map(x=>x.location),'Todas');chipDashRender()}catch(e){console.warn('chip dashboard',e)}}
+['chipDashOperation','chipDashCompany','chipDashLine','chipDashLocation','chipDashTestResult'].forEach(id=>document.getElementById(id)?.addEventListener('change',chipDashRender));document.getElementById('chipDashExport')?.addEventListener('click',()=>{const f=chipDashFilteredRows();const p=new URLSearchParams();if(f.op)p.set('operation',f.op);if(f.c)p.set('company',f.c);if(f.l)p.set('line',f.l);if(f.loc)p.set('location',f.loc);window.location.href='/api/chip-swaps/export.xlsx?'+p.toString()});loadChipDashboard();
+
+document.getElementById('chipDashExportPending')?.addEventListener('click',()=>{const f=chipDashFilteredRows();const p=new URLSearchParams({pending_only:'1'});if(f.op)p.set('operation',f.op);if(f.c)p.set('company',f.c);if(f.l)p.set('line',f.l);if(f.loc)p.set('location',f.loc);if(f.test)p.set('test_result',f.test);window.location.href='/api/chip-swaps/export.xlsx?'+p.toString()});
+
+// V41.3 — Dashboard EMV sincronizado com filtros executivos
+let emvDashRows=[];
+function emvDashFiltered(){const c=document.getElementById('execCompany')?.value||'',l=document.getElementById('execLine')?.value||'',st=document.getElementById('execStatus')?.value||'',t=document.getElementById('execType')?.value||'';if(t&&t!=='BLOQUEIO')return [];return emvDashRows.filter(x=>(!c||v413LooseMatch(x.company,c))&&(!l||v413LooseMatch(x.line,l))&&(!st||(st==='CONCLUIDA'?x.status==='CONCLUÍDA':st==='PENDENTE'?x.status==='PENDENTE':st==='EM ANDAMENTO'?x.status==='EM ANDAMENTO':st==='SEM REGISTRO'?!x.swap_id:true)))}
+function renderEmvDashboard(){const rows=emvDashFiltered(),total=rows.length,done=rows.filter(x=>x.status==='CONCLUÍDA').length,progress=rows.filter(x=>x.status==='EM ANDAMENTO').length,pend=rows.filter(x=>x.status==='PENDENTE').length,pct=total?Math.round(done/total*1000)/10:0;const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v};set('emvDashTotal',total);set('emvDashDone',done);set('emvDashPending',pend+progress);set('emvDashPct',pct+'%');set('emvDashDonePct',pct+'%');set('emvDashText',`${done} de ${total} bloqueios concluídos · ${progress} em andamento · ${pend} pendentes.`);const bd=document.getElementById('emvBarDone'),bp=document.getElementById('emvBarPending');if(bd)bd.style.width=pct+'%';if(bp)bp.style.width=(100-pct)+'%';const days={};rows.filter(x=>x.completed_at).forEach(x=>{const d=x.completed_at.slice(0,10);days[d]=(days[d]||0)+1});let cumulative=0;const data=Object.entries(days).sort().map(([d,n])=>({d,n,c:(cumulative+=n)})),el=document.getElementById('emvEvolution');if(el){if(!data.length){el.innerHTML='<p class="muted">Ainda não há histórico de conclusões para os filtros selecionados.</p>'}else{const max=Math.max(...data.map(x=>x.c),1);el.innerHTML=data.map(x=>`<div class="emvEvolutionRow"><span>${x.d.split('-').reverse().join('/')}</span><div><i style="width:${x.c/max*100}%"></i></div><b>${x.c}</b></div>`).join('')}}const link=document.querySelector('[data-v23-panel="emv"] a[href^="/api/emv-chip-swaps/export.xlsx"]');if(link){const p=new URLSearchParams();const c=document.getElementById('execCompany')?.value||'',l=document.getElementById('execLine')?.value||'',st=document.getElementById('execStatus')?.value||'';if(c)p.set('company',c);if(l)p.set('line',l);if(st)p.set('status',st==='CONCLUIDA'?'CONCLUÍDA':st);link.href='/api/emv-chip-swaps/export.xlsx?'+p.toString()}}
+async function loadEmvDashboard(){const panel=document.querySelector('[data-v23-panel="emv"]');if(!panel)return;try{const j=await (await fetch('/api/emv-chip-swaps',{cache:'no-store'})).json();emvDashRows=j.rows||[];renderEmvDashboard()}catch(e){console.warn('EMV dashboard',e)}}
+['execCompany','execLine','execStatus','execType'].forEach(id=>document.getElementById(id)?.addEventListener('change',()=>{chipDashRender();renderEmvDashboard()}));loadEmvDashboard();
+
+// V44.0 — Dashboard 2.0 consolidada / Inventário ATM 360.
+let atmDashData=null;
+const atmPalette=['#1d4ed8','#0891b2','#7c3aed','#059669','#d97706','#dc2626','#475569'];
+function atmEsc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function atmParams(){const p=new URLSearchParams();[['company','atmFCompany'],['line','atmFLine'],['locality','atmFLocation'],['model','atmFModel'],['contract','atmFContract'],['ownership','atmFOwnership'],['status','atmFStatus']].forEach(([k,id])=>{const e=document.getElementById(id);if(e?.value)p.set(k,e.value)});return p}
+function atmFill(id,values,label){const e=document.getElementById(id);if(!e)return;const old=e.value;e.innerHTML=`<option value="">${label}</option>`+(values||[]).map(v=>`<option value="${atmEsc(v)}">${atmEsc(v)}</option>`).join('');if([...e.options].some(o=>o.value===old))e.value=old}
+function atmSetFilter(id,value){const f=document.getElementById(id);if(!f)return; if(![...f.options].some(o=>o.value===value))f.add(new Option(value,value));f.value=value;loadAtmDashboard(false)}
+function atmBars(id,obj,filterId,limit=0){const e=document.getElementById(id);if(!e)return;let a=Object.entries(obj||{}).sort((x,y)=>y[1]-x[1]);if(limit)a=a.slice(0,limit);const m=Math.max(1,...a.map(x=>x[1]));e.innerHTML=a.map(([k,v])=>`<button class="barRow v424ClickableBar" data-value="${atmEsc(k)}"><span title="${atmEsc(k)}">${atmEsc(k)}</span><i><b style="width:${v/m*100}%"></b></i><strong>${v}</strong></button>`).join('')||'<p class="muted">Sem dados.</p>';e.querySelectorAll('button').forEach(b=>b.onclick=()=>atmSetFilter(filterId,b.dataset.value))}
+function atmColumns(obj){const e=document.getElementById('atmColumnOperator');if(!e)return;const a=Object.entries(obj||{}).sort((x,y)=>y[1]-x[1]).slice(0,10),m=Math.max(1,...a.map(x=>x[1]));e.innerHTML=a.map(([k,v],i)=>`<button class="v430Column" data-value="${atmEsc(k)}"><b>${v}</b><i style="height:${Math.max(8,v/m*82)}%;--bar:${atmPalette[i%atmPalette.length]}"></i><span title="${atmEsc(k)}">${atmEsc(k)}</span></button>`).join('');e.querySelectorAll('button').forEach(b=>b.onclick=()=>atmSetFilter('atmFCompany',b.dataset.value))}
+function atmDonut(obj,id,legendId,filterId){const entries=Object.entries(obj||{}).sort((a,b)=>b[1]-a[1]),total=entries.reduce((a,x)=>a+x[1],0)||1;let at=0,parts=[];entries.slice(0,6).forEach(([k,v],i)=>{const n=at+v/total*100;parts.push(`${atmPalette[i%atmPalette.length]} ${at}% ${n}%`);at=n});if(at<100)parts.push(`#e8eef5 ${at}% 100%`);const d=document.getElementById(id);if(d)d.style.background=`conic-gradient(${parts.join(',')})`;const l=document.getElementById(legendId);if(l){l.innerHTML=entries.slice(0,6).map(([k,v],i)=>`<button data-value="${atmEsc(k)}"><i style="background:${atmPalette[i%atmPalette.length]}"></i>${atmEsc(k)} <b>${v}</b></button>`).join('');l.querySelectorAll('button').forEach(b=>b.onclick=()=>atmSetFilter(filterId,b.dataset.value))}}
+function atmHeatmap(obj){const e=document.getElementById('atmLineHeatmap');if(!e)return;const a=Object.entries(obj||{}).sort((x,y)=>y[1]-x[1]).slice(0,12),m=Math.max(1,...a.map(x=>x[1]));e.innerHTML=a.map(([k,v],i)=>`<button class="v430Heat" data-value="${atmEsc(k)}" style="--intensity:${20+Math.round(v/m*60)}%;--heat:${atmPalette[i%4]}"><b>${v}</b><span>${atmEsc(k)}</span></button>`).join('');e.querySelectorAll('button').forEach(b=>b.onclick=()=>atmSetFilter('atmFLine',b.dataset.value))}
+function atmContracts(d){const e=document.getElementById('atmContractStack');if(!e)return;const rows=d.assets||[],map={};rows.forEach(x=>{const k=x.contract||'SEM CONTRATO';map[k]??={total:0,leasing:0};map[k].total++;if(String(x.ownership).toUpperCase()==='LEASING')map[k].leasing++});const a=Object.entries(map).sort((x,y)=>y[1].total-x[1].total).slice(0,10),m=Math.max(1,...a.map(x=>x[1].total));e.innerHTML=a.map(([k,v])=>`<button class="v430StackRow" data-value="${atmEsc(k)}"><div class="v430StackLabel"><span>${atmEsc(k)}</span><b>${v.total}</b></div><div class="v430StackBar" style="width:${Math.max(18,v.total/m*100)}%"><i style="width:${(v.total-v.leasing)/v.total*100}%"></i><i style="width:${v.leasing/v.total*100}%"></i></div></button>`).join('');e.querySelectorAll('button').forEach(b=>b.onclick=()=>atmSetFilter('atmFContract',b.dataset.value))}
+function atmDrill(d){const e=document.getElementById('atmDrillCards');if(!e)return;const loc=Object.entries(d.locations||{}).sort((a,b)=>b[1]-a[1]).slice(0,12);e.innerHTML=loc.map(([k,v])=>`<button data-value="${atmEsc(k)}"><small>LOCALIDADE</small><b>${v} ATM${v!==1?'s':''}</b><span>${atmEsc(k)}</span></button>`).join('');e.querySelectorAll('button').forEach(b=>b.onclick=()=>atmSetFilter('atmFLocation',b.dataset.value))}
+async function loadAtmDashboard(fillOptions=true){const r=await fetch('/api/dashboard/inventory-atm?'+atmParams(),{cache:'no-store'}),d=await r.json();if(!d.ok)return;atmDashData=d;atmFill('atmFCompany',d.options.companies,'Todas operadoras');atmFill('atmFLine',d.options.lines,'Todas linhas');atmFill('atmFLocation',d.options.localities,'Todas localidades');atmFill('atmFModel',d.options.models,'Todos modelos');atmFill('atmFContract',d.options.contracts,'Todos contratos');atmFill('atmFOwnership',d.options.ownership,'Todo tipo de posse');atmFill('atmFStatus',d.options.statuses,'Todos status');
+const assets=d.assets||[],set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v};set('atmKTotal',d.total);set('atmKAllocated',d.allocated||0);set('atmKStock',d.stock||0);set('atmKCptmStations',d.cptm_stations||0);set('atmKMetroStations',d.metro_stations||0);set('atmKTeamviewer',d.teamviewer_count||0);set('atmRowsTag',d.total+' ATMs');set('atmDonutTotal',d.total);set('atmAllocationA',d.allocated||0);set('atmAllocationS',d.stock||0);const pct=d.total?Math.round((d.allocated||0)/d.total*100):0;set('atmAllocationPct',pct+'%');const ring=document.getElementById('atmAllocationRing');if(ring)ring.style.setProperty('--pct',pct+'%');const leasing=assets.filter(x=>String(x.ownership).toUpperCase()==='LEASING').length;set('atmLeasingCount',leasing);
+atmColumns(d.operators);atmDonut(d.models,'atmModelDonut','atmModelLegend','atmFModel');atmDonut(d.ownership,'atmOwnershipDonut','atmOwnershipLegend','atmFOwnership');atmBars('atmLocationRanking',d.locations,'atmFLocation',10);atmHeatmap(d.lines);atmContracts(d);atmDrill(d);
+const cov=document.getElementById('atmCoverageTiles');if(cov){cov.innerHTML=`<button data-company="CPTM"><b>${d.cptm_stations||0}</b><span>CPTM</span><small>estações com ATM</small></button><button data-company="METRÔ"><b>${d.metro_stations||0}</b><span>Metrô</span><small>estações com ATM</small></button>`;cov.querySelectorAll('button').forEach(b=>b.onclick=()=>atmSetFilter('atmFCompany',b.dataset.company))}
+set('atmDrillTitle',document.getElementById('atmFLocation')?.value||document.getElementById('atmFLine')?.value||document.getElementById('atmFCompany')?.value||'Explorar parque');const body=document.getElementById('atmRows');body.innerHTML=assets.map((x,i)=>`<tr class="atmAssetRow" data-index="${i}"><td>${atmEsc(x.company)}</td><td>${atmEsc(x.line)}</td><td><b>${atmEsc(x.locality)}</b></td><td><button class="atmAssetLink" data-index="${i}">${atmEsc(x.asset_key)}</button></td><td>${atmEsc(x.model)}</td><td>${atmEsc(x.contract)}</td><td>${atmEsc(x.ownership)}</td><td>${atmEsc(x.teamviewer||'—')}</td><td><code>${atmEsc(x.teamviewer_id||'—')}</code></td><td><code>${atmEsc(x.ip||'—')}</code></td><td>${atmEsc(x.status)}</td></tr>`).join('')||'<tr><td colspan="11">Sem ATMs no recorte.</td></tr>';body.querySelectorAll('.atmAssetLink').forEach(b=>b.onclick=()=>atmOpen360(assets[Number(b.dataset.index)]))}
+function atmOpen360(x){if(!x)return;const p=document.getElementById('atm360Panel'),b=document.getElementById('atm360Body');document.getElementById('atm360Title').textContent=(x.asset_key||'ATM')+' · ATM 360°';const items=[['Operação',x.company],['Linha',x.line],['Localidade',x.locality],['Modelo',x.model],['Série',x.serial],['Fornecedor',x.supplier],['Contrato',x.contract],['Posse',x.ownership],['Status',x.status],['IP',x.ip],['Aplicação',x.application],['TeamViewer',x.teamviewer],['ID TeamViewer',x.teamviewer_id],['ID TOP',x.id_top]];b.innerHTML=items.map(([k,v])=>`<article><small>${atmEsc(k)}</small><b>${atmEsc(v||'—')}</b>${k==='ID TeamViewer'&&v?`<button class="miniBtn atmCopyTV" data-value="${atmEsc(v)}">Copiar ID</button>`:''}</article>`).join('');p.hidden=false;p.scrollIntoView({behavior:'smooth',block:'nearest'});b.querySelector('.atmCopyTV')?.addEventListener('click',async e=>{try{await navigator.clipboard.writeText(e.currentTarget.dataset.value);e.currentTarget.textContent='Copiado'}catch(_e){prompt('ID TeamViewer:',e.currentTarget.dataset.value)}})}
+const atmFilterIds=['atmFCompany','atmFLine','atmFLocation','atmFModel','atmFContract','atmFOwnership','atmFStatus'];
+if(document.getElementById('atmClear')){atmFilterIds.forEach(id=>document.getElementById(id)?.addEventListener('change',()=>loadAtmDashboard(true)));document.getElementById('atmClear').onclick=()=>{atmFilterIds.forEach(id=>document.getElementById(id).value='');loadAtmDashboard(true)};document.getElementById('atmDashRefresh').onclick=()=>loadAtmDashboard(true);document.getElementById('atmShowLocations').onclick=()=>{document.getElementById('atmAssetDetails')?.setAttribute('open','');document.getElementById('atmDrillTitle')?.scrollIntoView({behavior:'smooth'})};document.getElementById('atm360Close')?.addEventListener('click',()=>document.getElementById('atm360Panel').hidden=true);document.getElementById('atmDashExport').onclick=()=>{if(!atmDashData)return;const rows=[['Operadora','Linha','Localidade','ATM','Modelo','Contrato','Posse','TeamViewer','ID TeamViewer','IP','Status'],...(atmDashData.assets||[]).map(x=>[x.company,x.line,x.locality,x.asset_key,x.model,x.contract,x.ownership,x.teamviewer,x.teamviewer_id,x.ip,x.status])];const csv=rows.map(r=>r.map(v=>'"'+String(v??'').replaceAll('"','""')+'"').join(';')).join('\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\ufeff'+csv],{type:'text/csv'}));a.download='dashboard_atm_v44.csv';a.click()};loadAtmDashboard(true)}
