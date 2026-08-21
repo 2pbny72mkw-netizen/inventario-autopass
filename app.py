@@ -39,7 +39,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V52.3"
+APP_RELEASE = "V52.4"
 DASHBOARD_RELEASE = "dashboard-v47"
 TEAMS_RELEASE = "teams-v42-4"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -136,6 +136,10 @@ class FinancialMonthlyCost(db.Model):
     supplier_id = db.Column(db.Integer, db.ForeignKey("financial_suppliers.id"), nullable=False, index=True)
     service_id = db.Column(db.Integer, db.ForeignKey("financial_services.id"), nullable=False, index=True)
     amount = db.Column(db.Float, nullable=False, default=0)
+    forecast_amount = db.Column(db.Float)
+    cost_center = db.Column(db.String(60), nullable=False, default="SUPORTE_CAMPO", index=True)
+    project = db.Column(db.String(220))
+    service_text = db.Column(db.String(300))
     allocation_json = db.Column(db.Text, nullable=False, default="{}")
     notes = db.Column(db.Text)
     created_by = db.Column(db.Integer, db.ForeignKey("users.id"))
@@ -7309,6 +7313,25 @@ def emv_chip_export():
 
 
 
+def migrate_financial_v524_columns():
+    """V52.4: amplia lançamentos sem perder histórico existente."""
+    try:
+        inspector=db.inspect(db.engine)
+        if "financial_monthly_costs" not in inspector.get_table_names():
+            return
+        cols={c["name"] for c in inspector.get_columns("financial_monthly_costs")}
+        commands=[]
+        if "forecast_amount" not in cols: commands.append("ALTER TABLE financial_monthly_costs ADD COLUMN forecast_amount FLOAT")
+        if "cost_center" not in cols: commands.append("ALTER TABLE financial_monthly_costs ADD COLUMN cost_center VARCHAR(60) DEFAULT 'SUPORTE_CAMPO'")
+        if "project" not in cols: commands.append("ALTER TABLE financial_monthly_costs ADD COLUMN project VARCHAR(220)")
+        if "service_text" not in cols: commands.append("ALTER TABLE financial_monthly_costs ADD COLUMN service_text VARCHAR(300)")
+        for command in commands: db.session.execute(db.text(command))
+        if commands:
+            db.session.execute(db.text("UPDATE financial_monthly_costs SET cost_center='SUPORTE_CAMPO' WHERE cost_center IS NULL OR cost_center=''"))
+            db.session.commit()
+    except Exception:
+        db.session.rollback(); raise
+
 def _financial_admin_allowed():
     return session.get("role") in ("manager", "atm_financial_admin")
 
@@ -7360,19 +7383,51 @@ def financial_supplier_create_api():
     d=request.get_json(silent=True) or {}; name=(d.get("name") or "").strip()
     if not name: return jsonify({"ok":False,"error":"Informe a empresa/fornecedor."}),400
     row=FinancialSupplier.query.filter(func.lower(FinancialSupplier.name)==name.lower()).first()
-    if row: return jsonify({"ok":True,"id":row.id,"existing":True})
+    if row:
+        if not row.active: row.active=True; db.session.commit()
+        return jsonify({"ok":True,"id":row.id,"existing":True})
     row=FinancialSupplier(name=name,created_by=session.get("user_id"));db.session.add(row);db.session.flush()
     db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="FIN_SUPPLIER_CREATE",entity_type="financial_supplier",entity_id=str(row.id),detail=name));db.session.commit()
     return jsonify({"ok":True,"id":row.id})
 
-@app.post("/api/financeiro/servicos")
+@app.delete("/api/financeiro/fornecedores/<int:row_id>")
 @login_required
-def financial_service_create_api():
-    if not _financial_admin_allowed(): return jsonify({"ok":False,"error":"Sem permissão."}),403
-    d=request.get_json(silent=True) or {}; sid=int(d.get("supplier_id") or 0); name=(d.get("name") or "").strip()
-    if not db.session.get(FinancialSupplier,sid) or not name: return jsonify({"ok":False,"error":"Fornecedor e serviço são obrigatórios."}),400
-    row=FinancialService(supplier_id=sid,name=name,description=(d.get("description") or "").strip(),category=(d.get("category") or "OUTROS").strip().upper(),created_by=session.get("user_id"));db.session.add(row);db.session.flush()
-    db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="FIN_SERVICE_CREATE",entity_type="financial_service",entity_id=str(row.id),detail=name));db.session.commit();return jsonify({"ok":True,"id":row.id})
+def financial_supplier_delete_api(row_id):
+    if session.get("role")!="manager": return jsonify({"ok":False,"error":"Somente ADM pode excluir fornecedor."}),403
+    row=db.session.get(FinancialSupplier,row_id)
+    if not row: return jsonify({"ok":False,"error":"Fornecedor não encontrado."}),404
+    name=row.name
+    costs=FinancialMonthlyCost.query.filter_by(supplier_id=row.id).all()
+    for c in costs: db.session.delete(c)
+    services=FinancialService.query.filter_by(supplier_id=row.id).all()
+    for sv in services: db.session.delete(sv)
+    db.session.delete(row)
+    db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="FIN_SUPPLIER_DELETE",entity_type="financial_supplier",entity_id=str(row_id),detail=f"{name} · {len(costs)} lançamento(s) removido(s)"));db.session.commit()
+    return jsonify({"ok":True})
+
+@app.delete("/api/financeiro/servicos/<int:row_id>")
+@login_required
+def financial_service_delete_api(row_id):
+    if session.get("role")!="manager": return jsonify({"ok":False,"error":"Somente ADM pode excluir serviço."}),403
+    row=db.session.get(FinancialService,row_id)
+    if not row: return jsonify({"ok":False,"error":"Serviço não encontrado."}),404
+    used=FinancialMonthlyCost.query.filter_by(service_id=row.id).count()
+    if used: return jsonify({"ok":False,"error":"Serviço possui lançamentos. Edite/exclua os lançamentos primeiro."}),409
+    name=row.name;db.session.delete(row);db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="FIN_SERVICE_DELETE",entity_type="financial_service",entity_id=str(row_id),detail=name));db.session.commit();return jsonify({"ok":True})
+
+def _fin_service_for_text(supplier_id, service_text):
+    text=(service_text or "").strip()
+    if not text: return None
+    row=FinancialService.query.filter(FinancialService.supplier_id==supplier_id,func.lower(FinancialService.name)==text.lower()).first()
+    if not row:
+        row=FinancialService(supplier_id=supplier_id,name=text,description=text,category="OUTROS",created_by=session.get("user_id"));db.session.add(row);db.session.flush()
+    return row
+
+def _fin_payload(row, users=None, sups=None, svcs=None):
+    users=users or {u.id:u.name for u in User.query.all()}; sups=sups or {x.id:x.name for x in FinancialSupplier.query.all()}; svcs=svcs or {x.id:x.name for x in FinancialService.query.all()}
+    try: alloc=json.loads(row.allocation_json or "{}")
+    except: alloc={}
+    return {"id":row.id,"competence":row.competence,"cost_center":getattr(row,"cost_center",None) or "SUPORTE_CAMPO","project":getattr(row,"project",None) or "","supplier_id":row.supplier_id,"supplier":sups.get(row.supplier_id,""),"service":getattr(row,"service_text",None) or svcs.get(row.service_id,""),"amount":round(float(row.amount or 0),2),"forecast_amount":None if getattr(row,"forecast_amount",None) is None else round(float(row.forecast_amount),2),"allocation":alloc,"notes":row.notes or "","updated_by":users.get(row.updated_by or row.created_by,""),"updated_at":row.updated_at.isoformat()+"Z"}
 
 @app.route("/api/financeiro/lancamentos",methods=["GET","POST"])
 @login_required
@@ -7382,38 +7437,41 @@ def financial_monthly_costs_api():
         comp=(request.args.get("competence") or "").strip();q=FinancialMonthlyCost.query
         if comp:q=q.filter_by(competence=comp)
         users={u.id:u.name for u in User.query.all()}; sups={x.id:x.name for x in FinancialSupplier.query.all()}; svcs={x.id:x.name for x in FinancialService.query.all()}
-        rows=[]
-        for x in q.order_by(FinancialMonthlyCost.competence.desc(),FinancialMonthlyCost.id.desc()).all():
-            try: alloc=json.loads(x.allocation_json or "{}")
-            except: alloc={}
-            rows.append({"id":x.id,"competence":x.competence,"supplier":sups.get(x.supplier_id,""),"service":svcs.get(x.service_id,""),"amount":x.amount,"allocation":alloc,"notes":x.notes or "","updated_by":users.get(x.updated_by or x.created_by,""),"updated_at":x.updated_at.isoformat()+"Z"})
-        return jsonify({"ok":True,"rows":rows})
+        return jsonify({"ok":True,"rows":[_fin_payload(x,users,sups,svcs) for x in q.order_by(FinancialMonthlyCost.competence.desc(),FinancialMonthlyCost.id.desc()).all()]})
     if not _financial_admin_allowed(): return jsonify({"ok":False,"error":"Sem permissão."}),403
-    d=request.get_json(silent=True) or {}; comp=(d.get("competence") or "").strip(); sid=int(d.get("supplier_id") or 0); service_id=int(d.get("service_id") or 0)
-    try: amount=float(d.get("amount") or 0); alloc={k:float(v or 0) for k,v in (d.get("allocation") or {}).items()}
+    d=request.get_json(silent=True) or {}; comp=(d.get("competence") or "").strip(); sid=int(d.get("supplier_id") or 0); service_text=(d.get("service") or "").strip(); center=(d.get("cost_center") or "SUPORTE_CAMPO").strip().upper(); project=(d.get("project") or "").strip()
+    try:
+        amount=round(float(str(d.get("amount") or 0).replace(",",".")),2); forecast=d.get("forecast_amount"); forecast=None if forecast in (None,"") else round(float(str(forecast).replace(",",".")),2); alloc={str(k).upper():round(float(v or 0),2) for k,v in (d.get("allocation") or {}).items() if float(v or 0)>0}
     except: return jsonify({"ok":False,"error":"Valor/rateio inválido."}),400
     if len(comp)!=7 or comp[4]!="-" or amount<0: return jsonify({"ok":False,"error":"Competência e valor são obrigatórios."}),400
-    if not db.session.get(FinancialSupplier,sid) or not db.session.get(FinancialService,service_id): return jsonify({"ok":False,"error":"Fornecedor/serviço inválido."}),400
-    total=round(sum(alloc.values()),4)
-    if abs(total-100)>0.01: return jsonify({"ok":False,"error":f"O rateio deve totalizar 100%. Atual: {total:.2f}%."}),400
-    row=FinancialMonthlyCost(competence=comp,supplier_id=sid,service_id=service_id,amount=amount,allocation_json=json.dumps(alloc,ensure_ascii=False),notes=(d.get("notes") or "").strip(),created_by=session.get("user_id"),updated_by=session.get("user_id"));db.session.add(row);db.session.flush()
-    db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="FIN_MONTHLY_COST_CREATE",entity_type="financial_monthly_cost",entity_id=str(row.id),detail=f"{comp} · R$ {amount:.2f} · rateio {total:.2f}%"));db.session.commit();return jsonify({"ok":True,"id":row.id})
+    supplier=db.session.get(FinancialSupplier,sid)
+    if not supplier or not service_text: return jsonify({"ok":False,"error":"Fornecedor e serviço são obrigatórios."}),400
+    total=round(sum(alloc.values()),2)
+    if not alloc or abs(total-100)>0.001: return jsonify({"ok":False,"error":f"O rateio deve totalizar 100%. Atual: {total:.2f}%."}),400
+    service=_fin_service_for_text(sid,service_text)
+    row=FinancialMonthlyCost(competence=comp,supplier_id=sid,service_id=service.id,service_text=service_text,amount=amount,forecast_amount=forecast,cost_center=center,project=project,allocation_json=json.dumps(alloc,ensure_ascii=False),notes=(d.get("notes") or "").strip(),created_by=session.get("user_id"),updated_by=session.get("user_id"));db.session.add(row);db.session.flush()
+    db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="FIN_MONTHLY_COST_CREATE",entity_type="financial_monthly_cost",entity_id=str(row.id),detail=f"{comp} · {center} · {supplier.name} · {service_text} · R$ {amount:.2f}"));db.session.commit();return jsonify({"ok":True,"id":row.id})
 
-@app.put("/api/financeiro/lancamentos/<int:row_id>")
+@app.route("/api/financeiro/lancamentos/<int:row_id>",methods=["PUT","DELETE"])
 @login_required
 def financial_monthly_cost_update_api(row_id):
-    if not _financial_admin_allowed(): return jsonify({"ok":False,"error":"Sem permissão."}),403
     row=db.session.get(FinancialMonthlyCost,row_id)
     if not row: return jsonify({"ok":False,"error":"Lançamento não encontrado."}),404
-    d=request.get_json(silent=True) or {}
-    try: amount=float(d.get("amount",row.amount)); alloc={k:float(v or 0) for k,v in (d.get("allocation") or json.loads(row.allocation_json or "{}")).items()}
+    if request.method=="DELETE":
+        if session.get("role")!="manager": return jsonify({"ok":False,"error":"Somente ADM pode excluir lançamento."}),403
+        detail=f"{row.competence} · R$ {row.amount:.2f}";db.session.delete(row);db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="FIN_MONTHLY_COST_DELETE",entity_type="financial_monthly_cost",entity_id=str(row_id),detail=detail));db.session.commit();return jsonify({"ok":True})
+    if not _financial_admin_allowed(): return jsonify({"ok":False,"error":"Sem permissão."}),403
+    d=request.get_json(silent=True) or {}; sid=int(d.get("supplier_id") or row.supplier_id); service_text=(d.get("service") or getattr(row,"service_text",None) or "").strip(); center=(d.get("cost_center") or getattr(row,"cost_center",None) or "SUPORTE_CAMPO").strip().upper(); project=(d.get("project",getattr(row,"project",None)) or "").strip(); comp=(d.get("competence") or row.competence).strip()
+    try:
+        amount=round(float(str(d.get("amount",row.amount)).replace(",",".")),2); forecast=d.get("forecast_amount",getattr(row,"forecast_amount",None)); forecast=None if forecast in (None,"") else round(float(str(forecast).replace(",",".")),2); alloc={str(k).upper():round(float(v or 0),2) for k,v in (d.get("allocation") or json.loads(row.allocation_json or "{}")).items() if float(v or 0)>0}
     except: return jsonify({"ok":False,"error":"Valor/rateio inválido."}),400
-    total=round(sum(alloc.values()),4)
-    if abs(total-100)>0.01: return jsonify({"ok":False,"error":f"O rateio deve totalizar 100%. Atual: {total:.2f}%."}),400
-    before=f"{row.competence} · R$ {row.amount:.2f} · {row.allocation_json}"
-    row.amount=amount; row.allocation_json=json.dumps(alloc,ensure_ascii=False); row.notes=(d.get("notes",row.notes) or "").strip(); row.updated_by=session.get("user_id"); row.updated_at=datetime.utcnow()
-    db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="FIN_MONTHLY_COST_EDIT",entity_type="financial_monthly_cost",entity_id=str(row.id),detail=f"antes: {before} | depois: R$ {amount:.2f} · {row.allocation_json}"));db.session.commit()
-    return jsonify({"ok":True})
+    total=round(sum(alloc.values()),2)
+    if abs(total-100)>0.001:return jsonify({"ok":False,"error":f"O rateio deve totalizar 100%. Atual: {total:.2f}%."}),400
+    supplier=db.session.get(FinancialSupplier,sid); service=_fin_service_for_text(sid,service_text) if supplier else None
+    if not supplier or not service:return jsonify({"ok":False,"error":"Fornecedor/serviço inválido."}),400
+    before=f"{row.competence} · R$ {row.amount:.2f}"
+    row.competence=comp;row.supplier_id=sid;row.service_id=service.id;row.service_text=service_text;row.amount=amount;row.forecast_amount=forecast;row.cost_center=center;row.project=project;row.allocation_json=json.dumps(alloc,ensure_ascii=False);row.notes=(d.get("notes",row.notes) or "").strip();row.updated_by=session.get("user_id");row.updated_at=datetime.utcnow()
+    db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="FIN_MONTHLY_COST_EDIT",entity_type="financial_monthly_cost",entity_id=str(row.id),detail=f"antes: {before} | depois: {comp} · {center} · R$ {amount:.2f}"));db.session.commit();return jsonify({"ok":True})
 
 @app.get("/api/panoramas/export.xlsx")
 @login_required
@@ -7859,6 +7917,7 @@ with app.app_context():
     migrate_inventory_sync_uuid()
     migrate_user_archive_column()
     migrate_user_v23_columns()
+    migrate_financial_v524_columns()
     migrate_base_asset_columns()
     migrate_inventory_validator_columns()
     migrate_v421_columns()
