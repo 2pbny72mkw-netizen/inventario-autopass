@@ -39,7 +39,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V51.1"
+APP_RELEASE = "V52"
 DASHBOARD_RELEASE = "dashboard-v47"
 TEAMS_RELEASE = "teams-v42-4"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -109,6 +109,39 @@ class User(db.Model):
     personnel_status_note = db.Column(db.String(240))
 
 
+
+class FinancialSupplier(db.Model):
+    __tablename__ = "financial_suppliers"
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(180), nullable=False, unique=True, index=True)
+    active = db.Column(db.Boolean, nullable=False, default=True)
+    created_by = db.Column(db.Integer, db.ForeignKey("users.id"))
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+class FinancialService(db.Model):
+    __tablename__ = "financial_services"
+    id = db.Column(db.Integer, primary_key=True)
+    supplier_id = db.Column(db.Integer, db.ForeignKey("financial_suppliers.id"), nullable=False, index=True)
+    name = db.Column(db.String(220), nullable=False)
+    description = db.Column(db.Text)
+    category = db.Column(db.String(80), default="OUTROS")
+    active = db.Column(db.Boolean, nullable=False, default=True)
+    created_by = db.Column(db.Integer, db.ForeignKey("users.id"))
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+class FinancialMonthlyCost(db.Model):
+    __tablename__ = "financial_monthly_costs"
+    id = db.Column(db.Integer, primary_key=True)
+    competence = db.Column(db.String(7), nullable=False, index=True)
+    supplier_id = db.Column(db.Integer, db.ForeignKey("financial_suppliers.id"), nullable=False, index=True)
+    service_id = db.Column(db.Integer, db.ForeignKey("financial_services.id"), nullable=False, index=True)
+    amount = db.Column(db.Float, nullable=False, default=0)
+    allocation_json = db.Column(db.Text, nullable=False, default="{}")
+    notes = db.Column(db.Text)
+    created_by = db.Column(db.Integer, db.ForeignKey("users.id"))
+    updated_by = db.Column(db.Integer, db.ForeignKey("users.id"))
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
 class OperationalAction(db.Model):
     __tablename__ = "operational_actions"
@@ -776,7 +809,7 @@ def _role_assignment_allowed(role):
     # RH administra somente perfis operacionais. Perfis sensíveis ficam restritos ao ADM.
     if session.get("role") == "hr":
         return role in ("technician", "technician_implantation")
-    if role in ("manager", "manager_field", "consultation", "dispatcher"):
+    if role in ("manager", "manager_field", "consultation", "dispatcher", "atm_financial_admin"):
         return _current_user_is_superadmin()
     return role in ("technician", "technician_implantation", "hr")
 
@@ -790,7 +823,7 @@ def hardware_implantation_required(fn):
     def inner(*args, **kwargs):
         if not session.get("user_id"):
             return redirect(url_for("login"))
-        if session.get("role") not in ("manager", "technician_implantation"):
+        if session.get("role") not in ("manager", "manager_field", "technician_implantation"):
             if request.path.startswith("/api/"):
                 return jsonify({"ok": False, "error": "Acesso restrito à Implantação de Hardware."}), 403
             return redirect(url_for("manager" if session.get("role") in ("manager","consultation","dispatcher") else "activities_page"))
@@ -803,7 +836,7 @@ def emv_field_required(fn):
     def inner(*args, **kwargs):
         if not session.get("user_id"):
             return redirect(url_for("login"))
-        if session.get("role") not in ("manager", "technician_implantation"):
+        if session.get("role") not in ("manager", "manager_field", "technician_implantation"):
             if request.path.startswith("/api/"):
                 return jsonify({"ok": False, "error": "Acesso restrito à equipe de Implantação."}), 403
             return redirect(url_for("activities_page"))
@@ -2045,8 +2078,8 @@ def inventory_atm_dashboard_api():
 @dashboard_required
 def atm_financial_dashboard_api():
     # V46: visão financeira restrita ao ADM/Gestor principal.
-    if session.get("role") != "manager":
-        return jsonify({"ok":False,"error":"Dashboard financeira restrita ao ADM."}),403
+    if session.get("role") not in ("manager", "manager_field", "atm_financial_admin"):
+        return jsonify({"ok":False,"error":"Dashboard financeira restrita aos perfis autorizados."}),403
     path=DATA_DIR / "atm_financial_082026.json"
     try:
         payload=json.loads(path.read_text(encoding="utf-8"))
@@ -6863,6 +6896,8 @@ def chip_swap_save_api(location_id, base_asset_id):
     lon = _optional_float(request.form.get("longitude"))
     acc = _optional_float(request.form.get("gps_accuracy"))
     sw = ChipSwap.query.filter_by(location_id=location_id, base_asset_id=base_asset_id).first()
+    if sw and (sw.status or "").upper().replace("CONCLUIDA","CONCLUÍDA") == "CONCLUÍDA" and session.get("role") in ("technician", "technician_implantation"):
+        return jsonify({"ok": False, "error": "Registro concluído e bloqueado. Solicite ao Gestor/ADM a reabertura para EM ANDAMENTO."}), 409
     if not sw:
         sw = ChipSwap(location_id=location_id, base_asset_id=base_asset_id, technician_id=session["user_id"], status="EM ANDAMENTO", started_at=datetime.utcnow())
         db.session.add(sw)
@@ -6907,7 +6942,7 @@ def chip_swap_save_api(location_id, base_asset_id):
 @app.post("/api/chip-swaps/<int:location_id>/<int:base_asset_id>/admin-status")
 @dashboard_required
 def chip_swap_admin_status_api(location_id, base_asset_id):
-    if session.get("role") != "manager":
+    if session.get("role") not in ("manager", "manager_field"):
         return jsonify({"ok":False,"error":"Alteração administrativa restrita ao ADM/Gestor."}),403
     loc=db.session.get(Location,location_id); asset=db.session.get(BaseAsset,base_asset_id)
     if not loc or not asset or _canonical_equipment_type(asset.equipment_type)!="VALIDADOR" or not _chip_swap_asset_matches_location(asset,loc):
@@ -7221,6 +7256,73 @@ def emv_chip_export():
         if status_filter and status != status_filter: continue
         ws.append([r["company"],r["line"],r["station"],r["terminal"],r["version"],r["ip"],r["mask"],r["gateway"],r["dns1"],r["dns2"],r["group"],status,sw.test_result if sw else "",sw.notes if sw else ""])
     bio=io.BytesIO();wb.save(bio);bio.seek(0);return send_file(bio,as_attachment=True,download_name="troca_chips_emv.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+
+def _financial_admin_allowed():
+    return session.get("role") in ("manager", "atm_financial_admin")
+
+@app.get("/financeiro-atm/gestao")
+@login_required
+def financial_cost_management_page():
+    if not _financial_admin_allowed():
+        return redirect(url_for("dashboard_landing"))
+    return render_template("financial_cost_management.html", app_release=APP_RELEASE)
+
+@app.get("/api/financeiro/cadastros")
+@login_required
+def financial_catalog_api():
+    if session.get("role") not in ("manager","manager_field","atm_financial_admin"):
+        return jsonify({"ok":False,"error":"Sem permissão."}),403
+    suppliers=FinancialSupplier.query.order_by(FinancialSupplier.name).all()
+    services=FinancialService.query.order_by(FinancialService.name).all()
+    return jsonify({"ok":True,"suppliers":[{"id":x.id,"name":x.name,"active":x.active} for x in suppliers],"services":[{"id":x.id,"supplier_id":x.supplier_id,"name":x.name,"description":x.description or "","category":x.category or "OUTROS","active":x.active} for x in services]})
+
+@app.post("/api/financeiro/fornecedores")
+@login_required
+def financial_supplier_create_api():
+    if not _financial_admin_allowed(): return jsonify({"ok":False,"error":"Sem permissão."}),403
+    d=request.get_json(silent=True) or {}; name=(d.get("name") or "").strip()
+    if not name: return jsonify({"ok":False,"error":"Informe a empresa/fornecedor."}),400
+    row=FinancialSupplier.query.filter(func.lower(FinancialSupplier.name)==name.lower()).first()
+    if row: return jsonify({"ok":True,"id":row.id,"existing":True})
+    row=FinancialSupplier(name=name,created_by=session.get("user_id"));db.session.add(row);db.session.flush()
+    db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="FIN_SUPPLIER_CREATE",entity_type="financial_supplier",entity_id=str(row.id),detail=name));db.session.commit()
+    return jsonify({"ok":True,"id":row.id})
+
+@app.post("/api/financeiro/servicos")
+@login_required
+def financial_service_create_api():
+    if not _financial_admin_allowed(): return jsonify({"ok":False,"error":"Sem permissão."}),403
+    d=request.get_json(silent=True) or {}; sid=int(d.get("supplier_id") or 0); name=(d.get("name") or "").strip()
+    if not db.session.get(FinancialSupplier,sid) or not name: return jsonify({"ok":False,"error":"Fornecedor e serviço são obrigatórios."}),400
+    row=FinancialService(supplier_id=sid,name=name,description=(d.get("description") or "").strip(),category=(d.get("category") or "OUTROS").strip().upper(),created_by=session.get("user_id"));db.session.add(row);db.session.flush()
+    db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="FIN_SERVICE_CREATE",entity_type="financial_service",entity_id=str(row.id),detail=name));db.session.commit();return jsonify({"ok":True,"id":row.id})
+
+@app.route("/api/financeiro/lancamentos",methods=["GET","POST"])
+@login_required
+def financial_monthly_costs_api():
+    if request.method=="GET":
+        if session.get("role") not in ("manager","manager_field","atm_financial_admin"): return jsonify({"ok":False,"error":"Sem permissão."}),403
+        comp=(request.args.get("competence") or "").strip();q=FinancialMonthlyCost.query
+        if comp:q=q.filter_by(competence=comp)
+        users={u.id:u.name for u in User.query.all()}; sups={x.id:x.name for x in FinancialSupplier.query.all()}; svcs={x.id:x.name for x in FinancialService.query.all()}
+        rows=[]
+        for x in q.order_by(FinancialMonthlyCost.competence.desc(),FinancialMonthlyCost.id.desc()).all():
+            try: alloc=json.loads(x.allocation_json or "{}")
+            except: alloc={}
+            rows.append({"id":x.id,"competence":x.competence,"supplier":sups.get(x.supplier_id,""),"service":svcs.get(x.service_id,""),"amount":x.amount,"allocation":alloc,"notes":x.notes or "","updated_by":users.get(x.updated_by or x.created_by,""),"updated_at":x.updated_at.isoformat()+"Z"})
+        return jsonify({"ok":True,"rows":rows})
+    if not _financial_admin_allowed(): return jsonify({"ok":False,"error":"Sem permissão."}),403
+    d=request.get_json(silent=True) or {}; comp=(d.get("competence") or "").strip(); sid=int(d.get("supplier_id") or 0); service_id=int(d.get("service_id") or 0)
+    try: amount=float(d.get("amount") or 0); alloc={k:float(v or 0) for k,v in (d.get("allocation") or {}).items()}
+    except: return jsonify({"ok":False,"error":"Valor/rateio inválido."}),400
+    if len(comp)!=7 or comp[4]!="-" or amount<0: return jsonify({"ok":False,"error":"Competência e valor são obrigatórios."}),400
+    if not db.session.get(FinancialSupplier,sid) or not db.session.get(FinancialService,service_id): return jsonify({"ok":False,"error":"Fornecedor/serviço inválido."}),400
+    total=round(sum(alloc.values()),4)
+    if abs(total-100)>0.01: return jsonify({"ok":False,"error":f"O rateio deve totalizar 100%. Atual: {total:.2f}%."}),400
+    row=FinancialMonthlyCost(competence=comp,supplier_id=sid,service_id=service_id,amount=amount,allocation_json=json.dumps(alloc,ensure_ascii=False),notes=(d.get("notes") or "").strip(),created_by=session.get("user_id"),updated_by=session.get("user_id"));db.session.add(row);db.session.flush()
+    db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="FIN_MONTHLY_COST_CREATE",entity_type="financial_monthly_cost",entity_id=str(row.id),detail=f"{comp} · R$ {amount:.2f} · rateio {total:.2f}%"));db.session.commit();return jsonify({"ok":True,"id":row.id})
 
 @app.get("/api/panoramas/export.xlsx")
 @login_required
