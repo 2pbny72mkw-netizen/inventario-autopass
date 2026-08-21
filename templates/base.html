@@ -24,6 +24,7 @@
       {% if session.get('role') in ('manager','manager_field','consultation','dispatcher','technician','technician_implantation') %}<a href="/dashboard">Dashboard</a>{% endif %}
       {% if session.get('role') in ('manager','manager_field','technician','dispatcher','consultation') %}
       <div class="navDrop"><button type="button" class="navDropBtn">Field ▾</button><div class="navDropMenu">
+        {% if session.get('role') in ('manager','manager_field','technician','consultation') %}<a href="/tecnico">Inventário</a>{% endif %}
         {% if session.get('role') in ('manager','dispatcher') %}<a href="/topdesk">Chamados</a>{% elif session.get('role') in ('technician','manager_field') %}<a href="/trabalho">Chamados</a>{% endif %}
         {% if session.get('role') in ('manager','manager_field','technician','consultation') %}<a href="/patrimonio">Equipamentos</a><a href="/evidencias-campo">Evidências</a>{% endif %}
         {% if session.get('role') in ('manager','manager_field','technician','consultation') %}<a href="/visao-panoramica">Visão Panorâmica</a>{% endif %}
