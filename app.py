@@ -39,7 +39,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V44.0"
+APP_RELEASE = "V45.0"
 DASHBOARD_RELEASE = "dashboard-v44"
 TEAMS_RELEASE = "teams-v42-4"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -2416,6 +2416,16 @@ def hardware_field_visit_save_api():
     db.session.commit()
     return jsonify({"ok":True,"id":visit.id,"report_code":f"RV-{visit.id:06d}","status":visit.status})
 
+@app.get("/api/implantacao-hardware/visitas/<int:visit_id>")
+@manager_required
+def hardware_field_visit_detail_api(visit_id):
+    v=db.session.get(HardwareFieldVisit,visit_id)
+    if not v: return jsonify({"ok":False,"error":"Relatório não encontrado."}),404
+    fields=("client","project","report_group","requester","has_topdesk","topdesk_ticket","location_type","location_name","city","state","address","start_time","end_time","reason","activities","activity_notes","technical_details","conclusion_status","conclusion","pending_items","client_contact","client_company","client_role","client_email","client_phone","client_observations","client_accepted","status")
+    data={k:getattr(v,k,None) for k in fields}
+    data.update({"id":v.id,"report_code":f"RV-{v.id:06d}","visit_date":v.visit_date.isoformat() if v.visit_date else "","has_signature":bool(v.signature_file)})
+    return jsonify({"ok":True,"visit":data})
+
 @app.post("/api/implantacao-hardware/visitas/<int:visit_id>/editar")
 @manager_required
 def hardware_field_visit_edit_api(visit_id):
@@ -2438,9 +2448,18 @@ def hardware_field_visit_delete_api(visit_id):
     reason=(request.form.get("reason") or "").strip()
     if len(reason)<3: return jsonify({"ok":False,"error":"Informe o motivo da exclusão."}),400
     report=f"RV-{v.id:06d}"; detail=f"{report} | cliente={v.client} | projeto={v.project} | motivo={reason}"
-    for ph in HardwareFieldVisitPhoto.query.filter_by(visit_id=v.id).all(): db.session.delete(ph)
-    db.session.delete(v); db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="HARDWARE_FIELD_VISIT_DELETE",entity_type="hardware_field_visit",entity_id=str(visit_id),detail=detail)); db.session.commit()
-    return jsonify({"ok":True,"deleted":report})
+    try:
+        for ph in HardwareFieldVisitPhoto.query.filter_by(visit_id=v.id).all(): db.session.delete(ph)
+        db.session.flush()
+        db.session.delete(v)
+        db.session.flush()
+        db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="HARDWARE_FIELD_VISIT_DELETE",entity_type="hardware_field_visit",entity_id=str(visit_id),detail=detail))
+        db.session.commit()
+        return jsonify({"ok":True,"deleted":report})
+    except Exception as exc:
+        db.session.rollback()
+        app.logger.exception("Falha ao excluir %s",report)
+        return jsonify({"ok":False,"error":"Não foi possível excluir o relatório. Consulte Diagnóstico ADM.","detail":str(exc)[:300]}),500
 
 def _visit_media_data_uri(stored_name):
     if not stored_name: return None

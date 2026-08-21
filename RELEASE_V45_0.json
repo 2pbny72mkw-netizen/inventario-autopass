@@ -1,0 +1,14 @@
+{
+  "release": "V45.0",
+  "focus": [
+    "Dashboard 2.0",
+    "Localidade 360",
+    "ATM 360",
+    "Implantação Digital"
+  ],
+  "excluded": [
+    "TopDesk novas integrações",
+    "Portal do Cliente",
+    "Numerário completo"
+  ]
+}
