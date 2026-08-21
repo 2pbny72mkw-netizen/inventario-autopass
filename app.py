@@ -39,7 +39,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V50.0"
+APP_RELEASE = "V50.1"
 DASHBOARD_RELEASE = "dashboard-v47"
 TEAMS_RELEASE = "teams-v42-4"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -259,6 +259,7 @@ class Location(db.Model):
     expected_validator = db.Column(db.Integer, nullable=False, default=0)
     expected_pos = db.Column(db.Integer, nullable=False, default=0)
     survey_status = db.Column(db.String(30), nullable=False, default="PENDENTE", index=True)
+    panorama_status_override = db.Column(db.String(30))
     started_at = db.Column(db.DateTime)
     completed_at = db.Column(db.DateTime)
     completed_by = db.Column(db.Integer, db.ForeignKey("users.id"))
@@ -927,6 +928,16 @@ def manager_tv():
     if session.get("role")=="technician":
         return redirect(url_for("field_dashboard_page"))
     return render_template("manager_tv.html", app_release=APP_RELEASE)
+
+
+@app.get("/dashboard/atm")
+@dashboard_required
+def atm_dashboard_page():
+    # V50.1: rota canônica para a Dashboard ATM 2.0 dentro do gerencial.
+    # Mantém parâmetros de investigação (ex.: teamviewer_missing=1).
+    qs=request.query_string.decode("utf-8")
+    suffix=("&"+qs) if qs else ""
+    return redirect(f"/gerencial?view=atm-inventory{suffix}")
 
 
 @app.get("/dashboard/field")
@@ -1993,8 +2004,11 @@ def inventory_atm_dashboard_api():
     except Exception:
         all_rows=[]
     filters={k:(request.args.get(k) or "").strip() for k in ("company","line","locality","model","contract","ownership","status")}
+    teamviewer_missing=(request.args.get("teamviewer_missing") or "").strip() in ("1","true","TRUE","sim","SIM")
     field_map={"company":"company","line":"line","locality":"locality","model":"model","contract":"contract","ownership":"ownership","status":"status"}
     rows=[x for x in all_rows if all(not filters[k] or str(x.get(field_map[k],""))==filters[k] for k in filters)]
+    if teamviewer_missing:
+        rows=[x for x in rows if not str(x.get("teamviewer_id") or "").strip()]
     def agg(attr):
         out={}
         for a in rows:
@@ -2006,6 +2020,8 @@ def inventory_atm_dashboard_api():
     def facet_options(filter_key, attr):
         candidates=[]
         for a in all_rows:
+            if teamviewer_missing and str(a.get("teamviewer_id") or "").strip():
+                continue
             ok=True
             for k,v in filters.items():
                 if k==filter_key or not v:
@@ -5975,6 +5991,18 @@ def cleanup_test_gps():
     return jsonify({"ok": True, "updated": updated, "users": [u.username for u in test_users]})
 
 
+def migrate_panorama_status_column():
+    """V50.1: permite ao ADM sobrescrever o status da Visão Panorâmica sem interferir no status do Inventário."""
+    with db.engine.begin() as conn:
+        try:
+            conn.execute(db.text("ALTER TABLE locations ADD COLUMN IF NOT EXISTS panorama_status_override VARCHAR(30)"))
+        except Exception:
+            # Compatibilidade com SQLite antigo, onde ADD COLUMN IF NOT EXISTS pode não existir.
+            cols={row[1] for row in conn.execute(db.text("PRAGMA table_info(locations)"))} if db.engine.dialect.name=="sqlite" else set()
+            if db.engine.dialect.name=="sqlite" and "panorama_status_override" not in cols:
+                conn.execute(db.text("ALTER TABLE locations ADD COLUMN panorama_status_override VARCHAR(30)"))
+
+
 def migrate_base_asset_columns():
     with db.engine.begin() as conn:
         statements = [
@@ -6583,7 +6611,12 @@ def management_360_alerts_api():
     if session.get("role") not in ("manager","manager_field"):
         return jsonify({"ok":False,"error":"Sem permissão."}),403
     # FIELD
-    atm_without_tv=BaseAsset.query.filter(func.upper(func.coalesce(BaseAsset.equipment_type,""))=="ATM",func.coalesce(BaseAsset.teamviewer_id,"")=="").count()
+    official_path=DATA_DIR / "atm_official_082026.json"
+    try:
+        official_atms=json.loads(official_path.read_text(encoding="utf-8"))
+    except Exception:
+        official_atms=[]
+    atm_without_tv=sum(1 for x in official_atms if not str(x.get("teamviewer_id") or "").strip())
     inv_div=Inventory.query.filter(func.coalesce(Inventory.divergence,"")!="").count()
     loc_pending=Location.query.filter(func.upper(func.coalesce(Location.survey_status,"PENDENTE"))!="CONCLUIDO").count()
     # IMPLANTAÇÃO
@@ -6593,7 +6626,7 @@ def management_360_alerts_api():
     emv_rows=EmvChipSwap.query.all()
     emv_pending=sum(1 for x in emv_rows if not (x.status or '').upper().startswith('CONCLU'))
     alerts=[
-      {"domain":"FIELD","severity":"ATENCAO","label":"ATMs sem ID TeamViewer","count":atm_without_tv,"url":"/dashboard/atm"},
+      {"domain":"FIELD","severity":"ATENCAO","label":"ATMs sem ID TeamViewer","count":atm_without_tv,"url":"/dashboard/atm?teamviewer_missing=1"},
       {"domain":"FIELD","severity":"ATENCAO","label":"Divergências de inventário","count":inv_div,"url":"/dashboard/field"},
       {"domain":"FIELD","severity":"INFO","label":"Localidades não concluídas","count":loc_pending,"url":"/dashboard/field"},
       {"domain":"IMPLANTAÇÃO","severity":"ATENCAO","label":"RVs finalizados sem assinatura","count":rv_unsigned,"url":"/implantacao-hardware/dashboard"},
@@ -7279,9 +7312,11 @@ def _panorama_payload():
         for pt in points_by_location.get(loc.id,[]):
             pp=photos_by_point.get(pt.id,[]); total+=len(pp); creator=users.get(pt.created_by,"—")
             p_out.append({"id":pt.id,"name":pt.point_name,"notes":pt.notes or "","technician":creator,"status":"CONCLUÍDA" if pp else "EM ANDAMENTO","photos":[{"id":ph.id,"url":"/uploads/"+ph.stored_name,"name":ph.original_name,"stored_name":ph.stored_name,"uploaded_by":users.get(ph.uploaded_by,"—"),"created_at":ph.created_at.isoformat()+"Z" if ph.created_at else None,"latitude":ph.latitude,"longitude":ph.longitude} for ph in pp]})
-        status="PENDENTE" if not p_out else ("CONCLUÍDA" if all(x["photos"] for x in p_out) else "EM ANDAMENTO")
+        auto_status="PENDENTE" if not p_out else ("CONCLUÍDA" if all(x["photos"] for x in p_out) else "EM ANDAMENTO")
+        override=(loc.panorama_status_override or "").strip().upper().replace("CONCLUIDA","CONCLUÍDA")
+        status=override if override in ("PENDENTE","EM ANDAMENTO","CONCLUÍDA") else auto_status
         techs=sorted({x["technician"] for x in p_out if x.get("technician") and x["technician"]!="—"})
-        rows.append({"id":loc.id,"company":loc.company,"line":loc.line,"location":loc.location,"reference_latitude":loc.reference_latitude,"reference_longitude":loc.reference_longitude,"status":status,"photo_count":total,"technicians":techs,"points":p_out})
+        rows.append({"id":loc.id,"company":loc.company,"line":loc.line,"location":loc.location,"reference_latitude":loc.reference_latitude,"reference_longitude":loc.reference_longitude,"status":status,"auto_status":auto_status,"status_override":bool(override),"photo_count":total,"technicians":techs,"points":p_out})
     return rows
 
 @app.get("/api/panoramas")
@@ -7411,6 +7446,28 @@ def panorama_import_whatsapp_api():
     return jsonify({"ok":True,"imported":imported,"unresolved":unresolved,"duplicates":duplicates})
 
 
+@app.post("/api/panoramas/<int:location_id>/status")
+@manager_required
+def panorama_status_override_api(location_id):
+    loc=db.session.get(Location,location_id)
+    if not loc:
+        return jsonify({"ok":False,"error":"Localidade não encontrada."}),404
+    requested=(request.get_json(silent=True) or {}).get("status")
+    requested=(requested or "").strip().upper().replace("CONCLUIDA","CONCLUÍDA")
+    if requested in ("AUTOMATICO","AUTOMÁTICO",""):
+        new_value=None
+    elif requested in ("PENDENTE","EM ANDAMENTO","CONCLUÍDA"):
+        new_value=requested
+    else:
+        return jsonify({"ok":False,"error":"Status inválido."}),400
+    old=loc.panorama_status_override
+    loc.panorama_status_override=new_value
+    db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="PANORAMA_STATUS_OVERRIDE",entity_type="location",entity_id=str(location_id),detail=f"Visão Panorâmica: status manual {old or 'AUTOMÁTICO'} → {new_value or 'AUTOMÁTICO'}."))
+    db.session.commit()
+    row=next((x for x in _panorama_payload() if x["id"]==location_id),None)
+    return jsonify({"ok":True,"status":row["status"] if row else (new_value or "PENDENTE"),"auto_status":row.get("auto_status") if row else None,"status_override":bool(new_value)})
+
+
 @app.delete("/api/panoramas/photos/<int:photo_id>")
 @manager_required
 def panorama_delete_photo_api(photo_id):
@@ -7500,13 +7557,18 @@ def v50_notifications_api():
     if session.get("role") not in ("manager","manager_field"):
         return jsonify({"ok":True,"count":0,"items":[]})
     # Notificações derivadas das exceções operacionais, sem duplicar uma nova tabela nesta versão.
-    atm_without_tv=BaseAsset.query.filter(func.upper(func.coalesce(BaseAsset.equipment_type,""))=="ATM",func.coalesce(BaseAsset.teamviewer_id,"")=="").count()
+    official_path=DATA_DIR / "atm_official_082026.json"
+    try:
+        official_atms=json.loads(official_path.read_text(encoding="utf-8"))
+    except Exception:
+        official_atms=[]
+    atm_without_tv=sum(1 for x in official_atms if not str(x.get("teamviewer_id") or "").strip())
     inv_div=Inventory.query.filter(func.coalesce(Inventory.divergence,"")!="").count()
     visits=HardwareFieldVisit.query.all()
     rv_pending=sum(1 for v in visits if 'PEND' in (v.conclusion_status or '').upper())
     emv_pending=EmvChipSwap.query.filter(~func.upper(func.coalesce(EmvChipSwap.status,"" )).startswith("CONCLU")).count()
     items=[
-      {"domain":"FIELD","severity":"ATENÇÃO","title":"ATMs sem TeamViewer","count":atm_without_tv,"url":"/dashboard/atm"},
+      {"domain":"FIELD","severity":"ATENÇÃO","title":"ATMs sem TeamViewer","count":atm_without_tv,"url":"/dashboard/atm?teamviewer_missing=1"},
       {"domain":"FIELD","severity":"ATENÇÃO","title":"Divergências de inventário","count":inv_div,"url":"/dashboard/field"},
       {"domain":"IMPLANTAÇÃO","severity":"ATENÇÃO","title":"Visitas com pendências","count":rv_pending,"url":"/implantacao-hardware/dashboard"},
       {"domain":"IMPLANTAÇÃO","severity":"INFO","title":"EMV Trilhos pendentes","count":emv_pending,"url":"/implantacao-hardware/dashboard"},
@@ -7550,6 +7612,7 @@ def v50_contracts_api():
 
 with app.app_context():
     migrate_location_reference_columns()
+    migrate_panorama_status_column()
     # V39.7.1: não deixa a criação das novas tabelas de Troca de Chips bloquear o startup.
     core_tables=[t for t in db.metadata.sorted_tables if t.name not in ("chip_swaps","chip_swap_photos")]
     db.metadata.create_all(bind=db.engine, tables=core_tables, checkfirst=True)
