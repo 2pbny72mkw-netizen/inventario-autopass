@@ -1098,7 +1098,7 @@ function v23StartTv(){
   v23TvTimer=setInterval(v343SyncTv,5000);
 }
 function initV23DashboardNav(){
-  document.querySelectorAll('.v23Nav').forEach(btn=>btn.addEventListener('click',()=>v23SetView(btn.dataset.v23View)));
+  document.querySelectorAll('.v23Nav[data-v23-view]').forEach(btn=>btn.addEventListener('click',()=>v23SetView(btn.dataset.v23View))); // V49.1: links externos preservam navegação real
   $('v23TvBtn')?.addEventListener('click',()=>{ window.open('/gerencial/tv','_blank','noopener'); });
   document.addEventListener('fullscreenchange',()=>{if(!document.fullscreenElement && document.body.classList.contains('v23TvMode'))v23StopTv();});
   v23SetView('overview');

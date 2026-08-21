@@ -5,7 +5,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{% block title %}Sistema de Gestão Suporte a Campo{% endblock %}</title>
-<link rel="stylesheet" href="{{url_for('static',filename='app.css')}}?v=v48">
+<link rel="stylesheet" href="{{url_for('static',filename='app.css')}}?v=v49-1">
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#17345d">
 </head>
@@ -26,8 +26,15 @@
       <div class="navDrop"><button type="button" class="navDropBtn">Field ▾</button><div class="navDropMenu">
         {% if session.get('role') in ('manager','dispatcher') %}<a href="/topdesk">Chamados</a>{% elif session.get('role') in ('technician','manager_field') %}<a href="/trabalho">Chamados</a>{% endif %}
         {% if session.get('role') in ('manager','manager_field','technician','consultation') %}<a href="/patrimonio">Equipamentos</a><a href="/evidencias-campo">Evidências</a>{% endif %}
+        {% if session.get('role') in ('manager','manager_field','technician','consultation') %}<a href="/visao-panoramica">Visão Panorâmica</a>{% endif %}
+        {% if session.get('role') in ('manager','manager_field','technician','consultation','dispatcher') %}<a href="/troca-chips">Troca de Chips Recarga</a>{% endif %}
       </div></div>{% endif %}
-      {% if session.get('role') in ('manager','technician_implantation') %}<a href="/implantacao-hardware">Implantação de Hardware</a>{% endif %}
+      {% if session.get('role') in ('manager','technician_implantation') %}
+      <div class="navDrop"><button type="button" class="navDropBtn">Implantação de Hardware ▾</button><div class="navDropMenu">
+        <a href="/implantacao-hardware/dashboard">Dashboard Implantação</a>
+        <a href="/implantacao-hardware">Visitas a Campo / RV</a>
+        <a href="/troca-chips-emv">Troca de Chips EMV - Trilhos</a>
+      </div></div>{% endif %}
       {% if session.get('role') in ('manager','manager_field','consultation','hr','dispatcher') %}
       <div class="navDrop"><button type="button" class="navDropBtn">RH ▾</button><div class="navDropMenu">
         <a href="/equipes">Equipes</a>{% if session.get('role') in ('manager','hr') %}<a href="/usuarios">Usuários</a>{% endif %}

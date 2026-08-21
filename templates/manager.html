@@ -8,7 +8,7 @@
 
 <div class="v23DashboardShell v24Executive v30Executive v31CommandCenter v32CommandCenter v33CommandCenter v34CommandCenter" id="v23DashboardShell">
   <aside class="v23Sidebar" id="v23Sidebar">
-    <div class="v23SidebarBrand"><b>GESTÃO DE CAMPO</b><small>Autopass · V47.0</small></div>
+    <div class="v23SidebarBrand"><b>GESTÃO DE CAMPO</b><small>Autopass · V49.1</small></div>
     <div class="v42SideGroup">VISÃO GERAL</div><button class="v23Nav active" data-v23-view="overview">▦ <span>Visão Geral</span></button><div class="v42SideGroup">ATIVIDADES</div>
     <button class="v23Nav" data-v23-view="execution">▥ <span>Inventário</span></button>
     <button class="v23Nav" data-v23-view="atm-inventory">▦ <span>Dashboard ATM</span></button>
@@ -67,6 +67,11 @@
 <section class="v29InsightRail v23Panel" data-v23-panel="overview">
  <div><span>FOCO EXECUTIVO</span><b id="v29Headline">Carregando leitura operacional...</b></div>
  <div class="v29Signal" id="v29Signal">LIVE</div>
+</section>
+<section class="v491VisualGrid v23Panel" data-v23-panel="overview" aria-label="Indicadores visuais Dashboard 2.0">
+  <article class="card v491VisualCard"><div class="sectionHead"><div><span class="eyebrow">COBERTURA</span><h2>Velocímetro do inventário</h2></div><span class="tag">2.0</span></div><div class="v491Gauge" id="v491Gauge" style="--pct:0"><div><b id="v491GaugeValue">0%</b><small>parque inventariado</small></div></div></article>
+  <article class="card v491VisualCard"><div class="sectionHead"><div><span class="eyebrow">COMPOSIÇÃO</span><h2>Pizza explodida do parque</h2></div></div><div class="v491ExplodedWrap"><div class="v491ExplodedPie" id="v491ExplodedPie"></div><div class="v491ExplodedLegend" id="v491ExplodedLegend"></div></div></article>
+  <article class="card v491VisualCard"><div class="sectionHead"><div><span class="eyebrow">COMPARATIVO</span><h2>Parque por tipo · 3D</h2></div></div><div class="v491Bars3d" id="v491Bars3d"></div></article>
 </section>
 <section class="v23Panel v424AtmDashboard v430Atm" data-v23-panel="atm-inventory">
   <div class="dashHero v424Hero v430Hero"><div><span class="eyebrow">INVENTÁRIO 360 · ATM · DASHBOARD 2.0</span><h1>Parque ATM</h1><p>Visão executiva e exploratória da base oficial 08/2026. Clique nos gráficos para aprofundar Operação → Linha → Localidade → ATM.</p></div><div class="heroActions"><button class="secondary" id="atmDashExport">Exportar CSV</button><button class="secondary" id="atmDashRefresh">Atualizar</button></div></div>
@@ -470,6 +475,25 @@
   </div>
 </div>
 {% endblock %}
+
+<script>
+(function(){
+ const ids=[['ATM','typeATM'],['Recarga','typeVALIDADOR'],['POS','typePOS'],['Bloqueio','typeBLOQUEIO']];
+ function n(id){const e=document.getElementById(id);return e?Number((e.textContent||'0').replace(/\./g,'').replace(',','.').replace(/[^0-9.-]/g,''))||0:0}
+ function refreshV491(){
+   const cov=document.getElementById('assetCoverageTop'), g=document.getElementById('v491Gauge'), gv=document.getElementById('v491GaugeValue');
+   const pct=cov?Math.max(0,Math.min(100,parseFloat((cov.textContent||'0').replace(',','.'))||0)):0;
+   if(g)g.style.setProperty('--pct',pct); if(gv)gv.textContent=(String(pct).replace('.',','))+'%';
+   const vals=ids.map(x=>[x[0],n(x[1])]), total=vals.reduce((a,x)=>a+x[1],0)||1;
+   const colors=['#2878e8','#18a873','#ff9f1c','#18b7a6']; let acc=0, stops=[];
+   vals.forEach((x,i)=>{let a=acc/total*360;acc+=x[1];let b=acc/total*360;stops.push(`${colors[i]} ${a}deg ${b}deg`)});
+   const pie=document.getElementById('v491ExplodedPie'); if(pie)pie.style.background=`conic-gradient(${stops.join(',')})`;
+   const leg=document.getElementById('v491ExplodedLegend'); if(leg)leg.innerHTML=vals.map((x,i)=>`<span><i style="background:${colors[i]}"></i>${x[0]} <b>${x[1].toLocaleString('pt-BR')}</b></span>`).join('');
+   const max=Math.max(...vals.map(x=>x[1]),1), bars=document.getElementById('v491Bars3d'); if(bars)bars.innerHTML=vals.map((x,i)=>`<div class="v491Bar3dRow"><span>${x[0]}</span><div><i style="width:${Math.max(3,x[1]/max*100)}%;--bar:${colors[i]}"></i></div><b>${x[1].toLocaleString('pt-BR')}</b></div>`).join('');
+ }
+ document.addEventListener('DOMContentLoaded',()=>{refreshV491();setTimeout(refreshV491,800);setTimeout(refreshV491,2200); const target=document.getElementById('v23DashboardShell'); if(target)new MutationObserver(refreshV491).observe(target,{subtree:true,childList:true,characterData:true});});
+})();
+</script>
 {% block scripts %}
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
         integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
