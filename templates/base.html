@@ -61,7 +61,7 @@ document.getElementById('installPwa')?.addEventListener('click',async()=>{if(!v5
 if('serviceWorker' in navigator && (location.protocol==='https:' || location.hostname==='localhost')){
   window.addEventListener('load',async()=>{
     try{
-      const reg=await navigator.serviceWorker.register('/sw.js?v=v50-3',{scope:'/',updateViaCache:'none'});
+      const reg=await navigator.serviceWorker.register('/sw.js?v=v50-4',{scope:'/',updateViaCache:'none'});
       await reg.update();
     }catch(err){console.warn('Falha ao atualizar Service Worker',err);}
   },{once:true});
@@ -80,7 +80,7 @@ v50LoadNotifications();
 })();
 </script>
 <script>
-// V50.3: Dashboard Implantação é navegação dedicada, nunca painel de atividade.
+// V50.4: Dashboard Implantação é navegação dedicada, nunca painel de atividade.
 document.querySelectorAll('a[href="/implantacao-hardware/dashboard"]').forEach(a=>{a.addEventListener('click',e=>{e.preventDefault();window.location.assign('/implantacao-hardware/dashboard');},{capture:true});});
 </script>
 </body>
