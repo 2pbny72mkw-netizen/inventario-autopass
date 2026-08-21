@@ -2,17 +2,15 @@
 {% block title %}Troca de Chips | Inventário Autopass{% endblock %}
 {% block content %}
 <section class="card chipSwapPage">
-  <div class="sectionHead"><div><span class="eyebrow">ATIVIDADE DE CAMPO</span><h1>Troca de Chip Recarga · Validadores</h1><p class="muted">Selecione a estação, escolha o validador, registre a troca e anexe a evidência.</p></div><span class="tag" id="chipGpsStatus">GPS aguardando</span></div>
+  <div class="sectionHead"><div><span class="eyebrow">ATIVIDADE DE CAMPO</span><h1>Troca de Chip Recarga · Validadores</h1><p class="muted">Selecione empresa, linha e localidade; escolha o validador, registre a troca e anexe a evidência. GPS não é obrigatório nesta atividade.</p></div></div>
   <div class="grid4 chipFilters">
     <div><label>Empresa</label><select id="chipCompany"><option value="">Todas</option></select></div>
     <div><label>Linha</label><select id="chipLine"><option value="">Todas</option></select></div>
     <div><label>Localidade</label><select id="chipLocation"><option value="">Selecione</option></select></div>
     <div><label>Status</label><select id="chipStatus"><option value="">Todos</option><option>PENDENTE</option><option>EM ANDAMENTO</option><option>CONCLUÍDA</option></select></div>
   </div>
-  <div class="chipGpsActions" style="margin-top:12px">
-    <div id="chipLocationInfo" class="notice">Ative o GPS e selecione uma localidade.</div>
-    <button type="button" class="secondary" id="chipEnableGps">📍 GPS opcional</button>
-  </div>
+  <div id="chipLocationInfo" class="notice" style="margin-top:12px">Selecione empresa e linha para visualizar todas as localidades disponíveis.</div>
+  <div id="chipNextLocations" class="notice" style="margin-top:8px" hidden></div>
 </section>
 <section class="card chipStationProgress" id="chipStationProgress">
   <div class="sectionHead"><div><span class="eyebrow">PROGRESSO DA ESTAÇÃO</span><h2 id="chipProgressTitle">Selecione uma localidade</h2></div><b class="chipProgressPct" id="chipProgressPct">0%</b></div>
@@ -27,4 +25,4 @@
 </section>
 <section class="card"><div class="sectionHead"><div><h2>Ativos da base · Validadores da localidade</h2><p class="muted">São exibidos somente os Validadores de Recarga cadastrados na base para a estação selecionada. Uma foto anexada conclui automaticamente a troca daquele equipamento.</p></div></div><div id="chipValidators" class="chipValidatorGrid"><p class="muted">Selecione uma localidade.</p></div></section>
 {% endblock %}
-{% block scripts %}<script>window.CHIP_ROLE={{ session.get("role")|tojson }};</script><script src="{{url_for('static',filename='chip_swap.js')}}?v=v52"></script>{% endblock %}
+{% block scripts %}<script>window.CHIP_ROLE={{ session.get("role")|tojson }};</script><script src="{{url_for('static',filename='chip_swap.js')}}?v=v52-1"></script>{% endblock %}
