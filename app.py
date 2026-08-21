@@ -39,8 +39,8 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V46.0"
-DASHBOARD_RELEASE = "dashboard-v44"
+APP_RELEASE = "V47.0"
+DASHBOARD_RELEASE = "dashboard-v47"
 TEAMS_RELEASE = "teams-v42-4"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
 FIELD_GPS_GOOD_ACCURACY_M = float(os.getenv("FIELD_GPS_GOOD_ACCURACY_M", "30"))
@@ -6498,6 +6498,55 @@ def cleanup_v352_test_reference():
     return changed
 
 
+
+
+@app.get("/gestao-360")
+@login_required
+def management_360_page():
+    """V47: visão gerencial integrada, preservando FIELD e IMPLANTAÇÃO como domínios distintos."""
+    if session.get("role") not in ("manager", "manager_field"):
+        return redirect(url_for("dashboard_landing"))
+    return render_template("management_360.html", app_release=APP_RELEASE)
+
+
+@app.get("/api/gestao-360/resumo")
+@login_required
+def management_360_summary_api():
+    if session.get("role") not in ("manager", "manager_field"):
+        return jsonify({"ok": False, "error": "Sem permissão para a Central 360."}), 403
+
+    # FIELD: inventário, Recarga e Visão Panorâmica. EMV não pertence ao Field.
+    inv_total = Inventory.query.count()
+    inv_today = Inventory.query.filter(func.date(Inventory.created_at) == datetime.utcnow().date()).count()
+    chip_rows = ChipSwap.query.all()
+    chip_done = sum(1 for x in chip_rows if (x.status or "").upper().startswith("CONCLU"))
+    chip_pending = max(len(chip_rows) - chip_done, 0)
+    pan_total = PanoramaPoint.query.count()
+
+    field = {
+        "inventory_records": inv_total,
+        "inventory_today": inv_today,
+        "chip_total": len(chip_rows),
+        "chip_done": chip_done,
+        "chip_pending": chip_pending,
+        "panorama_points": pan_total,
+    }
+
+    # IMPLANTAÇÃO: Visitas/RV + Troca de Chips EMV Trilhos.
+    visits = HardwareFieldVisit.query.all()
+    visit_finalized = sum(1 for x in visits if (x.status or "").upper() == "FINALIZADO")
+    visit_pending = sum(1 for x in visits if "PEND" in (x.conclusion_status or "").upper())
+    emv_rows = EmvChipSwap.query.all()
+    emv_done = sum(1 for x in emv_rows if (x.status or "").upper().startswith("CONCLU"))
+    implantation = {
+        "visits_total": len(visits),
+        "visits_finalized": visit_finalized,
+        "visits_with_pending": visit_pending,
+        "emv_total": len(emv_rows),
+        "emv_done": emv_done,
+        "emv_pending": max(len(emv_rows) - emv_done, 0),
+    }
+    return jsonify({"ok": True, "release": APP_RELEASE, "field": field, "implantation": implantation})
 
 
 @app.get("/atividades")
