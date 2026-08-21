@@ -39,7 +39,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V52.2"
+APP_RELEASE = "V52.3"
 DASHBOARD_RELEASE = "dashboard-v47"
 TEAMS_RELEASE = "teams-v42-4"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -4095,7 +4095,7 @@ def create_user():
         flash("Nome, usuário e senha são obrigatórios.")
         return redirect(url_for("users_page"))
 
-    if role not in ("manager", "manager_field", "technician", "technician_implantation", "consultation", "hr", "dispatcher"):
+    if role not in ("manager", "manager_field", "technician", "technician_implantation", "consultation", "hr", "dispatcher", "atm_financial_admin"):
         flash("Perfil de acesso inválido.")
         return redirect(url_for("users_page"))
     if not _role_assignment_allowed(role):
@@ -4176,7 +4176,7 @@ def user_photo(user_id):
     user = db.session.get(User, user_id)
     if not user or not user.photo_url:
         return "", 404
-    if session.get("role") == "hr" and user.role != "technician":
+    if session.get("role") == "hr" and user.role not in ("technician", "technician_implantation"):
         return "", 404
 
     try:
@@ -4259,7 +4259,7 @@ def edit_user(user_id):
         flash("Nome e usuário são obrigatórios.")
         return redirect(url_for("users_page"))
 
-    if role not in ("manager", "manager_field", "technician", "technician_implantation", "consultation", "hr", "dispatcher"):
+    if role not in ("manager", "manager_field", "technician", "technician_implantation", "consultation", "hr", "dispatcher", "atm_financial_admin"):
         flash("Perfil de acesso inválido.")
         return redirect(url_for("users_page"))
     if not _role_assignment_allowed(role):
@@ -4339,6 +4339,7 @@ def edit_user(user_id):
 
     remove_photo = request.form.get("remove_photo") == "1"
 
+    old_role = user.role
     user.name = name
     user.username = username
     user.role = role
@@ -4367,6 +4368,14 @@ def edit_user(user_id):
 
     try:
         _sync_user_schedule_profile(user)
+        if old_role != role:
+            db.session.add(AuditEvent(
+                user_id=session.get("user_id"),
+                event_type="USER_ROLE_CHANGE",
+                entity_type="user",
+                entity_id=str(user.id),
+                detail=f"{user.name} · perfil {old_role} -> {role}",
+            ))
         db.session.commit()
     except IntegrityError:
         db.session.rollback()
