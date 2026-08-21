@@ -52,3 +52,16 @@ if($('panWhatsImport'))$('panWhatsImport').onclick=async()=>{const f=$('panWhats
 
 function updatePanPptLink(){const b=$('panPptBtn');if(!b)return;const q=new URLSearchParams();if($('panCompany')?.value)q.set('company',$('panCompany').value);if($('panLine')?.value)q.set('line',$('panLine').value);if($('panStatus')?.value)q.set('status',$('panStatus').value);if($('panSearch')?.value)q.set('search',$('panSearch').value);b.href='/api/panoramas/export.pptx'+(q.toString()?'?'+q.toString():'')}
 document.addEventListener('change',e=>{if(['panCompany','panLine','panStatus'].includes(e.target.id))updatePanPptLink()});document.addEventListener('input',e=>{if(e.target.id==='panSearch')updatePanPptLink()});document.addEventListener('DOMContentLoaded',updatePanPptLink);
+
+// V50.1 — controle administrativo de status da Visão Panorâmica.
+function panSyncAdminStatus(){
+  const sel=$('panAdminStatus'),info=$('panAdminStatusInfo'); if(!sel||!current)return;
+  sel.value=current.status_override?(current.status||'PENDENTE'):'AUTOMÁTICO';
+  if(info)info.textContent=current.status_override?`Status manual: ${current.status}`:`Automático: ${current.auto_status||current.status}`;
+}
+$('panAdminStatusSave')&&($('panAdminStatusSave').onclick=async()=>{
+  if(!current)return; const sel=$('panAdminStatus'),btn=$('panAdminStatusSave'); btn.disabled=true;
+  try{const r=await fetch(`/api/panoramas/${current.id}/status`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:sel.value})});const d=await r.json().catch(()=>({}));if(!r.ok){alert(d.error||'Não foi possível alterar o status.');return}panStatus(`Status alterado para ${d.status}.`,true);const id=current.id;await loadPan();if(panData.some(x=>x.id===id))openLoc(id);}finally{btn.disabled=false}
+});
+const _panOpenLocV501=typeof openLoc==='function'?openLoc:null;
+if(_panOpenLocV501){openLoc=function(id){_panOpenLocV501(id);setTimeout(panSyncAdminStatus,0)}}
