@@ -5,7 +5,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{% block title %}Sistema de Gestão Suporte a Campo{% endblock %}</title>
-<link rel="stylesheet" href="{{url_for('static',filename='app.css')}}?v=v49-1">
+<link rel="stylesheet" href="{{url_for('static',filename='app.css')}}?v=v50-0">
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#17345d">
 </head>
@@ -40,7 +40,7 @@
         <a href="/equipes">Equipes</a>{% if session.get('role') in ('manager','hr') %}<a href="/usuarios">Usuários</a>{% endif %}
       </div></div>{% endif %}
       <a href="/meu-perfil" class="navProfile">Meu Perfil</a>
-      {% if session.get('role') in ('manager','manager_field') %}<a href="/gestao-360">Central 360</a>{% endif %}{% if session.get('role') == 'manager' %}<a href="/diagnostico">Diagnóstico</a>{% endif %}<a href="/sobre">Sobre</a>
+      {% if session.get('role') in ('manager','manager_field') %}<a href="/gestao-360">Central 360</a><a href="#" id="notificationBell" class="v50Bell" title="Notificações">🔔 <span id="notificationCount" hidden>0</span></a>{% endif %}{% if session.get('role') == 'manager' %}<a href="/configuracoes">Configurações</a><a href="/diagnostico">Diagnóstico</a>{% endif %}<button type="button" id="installPwa" class="navInstall" hidden>Instalar App</button><a href="/sobre">Sobre</a>
       <a href="/logout">Sair</a>
     </nav>
   </div>
@@ -54,20 +54,13 @@
 </main>
 {% block scripts %}{% endblock %}
 <script>
-// V39.5 estabilidade mobile: remove Service Workers/caches antigos.
-// O modo offline será reativado após homologação desta correção.
-if('serviceWorker' in navigator){
-  window.addEventListener('load', async ()=>{
-    try{
-      const regs=await navigator.serviceWorker.getRegistrations();
-      await Promise.all(regs.map(r=>r.unregister()));
-      if(window.caches){
-        const keys=await caches.keys();
-        await Promise.all(keys.map(k=>caches.delete(k)));
-      }
-    }catch(_e){}
-  },{once:true});
-}
+// V50 — PWA instalável com cache seguro somente para recursos estáticos e fallback de navegação.
+let v50InstallPrompt=null;
+window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();v50InstallPrompt=e;const b=document.getElementById('installPwa');if(b)b.hidden=false;});
+document.getElementById('installPwa')?.addEventListener('click',async()=>{if(!v50InstallPrompt)return;v50InstallPrompt.prompt();await v50InstallPrompt.userChoice;v50InstallPrompt=null;document.getElementById('installPwa').hidden=true;});
+if('serviceWorker' in navigator && (location.protocol==='https:' || location.hostname==='localhost')){window.addEventListener('load',()=>navigator.serviceWorker.register('/sw.js').catch(console.warn),{once:true});}
+async function v50LoadNotifications(){const badge=document.getElementById('notificationCount');if(!badge)return;try{const d=await fetch('/api/notificacoes').then(r=>r.json());badge.textContent=d.count||0;badge.hidden=!(d.count>0);const bell=document.getElementById('notificationBell');if(bell){bell.onclick=e=>{e.preventDefault();location.href='/gestao-360';};}}catch(_e){}}
+v50LoadNotifications();
 </script>
 
 {% if session.get('role') in ('technician','technician_implantation') %}
