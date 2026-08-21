@@ -1336,9 +1336,54 @@ function atmDonut(obj,id,legendId,filterId){const entries=Object.entries(obj||{}
 function atmHeatmap(obj){const e=document.getElementById('atmLineHeatmap');if(!e)return;const a=Object.entries(obj||{}).sort((x,y)=>y[1]-x[1]).slice(0,12),m=Math.max(1,...a.map(x=>x[1]));e.innerHTML=a.map(([k,v],i)=>`<button class="v430Heat" data-value="${atmEsc(k)}" style="--intensity:${20+Math.round(v/m*60)}%;--heat:${atmPalette[i%4]}"><b>${v}</b><span>${atmEsc(k)}</span></button>`).join('');e.querySelectorAll('button').forEach(b=>b.onclick=()=>atmSetFilter('atmFLine',b.dataset.value))}
 function atmContracts(d){const e=document.getElementById('atmContractStack');if(!e)return;const rows=d.assets||[],map={};rows.forEach(x=>{const k=x.contract||'SEM CONTRATO';map[k]??={total:0,leasing:0};map[k].total++;if(String(x.ownership).toUpperCase()==='LEASING')map[k].leasing++});const a=Object.entries(map).sort((x,y)=>y[1].total-x[1].total).slice(0,10),m=Math.max(1,...a.map(x=>x[1].total));e.innerHTML=a.map(([k,v])=>`<button class="v430StackRow" data-value="${atmEsc(k)}"><div class="v430StackLabel"><span>${atmEsc(k)}</span><b>${v.total}</b></div><div class="v430StackBar" style="width:${Math.max(18,v.total/m*100)}%"><i style="width:${(v.total-v.leasing)/v.total*100}%"></i><i style="width:${v.leasing/v.total*100}%"></i></div></button>`).join('');e.querySelectorAll('button').forEach(b=>b.onclick=()=>atmSetFilter('atmFContract',b.dataset.value))}
 function atmDrill(d){const e=document.getElementById('atmDrillCards');if(!e)return;const loc=Object.entries(d.locations||{}).sort((a,b)=>b[1]-a[1]).slice(0,12);e.innerHTML=loc.map(([k,v])=>`<button data-value="${atmEsc(k)}"><small>LOCALIDADE</small><b>${v} ATM${v!==1?'s':''}</b><span>${atmEsc(k)}</span></button>`).join('');e.querySelectorAll('button').forEach(b=>b.onclick=()=>atmSetFilter('atmFLocation',b.dataset.value))}
-async function loadAtmDashboard(fillOptions=true){const r=await fetch('/api/dashboard/inventory-atm?'+atmParams(),{cache:'no-store'}),d=await r.json();if(!d.ok)return;atmDashData=d;if(fillOptions){atmFill('atmFCompany',d.options.companies,'Todas operadoras');atmFill('atmFLine',d.options.lines,'Todas linhas');atmFill('atmFLocation',d.options.localities,'Todas localidades');atmFill('atmFModel',d.options.models,'Todos modelos');atmFill('atmFContract',d.options.contracts,'Todos contratos');atmFill('atmFOwnership',d.options.ownership,'Todo tipo de posse');atmFill('atmFStatus',d.options.statuses,'Todos status')}
-const assets=d.assets||[],set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v};set('atmKTotal',d.total);set('atmKAllocated',d.allocated||0);set('atmKStock',d.stock||0);set('atmKCptmStations',d.cptm_stations||0);set('atmKMetroStations',d.metro_stations||0);set('atmKTeamviewer',d.teamviewer_count||0);set('atmRowsTag',d.total+' ATMs');set('atmDonutTotal',d.total);set('atmAllocationA',d.allocated||0);set('atmAllocationS',d.stock||0);const pct=d.total?Math.round((d.allocated||0)/d.total*100):0;set('atmAllocationPct',pct+'%');const ring=document.getElementById('atmAllocationRing');if(ring)ring.style.setProperty('--pct',pct+'%');const leasing=assets.filter(x=>String(x.ownership).toUpperCase()==='LEASING').length;set('atmLeasingCount',leasing);
-atmColumns(d.operators);atmDonut(d.models,'atmModelDonut','atmModelLegend','atmFModel');atmDonut(d.ownership,'atmOwnershipDonut','atmOwnershipLegend','atmFOwnership');atmBars('atmLocationRanking',d.locations,'atmFLocation',10);atmHeatmap(d.lines);atmContracts(d);atmDrill(d);
-const cov=document.getElementById('atmCoverageTiles');if(cov){cov.innerHTML=`<button data-company="CPTM"><b>${d.cptm_stations||0}</b><span>CPTM</span><small>estações com ATM</small></button><button data-company="METRÔ"><b>${d.metro_stations||0}</b><span>Metrô</span><small>estações com ATM</small></button>`;cov.querySelectorAll('button').forEach(b=>b.onclick=()=>atmSetFilter('atmFCompany',b.dataset.company))}
-set('atmDrillTitle',document.getElementById('atmFLocation')?.value||document.getElementById('atmFLine')?.value||document.getElementById('atmFCompany')?.value||'Explorar parque');document.getElementById('atmRows').innerHTML=assets.map(x=>`<tr><td>${atmEsc(x.company)}</td><td>${atmEsc(x.line)}</td><td><b>${atmEsc(x.locality)}</b></td><td>${atmEsc(x.asset_key)}</td><td>${atmEsc(x.model)}</td><td>${atmEsc(x.contract)}</td><td>${atmEsc(x.ownership)}</td><td>${atmEsc(x.teamviewer||'—')}</td><td><code>${atmEsc(x.teamviewer_id||'—')}</code></td><td><code>${atmEsc(x.ip||'—')}</code></td><td>${atmEsc(x.status)}</td></tr>`).join('')||'<tr><td colspan="11">Sem ATMs no recorte.</td></tr>'}
-if(document.getElementById('atmApply')){document.getElementById('atmApply').onclick=()=>loadAtmDashboard(false);document.getElementById('atmClear').onclick=()=>{['atmFCompany','atmFLine','atmFLocation','atmFModel','atmFContract','atmFOwnership','atmFStatus'].forEach(id=>document.getElementById(id).value='');const q=new URLSearchParams(window.location.search);q.delete('teamviewer_missing');q.set('view','atm-inventory');history.replaceState(null,'',window.location.pathname+'?'+q.toString());loadAtmDashboard(false)};document.getElementById('atmDashRefresh').onclick=()=>loadAtmDashboard(false);document.getElementById('atmShowLocations').onclick=()=>{document.getElementById('atmAssetDetails')?.setAttribute('open','');document.getElementById('atmDrillTitle')?.scrollIntoView({behavior:'smooth'})};document.getElementById('atmDashExport').onclick=()=>{if(!atmDashData)return;const rows=[['Operadora','Linha','Localidade','ATM','Modelo','Contrato','Posse','TeamViewer','ID TeamViewer','IP','Status'],...(atmDashData.assets||[]).map(x=>[x.company,x.line,x.locality,x.asset_key,x.model,x.contract,x.ownership,x.teamviewer,x.teamviewer_id,x.ip,x.status])];const csv=rows.map(r=>r.map(v=>'"'+String(v??'').replaceAll('"','""')+'"').join(';')).join('\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\ufeff'+csv],{type:'text/csv'}));a.download='dashboard_atm_v43.csv';a.click()};loadAtmDashboard(true)}
+async function loadAtmDashboard(fillOptions=true){
+  const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v};
+  try{
+    const r=await fetch('/api/dashboard/inventory-atm?'+atmParams(),{cache:'no-store',headers:{'Accept':'application/json'}});
+    if(!r.ok)throw new Error(`HTTP ${r.status}`);
+    const d=await r.json();
+    if(!d.ok)throw new Error(d.error||'API ATM retornou erro');
+    atmDashData=d;
+    const opts=d.options||{};
+    if(fillOptions){
+      atmFill('atmFCompany',opts.companies||[],'Todas operadoras');
+      atmFill('atmFLine',opts.lines||[],'Todas linhas');
+      atmFill('atmFLocation',opts.localities||[],'Todas localidades');
+      atmFill('atmFModel',opts.models||[],'Todos modelos');
+      atmFill('atmFContract',opts.contracts||[],'Todos contratos');
+      atmFill('atmFOwnership',opts.ownership||[],'Todo tipo de posse');
+      atmFill('atmFStatus',opts.statuses||[],'Todos status');
+    }
+    const assets=Array.isArray(d.assets)?d.assets:[];
+    const total=Number.isFinite(Number(d.total))?Number(d.total):assets.length;
+    const allocated=Number.isFinite(Number(d.allocated))?Number(d.allocated):assets.filter(x=>!x.stock).length;
+    const stock=Number.isFinite(Number(d.stock))?Number(d.stock):assets.filter(x=>x.stock).length;
+    set('atmKTotal',total);set('atmKAllocated',allocated);set('atmKStock',stock);
+    set('atmKCptmStations',d.cptm_stations||0);set('atmKMetroStations',d.metro_stations||0);set('atmKTeamviewer',d.teamviewer_count||0);
+    set('atmRowsTag',`${total} ATMs · API ${d.release||'—'}`);set('atmDonutTotal',total);set('atmAllocationA',allocated);set('atmAllocationS',stock);
+    const pct=total?Math.round(allocated/total*100):0;set('atmAllocationPct',pct+'%');
+    const ring=document.getElementById('atmAllocationRing');if(ring)ring.style.setProperty('--pct',pct+'%');
+    const leasing=assets.filter(x=>String(x.ownership).toUpperCase()==='LEASING').length;set('atmLeasingCount',leasing);
+    atmColumns(d.operators||{});atmDonut(d.models||{},'atmModelDonut','atmModelLegend','atmFModel');atmDonut(d.ownership||{},'atmOwnershipDonut','atmOwnershipLegend','atmFOwnership');atmBars('atmLocationRanking',d.locations||{},'atmFLocation',10);atmHeatmap(d.lines||{});atmContracts(d);atmDrill(d);
+    const cov=document.getElementById('atmCoverageTiles');if(cov){cov.innerHTML=`<button data-company="CPTM"><b>${d.cptm_stations||0}</b><span>CPTM</span><small>estações com ATM</small></button><button data-company="METRÔ"><b>${d.metro_stations||0}</b><span>Metrô</span><small>estações com ATM</small></button>`;cov.querySelectorAll('button').forEach(b=>b.onclick=()=>atmSetFilter('atmFCompany',b.dataset.company))}
+    set('atmDrillTitle',document.getElementById('atmFLocation')?.value||document.getElementById('atmFLine')?.value||document.getElementById('atmFCompany')?.value||'Explorar parque');
+    const rowsEl=document.getElementById('atmRows');if(rowsEl)rowsEl.innerHTML=assets.map(x=>`<tr><td>${atmEsc(x.company)}</td><td>${atmEsc(x.line)}</td><td><b>${atmEsc(x.locality)}</b></td><td>${atmEsc(x.asset_key)}</td><td>${atmEsc(x.model)}</td><td>${atmEsc(x.contract)}</td><td>${atmEsc(x.ownership)}</td><td>${atmEsc(x.teamviewer||'—')}</td><td><code>${atmEsc(x.teamviewer_id||'—')}</code></td><td><code>${atmEsc(x.ip||'—')}</code></td><td>${atmEsc(x.status)}</td></tr>`).join('')||'<tr><td colspan="11">Sem ATMs no recorte.</td></tr>';
+  }catch(err){
+    console.error('Dashboard ATM V50.3:',err);
+    ['atmKTotal','atmKAllocated','atmKStock','atmKCptmStations','atmKMetroStations','atmKTeamviewer'].forEach(id=>set(id,'—'));
+    set('atmRowsTag','Erro ao carregar dados');
+    const rowsEl=document.getElementById('atmRows');if(rowsEl)rowsEl.innerHTML=`<tr><td colspan="11"><b>Erro ao carregar a base ATM.</b> ${atmEsc(err.message||err)}</td></tr>`;
+  }
+}
+
+function initAtmDashboardV503(){
+  const panel=document.querySelector('[data-v23-panel="atm-inventory"]')||document.getElementById('atmKTotal');
+  if(!panel)return;
+  ['atmFCompany','atmFLine','atmFLocation','atmFModel','atmFContract','atmFOwnership','atmFStatus'].forEach(id=>document.getElementById(id)?.addEventListener('change',()=>loadAtmDashboard(true)));
+  document.getElementById('atmClear')?.addEventListener('click',()=>{['atmFCompany','atmFLine','atmFLocation','atmFModel','atmFContract','atmFOwnership','atmFStatus'].forEach(id=>{const e=document.getElementById(id);if(e)e.value=''});const q=new URLSearchParams(window.location.search);q.delete('teamviewer_missing');q.set('view','atm-inventory');history.replaceState(null,'',window.location.pathname+'?'+q.toString());loadAtmDashboard(true)});
+  document.getElementById('atmDashRefresh')?.addEventListener('click',()=>loadAtmDashboard(true));
+  document.getElementById('atmShowLocations')?.addEventListener('click',()=>{document.getElementById('atmAssetDetails')?.setAttribute('open','');document.getElementById('atmDrillTitle')?.scrollIntoView({behavior:'smooth'})});
+  document.getElementById('atmDashExport')?.addEventListener('click',()=>{if(!atmDashData)return;const rows=[['Operadora','Linha','Localidade','ATM','Modelo','Contrato','Posse','TeamViewer','ID TeamViewer','IP','Status'],...(atmDashData.assets||[]).map(x=>[x.company,x.line,x.locality,x.asset_key,x.model,x.contract,x.ownership,x.teamviewer,x.teamviewer_id,x.ip,x.status])];const csv=rows.map(r=>r.map(v=>'"'+String(v??'').replaceAll('"','""')+'"').join(';')).join('\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\ufeff'+csv],{type:'text/csv'}));a.download='dashboard_atm_v50_3.csv';a.click()});
+  loadAtmDashboard(true);
+}
+initAtmDashboardV503();
