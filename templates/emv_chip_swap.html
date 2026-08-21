@@ -30,4 +30,4 @@
   <div style="display:flex;gap:8px;flex-wrap:wrap"><a class="secondary buttonLink" href="/api/emv-chip-swaps/export.xlsx" id="emvExport">Exportar Excel</a><button type="button" class="secondary" id="emvToggleRows">Recolher bloqueios</button></div>
 </section>
 <section class="card" id="emvRowsSection"><h2>Bloqueios / pendências</h2><div id="emvRows" class="emvRows"></div></section>
-<script>window.EMV_ROLE={{ session.get("role")|tojson }};</script><script src="{{url_for('static',filename='emv_chip_swap.js')}}?v=v52-2"></script>{% endblock %}
+<script>window.EMV_ROLE={{ session.get("role")|tojson }};</script><script src="{{url_for('static',filename='emv_chip_swap.js')}}?v=v52-3"></script>{% endblock %}

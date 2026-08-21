@@ -33,6 +33,7 @@
           <label>Perfil *</label>
           <select name="role" id="roleSelect" required>
             <option value="technician">Técnico Field</option>
+            <option value="technician_implantation">Técnico Implantação</option>
             {% if can_assign_sensitive_roles %}<option value="manager_field">Gestor Field</option><option value="atm_financial_admin">ADM Financeiro</option>{% endif %}
             {% if not is_hr_admin %}<option value="manager">Gestor</option>
             <option value="consultation">Consulta</option>
@@ -174,6 +175,8 @@
             {% elif u.role == "consultation" %}Consulta
             {% elif u.role == "hr" %}RH
             {% elif u.role == "dispatcher" %}Dispatcher
+            {% elif u.role == "technician_implantation" %}Técnico Implantação
+            {% elif u.role == "atm_financial_admin" %}ADM Financeiro
             {% else %}Técnico Field{% endif %}
           </td>
           <td>{{ u.job_title or "—" }}</td>
@@ -237,6 +240,7 @@
                     <label>Perfil *</label>
                     <select name="role" class="editRoleSelect" required>
                       <option value="technician" {% if u.role == "technician" %}selected{% endif %}>Técnico Field</option>
+                      <option value="technician_implantation" {% if u.role == "technician_implantation" %}selected{% endif %}>Técnico Implantação</option>
                       {% if can_assign_sensitive_roles %}<option value="manager_field" {% if u.role == "manager_field" %}selected{% endif %}>Gestor Field</option><option value="atm_financial_admin" {% if u.role == "atm_financial_admin" %}selected{% endif %}>ADM Financeiro</option>{% endif %}
                       {% if not is_hr_admin %}{% if can_assign_sensitive_roles %}<option value="manager" {% if u.role == "manager" %}selected{% endif %}>Gestor</option>
                       <option value="consultation" {% if u.role == "consultation" %}selected{% endif %}>Consulta</option><option value="dispatcher" {% if u.role == "dispatcher" %}selected{% endif %}>Dispatcher</option>{% elif u.role in ("manager","consultation","dispatcher") %}<option value="{{ u.role }}" selected disabled>{{ {"manager":"Gestor","consultation":"Consulta","dispatcher":"Dispatcher"}.get(u.role,u.role) }}</option>{% endif %}
@@ -344,7 +348,7 @@
 
   function updateCreateProfileFields() {
     const consultation = role.value === "consultation";
-    const technician = role.value === "technician";
+    const technician = ["technician","technician_implantation"].includes(role.value);
     extended.forEach(el => {
       el.style.display = consultation ? "none" : "";
       if (consultation) el.querySelectorAll("input").forEach(input => input.value = "");
@@ -387,7 +391,7 @@
 
     function updateEditFields() {
       const consultation = roleSelect.value === "consultation";
-      const technician = roleSelect.value === "technician";
+      const technician = ["technician","technician_implantation"].includes(roleSelect.value);
       editExtended.forEach(el => el.style.display = consultation ? "none" : "");
       form.querySelectorAll('.scheduleField').forEach(el=>el.style.display=technician?'':'none');
       updateAnchorFields(form);
@@ -403,7 +407,7 @@
 <section class="card archivedUsersPanel" id="archivedUsersPanel" hidden>
   <div class="sectionHead"><div><h2>Usuários arquivados</h2><p class="muted">Histórico separado da operação diária. Um colaborador que retornar deve ser reativado, preservando sua identidade histórica.</p></div><span class="tag">{{ archived_users|length }} arquivado(s)</span></div>
   <div class="tableWrap"><table><thead><tr><th>Usuário</th><th>Código</th><th>Perfil</th><th>Cargo</th><th>Empresa</th><th>Arquivado em</th><th>Ações</th></tr></thead><tbody>
-  {% for u in archived_users %}<tr><td><b>{{ u.name }}</b></td><td>{{ u.user_code or '—' }}</td><td>{{ {'manager':'Gestor','manager_field':'Gestor Field','technician':'Técnico Field','consultation':'Consulta','hr':'RH','dispatcher':'Dispatcher'}.get(u.role,u.role) }}</td><td>{{ u.job_title or '—' }}</td><td>{{ u.company or '—' }}</td><td>{{ u.archived_at.strftime('%d/%m/%Y %H:%M') if u.archived_at else '—' }}</td><td><form method="post" action="/usuarios/{{u.id}}/reativar" onsubmit="return confirm('Reativar este colaborador preservando o histórico anterior?')"><button class="secondary" type="submit">Reativar</button></form></td></tr>{% endfor %}
+  {% for u in archived_users %}<tr><td><b>{{ u.name }}</b></td><td>{{ u.user_code or '—' }}</td><td>{{ {'manager':'Gestor','manager_field':'Gestor Field','technician':'Técnico Field','technician_implantation':'Técnico Implantação','consultation':'Consulta','hr':'RH','dispatcher':'Dispatcher','atm_financial_admin':'ADM Financeiro'}.get(u.role,u.role) }}</td><td>{{ u.job_title or '—' }}</td><td>{{ u.company or '—' }}</td><td>{{ u.archived_at.strftime('%d/%m/%Y %H:%M') if u.archived_at else '—' }}</td><td><form method="post" action="/usuarios/{{u.id}}/reativar" onsubmit="return confirm('Reativar este colaborador preservando o histórico anterior?')"><button class="secondary" type="submit">Reativar</button></form></td></tr>{% endfor %}
   </tbody></table></div>
 </section>
 {% endif %}
