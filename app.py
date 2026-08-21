@@ -39,7 +39,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V51.0"
+APP_RELEASE = "V51.1"
 DASHBOARD_RELEASE = "dashboard-v47"
 TEAMS_RELEASE = "teams-v42-4"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -6871,12 +6871,14 @@ def chip_swap_save_api(location_id, base_asset_id):
     sw.notes = (request.form.get("notes") or sw.notes or "").strip()
     test_result = (request.form.get("test_result") or "").strip()
     allowed_results = {"TESTADO_OK", "TESTADO_COM_DEFEITO", "NAO_FOI_POSSIVEL_TESTAR", "EQUIPAMENTO_INOPERANTE", "OUTRO"}
-    if test_result not in allowed_results:
+    is_admin = session.get("role") == "manager"
+    if not is_admin and test_result not in allowed_results:
         return jsonify({"ok": False, "error": "Informe o resultado do teste após a troca."}), 400
     test_notes = (request.form.get("test_notes") or "").strip()
-    if test_result != "TESTADO_OK" and not test_notes and not sw.notes:
+    if not is_admin and test_result != "TESTADO_OK" and not test_notes and not sw.notes:
         return jsonify({"ok": False, "error": "Para resultado com pendência, informe uma observação."}), 400
-    sw.test_result = test_result
+    if test_result in allowed_results:
+        sw.test_result = test_result
     sw.test_notes = test_notes or None
     sw.latitude = lat; sw.longitude = lon; sw.gps_accuracy = acc; sw.updated_at = datetime.utcnow()
     files = [f for f in request.files.getlist("photos") if f and f.filename]

@@ -1,0 +1,11 @@
+{
+  "release": "V51.1",
+  "base": "V51.0",
+  "type": "hotfix cumulativo",
+  "changes": [
+    "Restaura Inventário no menu Field",
+    "ADM pode regularizar Troca de Chips Recarga sem Resultado após troca obrigatório",
+    "Mantém motivo obrigatório no controle administrativo de status",
+    "Preserva Financeiro ATM 2.0 da V51"
+  ]
+}
