@@ -1402,6 +1402,10 @@ initAtmDashboardV503();
   const sum=(d.contracts||[]).reduce((a,x)=>a+Number(x.value||0),0)||1;let acc=0;const colors=['#1677ff','#16c784','#8a69ff','#ff9f1c'];const stops=(d.contracts||[]).map((x,i)=>{const a=acc/sum*100;acc+=Number(x.value||0);return `${colors[i%colors.length]} ${a}% ${acc/sum*100}%`}).join(',');document.getElementById('finContractDonut').innerHTML=`<div class="v460FinDonut" style="background:conic-gradient(${stops})"><div><b>${brl(sum)}</b><small>mensal</small></div></div><div class="v460FinLegend">${(d.contracts||[]).map((x,i)=>`<span><i style="background:${colors[i%colors.length]}"></i>${esc(x.contract)} <b>${x.qty}</b> · ${brl(x.value)}</span>`).join('')}</div>`;
   document.getElementById('finCompare').innerHTML=(d.comparison||[]).map(x=>`<div><b>${esc(x.model)}</b><span>Parque <strong>${x.park_qty}</strong></span><span>Contrato <strong>${x.contract_qty}</strong></span><span>Faturado <strong>${x.billed_qty}</strong></span></div>`).join('');
   document.getElementById('finRows').innerHTML=(d.models||[]).map(x=>`<tr><td><b>${esc(x.model)}</b></td><td>${x.leasing}</td><td>${x.non_leasing}</td><td>${x.stock}</td><td>${x.other}</td><td>${x.subtotal}</td><td>${brl(x.unit_value)}</td><td><b>${brl(x.total_value)}</b></td></tr>`).join('');
+  const sc=d.supplier_costs||{}, suppliers=sc.suppliers||[]; const st=sc.totals||{};
+  const fst=document.getElementById('finSupplierTotal'),fsc=document.getElementById('finSupplierCount'),fsr=document.getElementById('finSupplierRows');
+  if(fst)fst.textContent=brl(st.period_value); if(fsc)fsc.textContent=suppliers.length;
+  if(fsr)fsr.innerHTML=suppliers.map(x=>`<tr><td><b>${esc(x.supplier)}</b></td><td>${esc(x.description)}</td><td>${brl(x.avg_jan_jun_2026)}</td><td><b>${brl(x.period_value)}</b></td><td>${esc(x.category)}</td><td>${x.allocation_rule==='RATEIO'?'ATM 70% · POS 15% · Recarga 5% · Rack 9% · Outros 1%':esc(Object.keys(x.allocation_percentages||{})[0]||x.category)+' 100%'}</td></tr>`).join('');
  }
  document.querySelector('[data-v23-view="atm-financial"]')?.addEventListener('click',load);load();
 })();
