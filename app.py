@@ -39,7 +39,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V47.0"
+APP_RELEASE = "V48.0"
 DASHBOARD_RELEASE = "dashboard-v47"
 TEAMS_RELEASE = "teams-v42-4"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -6547,6 +6547,65 @@ def management_360_summary_api():
         "emv_pending": max(len(emv_rows) - emv_done, 0),
     }
     return jsonify({"ok": True, "release": APP_RELEASE, "field": field, "implantation": implantation})
+
+
+@app.get("/api/busca-global")
+@login_required
+def global_search_api():
+    """V48: busca transversal, preservando a identificação do domínio de origem."""
+    q=(request.args.get("q") or "").strip()
+    if len(q) < 2:
+        return jsonify({"ok": True, "results": []})
+    like=f"%{q}%"
+    out=[]
+    # Ativos / FIELD
+    assets=BaseAsset.query.filter(db.or_(BaseAsset.asset_key.ilike(like), BaseAsset.terminal_number.ilike(like), BaseAsset.serial.ilike(like), BaseAsset.teamviewer_id.ilike(like), BaseAsset.locality.ilike(like))).limit(12).all()
+    for a in assets:
+        out.append({"type":"ATIVO","domain":"FIELD","title":a.asset_key or a.terminal_number or f"Ativo #{a.id}","subtitle":" · ".join(x for x in [a.equipment_type,a.company,a.line,a.locality] if x),"url":f"/dashboard/atm?asset_id={a.id}" if (a.equipment_type or '').upper()=='ATM' else f"/patrimonio?asset={a.id}"})
+    # Localidades são compartilhadas, mas a tela 360 mantém os domínios separados.
+    locs=Location.query.filter(db.or_(Location.location.ilike(like),Location.line.ilike(like),Location.company.ilike(like))).limit(10).all()
+    for x in locs:
+        out.append({"type":"LOCALIDADE","domain":"360","title":x.location,"subtitle":" · ".join(y for y in [x.company,x.line] if y),"url":f"/localidade-360/{x.id}"})
+    # RV / IMPLANTAÇÃO
+    visits=HardwareFieldVisit.query.filter(db.or_(HardwareFieldVisit.report_code.ilike(like),HardwareFieldVisit.location_name.ilike(like),HardwareFieldVisit.client.ilike(like),HardwareFieldVisit.project.ilike(like))).limit(10).all()
+    for v in visits:
+        out.append({"type":"RELATÓRIO RV","domain":"IMPLANTAÇÃO","title":v.report_code or f"RV-{v.id:06d}","subtitle":" · ".join(y for y in [v.client,v.project,v.location_name] if y),"url":f"/implantacao-hardware/visita/{v.id}"})
+    return jsonify({"ok":True,"query":q,"results":out[:25]})
+
+
+@app.get("/api/gestao-360/alertas")
+@login_required
+def management_360_alerts_api():
+    if session.get("role") not in ("manager","manager_field"):
+        return jsonify({"ok":False,"error":"Sem permissão."}),403
+    # FIELD
+    atm_without_tv=BaseAsset.query.filter(func.upper(func.coalesce(BaseAsset.equipment_type,""))=="ATM",func.coalesce(BaseAsset.teamviewer_id,"")=="").count()
+    inv_div=Inventory.query.filter(func.coalesce(Inventory.divergence,"")!="").count()
+    loc_pending=Location.query.filter(func.upper(func.coalesce(Location.survey_status,"PENDENTE"))!="CONCLUIDO").count()
+    # IMPLANTAÇÃO
+    visits=HardwareFieldVisit.query.all()
+    rv_unsigned=sum(1 for v in visits if (v.status or '').upper()=='FINALIZADO' and not v.signature_file)
+    rv_pending=sum(1 for v in visits if 'PEND' in (v.conclusion_status or '').upper())
+    emv_rows=EmvChipSwap.query.all()
+    emv_pending=sum(1 for x in emv_rows if not (x.status or '').upper().startswith('CONCLU'))
+    alerts=[
+      {"domain":"FIELD","severity":"ATENCAO","label":"ATMs sem ID TeamViewer","count":atm_without_tv,"url":"/dashboard/atm"},
+      {"domain":"FIELD","severity":"ATENCAO","label":"Divergências de inventário","count":inv_div,"url":"/dashboard/field"},
+      {"domain":"FIELD","severity":"INFO","label":"Localidades não concluídas","count":loc_pending,"url":"/dashboard/field"},
+      {"domain":"IMPLANTAÇÃO","severity":"ATENCAO","label":"RVs finalizados sem assinatura","count":rv_unsigned,"url":"/implantacao-hardware/dashboard"},
+      {"domain":"IMPLANTAÇÃO","severity":"ATENCAO","label":"Visitas com pendências","count":rv_pending,"url":"/implantacao-hardware/dashboard"},
+      {"domain":"IMPLANTAÇÃO","severity":"INFO","label":"EMV Trilhos pendentes","count":emv_pending,"url":"/implantacao-hardware/dashboard"},
+    ]
+    return jsonify({"ok":True,"alerts":[a for a in alerts if a["count"]>0]})
+
+
+@app.get("/api/auditoria/recente")
+@login_required
+def recent_audit_api():
+    if session.get("role") not in ("manager","manager_field"):
+        return jsonify({"ok":False,"error":"Sem permissão."}),403
+    rows=AuditEvent.query.order_by(AuditEvent.created_at.desc()).limit(20).all()
+    return jsonify({"ok":True,"events":[{"id":x.id,"type":x.event_type,"entity":x.entity_type,"entity_id":x.entity_id,"detail":x.detail,"created_at":x.created_at.isoformat() if x.created_at else None} for x in rows]})
 
 
 @app.get("/atividades")
