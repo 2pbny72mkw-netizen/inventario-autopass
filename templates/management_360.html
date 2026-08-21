@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Central 360 | Inventário Autopass{% endblock %}
+{% block content %}
+<div class="pageHead"><span class="eyebrow">V47 · GESTÃO OPERACIONAL 360°</span><h1>Central 360</h1><p>Visão executiva integrada, mantendo Field e Implantação de Hardware como responsabilidades independentes.</p></div>
+<section class="v47DomainGrid">
+  <article class="v47Domain v47Field"><div class="v47DomainHead"><div><small>DOMÍNIO OPERACIONAL</small><h2>FIELD</h2></div><a class="secondary buttonLink" href="/dashboard/field">Abrir Dashboard Field</a></div>
+    <div class="v47Kpis"><div><span>Inventários</span><b id="fInv">—</b><small id="fToday">— hoje</small></div><div><span>Troca Chip Recarga</span><b id="fChip">—</b><small id="fChipPending">— pendentes</small></div><div><span>Panorâmicas</span><b id="fPan">—</b><small>evidências/localidades</small></div></div>
+    <div class="v47Scope"><b>Responsabilidade Field</b><span>Inventário · Troca de Chip Recarga · Visão Panorâmica · Evidências Field · divergências de inventário.</span></div>
+  </article>
+  <article class="v47Domain v47Impl"><div class="v47DomainHead"><div><small>DOMÍNIO OPERACIONAL</small><h2>IMPLANTAÇÃO DE HARDWARE</h2></div><a class="secondary buttonLink" href="/implantacao-hardware/dashboard">Abrir Dashboard Implantação</a></div>
+    <div class="v47Kpis"><div><span>Visitas / RV</span><b id="iVisits">—</b><small id="iVisitPending">— com pendências</small></div><div><span>EMV · Trilhos</span><b id="iEmv">—</b><small id="iEmvPending">— pendentes</small></div><div><span>RVs finalizados</span><b id="iFinal">—</b><small>documentação de implantação</small></div></div>
+    <div class="v47Scope"><b>Responsabilidade Implantação</b><span>Visitas a Campo · Relatórios RV · Troca de Chips EMV – Trilhos · aceite/assinatura · pendências de implantação.</span></div>
+  </article>
+</section>
+<section class="card"><div class="sectionHead"><div><span class="eyebrow">REGRA V47</span><h2>Integração sem mistura operacional</h2></div></div><p class="muted">A plataforma pode cruzar Localidade, Ativo e histórico, mas indicadores, pendências e produtividade permanecem separados entre Field e Implantação.</p></section>
+{% endblock %}
+{% block scripts %}<script>
+(async()=>{try{const r=await fetch('/api/gestao-360/resumo');const d=await r.json();if(!d.ok)return;const f=d.field,i=d.implantation;
+fInv.textContent=f.inventory_records;fToday.textContent=f.inventory_today+' hoje';fChip.textContent=f.chip_done+'/'+f.chip_total;fChipPending.textContent=f.chip_pending+' pendentes';fPan.textContent=f.panorama_points;
+iVisits.textContent=i.visits_total;iVisitPending.textContent=i.visits_with_pending+' com pendências';iEmv.textContent=i.emv_done+'/'+i.emv_total;iEmvPending.textContent=i.emv_pending+' pendentes';iFinal.textContent=i.visits_finalized;}catch(e){console.error(e)}})();
+</script>{% endblock %}

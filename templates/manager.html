@@ -8,7 +8,7 @@
 
 <div class="v23DashboardShell v24Executive v30Executive v31CommandCenter v32CommandCenter v33CommandCenter v34CommandCenter" id="v23DashboardShell">
   <aside class="v23Sidebar" id="v23Sidebar">
-    <div class="v23SidebarBrand"><b>GESTÃO DE CAMPO</b><small>Autopass · V46.0</small></div>
+    <div class="v23SidebarBrand"><b>GESTÃO DE CAMPO</b><small>Autopass · V47.0</small></div>
     <div class="v42SideGroup">VISÃO GERAL</div><button class="v23Nav active" data-v23-view="overview">▦ <span>Visão Geral</span></button><div class="v42SideGroup">ATIVIDADES</div>
     <button class="v23Nav" data-v23-view="execution">▥ <span>Inventário</span></button>
     <button class="v23Nav" data-v23-view="atm-inventory">▦ <span>Dashboard ATM</span></button>
@@ -20,8 +20,9 @@
     <button class="v23Nav" data-v23-view="evidence">▣ <span>Evidências · Inventário</span></button>
     <button class="v23Nav" data-v23-view="panorama">▤ <span>Visões panorâmicas</span></button>
     <button class="v23Nav" data-v23-view="chips">▣ <span>Troca de Chip Recarga</span></button>
-{% if session.get("role") != "manager_field" %}    <button class="v23Nav" data-v23-view="emv">▣ <span>Troca Chips EMV</span></button>
-    <a class="v23Nav v42ExternalNav" href="/implantacao-hardware/dashboard">⌁ <span>Implantação de Hardware</span></a>{% endif %}<div class="v42SideGroup">OPERAÇÃO</div><button class="v23Nav" data-v23-view="ranking">↗ <span>Ranking</span></button>
+{% if session.get("role") != "manager_field" %}<div class="v42SideGroup">IMPLANTAÇÃO</div>
+    <button class="v23Nav" data-v23-view="emv">▣ <span>Troca Chips EMV · Trilhos</span></button>
+    <a class="v23Nav v42ExternalNav" href="/implantacao-hardware/dashboard">⌁ <span>Dashboard Implantação</span></a>{% endif %}<div class="v42SideGroup">OPERAÇÃO</div><button class="v23Nav" data-v23-view="ranking">↗ <span>Ranking</span></button>
     <button class="v23Nav" data-v23-view="competition">◉ <span>Concorrência</span></button>
     <div class="v23SidebarSpacer"></div>
     <button class="v23TvBtn" id="v23TvBtn" type="button">▣ <span>Modo TV</span></button>
