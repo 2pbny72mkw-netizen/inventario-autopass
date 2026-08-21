@@ -1,0 +1,327 @@
+{
+  "suppliers": [
+    {
+      "supplier": "IMPLY",
+      "avg_jan_jun_2026": 664886.81,
+      "period_value": 646886.81,
+      "period_label": "jul/27",
+      "description": "Locação de equipamentos ATMs",
+      "category": "ATM",
+      "allocation_rule": "DIRETO",
+      "allocation_percentages": {
+        "ATM": 100
+      }
+    },
+    {
+      "supplier": "DOGMA",
+      "avg_jan_jun_2026": 429765.49,
+      "period_value": 415025.24,
+      "period_label": "jul/27",
+      "description": "Prestação de serviços de Field Service, com técnicos de campo para atendimento e suporte operacional.",
+      "category": "COMPARTILHADO",
+      "allocation_rule": "RATEIO",
+      "allocation_percentages": {
+        "ATM": 70,
+        "POS": 15,
+        "RECARGA": 5,
+        "RACK": 9,
+        "OUTROS": 1
+      }
+    },
+    {
+      "supplier": "AUTOPEL",
+      "avg_jan_jun_2026": 107181.9,
+      "period_value": 92163.2,
+      "period_label": "jul/27",
+      "description": "Fornecimento de bobinas para POS e ATM, para operação em SP.",
+      "category": "COMPARTILHADO",
+      "allocation_rule": "RATEIO",
+      "allocation_percentages": {
+        "ATM": 70,
+        "POS": 15,
+        "RECARGA": 5,
+        "RACK": 9,
+        "OUTROS": 1
+      }
+    },
+    {
+      "supplier": "FISERV (SKYTEF)",
+      "avg_jan_jun_2026": 61159.14,
+      "period_value": 24930.95,
+      "period_label": "jul/27",
+      "description": "Locação de POS",
+      "category": "POS",
+      "allocation_rule": "DIRETO",
+      "allocation_percentages": {
+        "POS": 100
+      }
+    },
+    {
+      "supplier": "ARROW",
+      "avg_jan_jun_2026": 54520.5,
+      "period_value": 42075.54,
+      "period_label": "jul/27",
+      "description": "Prestação de serviços de Body Shop (alocação de profissionais)",
+      "category": "OUTROS",
+      "allocation_rule": "DIRETO",
+      "allocation_percentages": {
+        "OUTROS": 100
+      }
+    },
+    {
+      "supplier": "IMPLY - EVBA",
+      "avg_jan_jun_2026": 44162.52,
+      "period_value": 0,
+      "period_label": "jul/27",
+      "description": "Prestação de serviços técnicos e operacionais para 153 equipamentos EVBA.",
+      "category": "ATM",
+      "allocation_rule": "DIRETO",
+      "allocation_percentages": {
+        "ATM": 100
+      }
+    },
+    {
+      "supplier": "BRINK'S",
+      "avg_jan_jun_2026": 53949.59,
+      "period_value": 95348.3,
+      "period_label": "jul/27",
+      "description": "Transporte e gestão de valores, incluindo coletas emergenciais e eventuais, conjunta técnica",
+      "category": "ATM",
+      "allocation_rule": "DIRETO",
+      "allocation_percentages": {
+        "ATM": 100
+      }
+    },
+    {
+      "supplier": "CASH SOLUTION",
+      "avg_jan_jun_2026": 28292.04,
+      "period_value": 10500,
+      "period_label": "jul/27",
+      "description": "Locação de ATMs, manutenção corretiva e troca de peças por vandalismo",
+      "category": "ATM",
+      "allocation_rule": "DIRETO",
+      "allocation_percentages": {
+        "ATM": 100
+      }
+    },
+    {
+      "supplier": "IMPLY - VANDALISMO",
+      "avg_jan_jun_2026": 22986.53,
+      "period_value": 1838,
+      "period_label": "jul/27",
+      "description": "Troca de peças e atendimento técnico decorrente de ocorrências de vandalismo nos ATMs.",
+      "category": "ATM",
+      "allocation_rule": "DIRETO",
+      "allocation_percentages": {
+        "ATM": 100
+      }
+    },
+    {
+      "supplier": "WFORTE",
+      "avg_jan_jun_2026": 14810.08,
+      "period_value": 300353.6,
+      "period_label": "jul/27",
+      "description": "Manutenção, reparo, remanejamento de equipamentos, logística de nobreaks e ATMs",
+      "category": "ATM",
+      "allocation_rule": "DIRETO",
+      "allocation_percentages": {
+        "ATM": 100
+      }
+    },
+    {
+      "supplier": "IDEAL",
+      "avg_jan_jun_2026": 16479.81,
+      "period_value": 0,
+      "period_label": "jul/27",
+      "description": "Fornecimento de bags + reparos",
+      "category": "OUTROS",
+      "allocation_rule": "DIRETO",
+      "allocation_percentages": {
+        "OUTROS": 100
+      }
+    },
+    {
+      "supplier": "SAGA - BELEM",
+      "avg_jan_jun_2026": 8172.64,
+      "period_value": 19683,
+      "period_label": "jul/27",
+      "description": "Transporte e gestão de valores em Belém, incluindo coletas emergenciais e eventuais, conjunta técnica",
+      "category": "ATM",
+      "allocation_rule": "DIRETO",
+      "allocation_percentages": {
+        "ATM": 100
+      }
+    },
+    {
+      "supplier": "AUTOPEL - BELEM",
+      "avg_jan_jun_2026": 11153.15,
+      "period_value": 0,
+      "period_label": "jul/27",
+      "description": "Fornecimento de bobinas para POS e ATM, incluindo distribuição e atendimento da operação de Belém.",
+      "category": "COMPARTILHADO",
+      "allocation_rule": "RATEIO",
+      "allocation_percentages": {
+        "ATM": 70,
+        "POS": 15,
+        "RECARGA": 5,
+        "RACK": 9,
+        "OUTROS": 1
+      }
+    },
+    {
+      "supplier": "GR4 - SP",
+      "avg_jan_jun_2026": 8459.74,
+      "period_value": 10998.72,
+      "period_label": "jul/27",
+      "description": "Serviços logísticos para entrega e distribuição de bobinas de POS.",
+      "category": "POS",
+      "allocation_rule": "DIRETO",
+      "allocation_percentages": {
+        "POS": 100
+      }
+    },
+    {
+      "supplier": "IMPLY - LEASING",
+      "avg_jan_jun_2026": 7939.24,
+      "period_value": 4666,
+      "period_label": "jul/27",
+      "description": "Serviços relacionados aos equipamentos em modalidade de leasing",
+      "category": "ATM",
+      "allocation_rule": "DIRETO",
+      "allocation_percentages": {
+        "ATM": 100
+      }
+    },
+    {
+      "supplier": "M3 STORAGE",
+      "avg_jan_jun_2026": 4120.8,
+      "period_value": 4293,
+      "period_label": "jul/27",
+      "description": "Locação de espaço para armazenagem de materiais e liberdade.",
+      "category": "OUTROS",
+      "allocation_rule": "DIRETO",
+      "allocation_percentages": {
+        "OUTROS": 100
+      }
+    },
+    {
+      "supplier": "IMPLY - BELEM",
+      "avg_jan_jun_2026": 3317.41,
+      "period_value": 3210.4,
+      "period_label": "jul/27",
+      "description": "Locação, instalação e manutenção de ATMs em Belém, incluindo atendimento de ocorrências de vandalismo.",
+      "category": "ATM",
+      "allocation_rule": "DIRETO",
+      "allocation_percentages": {
+        "ATM": 100
+      }
+    },
+    {
+      "supplier": "PRODATA",
+      "avg_jan_jun_2026": 2954.93,
+      "period_value": 3488,
+      "period_label": "jul/27",
+      "description": "Locação, gestão e devolução de equipamentos POS",
+      "category": "POS",
+      "allocation_rule": "DIRETO",
+      "allocation_percentages": {
+        "POS": 100
+      }
+    },
+    {
+      "supplier": "RAGTECH",
+      "avg_jan_jun_2026": 1708.61,
+      "period_value": 2553.9,
+      "period_label": "jul/27",
+      "description": "Manutenção preventiva e corretiva de nobreaks.",
+      "category": "OUTROS",
+      "allocation_rule": "DIRETO",
+      "allocation_percentages": {
+        "OUTROS": 100
+      }
+    },
+    {
+      "supplier": "BANCO ITAUCARD",
+      "avg_jan_jun_2026": 2002.7,
+      "period_value": 2000,
+      "period_label": "jul/27",
+      "description": "Aquisição de insumos e materiais diversos necessários à operação.",
+      "category": "OUTROS",
+      "allocation_rule": "DIRETO",
+      "allocation_percentages": {
+        "OUTROS": 100
+      }
+    },
+    {
+      "supplier": "AUTTAR",
+      "avg_jan_jun_2026": 1356.2,
+      "period_value": 1216.85,
+      "period_label": "jul/27",
+      "description": "Prestação de serviço de TEF (Transferência Eletrônica de Fundos) e suporte de pagamento (PDVs).",
+      "category": "POS",
+      "allocation_rule": "DIRETO",
+      "allocation_percentages": {
+        "POS": 100
+      }
+    },
+    {
+      "supplier": "TRANSBARUC",
+      "avg_jan_jun_2026": 620,
+      "period_value": 0,
+      "period_label": "jul/27",
+      "description": "Transporte rodoviário e urbano de equipamentos ATM",
+      "category": "ATM",
+      "allocation_rule": "DIRETO",
+      "allocation_percentages": {
+        "ATM": 100
+      }
+    },
+    {
+      "supplier": "TR3",
+      "avg_jan_jun_2026": 409.78,
+      "period_value": 647.58,
+      "period_label": "jul/27",
+      "description": "Armazenagem de bobinas de POS, separação de pedidos e serviços de manuseio logístico.",
+      "category": "POS",
+      "allocation_rule": "DIRETO",
+      "allocation_percentages": {
+        "POS": 100
+      }
+    },
+    {
+      "supplier": "99 / UBER",
+      "avg_jan_jun_2026": 241.21,
+      "period_value": 0,
+      "period_label": "jul/27",
+      "description": "Serviço de transporte por aplicativo para deslocamento de colaboradores.",
+      "category": "OUTROS",
+      "allocation_rule": "DIRETO",
+      "allocation_percentages": {
+        "OUTROS": 100
+      }
+    },
+    {
+      "supplier": "ENGEHALL",
+      "avg_jan_jun_2026": 110,
+      "period_value": 0,
+      "period_label": "jul/27",
+      "description": "Treinamentos e certificações em segurança do trabalho (NR-10 e NR-35).",
+      "category": "OUTROS",
+      "allocation_rule": "DIRETO",
+      "allocation_percentages": {
+        "OUTROS": 100
+      }
+    }
+  ],
+  "totals": {
+    "avg_jan_jun_2026": 1550760.82,
+    "period_value": 1681879.09
+  },
+  "default_shared_allocation": {
+    "ATM": 70,
+    "POS": 15,
+    "RECARGA": 5,
+    "RACK": 9,
+    "OUTROS": 1
+  }
+}
