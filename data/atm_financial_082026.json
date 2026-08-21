@@ -1,0 +1,159 @@
+{
+  "source": "Custo operação ATM - Aline(1).xlsx",
+  "reference": "Base ativa a partir de 08/2026",
+  "models": [
+    {
+      "model": "MINIWALL",
+      "leasing": 0,
+      "non_leasing": 50,
+      "stock": 0,
+      "other": 1,
+      "subtotal": 51,
+      "unit_value": 650.88,
+      "total_value": 33194.88
+    },
+    {
+      "model": "MK",
+      "leasing": 18,
+      "non_leasing": 119,
+      "stock": 2,
+      "other": 0,
+      "subtotal": 121,
+      "unit_value": 1759.13,
+      "total_value": 212854.73
+    },
+    {
+      "model": "MKNEO",
+      "leasing": 0,
+      "non_leasing": 124,
+      "stock": 4,
+      "other": 1,
+      "subtotal": 129,
+      "unit_value": 1759.13,
+      "total_value": 226927.77
+    },
+    {
+      "model": "TCI",
+      "leasing": 26,
+      "non_leasing": 127,
+      "stock": 0,
+      "other": 0,
+      "subtotal": 127,
+      "unit_value": 802.6,
+      "total_value": 101930.2
+    },
+    {
+      "model": "TCINEO",
+      "leasing": 0,
+      "non_leasing": 122,
+      "stock": 2,
+      "other": 1,
+      "subtotal": 125,
+      "unit_value": 802.6,
+      "total_value": 100325.0
+    },
+    {
+      "model": "TCIPLUS",
+      "leasing": 0,
+      "non_leasing": 4,
+      "stock": 1,
+      "other": 0,
+      "subtotal": 5,
+      "unit_value": 802.6,
+      "total_value": 4013.0
+    }
+  ],
+  "contracts": [
+    {
+      "contract": "CONTRATO 22/12/2023",
+      "qty": 412.0,
+      "value": 549129.72
+    },
+    {
+      "contract": "1 TERMO ADITIVO  10/02/2025",
+      "qty": 100.0,
+      "value": 94152.79
+    },
+    {
+      "contract": "NÃO ADITIVO BELÉM",
+      "qty": 4.0,
+      "value": 3210.4
+    },
+    {
+      "contract": "NÃO ADITIVO",
+      "qty": 35.0,
+      "value": 24078.0
+    }
+  ],
+  "comparison": [
+    {
+      "model": "MINIWALL",
+      "park_qty": 51,
+      "contract_qty": 51,
+      "billed_qty": 51,
+      "not_billed": 0,
+      "park_value": 33194.88,
+      "contract_value": 33194.88,
+      "billed_value": 33194.88
+    },
+    {
+      "model": "MK",
+      "park_qty": 121,
+      "contract_qty": 122,
+      "billed_qty": 122,
+      "not_billed": -1,
+      "park_value": 212854.73,
+      "contract_value": 214613.86,
+      "billed_value": 214613.86
+    },
+    {
+      "model": "MKNEO",
+      "park_qty": 129,
+      "contract_qty": 129,
+      "billed_qty": 129,
+      "not_billed": 0,
+      "park_value": 226927.77,
+      "contract_value": 226927.77,
+      "billed_value": 226927.77
+    },
+    {
+      "model": "TCI",
+      "park_qty": 127,
+      "contract_qty": 127,
+      "billed_qty": 123,
+      "not_billed": 4,
+      "park_value": 101930.2,
+      "contract_value": 101930.2,
+      "billed_value": 98719.8
+    },
+    {
+      "model": "TCINEO",
+      "park_qty": 125,
+      "contract_qty": 116,
+      "billed_qty": 92,
+      "not_billed": 24,
+      "park_value": 100325.0,
+      "contract_value": 93101.6,
+      "billed_value": 73839.2
+    },
+    {
+      "model": "TCIPLUS",
+      "park_qty": 5,
+      "contract_qty": 5,
+      "billed_qty": 0,
+      "not_billed": 5,
+      "park_value": 4013.0,
+      "contract_value": 4013.0,
+      "billed_value": 0
+    }
+  ],
+  "totals": {
+    "park_qty": 558,
+    "contract_qty": 550,
+    "billed_qty": 517,
+    "not_billed": 32,
+    "park_value": 679245.58,
+    "contract_value": 673781.31,
+    "billed_value": 647295.51
+  }
+}
