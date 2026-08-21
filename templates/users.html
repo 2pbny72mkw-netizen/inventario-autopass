@@ -33,7 +33,7 @@
           <label>Perfil *</label>
           <select name="role" id="roleSelect" required>
             <option value="technician">Técnico Field</option>
-            {% if can_assign_sensitive_roles %}<option value="manager_field">Gestor Field</option>{% endif %}
+            {% if can_assign_sensitive_roles %}<option value="manager_field">Gestor Field</option><option value="atm_financial_admin">ADM Financeiro ATM</option>{% endif %}
             {% if not is_hr_admin %}<option value="manager">Gestor</option>
             <option value="consultation">Consulta</option>
             {% if can_assign_sensitive_roles %}<option value="dispatcher">Dispatcher</option>{% endif %}
@@ -237,7 +237,7 @@
                     <label>Perfil *</label>
                     <select name="role" class="editRoleSelect" required>
                       <option value="technician" {% if u.role == "technician" %}selected{% endif %}>Técnico Field</option>
-                      {% if can_assign_sensitive_roles %}<option value="manager_field" {% if u.role == "manager_field" %}selected{% endif %}>Gestor Field</option>{% endif %}
+                      {% if can_assign_sensitive_roles %}<option value="manager_field" {% if u.role == "manager_field" %}selected{% endif %}>Gestor Field</option><option value="atm_financial_admin" {% if u.role == "atm_financial_admin" %}selected{% endif %}>ADM Financeiro ATM</option>{% endif %}
                       {% if not is_hr_admin %}{% if can_assign_sensitive_roles %}<option value="manager" {% if u.role == "manager" %}selected{% endif %}>Gestor</option>
                       <option value="consultation" {% if u.role == "consultation" %}selected{% endif %}>Consulta</option><option value="dispatcher" {% if u.role == "dispatcher" %}selected{% endif %}>Dispatcher</option>{% elif u.role in ("manager","consultation","dispatcher") %}<option value="{{ u.role }}" selected disabled>{{ {"manager":"Gestor","consultation":"Consulta","dispatcher":"Dispatcher"}.get(u.role,u.role) }}</option>{% endif %}
                       <option value="hr" {% if u.role == "hr" %}selected{% endif %}>RH</option>{% endif %}

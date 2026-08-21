@@ -17,7 +17,7 @@
       <img src="{{url_for('static',filename='autopass-logo.png')}}" alt="Autopass">
       <div class="brandtext">
         <b>Sistema de Gestão Suporte a Campo</b>
-        <small>{{session.get('name')}} • {{ {'manager':'Gestor','technician':'Técnico Field','technician_implantation':'Técnico Implantação','manager_field':'Gestor Field','consultation':'Consulta','hr':'RH','dispatcher':'Dispatcher'}.get(session.get('role'),'Usuário') }}</small>
+        <small>{{session.get('name')}} • {{ {'manager':'Gestor','technician':'Técnico Field','technician_implantation':'Técnico Implantação','manager_field':'Gestor Field','consultation':'Consulta','hr':'RH','dispatcher':'Dispatcher','atm_financial_admin':'ADM Financeiro ATM'}.get(session.get('role'),'Usuário') }}</small>
       </div>
     </div>
     <nav class="mainNavV424">
@@ -41,7 +41,7 @@
         <a href="/equipes">Equipes</a>{% if session.get('role') in ('manager','hr') %}<a href="/usuarios">Usuários</a>{% endif %}
       </div></div>{% endif %}
       <a href="/meu-perfil" class="navProfile">Meu Perfil</a>
-      {% if session.get('role') in ('manager','manager_field') %}<a href="/gestao-360">Central 360</a><a href="#" id="notificationBell" class="v50Bell" title="Notificações">🔔 <span id="notificationCount" hidden>0</span></a>{% endif %}{% if session.get('role') == 'manager' %}<a href="/configuracoes">Configurações</a><a href="/diagnostico">Diagnóstico</a>{% endif %}{% if session.get('role') in ('manager','manager_field','technician','technician_implantation') %}<button type="button" id="installPwa" class="navInstall" hidden>Instalar App</button>{% endif %}{% if session.get('role') != 'technician_implantation' %}<a href="/sobre">Sobre</a>{% endif %}
+      {% if session.get('role') in ('manager','manager_field') %}<a href="/gestao-360">Central 360</a><a href="#" id="notificationBell" class="v50Bell" title="Notificações">🔔 <span id="notificationCount" hidden>0</span></a>{% endif %}{% if session.get('role') == 'manager' %}<a href="/configuracoes">Configurações</a><a href="/diagnostico">Diagnóstico</a>{% endif %}{% if session.get('role') in ('manager','manager_field','technician','technician_implantation') %}<button type="button" id="installPwa" class="navInstall" hidden>Instalar App</button>{% endif %}{% if session.get('role') in ('manager','atm_financial_admin') %}<a href="/financeiro-atm/gestao">Gestão Financeira</a>{% endif %}<a href="/sobre">Sobre</a>
       <a href="/logout">Sair</a>
     </nav>
   </div>
