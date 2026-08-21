@@ -1,0 +1,11 @@
+{
+  "release": "V51.0",
+  "base": "V50.6",
+  "scope": "Financeiro 2.0 + controle administrativo Recarga",
+  "changes": [
+    "Custos por fornecedor e atividade",
+    "Rateio por família de equipamento",
+    "Status ADM/Gestor em Troca de Chip Recarga com auditoria",
+    "Preserva status ADM da Visão Panorâmica"
+  ]
+}

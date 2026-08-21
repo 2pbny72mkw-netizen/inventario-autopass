@@ -39,7 +39,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V50.6"
+APP_RELEASE = "V51.0"
 DASHBOARD_RELEASE = "dashboard-v47"
 TEAMS_RELEASE = "teams-v42-4"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -2052,7 +2052,13 @@ def atm_financial_dashboard_api():
         payload=json.loads(path.read_text(encoding="utf-8"))
     except Exception as exc:
         return jsonify({"ok":False,"error":f"Base financeira ATM indisponível: {exc}"}),500
-    payload.update({"ok":True,"release":APP_RELEASE})
+    # V51: custos operacionais por fornecedor, preservando origem e descrição da atividade.
+    supplier_path=DATA_DIR / "atm_supplier_costs_v51.json"
+    try:
+        supplier_payload=json.loads(supplier_path.read_text(encoding="utf-8"))
+    except Exception:
+        supplier_payload={"suppliers":[],"totals":{}}
+    payload.update({"ok":True,"release":APP_RELEASE,"supplier_costs":supplier_payload})
     return jsonify(payload)
 
 @app.get("/api/v30/atm-contracts")
@@ -6894,6 +6900,33 @@ def chip_swap_save_api(location_id, base_asset_id):
     _invalidate_chip_swap_cache()
     return jsonify({"ok": True, "status": sw.status, "photo_count": photo_count})
 
+
+
+@app.post("/api/chip-swaps/<int:location_id>/<int:base_asset_id>/admin-status")
+@dashboard_required
+def chip_swap_admin_status_api(location_id, base_asset_id):
+    if session.get("role") != "manager":
+        return jsonify({"ok":False,"error":"Alteração administrativa restrita ao ADM/Gestor."}),403
+    loc=db.session.get(Location,location_id); asset=db.session.get(BaseAsset,base_asset_id)
+    if not loc or not asset or _canonical_equipment_type(asset.equipment_type)!="VALIDADOR" or not _chip_swap_asset_matches_location(asset,loc):
+        return jsonify({"ok":False,"error":"Validador não encontrado nesta localidade."}),404
+    data=request.get_json(silent=True) or {}; new=(data.get("status") or "").strip().upper().replace("CONCLUIDA","CONCLUÍDA")
+    reason=(data.get("reason") or "").strip()
+    if new not in {"PENDENTE","EM ANDAMENTO","CONCLUÍDA"}:
+        return jsonify({"ok":False,"error":"Status administrativo inválido."}),400
+    if not reason:
+        return jsonify({"ok":False,"error":"Informe o motivo da alteração administrativa."}),400
+    sw=ChipSwap.query.filter_by(location_id=location_id,base_asset_id=base_asset_id).first()
+    old_status=sw.status if sw else "PENDENTE"
+    if not sw:
+        sw=ChipSwap(location_id=location_id,base_asset_id=base_asset_id,technician_id=session["user_id"],status=new,started_at=datetime.utcnow())
+        db.session.add(sw)
+    sw.status=new; sw.updated_at=datetime.utcnow()
+    if new=="CONCLUÍDA": sw.completed_at=sw.completed_at or datetime.utcnow()
+    else: sw.completed_at=None
+    db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="CHIP_SWAP_ADMIN_STATUS",entity_type="base_asset",entity_id=str(base_asset_id),detail=f"{loc.location} · {_chip_swap_asset_label(asset)} · {old_status} -> {new} · motivo: {reason}"))
+    db.session.commit(); _invalidate_chip_swap_cache()
+    return jsonify({"ok":True,"status":new})
 
 
 def _delete_stored_media(stored_name):
