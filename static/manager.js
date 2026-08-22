@@ -1,4 +1,4 @@
-window.AUTOPASS_MANAGER_VERSION='dashboard-v42-4';
+window.AUTOPASS_MANAGER_VERSION='dashboard-v52-6';
 console.log('AUTOPASS Dashboard Executivo V25 carregado');
 let locations=[];
 let dashboardData=null;
@@ -754,12 +754,8 @@ function renderExecutiveFilters(){
   if([...line.options].some(o=>o.value===oldL))line.value=oldL;
 }
 function executiveFilteredLocations(){
-  const c=$('execCompany')?.value||'',line=$('execLine')?.value||'',type=$('execType')?.value||'';
-  return locations.filter(x=>
-    (!c||x.company===c)&&
-    (!line||x.line===line)&&
-    (!type||Number((x.expected_by_type||{})[type]||0)>0||Number((x.inventoried_by_type||{})[type]||0)>0)
-  );
+  const c=$('execCompany')?.value||'',line=$('execLine')?.value||'',type=$('execType')?.value||'',status=$('execStatus')?.value||'';
+  return locations.filter(x=>{const st=String(x.survey_status||'').toUpperCase().replace('CONCLUÍDA','CONCLUIDA');return (!c||x.company===c)&&(!line||x.line===line)&&(!type||Number((x.expected_by_type||{})[type]||0)>0||Number((x.inventoried_by_type||{})[type]||0)>0)&&(!status||st===status);});
 }
 
 function renderExecutiveAnalytics(rows,type){
@@ -805,6 +801,8 @@ function renderV21ExecutiveCharts(rows,type){
 
 function renderV22Cockpit(){
   if(!dashboardData||!$('v22ExecutiveCockpit')) return;
+  const erows=executiveFilteredLocations(),active=!!(($('execCompany')?.value||'')||($('execLine')?.value||'')||($('execType')?.value||'')||($('execStatus')?.value||''));
+  if(active){const sts={};erows.forEach(x=>{const k=String(x.survey_status||'SEM STATUS');sts[k]=(sts[k]||0)+1});const vals=Object.entries(sts),mx=Math.max(1,...vals.map(x=>x[1]));$('v22Trend').innerHTML=vals.map(([k,v])=>`<div class="v22TrendCol"><b>${fmt(v)}</b><i style="height:${Math.max(8,v/mx*100)}%"></i><small>${esc(k.slice(0,7))}</small></div>`).join('');$('v22Productivity').innerHTML='<div class="muted">Produtividade individual não é inferida do filtro de localidade. Use o recorte operacional detalhado.</div>';const m=filteredLocationMetrics(erows,$('execType')?.value||'');$('v22EvidenceQuality').innerHTML=`<div class="v22EvidenceHero"><b>${erows.length}</b><span>localidades no recorte</span></div><div class="v22EvidenceRows"><span>Divergências <b>${fmt(m.divergences)}</b></span><span>Inoperantes <b>${fmt(m.inoperative)}</b></span></div>`;return;}
   const trend=dashboardData.trend_14d||[]; const max=Math.max(1,...trend.map(x=>Number(x.count||0)));
   $('v22Trend').innerHTML=trend.map(x=>{const h=Math.max(4,Math.round(Number(x.count||0)/max*100)); const d=new Date(x.date+'T12:00:00'); return `<div class="v22TrendCol"><b>${fmt(x.count||0)}</b><i style="height:${h}%"></i><small>${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}</small></div>`}).join('');
   const tech=dashboardData.top_technicians_14d||[]; const tmax=Math.max(1,...tech.map(x=>Number(x.count||0)));
@@ -847,6 +845,18 @@ function renderV25ExecutiveBI(){
   $('v25CompetitionBars').innerHTML=entries.length?entries.map(([k,v])=>`<div class="v25CompanyRow"><span>${esc(k)}</span><div class="v25CompanyTrack"><i style="width:${Math.round(Number(v)/m*100)}%"></i></div><b>${fmt(v)}</b></div>`).join(''):'<div class="muted">Nenhuma quantidade estruturada de concorrência encontrada nas evidências importadas.</div>';
 }
 
+function renderV526FilteredBI(rows,type){
+  const active=!!(($('execCompany')?.value||'')||($('execLine')?.value||'')||($('execStatus')?.value||'')||type);
+  if(!active)return;
+  const m=filteredLocationMetrics(rows,type),types=type?[type]:['ATM','VALIDADOR','POS','BLOQUEIO'];
+  const mix=types.map(t=>[typeLabel(t),Number(m.byType[t]?.e||m.byType[t]?.i||0)]).filter(x=>x[1]>0);
+  const mt=mix.reduce((a,x)=>a+x[1],0)||1;
+  if($('v25MixLegend'))$('v25MixLegend').innerHTML=mix.map(x=>`<span>${esc(x[0])}<b>${fmt(x[1])}</b></span>`).join('');
+  if($('v25MixPct'))$('v25MixPct').textContent=(m.expected?Math.round(m.inventoried/m.expected*100):0)+'%';
+  const groups={};rows.forEach(x=>{const k=x.company||'Não informado';groups[k]=(groups[k]||0)+1});const arr=Object.entries(groups).sort((a,b)=>b[1]-a[1]),mx=Math.max(1,...arr.map(x=>x[1]));
+  if($('v25CompanyCompare'))$('v25CompanyCompare').innerHTML=arr.map(([k,v])=>`<div class="v25CompanyRow"><span>${esc(k)}</span><div class="v25CompanyTrack"><i style="width:${v/mx*100}%"></i></div><b>${fmt(v)}</b></div>`).join('')||'<span class="muted">Sem dados no recorte.</span>';
+  if($('v25Attention'))$('v25Attention').innerHTML=`<article><b>${fmt(m.divergences)}</b><span>Divergências</span></article><article><b>${fmt(m.inoperative)}</b><span>Inoperantes</span></article><article><b>${fmt(rows.filter(x=>String(x.survey_status||'').toUpperCase()==='PENDENTE').length)}</b><span>Localidades pendentes</span></article><article><b>${fmt(rows.length)}</b><span>Localidades no recorte</span></article>`;
+}
 function updateExecutiveView(){
   if(!dashboardData) return;
   renderV25ExecutiveBI();
@@ -854,6 +864,7 @@ function updateExecutiveView(){
   const c=$('execCompany')?.value||'', line=$('execLine')?.value||'', type=$('execType')?.value||'';
   const noGeoFilters=!c&&!line;
   const rows=executiveFilteredLocations();
+  renderV526FilteredBI(rows,type);
 
   // Sem Empresa/Linha usamos os denominadores oficiais para os Big Numbers.
   if(noGeoFilters){
@@ -1006,6 +1017,7 @@ if($('execCompany')) $('execCompany').onchange=()=>{
   applyExecutiveFilterToTable();
 };
 if($('execLine')) $('execLine').onchange=applyExecutiveFilterToTable;
+if($('execStatus')) $('execStatus').onchange=()=>{applyExecutiveFilterToTable();dashPanLocations();};
 if($('execType')) $('execType').onchange=()=>{
   document.querySelectorAll('.equipmentBig').forEach(x=>x.classList.toggle('active',x.dataset.type===$('execType').value));
   updateExecutiveView();
@@ -1015,6 +1027,7 @@ if($('execReset')) $('execReset').onclick=()=>{
   renderExecutiveFilters();
   $('execLine').value='';
   $('execType').value='';
+  if($('execStatus'))$('execStatus').value='';
   document.querySelectorAll('.equipmentBig').forEach(x=>x.classList.remove('active'));
   applyExecutiveFilterToTable();
 };
@@ -1263,7 +1276,7 @@ function dashPanFiltered(includeStatus=true){
   const c=document.getElementById('dashPanCompany')?.value||'';
   const l=document.getElementById('dashPanLine')?.value||'';
   const st=document.getElementById('dashPanStatus')?.value||'';
-  return dashPanData.filter(x=>(!c||x.company===c)&&(!l||x.line===l)&&(!includeStatus||!st||x.status===st));
+  const gc=document.getElementById('execCompany')?.value||'',gl=document.getElementById('execLine')?.value||'',gs=document.getElementById('execStatus')?.value||'';return dashPanData.filter(x=>(!gc||x.company===gc)&&(!gl||x.line===gl)&&(!c||x.company===c)&&(!l||x.line===l)&&(!includeStatus||!st||x.status===st)&&(!gs||String(x.status||'').toUpperCase().replace('CONCLUÍDA','CONCLUIDA')===gs));
 }
 function dashPanFill(id,vals,label){const e=document.getElementById(id);if(!e)return;const cur=e.value;e.innerHTML=`<option value="">${label}</option>`+[...new Set(vals.filter(Boolean))].sort((a,b)=>String(a).localeCompare(String(b),'pt-BR')).map(v=>`<option value="${dashPanEsc(v)}">${dashPanEsc(v)}</option>`).join('');if([...e.options].some(o=>o.value===cur))e.value=cur}
 function dashPanRenderSummary(){
@@ -1282,7 +1295,7 @@ function dashPanRenderSummary(){
   const bd=document.getElementById('dashPanBarDone'),bp=document.getElementById('dashPanBarProgress'),bn=document.getElementById('dashPanBarPending');
   if(bd)bd.style.width=pct(done)+'%';if(bp)bp.style.width=pct(progress)+'%';if(bn)bn.style.width=pct(pending)+'%';
 }
-function dashPanLocations(){
+function dashPanLocations(){const gc=document.getElementById('execCompany')?.value||'',gl=document.getElementById('execLine')?.value||'';if(gc&&document.getElementById('dashPanCompany'))document.getElementById('dashPanCompany').value=gc;if(gl&&document.getElementById('dashPanLine'))document.getElementById('dashPanLine').value=gl;
   const a=dashPanFiltered(true),el=document.getElementById('dashPanLocation');if(!el)return;
   const cur=el.value;el.innerHTML='<option value="">Selecione</option>'+a.map(x=>`<option value="${x.id}">${dashPanEsc(x.location)} · ${dashPanEsc(x.status)}</option>`).join('');if([...el.options].some(o=>o.value===cur))el.value=cur;
   if(!el.value){const g=document.getElementById('dashPanGallery');if(g)g.innerHTML='<p class="muted">Selecione uma localidade para visualizar as fotos.</p>'}
@@ -1395,12 +1408,12 @@ initAtmDashboardV503();
  const panel=document.querySelector('[data-v23-panel="atm-financial"]'); if(!panel)return;
  const brl=v=>Number(v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
  const esc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
- function bars(el,rows,valueKey,labelFn){const max=Math.max(1,...rows.map(x=>Number(x[valueKey]||0)));el.innerHTML=rows.map((x,i)=>`<button class="v460Bar"><span>${esc(x.model)}</span><i><b style="width:${Math.max(3,Number(x[valueKey]||0)/max*100)}%"></b></i><strong>${labelFn(x[valueKey])}</strong></button>`).join('')}
+ const modelColors={'MINIWALL':'#2563eb','MK':'#10b981','MKNEO':'#f59e0b','TCI':'#8b5cf6','TCINEO':'#ef4444','TCIPLUS':'#06b6d4'};function bars(el,rows,valueKey,labelFn){const max=Math.max(1,...rows.map(x=>Number(x[valueKey]||0)));el.innerHTML=rows.map((x,i)=>`<button class="v460Bar"><span>${esc(x.model)}</span><i><b style="width:${Math.max(3,Number(x[valueKey]||0)/max*100)}%;background:${modelColors[String(x.model).toUpperCase()]||'#64748b'}"></b></i><strong>${labelFn(x[valueKey])}</strong></button>`).join('')}
  async function load(){const r=await fetch('/api/dashboard/atm-financial',{cache:'no-store'}),d=await r.json();if(!d.ok)return;
   const t=d.totals||{};document.getElementById('finParkValue').textContent=brl(t.park_value);document.getElementById('finParkQty').textContent=`${t.park_qty} ATMs`;document.getElementById('finContractValue').textContent=brl(t.contract_value);document.getElementById('finContractQty').textContent=`${t.contract_qty} ATMs`;document.getElementById('finBilledValue').textContent=brl(t.billed_value);document.getElementById('finBilledQty').textContent=`${t.billed_qty} ATMs`;document.getElementById('finNotBilled').textContent=t.not_billed||0;
   bars(document.getElementById('finModelBars'),d.models,'total_value',brl);bars(document.getElementById('finUnitBars'),d.models,'unit_value',brl);
-  const sum=(d.contracts||[]).reduce((a,x)=>a+Number(x.value||0),0)||1;let acc=0;const colors=['#1677ff','#16c784','#8a69ff','#ff9f1c'];const stops=(d.contracts||[]).map((x,i)=>{const a=acc/sum*100;acc+=Number(x.value||0);return `${colors[i%colors.length]} ${a}% ${acc/sum*100}%`}).join(',');document.getElementById('finContractDonut').innerHTML=`<div class="v460FinDonut" style="background:conic-gradient(${stops})"><div><b>${brl(sum)}</b><small>mensal</small></div></div><div class="v460FinLegend">${(d.contracts||[]).map((x,i)=>`<span><i style="background:${colors[i%colors.length]}"></i>${esc(x.contract)} <b>${x.qty}</b> · ${brl(x.value)}</span>`).join('')}</div>`;
-  document.getElementById('finCompare').innerHTML=(d.comparison||[]).map(x=>`<div><b>${esc(x.model)}</b><span>Parque <strong>${x.park_qty}</strong></span><span>Contrato <strong>${x.contract_qty}</strong></span><span>Faturado <strong>${x.billed_qty}</strong></span></div>`).join('');
+  const contracts=(d.contracts||[]).slice().sort((a,b)=>Number(b.value||0)-Number(a.value||0)),cmax=Math.max(1,...contracts.map(x=>Number(x.value||0)));const cb=document.getElementById('finContractBars');if(cb)cb.innerHTML=contracts.map((x,i)=>`<div class="v526ContractRow"><span title="${esc(x.contract)}">${esc(x.contract)}</span><i><b style="width:${Math.max(2,Number(x.value||0)/cmax*100)}%;background:${['#2563eb','#10b981','#f59e0b','#8b5cf6','#ef4444','#06b6d4'][i%6]}"></b></i><strong>${brl(x.value)} · ${x.qty} ATM${x.qty===1?'':'s'}</strong></div>`).join('')||'<p class="muted">Sem contratos no recorte.</p>';
+  const cmp=d.comparison||[];document.getElementById('finCompare').innerHTML=cmp.map(x=>`<div><b>${esc(x.model)}</b><span>Parque <strong>${x.park_qty}</strong></span><span>Contrato <strong>${x.contract_qty}</strong></span><span>Faturado <strong>${x.billed_qty}</strong></span><span>Dif. parque→faturado <strong>${Number(x.billed_qty)-Number(x.park_qty)}</strong></span></div>`).join('');const dbx=document.getElementById('finDivergenceBars');if(dbx){const dr=cmp.map(x=>({model:x.model,d:Math.abs(Number(x.park_qty)-Number(x.billed_qty)),signed:Number(x.billed_qty)-Number(x.park_qty)})).sort((a,b)=>b.d-a.d),dm=Math.max(1,...dr.map(x=>x.d));dbx.innerHTML='<h3>Divergências por modelo</h3>'+dr.map(x=>`<div class="v526DivRow"><span>${esc(x.model)}</span><i><b style="width:${x.d/dm*100}%"></b></i><strong>${x.signed>0?'+':''}${x.signed}</strong></div>`).join('')}
   document.getElementById('finRows').innerHTML=(d.models||[]).map(x=>`<tr><td><b>${esc(x.model)}</b></td><td>${x.leasing}</td><td>${x.non_leasing}</td><td>${x.stock}</td><td>${x.other}</td><td>${x.subtotal}</td><td>${brl(x.unit_value)}</td><td><b>${brl(x.total_value)}</b></td></tr>`).join('');
   const sc=d.supplier_costs||{}, suppliers=sc.suppliers||[]; const st=sc.totals||{};
   const fst=document.getElementById('finSupplierTotal'),fsc=document.getElementById('finSupplierCount'),fsr=document.getElementById('finSupplierRows');
