@@ -1,60 +1,8 @@
-{% extends "base.html" %}
-{% block title %}Financeiro · Central de Lançamentos{% endblock %}
-{% block content %}
-<div class="container fin524" data-role="{{ session.get('role') }}">
-  <div class="sectionHead"><div><span class="eyebrow">FINANCEIRO · V52.4</span><h1>Central Financeira</h1><p class="muted">Cadastro único por centro de custo, competência, fornecedor, serviço, valor, forecast e rateio.</p></div></div>
-  <nav class="financialTabs finNav524">
-    <a class="secondary buttonLink" href="/financeiro/suporte-campo">Suporte a Campo</a>
-    <a class="secondary buttonLink" href="/financeiro/suporte-campo/coleta-valores">Coleta de Valores</a>
-    <a class="secondary buttonLink" href="/financeiro/assistencia-tecnica">Assistência Técnica</a>
-    <a class="secondary buttonLink" href="/financeiro/implantacao">Implantação de Hardware</a>
-  </nav>
-
-  <section class="card">
-    <div class="sectionHead"><div><h2>Empresas / fornecedores</h2><p class="muted">ADM pode incluir e excluir fornecedores. Exclusão remove também os lançamentos vinculados após confirmação.</p></div></div>
-    <div class="finSupplierAdd"><input id="finSupplierName" placeholder="Nova empresa / fornecedor"><button id="finAddSupplier">+ Adicionar empresa</button></div>
-    <div id="finSupplierList" class="finSupplierList"></div>
-  </section>
-
-  <section class="card">
-    <div class="sectionHead"><div><h2>Novo lançamento</h2><p class="muted">O serviço é um campo único. O rateio é composto por produto + percentual e deve fechar 100%.</p></div></div>
-    <div class="finFormGrid">
-      <label>Centro de custo<select id="finCenter"><option value="SUPORTE_CAMPO">Suporte a Campo</option><option value="ASSISTENCIA_TECNICA">Assistência Técnica</option><option value="IMPLANTACAO_HARDWARE">Implantação de Hardware</option></select></label>
-      <label>Competência<input id="finComp" type="month"></label>
-      <label id="finProjectWrap" hidden>Projeto<input id="finProject" placeholder="Projeto de implantação"></label>
-      <label>Fornecedor<select id="finSupplier"></select></label>
-      <label class="finSpan2">Serviço / descrição do gasto<input id="finServiceText" maxlength="300" placeholder="Ex.: Field Service, locação, manutenção..."></label>
-      <label>Valor realizado (R$)<input id="finAmount" class="money2" inputmode="decimal" placeholder="0,00"></label>
-      <label>Existe forecast?<select id="finHasForecast"><option value="0">Não</option><option value="1">Sim</option></select></label>
-      <label id="finForecastWrap" hidden>Valor forecast (R$)<input id="finForecast" class="money2" inputmode="decimal" placeholder="0,00"></label>
-    </div>
-
-    <div class="sectionHead finRateioHead"><div><h3>Rateio por produto</h3><p class="muted">Selecione o produto e informe o percentual. Produtos não podem se repetir.</p></div><button type="button" class="secondary" id="finAddAllocation">+ Adicionar rateio</button></div>
-    <div id="finAllocationRows" class="finAllocationRows"></div>
-    <div class="finAllocationTotal">Total do rateio: <strong id="finTotal">0,00%</strong></div>
-    <label class="finNotesLabel">Observação / justificativa<textarea id="finNotes" rows="3" placeholder="Observação do lançamento; obrigatória ao editar."></textarea></label>
-    <div class="finActions"><button id="finSave">Salvar lançamento</button><small id="finMsg"></small></div>
-  </section>
-
-  <section class="card"><div class="sectionHead"><div><h2>Histórico de competências</h2><p class="muted">Editar abre todos os campos do lançamento em uma única tela.</p></div></div><div id="finHistory"></div></section>
-</div>
-
-<div id="finEditModal" class="finModal" hidden aria-hidden="true">
-  <div class="finModalBackdrop"></div><section class="finModalCard" role="dialog" aria-modal="true" aria-labelledby="finEditTitle">
-    <div class="sectionHead"><h2 id="finEditTitle">Editar lançamento</h2><button type="button" class="secondary" id="finEditClose">Fechar</button></div>
-    <div class="finFormGrid">
-      <label>Centro de custo<select id="editCenter"><option value="SUPORTE_CAMPO">Suporte a Campo</option><option value="ASSISTENCIA_TECNICA">Assistência Técnica</option><option value="IMPLANTACAO_HARDWARE">Implantação de Hardware</option></select></label>
-      <label>Competência<input id="editComp" type="month"></label><label id="editProjectWrap">Projeto<input id="editProject"></label>
-      <label>Fornecedor<select id="editSupplier"></select></label><label class="finSpan2">Serviço / descrição<input id="editService"></label>
-      <label>Valor realizado (R$)<input id="editAmount" class="money2" inputmode="decimal"></label>
-      <label>Existe forecast?<select id="editHasForecast"><option value="0">Não</option><option value="1">Sim</option></select></label>
-      <label id="editForecastWrap">Valor forecast (R$)<input id="editForecast" class="money2" inputmode="decimal"></label>
-    </div>
-    <div class="sectionHead finRateioHead"><h3>Rateio</h3><button type="button" class="secondary" id="editAddAllocation">+ Adicionar rateio</button></div>
-    <div id="editAllocationRows" class="finAllocationRows"></div><div class="finAllocationTotal">Total: <strong id="editTotal">0,00%</strong></div>
-    <label class="finNotesLabel">Observação / justificativa<textarea id="editNotes" rows="3" required></textarea></label>
-    <div class="finActions"><button id="finEditSave">Salvar todas as alterações</button><button type="button" class="dangerGhost" id="finEditDelete">Excluir lançamento</button><small id="finEditMsg"></small></div>
-  </section>
-</div>
-{% endblock %}
-{% block scripts %}<script src="/static/financial_cost_management.js?v=v52-4"></script>{% endblock %}
+{% extends "base.html" %}{% block title %}Financeiro · Central Financeira{% endblock %}{% block content %}
+<div class="container fin526"><div class="sectionHead"><div><span class="eyebrow">FINANCEIRO · V52.6</span><h1>Central Financeira</h1><p class="muted">Cadastro único por centro de custo, competência, fornecedor, serviço, realizado, forecast e rateio.</p></div></div>
+<nav class="financialTabs fin526Tabs"><a class="buttonLink active" href="/financeiro/suporte-campo">Suporte a Campo</a><a class="buttonLink" href="/financeiro/suporte-campo/coleta-valores">Coleta de Valores</a><a class="buttonLink" href="/financeiro/assistencia-tecnica">Assistência Técnica</a><a class="buttonLink" href="/financeiro/implantacao">Implantação de Hardware</a></nav>
+<section class="card"><div class="sectionHead"><div><h2>Empresas / fornecedores</h2><p class="muted">Cadastre a empresa uma vez. O serviço é informado no lançamento.</p></div></div><div class="fin526SupplierRow"><input id="finSupplierName" placeholder="Empresa / fornecedor"><button id="finAddSupplier">+ Adicionar empresa</button></div><div id="finSupplierList" class="fin526Pills"></div></section>
+<section class="card"><div class="sectionHead"><div><h2 id="finFormTitle">Novo lançamento mensal</h2><p class="muted">O rateio precisa completar 100,00%.</p></div><button type="button" class="secondary hidden" id="finCancelEdit">Cancelar edição</button></div>
+<div class="fin526FormGrid"><label>Centro de custo<select id="finCostCenter"><option value="SUPORTE_CAMPO">Suporte a Campo</option><option value="ASSISTENCIA_TECNICA">Assistência Técnica</option><option value="IMPLANTACAO_HARDWARE">Implantação de Hardware</option></select></label><label>Competência<input id="finComp" type="month"></label><label>Fornecedor<select id="finSupplier"></select></label><label id="finProjectWrap" class="hidden">Projeto<input id="finProject" placeholder="Projeto de implantação"></label><label class="fin526Wide">Serviço / descrição do gasto<input id="finServiceText" maxlength="300" placeholder="Ex.: Field Service, locação, manutenção"></label><label>Valor realizado (R$)<input id="finAmount" inputmode="decimal" placeholder="0,00"></label><label>Existe Forecast?<select id="finHasForecast"><option value="0">Não</option><option value="1">Sim</option></select></label><label id="finForecastWrap" class="hidden">Valor Forecast (R$)<input id="finForecast" inputmode="decimal" placeholder="0,00"></label></div>
+<div class="sectionHead fin526RateioHead"><div><h3>Rateio por produto</h3><p class="muted">Produto/equipamento + percentual.</p></div><button type="button" class="secondary" id="finAddAlloc">+ Adicionar rateio</button></div><div id="finAllocRows" class="fin526AllocRows"></div><div class="fin526AllocTotal"><span>Total do rateio</span><strong id="finTotal">0,00%</strong></div><label class="fin526Notes">Observação / justificativa<textarea id="finNotes" rows="3"></textarea></label><div class="heroActions"><button id="finSave">Salvar lançamento</button><small id="finMsg" class="muted"></small></div></section>
+<section class="card"><div class="sectionHead"><div><h2>Histórico de competências</h2><p class="muted">Editar abre todos os campos de uma vez.</p></div></div><div id="finHistory"></div></section></div><script>window.FIN_ROLE={{ session.get("role")|tojson }};</script><script src="/static/financial_cost_management.js?v=v52-6"></script>{% endblock %}
