@@ -39,7 +39,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V52.5"
+APP_RELEASE = "V52.6"
 DASHBOARD_RELEASE = "dashboard-v47"
 TEAMS_RELEASE = "teams-v42-4"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -2096,49 +2096,49 @@ def atm_financial_dashboard_api():
         supplier_payload=json.loads(supplier_path.read_text(encoding="utf-8"))
     except Exception:
         supplier_payload={"suppliers":[],"totals":{}}
-    competence=(request.args.get("competence") or "").strip()
+    competences=[x.strip() for x in request.args.getlist("competence") if x.strip()]
+    if not competences:
+        raw=(request.args.get("competences") or request.args.get("competence") or "").strip()
+        competences=[x.strip() for x in raw.split(",") if x.strip()]
     q=FinancialMonthlyCost.query
-    if competence: q=q.filter_by(competence=competence)
-    dynamic=[]; allocated={"ATM":0.0,"POS":0.0,"RECARGA":0.0,"RACK":0.0,"OUTROS":0.0}
+    if competences: q=q.filter(FinancialMonthlyCost.competence.in_(competences))
+    dynamic=[]; allocated={"ATM":0.0,"POS":0.0,"RECARGA":0.0,"RACK":0.0,"OUTROS":0.0}; forecast_allocated={"ATM":0.0,"POS":0.0,"RECARGA":0.0,"RACK":0.0,"OUTROS":0.0}
     sups={x.id:x.name for x in FinancialSupplier.query.all()}; svcs={x.id:x.name for x in FinancialService.query.all()}
     for x in q.order_by(FinancialMonthlyCost.competence.desc()).all():
         try: alloc=json.loads(x.allocation_json or "{}")
         except: alloc={}
         for k,pct in alloc.items():
             key=str(k).upper(); allocated[key]=allocated.get(key,0.0)+float(x.amount or 0)*float(pct or 0)/100.0
-        dynamic.append({"id":x.id,"competence":x.competence,"supplier":sups.get(x.supplier_id,""),"service":svcs.get(x.service_id,""),"amount":x.amount,"allocation":alloc})
-    payload.update({"ok":True,"release":APP_RELEASE,"supplier_costs":supplier_payload,"monthly_costs":dynamic,"monthly_allocated":allocated,"monthly_total":sum(float(x.get("amount") or 0) for x in dynamic)})
+            if getattr(x,"forecast_amount",None) is not None:
+                forecast_allocated[key]=forecast_allocated.get(key,0.0)+float(x.forecast_amount or 0)*float(pct or 0)/100.0
+        dynamic.append({"id":x.id,"competence":x.competence,"supplier":sups.get(x.supplier_id,""),"service":getattr(x,"service_text",None) or svcs.get(x.service_id,""),"amount":round(float(x.amount or 0),2),"forecast_amount":None if getattr(x,"forecast_amount",None) is None else round(float(x.forecast_amount or 0),2),"cost_center":getattr(x,"cost_center",None) or "SUPORTE_CAMPO","project":getattr(x,"project",None) or "","allocation":alloc})
+    all_competences=sorted({x[0] for x in db.session.query(FinancialMonthlyCost.competence).filter(FinancialMonthlyCost.competence.isnot(None)).all() if x and x[0]})
+    payload.update({"ok":True,"release":APP_RELEASE,"supplier_costs":supplier_payload,"monthly_costs":dynamic,"monthly_allocated":allocated,"monthly_forecast_allocated":forecast_allocated,"monthly_total":round(sum(float(x.get("amount") or 0) for x in dynamic),2),"monthly_forecast_total":round(sum(float(x.get("forecast_amount") or 0) for x in dynamic if x.get("forecast_amount") is not None),2),"competences":all_competences})
     return jsonify(payload)
 
 @app.get("/api/v30/atm-contracts")
 @dashboard_required
 def v30_atm_contracts():
-    company=(request.args.get("company") or "").strip()
-    line=(request.args.get("line") or "").strip()
-    contract=(request.args.get("contract") or "").strip()
-    horizon=(request.args.get("horizon") or "").strip()
-    q=BaseAsset.query.filter(func.upper(func.coalesce(BaseAsset.equipment_type,""))=="ATM")
-    if company: q=q.filter(BaseAsset.company==company)
-    if line: q=q.filter(BaseAsset.line==line)
-    if contract: q=q.filter(BaseAsset.leasing_status==contract)
-    rows=q.order_by(BaseAsset.company,BaseAsset.line,BaseAsset.locality,BaseAsset.asset_key).all()
-    today=datetime.utcnow().date()
-    out=[]
-    for a in rows:
-        end=_parse_contract_date(a.contract_end)
-        days=(end-today).days if end else None
-        status="SEM DATA"
-        if end:
-            status="VENCIDO" if days<0 else ("ATÉ 30 DIAS" if days<=30 else ("31–60 DIAS" if days<=60 else ("61–90 DIAS" if days<=90 else "ACIMA DE 90 DIAS")))
+    company=(request.args.get("company") or "").strip(); line=(request.args.get("line") or "").strip(); contract=(request.args.get("contract") or "").strip(); horizon=(request.args.get("horizon") or "").strip()
+    # V52.6: a situação contratual usa somente a base oficial ATM importada; nenhuma data é inferida.
+    try: rows=json.loads((DATA_DIR / "atm_official_082026.json").read_text(encoding="utf-8"))
+    except Exception: rows=[]
+    today=datetime.utcnow().date(); out=[]
+    for idx,a in enumerate(rows,1):
+        if company and str(a.get("company") or "")!=company: continue
+        if line and str(a.get("line") or "")!=line: continue
+        c=(str(a.get("contract") or "Não informado")).strip() or "Não informado"
+        if contract and c!=contract: continue
+        raw_end=(a.get("contract_end") or a.get("vencimento_contrato") or a.get("venc_contrato") or "")
+        end=_parse_contract_date(str(raw_end)) if raw_end else None; days=(end-today).days if end else None
+        status="SEM DATA" if not end else ("VENCIDO" if days<0 else ("ATÉ 30 DIAS" if days<=30 else ("31–60 DIAS" if days<=60 else ("61–90 DIAS" if days<=90 else "ACIMA DE 90 DIAS"))))
         if horizon=="expired" and status!="VENCIDO": continue
         if horizon=="30" and not(end and 0<=days<=30): continue
         if horizon=="60" and not(end and 0<=days<=60): continue
         if horizon=="90" and not(end and 0<=days<=90): continue
-        out.append({"id":a.id,"asset_key":a.asset_key,"company":a.company,"line":a.line,"locality":a.locality,
-                    "serial":a.serial,"model":a.model,"supplier":a.supplier,"contract":a.leasing_status or "Não informado",
-                    "contract_end":a.contract_end or "","days_to_expire":days,"contract_status":status})
-    contracts=sorted({x["contract"] for x in out if x["contract"]})
-    return jsonify({"ok":True,"release":APP_RELEASE,"count":len(out),"contracts":contracts,"assets":out})
+        out.append({"id":idx,"asset_key":a.get("asset_key") or a.get("id_top") or "","company":a.get("company") or "","line":a.get("line") or "","locality":a.get("locality") or "","serial":a.get("serial") or "","model":a.get("model") or "","supplier":a.get("supplier") or "","contract":c,"contract_end":str(raw_end or ""),"days_to_expire":days,"contract_status":status})
+    contracts=sorted({x["contract"] for x in out if x["contract"]},key=lambda x:x.casefold())
+    return jsonify({"ok":True,"release":APP_RELEASE,"count":len(out),"contracts":contracts,"assets":out,"source":"BASE_OFICIAL_ATM","date_rule":"somente data de vencimento importada; sem inferência"})
 
 @app.get("/api/v30/atm-contracts/export")
 @dashboard_required
@@ -7374,7 +7374,15 @@ def financial_catalog_api():
         return jsonify({"ok":False,"error":"Sem permissão."}),403
     suppliers=FinancialSupplier.query.order_by(FinancialSupplier.name).all()
     services=FinancialService.query.order_by(FinancialService.name).all()
-    return jsonify({"ok":True,"suppliers":[{"id":x.id,"name":x.name,"active":x.active} for x in suppliers],"services":[{"id":x.id,"supplier_id":x.supplier_id,"name":x.name,"description":x.description or "","category":x.category or "OUTROS","active":x.active} for x in services]})
+    raw_products=[x[0] for x in db.session.query(BaseAsset.equipment_type).distinct().all() if x and x[0]]
+    aliases={"VALIDADOR":"RECARGA","VALIDADOR DE RECARGA":"RECARGA","POS DE BILHETERIA":"POS"}
+    products=[]
+    for value in raw_products:
+        key=aliases.get(str(value).strip().upper(),str(value).strip().upper())
+        if key and key not in products: products.append(key)
+    for fallback in ("ATM","POS","RECARGA","RACK","BLOQUEIO","TDI","OUTROS"):
+        if fallback not in products: products.append(fallback)
+    return jsonify({"ok":True,"suppliers":[{"id":x.id,"name":x.name,"active":x.active} for x in suppliers],"services":[{"id":x.id,"supplier_id":x.supplier_id,"name":x.name,"description":x.description or "","category":x.category or "OUTROS","active":x.active} for x in services],"products":products})
 
 @app.post("/api/financeiro/fornecedores")
 @login_required
