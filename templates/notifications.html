@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}Notificações{% endblock %}
+{% block content %}
+<section class="topdeskHero"><div><span class="eyebrow">GESTÃO · V55</span><h1>Notificações</h1><p>Exceções operacionais consolidadas para acompanhamento gerencial.</p></div><button class="secondary" id="ntRefresh">Atualizar</button></section>
+<section class="card"><div class="sectionHead"><div><h2>Itens que precisam de atenção</h2><p class="muted">As notificações são derivadas dos módulos operacionais e levam diretamente ao ponto de ação.</p></div><b id="ntCount">0</b></div><div id="ntList" class="v48AlertList"><p class="muted">Carregando...</p></div></section>
+{% endblock %}
+{% block scripts %}<script>(()=>{const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));async function load(){const d=await fetch('/api/notificacoes',{cache:'no-store'}).then(r=>r.json());document.getElementById('ntCount').textContent=d.count||0;document.getElementById('ntList').innerHTML=(d.items||[]).map(x=>`<a class="td27Alert ${x.severity==='ATENÇÃO'?'warning':'info'}" href="${e(x.url)}"><b>${e(x.title)}</b><span>${e(x.domain)} · ${(+x.count||0).toLocaleString('pt-BR')}</span></a>`).join('')||'<p class="muted">Nenhuma notificação no momento.</p>';}document.getElementById('ntRefresh').onclick=load;load();})();</script>{% endblock %}
