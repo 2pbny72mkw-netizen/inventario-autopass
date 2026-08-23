@@ -40,7 +40,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V52.8"
+APP_RELEASE = "V55.0"
 DASHBOARD_RELEASE = "dashboard-v47"
 TEAMS_RELEASE = "teams-v42-4"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -86,6 +86,32 @@ def _td_job_snapshot(job_id):
     with TOPDESK_IMPORT_LOCK:
         job = TOPDESK_IMPORT_JOBS.get(job_id)
         return dict(job) if job else None
+
+# V55: cache curto de analytics TopDesk para evitar recalcular dezenas de milhares
+# de chamados a cada repaint/filtro idêntico. É invalidado ao fim de cada importação.
+TOPDESK_ANALYTICS_CACHE = {}
+TOPDESK_ANALYTICS_CACHE_LOCK = threading.Lock()
+TOPDESK_ANALYTICS_TTL = int(os.getenv("TOPDESK_ANALYTICS_TTL", "180"))
+
+def _td_cache_get(key):
+    now=time.time()
+    with TOPDESK_ANALYTICS_CACHE_LOCK:
+        row=TOPDESK_ANALYTICS_CACHE.get(key)
+        if not row or now-row[0] > TOPDESK_ANALYTICS_TTL:
+            if row: TOPDESK_ANALYTICS_CACHE.pop(key,None)
+            return None
+        return row[1]
+
+def _td_cache_put(key, payload):
+    with TOPDESK_ANALYTICS_CACHE_LOCK:
+        if len(TOPDESK_ANALYTICS_CACHE) >= 64:
+            oldest=min(TOPDESK_ANALYTICS_CACHE.items(),key=lambda kv:kv[1][0])[0]
+            TOPDESK_ANALYTICS_CACHE.pop(oldest,None)
+        TOPDESK_ANALYTICS_CACHE[key]=(time.time(),payload)
+
+def _td_cache_clear():
+    with TOPDESK_ANALYTICS_CACHE_LOCK:
+        TOPDESK_ANALYTICS_CACHE.clear()
 app.config["SQLALCHEMY_DATABASE_URI"] = database_url
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.config["MAX_CONTENT_LENGTH"] = 160 * 1024 * 1024
@@ -787,12 +813,12 @@ def teams_view_required(fn):
 
 
 def topdesk_required(fn):
-    """TopDesk: Gestor e Dispatcher."""
+    """TopDesk: Gestor, Gestor Field e Dispatcher."""
     @wraps(fn)
     def inner(*args, **kwargs):
         if not session.get("user_id"):
             return redirect(url_for("login"))
-        if session.get("role") not in ("manager", "dispatcher"):
+        if session.get("role") not in ("manager", "manager_field", "dispatcher"):
             if request.path.startswith("/api/"):
                 return jsonify({"ok": False, "error": "Sem permissão para operação TopDesk."}), 403
             return redirect(url_for("manager" if session.get("role") == "consultation" else "technician_work"))
@@ -2597,18 +2623,25 @@ def hardware_field_visit_report(visit_id):
     return render_template("hardware_field_visit_report.html",v=v,photos=photos,photo_media=photo_media,signature_data_uri=signature_data_uri,tech=tech)
 
 @app.get("/diagnostico")
-@manager_required
+@login_required
 def diagnostics_page():
+    if session.get("role") not in ("manager","manager_field"): return redirect(url_for("dashboard_landing"))
     return render_template("diagnostics.html", app_release=APP_RELEASE)
 
 @app.get("/api/diagnostico/resumo")
-@manager_required
+@login_required
 def diagnostics_api():
+    if session.get("role") not in ("manager","manager_field"): return jsonify({"ok":False,"error":"Sem permissão."}),403
     events=AuditEvent.query.order_by(AuditEvent.created_at.desc()).limit(150).all()
     user_ids={e.user_id for e in events if e.user_id}
     users={u.id:u.name for u in User.query.filter(User.id.in_(user_ids)).all()} if user_ids else {}
+    media={"local_files":0,"local_bytes":0,"chip_photos":ChipSwapPhoto.query.count(),"emv_photos":EmvChipSwapPhoto.query.count(),"panorama_photos":PanoramaPointPhoto.query.count() if 'PanoramaPointPhoto' in globals() else 0,"r2_enabled":bool(_r2_available())}
+    try:
+        local=[x for x in UPLOAD_DIR.rglob('*') if x.is_file()]; media["local_files"]=len(local); media["local_bytes"]=sum(x.stat().st_size for x in local)
+    except Exception: pass
     return jsonify({"ok":True,"release":APP_RELEASE,
-        "database":{"users":User.query.count(),"inventory":Inventory.query.count(),"field_visits":HardwareFieldVisit.query.count(),"audit_events":AuditEvent.query.count()},
+        "database":{"users":User.query.count(),"inventory":Inventory.query.count(),"field_visits":HardwareFieldVisit.query.count(),"audit_events":AuditEvent.query.count(),"topdesk_tickets":TopDeskTicket.query.count()},
+        "media":media,
         "events":[{"id":e.id,"created_at":e.created_at.isoformat() if e.created_at else None,"user":users.get(e.user_id,"Sistema"),"event_type":e.event_type,"entity_type":e.entity_type,"entity_id":e.entity_id or "","detail":e.detail or ""} for e in events]})
 
 @app.get("/sobre")
@@ -5574,20 +5607,19 @@ def _topdesk_demand_type(ticket):
     return "INCIDENTE" if "INCIDENT" in t or "FALHA" in t else "SOLICITACAO"
 
 
-def _topdesk_match_location(row):
+def _topdesk_match_location(row, loc_cache=None):
     raw = " ".join(str(row.get(k) or "") for k in ("ID do objeto","Pedido","Ação","Subcategoria"))
     nraw = normalize(raw)
     if not nraw: return None
-    # Prioriza código de estação/localidade quando existe no ID do objeto.
-    locs = Location.query.all()
+    # V55: a lista de localidades é pré-carregada uma vez por importação.
+    # Antes, Location.query.all() era executado para CADA chamado.
+    if loc_cache is None:
+        loc_cache=[(loc,normalize(loc.location),[x for x in normalize(loc.location).split() if len(x)>=4]) for loc in Location.query.all()]
     best=None; bestscore=0
-    for loc in locs:
-        candidates=[normalize(loc.location), normalize(getattr(loc,"line","") or "")]
-        name=candidates[0]
+    for loc,name,tokens in loc_cache:
         if name and len(name)>=4 and name in nraw:
             score=100+len(name)
         else:
-            tokens=[x for x in name.split() if len(x)>=4]
             score=sum(8 for x in tokens if x in nraw)
         if score>bestscore:
             bestscore=score; best=loc
@@ -5705,6 +5737,9 @@ def _topdesk_import_worker(job_id, raw, filename, user_id):
             if not padrao_antigo and len(novo_padrao.intersection(headers)) < 6:
                 raise ValueError("Formato TopDesk não reconhecido. Use o padrão Campo - Dogma.")
             total=len(rows); inserted=updated=ignored=errors=0
+            _td_job_update(job_id,status="PROCESSING",phase="Preparando índices de importação",progress=8,total=total,processed=0)
+            existing={t.ticket_number:t for t in TopDeskTicket.query.all()}
+            loc_cache=[(loc,normalize(loc.location),[x for x in normalize(loc.location).split() if len(x)>=4]) for loc in Location.query.all()]
             _td_job_update(job_id,status="PROCESSING",phase="Importando chamados",progress=10,total=total,processed=0)
             for pos,row in enumerate(rows, start=1):
                 try:
@@ -5717,10 +5752,10 @@ def _topdesk_import_worker(job_id, raw, filename, user_id):
                     if not obj and not str(row.get("Pedido") or "").strip():
                         ignored+=1
                         continue
-                    t=TopDeskTicket.query.filter_by(ticket_number=num).first()
+                    t=existing.get(num)
                     is_new=t is None
                     if is_new:
-                        t=TopDeskTicket(ticket_number=num); db.session.add(t)
+                        t=TopDeskTicket(ticket_number=num); db.session.add(t); existing[num]=t
                     t.object_id=obj
                     t.category=str(row.get("Categoria") or "").strip()
                     t.subcategory=str(row.get("Subcategoria") or "").strip()
@@ -5735,7 +5770,7 @@ def _topdesk_import_worker(job_id, raw, filename, user_id):
                     t.attachments_text=str(row.get("Anexos") or "").strip()
                     t.source_file=filename[:300]
                     t.equipment_type=_topdesk_equipment_type(row)
-                    loc=_topdesk_match_location(row)
+                    loc=_topdesk_match_location(row,loc_cache)
                     if loc: t.location_id=loc.id
                     t.priority="ALTA" if _topdesk_demand_type(t)=="INCIDENTE" else "NORMAL"
                     t.last_import_at=datetime.utcnow(); t.updated_at=datetime.utcnow()
@@ -5743,14 +5778,14 @@ def _topdesk_import_worker(job_id, raw, filename, user_id):
                     else: updated+=1
                 except Exception:
                     errors+=1
-                    db.session.rollback()
-                if pos % 250 == 0:
+                if pos % 1000 == 0:
                     db.session.commit()
                     progress=min(99,10+int(pos/max(total,1)*89))
                     _td_job_update(job_id,processed=pos,inserted=inserted,updated=updated,ignored=ignored,errors=errors,progress=progress,elapsed_seconds=int(time.time()-started))
             db.session.commit()
             batch=TopDeskImportBatch(filename=filename,imported_by=user_id,row_count=total,inserted_count=inserted,updated_count=updated,error_count=errors)
             db.session.add(batch); db.session.commit()
+            _td_cache_clear()
             _td_job_update(job_id,status="DONE",phase="Importação concluída",progress=100,total=total,processed=total,inserted=inserted,updated=updated,ignored=ignored,errors=errors,elapsed_seconds=int(time.time()-started),finished_at=datetime.utcnow().isoformat()+"Z",format="TopDesk legado" if padrao_antigo else "Campo - Dogma")
         except Exception as exc:
             db.session.rollback()
@@ -5766,6 +5801,18 @@ def topdesk_import_status(job_id):
     if not job:
         return jsonify({"ok":False,"error":"Importação não encontrada ou processo reiniciado."}),404
     return jsonify({"ok":True,**job})
+
+
+@app.get("/api/topdesk/import/active")
+@login_required
+def topdesk_import_active():
+    """V55: permite acompanhar a carga mesmo navegando para outra tela."""
+    uid=session.get('user_id')
+    with TOPDESK_IMPORT_LOCK:
+        active=[dict(v,job_id=k) for k,v in TOPDESK_IMPORT_JOBS.items() if v.get('status') in ('QUEUED','READING','PROCESSING') and (not v.get('user_id') or v.get('user_id')==uid)]
+    if not active: return jsonify({'ok':True,'active':False})
+    active.sort(key=lambda x:x.get('started_at') or '',reverse=True)
+    return jsonify({'ok':True,'active':True,'job':active[0]})
 
 
 @app.get("/api/topdesk/tickets")
@@ -5819,33 +5866,56 @@ def _td_object_parts(object_id):
 
 
 def _td_filter_rows(args):
-    rows=TopDeskTicket.query.all(); out=[]
+    """V55: filtra o máximo possível no PostgreSQL/SQLite e evita N+1 de Location.
+
+    created_at_text e partes do object_id ainda são compatíveis com os imports legados,
+    portanto a etapa final de data/modelo continua em Python, mas somente após filtros
+    indexáveis terem reduzido o conjunto candidato.
+    """
     start=_td_dt(args.get('start')); end=_td_dt(args.get('end'))
     eq=normalize(args.get('equipment_type','')); linef=normalize(args.get('line','')); locf=normalize(args.get('location',''))
     modelf=normalize(args.get('model','')); catf=normalize(args.get('category','')); subf=normalize(args.get('subcategory',''))
     opf=normalize(args.get('operator','')); statusf=normalize(args.get('status','')); slaf=normalize(args.get('sla',''))
     search=normalize(args.get('q',''))
-    for t in rows:
+
+    q=(db.session.query(TopDeskTicket, Location.line, Location.location)
+       .outerjoin(Location, TopDeskTicket.location_id==Location.id))
+    # campos diretamente indexáveis / pesquisáveis no banco
+    if eq: q=q.filter(func.upper(func.coalesce(TopDeskTicket.equipment_type,''))==eq)
+    if catf: q=q.filter(func.upper(func.coalesce(TopDeskTicket.category,''))==catf)
+    if subf: q=q.filter(func.upper(func.coalesce(TopDeskTicket.subcategory,''))==subf)
+    if opf: q=q.filter(func.upper(func.coalesce(TopDeskTicket.operator,''))==opf)
+    if statusf: q=q.filter(func.upper(func.coalesce(TopDeskTicket.status,''))==statusf)
+    if slaf=='COM SLA': q=q.filter(func.length(func.trim(func.coalesce(TopDeskTicket.sla_target_text,'')))>0)
+    elif slaf=='SEM SLA': q=q.filter(func.length(func.trim(func.coalesce(TopDeskTicket.sla_target_text,'')))==0)
+    if search:
+        like=f"%{search}%"
+        q=q.filter(db.or_(
+            func.upper(func.coalesce(TopDeskTicket.ticket_number,'')).like(like),
+            func.upper(func.coalesce(TopDeskTicket.object_id,'')).like(like),
+            func.upper(func.coalesce(TopDeskTicket.request_text,'')).like(like),
+            func.upper(func.coalesce(TopDeskTicket.category,'')).like(like),
+            func.upper(func.coalesce(TopDeskTicket.subcategory,'')).like(like),
+        ))
+    # localização vinculada pode ser filtrada no banco sem impedir fallback legado do object_id
+    if linef:
+        q=q.filter(db.or_(func.upper(func.coalesce(Location.line,''))==linef,
+                          func.upper(func.coalesce(TopDeskTicket.object_id,'')).like(linef+'-%')))
+    if locf:
+        q=q.filter(db.or_(func.upper(func.coalesce(Location.location,''))==locf,
+                          func.upper(func.coalesce(TopDeskTicket.object_id,'')).like('%-'+locf+'-%')))
+
+    out=[]
+    for t,loc_line,loc_name in q.all():
         dt=_td_dt(t.created_at_text)
         if start and (not dt or dt<start): continue
         if end and (not dt or dt>end.replace(hour=23,minute=59,second=59)): continue
         line,station,model=_td_object_parts(t.object_id)
-        loc=db.session.get(Location,t.location_id) if t.location_id else None
-        line=line or (loc.line if loc else '')
-        location=(loc.location if loc else '') or station
-        if eq and normalize(t.equipment_type)!=eq: continue
+        line=line or (loc_line or '')
+        location=(loc_name or '') or station
         if linef and normalize(line)!=linef: continue
         if locf and normalize(location)!=locf: continue
         if modelf and normalize(model)!=modelf: continue
-        if catf and normalize(t.category)!=catf: continue
-        if subf and normalize(t.subcategory)!=subf: continue
-        if opf and normalize(t.operator)!=opf: continue
-        if statusf and normalize(t.status)!=statusf: continue
-        if slaf:
-            has_sla=bool(str(t.sla_target_text or '').strip())
-            if slaf=='COM SLA' and not has_sla: continue
-            if slaf=='SEM SLA' and has_sla: continue
-        if search and search not in normalize(' '.join([t.ticket_number or '',t.object_id or '',t.request_text or '',t.category or '',t.subcategory or ''])): continue
         out.append((t,dt,line,location,model))
     return out
 
@@ -5864,9 +5934,54 @@ def _td_recurrence(rows, days):
     return round(repeated*100/eligible,1) if eligible else 0
 
 
+def _td_rank_map(rows, dimension):
+    out={}
+    for t,dt,line,loc,model in rows:
+        if dimension=='failure': key=t.subcategory or 'Sem subcategoria'
+        elif dimension=='line': key=line or ''
+        elif dimension=='location': key=loc or ''
+        elif dimension=='model': key=model or ''
+        elif dimension=='object': key=t.object_id or ''
+        else: key=''
+        if key: out[key]=out.get(key,0)+1
+    return out
+
+
+def _td_previous_args(args):
+    start=_td_dt(args.get('start')); end=_td_dt(args.get('end'))
+    if not start or not end or end < start: return None
+    days=(end.date()-start.date()).days+1
+    prev_end=start-timedelta(days=1); prev_start=prev_end-timedelta(days=days-1)
+    d={k:v for k,v in args.items()}
+    d['start']=prev_start.strftime('%Y-%m-%d'); d['end']=prev_end.strftime('%Y-%m-%d')
+    return d
+
+
+def _td_ranked(current_map, n=15, total=0, previous_map=None):
+    vals=list(current_map.values()); avg=(sum(vals)/len(vals)) if vals else 0
+    rows=[]
+    for k,v in sorted(current_map.items(),key=lambda x:x[1],reverse=True)[:n]:
+        prev=(previous_map or {}).get(k,0) if previous_map is not None else None
+        delta=None
+        if previous_map is not None:
+            if prev: delta=round((v-prev)*100/prev,1)
+            elif v: delta=100.0
+            else: delta=0.0
+        rows.append({'name':k,'count':v,'share':round(v*100/max(1,total),1),
+                     'vs_average_pct':round((v-avg)*100/avg,1) if avg else 0,
+                     'previous_count':prev,'vs_previous_pct':delta})
+    return rows
+
+
 @app.get("/api/topdesk/analytics")
 @dashboard_required
 def topdesk_analytics_api():
+    # Cache por querystring; filtros iguais deixam de reler/recalcular toda a base.
+    cache_key='analytics|'+request.query_string.decode('utf-8','ignore')
+    cached=_td_cache_get(cache_key)
+    if cached is not None:
+        payload=dict(cached); payload['cache']='HIT'; return jsonify(payload)
+
     rows=_td_filter_rows(request.args); total=len(rows)
     objects={normalize(t.object_id) for t,*_ in rows if t.object_id}; locations={normalize(loc) for *_,loc,_ in rows if loc}; operators={normalize(t.operator) for t,*_ in rows if t.operator}
     monthly={}; failures={}; lines={}; models={}; locs={}; hours={}; weekdays={}; heat={}; tech={}; objcount={}
@@ -5885,19 +6000,44 @@ def topdesk_analytics_api():
         if t.object_id:d['objects'].add(t.object_id)
         if loc:d['locations'].add(loc)
         if line:d['lines'].add(line)
-    prod=[]
-    # reincidência individual: mesma falha + mesmo ATM em até 7 dias; indicador de contexto, não nota de desempenho.
+
     byop={}
     for row in rows: byop.setdefault(row[0].operator or 'Sem operador',[]).append(row)
+    prod=[]
     for op,d in tech.items():
         days=max(1,len(d['days'])); prod.append({'operator':op,'tickets':d['tickets'],'active_days':len(d['days']),'per_day':round(d['tickets']/days,1),'objects':len(d['objects']),'locations':len(d['locations']),'lines':len(d['lines']),'recurrence7':_td_recurrence(byop.get(op,[]),7)})
     prod.sort(key=lambda x:x['tickets'],reverse=True)
-    def ranked(d,n=15): return [{'name':k,'count':v} for k,v in sorted(d.items(),key=lambda x:x[1],reverse=True)[:n]]
+
+    # Referência: período imediatamente anterior quando o usuário definiu início/fim.
+    prev_args=_td_previous_args(request.args)
+    prev_rows=_td_filter_rows(prev_args) if prev_args else None
+    prev_failure=_td_rank_map(prev_rows,'failure') if prev_rows is not None else None
+    prev_line=_td_rank_map(prev_rows,'line') if prev_rows is not None else None
+    prev_loc=_td_rank_map(prev_rows,'location') if prev_rows is not None else None
+    prev_model=_td_rank_map(prev_rows,'model') if prev_rows is not None else None
+    prev_obj=_td_rank_map(prev_rows,'object') if prev_rows is not None else None
+    reference_label='Período anterior' if prev_rows is not None else 'Média das categorias no recorte'
+
     filters={'lines':sorted(set(x[2] for x in rows if x[2])),'locations':sorted(set(x[3] for x in rows if x[3])),'models':sorted(set(x[4] for x in rows if x[4])),'categories':sorted(set(t.category for t,*_ in rows if t.category)),'subcategories':sorted(set(t.subcategory for t,*_ in rows if t.subcategory)),'operators':sorted(set(t.operator for t,*_ in rows if t.operator)),'statuses':sorted(set(t.status for t,*_ in rows if t.status)),'equipment_types':sorted(set(t.equipment_type for t,*_ in rows if t.equipment_type))}
-    chronic=[{'object_id':k,'count':v,'level':'CRÔNICO' if v>=50 else 'CRÍTICO' if v>=25 else 'ATENÇÃO'} for k,v in sorted(objcount.items(),key=lambda x:x[1],reverse=True)[:20]]
+    chronic=[]
+    obj_avg=(sum(objcount.values())/len(objcount)) if objcount else 0
+    for k,v in sorted(objcount.items(),key=lambda x:x[1],reverse=True)[:20]:
+        level='CRÔNICO' if v>=50 else 'CRÍTICO' if v>=25 else 'ATENÇÃO'
+        prev=(prev_obj or {}).get(k,0) if prev_obj is not None else None
+        chronic.append({'object_id':k,'count':v,'level':level,'share':round(v*100/max(1,total),1),
+                        'times_average':round(v/max(obj_avg,0.01),1),'previous_count':prev,
+                        'vs_previous_pct':(round((v-prev)*100/prev,1) if prev else (100.0 if prev==0 else None))})
     alerts=[]
-    for x in chronic[:5]: alerts.append({'level':'critical' if x['level']=='CRÔNICO' else 'warning','title':f"{x['object_id']} · {x['level']}",'detail':f"{x['count']} chamados no recorte selecionado"})
-    return jsonify({'ok':True,'release':APP_RELEASE,'kpis':{'tickets':total,'objects':len(objects),'locations':len(locations),'operators':len(operators),'per_object':round(total/max(1,len(objects)),1),'recurrence24':_td_recurrence(rows,1),'recurrence7':_td_recurrence(rows,7),'recurrence30':_td_recurrence(rows,30)},'monthly':[{'month':k,'count':monthly[k]} for k in sorted(monthly)],'failures':ranked(failures,12),'lines':ranked(lines,15),'locations':ranked(locs,15),'models':ranked(models,12),'hours':[{'hour':str(h).zfill(2),'count':hours.get(str(h).zfill(2),0)} for h in range(24)],'weekdays':[{'day':d,'count':weekdays.get(d,0)} for d in weekday_names],'heatmap':[{'day':d,'hour':str(h).zfill(2),'count':heat.get((d,str(h).zfill(2)),0)} for d in weekday_names for h in range(24)],'productivity':prod[:30],'chronic':chronic,'alerts':alerts,'filters':filters})
+    for x in chronic[:5]: alerts.append({'level':'critical' if x['level']=='CRÔNICO' else 'warning','title':f"{x['object_id']} · {x['level']}",'detail':f"{x['count']} chamados · {x['times_average']}× a média por equipamento"})
+
+    payload={'ok':True,'release':APP_RELEASE,'cache':'MISS','reference_label':reference_label,
+      'kpis':{'tickets':total,'objects':len(objects),'locations':len(locations),'operators':len(operators),'per_object':round(total/max(1,len(objects)),1),'recurrence24':_td_recurrence(rows,1),'recurrence7':_td_recurrence(rows,7),'recurrence30':_td_recurrence(rows,30)},
+      'monthly':[{'month':k,'count':monthly[k]} for k in sorted(monthly)],
+      'failures':_td_ranked(failures,12,total,prev_failure),'lines':_td_ranked(lines,15,total,prev_line),'locations':_td_ranked(locs,15,total,prev_loc),'models':_td_ranked(models,12,total,prev_model),
+      'hours':[{'hour':str(h).zfill(2),'count':hours.get(str(h).zfill(2),0)} for h in range(24)],'weekdays':[{'day':d,'count':weekdays.get(d,0)} for d in weekday_names],
+      'heatmap':[{'day':d,'hour':str(h).zfill(2),'count':heat.get((d,str(h).zfill(2)),0)} for d in weekday_names for h in range(24)],'productivity':prod[:30],'chronic':chronic,'alerts':alerts,'filters':filters}
+    _td_cache_put(cache_key,payload)
+    return jsonify(payload)
 
 
 @app.get("/api/topdesk/dashboard")
@@ -6855,7 +6995,10 @@ def management_360_summary_api():
         "emv_done": emv_done,
         "emv_pending": max(len(emv_rows) - emv_done, 0),
     }
-    return jsonify({"ok": True, "release": APP_RELEASE, "field": field, "implantation": implantation})
+    td_total=TopDeskTicket.query.count(); td_open=TopDeskTicket.query.filter(~func.upper(func.coalesce(TopDeskTicket.status,'')).in_(['RESOLVIDO','FECHADO','CONCLUÍDO','CONCLUIDO'])).count()
+    td_objects=db.session.query(TopDeskTicket.object_id).filter(TopDeskTicket.object_id.isnot(None),TopDeskTicket.object_id!='').distinct().count()
+    topdesk={"tickets":td_total,"open":td_open,"objects":td_objects}
+    return jsonify({"ok": True, "release": APP_RELEASE, "field": field, "implantation": implantation, "topdesk":topdesk})
 
 
 @app.get("/api/busca-global")
@@ -6883,6 +7026,10 @@ def global_search_api():
     visits=HardwareFieldVisit.query.filter(db.or_(HardwareFieldVisit.report_code.ilike(like),HardwareFieldVisit.location_name.ilike(like),HardwareFieldVisit.client.ilike(like),HardwareFieldVisit.project.ilike(like))).limit(10).all()
     for v in visits:
         out.append({"type":"RELATÓRIO RV","domain":"IMPLANTAÇÃO","title":v.report_code or f"RV-{v.id:06d}","subtitle":" · ".join(y for y in [v.client,v.project,v.location_name] if y),"url":f"/implantacao-hardware/visita/{v.id}"})
+    # V55: chamados entram na pesquisa transversal / Central 360.
+    tickets=TopDeskTicket.query.filter(db.or_(TopDeskTicket.ticket_number.ilike(like),TopDeskTicket.object_id.ilike(like),TopDeskTicket.subcategory.ilike(like))).limit(8).all()
+    for t in tickets:
+        out.append({"type":"CHAMADO","domain":"GESTÃO","title":t.ticket_number,"subtitle":" · ".join(y for y in [t.object_id,t.subcategory,t.status] if y),"url":f"/topdesk?q={t.ticket_number}"})
     return jsonify({"ok":True,"query":q,"results":out[:25]})
 
 
@@ -7505,6 +7652,34 @@ def emv_chip_delete(terminal):
     db.session.delete(sw); db.session.commit()
     return jsonify({"ok":True})
 
+def _cleanup_activity_photos(kind):
+    if session.get('role') not in ('manager','manager_field'):
+        return jsonify({'ok':False,'error':'Limpeza restrita ao Gestor/ADM.'}),403
+    data=request.get_json(silent=True) or {}; confirm=str(data.get('confirm') or '').strip().upper()
+    if confirm!='CONFIRMAR': return jsonify({'ok':False,'error':'Digite CONFIRMAR para remover as evidências temporárias.'}),400
+    if kind=='recarga':
+        swaps=ChipSwap.query.all(); total=len(swaps); done=sum(1 for x in swaps if (x.status or '').upper().startswith('CONCLU'))
+        if total and done<total: return jsonify({'ok':False,'error':f'Campanha ainda não concluída: {done}/{total} registros concluídos.'}),409
+        photos=ChipSwapPhoto.query.all()
+    else:
+        _ensure_emv_tables(); swaps=EmvChipSwap.query.all(); total=len(swaps); done=sum(1 for x in swaps if (x.status or '').upper().startswith('CONCLU'))
+        if total and done<total: return jsonify({'ok':False,'error':f'Campanha ainda não concluída: {done}/{total} registros concluídos.'}),409
+        photos=EmvChipSwapPhoto.query.all()
+    removed=0
+    for ph in photos:
+        _delete_stored_media(ph.stored_name); db.session.delete(ph); removed+=1
+    db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='CAMPAIGN_EVIDENCE_PURGE',entity_type=kind,entity_id='',detail=f'{removed} foto(s) temporárias removidas após encerramento; registros operacionais preservados.'))
+    db.session.commit(); return jsonify({'ok':True,'removed':removed,'records_preserved':total})
+
+@app.post('/api/chip-swaps/purge-evidence')
+@login_required
+def chip_swap_purge_evidence(): return _cleanup_activity_photos('recarga')
+
+@app.post('/api/emv-chip-swaps/purge-evidence')
+@login_required
+def emv_chip_purge_evidence(): return _cleanup_activity_photos('emv')
+
+
 @app.get("/api/emv-chip-swaps/export.xlsx")
 @login_required
 def emv_chip_export():
@@ -8064,6 +8239,14 @@ def v50_command_center_today():
     tech_today=db.session.query(TechnicianPosition.user_id).filter(func.date(TechnicianPosition.captured_at)==today).distinct().count()
     return jsonify({"ok":True,"date":today.isoformat(),"field":{"inventory":inv_today,"chip_started":chip_today,"chip_done":chip_done_today,"technicians":tech_today},"implantation":{"visits":visits_today,"visits_finalized":visits_final_today,"emv_started":emv_today,"emv_done":emv_done_today}})
 
+@app.get("/notificacoes")
+@login_required
+def notifications_page():
+    if session.get('role') not in ('manager','manager_field'):
+        return redirect(url_for('dashboard_landing'))
+    return render_template('notifications.html', app_release=APP_RELEASE)
+
+
 @app.get("/api/notificacoes")
 @login_required
 def v50_notifications_api():
@@ -8123,12 +8306,29 @@ def v50_contracts_api():
     return jsonify({"ok":True,"release":APP_RELEASE,"park_total":len(assets),"rental":sum(x["rental"] for x in rows),"leasing":sum(x["leasing"] for x in rows),"monthly":total_month,"annual":total_month*12,"contracts":rows})
 
 
+def migrate_v55_performance_indexes():
+    """Índices seguros para os filtros mais usados em Chamados/TopDesk."""
+    if not db.inspect(db.engine).has_table('topdesk_tickets'): return
+    commands=[
+      'CREATE INDEX IF NOT EXISTS ix_topdesk_operator ON topdesk_tickets (operator)',
+      'CREATE INDEX IF NOT EXISTS ix_topdesk_created_text ON topdesk_tickets (created_at_text)',
+      'CREATE INDEX IF NOT EXISTS ix_topdesk_location_status ON topdesk_tickets (location_id, status)',
+      'CREATE INDEX IF NOT EXISTS ix_topdesk_equipment_status ON topdesk_tickets (equipment_type, status)',
+      'CREATE INDEX IF NOT EXISTS ix_topdesk_category_subcategory ON topdesk_tickets (category, subcategory)',
+    ]
+    try:
+        with db.engine.begin() as conn:
+            for cmd in commands: conn.execute(text(cmd))
+    except Exception as exc: app.logger.warning('V55 indexes: %s',exc)
+
+
 with app.app_context():
     migrate_location_reference_columns()
     migrate_panorama_status_column()
     # V39.7.1: não deixa a criação das novas tabelas de Troca de Chips bloquear o startup.
     core_tables=[t for t in db.metadata.sorted_tables if t.name not in ("chip_swaps","chip_swap_photos")]
     db.metadata.create_all(bind=db.engine, tables=core_tables, checkfirst=True)
+    migrate_v55_performance_indexes()
     migrate_team_schedule_columns()
     migrate_inventory_sync_uuid()
     migrate_user_archive_column()

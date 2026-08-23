@@ -8,7 +8,7 @@
   "orientation": "any",
   "background_color": "#f3f7fb",
   "theme_color": "#071a32",
-  "description": "Inventário Autopass V32 — Suporte a Campo, BI Executivo, Patrimônio 360 e PWA offline-first com sincronização de múltiplas mídias.",
+  "description": "Inventário Autopass V55 — operação mobile, Gestão 360, Chamados TopDesk 2.0 e evidências otimizadas para campo.",
   "icons": [
     {
       "src": "/static/autopass-logo.png",

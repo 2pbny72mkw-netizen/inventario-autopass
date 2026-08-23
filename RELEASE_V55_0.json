@@ -1,0 +1,16 @@
+{
+  "release": "V55.0",
+  "base": "main pós-V52.8 recebido do usuário",
+  "focus": [
+    "Gestão no menu superior",
+    "TopDesk performance/cache/indexes",
+    "importação em background com acompanhamento global",
+    "comparativos e referências percentuais",
+    "Central 360 + TopDesk",
+    "política de evidências temporárias EMV/Recarga",
+    "diagnóstico de mídia/bandwidth",
+    "PWA V55"
+  ],
+  "static_acceptance": {"passed": 17, "failed": 0},
+  "runtime_render_required": true
+}
