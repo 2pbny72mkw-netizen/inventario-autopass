@@ -8,11 +8,11 @@
 
 <div class="v23DashboardShell v24Executive v30Executive v31CommandCenter v32CommandCenter v33CommandCenter v34CommandCenter" id="v23DashboardShell">
   <aside class="v23Sidebar" id="v23Sidebar">
-    <div class="v23SidebarBrand"><b>GESTÃO DE CAMPO</b><small>Autopass · V52.6</small></div>
+    <div class="v23SidebarBrand"><b>GESTÃO DE CAMPO</b><small>Autopass · V55.1</small></div>
     <div class="v42SideGroup">VISÃO GERAL</div><button class="v23Nav active" data-v23-view="overview">▦ <span>Visão Geral</span></button><div class="v42SideGroup">ATIVIDADES</div>
     <button class="v23Nav" data-v23-view="execution">▥ <span>Inventário</span></button>
     <button class="v23Nav" data-v23-view="atm-inventory">▦ <span>Dashboard ATM</span></button>
-{% if session.get("role") in ("manager","manager_field") %}<button class="v23Nav" data-v23-view="atm-financial">$ <span>Financeiro ATM</span></button>{% endif %}
+{% if session.get("role") in ("manager","manager_field") %}<a class="v42ExternalNav" href="/financeiro/dashboard">$ <span>Financeiro 2.0</span></a><button class="v23Nav" data-v23-view="atm-financial">$ <span>ATM Financeiro · detalhe</span></button>{% endif %}
     <button class="v23Nav" data-v23-view="journal">◷ <span>Diário de bordo</span></button>
     <button class="v23Nav" data-v23-view="topdesk">⚡ <span>Chamados</span></button>
     <button class="v23Nav" data-v23-view="map">⌖ <span>Mapa</span></button>
@@ -20,7 +20,7 @@
     <button class="v23Nav" data-v23-view="chips">▣ <span>Troca de Chip Recarga</span></button>
 <div class="v42SideGroup">IMPLANTAÇÃO</div>
     <button class="v23Nav" data-v23-view="emv">▣ <span>Troca Chips EMV · Trilhos</span></button>
-    <a class="v42ExternalNav v50ImplantDashboardLink" href="/implantacao-hardware/dashboard">⌁ <span>Dashboard Implantação</span></a><div class="v42SideGroup">OPERAÇÃO</div><button class="v23Nav" data-v23-view="ranking">↗ <span>Ranking</span></button>
+    <a class="v42ExternalNav v50ImplantDashboardLink" href="/dashboard/implantacao">⌁ <span>Dashboard Implantação</span></a><div class="v42SideGroup">OPERAÇÃO</div><button class="v23Nav" data-v23-view="ranking">↗ <span>Ranking</span></button>
     <button class="v23Nav" data-v23-view="competition">◉ <span>Concorrência</span></button>
     <div class="v23SidebarSpacer"></div>
     <button class="v23TvBtn" id="v23TvBtn" type="button">▣ <span>Modo TV</span></button>
@@ -310,7 +310,7 @@
 
 <section class="card v30Contracts v23Panel" data-v23-panel="execution" id="v30Contracts">
  <div class="sectionHead"><div><span class="eyebrow">GESTÃO CONTRATUAL ATM</span><h2>Contratos e vencimentos</h2><p class="muted">Filtro e exportação dos contratos cadastrados na base ATM.</p></div><button class="secondary" id="v30ContractExport" type="button">Exportar contratos</button></div>
- <div class="grid4"><div><label>Contrato</label><select id="v30Contract"><option value="">Todos</option></select></div><div><label>Vencimento</label><select id="v30Horizon"><option value="">Todos</option><option value="30">Até 30 dias</option><option value="60">Até 60 dias</option><option value="90">Até 90 dias</option><option value="expired">Vencidos</option></select></div><div class="v30ContractKpi"><span>ATMs no recorte</span><b id="v30ContractCount">0</b></div><div class="v30ContractKpi danger"><span>Vencidos / até 90d</span><b id="v30ContractRisk">0</b></div></div>
+ <div class="grid4"><div><label>Vencimento / contrato</label><select id="v30Contract"><option value="">Todos</option></select></div><div><label>Situação</label><select id="v30Horizon"><option value="">Todos</option><option value="expired">Vencidos</option><option value="none">Sem contrato</option></select></div><div class="v30ContractKpi"><span>ATMs no recorte</span><b id="v30ContractCount">0</b></div><div class="v30ContractKpi danger"><span>Com vencimento informado</span><b id="v30ContractRisk">0</b></div></div>
  <div id="v30ContractBars" class="v30ContractBars"></div>
 </section>
 
@@ -520,5 +520,5 @@
   <div class="v343TvFooter"><span id="v343TvHeadline">Monitoramento executivo do inventário.</span><span>SUPORTE A CAMPO · V42.4</span></div>
 </div>
 
-<script src="{{url_for('static',filename='manager.js')}}?v=v55-0"></script>
+<script src="{{url_for('static',filename='manager.js')}}?v=v55-1"></script>
 {% endblock %}
