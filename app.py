@@ -39,7 +39,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V52.6"
+APP_RELEASE = "V52.7"
 DASHBOARD_RELEASE = "dashboard-v47"
 TEAMS_RELEASE = "teams-v42-4"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -5707,17 +5707,117 @@ def topdesk_assign(ticket_id):
     db.session.commit(); return jsonify({"ok":True,"assigned":u.name if u else None})
 
 
+def _td_dt(value):
+    if isinstance(value, datetime): return value
+    textv=str(value or '').strip()
+    if not textv: return None
+    for fmt in ("%Y-%m-%d %H:%M:%S","%d/%m/%Y %H:%M:%S","%d/%m/%Y %H:%M","%Y-%m-%dT%H:%M:%S"):
+        try: return datetime.strptime(textv[:19],fmt)
+        except Exception: pass
+    try: return datetime.fromisoformat(textv.replace('Z',''))
+    except Exception: return None
+
+
+def _td_object_parts(object_id):
+    parts=[x.strip() for x in str(object_id or '').split('-') if x.strip()]
+    line=parts[0] if parts and re.match(r'^L\\d+',parts[0],re.I) else ''
+    station=parts[1] if len(parts)>1 and line else ''
+    model=parts[-1] if len(parts)>=4 else ''
+    return line.upper(),station.upper(),model.upper()
+
+
+def _td_filter_rows(args):
+    rows=TopDeskTicket.query.all(); out=[]
+    start=_td_dt(args.get('start')); end=_td_dt(args.get('end'))
+    eq=normalize(args.get('equipment_type','')); linef=normalize(args.get('line','')); locf=normalize(args.get('location',''))
+    modelf=normalize(args.get('model','')); catf=normalize(args.get('category','')); subf=normalize(args.get('subcategory',''))
+    opf=normalize(args.get('operator','')); statusf=normalize(args.get('status','')); slaf=normalize(args.get('sla',''))
+    search=normalize(args.get('q',''))
+    for t in rows:
+        dt=_td_dt(t.created_at_text)
+        if start and (not dt or dt<start): continue
+        if end and (not dt or dt>end.replace(hour=23,minute=59,second=59)): continue
+        line,station,model=_td_object_parts(t.object_id)
+        loc=db.session.get(Location,t.location_id) if t.location_id else None
+        line=line or (loc.line if loc else '')
+        location=(loc.location if loc else '') or station
+        if eq and normalize(t.equipment_type)!=eq: continue
+        if linef and normalize(line)!=linef: continue
+        if locf and normalize(location)!=locf: continue
+        if modelf and normalize(model)!=modelf: continue
+        if catf and normalize(t.category)!=catf: continue
+        if subf and normalize(t.subcategory)!=subf: continue
+        if opf and normalize(t.operator)!=opf: continue
+        if statusf and normalize(t.status)!=statusf: continue
+        if slaf:
+            has_sla=bool(str(t.sla_target_text or '').strip())
+            if slaf=='COM SLA' and not has_sla: continue
+            if slaf=='SEM SLA' and has_sla: continue
+        if search and search not in normalize(' '.join([t.ticket_number or '',t.object_id or '',t.request_text or '',t.category or '',t.subcategory or ''])): continue
+        out.append((t,dt,line,location,model))
+    return out
+
+
+def _td_recurrence(rows, days):
+    groups={}
+    for t,dt,*_ in rows:
+        if not dt or not t.object_id: continue
+        groups.setdefault((normalize(t.object_id),normalize(t.subcategory)),[]).append(dt)
+    repeated=0; eligible=0
+    for dates in groups.values():
+        dates.sort()
+        for i in range(1,len(dates)):
+            eligible+=1
+            if (dates[i]-dates[i-1]).total_seconds() <= days*86400: repeated+=1
+    return round(repeated*100/eligible,1) if eligible else 0
+
+
+@app.get("/api/topdesk/analytics")
+@dashboard_required
+def topdesk_analytics_api():
+    rows=_td_filter_rows(request.args); total=len(rows)
+    objects={normalize(t.object_id) for t,*_ in rows if t.object_id}; locations={normalize(loc) for *_,loc,_ in rows if loc}; operators={normalize(t.operator) for t,*_ in rows if t.operator}
+    monthly={}; failures={}; lines={}; models={}; locs={}; hours={}; weekdays={}; heat={}; tech={}; objcount={}
+    weekday_names=['Seg','Ter','Qua','Qui','Sex','Sáb','Dom']
+    for t,dt,line,loc,model in rows:
+        if dt:
+            mk=dt.strftime('%Y-%m'); monthly[mk]=monthly.get(mk,0)+1; hours[str(dt.hour).zfill(2)]=hours.get(str(dt.hour).zfill(2),0)+1; weekdays[weekday_names[dt.weekday()]]=weekdays.get(weekday_names[dt.weekday()],0)+1
+            heat[(weekday_names[dt.weekday()],str(dt.hour).zfill(2))]=heat.get((weekday_names[dt.weekday()],str(dt.hour).zfill(2)),0)+1
+        failures[t.subcategory or 'Sem subcategoria']=failures.get(t.subcategory or 'Sem subcategoria',0)+1
+        if line: lines[line]=lines.get(line,0)+1
+        if model: models[model]=models.get(model,0)+1
+        if loc: locs[loc]=locs.get(loc,0)+1
+        if t.object_id: objcount[t.object_id]=objcount.get(t.object_id,0)+1
+        op=t.operator or 'Sem operador'; d=tech.setdefault(op,{'tickets':0,'days':set(),'objects':set(),'locations':set(),'lines':set()}); d['tickets']+=1
+        if dt:d['days'].add(dt.date().isoformat())
+        if t.object_id:d['objects'].add(t.object_id)
+        if loc:d['locations'].add(loc)
+        if line:d['lines'].add(line)
+    prod=[]
+    # reincidência individual: mesma falha + mesmo ATM em até 7 dias; indicador de contexto, não nota de desempenho.
+    byop={}
+    for row in rows: byop.setdefault(row[0].operator or 'Sem operador',[]).append(row)
+    for op,d in tech.items():
+        days=max(1,len(d['days'])); prod.append({'operator':op,'tickets':d['tickets'],'active_days':len(d['days']),'per_day':round(d['tickets']/days,1),'objects':len(d['objects']),'locations':len(d['locations']),'lines':len(d['lines']),'recurrence7':_td_recurrence(byop.get(op,[]),7)})
+    prod.sort(key=lambda x:x['tickets'],reverse=True)
+    def ranked(d,n=15): return [{'name':k,'count':v} for k,v in sorted(d.items(),key=lambda x:x[1],reverse=True)[:n]]
+    filters={'lines':sorted(set(x[2] for x in rows if x[2])),'locations':sorted(set(x[3] for x in rows if x[3])),'models':sorted(set(x[4] for x in rows if x[4])),'categories':sorted(set(t.category for t,*_ in rows if t.category)),'subcategories':sorted(set(t.subcategory for t,*_ in rows if t.subcategory)),'operators':sorted(set(t.operator for t,*_ in rows if t.operator)),'statuses':sorted(set(t.status for t,*_ in rows if t.status)),'equipment_types':sorted(set(t.equipment_type for t,*_ in rows if t.equipment_type))}
+    chronic=[{'object_id':k,'count':v,'level':'CRÔNICO' if v>=50 else 'CRÍTICO' if v>=25 else 'ATENÇÃO'} for k,v in sorted(objcount.items(),key=lambda x:x[1],reverse=True)[:20]]
+    alerts=[]
+    for x in chronic[:5]: alerts.append({'level':'critical' if x['level']=='CRÔNICO' else 'warning','title':f"{x['object_id']} · {x['level']}",'detail':f"{x['count']} chamados no recorte selecionado"})
+    return jsonify({'ok':True,'release':APP_RELEASE,'kpis':{'tickets':total,'objects':len(objects),'locations':len(locations),'operators':len(operators),'per_object':round(total/max(1,len(objects)),1),'recurrence24':_td_recurrence(rows,1),'recurrence7':_td_recurrence(rows,7),'recurrence30':_td_recurrence(rows,30)},'monthly':[{'month':k,'count':monthly[k]} for k in sorted(monthly)],'failures':ranked(failures,12),'lines':ranked(lines,15),'locations':ranked(locs,15),'models':ranked(models,12),'hours':[{'hour':str(h).zfill(2),'count':hours.get(str(h).zfill(2),0)} for h in range(24)],'weekdays':[{'day':d,'count':weekdays.get(d,0)} for d in weekday_names],'heatmap':[{'day':d,'hour':str(h).zfill(2),'count':heat.get((d,str(h).zfill(2)),0)} for d in weekday_names for h in range(24)],'productivity':prod[:30],'chronic':chronic,'alerts':alerts,'filters':filters})
+
+
 @app.get("/api/topdesk/dashboard")
 @dashboard_required
 def topdesk_dashboard_api():
-    tickets=TopDeskTicket.query.all(); total=len(tickets); openrows=[t for t in tickets if _ticket_open(t)]; resolved=total-len(openrows)
+    rows=_td_filter_rows(request.args); tickets=[x[0] for x in rows]; total=len(tickets); openrows=[t for t in tickets if _ticket_open(t)]; resolved=total-len(openrows)
     by_status={}; by_type={}; by_location={}; assigned=0
-    for t in tickets:
+    for t,dt,line,location,model in rows:
         by_status[t.status or "Sem status"]=by_status.get(t.status or "Sem status",0)+1
         by_type[t.equipment_type or "OUTRO"]=by_type.get(t.equipment_type or "OUTRO",0)+1
         if t.assigned_technician_id: assigned+=1
-        if t.location_id:
-            loc=db.session.get(Location,t.location_id); key=loc.location if loc else "Não vinculada"; by_location[key]=by_location.get(key,0)+1
+        if location: by_location[location]=by_location.get(location,0)+1
     top_locations=sorted(by_location.items(),key=lambda x:x[1],reverse=True)[:12]
     return jsonify({"ok":True,"total":total,"open":len(openrows),"resolved":resolved,"assigned":assigned,"unassigned":total-assigned,"by_status":by_status,"by_type":by_type,"top_locations":[{"name":k,"count":v} for k,v in top_locations]})
 
@@ -5725,12 +5825,28 @@ def topdesk_dashboard_api():
 @app.get("/topdesk/export.xlsx")
 @topdesk_required
 def topdesk_export():
-    rows=TopDeskTicket.query.order_by(TopDeskTicket.id).all(); wb=Workbook(); ws=wb.active; ws.title="Chamados TopDesk"
-    ws.append(["Número","Tipo","Status TopDesk","Status Campo","Prioridade","Equipamento","Objeto","Categoria","Subcategoria","Operador","Criação","SLA","Localidade","Técnico","Pedido","Ação"])
-    for t in rows:
-        loc=db.session.get(Location,t.location_id) if t.location_id else None; tech=db.session.get(User,t.assigned_technician_id) if t.assigned_technician_id else None
-        ws.append([t.ticket_number,_topdesk_demand_type(t),t.status,t.work_status,t.priority,t.equipment_type,t.object_id,t.category,t.subcategory,t.operator,t.created_at_text,t.sla_target_text,loc.location if loc else "",tech.name if tech else "",t.request_text,t.action_text])
-    bio=io.BytesIO(); wb.save(bio); bio.seek(0); return send_file(bio,as_attachment=True,download_name=f"topdesk_suporte_campo_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    rows=_td_filter_rows(request.args); wb=Workbook(); ws=wb.active; ws.title="Chamados"
+    ws.append(["Número","Tipo","Status TopDesk","Status Campo","Prioridade","Equipamento","Objeto","Modelo","Categoria","Subcategoria","Operador","Criação","SLA","Linha","Localidade","Técnico","Pedido","Ação"])
+    for t,dt,line,location,model in rows:
+        tech=db.session.get(User,t.assigned_technician_id) if t.assigned_technician_id else None
+        ws.append([t.ticket_number,_topdesk_demand_type(t),t.status,t.work_status,t.priority,t.equipment_type,t.object_id,model,t.category,t.subcategory,t.operator,t.created_at_text,t.sla_target_text,line,location,tech.name if tech else "",t.request_text,t.action_text])
+    # Abas analíticas respeitando o mesmo recorte.
+    wp=wb.create_sheet("Produtividade"); wp.append(["Operador","Chamados","Dias ativos","Chamados/dia","Equipamentos","Localidades","Linhas","Reincidência 7d %"])
+    byop={}
+    for row in rows: byop.setdefault(row[0].operator or 'Sem operador',[]).append(row)
+    for op,rr in sorted(byop.items(),key=lambda x:len(x[1]),reverse=True):
+        days={x[1].date() for x in rr if x[1]}; objs={x[0].object_id for x in rr if x[0].object_id}; locs={x[3] for x in rr if x[3]}; lines={x[2] for x in rr if x[2]}
+        wp.append([op,len(rr),len(days),round(len(rr)/max(1,len(days)),1),len(objs),len(locs),len(lines),_td_recurrence(rr,7)])
+    wc=wb.create_sheet("Crônicos"); wc.append(["Objeto","Chamados"])
+    counts={}
+    for t,*_ in rows:
+        if t.object_id: counts[t.object_id]=counts.get(t.object_id,0)+1
+    for k,v in sorted(counts.items(),key=lambda x:x[1],reverse=True): wc.append([k,v])
+    for sh in wb.worksheets:
+        sh.freeze_panes='A2'; sh.auto_filter.ref=sh.dimensions; sh.row_dimensions[1].height=24
+        for cell in sh[1]: cell.font=Font(bold=True,color='FFFFFF'); cell.fill=PatternFill('solid',fgColor='17365D')
+        for col in range(1,sh.max_column+1): sh.column_dimensions[get_column_letter(col)].width=min(45,max(12,max(len(str(sh.cell(r,col).value or '')) for r in range(1,min(sh.max_row,200)+1))+2))
+    bio=io.BytesIO(); wb.save(bio); bio.seek(0); return send_file(bio,as_attachment=True,download_name=f"topdesk_dashboard_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
 @app.get("/api/minhas-atividades")
