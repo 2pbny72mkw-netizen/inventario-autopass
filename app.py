@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 import time
 import tempfile
 import shutil
+import threading
 import html as html_lib
 from functools import wraps
 
@@ -39,7 +40,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V52.7"
+APP_RELEASE = "V52.8"
 DASHBOARD_RELEASE = "dashboard-v47"
 TEAMS_RELEASE = "teams-v42-4"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -68,6 +69,23 @@ if not database_url:
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("INVENTARIO_SECRET_KEY", "chave-local-apenas-para-desenvolvimento")
+
+# V52.8: acompanhamento de importações TopDesk em background.
+# O workspace Hobby normalmente roda uma única instância; o estado é apenas operacional
+# e não substitui o registro persistente TopDeskImportBatch concluído.
+TOPDESK_IMPORT_JOBS = {}
+TOPDESK_IMPORT_LOCK = threading.Lock()
+
+def _td_job_update(job_id, **changes):
+    with TOPDESK_IMPORT_LOCK:
+        job = TOPDESK_IMPORT_JOBS.setdefault(job_id, {})
+        job.update(changes)
+        job["updated_at"] = datetime.utcnow().isoformat() + "Z"
+
+def _td_job_snapshot(job_id):
+    with TOPDESK_IMPORT_LOCK:
+        job = TOPDESK_IMPORT_JOBS.get(job_id)
+        return dict(job) if job else None
 app.config["SQLALCHEMY_DATABASE_URI"] = database_url
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.config["MAX_CONTENT_LENGTH"] = 160 * 1024 * 1024
@@ -3988,6 +4006,33 @@ def export_dashboard_excel():
     )
 
 
+def _media_thumbnail(raw, max_px=520, quality=68):
+    """V52.8: miniatura leve para galerias; original continua disponível sob demanda."""
+    try:
+        with Image.open(io.BytesIO(raw)) as im:
+            im=ImageOps.exif_transpose(im)
+            im.thumbnail((max_px,max_px), Image.Resampling.LANCZOS)
+            if im.mode != "RGB":
+                bg=Image.new("RGB",im.size,"white")
+                if "A" in im.getbands(): bg.paste(im,mask=im.getchannel("A"))
+                else: bg.paste(im)
+                im=bg
+            out=io.BytesIO(); im.save(out,format="JPEG",quality=quality,optimize=True,progressive=True); return out.getvalue()
+    except Exception:
+        return None
+
+def _cached_media_response(raw, mimetype, filename=None, thumb=False):
+    if thumb and (mimetype or "").startswith("image/"):
+        compact=_media_thumbnail(raw)
+        if compact:
+            resp=send_file(io.BytesIO(compact),mimetype="image/jpeg",download_name=(Path(filename or "thumb.jpg").stem+"-thumb.jpg"),max_age=604800)
+        else:
+            resp=send_file(io.BytesIO(raw),mimetype=mimetype,download_name=filename,max_age=604800)
+    else:
+        resp=send_file(io.BytesIO(raw),mimetype=mimetype,download_name=filename,max_age=604800)
+    resp.headers["Cache-Control"]="private, max-age=604800, immutable"
+    return resp
+
 @app.route("/uploads/<path:name>")
 @login_required
 def uploaded(name):
@@ -3999,10 +4044,13 @@ def uploaded(name):
             raw = _r2_get_bytes(key)
             ext = Path(key).suffix.lower()
             mime = {".jpg":"image/jpeg",".jpeg":"image/jpeg",".png":"image/png",".webp":"image/webp",".mp4":"video/mp4"}.get(ext,"application/octet-stream")
-            return send_file(io.BytesIO(raw), mimetype=mime, download_name=Path(key).name)
+            return _cached_media_response(raw,mime,Path(key).name,thumb=request.args.get("thumb")=="1")
         except Exception:
             abort(404)
-    return send_from_directory(UPLOAD_DIR, name)
+    path=UPLOAD_DIR/name
+    if request.args.get("thumb")=="1" and path.exists() and mimetypes.guess_type(name)[0] and mimetypes.guess_type(name)[0].startswith("image/"):
+        return _cached_media_response(path.read_bytes(),mimetypes.guess_type(name)[0],Path(name).name,thumb=True)
+    return send_from_directory(UPLOAD_DIR,name,max_age=604800)
 
 
 @app.get("/api/inventory/<int:inventory_id>/attachments")
@@ -4188,11 +4236,11 @@ def user_photo(user_id):
             Bucket=os.environ["R2_BUCKET_NAME"],
             Key=user.photo_url
         )
-        return Response(
-            obj["Body"].read(),
-            mimetype=obj.get("ContentType") or "image/jpeg",
-            headers={"Cache-Control": "private, no-cache, max-age=0", "Pragma": "no-cache"}
-        )
+        raw=obj["Body"].read()
+        mime=obj.get("ContentType") or "image/jpeg"
+        if request.args.get("thumb")=="1":
+            return _cached_media_response(raw,mime,"usuario.jpg",thumb=True)
+        return Response(raw,mimetype=mime,headers={"Cache-Control":"private, max-age=86400, stale-while-revalidate=604800"})
     except Exception:
         return "", 404
 
@@ -5622,58 +5670,102 @@ def topdesk_page():
 @app.post("/topdesk/import")
 @topdesk_required
 def topdesk_import():
+    """V52.8: inicia importação em background e devolve job_id para polling."""
     f=request.files.get("file")
     if not f or not f.filename:
         return jsonify({"ok":False,"error":"Selecione o arquivo exportado do TopDesk."}),400
     if not f.filename.lower().endswith((".xlsx",".xlsm")):
         return jsonify({"ok":False,"error":"Use arquivo XLSX exportado do TopDesk."}),400
-    try:
-        rows=_read_topdesk_xlsx(f.stream)
-        if not rows:
-            return jsonify({"ok":False,"error":"Arquivo sem registros válidos."}),400
-        headers=set(rows[0].keys())
-        novo_padrao={"Dia/hora da criação","Status","ID do objeto","Categoria","Subcategoria","Operador","Nível","Pedido","Ação","Anexos"}
-        padrao_antigo="Número do incidente" in headers
-        if not padrao_antigo and len(novo_padrao.intersection(headers)) < 6:
-            return jsonify({"ok":False,"error":"Formato TopDesk não reconhecido. Use o padrão Campo - Dogma."}),400
-        inserted=updated=errors=0
-        for idx,row in enumerate(rows, start=2):
-            obj=str(row.get("ID do objeto") or "").strip()
-            created=str(row.get("Dia/hora da criação") or "").strip()
-            num=str(row.get("Número do incidente") or "").strip()
-            if not num:
-                stable="|".join([obj,created,str(row.get("Categoria") or ""),str(row.get("Subcategoria") or "")])
-                num="TD-"+hashlib.sha1(stable.encode("utf-8","ignore")).hexdigest()[:16].upper()
-            if not obj and not str(row.get("Pedido") or "").strip():
-                errors+=1; continue
-            t=TopDeskTicket.query.filter_by(ticket_number=num).first()
-            is_new=t is None
-            if is_new: t=TopDeskTicket(ticket_number=num); db.session.add(t)
-            t.object_id=obj
-            t.category=str(row.get("Categoria") or "").strip()
-            t.subcategory=str(row.get("Subcategoria") or "").strip()
-            t.incident_type=str(row.get("Tipo de incidente") or row.get("Nível") or "").strip()
-            t.status=str(row.get("Status") or "").strip()
-            t.operator=str(row.get("Operador") or "").strip()
-            t.created_at_text=created
-            t.sla_target_text=str(row.get("Data alvo do SLA") or "").strip()
-            t.requester=str(row.get("Nome do solicitante") or "").strip()
-            t.request_text=str(row.get("Pedido") or "").strip()
-            t.action_text=str(row.get("Ação") or "").strip()
-            t.attachments_text=str(row.get("Anexos") or "").strip()
-            t.source_file=secure_filename(f.filename)[:300]
-            t.equipment_type=_topdesk_equipment_type(row)
-            loc=_topdesk_match_location(row)
-            if loc: t.location_id=loc.id
-            t.priority="ALTA" if _topdesk_demand_type(t)=="INCIDENTE" else "NORMAL"
-            t.last_import_at=datetime.utcnow(); t.updated_at=datetime.utcnow()
-            if is_new: inserted+=1
-            else: updated+=1
-        batch=TopDeskImportBatch(filename=secure_filename(f.filename),imported_by=session["user_id"],row_count=len(rows),inserted_count=inserted,updated_count=updated,error_count=errors)
-        db.session.add(batch); db.session.commit()
-        return jsonify({"ok":True,"rows":len(rows),"inserted":inserted,"updated":updated,"errors":errors,"format":"Campo - Dogma" if not padrao_antigo else "TopDesk legado"})
-    except Exception as exc:
-        db.session.rollback(); return jsonify({"ok":False,"error":f"{type(exc).__name__}: {exc}"}),500
+    raw=f.read()
+    if not raw:
+        return jsonify({"ok":False,"error":"Arquivo vazio."}),400
+    # evita duas cargas simultâneas no mesmo processo
+    with TOPDESK_IMPORT_LOCK:
+        active=[x for x in TOPDESK_IMPORT_JOBS.values() if x.get("status") in ("QUEUED","READING","PROCESSING")]
+        if active:
+            return jsonify({"ok":False,"error":"Já existe uma importação TopDesk em andamento."}),409
+    job_id=uuid.uuid4().hex
+    _td_job_update(job_id,status="QUEUED",phase="Preparando arquivo",filename=secure_filename(f.filename),progress=1,total=0,processed=0,inserted=0,updated=0,ignored=0,errors=0,started_at=datetime.utcnow().isoformat()+"Z",finished_at=None,user_id=session.get("user_id"))
+    thread=threading.Thread(target=_topdesk_import_worker,args=(job_id,raw,secure_filename(f.filename),session.get("user_id")),daemon=True,name=f"topdesk-import-{job_id[:8]}")
+    thread.start()
+    return jsonify({"ok":True,"job_id":job_id,"status":"QUEUED"}),202
+
+
+def _topdesk_import_worker(job_id, raw, filename, user_id):
+    started=time.time()
+    with app.app_context():
+        try:
+            _td_job_update(job_id,status="READING",phase="Lendo planilha",progress=5)
+            rows=_read_topdesk_xlsx(io.BytesIO(raw))
+            if not rows:
+                raise ValueError("Arquivo sem registros válidos.")
+            headers=set(rows[0].keys())
+            novo_padrao={"Dia/hora da criação","Status","ID do objeto","Categoria","Subcategoria","Operador","Nível","Pedido","Ação","Anexos"}
+            padrao_antigo="Número do incidente" in headers
+            if not padrao_antigo and len(novo_padrao.intersection(headers)) < 6:
+                raise ValueError("Formato TopDesk não reconhecido. Use o padrão Campo - Dogma.")
+            total=len(rows); inserted=updated=ignored=errors=0
+            _td_job_update(job_id,status="PROCESSING",phase="Importando chamados",progress=10,total=total,processed=0)
+            for pos,row in enumerate(rows, start=1):
+                try:
+                    obj=str(row.get("ID do objeto") or "").strip()
+                    created=str(row.get("Dia/hora da criação") or "").strip()
+                    num=str(row.get("Número do incidente") or "").strip()
+                    if not num:
+                        stable="|".join([obj,created,str(row.get("Categoria") or ""),str(row.get("Subcategoria") or "")])
+                        num="TD-"+hashlib.sha1(stable.encode("utf-8","ignore")).hexdigest()[:16].upper()
+                    if not obj and not str(row.get("Pedido") or "").strip():
+                        ignored+=1
+                        continue
+                    t=TopDeskTicket.query.filter_by(ticket_number=num).first()
+                    is_new=t is None
+                    if is_new:
+                        t=TopDeskTicket(ticket_number=num); db.session.add(t)
+                    t.object_id=obj
+                    t.category=str(row.get("Categoria") or "").strip()
+                    t.subcategory=str(row.get("Subcategoria") or "").strip()
+                    t.incident_type=str(row.get("Tipo de incidente") or row.get("Nível") or "").strip()
+                    t.status=str(row.get("Status") or "").strip()
+                    t.operator=str(row.get("Operador") or "").strip()
+                    t.created_at_text=created
+                    t.sla_target_text=str(row.get("Data alvo do SLA") or "").strip()
+                    t.requester=str(row.get("Nome do solicitante") or "").strip()
+                    t.request_text=str(row.get("Pedido") or "").strip()
+                    t.action_text=str(row.get("Ação") or "").strip()
+                    t.attachments_text=str(row.get("Anexos") or "").strip()
+                    t.source_file=filename[:300]
+                    t.equipment_type=_topdesk_equipment_type(row)
+                    loc=_topdesk_match_location(row)
+                    if loc: t.location_id=loc.id
+                    t.priority="ALTA" if _topdesk_demand_type(t)=="INCIDENTE" else "NORMAL"
+                    t.last_import_at=datetime.utcnow(); t.updated_at=datetime.utcnow()
+                    if is_new: inserted+=1
+                    else: updated+=1
+                except Exception:
+                    errors+=1
+                    db.session.rollback()
+                if pos % 250 == 0:
+                    db.session.commit()
+                    progress=min(99,10+int(pos/max(total,1)*89))
+                    _td_job_update(job_id,processed=pos,inserted=inserted,updated=updated,ignored=ignored,errors=errors,progress=progress,elapsed_seconds=int(time.time()-started))
+            db.session.commit()
+            batch=TopDeskImportBatch(filename=filename,imported_by=user_id,row_count=total,inserted_count=inserted,updated_count=updated,error_count=errors)
+            db.session.add(batch); db.session.commit()
+            _td_job_update(job_id,status="DONE",phase="Importação concluída",progress=100,total=total,processed=total,inserted=inserted,updated=updated,ignored=ignored,errors=errors,elapsed_seconds=int(time.time()-started),finished_at=datetime.utcnow().isoformat()+"Z",format="TopDesk legado" if padrao_antigo else "Campo - Dogma")
+        except Exception as exc:
+            db.session.rollback()
+            _td_job_update(job_id,status="ERROR",phase="Importação interrompida",error=f"{type(exc).__name__}: {exc}",elapsed_seconds=int(time.time()-started),finished_at=datetime.utcnow().isoformat()+"Z")
+        finally:
+            db.session.remove()
+
+
+@app.get("/api/topdesk/import/<job_id>/status")
+@topdesk_required
+def topdesk_import_status(job_id):
+    job=_td_job_snapshot(job_id)
+    if not job:
+        return jsonify({"ok":False,"error":"Importação não encontrada ou processo reiniciado."}),404
+    return jsonify({"ok":True,**job})
 
 
 @app.get("/api/topdesk/tickets")
@@ -6013,7 +6105,7 @@ def field_evidence_media(media_id):
                 io.BytesIO(raw),
                 mimetype=media.mime_type or "application/octet-stream",
                 download_name=media.original_name,
-                max_age=3600,
+                max_age=604800,
             )
         except Exception:
             return "Não foi possível recuperar a mídia do R2.", 502
@@ -6025,7 +6117,7 @@ def field_evidence_media(media_id):
         UPLOAD_DIR / "field_evidence",
         media.storage_key,
         mimetype=media.mime_type,
-        max_age=3600,
+        max_age=604800,
     )
 
 
@@ -7008,7 +7100,7 @@ def _chip_swap_locations_payload(force=False):
                 "notes": sw.notes if sw else "",
                 "test_result": sw.test_result if sw else "",
                 "test_notes": sw.test_notes if sw else "",
-                "photos": [{"id": ph.id, "url": "/uploads/"+ph.stored_name, "name": ph.original_name} for ph in photos],
+                "photos": [{"id": ph.id, "url": "/uploads/"+ph.stored_name, "thumb_url": "/uploads/"+ph.stored_name+"?thumb=1", "name": ph.original_name} for ph in photos],
             })
         total = max(len(items), int(loc.expected_validator or 0))
         concluded = sum(1 for i in items if i["status"] == "CONCLUÍDA")
@@ -7732,7 +7824,7 @@ def _panorama_payload():
         p_out=[]; total=0
         for pt in points_by_location.get(loc.id,[]):
             pp=photos_by_point.get(pt.id,[]); total+=len(pp); creator=users.get(pt.created_by,"—")
-            p_out.append({"id":pt.id,"name":pt.point_name,"notes":pt.notes or "","technician":creator,"status":"CONCLUÍDA" if pp else "EM ANDAMENTO","photos":[{"id":ph.id,"url":"/uploads/"+ph.stored_name,"name":ph.original_name,"stored_name":ph.stored_name,"uploaded_by":users.get(ph.uploaded_by,"—"),"created_at":ph.created_at.isoformat()+"Z" if ph.created_at else None,"latitude":ph.latitude,"longitude":ph.longitude} for ph in pp]})
+            p_out.append({"id":pt.id,"name":pt.point_name,"notes":pt.notes or "","technician":creator,"status":"CONCLUÍDA" if pp else "EM ANDAMENTO","photos":[{"id":ph.id,"url":"/uploads/"+ph.stored_name,"thumb_url":"/uploads/"+ph.stored_name+"?thumb=1","name":ph.original_name,"stored_name":ph.stored_name,"uploaded_by":users.get(ph.uploaded_by,"—"),"created_at":ph.created_at.isoformat()+"Z" if ph.created_at else None,"latitude":ph.latitude,"longitude":ph.longitude} for ph in pp]})
         auto_status="PENDENTE" if not p_out else ("CONCLUÍDA" if all(x["photos"] for x in p_out) else "EM ANDAMENTO")
         override=(loc.panorama_status_override or "").strip().upper().replace("CONCLUIDA","CONCLUÍDA")
         status=override if override in ("PENDENTE","EM ANDAMENTO","CONCLUÍDA") else auto_status
