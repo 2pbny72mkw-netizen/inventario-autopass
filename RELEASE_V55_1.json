@@ -1,0 +1,22 @@
+{
+  "release": "V55.1",
+  "type": "ENXUTO",
+  "implemented": [
+    "gestao_navigation",
+    "adm_financeiro",
+    "unique_full_name",
+    "topdesk_2_0_refinements",
+    "topdesk_tv",
+    "atm_contract_reference",
+    "atm_financial_visuals",
+    "financial_dashboard_multiproduct",
+    "cash_collection_2_0"
+  ],
+  "validation": {
+    "python_compile": "PASS",
+    "javascript_syntax": "PASS",
+    "jinja_parse": "PASS",
+    "contract_reference_counts": "PASS: 412/100/90",
+    "render_runtime": "PENDING_HOMOLOGATION"
+  }
+}

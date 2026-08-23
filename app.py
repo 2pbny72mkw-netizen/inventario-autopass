@@ -40,7 +40,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V55.0"
+APP_RELEASE = "V55.1"
 DASHBOARD_RELEASE = "dashboard-v47"
 TEAMS_RELEASE = "teams-v42-4"
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -935,6 +935,8 @@ def dashboard_landing():
         return redirect(url_for("manager"))
     if role=="hr":
         return redirect(url_for("teams_page"))
+    if role=="atm_financial_admin":
+        return redirect(url_for("financial_cost_management_page"))
     return redirect(url_for("my_profile_page"))
 
 
@@ -945,6 +947,8 @@ def index():
     role = session.get("role")
     if role == "hr":
         return redirect(url_for("teams_page"))
+    if role == "atm_financial_admin":
+        return redirect(url_for("financial_cost_management_page"))
     if role in ("manager", "manager_field", "consultation", "dispatcher", "technician", "technician_implantation"):
         return redirect(url_for("dashboard_landing"))
     return redirect(url_for("my_profile_page"))
@@ -967,6 +971,8 @@ def login():
                 db.session.rollback()
             if user.role == "hr":
                 return redirect(url_for("teams_page"))
+            if user.role == "atm_financial_admin":
+                return redirect(url_for("financial_cost_management_page"))
             return redirect(url_for("manager" if user.role in ("manager", "manager_field", "consultation", "dispatcher") else "activities_page"))
         flash("Usuário ou senha inválidos.")
     return render_template("login.html")
@@ -2073,6 +2079,36 @@ def _parse_contract_date(value):
             pass
     return None
 
+
+def _v551_contract_reference():
+    """Referência contratual validada na planilha ATM com vencimentos atualizados.
+    Esperado: 412 ATMs em Dez/2026, 100 em Fev/2028 e demais sem contrato.
+    """
+    try:
+        rows=json.loads((DATA_DIR / "atm_contract_reference_v551.json").read_text(encoding="utf-8"))
+    except Exception:
+        rows=[]
+    by_asset={}; by_top={}
+    for r in rows:
+        if str(r.get("asset_key") or "").strip(): by_asset[str(r.get("asset_key")).strip()]=r
+        if str(r.get("id_top") or "").strip(): by_top[str(r.get("id_top")).strip()]=r
+    return rows,by_asset,by_top
+
+def _v551_apply_contract_reference(rows):
+    _,by_asset,by_top=_v551_contract_reference()
+    out=[]
+    for src in rows:
+        a=dict(src)
+        ref=by_asset.get(str(a.get("asset_key") or "").strip()) or by_top.get(str(a.get("id_top") or "").strip())
+        if ref:
+            a["contract"]=ref.get("contract_label") or "Sem contrato"
+            a["contract_end"]=ref.get("contract_end") or ""
+        else:
+            a["contract"]="Sem contrato"
+            a["contract_end"]=""
+        out.append(a)
+    return out
+
 @app.get("/api/dashboard/inventory-atm")
 @dashboard_required
 def inventory_atm_dashboard_api():
@@ -2085,6 +2121,7 @@ def inventory_atm_dashboard_api():
         all_rows=json.loads(official_path.read_text(encoding="utf-8"))
     except Exception:
         all_rows=[]
+    all_rows=_v551_apply_contract_reference(all_rows)
     filters={k:(request.args.get(k) or "").strip() for k in ("company","line","locality","model","contract","ownership","status")}
     teamviewer_missing=(request.args.get("teamviewer_missing") or "").strip() in ("1","true","TRUE","sim","SIM")
     field_map={"company":"company","line":"line","locality":"locality","model":"model","contract":"contract","ownership":"ownership","status":"status"}
@@ -2124,7 +2161,7 @@ def inventory_atm_dashboard_api():
         "options":{"companies":facet_options("company","company"),"lines":facet_options("line","line"),"localities":facet_options("locality","locality"),"models":facet_options("model","model"),"contracts":facet_options("contract","contract"),"ownership":facet_options("ownership","ownership"),"statuses":facet_options("status","status")}})
 
 @app.get("/api/dashboard/atm-financial")
-@dashboard_required
+@login_required
 def atm_financial_dashboard_api():
     # V46: visão financeira restrita ao ADM/Gestor principal.
     if session.get("role") not in ("manager", "manager_field", "atm_financial_admin"):
@@ -2157,6 +2194,16 @@ def atm_financial_dashboard_api():
                 forecast_allocated[key]=forecast_allocated.get(key,0.0)+float(x.forecast_amount or 0)*float(pct or 0)/100.0
         dynamic.append({"id":x.id,"competence":x.competence,"supplier":sups.get(x.supplier_id,""),"service":getattr(x,"service_text",None) or svcs.get(x.service_id,""),"amount":round(float(x.amount or 0),2),"forecast_amount":None if getattr(x,"forecast_amount",None) is None else round(float(x.forecast_amount or 0),2),"cost_center":getattr(x,"cost_center",None) or "SUPORTE_CAMPO","project":getattr(x,"project",None) or "","allocation":alloc})
     all_competences=sorted({x[0] for x in db.session.query(FinancialMonthlyCost.competence).filter(FinancialMonthlyCost.competence.isnot(None)).all() if x and x[0]})
+    # V55.1: havendo lançamentos internos, a dashboard deixa de depender da planilha histórica de fornecedores.
+    if dynamic:
+        by_supplier={}
+        for row in dynamic:
+            atm_pct=float((row.get("allocation") or {}).get("ATM") or 0)
+            atm_value=float(row.get("amount") or 0)*atm_pct/100.0
+            key=(row.get("supplier") or "Sem fornecedor", row.get("service") or "Sem serviço")
+            d=by_supplier.setdefault(key,{"supplier":key[0],"description":key[1],"period_value":0.0,"avg_jan_jun_2026":0.0,"category":"ATM","allocation_rule":"RATEIO","allocation_percentages":{"ATM":atm_pct}})
+            d["period_value"]+=atm_value
+        supplier_payload={"suppliers":[{**v,"period_value":round(v["period_value"],2)} for v in by_supplier.values()],"totals":{"period_value":round(sum(v["period_value"] for v in by_supplier.values()),2)},"source":"LANÇAMENTOS_FINANCEIROS"}
     payload.update({"ok":True,"release":APP_RELEASE,"supplier_costs":supplier_payload,"monthly_costs":dynamic,"monthly_allocated":allocated,"monthly_forecast_allocated":forecast_allocated,"monthly_total":round(sum(float(x.get("amount") or 0) for x in dynamic),2),"monthly_forecast_total":round(sum(float(x.get("forecast_amount") or 0) for x in dynamic if x.get("forecast_amount") is not None),2),"competences":all_competences})
     return jsonify(payload)
 
@@ -2167,49 +2214,46 @@ def v30_atm_contracts():
     # V52.6: a situação contratual usa somente a base oficial ATM importada; nenhuma data é inferida.
     try: rows=json.loads((DATA_DIR / "atm_official_082026.json").read_text(encoding="utf-8"))
     except Exception: rows=[]
+    rows=_v551_apply_contract_reference(rows)
     today=datetime.utcnow().date(); out=[]
     for idx,a in enumerate(rows,1):
         if company and str(a.get("company") or "")!=company: continue
         if line and str(a.get("line") or "")!=line: continue
-        c=(str(a.get("contract") or "Não informado")).strip() or "Não informado"
+        c=(str(a.get("contract") or "Sem contrato")).strip() or "Sem contrato"
         if contract and c!=contract: continue
         raw_end=(a.get("contract_end") or a.get("vencimento_contrato") or a.get("venc_contrato") or "")
         end=_parse_contract_date(str(raw_end)) if raw_end else None; days=(end-today).days if end else None
-        status="SEM DATA" if not end else ("VENCIDO" if days<0 else ("ATÉ 30 DIAS" if days<=30 else ("31–60 DIAS" if days<=60 else ("61–90 DIAS" if days<=90 else "ACIMA DE 90 DIAS"))))
+        status="SEM CONTRATO" if not end else ("VENCIDO" if days<0 else ("ATÉ 30 DIAS" if days<=30 else ("31–60 DIAS" if days<=60 else ("61–90 DIAS" if days<=90 else "ACIMA DE 90 DIAS"))))
         if horizon=="expired" and status!="VENCIDO": continue
-        if horizon=="30" and not(end and 0<=days<=30): continue
-        if horizon=="60" and not(end and 0<=days<=60): continue
-        if horizon=="90" and not(end and 0<=days<=90): continue
+        if horizon=="none" and status!="SEM CONTRATO": continue
         out.append({"id":idx,"asset_key":a.get("asset_key") or a.get("id_top") or "","company":a.get("company") or "","line":a.get("line") or "","locality":a.get("locality") or "","serial":a.get("serial") or "","model":a.get("model") or "","supplier":a.get("supplier") or "","contract":c,"contract_end":str(raw_end or ""),"days_to_expire":days,"contract_status":status})
     contracts=sorted({x["contract"] for x in out if x["contract"]},key=lambda x:x.casefold())
-    return jsonify({"ok":True,"release":APP_RELEASE,"count":len(out),"contracts":contracts,"assets":out,"source":"BASE_OFICIAL_ATM","date_rule":"somente data de vencimento importada; sem inferência"})
+    return jsonify({"ok":True,"release":APP_RELEASE,"count":len(out),"contracts":contracts,"assets":out,"source":"PLANILHA_ATM_VENCIMENTOS_ATUALIZADA","date_rule":"412 Dez/2026 · 100 Fev/2028 · demais sem contrato; sem inferência"})
 
 @app.get("/api/v30/atm-contracts/export")
 @dashboard_required
 def v30_atm_contracts_export():
     company=(request.args.get("company") or "").strip(); line=(request.args.get("line") or "").strip()
     contract=(request.args.get("contract") or "").strip(); horizon=(request.args.get("horizon") or "").strip()
-    # Reaplica os mesmos filtros de forma local para exportação.
-    q=BaseAsset.query.filter(func.upper(func.coalesce(BaseAsset.equipment_type,""))=="ATM")
-    if company: q=q.filter(BaseAsset.company==company)
-    if line: q=q.filter(BaseAsset.line==line)
-    if contract: q=q.filter(BaseAsset.leasing_status==contract)
-    today=datetime.utcnow().date(); selected=[]
-    for a in q.order_by(BaseAsset.company,BaseAsset.line,BaseAsset.locality).all():
-        end=_parse_contract_date(a.contract_end); days=(end-today).days if end else None
-        status="SEM DATA" if not end else ("VENCIDO" if days<0 else ("ATÉ 30 DIAS" if days<=30 else ("31–60 DIAS" if days<=60 else ("61–90 DIAS" if days<=90 else "ACIMA DE 90 DIAS"))))
+    try: rows=json.loads((DATA_DIR / "atm_official_082026.json").read_text(encoding="utf-8"))
+    except Exception: rows=[]
+    rows=_v551_apply_contract_reference(rows); today=datetime.utcnow().date(); selected=[]
+    for a in rows:
+        if company and str(a.get("company") or "")!=company: continue
+        if line and str(a.get("line") or "")!=line: continue
+        c=(str(a.get("contract") or "Sem contrato")).strip() or "Sem contrato"
+        if contract and c!=contract: continue
+        raw_end=str(a.get("contract_end") or ""); end=_parse_contract_date(raw_end) if raw_end else None; days=(end-today).days if end else None
+        status="SEM CONTRATO" if not end else ("VENCIDO" if days<0 else ("ATÉ 30 DIAS" if days<=30 else ("31–60 DIAS" if days<=60 else ("61–90 DIAS" if days<=90 else "ACIMA DE 90 DIAS"))))
         if horizon=="expired" and status!="VENCIDO": continue
-        if horizon=="30" and not(end and 0<=days<=30): continue
-        if horizon=="60" and not(end and 0<=days<=60): continue
-        if horizon=="90" and not(end and 0<=days<=90): continue
-        selected.append((a,days,status))
+        if horizon=="none" and status!="SEM CONTRATO": continue
+        selected.append((a,c,raw_end,days,status))
     wb=Workbook(); ws=wb.active; ws.title="Contratos ATM"
-    headers=["Empresa","Linha","Localidade","ATM","Série","Modelo","Fornecedor","Contrato","Vencimento","Dias para vencer","Status contrato","Status base"]
-    ws.append(headers)
-    fill=PatternFill("solid",fgColor="17365D"); font=Font(color="FFFFFF",bold=True)
-    for c in ws[1]: c.fill=fill; c.font=font
-    for a,days,status in selected:
-        ws.append([a.company,a.line,a.locality,a.asset_key,a.serial,a.model,a.supplier,a.leasing_status,a.contract_end,days,status,a.base_status])
+    headers=["Empresa","Linha","Localidade","ATM","Série","Modelo","Fornecedor","Referência contratual","Vencimento","Dias para vencer","Status contrato","Status base"]
+    ws.append(headers); fill=PatternFill("solid",fgColor="17365D"); font=Font(color="FFFFFF",bold=True)
+    for cell in ws[1]: cell.fill=fill; cell.font=font
+    for a,c,raw_end,days,status in selected:
+        ws.append([a.get("company"),a.get("line"),a.get("locality"),a.get("asset_key") or a.get("id_top"),a.get("serial"),a.get("model"),a.get("supplier"),c,raw_end,days,status,a.get("status")])
     for col in range(1,ws.max_column+1): ws.column_dimensions[get_column_letter(col)].width=20
     ws.freeze_panes="A2"; out=io.BytesIO(); wb.save(out); out.seek(0)
     return send_file(out,as_attachment=True,download_name=f"autopass_contratos_atm_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
@@ -2452,14 +2496,22 @@ def hardware_implantation_page():
 def hardware_field_visit_page():
     return render_template("hardware_field_visit.html", app_release=APP_RELEASE)
 
-@app.get("/implantacao-hardware/dashboard")
-@hardware_implantation_required
-def hardware_implantation_dashboard_page():
-    response = make_response(render_template("hardware_implantation_dashboard.html", app_release=APP_RELEASE))
-    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-    response.headers["Pragma"] = "no-cache"
-    response.headers["Expires"] = "0"
+@app.get("/dashboard/implantacao")
+@login_required
+def hardware_implantation_dashboard_canonical():
+    if session.get("role") not in ("manager","manager_field","technician_implantation"):
+        abort(403)
+    response=make_response(render_template("hardware_implantation_dashboard.html", app_release=APP_RELEASE))
+    response.headers["Cache-Control"]="no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"]="no-cache"
+    response.headers["Expires"]="0"
     return response
+
+@app.get("/implantacao-hardware/dashboard")
+@login_required
+def hardware_implantation_dashboard_page():
+    # V55.1: rota legada redireciona uma única vez para a rota canônica, evitando conflito com a atividade.
+    return redirect(url_for("hardware_implantation_dashboard_canonical"), code=302)
 
 @app.get("/api/implantacao-hardware/visitas")
 @hardware_implantation_required
@@ -4139,6 +4191,7 @@ def _next_user_code(role):
         "consultation": "C",
         "hr": "RH",
         "dispatcher": "D",
+        "atm_financial_admin": "AF",
     }
     prefix = prefixes.get(role, "U")
     existing = (
@@ -4195,6 +4248,10 @@ def create_user():
         flash("A senha deve ter pelo menos 8 caracteres.")
         return redirect(url_for("users_page"))
 
+    normalized_name = re.sub(r"\s+", " ", name).strip().lower()
+    if User.query.filter(func.lower(func.trim(User.name)) == normalized_name).first():
+        flash("Já existe um usuário cadastrado com este nome.")
+        return redirect(url_for("users_page"))
     if User.query.filter(func.lower(User.username) == username).first():
         flash("Já existe um usuário com esse login.")
         return redirect(url_for("users_page"))
@@ -4358,6 +4415,11 @@ def edit_user(user_id):
     if not user_code:
         user_code = user.user_code or _next_user_code(role)
 
+    normalized_name = re.sub(r"\s+", " ", name).strip().lower()
+    duplicate_name = User.query.filter(User.id != user.id, func.lower(func.trim(User.name)) == normalized_name).first()
+    if duplicate_name:
+        flash("Já existe outro usuário cadastrado com este nome.")
+        return redirect(url_for("users_page"))
     duplicate_username = User.query.filter(
         User.id != user.id,
         func.lower(User.username) == username
@@ -4609,7 +4671,7 @@ def export_users_excel():
         c.font = Font(bold=True, color="FFFFFF")
         c.fill = PatternFill("solid", fgColor="17345D")
         c.alignment = Alignment(horizontal="center")
-    role_label={"manager":"Gestor","technician":"Técnico de Campo","technician_implantation":"Técnico Implantação","manager_field":"Gestor Field","consultation":"Consulta","hr":"RH","dispatcher":"Dispatcher"}
+    role_label={"manager":"Gestor","technician":"Técnico de Campo","technician_implantation":"Técnico Implantação","manager_field":"Gestor Field","consultation":"Consulta","hr":"RH","dispatcher":"Dispatcher","atm_financial_admin":"ADM Financeiro"}
     for u in (User.query.filter(User.role == "technician") if session.get("role") == "hr" else User.query).order_by(User.name).all():
         status = "ARQUIVADO" if u.archived_at else ("ATIVO" if u.active else "INATIVO")
         ws.append([
@@ -5873,6 +5935,8 @@ def _td_filter_rows(args):
     indexáveis terem reduzido o conjunto candidato.
     """
     start=_td_dt(args.get('start')); end=_td_dt(args.get('end'))
+    # V55.1: dashboard TopDesk opera por padrão com histórico 2026 em diante.
+    if start is None: start=datetime(2026,1,1)
     eq=normalize(args.get('equipment_type','')); linef=normalize(args.get('line','')); locf=normalize(args.get('location',''))
     modelf=normalize(args.get('model','')); catf=normalize(args.get('category','')); subf=normalize(args.get('subcategory',''))
     opf=normalize(args.get('operator','')); statusf=normalize(args.get('status','')); slaf=normalize(args.get('sla',''))
@@ -5973,6 +6037,12 @@ def _td_ranked(current_map, n=15, total=0, previous_map=None):
     return rows
 
 
+
+@app.get("/topdesk/tv")
+@topdesk_required
+def topdesk_tv_page():
+    return render_template("topdesk_tv.html", app_release=APP_RELEASE)
+
 @app.get("/api/topdesk/analytics")
 @dashboard_required
 def topdesk_analytics_api():
@@ -5988,7 +6058,8 @@ def topdesk_analytics_api():
     weekday_names=['Seg','Ter','Qua','Qui','Sex','Sáb','Dom']
     for t,dt,line,loc,model in rows:
         if dt:
-            mk=dt.strftime('%Y-%m'); monthly[mk]=monthly.get(mk,0)+1; hours[str(dt.hour).zfill(2)]=hours.get(str(dt.hour).zfill(2),0)+1; weekdays[weekday_names[dt.weekday()]]=weekdays.get(weekday_names[dt.weekday()],0)+1
+            if dt.year >= 2026:
+                mk=dt.strftime('%Y-%m'); monthly[mk]=monthly.get(mk,0)+1; hours[str(dt.hour).zfill(2)]=hours.get(str(dt.hour).zfill(2),0)+1; weekdays[weekday_names[dt.weekday()]]=weekdays.get(weekday_names[dt.weekday()],0)+1
             heat[(weekday_names[dt.weekday()],str(dt.hour).zfill(2))]=heat.get((weekday_names[dt.weekday()],str(dt.hour).zfill(2)),0)+1
         failures[t.subcategory or 'Sem subcategoria']=failures.get(t.subcategory or 'Sem subcategoria',0)+1
         if line: lines[line]=lines.get(line,0)+1
@@ -6028,12 +6099,17 @@ def topdesk_analytics_api():
                         'times_average':round(v/max(obj_avg,0.01),1),'previous_count':prev,
                         'vs_previous_pct':(round((v-prev)*100/prev,1) if prev else (100.0 if prev==0 else None))})
     alerts=[]
-    for x in chronic[:5]: alerts.append({'level':'critical' if x['level']=='CRÔNICO' else 'warning','title':f"{x['object_id']} · {x['level']}",'detail':f"{x['count']} chamados · {x['times_average']}× a média por equipamento"})
+    for x in chronic[:5]:
+        line, station, model = _td_object_parts(x['object_id'])
+        parts=[p for p in str(x['object_id'] or '').split('-') if p]
+        atm_num=next((p for p in parts if p.isdigit()), str(x['object_id'] or ''))
+        friendly=' · '.join(y for y in [f'ATM {atm_num}' if atm_num else '', model, line, station] if y)
+        alerts.append({'level':'critical' if x['level']=='CRÔNICO' else 'warning','title':f"{friendly or x['object_id']} · {x['level']}",'detail':f"{x['count']} chamados · {x['times_average']}× a média por equipamento",'object_id':x['object_id']})
 
     payload={'ok':True,'release':APP_RELEASE,'cache':'MISS','reference_label':reference_label,
       'kpis':{'tickets':total,'objects':len(objects),'locations':len(locations),'operators':len(operators),'per_object':round(total/max(1,len(objects)),1),'recurrence24':_td_recurrence(rows,1),'recurrence7':_td_recurrence(rows,7),'recurrence30':_td_recurrence(rows,30)},
       'monthly':[{'month':k,'count':monthly[k]} for k in sorted(monthly)],
-      'failures':_td_ranked(failures,12,total,prev_failure),'lines':_td_ranked(lines,15,total,prev_line),'locations':_td_ranked(locs,15,total,prev_loc),'models':_td_ranked(models,12,total,prev_model),
+      'failures':_td_ranked(failures,30,total,prev_failure),'lines':_td_ranked(lines,30,total,prev_line),'locations':_td_ranked(locs,30,total,prev_loc),'models':_td_ranked(models,30,total,prev_model),
       'hours':[{'hour':str(h).zfill(2),'count':hours.get(str(h).zfill(2),0)} for h in range(24)],'weekdays':[{'day':d,'count':weekdays.get(d,0)} for d in weekday_names],
       'heatmap':[{'day':d,'hour':str(h).zfill(2),'count':heat.get((d,str(h).zfill(2)),0)} for d in weekday_names for h in range(24)],'productivity':prod[:30],'chronic':chronic,'alerts':alerts,'filters':filters}
     _td_cache_put(cache_key,payload)
@@ -7717,6 +7793,14 @@ def migrate_financial_v524_columns():
 
 def _financial_admin_allowed():
     return session.get("role") in ("manager", "atm_financial_admin")
+
+
+@app.get("/financeiro/dashboard")
+@login_required
+def financial_dashboard_page():
+    if session.get("role") not in ("manager","manager_field","atm_financial_admin"):
+        abort(403)
+    return render_template("financial_dashboard.html", app_release=APP_RELEASE)
 
 @app.get("/financeiro")
 @login_required
