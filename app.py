@@ -40,9 +40,9 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V55.1"
-DASHBOARD_RELEASE = "dashboard-v47"
-TEAMS_RELEASE = "teams-v42-4"
+APP_RELEASE = "V55.3"
+DASHBOARD_RELEASE = APP_RELEASE
+TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
 FIELD_GPS_GOOD_ACCURACY_M = float(os.getenv("FIELD_GPS_GOOD_ACCURACY_M", "30"))
 FIELD_GPS_MAX_ACCURACY_M = float(os.getenv("FIELD_GPS_MAX_ACCURACY_M", "80"))
@@ -159,6 +159,13 @@ class FinancialSupplier(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(180), nullable=False, unique=True, index=True)
     active = db.Column(db.Boolean, nullable=False, default=True)
+    trade_name = db.Column(db.String(180))
+    cnpj = db.Column(db.String(30), index=True)
+    primary_cost_center = db.Column(db.String(60))
+    contact_name = db.Column(db.String(180))
+    phone = db.Column(db.String(40))
+    email = db.Column(db.String(180))
+    pending_profile = db.Column(db.Boolean, nullable=False, default=False)
     created_by = db.Column(db.Integer, db.ForeignKey("users.id"))
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
@@ -2501,11 +2508,17 @@ def hardware_field_visit_page():
 def hardware_implantation_dashboard_canonical():
     if session.get("role") not in ("manager","manager_field","technician_implantation"):
         abort(403)
-    response=make_response(render_template("hardware_implantation_dashboard.html", app_release=APP_RELEASE))
-    response.headers["Cache-Control"]="no-store, no-cache, must-revalidate, max-age=0"
-    response.headers["Pragma"]="no-cache"
-    response.headers["Expires"]="0"
-    return response
+    # V55.2: gestores visualizam a dashboard dentro do shell gerencial; não como atividade.
+    if session.get("role") in ("manager","manager_field"):
+        return redirect("/gerencial?view=implantation-dashboard")
+    return render_template("hardware_implantation_dashboard.html", app_release=APP_RELEASE)
+
+@app.get("/dashboard/implantacao/embed")
+@login_required
+def hardware_implantation_dashboard_embed():
+    if session.get("role") not in ("manager","manager_field"):
+        abort(403)
+    return render_template("hardware_implantation_dashboard.html", app_release=APP_RELEASE, embedded=True)
 
 @app.get("/implantacao-hardware/dashboard")
 @login_required
@@ -6099,12 +6112,20 @@ def topdesk_analytics_api():
                         'times_average':round(v/max(obj_avg,0.01),1),'previous_count':prev,
                         'vs_previous_pct':(round((v-prev)*100/prev,1) if prev else (100.0 if prev==0 else None))})
     alerts=[]
+    object_rows={}
+    for rr in rows:
+        if rr[0].object_id: object_rows.setdefault(rr[0].object_id,[]).append(rr)
     for x in chronic[:5]:
-        line, station, model = _td_object_parts(x['object_id'])
-        parts=[p for p in str(x['object_id'] or '').split('-') if p]
-        atm_num=next((p for p in parts if p.isdigit()), str(x['object_id'] or ''))
+        line, station, model = _td_object_parts(x['object_id']); rr=object_rows.get(x['object_id'],[])
+        parts=[p for p in str(x['object_id'] or '').split('-') if p]; atm_num=next((p for p in parts if p.isdigit()), str(x['object_id'] or ''))
         friendly=' · '.join(y for y in [f'ATM {atm_num}' if atm_num else '', model, line, station] if y)
-        alerts.append({'level':'critical' if x['level']=='CRÔNICO' else 'warning','title':f"{friendly or x['object_id']} · {x['level']}",'detail':f"{x['count']} chamados · {x['times_average']}× a média por equipamento",'object_id':x['object_id']})
+        failmap={}; dates=[]
+        for t,dt,*_rest in rr:
+            fail=t.subcategory or t.category or 'Sem classificação'; failmap[fail]=failmap.get(fail,0)+1
+            if dt: dates.append(dt)
+        top_fail=max(failmap.items(),key=lambda z:z[1]) if failmap else ('Sem classificação',0); last=max(dates).strftime('%d/%m/%Y') if dates else '—'
+        recent30=sum(1 for t,dt,*_ in rr if dt and dt >= datetime.now()-timedelta(days=30))
+        alerts.append({'level':'critical' if x['level']=='CRÔNICO' else 'warning','title':f"{friendly or x['object_id']} · {x['level']}",'detail':f"{x['count']} chamados · {x['times_average']}× média · {x['share']}% do recorte",'cause':f"Principal: {top_fail[0]} ({top_fail[1]})",'recent':f"30 dias: {recent30} · último: {last}",'object_id':x['object_id']})
 
     payload={'ok':True,'release':APP_RELEASE,'cache':'MISS','reference_label':reference_label,
       'kpis':{'tickets':total,'objects':len(objects),'locations':len(locations),'operators':len(operators),'per_object':round(total/max(1,len(objects)),1),'recurrence24':_td_recurrence(rows,1),'recurrence7':_td_recurrence(rows,7),'recurrence30':_td_recurrence(rows,30)},
@@ -7784,6 +7805,12 @@ def migrate_financial_v524_columns():
         if "cost_center" not in cols: commands.append("ALTER TABLE financial_monthly_costs ADD COLUMN cost_center VARCHAR(60) DEFAULT 'SUPORTE_CAMPO'")
         if "project" not in cols: commands.append("ALTER TABLE financial_monthly_costs ADD COLUMN project VARCHAR(220)")
         if "service_text" not in cols: commands.append("ALTER TABLE financial_monthly_costs ADD COLUMN service_text VARCHAR(300)")
+        # V55.2: cadastro financeiro enriquecido para importação de empresas.
+        sup_cols={c["name"] for c in inspector.get_columns("financial_suppliers")} if "financial_suppliers" in inspector.get_table_names() else set()
+        sup_commands=[]
+        for col,sql in (("trade_name","VARCHAR(180)"),("cnpj","VARCHAR(30)"),("primary_cost_center","VARCHAR(60)"),("contact_name","VARCHAR(180)"),("phone","VARCHAR(40)"),("email","VARCHAR(180)"),("pending_profile","BOOLEAN DEFAULT 0")):
+            if col not in sup_cols: sup_commands.append(f"ALTER TABLE financial_suppliers ADD COLUMN {col} {sql}")
+        commands.extend(sup_commands)
         for command in commands: db.session.execute(db.text(command))
         if commands:
             db.session.execute(db.text("UPDATE financial_monthly_costs SET cost_center='SUPORTE_CAMPO' WHERE cost_center IS NULL OR cost_center=''"))
@@ -7800,7 +7827,17 @@ def _financial_admin_allowed():
 def financial_dashboard_page():
     if session.get("role") not in ("manager","manager_field","atm_financial_admin"):
         abort(403)
+    # V55.2: para gestores, a Dashboard Financeiro é painel do shell gerencial.
+    if session.get("role") in ("manager","manager_field"):
+        return redirect("/gerencial?view=financial-dashboard")
     return render_template("financial_dashboard.html", app_release=APP_RELEASE)
+
+@app.get("/financeiro/dashboard/embed")
+@login_required
+def financial_dashboard_embed():
+    if session.get("role") not in ("manager","manager_field"):
+        abort(403)
+    return render_template("financial_dashboard.html", app_release=APP_RELEASE, embedded=True)
 
 @app.get("/financeiro")
 @login_required
@@ -7819,6 +7856,7 @@ def financial_assistance_page():
     if session.get("role") not in ("manager","manager_field","atm_financial_admin"): return redirect(url_for("dashboard_landing"))
     return render_template("financial_area_placeholder.html", app_release=APP_RELEASE, area="Assistência Técnica")
 
+@app.get("/financeiro/coleta-valores")
 @app.get("/financeiro/suporte-campo/coleta-valores")
 @login_required
 def financial_cash_collection_page():
@@ -7826,6 +7864,7 @@ def financial_cash_collection_page():
         return redirect(url_for("dashboard_landing"))
     return render_template("financial_cash_collection.html", app_release=APP_RELEASE)
 
+@app.get("/financeiro/lancamentos")
 @app.get("/financeiro-atm/gestao")
 @app.get("/financeiro/suporte-campo")
 @login_required
@@ -7833,6 +7872,29 @@ def financial_cost_management_page():
     if not _financial_admin_allowed():
         return redirect(url_for("dashboard_landing"))
     return render_template("financial_cost_management.html", app_release=APP_RELEASE)
+
+@app.get("/financeiro/lancamentos/embed")
+@login_required
+def financial_cost_management_embed():
+    if session.get("role") not in ("manager","manager_field","atm_financial_admin"):
+        abort(403)
+    return render_template("financial_cost_management.html", app_release=APP_RELEASE, embedded=True)
+
+@app.get("/api/release/routes-v553")
+@login_required
+def release_routes_v553():
+    """Diagnóstico simples para confirmar que o backend V55.3 carregou as novas rotas."""
+    checks = [
+        "/financeiro/dashboard",
+        "/financeiro/dashboard/embed",
+        "/financeiro/lancamentos",
+        "/financeiro/lancamentos/embed",
+        "/financeiro/coleta-valores",
+        "/dashboard/implantacao",
+        "/dashboard/implantacao/embed",
+    ]
+    registered = {rule.rule for rule in app.url_map.iter_rules()}
+    return jsonify({"ok": True, "release": APP_RELEASE, "routes": {x: x in registered for x in checks}})
 
 @app.get("/api/financeiro/cadastros")
 @login_required
@@ -7947,6 +8009,83 @@ def financial_monthly_cost_update_api(row_id):
     before=f"{row.competence} · R$ {row.amount:.2f}"
     row.competence=comp;row.supplier_id=sid;row.service_id=service.id;row.service_text=service_text;row.amount=amount;row.forecast_amount=forecast;row.cost_center=center;row.project=project;row.allocation_json=json.dumps(alloc,ensure_ascii=False);row.notes=(d.get("notes",row.notes) or "").strip();row.updated_by=session.get("user_id");row.updated_at=datetime.utcnow()
     db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="FIN_MONTHLY_COST_EDIT",entity_type="financial_monthly_cost",entity_id=str(row.id),detail=f"antes: {before} | depois: {comp} · {center} · R$ {amount:.2f}"));db.session.commit();return jsonify({"ok":True})
+
+
+@app.post("/api/financeiro/importar.xlsx")
+@login_required
+def financial_import_xlsx():
+    if not _financial_admin_allowed(): return jsonify({"ok":False,"error":"Sem permissão."}),403
+    f=request.files.get("file")
+    if not f or not f.filename: return jsonify({"ok":False,"error":"Selecione o arquivo Excel."}),400
+    try: wb=load_workbook(f.stream,data_only=True)
+    except Exception as exc: return jsonify({"ok":False,"error":f"Excel inválido: {exc}"}),400
+    if "Empresas" not in wb.sheetnames or "Lançamentos" not in wb.sheetnames:
+        return jsonify({"ok":False,"error":"O arquivo deve conter as abas Empresas e Lançamentos."}),400
+    def headers(ws): return {str(c.value or '').strip():i+1 for i,c in enumerate(ws[4])}
+    def val(ws,row,h,name):
+        i=h.get(name); return ws.cell(row,i).value if i else None
+    created_sup=updated_sup=pending_sup=created_cost=duplicates=errors=0
+    ws=wb["Empresas"]; h=headers(ws)
+    for r in range(5,ws.max_row+1):
+        name=str(val(ws,r,h,"Razão Social / Nome") or '').strip()
+        if not name: continue
+        sup=FinancialSupplier.query.filter(func.lower(FinancialSupplier.name)==name.lower()).first()
+        if not sup: sup=FinancialSupplier(name=name,created_by=session.get('user_id'));db.session.add(sup);created_sup+=1
+        else: updated_sup+=1
+        sup.trade_name=str(val(ws,r,h,"Nome Fantasia") or '').strip() or None; sup.cnpj=str(val(ws,r,h,"CNPJ") or '').strip() or None
+        sup.primary_cost_center=str(val(ws,r,h,"Centro de Custo Principal") or '').strip() or None; sup.contact_name=str(val(ws,r,h,"Contato") or '').strip() or None
+        sup.phone=str(val(ws,r,h,"Telefone") or '').strip() or None; sup.email=str(val(ws,r,h,"E-mail") or '').strip() or None
+        sup.pending_profile=not bool(sup.cnpj and sup.contact_name and (sup.phone or sup.email)); pending_sup+=1 if sup.pending_profile else 0
+    db.session.flush()
+    ws=wb["Lançamentos"]; h=headers(ws)
+    prodcols=[("Produto 1","Rateio 1 %"),("Produto 2","Rateio 2 %"),("Produto 3","Rateio 3 %"),("Produto 4","Rateio 4 %"),("Produto 5","Rateio 5 %"),("Produto 6","Rateio 6 %")]
+    for r in range(5,ws.max_row+1):
+        try:
+            supplier_name=str(val(ws,r,h,"Fornecedor / Empresa") or '').strip(); service=str(val(ws,r,h,"Serviço / Atividade") or '').strip()
+            if not supplier_name and not service: continue
+            if not supplier_name or not service: errors+=1; continue
+            cv=val(ws,r,h,"Competência")
+            if isinstance(cv,datetime): comp=cv.strftime('%Y-%m')
+            else:
+                raw=str(cv or '').strip(); m=re.search(r'(20\d{2})[-/](\d{1,2})',raw); comp=f"{m.group(1)}-{int(m.group(2)):02d}" if m else raw
+            amount=float(val(ws,r,h,"Valor Realizado (R$)") or 0); forecast=val(ws,r,h,"Valor Forecast (R$)"); forecast=None if forecast in (None,'') else float(forecast)
+            center=str(val(ws,r,h,"Centro de Custo") or 'SUPORTE_CAMPO').strip().upper().replace(' ','_').replace('Ê','E').replace('É','E').replace('Ç','C').replace('Ã','A')
+            center={'SUPORTE_A_CAMPO':'SUPORTE_CAMPO','ASSISTENCIA_TECNICA':'ASSISTENCIA_TECNICA','IMPLANTACAO_DE_HARDWARE':'IMPLANTACAO_HARDWARE'}.get(center,center)
+            sup=FinancialSupplier.query.filter(func.lower(FinancialSupplier.name)==supplier_name.lower()).first()
+            if not sup:
+                sup=FinancialSupplier(name=supplier_name,pending_profile=True,created_by=session.get('user_id'));db.session.add(sup);db.session.flush();created_sup+=1;pending_sup+=1
+            alloc={}
+            for pc,rc in prodcols:
+                pr=str(val(ws,r,h,pc) or '').strip().upper(); rv=val(ws,r,h,rc)
+                if pr and rv not in (None,''): alloc[pr]=round(float(rv),2)
+            if alloc and abs(sum(alloc.values())-100)>0.01: errors+=1; continue
+            if not alloc: alloc={'OUTROS':100.0}
+            exists=FinancialMonthlyCost.query.filter_by(competence=comp,supplier_id=sup.id).filter(func.abs(FinancialMonthlyCost.amount-amount)<0.01,func.lower(FinancialMonthlyCost.service_text)==service.lower()).first()
+            if exists: duplicates+=1; continue
+            svc=_fin_service_for_text(sup.id,service)
+            row=FinancialMonthlyCost(competence=comp,supplier_id=sup.id,service_id=svc.id,service_text=service,amount=round(amount,2),forecast_amount=None if forecast is None else round(forecast,2),cost_center=center,project=str(val(ws,r,h,"Projeto") or '').strip(),allocation_json=json.dumps(alloc,ensure_ascii=False),notes=str(val(ws,r,h,"Observação / Justificativa") or '').strip(),created_by=session.get('user_id'),updated_by=session.get('user_id'))
+            db.session.add(row); created_cost+=1
+        except Exception: errors+=1
+    db.session.commit(); _td_cache_clear()
+    return jsonify({"ok":True,"companies_created":created_sup,"companies_updated":updated_sup,"companies_pending":pending_sup,"launches_created":created_cost,"duplicates":duplicates,"errors":errors})
+
+@app.get("/api/financeiro/export.xlsx")
+@login_required
+def financial_export_xlsx():
+    if session.get("role") not in ("manager","manager_field","atm_financial_admin"): abort(403)
+    comps=set(x for x in (request.args.get('competences') or '').split(',') if x); center=(request.args.get('center') or 'ALL'); product=(request.args.get('product') or 'ALL').upper()
+    q=FinancialMonthlyCost.query
+    if comps:q=q.filter(FinancialMonthlyCost.competence.in_(comps))
+    if center!='ALL':q=q.filter_by(cost_center=center)
+    rows=q.order_by(FinancialMonthlyCost.competence,FinancialMonthlyCost.id).all(); sups={x.id:x.name for x in FinancialSupplier.query.all()}
+    wb=Workbook(); ws=wb.active;ws.title='Lançamentos';ws.append(['Competência','Centro de Custo','Fornecedor','Serviço','Projeto','Realizado','Forecast','Produto','Rateio %','Valor Rateado'])
+    for x in rows:
+        alloc=json.loads(x.allocation_json or '{}')
+        pairs=alloc.items() if product=='ALL' else [(product,alloc.get(product,0))]
+        for pr,pct in pairs:
+            if not pct: continue
+            ws.append([x.competence,x.cost_center,sups.get(x.supplier_id,''),x.service_text or '',x.project or '',x.amount,x.forecast_amount,pr,pct,round(x.amount*float(pct)/100,2)])
+    bio=io.BytesIO();wb.save(bio);bio.seek(0);return send_file(bio,as_attachment=True,download_name='dashboard_financeiro_v55_2.xlsx',mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 @app.get("/api/panoramas/export.xlsx")
 @login_required
