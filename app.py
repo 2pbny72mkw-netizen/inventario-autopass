@@ -40,7 +40,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V55.3.1"
+APP_RELEASE = "V55.4"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -2129,6 +2129,12 @@ def inventory_atm_dashboard_api():
     except Exception:
         all_rows=[]
     all_rows=_v551_apply_contract_reference(all_rows)
+    # V55.4: modelo ATM é uma dimensão controlada. IDs/terminais numéricos não podem contaminar o filtro Modelo.
+    valid_atm_models={"TCI","MK","MKNEO","TCINEO","MINIWALL","TCIPLUS","DCASH"}
+    for _a in all_rows:
+        _raw_model=str(_a.get("model") or "").strip().upper()
+        _a["model_raw"]=_raw_model
+        _a["model"]=_raw_model if _raw_model in valid_atm_models else "Modelo não identificado"
     filters={k:(request.args.get(k) or "").strip() for k in ("company","line","locality","model","contract","ownership","status")}
     teamviewer_missing=(request.args.get("teamviewer_missing") or "").strip() in ("1","true","TRUE","sim","SIM")
     field_map={"company":"company","line":"line","locality":"locality","model":"model","contract":"contract","ownership":"ownership","status":"status"}
