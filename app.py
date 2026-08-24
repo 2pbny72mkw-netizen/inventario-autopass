@@ -40,7 +40,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V55.3"
+APP_RELEASE = "V55.3.1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -7808,7 +7808,7 @@ def migrate_financial_v524_columns():
         # V55.2: cadastro financeiro enriquecido para importação de empresas.
         sup_cols={c["name"] for c in inspector.get_columns("financial_suppliers")} if "financial_suppliers" in inspector.get_table_names() else set()
         sup_commands=[]
-        for col,sql in (("trade_name","VARCHAR(180)"),("cnpj","VARCHAR(30)"),("primary_cost_center","VARCHAR(60)"),("contact_name","VARCHAR(180)"),("phone","VARCHAR(40)"),("email","VARCHAR(180)"),("pending_profile","BOOLEAN DEFAULT 0")):
+        for col,sql in (("trade_name","VARCHAR(180)"),("cnpj","VARCHAR(30)"),("primary_cost_center","VARCHAR(60)"),("contact_name","VARCHAR(180)"),("phone","VARCHAR(40)"),("email","VARCHAR(180)"),("pending_profile","BOOLEAN NOT NULL DEFAULT FALSE")):
             if col not in sup_cols: sup_commands.append(f"ALTER TABLE financial_suppliers ADD COLUMN {col} {sql}")
         commands.extend(sup_commands)
         for command in commands: db.session.execute(db.text(command))
@@ -7883,7 +7883,7 @@ def financial_cost_management_embed():
 @app.get("/api/release/routes-v553")
 @login_required
 def release_routes_v553():
-    """Diagnóstico simples para confirmar que o backend V55.3 carregou as novas rotas."""
+    """Diagnóstico simples para confirmar que o backend V55.3.1 carregou as novas rotas."""
     checks = [
         "/financeiro/dashboard",
         "/financeiro/dashboard/embed",
