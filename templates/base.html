@@ -5,7 +5,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{% block title %}Sistema de Gestão Suporte a Campo{% endblock %}</title>
-<link rel="stylesheet" href="{{url_for('static',filename='app.css')}}?v=v56-a3">
+<link rel="stylesheet" href="{{url_for('static',filename='app.css')}}?v=v56-a4">
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#17345d">
 </head>
@@ -21,8 +21,8 @@
       </div>
     </div>
     <nav class="mainNavV424">
-      {% if session.get('role') in ('manager','manager_field','consultation','dispatcher','technician','technician_implantation') %}<a href="/dashboard">Dashboard</a>{% endif %}
-      {% if session.get('role') in ('manager','manager_field','technician','dispatcher','consultation') %}
+      {% if can_view('dashboard') %}<a href="/dashboard">Dashboard</a>{% endif %}
+      {% if can_view('field') %}
       <div class="navDrop"><button type="button" class="navDropBtn">Field ▾</button><div class="navDropMenu">
         {% if session.get('role') in ('manager','manager_field','technician','consultation') %}<a href="/tecnico">Inventário</a>{% endif %}
         {% if session.get('role') == 'technician' %}<a href="/trabalho">Chamados</a>{% endif %}
@@ -30,17 +30,17 @@
         {% if session.get('role') in ('manager','manager_field','technician','consultation') %}<a href="/visao-panoramica">Visão Panorâmica</a>{% endif %}
         {% if session.get('role') in ('manager','manager_field','technician','consultation','dispatcher') %}<a href="/troca-chips">Troca de Chips Recarga</a>{% endif %}
       </div></div>{% endif %}
-      {% if session.get('role') in ('manager','manager_field','technician_implantation') %}
+      {% if can_view('implantation') %}
       <div class="navDrop"><button type="button" class="navDropBtn">Implantação de Hardware ▾</button><div class="navDropMenu">
         <a href="/dashboard/implantacao">Dashboard Implantação</a>
         <a href="/implantacao-hardware">Visitas a Campo / RV</a>
         <a href="/troca-chips-emv">Troca de Chips EMV - Trilhos</a>
       </div></div>{% endif %}
-      {% if session.get('role') in ('manager','manager_field','consultation','hr','dispatcher') %}
+      {% if can_view('teams') or can_view('users') %}
       <div class="navDrop"><button type="button" class="navDropBtn">RH ▾</button><div class="navDropMenu">
-        <a href="/equipes">Equipes</a>{% if session.get('role') in ('manager','hr') %}<a href="/usuarios">Usuários</a>{% endif %}
+        {% if can_view('teams') %}<a href="/equipes">Equipes</a>{% endif %}{% if can_view('users') %}<a href="/usuarios">Usuários</a>{% endif %}
       </div></div>{% endif %}
-      {% if session.get('role') in ('manager','manager_field','dispatcher') %}<div class="navDrop"><button type="button" class="navDropBtn">Gestão ▾</button><div class="navDropMenu"><a href="/topdesk">Chamados</a>{% if session.get('role') in ('manager','manager_field') %}<a href="/gestao-360">Central 360</a><a href="/notificacoes" id="notificationBell">Notificações <span id="notificationCount" hidden>0</span></a><a href="/diagnostico">Diagnóstico</a>{% if session.get('role') == 'manager' %}<a href="/configuracoes">Configurações</a>{% endif %}{% endif %}</div></div>{% endif %}{% if session.get('role') in ('manager','manager_field','technician','technician_implantation') %}<button type="button" id="installPwa" class="navInstall" hidden>Instalar App</button>{% endif %}{% if session.get('role') in ('manager','manager_field','atm_financial_admin') %}<div class="navDrop"><button type="button" class="navDropBtn">Financeiro ▾</button><div class="navDropMenu"><a href="/financeiro/dashboard">Dashboard Financeiro</a>{% if session.get('role') in ('manager','atm_financial_admin') %}<a href="/financeiro/lancamentos">Lançamentos</a><a href="/financeiro/coleta-valores">Coleta de Valores</a>{% endif %}</div></div>{% endif %}<a href="/meu-perfil" class="navProfile navRightStart">Meu Perfil</a><a href="/sobre">Sobre</a>
+      {% if can_view('management') %}<div class="navDrop"><button type="button" class="navDropBtn">Gestão ▾</button><div class="navDropMenu"><a href="/topdesk">Chamados</a>{% if session.get('role') in ('manager','manager_field') %}<a href="/gestao-360">Central 360</a><a href="/notificacoes" id="notificationBell">Notificações <span id="notificationCount" hidden>0</span></a><a href="/diagnostico">Diagnóstico</a>{% if session.get('role') == 'manager' %}<a href="/configuracoes">Configurações</a>{% endif %}{% endif %}</div></div>{% endif %}{% if session.get('role') in ('manager','manager_field','technician','technician_implantation') %}<button type="button" id="installPwa" class="navInstall" hidden>Instalar App</button>{% endif %}{% if can_view('finance') or can_view('finance_dashboard') %}<div class="navDrop"><button type="button" class="navDropBtn">Financeiro ▾</button><div class="navDropMenu">{% if can_view('finance_dashboard') %}<a href="/financeiro/dashboard">Dashboard Financeiro</a>{% endif %}{% if can_view('finance') %}<a href="/financeiro/lancamentos">Lançamentos</a><a href="/financeiro/coleta-valores">Coleta de Valores</a>{% endif %}</div></div>{% endif %}<a href="/meu-perfil" class="navProfile navRightStart">Meu Perfil</a>{% if can_view('about_versions') %}<a href="/sobre">Sobre</a>{% endif %}
       <a href="/logout">Sair</a>
     </nav>
   </div>
@@ -62,7 +62,7 @@ document.getElementById('installPwa')?.addEventListener('click',async()=>{if(!v5
 if('serviceWorker' in navigator && (location.protocol==='https:' || location.hostname==='localhost')){
   window.addEventListener('load',async()=>{
     try{
-      const reg=await navigator.serviceWorker.register('/sw.js?v=v56-a3',{scope:'/',updateViaCache:'none'});
+      const reg=await navigator.serviceWorker.register('/sw.js?v=v56-a4',{scope:'/',updateViaCache:'none'});
       await reg.update();
     }catch(err){console.warn('Falha ao atualizar Service Worker',err);}
   },{once:true});

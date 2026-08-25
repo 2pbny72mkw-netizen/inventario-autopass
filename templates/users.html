@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Usuários | Inventário SP{% endblock %}
-{% block content %}
+{% block content %}<style>.accessBox{border:1px solid #d7e1ee;border-radius:10px;padding:12px;background:#f8fbff}.accessGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin-top:8px}.accessGrid label{display:flex;gap:7px;align-items:center;font-weight:600}.accessGrid input{width:auto}</style>
 <section class="dashHero">
   <div>
     <span class="eyebrow">ADMINISTRAÇÃO</span>
@@ -92,6 +92,7 @@
           <input name="photo" type="file" accept="image/*">
           <small>Opcional • até 3 MB.</small>
         </div>
+<div class="full accessBox" data-access-box><label>Acessos / visualização</label><div class="accessGrid">{% for key,label in [('dashboard','Dashboard Geral'),('field','Field'),('implantation','Implantação de Hardware'),('teams','RH / Equipes'),('users','RH / Usuários'),('finance','Financeiro / Lançamentos'),('finance_dashboard','Dashboard Financeira'),('management','Gestão'),('about_versions','Sobre / Versões')] %}<label><input type="checkbox" name="access_modules" value="{{key}}"> {{label}}</label>{% endfor %}</div><small>O perfil define o padrão. O ADM pode ajustar a visualização permitida; restrições sensíveis continuam protegidas no backend.</small></div>
         <div class="full">
           <label>Senha inicial *</label>
           <input name="password" type="password" required minlength="8"
@@ -304,6 +305,7 @@
                     <input name="photo" type="file" accept="image/*">
                     <small>Opcional • até 3 MB.</small>
                   </div>
+                  <div class="full accessBox"><input type="hidden" name="access_config_present" value="1"><label>Acessos / visualização</label><div class="accessGrid">{% set ua = user_access(u) %}{% for key,label in [('dashboard','Dashboard Geral'),('field','Field'),('implantation','Implantação de Hardware'),('teams','RH / Equipes'),('users','RH / Usuários'),('finance','Financeiro / Lançamentos'),('finance_dashboard','Dashboard Financeira'),('management','Gestão'),('about_versions','Sobre / Versões')] %}<label><input type="checkbox" name="access_modules" value="{{key}}" {% if key in ua %}checked{% endif %}> {{label}}</label>{% endfor %}</div><small>Ao salvar, estas opções controlam os menus e as principais rotas de visualização deste usuário.</small></div>
                   {% if u.photo_url %}
                   <div>
                     <label style="display:flex;gap:8px;align-items:center;margin-top:28px">
