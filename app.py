@@ -40,7 +40,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V56-A.3 HOTFIX"
+APP_RELEASE = "V56-A.4"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -156,6 +156,7 @@ class User(db.Model):
     job_title = db.Column(db.String(120))
     personnel_status = db.Column(db.String(30), nullable=False, default="ATIVO")
     personnel_status_note = db.Column(db.String(240))
+    access_json = db.Column(db.Text)
 
 
 
@@ -197,6 +198,7 @@ class FinancialMonthlyCost(db.Model):
     project = db.Column(db.String(220))
     service_text = db.Column(db.String(300))
     allocation_json = db.Column(db.Text, nullable=False, default="{}")
+    invoice_number = db.Column(db.String(120))
     notes = db.Column(db.Text)
     created_by = db.Column(db.Integer, db.ForeignKey("users.id"))
     updated_by = db.Column(db.Integer, db.ForeignKey("users.id"))
@@ -796,6 +798,51 @@ def login_required(fn):
     return inner
 
 
+ACCESS_MODULES = ("dashboard","field","implantation","teams","users","finance","finance_dashboard","management","about_versions")
+
+def _default_access_for_role(role):
+    defaults={
+      "manager":set(ACCESS_MODULES),
+      "manager_field":{"dashboard","field","implantation","teams","finance_dashboard","management","about_versions"},
+      "technician":{"dashboard","field","about_versions"},
+      "technician_implantation":{"dashboard","field","implantation","about_versions"},
+      "consultation":{"dashboard","field","teams","about_versions"},
+      "hr":{"teams","users","about_versions"},
+      "dispatcher":{"dashboard","field","teams","management","about_versions"},
+      "atm_financial_admin":{"finance","finance_dashboard","about_versions"},
+    }
+    return defaults.get(role,set())
+
+def _user_access_set(user=None):
+    if user is None:
+        uid=session.get("user_id")
+        user=db.session.get(User,uid) if uid else None
+    if not user:return set()
+    try:
+        custom=json.loads(user.access_json or "null")
+        if isinstance(custom,list): return {x for x in custom if x in ACCESS_MODULES}
+    except Exception: pass
+    return _default_access_for_role(user.role)
+
+def _has_access(module):
+    if not session.get("user_id"): return False
+    if session.get("role")=="manager": return True
+    return module in _user_access_set()
+
+def _parse_access_form(role):
+    # Sem seleção explícita, usa o padrão do perfil.
+    raw=request.form.getlist("access_modules")
+    allowed={x for x in raw if x in ACCESS_MODULES}
+    # Segurança: áreas administrativas sensíveis continuam limitadas ao perfil.
+    if role=="atm_financial_admin": allowed &= {"finance","finance_dashboard","about_versions"}
+    if role=="hr": allowed &= {"teams","users","about_versions"}
+    if role in ("technician","technician_implantation"): allowed -= {"users","finance","management"}
+    return sorted(allowed if request.form.get("access_config_present")=="1" else _default_access_for_role(role))
+
+@app.context_processor
+def inject_access_helpers():
+    return {"can_view": _has_access, "access_modules": ACCESS_MODULES, "user_access": _user_access_set}
+
 def manager_required(fn):
     @wraps(fn)
     def inner(*args, **kwargs):
@@ -815,10 +862,8 @@ def dashboard_required(fn):
     def inner(*args, **kwargs):
         if not session.get("user_id"):
             return redirect(url_for("login"))
-        if session.get("role") not in ("manager", "manager_field", "consultation", "dispatcher", "technician"):
-            if session.get("role") == "hr":
-                return redirect(url_for("teams_page"))
-            return redirect(url_for("technician"))
+        if not _has_access("dashboard"):
+            return redirect(url_for("dashboard_landing"))
         return fn(*args, **kwargs)
     return inner
 
@@ -829,8 +874,8 @@ def teams_view_required(fn):
     def inner(*args, **kwargs):
         if not session.get("user_id"):
             return redirect(url_for("login"))
-        if session.get("role") not in ("manager", "manager_field", "consultation", "hr", "dispatcher"):
-            return redirect(url_for("technician"))
+        if not _has_access("teams"):
+            return redirect(url_for("dashboard_landing"))
         return fn(*args, **kwargs)
     return inner
 
@@ -841,7 +886,7 @@ def topdesk_required(fn):
     def inner(*args, **kwargs):
         if not session.get("user_id"):
             return redirect(url_for("login"))
-        if session.get("role") not in ("manager", "manager_field", "dispatcher"):
+        if not _has_access("management"):
             if request.path.startswith("/api/"):
                 return jsonify({"ok": False, "error": "Sem permissão para operação TopDesk."}), 403
             return redirect(url_for("manager" if session.get("role") == "consultation" else "technician_work"))
@@ -855,8 +900,8 @@ def user_admin_required(fn):
     def inner(*args, **kwargs):
         if not session.get("user_id"):
             return redirect(url_for("login"))
-        if session.get("role") not in ("manager", "hr"):
-            return redirect(url_for("manager" if session.get("role") == "consultation" else "technician"))
+        if not _has_access("users"):
+            return redirect(url_for("dashboard_landing"))
         return fn(*args, **kwargs)
     return inner
 
@@ -895,7 +940,7 @@ def hardware_implantation_required(fn):
     def inner(*args, **kwargs):
         if not session.get("user_id"):
             return redirect(url_for("login"))
-        if session.get("role") not in ("manager", "manager_field", "technician_implantation"):
+        if not _has_access("implantation"):
             if request.path.startswith("/api/"):
                 return jsonify({"ok": False, "error": "Acesso restrito à Implantação de Hardware."}), 403
             return redirect(url_for("manager" if session.get("role") in ("manager","consultation","dispatcher") else "activities_page"))
@@ -908,7 +953,7 @@ def emv_field_required(fn):
     def inner(*args, **kwargs):
         if not session.get("user_id"):
             return redirect(url_for("login"))
-        if session.get("role") not in ("manager", "manager_field", "technician_implantation"):
+        if not _has_access("implantation"):
             if request.path.startswith("/api/"):
                 return jsonify({"ok": False, "error": "Acesso restrito à equipe de Implantação."}), 403
             return redirect(url_for("activities_page"))
@@ -922,9 +967,9 @@ def field_required(fn):
     def inner(*args, **kwargs):
         if not session.get("user_id"):
             return redirect(url_for("login"))
-        if session.get("role") not in ("manager", "manager_field", "technician"):
+        if not _has_access("field"):
             if request.path.startswith("/api/"):
-                return jsonify({"ok": False, "error": "Acesso restrito ao Técnico Field."}), 403
+                return jsonify({"ok": False, "error": "Acesso restrito ao Field."}), 403
             return redirect(url_for("activities_page"))
         return fn(*args, **kwargs)
     return inner
@@ -936,7 +981,7 @@ def field_dashboard_required(fn):
     def inner(*args, **kwargs):
         if not session.get("user_id"):
             return redirect(url_for("login"))
-        if session.get("role") not in ("manager", "manager_field", "technician"):
+        if not _has_access("field"):
             if request.path.startswith("/api/"):
                 return jsonify({"ok": False, "error": "Sem permissão para a Dashboard Field."}), 403
             return redirect(url_for("dashboard_landing"))
@@ -948,20 +993,13 @@ def field_dashboard_required(fn):
 @login_required
 def dashboard_landing():
     role=session.get("role")
-    if role=="technician_implantation":
-        return redirect(url_for("hardware_implantation_dashboard_page"))
-    if role=="technician":
-        return redirect(url_for("field_dashboard_page"))
-    if role=="manager_field":
-        return redirect(url_for("field_dashboard_page"))
-    if role in ("manager","consultation","dispatcher"):
-        return redirect(url_for("manager"))
-    if role=="hr":
-        return redirect(url_for("teams_page"))
-    if role=="atm_financial_admin":
-        return redirect(url_for("financial_cost_management_page"))
+    if _has_access("finance") and role=="atm_financial_admin": return redirect(url_for("financial_cost_management_page"))
+    if _has_access("implantation") and role=="technician_implantation": return redirect(url_for("hardware_implantation_dashboard_page"))
+    if _has_access("field") and role in ("technician","manager_field"): return redirect(url_for("field_dashboard_page"))
+    if _has_access("dashboard") and role in ("manager","consultation","dispatcher"): return redirect(url_for("manager"))
+    if _has_access("teams"): return redirect(url_for("teams_page"))
+    if _has_access("finance_dashboard"): return redirect(url_for("financial_dashboard_page"))
     return redirect(url_for("my_profile_page"))
-
 
 @app.route("/")
 def index():
@@ -4331,6 +4369,7 @@ def create_user():
         work_shift=work_shift if role in ("technician", "technician_implantation", "manager_field") else None,
         work_anchor_date=work_anchor_date if role in ("technician", "technician_implantation", "manager_field") and work_schedule_type == "12x36" else None,
         work_anchor_status=work_anchor_status if role in ("technician", "technician_implantation", "manager_field") and work_schedule_type == "12x36" else None,
+        access_json=json.dumps(_parse_access_form(role), ensure_ascii=False),
     )
 
     photo = request.files.get("photo")
@@ -4546,6 +4585,8 @@ def edit_user(user_id):
     user.job_title = job_title
     user.personnel_status = personnel_status
     user.personnel_status_note = personnel_status_note
+    if session.get("role") == "manager":
+        user.access_json = json.dumps(_parse_access_form(role), ensure_ascii=False)
     if role in ("technician", "technician_implantation", "manager_field"):
         user.work_schedule_type = work_schedule_type
         user.work_shift = work_shift
@@ -7883,6 +7924,9 @@ def migrate_financial_v524_columns():
         if "cost_center" not in cols: commands.append("ALTER TABLE financial_monthly_costs ADD COLUMN cost_center VARCHAR(60) DEFAULT 'SUPORTE_CAMPO'")
         if "project" not in cols: commands.append("ALTER TABLE financial_monthly_costs ADD COLUMN project VARCHAR(220)")
         if "service_text" not in cols: commands.append("ALTER TABLE financial_monthly_costs ADD COLUMN service_text VARCHAR(300)")
+        if "invoice_number" not in cols: commands.append("ALTER TABLE financial_monthly_costs ADD COLUMN invoice_number VARCHAR(120)")
+        user_cols={c["name"] for c in inspector.get_columns("users")} if "users" in inspector.get_table_names() else set()
+        if "access_json" not in user_cols: commands.append("ALTER TABLE users ADD COLUMN access_json TEXT")
         # V55.2: cadastro financeiro enriquecido para importação de empresas.
         sup_cols={c["name"] for c in inspector.get_columns("financial_suppliers")} if "financial_suppliers" in inspector.get_table_names() else set()
         sup_commands=[]
@@ -7903,7 +7947,7 @@ def _financial_admin_allowed():
 @app.get("/financeiro/dashboard")
 @login_required
 def financial_dashboard_page():
-    if session.get("role") not in ("manager","manager_field","atm_financial_admin"):
+    if not _has_access("finance_dashboard"):
         abort(403)
     # V55.2: para gestores, a Dashboard Financeiro é painel do shell gerencial.
     if session.get("role") in ("manager","manager_field"):
@@ -7947,7 +7991,7 @@ def financial_cash_collection_page():
 @app.get("/financeiro/suporte-campo")
 @login_required
 def financial_cost_management_page():
-    if not _financial_admin_allowed():
+    if not _has_access("finance") or not _financial_admin_allowed():
         return redirect(url_for("dashboard_landing"))
     return render_template("financial_cost_management.html", app_release=APP_RELEASE)
 
@@ -8085,7 +8129,7 @@ def _fin_payload(row, users=None, sups=None, svcs=None):
     users=users or {u.id:u.name for u in User.query.all()}; sups=sups or {x.id:x.name for x in FinancialSupplier.query.all()}; svcs=svcs or {x.id:x.name for x in FinancialService.query.all()}
     try: alloc=json.loads(row.allocation_json or "{}")
     except: alloc={}
-    return {"id":row.id,"competence":row.competence,"cost_center":getattr(row,"cost_center",None) or "SUPORTE_CAMPO","project":getattr(row,"project",None) or "","supplier_id":row.supplier_id,"supplier":sups.get(row.supplier_id,""),"service":getattr(row,"service_text",None) or svcs.get(row.service_id,""),"amount":round(float(row.amount or 0),2),"forecast_amount":None if getattr(row,"forecast_amount",None) is None else round(float(row.forecast_amount),2),"allocation":alloc,"notes":row.notes or "","updated_by":users.get(row.updated_by or row.created_by,""),"updated_at":row.updated_at.isoformat()+"Z"}
+    return {"id":row.id,"competence":row.competence,"cost_center":getattr(row,"cost_center",None) or "SUPORTE_CAMPO","project":getattr(row,"project",None) or "","supplier_id":row.supplier_id,"supplier":sups.get(row.supplier_id,""),"service":getattr(row,"service_text",None) or svcs.get(row.service_id,""),"amount":round(float(row.amount or 0),2),"forecast_amount":None if getattr(row,"forecast_amount",None) is None else round(float(row.forecast_amount),2),"allocation":alloc,"invoice_number":getattr(row,"invoice_number",None) or "","notes":row.notes or "","updated_by":users.get(row.updated_by or row.created_by,""),"updated_at":row.updated_at.isoformat()+"Z"}
 
 @app.route("/api/financeiro/lancamentos",methods=["GET","POST"])
 @login_required
@@ -8107,7 +8151,7 @@ def financial_monthly_costs_api():
     total=round(sum(alloc.values()),2)
     if not alloc or abs(total-100)>0.001: return jsonify({"ok":False,"error":f"O rateio deve totalizar 100%. Atual: {total:.2f}%."}),400
     service=_fin_service_for_text(sid,service_text)
-    row=FinancialMonthlyCost(competence=comp,supplier_id=sid,service_id=service.id,service_text=service_text,amount=amount,forecast_amount=forecast,cost_center=center,project=project,allocation_json=json.dumps(alloc,ensure_ascii=False),notes=(d.get("notes") or "").strip(),created_by=session.get("user_id"),updated_by=session.get("user_id"));db.session.add(row);db.session.flush()
+    row=FinancialMonthlyCost(competence=comp,supplier_id=sid,service_id=service.id,service_text=service_text,amount=amount,forecast_amount=forecast,cost_center=center,project=project,allocation_json=json.dumps(alloc,ensure_ascii=False),invoice_number=(d.get("invoice_number") or "").strip(),notes=(d.get("notes") or "").strip(),created_by=session.get("user_id"),updated_by=session.get("user_id"));db.session.add(row);db.session.flush()
     db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="FIN_MONTHLY_COST_CREATE",entity_type="financial_monthly_cost",entity_id=str(row.id),detail=f"{comp} · {center} · {supplier.name} · {service_text} · R$ {amount:.2f}"));db.session.commit();return jsonify({"ok":True,"id":row.id})
 
 @app.route("/api/financeiro/lancamentos/<int:row_id>",methods=["PUT","DELETE"])
@@ -8128,9 +8172,57 @@ def financial_monthly_cost_update_api(row_id):
     supplier=db.session.get(FinancialSupplier,sid); service=_fin_service_for_text(sid,service_text) if supplier else None
     if not supplier or not service:return jsonify({"ok":False,"error":"Fornecedor/serviço inválido."}),400
     before=f"{row.competence} · R$ {row.amount:.2f}"
-    row.competence=comp;row.supplier_id=sid;row.service_id=service.id;row.service_text=service_text;row.amount=amount;row.forecast_amount=forecast;row.cost_center=center;row.project=project;row.allocation_json=json.dumps(alloc,ensure_ascii=False);row.notes=(d.get("notes",row.notes) or "").strip();row.updated_by=session.get("user_id");row.updated_at=datetime.utcnow()
+    row.competence=comp;row.supplier_id=sid;row.service_id=service.id;row.service_text=service_text;row.amount=amount;row.forecast_amount=forecast;row.cost_center=center;row.project=project;row.allocation_json=json.dumps(alloc,ensure_ascii=False);row.invoice_number=(d.get("invoice_number",getattr(row,"invoice_number",None)) or "").strip();row.notes=(d.get("notes",row.notes) or "").strip();row.updated_by=session.get("user_id");row.updated_at=datetime.utcnow()
     db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="FIN_MONTHLY_COST_EDIT",entity_type="financial_monthly_cost",entity_id=str(row.id),detail=f"antes: {before} | depois: {comp} · {center} · R$ {amount:.2f}"));db.session.commit();return jsonify({"ok":True})
 
+
+@app.route("/api/financeiro/lancamentos-lote", methods=["GET","POST"])
+@login_required
+def financial_monthly_batch_api():
+    if not _financial_admin_allowed() or not _has_access("finance"):
+        return jsonify({"ok":False,"error":"Sem permissão."}),403
+    if request.method=="GET":
+        comp=(request.args.get("competence") or "").strip(); center=(request.args.get("cost_center") or "SUPORTE_CAMPO").strip().upper()
+        if len(comp)!=7 or comp[4]!="-": return jsonify({"ok":False,"error":"Informe uma competência válida."}),400
+        q=FinancialMonthlyCost.query.filter_by(competence=comp,cost_center=center)
+        rows=q.order_by(FinancialMonthlyCost.supplier_id,FinancialMonthlyCost.service_text).all(); source=comp
+        template=False
+        if not rows:
+            prev=(FinancialMonthlyCost.query.filter(FinancialMonthlyCost.competence<comp,FinancialMonthlyCost.cost_center==center).order_by(FinancialMonthlyCost.competence.desc()).with_entities(FinancialMonthlyCost.competence).first())
+            if prev:
+                source=prev[0]; rows=FinancialMonthlyCost.query.filter_by(competence=source,cost_center=center).order_by(FinancialMonthlyCost.supplier_id,FinancialMonthlyCost.service_text).all(); template=True
+        users={u.id:u.name for u in User.query.all()}; sups={x.id:x.name for x in FinancialSupplier.query.all()}; svcs={x.id:x.name for x in FinancialService.query.all()}
+        payload=[]
+        for x in rows:
+            d=_fin_payload(x,users,sups,svcs); d["source_id"]=x.id; d["id"]=None if template else x.id; d["competence"]=comp
+            if template: d["amount"]=0; d["invoice_number"]=""
+            payload.append(d)
+        return jsonify({"ok":True,"rows":payload,"template":template,"source_competence":source,"competence":comp})
+    d=request.get_json(silent=True) or {}; comp=(d.get("competence") or "").strip(); center=(d.get("cost_center") or "SUPORTE_CAMPO").strip().upper(); items=d.get("rows") or []
+    if len(comp)!=7 or comp[4]!="-": return jsonify({"ok":False,"error":"Competência inválida."}),400
+    saved=deleted=0
+    try:
+        for item in items:
+            if item.get("deleted") and item.get("id"):
+                row=db.session.get(FinancialMonthlyCost,int(item["id"]));
+                if row and row.competence==comp and row.cost_center==center:
+                    db.session.delete(row); deleted+=1
+                continue
+            if item.get("deleted"): continue
+            sid=int(item.get("supplier_id") or 0); service_text=(item.get("service") or "").strip(); supplier=db.session.get(FinancialSupplier,sid)
+            if not supplier or not service_text: raise ValueError("Fornecedor e serviço são obrigatórios em todas as linhas.")
+            amount=round(float(item.get("amount") or 0),2); forecast=item.get("forecast_amount"); forecast=None if forecast in (None,"") else round(float(forecast),2)
+            alloc={str(k).upper():round(float(v or 0),2) for k,v in (item.get("allocation") or {}).items() if float(v or 0)>0}
+            if not alloc or abs(sum(alloc.values())-100)>0.01: raise ValueError(f"Rateio de {supplier.name} deve totalizar 100%.")
+            service=_fin_service_for_text(sid,service_text)
+            row=db.session.get(FinancialMonthlyCost,int(item["id"])) if item.get("id") else None
+            if row is None:
+                row=FinancialMonthlyCost(competence=comp,supplier_id=sid,service_id=service.id,cost_center=center,created_by=session.get("user_id")); db.session.add(row)
+            row.competence=comp; row.supplier_id=sid; row.service_id=service.id; row.service_text=service_text; row.amount=amount; row.forecast_amount=forecast; row.cost_center=center; row.project=(item.get("project") or "").strip(); row.invoice_number=(item.get("invoice_number") or "").strip(); row.allocation_json=json.dumps(alloc,ensure_ascii=False); row.notes=(item.get("notes") or "").strip(); row.updated_by=session.get("user_id"); row.updated_at=datetime.utcnow(); saved+=1
+        db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="FIN_MONTHLY_BATCH_SAVE",entity_type="financial_monthly_cost",entity_id=comp,detail=f"{center} · {saved} salvo(s) · {deleted} excluído(s)")); db.session.commit()
+        return jsonify({"ok":True,"saved":saved,"deleted":deleted})
+    except Exception as exc:
+        db.session.rollback(); return jsonify({"ok":False,"error":str(exc)}),400
 
 @app.post("/api/financeiro/importar.xlsx")
 @login_required
