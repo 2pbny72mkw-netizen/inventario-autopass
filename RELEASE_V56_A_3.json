@@ -1,0 +1,12 @@
+{
+  "release": "V56-A.3",
+  "date": "2026-08-25",
+  "base": "V56-A.2",
+  "scope": [
+    "financeiro-tabelas-filtros",
+    "adm-financeiro",
+    "usuarios-filtros",
+    "equipes-operacao-hoje-gps-estacao",
+    "relatorio-visita-multiplos-contatos"
+  ]
+}

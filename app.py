@@ -40,7 +40,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V56-A.2"
+APP_RELEASE = "V56-A.3"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -571,6 +571,8 @@ class HardwareFieldVisit(db.Model):
     client_role = db.Column(db.String(120))
     client_email = db.Column(db.String(180))
     client_phone = db.Column(db.String(40))
+    # V56-A.3: múltiplos acompanhantes/destinatários preservados no relatório.
+    contacts_json = db.Column(db.Text)
     client_observations = db.Column(db.Text)
     client_accepted = db.Column(db.Boolean, nullable=False, default=False)
     signature_file = db.Column(db.String(500))
@@ -1427,59 +1429,62 @@ def technician_checkin():
 @app.get("/api/equipes/status")
 @teams_view_required
 def teams_status_api():
+    """V56-A.3 — operação de hoje + última posição GPS + estação atual/mais próxima."""
     _ensure_team_schedule_profiles()
     local_now = datetime.now(ZoneInfo("America/Sao_Paulo"))
     target_date = local_now.date()
     scheduled = _schedule_today_db(target_date)
-
-    rows = []
     now_utc = datetime.utcnow()
+    start_local=datetime.combine(target_date, datetime.min.time(), tzinfo=ZoneInfo("America/Sao_Paulo"))
+    start_utc=start_local.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+    end_utc=(start_local+timedelta(days=1)).astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+    stations=Location.query.filter(Location.reference_latitude.isnot(None),Location.reference_longitude.isnot(None)).all()
 
+    def nearest_station(lat, lon):
+        if lat is None or lon is None or not stations: return None
+        best=None
+        for loc in stations:
+            try: dist=_haversine_m(float(lat),float(lon),float(loc.reference_latitude),float(loc.reference_longitude))
+            except Exception: continue
+            if best is None or dist < best[0]: best=(dist,loc)
+        if not best:return None
+        dist,loc=best
+        radius=float(os.getenv("FIELD_GPS_MAX_DISTANCE_M","600"))
+        return {"id":loc.id,"name":loc.location,"company":loc.company or "","line":loc.line or "","distance_m":round(dist),"relation":"NA ESTAÇÃO" if dist<=radius else "MAIS PRÓXIMA"}
+
+    rows=[]; summary={"in_operation":0,"late":0,"not_logged":0,"stale_gt10":0,"no_gps":0,"outside_locality":0,"not_started":0}
     for member in scheduled:
-        user = db.session.get(User, member.get("user_id")) if member.get("user_id") else None
-        if user is not None and (not user.active or normalize(user.personnel_status or "ATIVO") != "ATIVO"):
-            continue
-        pos = _team_latest_position(user.id if user else None)
-        minutes = None
-        if pos:
-            minutes = max(0, int((now_utc - pos.captured_at).total_seconds() // 60))
-
-        if minutes is None:
-            freshness = "SEM SINAL"
-        elif minutes <= 5:
-            freshness = "ATUAL"
-        elif minutes <= 15:
-            freshness = "ATENÇÃO"
+        user=db.session.get(User,member.get("user_id")) if member.get("user_id") else None
+        if user is not None and (not user.active or normalize(user.personnel_status or "ATIVO") != "ATIVO"): continue
+        pos=_team_latest_position(user.id if user else None, only_today=False)
+        minutes=None
+        if pos: minutes=max(0,int((now_utc-pos.captured_at).total_seconds()//60))
+        today_login=(SessionEvent.query.filter(SessionEvent.user_id==user.id,SessionEvent.event_type=="LOGIN",SessionEvent.created_at>=start_utc,SessionEvent.created_at<end_utc).order_by(SessionEvent.created_at).first() if user else None)
+        shift=(member.get("shift") or member.get("entry") or "").strip(); m=re.search(r'(\d{1,2}):(\d{2})',shift)
+        expected_local=None
+        if m:
+            expected_local=datetime.combine(target_date,datetime.min.time(),tzinfo=ZoneInfo("America/Sao_Paulo")).replace(hour=int(m.group(1)),minute=int(m.group(2)))
+        login_local=today_login.created_at.replace(tzinfo=ZoneInfo("UTC")).astimezone(ZoneInfo("America/Sao_Paulo")) if today_login else None
+        late_minutes=max(0,int((login_local-expected_local).total_seconds()//60)) if login_local and expected_local else 0
+        station=nearest_station(pos.latitude,pos.longitude) if pos else None
+        if expected_local and local_now < expected_local and not today_login:
+            operation_status="AINDA NÃO INICIOU"; summary["not_started"]+=1
+        elif not today_login:
+            operation_status="NÃO LOGOU"; summary["not_logged"]+=1
+        elif not pos:
+            operation_status="SEM GPS"; summary["no_gps"]+=1
+        elif minutes is not None and minutes>10:
+            operation_status="SEM POSIÇÃO >10 MIN"; summary["stale_gt10"]+=1
+        elif late_minutes>0:
+            operation_status=f"ATRASADO {late_minutes} MIN"; summary["late"]+=1
         else:
-            freshness = "ATRASADO"
-
-        last_checkin = TechnicianCheckin.query.filter_by(user_id=user.id).order_by(TechnicianCheckin.created_at.desc()).first() if user else None
-        checkin_loc = db.session.get(Location, last_checkin.location_id) if last_checkin else None
-        rows.append({
-            **member,
-            "photo_url": (f"/usuarios/{user.id}/foto" if user and user.photo_url else None),
-            "photo_version": (str(user.photo_url) if user and user.photo_url else None),
-            "latitude": pos.latitude if pos else None,
-            "longitude": pos.longitude if pos else None,
-            "accuracy": pos.accuracy if pos else None,
-            "captured_at": (pos.captured_at.isoformat() + "Z") if pos else None,
-            "minutes_since": minutes,
-            "freshness": freshness,
-            "current_location": checkin_loc.location if checkin_loc else None,
-        })
-
-    counts = {}
-    for row in rows:
-        counts[row["category"]] = counts.get(row["category"], 0) + 1
-
-    return jsonify({
-        "ok": True,
-        "date": target_date.isoformat(),
-        "time": local_now.strftime("%H:%M"),
-        "scheduled": len(rows),
-        "counts_by_category": counts,
-        "technicians": rows,
-    })
+            operation_status="EM OPERAÇÃO"; summary["in_operation"]+=1
+        if station and station["relation"]=="MAIS PRÓXIMA": summary["outside_locality"]+=1
+        freshness="SEM SINAL" if minutes is None else ("ATUAL" if minutes<=5 else ("ATENÇÃO" if minutes<=15 else "ATRASADO"))
+        rows.append({**member,"photo_url":(f"/usuarios/{user.id}/foto" if user and user.photo_url else None),"photo_version":(str(user.photo_url) if user and user.photo_url else None),"latitude":pos.latitude if pos else None,"longitude":pos.longitude if pos else None,"accuracy":pos.accuracy if pos else None,"captured_at":(pos.captured_at.isoformat()+"Z") if pos else None,"minutes_since":minutes,"freshness":freshness,"first_login":login_local.strftime("%H:%M") if login_local else None,"late_minutes":late_minutes,"operation_status":operation_status,"nearest_station":station,"current_location":station["name"] if station else None})
+    counts={}
+    for row in rows: counts[row["category"]]=counts.get(row["category"],0)+1
+    return jsonify({"ok":True,"date":target_date.isoformat(),"time":local_now.strftime("%H:%M"),"scheduled":len(rows),"counts_by_category":counts,"summary":summary,"technicians":rows})
 
 
 @app.get("/api/equipes/colaboradores")
@@ -2615,6 +2620,7 @@ def hardware_field_visit_save_api():
       reason=f.get("reason"), activities=f.get("activities"), activity_notes=f.get("activity_notes"), technical_details=f.get("technical_details"),
       conclusion_status=f.get("conclusion_status") or "EM ANDAMENTO", conclusion=f.get("conclusion"), pending_items=f.get("pending_items"),
       client_contact=f.get("client_contact"),client_company=f.get("client_company"),client_role=f.get("client_role"),client_email=f.get("client_email"),client_phone=f.get("client_phone"),
+      contacts_json=(f.get("contacts_json") or "[]"),
       client_observations=f.get("client_observations"),client_accepted=f.get("client_accepted")=="1",technician_id=session["user_id"],status=f.get("save_mode") or "RASCUNHO")
     db.session.add(visit); db.session.flush()
     sig=f.get("signature_data") or ""
@@ -2648,7 +2654,9 @@ def hardware_field_visit_detail_api(visit_id):
     if not v: return jsonify({"ok":False,"error":"Relatório não encontrado."}),404
     fields=("client","project","report_group","requester","has_topdesk","topdesk_ticket","location_type","location_name","city","state","address","start_time","end_time","reason","activities","activity_notes","technical_details","conclusion_status","conclusion","pending_items","client_contact","client_company","client_role","client_email","client_phone","client_observations","client_accepted","status")
     data={k:getattr(v,k,None) for k in fields}
-    data.update({"id":v.id,"report_code":f"RV-{v.id:06d}","visit_date":v.visit_date.isoformat() if v.visit_date else "","has_signature":bool(v.signature_file)})
+    try: contacts=json.loads(getattr(v,"contacts_json",None) or "[]")
+    except Exception: contacts=[]
+    data.update({"id":v.id,"report_code":f"RV-{v.id:06d}","visit_date":v.visit_date.isoformat() if v.visit_date else "","has_signature":bool(v.signature_file),"contacts":contacts})
     return jsonify({"ok":True,"visit":data})
 
 @app.post("/api/implantacao-hardware/visitas/<int:visit_id>/editar")
@@ -2659,6 +2667,7 @@ def hardware_field_visit_edit_api(visit_id):
     f=request.form; before=f"{v.client} | {v.project} | {v.status} | {v.conclusion_status}"
     for key in ("client","project","requester","topdesk_ticket","location_name","city","state","address","reason","activities","activity_notes","technical_details","conclusion_status","conclusion","pending_items","client_contact","client_company","client_role","client_email","client_phone","client_observations"):
         if key in f: setattr(v,key,(f.get(key) or "").strip() or None)
+    if "contacts_json" in f: v.contacts_json=f.get("contacts_json") or "[]"
     if f.get("visit_date"):
         try: v.visit_date=datetime.strptime(f.get("visit_date"),"%Y-%m-%d").date()
         except ValueError: return jsonify({"ok":False,"error":"Data inválida."}),400
@@ -4712,7 +4721,16 @@ def export_users_excel():
         c.fill = PatternFill("solid", fgColor="17345D")
         c.alignment = Alignment(horizontal="center")
     role_label={"manager":"Gestor","technician":"Técnico de Campo","technician_implantation":"Técnico Implantação","manager_field":"Gestor Field","consultation":"Consulta","hr":"RH","dispatcher":"Dispatcher","atm_financial_admin":"ADM Financeiro"}
-    for u in (User.query.filter(User.role == "technician") if session.get("role") == "hr" else User.query).order_by(User.name).all():
+    q=(User.query.filter(User.role == "technician") if session.get("role") == "hr" else User.query)
+    term=(request.args.get("q") or "").strip(); role_f=(request.args.get("role") or "").strip(); company_f=(request.args.get("company") or "").strip(); status_f=(request.args.get("status") or "").strip().upper()
+    if term:
+        like=f"%{term}%"; q=q.filter(db.or_(User.name.ilike(like),User.username.ilike(like),User.user_code.ilike(like),User.job_title.ilike(like)))
+    if role_f: q=q.filter(User.role==role_f)
+    if company_f: q=q.filter(User.company==company_f)
+    if status_f=="ATIVO": q=q.filter(User.active.is_(True),User.archived_at.is_(None))
+    elif status_f=="INATIVO": q=q.filter(User.active.is_(False),User.archived_at.is_(None))
+    elif status_f=="ARQUIVADO": q=q.filter(User.archived_at.isnot(None))
+    for u in q.order_by(User.name).all():
         status = "ARQUIVADO" if u.archived_at else ("ATIVO" if u.active else "INATIVO")
         ws.append([
             u.user_code or "",u.name,u.username,role_label.get(u.role,u.role),u.job_title or "",u.company or "",u.email or "",u.phone or "",
@@ -8034,13 +8052,16 @@ def financial_supplier_delete_api(row_id):
     row=db.session.get(FinancialSupplier,row_id)
     if not row: return jsonify({"ok":False,"error":"Fornecedor não encontrado."}),404
     name=row.name
-    costs=FinancialMonthlyCost.query.filter_by(supplier_id=row.id).all()
-    for c in costs: db.session.delete(c)
-    services=FinancialService.query.filter_by(supplier_id=row.id).all()
-    for sv in services: db.session.delete(sv)
+    used=FinancialMonthlyCost.query.filter_by(supplier_id=row.id).count()
+    services=FinancialService.query.filter_by(supplier_id=row.id).count()
+    if used:
+        row.active=False
+        db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="FIN_SUPPLIER_INACTIVATE",entity_type="financial_supplier",entity_id=str(row_id),detail=f"{name} · preservados {used} lançamento(s)"));db.session.commit()
+        return jsonify({"ok":True,"inactivated":True,"linked_launches":used})
+    FinancialService.query.filter_by(supplier_id=row.id).delete(synchronize_session=False)
     db.session.delete(row)
-    db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="FIN_SUPPLIER_DELETE",entity_type="financial_supplier",entity_id=str(row_id),detail=f"{name} · {len(costs)} lançamento(s) removido(s)"));db.session.commit()
-    return jsonify({"ok":True})
+    db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="FIN_SUPPLIER_DELETE",entity_type="financial_supplier",entity_id=str(row_id),detail=f"{name} · sem histórico financeiro"));db.session.commit()
+    return jsonify({"ok":True,"deleted":True})
 
 @app.delete("/api/financeiro/servicos/<int:row_id>")
 @login_required
@@ -8698,6 +8719,18 @@ def migrate_v56a_topdesk_dimensions():
     _start_v56a_backfill()
 
 
+
+def migrate_v56a3_visit_contacts():
+    """V56-A.3: coluna aditiva para múltiplos contatos do Relatório de Visita."""
+    try:
+        inspector=db.inspect(db.engine)
+        if not inspector.has_table("hardware_field_visits"): return
+        cols={c["name"] for c in inspector.get_columns("hardware_field_visits")}
+        if "contacts_json" not in cols:
+            db.session.execute(db.text("ALTER TABLE hardware_field_visits ADD COLUMN contacts_json TEXT")); db.session.commit()
+    except Exception:
+        db.session.rollback(); raise
+
 def migrate_v55_performance_indexes():
     # Compatibilidade com chamadas/patches anteriores.
     return migrate_v56a_topdesk_dimensions()
@@ -8715,6 +8748,7 @@ with app.app_context():
     migrate_user_archive_column()
     migrate_user_v23_columns()
     migrate_financial_v524_columns()
+    migrate_v56a3_visit_contacts()
     migrate_base_asset_columns()
     migrate_inventory_validator_columns()
     migrate_v421_columns()
