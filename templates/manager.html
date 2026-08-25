@@ -12,7 +12,7 @@
     <div class="v42SideGroup">VISÃO GERAL</div><button class="v23Nav active" data-v23-view="overview">▦ <span>Visão Geral</span></button><div class="v42SideGroup">ATIVIDADES</div>
     <button class="v23Nav" data-v23-view="execution">▥ <span>Inventário</span></button>
     <button class="v23Nav" data-v23-view="atm-inventory">▦ <span>Dashboard ATM</span></button>
-{% if session.get("role") in ("manager","manager_field") %}<button class="v23Nav" data-v23-view="financial-dashboard">$ <span>Dashboard Financeiro</span></button>{% endif %}
+{% if session.get("role") in ("manager","manager_field","atm_financial_admin") %}<button class="v23Nav" data-v23-view="financial-dashboard">$ <span>Dashboard Financeiro</span></button>{% endif %}
     <button class="v23Nav" data-v23-view="journal">◷ <span>Diário de bordo</span></button>
     <button class="v23Nav" data-v23-view="topdesk">⚡ <span>Chamados</span></button>
     <button class="v23Nav" data-v23-view="map">⌖ <span>Mapa</span></button>

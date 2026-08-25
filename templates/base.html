@@ -5,7 +5,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{% block title %}Sistema de Gestão Suporte a Campo{% endblock %}</title>
-<link rel="stylesheet" href="{{url_for('static',filename='app.css')}}?v=v55-2">
+<link rel="stylesheet" href="{{url_for('static',filename='app.css')}}?v=v56-a1">
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#17345d">
 </head>
@@ -62,7 +62,7 @@ document.getElementById('installPwa')?.addEventListener('click',async()=>{if(!v5
 if('serviceWorker' in navigator && (location.protocol==='https:' || location.hostname==='localhost')){
   window.addEventListener('load',async()=>{
     try{
-      const reg=await navigator.serviceWorker.register('/sw.js?v=v55-2',{scope:'/',updateViaCache:'none'});
+      const reg=await navigator.serviceWorker.register('/sw.js?v=v56-a1',{scope:'/',updateViaCache:'none'});
       await reg.update();
     }catch(err){console.warn('Falha ao atualizar Service Worker',err);}
   },{once:true});
@@ -85,6 +85,11 @@ v55ImportBanner();setInterval(v55ImportBanner,5000);
 <script>
 // V50.4: Dashboard Implantação é navegação dedicada, nunca painel de atividade.
 document.querySelectorAll('a[href="/dashboard/implantacao"]').forEach(a=>{a.addEventListener('click',e=>{e.preventDefault();window.location.assign('/dashboard/implantacao');},{capture:true});});
+</script>
+
+<script>
+// V56-A.1: dropdowns móveis por toque (inclui RH).
+document.addEventListener('click',function(e){const b=e.target.closest('.navDropBtn');if(!b)return;if(window.matchMedia('(max-width:760px)').matches){e.preventDefault();const d=b.closest('.navDrop');document.querySelectorAll('.navDrop.open').forEach(x=>{if(x!==d)x.classList.remove('open')});d.classList.toggle('open');}});
 </script>
 </body>
 </html>
