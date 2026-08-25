@@ -1,12 +1,9 @@
 {
-  "release": "V56-A.3 HOTFIX",
+  "version": "V56-A.3 HOTFIX",
   "date": "2026-08-25",
-  "base": "V56-A.3",
-  "scope": [
-    "restaura-importacao-planilha-financeira",
-    "paginacao-padrao-10",
-    "seletor-10-25-50-100",
-    "recolher-expandir-tabelas-financeiras",
-    "preserva-filtros-e-paginacao"
+  "changes": [
+    "Competências financeiras exibidas como jan/26, fev/26 etc., mantendo YYYY-MM internamente",
+    "Seleção de competências em linha, sem rolagem interna",
+    "Botões Todas e Limpar para seleção rápida de competências"
   ]
 }
