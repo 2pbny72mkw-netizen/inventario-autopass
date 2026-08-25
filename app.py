@@ -93,6 +93,11 @@ TOPDESK_ANALYTICS_CACHE = {}
 TOPDESK_ANALYTICS_CACHE_LOCK = threading.Lock()
 TOPDESK_ANALYTICS_TTL = int(os.getenv("TOPDESK_ANALYTICS_TTL", "180"))
 
+# V56-A.1: estado operacional do backfill TopDesk.
+# Deve existir antes das rotas, migrações e do startup que o consultam.
+_V56A_BACKFILL = {"running": False, "processed": 0, "error": None}
+_V56A_BACKFILL_LOCK = threading.Lock()
+
 def _td_cache_get(key):
     now=time.time()
     with TOPDESK_ANALYTICS_CACHE_LOCK:
