@@ -1675,3 +1675,6 @@ body.mapFullscreenOpen #gpsMap .autopassMapFullscreenControl{
 
 /* V56-A.3 HOTFIX — importação financeira + paginação 10 + recolher/expandir */
 .fin563ImportMsg{min-height:18px;margin:4px 0 10px}.fin563CollapseBody.hidden{display:none!important}.fin563Collapsible>.sectionHead{align-items:flex-start}.fin563Collapsible>.sectionHead .fin563Collapse{margin-left:auto}.fin563Pager select{min-width:72px}.fin563Pager button:disabled{opacity:.45;cursor:not-allowed}
+
+/* V56-A.4 */
+.finBatchControls{display:grid;grid-template-columns:1fr 220px auto;gap:10px;align-items:end;margin-bottom:10px}.finBatchTable input,.finBatchTable select{min-width:110px}.finBatchTable td:nth-child(1){min-width:190px}.finBatchTable td:nth-child(2){min-width:220px}.finBatchDeleted{opacity:.45;text-decoration:line-through}@media(max-width:800px){.finBatchControls{grid-template-columns:1fr}}
