@@ -1678,3 +1678,6 @@ body.mapFullscreenOpen #gpsMap .autopassMapFullscreenControl{
 
 /* V56-A.4 */
 .finBatchControls{display:grid;grid-template-columns:1fr 220px auto;gap:10px;align-items:end;margin-bottom:10px}.finBatchTable input,.finBatchTable select{min-width:110px}.finBatchTable td:nth-child(1){min-width:190px}.finBatchTable td:nth-child(2){min-width:220px}.finBatchDeleted{opacity:.45;text-decoration:line-through}@media(max-width:800px){.finBatchControls{grid-template-columns:1fr}}
+
+/* V56-B: evolução mensal vertical com profundidade visual */
+.td56Monthly{display:flex;align-items:flex-end;gap:12px;min-height:210px;overflow-x:auto;padding:18px 8px 4px}.td56Col{min-width:64px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:5px}.td56Col>b{font-size:12px}.td56Col>small{font-weight:800;color:#52657a}.td56Pillar{width:42px;min-height:5px;border-radius:7px 7px 2px 2px;box-shadow:7px 5px 0 rgba(15,23,42,.12);border:1px solid rgba(15,23,42,.12)}
