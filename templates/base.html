@@ -5,7 +5,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{% block title %}Sistema de Gestão Suporte a Campo{% endblock %}</title>
-<link rel="stylesheet" href="{{url_for('static',filename='app.css')}}?v=v56-a1">
+<link rel="stylesheet" href="{{url_for('static',filename='app.css')}}?v=v56-a2">
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#17345d">
 </head>
@@ -62,15 +62,47 @@ document.getElementById('installPwa')?.addEventListener('click',async()=>{if(!v5
 if('serviceWorker' in navigator && (location.protocol==='https:' || location.hostname==='localhost')){
   window.addEventListener('load',async()=>{
     try{
-      const reg=await navigator.serviceWorker.register('/sw.js?v=v56-a1',{scope:'/',updateViaCache:'none'});
+      const reg=await navigator.serviceWorker.register('/sw.js?v=v56-a2',{scope:'/',updateViaCache:'none'});
       await reg.update();
     }catch(err){console.warn('Falha ao atualizar Service Worker',err);}
   },{once:true});
 }
 async function v50LoadNotifications(){const badge=document.getElementById('notificationCount');if(!badge)return;try{const d=await fetch('/api/notificacoes').then(r=>r.json());badge.textContent=d.count||0;badge.hidden=!(d.count>0);const bell=document.getElementById('notificationBell');if(bell){bell.onclick=e=>{e.preventDefault();location.href='/notificacoes';};}}catch(_e){}}
 v50LoadNotifications();
-async function v55ImportBanner(){const box=document.getElementById('globalImportBanner');if(!box)return;try{const d=await fetch('/api/topdesk/import/active',{cache:'no-store'}).then(r=>r.json());if(!d.active){box.hidden=true;return;}const j=d.job||{},pct=Math.max(0,Math.min(100,+j.progress||0));box.hidden=false;document.getElementById('globalImportTitle').textContent='Importação TopDesk · '+pct+'%';document.getElementById('globalImportText').textContent=`${(+j.processed||0).toLocaleString('pt-BR')} / ${(+j.total||0).toLocaleString('pt-BR')} · ${j.phase||'Processando'}`;document.getElementById('globalImportBar').style.width=pct+'%';}catch(_e){}}
-v55ImportBanner();setInterval(v55ImportBanner,5000);
+// V56-A.2: polling TopDesk singleton, adaptativo e suspenso quando a aba não está visível.
+(function(){
+  const KEY='__autopassTopdeskImportPoll';
+  if(window[KEY]?.timer){clearTimeout(window[KEY].timer);}
+  const state=window[KEY]={timer:null,inflight:false,stopped:false,lastActive:false};
+  const ACTIVE_MS=10000, IDLE_MS=60000, HIDDEN_MS=60000;
+  async function poll(){
+    if(state.stopped||state.inflight)return;
+    if(document.visibilityState==='hidden'){schedule(HIDDEN_MS);return;}
+    const box=document.getElementById('globalImportBanner');
+    if(!box){schedule(IDLE_MS);return;}
+    state.inflight=true;
+    let next=IDLE_MS;
+    try{
+      const r=await fetch('/api/topdesk/import/active',{cache:'no-store',headers:{'X-Autopass-Poll':'topdesk-import'}});
+      const d=await r.json();
+      state.lastActive=!!d.active;
+      if(!d.active){box.hidden=true;next=IDLE_MS;}
+      else{
+        const j=d.job||{},pct=Math.max(0,Math.min(100,+j.progress||0));
+        box.hidden=false;
+        document.getElementById('globalImportTitle').textContent='Importação TopDesk · '+pct+'%';
+        document.getElementById('globalImportText').textContent=`${(+j.processed||0).toLocaleString('pt-BR')} / ${(+j.total||0).toLocaleString('pt-BR')} · ${j.phase||'Processando'}`;
+        document.getElementById('globalImportBar').style.width=pct+'%';
+        next=ACTIVE_MS;
+      }
+    }catch(_e){next=IDLE_MS;}
+    finally{state.inflight=false;schedule(next);}
+  }
+  function schedule(ms){if(state.stopped)return;clearTimeout(state.timer);state.timer=setTimeout(poll,ms);}
+  document.addEventListener('visibilitychange',()=>{clearTimeout(state.timer);schedule(document.visibilityState==='visible'?500:HIDDEN_MS);});
+  window.addEventListener('pagehide',()=>{state.stopped=true;clearTimeout(state.timer);},{once:true});
+  schedule(500);
+})();
 </script>
 
 {% if session.get('role') in ('technician','technician_implantation') %}
