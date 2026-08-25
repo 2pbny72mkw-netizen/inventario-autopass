@@ -40,7 +40,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V56-A.1"
+APP_RELEASE = "V56-A.2"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -8635,7 +8635,7 @@ def _v56a_backfill_worker():
         try:
             _V56A_BACKFILL.update({"running":True,"processed":0,"error":None})
             while True:
-                batch=(TopDeskTicket.query.filter(TopDeskTicket.created_at.is_(None)).order_by(TopDeskTicket.id).limit(1000).all())
+                batch=(TopDeskTicket.query.filter(TopDeskTicket.created_at.is_(None)).order_by(TopDeskTicket.id).limit(250).all())
                 if not batch: break
                 for t in batch:
                     parsed=_td_dt(t.created_at_text)
@@ -8643,9 +8643,9 @@ def _v56a_backfill_worker():
                     t.created_at=parsed or t.imported_at or t.last_import_at or datetime.utcnow()
                     t.line_code=line or None; t.station_code=station or None; t.model_code=model or None
                 db.session.commit(); _V56A_BACKFILL["processed"]+=len(batch); db.session.expire_all()
-                time.sleep(0.02)
+                time.sleep(0.20)
         except Exception as exc:
-            db.session.rollback(); _V56A_BACKFILL["error"]=str(exc); app.logger.warning('V56-A.1 TopDesk background backfill: %s',exc)
+            db.session.rollback(); _V56A_BACKFILL["error"]=str(exc); app.logger.warning('V56-A.2 TopDesk background backfill: %s',exc)
         finally:
             _V56A_BACKFILL["running"]=False
 

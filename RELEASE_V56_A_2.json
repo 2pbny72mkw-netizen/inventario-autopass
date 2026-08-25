@@ -1,0 +1,7 @@
+{
+  "release":"V56-A.2",
+  "focus":"stability-polling-backfill",
+  "topdesk_poll":{"active_seconds":10,"idle_seconds":60,"hidden_seconds":60,"singleton":true,"inflight_guard":true},
+  "backfill":{"batch_size":250,"sleep_ms":200},
+  "emv_manual_display_fix":true
+}
