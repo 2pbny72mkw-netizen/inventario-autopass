@@ -40,7 +40,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V56-A"
+APP_RELEASE = "V56-A.1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -521,6 +521,9 @@ class EmvChipSwap(db.Model):
     latitude = db.Column(db.Float); longitude = db.Column(db.Float); gps_accuracy = db.Column(db.Float)
     started_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     completed_at = db.Column(db.DateTime); completed_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), index=True); updated_at = db.Column(db.DateTime)
+    # V56-A.1: bloqueio informado em campo quando não existe na base EMV.
+    manual_entry = db.Column(db.Boolean, nullable=False, default=False, index=True)
+    company = db.Column(db.String(120)); line = db.Column(db.String(120)); station = db.Column(db.String(180)); block_number = db.Column(db.String(80))
 
 class EmvChipSwapPhoto(db.Model):
     __tablename__ = "emv_chip_swap_photos"
@@ -2556,6 +2559,13 @@ def hardware_field_visits_api():
         try: q=q.filter(HardwareFieldVisit.technician_id == int(technician))
         except ValueError: return jsonify({"ok":False,"error":"Técnico inválido."}),400
     rows=q.order_by(HardwareFieldVisit.created_at.desc()).limit(500).all()
+    # V56-A.1: evita duplicidade visual de visitas idênticas sem apagar histórico/auditoria.
+    deduped=[]; seen=set()
+    for x in rows:
+        sig=((x.client or '').strip().upper(),(x.project or '').strip().upper(),(x.location_name or '').strip().upper(),x.visit_date,x.technician_id,(x.status or '').strip().upper())
+        if sig in seen: continue
+        seen.add(sig); deduped.append(x)
+    rows=deduped
     ids={x.technician_id for x in rows if x.technician_id}; tech_map={u.id:u.name for u in User.query.filter(User.id.in_(ids)).all()} if ids else {}
     visit_ids=[x.id for x in rows]; photo_counts={}
     if visit_ids:
@@ -5989,23 +5999,28 @@ def _td_filter_rows(args):
             func.upper(func.coalesce(TopDeskTicket.subcategory,'')).like(like),
         ))
 
-    # A partir da V56-A, a janela temporal é resolvida pelo índice created_at.
-    q=q.filter(TopDeskTicket.created_at.isnot(None), TopDeskTicket.created_at >= start)
-    if end: q=q.filter(TopDeskTicket.created_at <= end.replace(hour=23,minute=59,second=59))
-    if linef:
-        q=q.filter(db.or_(func.upper(func.coalesce(TopDeskTicket.line_code,''))==linef,
-                          func.upper(func.coalesce(Location.line,''))==linef))
-    if locf:
-        q=q.filter(db.or_(func.upper(func.coalesce(Location.location,''))==locf,
-                          func.upper(func.coalesce(TopDeskTicket.station_code,''))==locf))
-    if modelf: q=q.filter(func.upper(func.coalesce(TopDeskTicket.model_code,''))==modelf)
+    # V56-A.1: compatibilidade durante o backfill. Registros ainda não normalizados
+    # continuam elegíveis e usam os campos legados, evitando a queda 50k -> poucos tickets.
+    if end:
+        q=q.filter(db.or_(
+            db.and_(TopDeskTicket.created_at.isnot(None), TopDeskTicket.created_at >= start, TopDeskTicket.created_at <= end.replace(hour=23,minute=59,second=59)),
+            TopDeskTicket.created_at.is_(None)
+        ))
+    else:
+        q=q.filter(db.or_(TopDeskTicket.created_at >= start, TopDeskTicket.created_at.is_(None)))
 
     out=[]
     for t,loc_line,loc_name in q.all():
-        dt=t.created_at
-        line=t.line_code or (loc_line or '')
-        location=(loc_name or '') or (t.station_code or '')
-        model=t.model_code or ''
+        dt=t.created_at or _td_dt(t.created_at_text)
+        if not dt or dt < start or (end and dt > end.replace(hour=23,minute=59,second=59)):
+            continue
+        legacy_line,legacy_station,legacy_model=_td_object_parts(t.object_id)
+        line=t.line_code or legacy_line or (loc_line or '')
+        location=(loc_name or '') or t.station_code or legacy_station
+        model=t.model_code or legacy_model or ''
+        if linef and normalize(line)!=linef: continue
+        if locf and normalize(location)!=locf and normalize(t.station_code or legacy_station)!=locf: continue
+        if modelf and normalize(model)!=modelf: continue
         out.append((t,dt,line,location,model))
     return out
 
@@ -7673,8 +7688,16 @@ def _ensure_emv_tables():
     EmvChipSwap.__table__.create(bind=db.engine,checkfirst=True); EmvChipSwapPhoto.__table__.create(bind=db.engine,checkfirst=True)
     try:
         cols={c["name"] for c in db.inspect(db.engine).get_columns("emv_chip_swaps")}
-        if "completed_by_id" not in cols:
-            with db.engine.begin() as conn: conn.execute(text("ALTER TABLE emv_chip_swaps ADD COLUMN completed_by_id INTEGER"))
+        additions=[]
+        if "completed_by_id" not in cols: additions.append(("completed_by_id","INTEGER"))
+        if "manual_entry" not in cols: additions.append(("manual_entry","BOOLEAN NOT NULL DEFAULT FALSE"))
+        if "company" not in cols: additions.append(("company","VARCHAR(120)"))
+        if "line" not in cols: additions.append(("line","VARCHAR(120)"))
+        if "station" not in cols: additions.append(("station","VARCHAR(180)"))
+        if "block_number" not in cols: additions.append(("block_number","VARCHAR(80)"))
+        if additions:
+            with db.engine.begin() as conn:
+                for name,typ in additions: conn.execute(text(f"ALTER TABLE emv_chip_swaps ADD COLUMN {name} {typ}"))
     except Exception as exc:
         app.logger.warning("V52.1 EMV autoria migration: %s", exc)
 
@@ -7704,14 +7727,33 @@ def emv_chip_list():
         tech=users.get(sw.technician_id) if sw else None; completer=users.get(getattr(sw,"completed_by_id",None)) if sw else None
         d.update({"status":sw.status if sw else "PENDENTE","test_result":sw.test_result if sw else None,"notes":sw.notes if sw else "","swap_id":sw.id if sw else None,"station_name":station_name,"photos":photos,"technician":tech.name if tech else "","completed_by":completer.name if completer else (tech.name if sw and sw.completed_at and tech else ""),"completed_by_role":completer.role if completer else (tech.role if sw and sw.completed_at and tech else ""),"completed_at":sw.completed_at.isoformat() if sw and sw.completed_at else None,"updated_at":sw.updated_at.isoformat() if sw and sw.updated_at else None})
         rows.append(d)
+    # Registros incluídos manualmente em campo e ainda ausentes da planilha base.
+    base_terms={str(x.get("terminal") or "") for x in _v41_emv_rows()}
+    for sw in swap_rows:
+        if not getattr(sw,"manual_entry",False) or sw.terminal in base_terms: continue
+        photos=[{"id":ph.id,"name":ph.original_name,"url":url_for("uploaded",name=ph.stored_name),"created_at":ph.created_at.isoformat() if ph.created_at else None} for ph in EmvChipSwapPhoto.query.filter_by(swap_id=sw.id).order_by(EmvChipSwapPhoto.created_at).all()]
+        tech=users.get(sw.technician_id); completer=users.get(getattr(sw,"completed_by_id",None))
+        rows.append({"company":sw.company or "","line":sw.line or "","station":sw.station or "","station_name":sw.station or "","terminal":sw.terminal,"block_number":sw.block_number or "","version":"","ip":"","mask":"","gateway":"","dns1":"","dns2":"","group":"","manual_entry":True,"status":sw.status or "PENDENTE","test_result":sw.test_result,"notes":sw.notes or "","swap_id":sw.id,"photos":photos,"technician":tech.name if tech else "","completed_by":completer.name if completer else "","completed_at":sw.completed_at.isoformat() if sw.completed_at else None,"updated_at":sw.updated_at.isoformat() if sw.updated_at else None})
     return jsonify({"ok":True,"rows":rows})
+
+@app.post("/api/emv-chip-swaps/manual")
+@emv_field_required
+def emv_chip_manual_create():
+    _ensure_emv_tables(); d=request.get_json(silent=True) or {}
+    company=(d.get("company") or "").strip(); line=(d.get("line") or "").strip(); station=(d.get("station") or "").strip(); block=(d.get("block_number") or "").strip()
+    if not all((company,line,station,block)): return jsonify({"ok":False,"error":"Informe operadora, linha, estação/localidade e número do bloqueio."}),400
+    terminal=(d.get("terminal") or f"MANUAL-{normalize(company)[:12]}-{normalize(line)[:12]}-{normalize(station)[:16]}-{normalize(block)}").strip()[:120]
+    if EmvChipSwap.query.filter_by(terminal=terminal).first(): return jsonify({"ok":False,"error":"Este bloqueio manual já foi incluído."}),409
+    sw=EmvChipSwap(terminal=terminal,technician_id=session["user_id"],status="PENDENTE",manual_entry=True,company=company,line=line,station=station,block_number=block,notes=(d.get("notes") or "").strip(),updated_at=datetime.utcnow())
+    db.session.add(sw);db.session.flush();db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="EMV_MANUAL_CREATE",entity_type="emv_chip_swap",entity_id=str(sw.id),detail=f"{company} · {line} · {station} · bloqueio {block}"));db.session.commit()
+    return jsonify({"ok":True,"terminal":terminal,"id":sw.id})
 
 @app.post("/api/emv-chip-swaps/<terminal>")
 @emv_field_required
 def emv_chip_save(terminal):
     _ensure_emv_tables(); base=next((x for x in _v41_emv_rows() if x["terminal"]==terminal),None)
-    if not base: return jsonify({"ok":False,"error":"Bloqueio EMV não encontrado na base."}),404
     sw=EmvChipSwap.query.filter_by(terminal=terminal).first()
+    if not base and not (sw and getattr(sw,"manual_entry",False)): return jsonify({"ok":False,"error":"Bloqueio EMV não encontrado na base."}),404
     if sw and (sw.status or "").upper().replace("CONCLUIDA","CONCLUÍDA")=="CONCLUÍDA" and session.get("role") in ("technician","technician_implantation"):
         return jsonify({"ok":False,"error":"Registro concluído e bloqueado. Solicite ao Gestor/ADM a reabertura para EM ANDAMENTO."}),409
     if not sw: sw=EmvChipSwap(terminal=terminal,technician_id=session["user_id"]);db.session.add(sw);db.session.flush()
@@ -7848,7 +7890,7 @@ def financial_dashboard_page():
 @app.get("/financeiro/dashboard/embed")
 @login_required
 def financial_dashboard_embed():
-    if session.get("role") not in ("manager","manager_field"):
+    if session.get("role") not in ("manager","manager_field","atm_financial_admin"):
         abort(403)
     return render_template("financial_dashboard.html", app_release=APP_RELEASE, embedded=True)
 
@@ -7903,8 +7945,10 @@ def v56a_performance_status():
     normalized=db.session.query(func.count(TopDeskTicket.id)).filter(TopDeskTicket.created_at.isnot(None)).scalar() or 0
     return jsonify({
       "ok":True,"release":APP_RELEASE,"topdesk":{
-        "tickets":int(total),"normalized":int(normalized),
+        "tickets":int(total),"normalized":int(normalized),"pending":int(max(0,total-normalized)),
         "normalized_pct":round(normalized*100/max(1,total),1),
+        "dashboard_eligible":int(total),
+        "backfill":{"running":bool(_V56A_BACKFILL.get("running")),"processed_this_boot":int(_V56A_BACKFILL.get("processed") or 0),"error":_V56A_BACKFILL.get("error")},
         "analytics_cache_ttl_seconds":TOPDESK_ANALYTICS_TTL,
         "dimensions":["created_at","line_code","station_code","model_code"]
       }
@@ -7942,7 +7986,7 @@ def financial_catalog_api():
         if key and key not in products: products.append(key)
     for fallback in ("ATM","POS","RECARGA","RACK","BLOQUEIO","TDI","OUTROS"):
         if fallback not in products: products.append(fallback)
-    return jsonify({"ok":True,"suppliers":[{"id":x.id,"name":x.name,"active":x.active} for x in suppliers],"services":[{"id":x.id,"supplier_id":x.supplier_id,"name":x.name,"description":x.description or "","category":x.category or "OUTROS","active":x.active} for x in services],"products":products})
+    return jsonify({"ok":True,"suppliers":[{"id":x.id,"name":x.name,"trade_name":getattr(x,"trade_name",None),"cnpj":getattr(x,"cnpj",None),"primary_cost_center":getattr(x,"primary_cost_center",None),"contact_name":getattr(x,"contact_name",None),"phone":getattr(x,"phone",None),"email":getattr(x,"email",None),"pending_profile":bool(getattr(x,"pending_profile",False)),"active":x.active} for x in suppliers],"services":[{"id":x.id,"supplier_id":x.supplier_id,"name":x.name,"description":x.description or "","category":x.category or "OUTROS","active":x.active} for x in services],"products":products})
 
 @app.post("/api/financeiro/fornecedores")
 @login_required
@@ -7958,10 +8002,30 @@ def financial_supplier_create_api():
     db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="FIN_SUPPLIER_CREATE",entity_type="financial_supplier",entity_id=str(row.id),detail=name));db.session.commit()
     return jsonify({"ok":True,"id":row.id})
 
+@app.put("/api/financeiro/fornecedores/<int:row_id>")
+@login_required
+def financial_supplier_update_api(row_id):
+    if not _financial_admin_allowed(): return jsonify({"ok":False,"error":"Sem permissão."}),403
+    row=db.session.get(FinancialSupplier,row_id)
+    if not row: return jsonify({"ok":False,"error":"Fornecedor não encontrado."}),404
+    d=request.get_json(silent=True) or {}
+    old=row.name
+    row.name=(d.get("name") or row.name or "").strip()
+    row.trade_name=(d.get("trade_name") or "").strip() or None
+    row.cnpj=(d.get("cnpj") or "").strip() or None
+    row.primary_cost_center=(d.get("primary_cost_center") or "").strip() or None
+    row.contact_name=(d.get("contact_name") or "").strip() or None
+    row.phone=(d.get("phone") or "").strip() or None
+    row.email=(d.get("email") or "").strip() or None
+    if "active" in d: row.active=bool(d.get("active"))
+    row.pending_profile=bool(d.get("pending_profile",False))
+    db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="FIN_SUPPLIER_UPDATE",entity_type="financial_supplier",entity_id=str(row.id),detail=f"{old} -> {row.name}"));db.session.commit()
+    return jsonify({"ok":True})
+
 @app.delete("/api/financeiro/fornecedores/<int:row_id>")
 @login_required
 def financial_supplier_delete_api(row_id):
-    if session.get("role")!="manager": return jsonify({"ok":False,"error":"Somente ADM pode excluir fornecedor."}),403
+    if session.get("role") not in ("manager","atm_financial_admin"): return jsonify({"ok":False,"error":"Sem permissão para excluir fornecedor."}),403
     row=db.session.get(FinancialSupplier,row_id)
     if not row: return jsonify({"ok":False,"error":"Fornecedor não encontrado."}),404
     name=row.name
@@ -7976,7 +8040,7 @@ def financial_supplier_delete_api(row_id):
 @app.delete("/api/financeiro/servicos/<int:row_id>")
 @login_required
 def financial_service_delete_api(row_id):
-    if session.get("role")!="manager": return jsonify({"ok":False,"error":"Somente ADM pode excluir serviço."}),403
+    if session.get("role") not in ("manager","atm_financial_admin"): return jsonify({"ok":False,"error":"Sem permissão para excluir serviço."}),403
     row=db.session.get(FinancialService,row_id)
     if not row: return jsonify({"ok":False,"error":"Serviço não encontrado."}),404
     used=FinancialMonthlyCost.query.filter_by(service_id=row.id).count()
@@ -8560,6 +8624,33 @@ def v50_contracts_api():
     return jsonify({"ok":True,"release":APP_RELEASE,"park_total":len(assets),"rental":sum(x["rental"] for x in rows),"leasing":sum(x["leasing"] for x in rows),"monthly":total_month,"annual":total_month*12,"contracts":rows})
 
 
+def _v56a_backfill_worker():
+    global _V56A_BACKFILL
+    with app.app_context():
+        try:
+            _V56A_BACKFILL.update({"running":True,"processed":0,"error":None})
+            while True:
+                batch=(TopDeskTicket.query.filter(TopDeskTicket.created_at.is_(None)).order_by(TopDeskTicket.id).limit(1000).all())
+                if not batch: break
+                for t in batch:
+                    parsed=_td_dt(t.created_at_text)
+                    line,station,model=_td_object_parts(t.object_id)
+                    t.created_at=parsed or t.imported_at or t.last_import_at or datetime.utcnow()
+                    t.line_code=line or None; t.station_code=station or None; t.model_code=model or None
+                db.session.commit(); _V56A_BACKFILL["processed"]+=len(batch); db.session.expire_all()
+                time.sleep(0.02)
+        except Exception as exc:
+            db.session.rollback(); _V56A_BACKFILL["error"]=str(exc); app.logger.warning('V56-A.1 TopDesk background backfill: %s',exc)
+        finally:
+            _V56A_BACKFILL["running"]=False
+
+def _start_v56a_backfill():
+    if _V56A_BACKFILL.get("running"): return
+    with _V56A_BACKFILL_LOCK:
+        if _V56A_BACKFILL.get("running"): return
+        _V56A_BACKFILL["running"]=True
+        threading.Thread(target=_v56a_backfill_worker,name='v56a-topdesk-backfill',daemon=True).start()
+
 def migrate_v56a_topdesk_dimensions():
     """V56-A: adiciona e normaliza dimensões TopDesk usadas pelos dashboards.
 
@@ -8582,24 +8673,6 @@ def migrate_v56a_topdesk_dimensions():
     except Exception as exc:
         app.logger.warning('V56-A TopDesk columns: %s',exc); return
 
-    # Backfill compatível com os formatos já importados. Executa uma única vez por linha.
-    try:
-        pending=(TopDeskTicket.query
-                 .filter(TopDeskTicket.created_at.is_(None))
-                 .order_by(TopDeskTicket.id)
-                 .yield_per(1000))
-        changed=0
-        for t in pending:
-            t.created_at=_td_dt(t.created_at_text)
-            line,station,model=_td_object_parts(t.object_id)
-            t.line_code=line or None; t.station_code=station or None; t.model_code=model or None
-            changed+=1
-            if changed % 1000 == 0:
-                db.session.commit(); db.session.expire_all()
-        if changed: db.session.commit()
-    except Exception as exc:
-        db.session.rollback(); app.logger.warning('V56-A TopDesk backfill: %s',exc)
-
     commands=[
       'CREATE INDEX IF NOT EXISTS ix_topdesk_operator ON topdesk_tickets (operator)',
       'CREATE INDEX IF NOT EXISTS ix_topdesk_location_status ON topdesk_tickets (location_id, status)',
@@ -8615,6 +8688,9 @@ def migrate_v56a_topdesk_dimensions():
         with db.engine.begin() as conn:
             for cmd in commands: conn.execute(text(cmd))
     except Exception as exc: app.logger.warning('V56-A TopDesk indexes: %s',exc)
+
+    # Após garantir colunas/índices, normaliza em background sem bloquear o boot.
+    _start_v56a_backfill()
 
 
 def migrate_v55_performance_indexes():
