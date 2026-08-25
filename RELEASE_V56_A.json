@@ -1,0 +1,8 @@
+{
+  "release": "V56-A",
+  "date": "2026-08-25",
+  "base": "V55.4",
+  "focus": "Dados & Performance",
+  "topdesk_normalized_dimensions": ["created_at", "line_code", "station_code", "model_code"],
+  "performance_endpoint": "/api/v56a/performance"
+}

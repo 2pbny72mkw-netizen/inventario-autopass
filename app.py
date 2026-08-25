@@ -40,7 +40,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V55.4"
+APP_RELEASE = "V56-A"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -293,6 +293,12 @@ class TopDeskTicket(db.Model):
     status = db.Column(db.String(120), index=True)
     operator = db.Column(db.String(180))
     created_at_text = db.Column(db.String(120))
+    # V56-A: dimensões normalizadas para filtros/analytics no PostgreSQL.
+    # Mantemos os campos legados para auditoria e compatibilidade.
+    created_at = db.Column(db.DateTime, index=True)
+    line_code = db.Column(db.String(40), index=True)
+    station_code = db.Column(db.String(180), index=True)
+    model_code = db.Column(db.String(80), index=True)
     sla_target_text = db.Column(db.String(120))
     requester = db.Column(db.String(220))
     request_text = db.Column(db.Text)
@@ -5844,6 +5850,11 @@ def _topdesk_import_worker(job_id, raw, filename, user_id):
                     t.status=str(row.get("Status") or "").strip()
                     t.operator=str(row.get("Operador") or "").strip()
                     t.created_at_text=created
+                    t.created_at=_td_dt(created)
+                    _line,_station,_model=_td_object_parts(obj)
+                    t.line_code=_line or None
+                    t.station_code=_station or None
+                    t.model_code=_model or None
                     t.sla_target_text=str(row.get("Data alvo do SLA") or "").strip()
                     t.requester=str(row.get("Nome do solicitante") or "").strip()
                     t.request_text=str(row.get("Pedido") or "").strip()
@@ -5947,14 +5958,12 @@ def _td_object_parts(object_id):
 
 
 def _td_filter_rows(args):
-    """V55: filtra o máximo possível no PostgreSQL/SQLite e evita N+1 de Location.
+    """V56-A: filtros de analytics executados prioritariamente no banco.
 
-    created_at_text e partes do object_id ainda são compatíveis com os imports legados,
-    portanto a etapa final de data/modelo continua em Python, mas somente após filtros
-    indexáveis terem reduzido o conjunto candidato.
+    Datas, linha, estação e modelo passam a ter colunas normalizadas/indexadas.
+    O fallback legado permanece apenas para registros antigos ainda não normalizados.
     """
     start=_td_dt(args.get('start')); end=_td_dt(args.get('end'))
-    # V55.1: dashboard TopDesk opera por padrão com histórico 2026 em diante.
     if start is None: start=datetime(2026,1,1)
     eq=normalize(args.get('equipment_type','')); linef=normalize(args.get('line','')); locf=normalize(args.get('location',''))
     modelf=normalize(args.get('model','')); catf=normalize(args.get('category','')); subf=normalize(args.get('subcategory',''))
@@ -5963,7 +5972,6 @@ def _td_filter_rows(args):
 
     q=(db.session.query(TopDeskTicket, Location.line, Location.location)
        .outerjoin(Location, TopDeskTicket.location_id==Location.id))
-    # campos diretamente indexáveis / pesquisáveis no banco
     if eq: q=q.filter(func.upper(func.coalesce(TopDeskTicket.equipment_type,''))==eq)
     if catf: q=q.filter(func.upper(func.coalesce(TopDeskTicket.category,''))==catf)
     if subf: q=q.filter(func.upper(func.coalesce(TopDeskTicket.subcategory,''))==subf)
@@ -5980,25 +5988,24 @@ def _td_filter_rows(args):
             func.upper(func.coalesce(TopDeskTicket.category,'')).like(like),
             func.upper(func.coalesce(TopDeskTicket.subcategory,'')).like(like),
         ))
-    # localização vinculada pode ser filtrada no banco sem impedir fallback legado do object_id
+
+    # A partir da V56-A, a janela temporal é resolvida pelo índice created_at.
+    q=q.filter(TopDeskTicket.created_at.isnot(None), TopDeskTicket.created_at >= start)
+    if end: q=q.filter(TopDeskTicket.created_at <= end.replace(hour=23,minute=59,second=59))
     if linef:
-        q=q.filter(db.or_(func.upper(func.coalesce(Location.line,''))==linef,
-                          func.upper(func.coalesce(TopDeskTicket.object_id,'')).like(linef+'-%')))
+        q=q.filter(db.or_(func.upper(func.coalesce(TopDeskTicket.line_code,''))==linef,
+                          func.upper(func.coalesce(Location.line,''))==linef))
     if locf:
         q=q.filter(db.or_(func.upper(func.coalesce(Location.location,''))==locf,
-                          func.upper(func.coalesce(TopDeskTicket.object_id,'')).like('%-'+locf+'-%')))
+                          func.upper(func.coalesce(TopDeskTicket.station_code,''))==locf))
+    if modelf: q=q.filter(func.upper(func.coalesce(TopDeskTicket.model_code,''))==modelf)
 
     out=[]
     for t,loc_line,loc_name in q.all():
-        dt=_td_dt(t.created_at_text)
-        if start and (not dt or dt<start): continue
-        if end and (not dt or dt>end.replace(hour=23,minute=59,second=59)): continue
-        line,station,model=_td_object_parts(t.object_id)
-        line=line or (loc_line or '')
-        location=(loc_name or '') or station
-        if linef and normalize(line)!=linef: continue
-        if locf and normalize(location)!=locf: continue
-        if modelf and normalize(model)!=modelf: continue
+        dt=t.created_at
+        line=t.line_code or (loc_line or '')
+        location=(loc_name or '') or (t.station_code or '')
+        model=t.model_code or ''
         out.append((t,dt,line,location,model))
     return out
 
@@ -7886,6 +7893,24 @@ def financial_cost_management_embed():
         abort(403)
     return render_template("financial_cost_management.html", app_release=APP_RELEASE, embedded=True)
 
+@app.get("/api/v56a/performance")
+@login_required
+def v56a_performance_status():
+    """Diagnóstico leve da normalização V56-A sem varrer objetos ORM completos."""
+    if session.get("role") not in ("manager","manager_field","atm_financial_admin"):
+        abort(403)
+    total=db.session.query(func.count(TopDeskTicket.id)).scalar() or 0
+    normalized=db.session.query(func.count(TopDeskTicket.id)).filter(TopDeskTicket.created_at.isnot(None)).scalar() or 0
+    return jsonify({
+      "ok":True,"release":APP_RELEASE,"topdesk":{
+        "tickets":int(total),"normalized":int(normalized),
+        "normalized_pct":round(normalized*100/max(1,total),1),
+        "analytics_cache_ttl_seconds":TOPDESK_ANALYTICS_TTL,
+        "dimensions":["created_at","line_code","station_code","model_code"]
+      }
+    })
+
+
 @app.get("/api/release/routes-v553")
 @login_required
 def release_routes_v553():
@@ -8535,20 +8560,66 @@ def v50_contracts_api():
     return jsonify({"ok":True,"release":APP_RELEASE,"park_total":len(assets),"rental":sum(x["rental"] for x in rows),"leasing":sum(x["leasing"] for x in rows),"monthly":total_month,"annual":total_month*12,"contracts":rows})
 
 
-def migrate_v55_performance_indexes():
-    """Índices seguros para os filtros mais usados em Chamados/TopDesk."""
-    if not db.inspect(db.engine).has_table('topdesk_tickets'): return
+def migrate_v56a_topdesk_dimensions():
+    """V56-A: adiciona e normaliza dimensões TopDesk usadas pelos dashboards.
+
+    Migração aditiva/idempotente. O backfill ocorre apenas em registros sem created_at
+    e é commitado em lotes para não manter uma transação gigante.
+    """
+    inspector=db.inspect(db.engine)
+    if not inspector.has_table('topdesk_tickets'): return
+    cols={c['name'] for c in inspector.get_columns('topdesk_tickets')}
+    dialect=db.engine.dialect.name
+    dt_type='TIMESTAMP' if dialect=='postgresql' else 'DATETIME'
+    additions=[
+      ('created_at',dt_type),('line_code','VARCHAR(40)'),('station_code','VARCHAR(180)'),('model_code','VARCHAR(80)')
+    ]
+    try:
+        with db.engine.begin() as conn:
+            for name,sqltype in additions:
+                if name not in cols:
+                    conn.execute(text(f'ALTER TABLE topdesk_tickets ADD COLUMN {name} {sqltype}'))
+    except Exception as exc:
+        app.logger.warning('V56-A TopDesk columns: %s',exc); return
+
+    # Backfill compatível com os formatos já importados. Executa uma única vez por linha.
+    try:
+        pending=(TopDeskTicket.query
+                 .filter(TopDeskTicket.created_at.is_(None))
+                 .order_by(TopDeskTicket.id)
+                 .yield_per(1000))
+        changed=0
+        for t in pending:
+            t.created_at=_td_dt(t.created_at_text)
+            line,station,model=_td_object_parts(t.object_id)
+            t.line_code=line or None; t.station_code=station or None; t.model_code=model or None
+            changed+=1
+            if changed % 1000 == 0:
+                db.session.commit(); db.session.expire_all()
+        if changed: db.session.commit()
+    except Exception as exc:
+        db.session.rollback(); app.logger.warning('V56-A TopDesk backfill: %s',exc)
+
     commands=[
       'CREATE INDEX IF NOT EXISTS ix_topdesk_operator ON topdesk_tickets (operator)',
-      'CREATE INDEX IF NOT EXISTS ix_topdesk_created_text ON topdesk_tickets (created_at_text)',
       'CREATE INDEX IF NOT EXISTS ix_topdesk_location_status ON topdesk_tickets (location_id, status)',
       'CREATE INDEX IF NOT EXISTS ix_topdesk_equipment_status ON topdesk_tickets (equipment_type, status)',
       'CREATE INDEX IF NOT EXISTS ix_topdesk_category_subcategory ON topdesk_tickets (category, subcategory)',
+      'CREATE INDEX IF NOT EXISTS ix_topdesk_created_at ON topdesk_tickets (created_at)',
+      'CREATE INDEX IF NOT EXISTS ix_topdesk_line_created ON topdesk_tickets (line_code, created_at)',
+      'CREATE INDEX IF NOT EXISTS ix_topdesk_station_created ON topdesk_tickets (station_code, created_at)',
+      'CREATE INDEX IF NOT EXISTS ix_topdesk_model_created ON topdesk_tickets (model_code, created_at)',
+      'CREATE INDEX IF NOT EXISTS ix_topdesk_operator_created ON topdesk_tickets (operator, created_at)',
     ]
     try:
         with db.engine.begin() as conn:
             for cmd in commands: conn.execute(text(cmd))
-    except Exception as exc: app.logger.warning('V55 indexes: %s',exc)
+    except Exception as exc: app.logger.warning('V56-A TopDesk indexes: %s',exc)
+
+
+def migrate_v55_performance_indexes():
+    # Compatibilidade com chamadas/patches anteriores.
+    return migrate_v56a_topdesk_dimensions()
 
 
 with app.app_context():
@@ -8557,7 +8628,7 @@ with app.app_context():
     # V39.7.1: não deixa a criação das novas tabelas de Troca de Chips bloquear o startup.
     core_tables=[t for t in db.metadata.sorted_tables if t.name not in ("chip_swaps","chip_swap_photos")]
     db.metadata.create_all(bind=db.engine, tables=core_tables, checkfirst=True)
-    migrate_v55_performance_indexes()
+    migrate_v56a_topdesk_dimensions()
     migrate_team_schedule_columns()
     migrate_inventory_sync_uuid()
     migrate_user_archive_column()
