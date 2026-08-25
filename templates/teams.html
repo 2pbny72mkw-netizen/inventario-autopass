@@ -92,9 +92,9 @@
 <section class="card teamCollapsible">
   <button type="button" class="teamSectionToggle" id="toggleTodayOperational" aria-expanded="false">Ver operação de hoje <span>＋</span></button>
   <div id="todayOperationalContent" class="teamCollapsibleContent hidden">
-  <div class="sectionHead"><div><h2>Visão operacional de hoje</h2><p class="muted">Equipe, função, jornada e situação de campo em uma leitura única.</p></div><span class="tag" id="teamClock">—</span></div>
+  <div class="sectionHead"><div><h2>Operação de Hoje</h2><p class="muted">Presença, atraso, login, GPS e localidade da equipe escalada hoje.</p></div><span class="tag" id="teamClock">—</span></div><div class="todayOpsKpis"><span>Em operação <b id="opInOperation">0</b></span><span>Atrasados <b id="opLate">0</b></span><span>Não logaram <b id="opNoLogin">0</b></span><span>GPS &gt;10 min <b id="opStale">0</b></span><span>Sem GPS <b id="opNoGps">0</b></span></div>
   <div class="scaleTableWrap">
-    <table class="scaleTable"><thead><tr><th>Nome</th><th>Cargo</th><th>Escala</th><th>Horário</th><th>Entrada</th><th>Linhas</th><th>Situação</th><th>Última posição</th></tr></thead><tbody id="todayTeamTable"></tbody></table>
+    <table class="scaleTable"><thead><tr><th>Colaborador</th><th>Cargo</th><th>Empresa</th><th>Escala</th><th>Horário</th><th>Login</th><th>Status</th><th>Última posição</th><th>Localidade / estação</th><th>GPS</th></tr></thead><tbody id="todayTeamTable"></tbody></table>
   </div>
 </div></section>
 
@@ -204,5 +204,5 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="{{ url_for('static', filename='shared_rail_map.js') }}?v=v40-1-2"></script>
-<script src="{{ url_for('static', filename='teams.js') }}?v=teams-v40-1-2"></script>
+<script src="{{ url_for('static', filename='teams.js') }}?v=teams-v56-a3"></script>
 {% endblock %}
