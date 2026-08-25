@@ -40,7 +40,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V56-A.4 HOTFIX2"
+APP_RELEASE = "V56-A.5"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -204,6 +204,40 @@ class FinancialMonthlyCost(db.Model):
     updated_by = db.Column(db.Integer, db.ForeignKey("users.id"))
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+class FinancialCashCollection(db.Model):
+    __tablename__ = "financial_cash_collections"
+    id = db.Column(db.Integer, primary_key=True)
+    terminal = db.Column(db.String(40), nullable=False, index=True)
+    point_name = db.Column(db.String(240))
+    collection_date = db.Column(db.Date, nullable=False, index=True)
+    start_at = db.Column(db.DateTime, index=True)
+    end_at = db.Column(db.DateTime, nullable=False, index=True)
+    collected_amount = db.Column(db.Float, nullable=False, default=0)
+    gtv = db.Column(db.String(60), index=True)
+    route = db.Column(db.String(40))
+    municipality = db.Column(db.String(120))
+    declared_amount = db.Column(db.Float)
+    processed_amount = db.Column(db.Float)
+    processed_at = db.Column(db.DateTime)
+    source_file = db.Column(db.String(255))
+    source_hash = db.Column(db.String(64), nullable=False, unique=True, index=True)
+    imported_by = db.Column(db.Integer, db.ForeignKey("users.id"))
+    imported_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+class FinancialATMTransaction(db.Model):
+    __tablename__ = "financial_atm_transactions"
+    id = db.Column(db.Integer, primary_key=True)
+    terminal = db.Column(db.String(40), nullable=False, index=True)
+    transaction_at = db.Column(db.DateTime, nullable=False, index=True)
+    status = db.Column(db.String(20), index=True)
+    value = db.Column(db.Float, nullable=False, default=0)
+    cpm_id = db.Column(db.String(60))
+    source_file = db.Column(db.String(255))
+    source_hash = db.Column(db.String(64), nullable=False, unique=True, index=True)
+    imported_by = db.Column(db.Integer, db.ForeignKey("users.id"))
+    imported_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    __table_args__ = (Index("ix_fin_atm_tx_terminal_datetime", "terminal", "transaction_at"),)
 
 class OperationalAction(db.Model):
     __tablename__ = "operational_actions"
@@ -813,7 +847,7 @@ ACCESS_GROUPS = {
         "users.view","users.create","users.edit","users.activate","users.delete","users.password","users.export"
     )),
     "finance": ("Financeiro", (
-        "finance.support","finance.collection","finance.assistance","finance.implantation","finance.entries","finance.suppliers","finance.import","finance.edit","finance.delete"
+        "finance.support","finance.collection","finance.apuracao","finance.assistance","finance.implantation","finance.entries","finance.suppliers","finance.import","finance.edit","finance.delete"
     )),
     "finance_dashboard": ("Dashboard Financeira", ("finance.dashboard",)),
     "management": ("Gestão", (
@@ -830,7 +864,7 @@ ACCESS_LABELS = {
  "implantation.dashboard":"Dashboard Implantação","implantation.visits":"Visita a Campo / Relatório de Visita","implantation.reports":"Relatórios / Visitas recentes","implantation.emv":"Troca de Chips EMV – Trilhos",
  "teams.map":"Mapa operacional","teams.today":"Operação de Hoje","teams.schedule":"Escala por dias","teams.manage":"Gestão de equipes / escala","teams.export":"Exportar dados",
  "users.view":"Visualizar usuários","users.create":"Criar usuário","users.edit":"Editar usuário","users.activate":"Ativar / Desativar","users.delete":"Excluir / Arquivar","users.password":"Redefinir senha","users.export":"Exportar Excel",
- "finance.dashboard":"Dashboard Financeira","finance.support":"Suporte a Campo","finance.collection":"Coleta de Valores","finance.assistance":"Assistência Técnica","finance.implantation":"Implantação de Hardware","finance.entries":"Lançamentos","finance.suppliers":"Empresas / Fornecedores","finance.import":"Importar planilha","finance.edit":"Editar lançamentos","finance.delete":"Excluir lançamentos",
+ "finance.dashboard":"Dashboard Financeira","finance.support":"Suporte a Campo","finance.collection":"Coleta de Valores","finance.apuracao":"Apuração de Numerário","finance.assistance":"Assistência Técnica","finance.implantation":"Implantação de Hardware","finance.entries":"Lançamentos","finance.suppliers":"Empresas / Fornecedores","finance.import":"Importar planilha","finance.edit":"Editar lançamentos","finance.delete":"Excluir lançamentos",
  "management.calls":"Chamados","management.360":"Central 360","management.notifications":"Notificações","management.diagnostics":"Diagnóstico","management.settings":"Configurações",
  "about.versions":"Histórico / Versões",
 }
@@ -853,7 +887,7 @@ def _default_access_for_role(role):
       "consultation":{"dashboard.general","field.dashboard","field.inventory","field.equipment","field.evidence","field.panorama","field.chip_recarga","teams.map","teams.today","teams.schedule","about.versions"},
       "hr":{"teams.map","teams.today","teams.schedule","teams.manage","teams.export","users.view","users.create","users.edit","users.activate","users.password","users.export","about.versions"},
       "dispatcher":{"dashboard.general","field.calls","field.chip_recarga","teams.map","teams.today","teams.schedule","management.calls","about.versions"},
-      "atm_financial_admin":{"finance.dashboard","finance.support","finance.collection","finance.assistance","finance.implantation","finance.entries","finance.suppliers","finance.import","finance.edit","finance.delete","about.versions"},
+      "atm_financial_admin":{"finance.dashboard","finance.support","finance.collection","finance.apuracao","finance.assistance","finance.implantation","finance.entries","finance.suppliers","finance.import","finance.edit","finance.delete","about.versions"},
     }
     return defaults.get(role,set())
 
@@ -6888,6 +6922,7 @@ def sync_base_assets_1408(force=False):
     if not force:
         sentinels = {
             "L01-PPQ-POS-13301": ("POS", "01 - AZUL", "METRO"),
+            "L03-PSE-VAL-325-TMB": ("VALIDADOR", "03 - VERMELHA", "METRO"),
             "TDI|SAC|220|1500070008": ("TDI", "02 - VERDE", "METRO"),
             "BLOQ|09 - ESMERALDA|OSASCO|356406": ("BLOQUEIO", "09 - ESMERALDA", "VIA MOBILIDADE"),
         }
@@ -7495,6 +7530,19 @@ def _chip_swap_locations_payload(force=False):
         by_line.setdefault(_normalize_line_key(loc.line), []).append(loc)
 
     assets_by_loc = {loc.id: [] for loc in locations}
+
+    # V56-A.4 HOTFIX3: garante que a base detalhada de validadores esteja realmente
+    # sincronizada no banco persistente. Versões anteriores podiam considerar a base
+    # 1408-5 "já sincronizada" olhando apenas sentinelas de POS/TDI/Bloqueio, deixando
+    # os Validadores ausentes em bancos antigos. Isso gerava contador previsto > 0,
+    # mas lista detalhada vazia na Troca de Chip Recarga.
+    validator_sentinel = BaseAsset.query.filter_by(asset_key="L03-PSE-VAL-325-TMB").first()
+    if validator_sentinel is None:
+        try:
+            sync_base_assets_1408(force=True)
+        except Exception as exc:
+            app.logger.exception("HOTFIX3: falha ao sincronizar base detalhada de validadores: %s", exc)
+
     validator_assets = BaseAsset.query.filter(
         func.upper(func.coalesce(BaseAsset.equipment_type, '')).like('%VALID%')
     ).all()
@@ -7555,7 +7603,7 @@ def _chip_swap_locations_payload(force=False):
                 "test_notes": sw.test_notes if sw else "",
                 "photos": [{"id": ph.id, "url": "/uploads/"+ph.stored_name, "thumb_url": "/uploads/"+ph.stored_name+"?thumb=1", "name": ph.original_name} for ph in photos],
             })
-        # V56-A.4 HOTFIX2: a lista detalhada é a fonte principal. O contador legado
+        # V56-A.4 HOTFIX3: a lista detalhada é a fonte principal. O contador legado
         # expected_validator fica apenas como fallback quando ainda não há ativos detalhados.
         total = len(items) if items else int(loc.expected_validator or 0)
         concluded = sum(1 for i in items if i["status"] == "CONCLUÍDA")
@@ -8307,13 +8355,15 @@ def financial_monthly_batch_api():
     if request.method=="GET":
         comp=(request.args.get("competence") or "").strip(); center=(request.args.get("cost_center") or "SUPORTE_CAMPO").strip().upper()
         if len(comp)!=7 or comp[4]!="-": return jsonify({"ok":False,"error":"Informe uma competência válida."}),400
-        q=FinancialMonthlyCost.query.filter_by(competence=comp,cost_center=center)
-        rows=q.order_by(FinancialMonthlyCost.supplier_id,FinancialMonthlyCost.service_text).all(); source=comp
+        center_aliases={center,center.replace("_"," ")}
+        if center=="SUPORTE_CAMPO": center_aliases.update({"SUPORTE A CAMPO","SUPORTE_CAMPO","SUPORTE DE CAMPO"})
+        q=(FinancialMonthlyCost.query.join(FinancialSupplier,FinancialMonthlyCost.supplier_id==FinancialSupplier.id).filter(FinancialMonthlyCost.competence==comp,func.upper(FinancialMonthlyCost.cost_center).in_({x.upper() for x in center_aliases})))
+        rows=q.order_by(func.upper(FinancialSupplier.name),func.upper(FinancialMonthlyCost.service_text)).all(); source=comp
         template=False
         if not rows:
-            prev=(FinancialMonthlyCost.query.filter(FinancialMonthlyCost.competence<comp,FinancialMonthlyCost.cost_center==center).order_by(FinancialMonthlyCost.competence.desc()).with_entities(FinancialMonthlyCost.competence).first())
+            prev=(db.session.query(FinancialMonthlyCost.competence).filter(FinancialMonthlyCost.competence<comp,func.upper(FinancialMonthlyCost.cost_center).in_({x.upper() for x in center_aliases})).order_by(FinancialMonthlyCost.competence.desc()).first())
             if prev:
-                source=prev[0]; rows=FinancialMonthlyCost.query.filter_by(competence=source,cost_center=center).order_by(FinancialMonthlyCost.supplier_id,FinancialMonthlyCost.service_text).all(); template=True
+                source=prev[0]; rows=(FinancialMonthlyCost.query.join(FinancialSupplier,FinancialMonthlyCost.supplier_id==FinancialSupplier.id).filter(FinancialMonthlyCost.competence==source,func.upper(FinancialMonthlyCost.cost_center).in_({x.upper() for x in center_aliases})).order_by(func.upper(FinancialSupplier.name),func.upper(FinancialMonthlyCost.service_text)).all()); template=True
         users={u.id:u.name for u in User.query.all()}; sups={x.id:x.name for x in FinancialSupplier.query.all()}; svcs={x.id:x.name for x in FinancialService.query.all()}
         payload=[]
         for x in rows:
@@ -8346,6 +8396,192 @@ def financial_monthly_batch_api():
         return jsonify({"ok":True,"saved":saved,"deleted":deleted})
     except Exception as exc:
         db.session.rollback(); return jsonify({"ok":False,"error":str(exc)}),400
+
+
+def _fin_terminal(value, point_name=""):
+    raw=str(value or "").strip()
+    if raw and raw.lower() not in ("none","nan") and re.search(r"\d",raw):
+        raw=re.sub(r"\.0$","",raw)
+        return re.sub(r"\s+","",raw)
+    m=re.search(r"\bATM\s+(\d+)\b",str(point_name or ""),re.I)
+    return m.group(1) if m else ""
+
+def _fin_gtv(value):
+    return re.sub(r"\D","",str(value or ""))
+
+def _fin_parse_date(value):
+    if isinstance(value,datetime): return value.date()
+    if hasattr(value,"year") and hasattr(value,"month") and hasattr(value,"day"):
+        try:return value
+        except:return None
+    textv=str(value or "").strip()
+    for fmt in ("%d/%m/%Y","%Y-%m-%d","%d/%m/%y"):
+        try:return datetime.strptime(textv,fmt).date()
+        except:pass
+    return None
+
+def _fin_parse_time(value):
+    if isinstance(value,datetime): return value.time().replace(microsecond=0)
+    if hasattr(value,"hour") and hasattr(value,"minute"):
+        try:return value.replace(microsecond=0)
+        except:return value
+    textv=str(value or "").strip()
+    for fmt in ("%H:%M:%S","%H:%M"):
+        try:return datetime.strptime(textv,fmt).time()
+        except:pass
+    return None
+
+def _fin_dt(date_value,time_value):
+    d=_fin_parse_date(date_value); t=_fin_parse_time(time_value)
+    return datetime.combine(d,t) if d and t else (datetime.combine(d,datetime.min.time()) if d else None)
+
+def _fin_hash(*parts):
+    return hashlib.sha256("|".join(str(x or "").strip() for x in parts).encode("utf-8","ignore")).hexdigest()
+
+def _fin_bulk_ignore(model, mappings, chunk=2000):
+    if not mappings:return 0
+    inserted=0
+    dialect=db.engine.dialect.name
+    for start in range(0,len(mappings),chunk):
+        part=mappings[start:start+chunk]
+        if dialect=="postgresql":
+            from sqlalchemy.dialects.postgresql import insert as pg_insert
+            stmt=pg_insert(model.__table__).values(part).on_conflict_do_nothing(index_elements=["source_hash"])
+            res=db.session.execute(stmt); inserted += max(0,res.rowcount or 0)
+        elif dialect=="sqlite":
+            from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+            stmt=sqlite_insert(model.__table__).values(part).on_conflict_do_nothing(index_elements=["source_hash"])
+            res=db.session.execute(stmt); inserted += max(0,res.rowcount or 0)
+        else:
+            hashes=[x["source_hash"] for x in part]
+            existing={x[0] for x in db.session.query(model.source_hash).filter(model.source_hash.in_(hashes)).all()}
+            fresh=[x for x in part if x["source_hash"] not in existing]
+            if fresh: db.session.bulk_insert_mappings(model,fresh); inserted+=len(fresh)
+    return inserted
+
+def _fin_import_tbf_wb(wb, filename, user_id):
+    result={"kind":"TBFORTE","collections":0,"processed_updated":0,"errors":0}
+    transport=[ws for ws in wb.worksheets if ws.title.upper().startswith("TRANSPORTE")]
+    processing=[ws for ws in wb.worksheets if ws.title.upper().startswith("PROCESSAMENTO")]
+    rows=[]
+    for ws in transport:
+        headers={str(v or "").strip().upper():i for i,v in enumerate(next(ws.iter_rows(min_row=1,max_row=1,values_only=True)))}
+        def gv(row,key):
+            i=headers.get(key.upper()); return row[i] if i is not None and i<len(row) else None
+        for row in ws.iter_rows(min_row=2,values_only=True):
+            try:
+                point=str(gv(row,"PONTO ATENDIMENTO") or "").strip(); terminal=_fin_terminal(gv(row,"TERMINAL"),point)
+                d=_fin_parse_date(gv(row,"DATA")); start_at=_fin_dt(d,gv(row,"Hora inicial")); end_at=_fin_dt(d,gv(row,"Hora final"))
+                if not terminal or not d or not end_at: continue
+                gtv=_fin_gtv(gv(row,"GTV")); amount=float(gv(row,"Valor RECOLHIDO") or 0)
+                sh=_fin_hash("COL",terminal,end_at.isoformat(),gtv,amount)
+                rows.append({"terminal":terminal,"point_name":point,"collection_date":d,"start_at":start_at,"end_at":end_at,"collected_amount":amount,"gtv":gtv or None,"route":str(gv(row,"Rota") or "").strip() or None,"municipality":str(gv(row,"MUNICÍPIO") or "").strip() or None,"source_file":filename,"source_hash":sh,"imported_by":user_id,"imported_at":datetime.utcnow()})
+            except Exception: result["errors"]+=1
+    result["collections"]=_fin_bulk_ignore(FinancialCashCollection,rows); db.session.flush()
+    # Atualiza valor declarado/apurado pela GTV. O processamento não precisa criar outra coleta.
+    for ws in processing:
+        headers={str(v or "").strip().upper():i for i,v in enumerate(next(ws.iter_rows(min_row=1,max_row=1,values_only=True)))}
+        def gv(row,key):
+            i=headers.get(key.upper()); return row[i] if i is not None and i<len(row) else None
+        for row in ws.iter_rows(min_row=2,values_only=True):
+            try:
+                gtv=_fin_gtv(gv(row,"GTV")); point=str(gv(row,"PONTO ATENDIMENTO") or "").strip(); terminal=_fin_terminal(None,point)
+                if not gtv: continue
+                candidates=FinancialCashCollection.query.filter_by(gtv=gtv).all()
+                if not candidates and terminal:
+                    pd=_fin_parse_date(gv(row,"Data do Processamento")); candidates=FinancialCashCollection.query.filter_by(terminal=terminal,collection_date=pd).all() if pd else []
+                if not candidates: continue
+                declared=float(gv(row,"Valor Declarado (R$)") or 0); processed=float(gv(row,"Valor Apurado (R$)") or 0); pd=_fin_parse_date(gv(row,"Data do Processamento"))
+                for c in candidates:
+                    c.declared_amount=declared; c.processed_amount=processed; c.processed_at=datetime.combine(pd,datetime.min.time()) if pd else c.processed_at
+                    result["processed_updated"]+=1
+            except Exception: result["errors"]+=1
+    return result
+
+def _fin_import_transactions_wb(wb, filename, user_id):
+    ws=wb[wb.sheetnames[0]]; header=next(ws.iter_rows(min_row=1,max_row=1,values_only=True)); headers={str(v or "").strip().upper():i for i,v in enumerate(header)}
+    required={"ATM","CTM_DATETIME_TZ","CTD_VALUE"}
+    if not required.issubset(headers): raise ValueError("Planilha de transações sem colunas ATM, ctm_datetime_tz e ctd_value.")
+    out=[]; errors=0; total=0
+    def gv(row,key):
+        i=headers.get(key.upper()); return row[i] if i is not None and i<len(row) else None
+    for row in ws.iter_rows(min_row=2,values_only=True):
+        total+=1
+        try:
+            terminal=_fin_terminal(gv(row,"ATM")); dt=gv(row,"ctm_datetime_tz")
+            if not isinstance(dt,datetime):
+                d=_fin_parse_date(gv(row,"data")); dt=_fin_dt(d,gv(row,"hora"))
+            if not terminal or not dt: continue
+            status=str(gv(row,"ctm_status") or "").strip().upper(); value=float(gv(row,"ctd_value") or 0); cpm=str(gv(row,"cpm_id") or "").strip()
+            sh=_fin_hash("TX",terminal,dt.isoformat(),status,value,cpm)
+            out.append({"terminal":terminal,"transaction_at":dt,"status":status or None,"value":value,"cpm_id":cpm or None,"source_file":filename,"source_hash":sh,"imported_by":user_id,"imported_at":datetime.utcnow()})
+            if len(out)>=10000:
+                _fin_bulk_ignore(FinancialATMTransaction,out); db.session.flush(); out=[]
+        except Exception: errors+=1
+    inserted=_fin_bulk_ignore(FinancialATMTransaction,out); db.session.flush()
+    # rowcount de chunks anteriores não é acumulado aqui; devolve total persistido deste arquivo por source_file para diagnóstico.
+    persisted=db.session.query(func.count(FinancialATMTransaction.id)).filter(FinancialATMTransaction.source_file==filename).scalar() or inserted
+    return {"kind":"TRANSACOES","rows_read":total,"transactions":int(persisted),"errors":errors}
+
+@app.get("/financeiro/apuracao")
+@login_required
+def financial_cash_reconciliation_page():
+    if not _financial_admin_allowed() or not _has_access("finance.apuracao"):
+        return redirect(url_for("dashboard_landing"))
+    return render_template("financial_cash_reconciliation.html",app_release=APP_RELEASE)
+
+@app.post("/api/financeiro/apuracao/importar")
+@login_required
+def financial_cash_reconciliation_import():
+    if not _financial_admin_allowed() or not _has_access("finance.apuracao"):
+        return jsonify({"ok":False,"error":"Sem permissão."}),403
+    files=request.files.getlist("files") or ([request.files.get("file")] if request.files.get("file") else [])
+    files=[f for f in files if f and f.filename]
+    if not files:return jsonify({"ok":False,"error":"Selecione uma ou mais planilhas Excel."}),400
+    results=[]
+    try:
+        for f in files:
+            wb=load_workbook(f.stream,read_only=True,data_only=True)
+            upper=[x.upper() for x in wb.sheetnames]
+            if any(x.startswith("TRANSPORTE") for x in upper): results.append(_fin_import_tbf_wb(wb,secure_filename(f.filename),session.get("user_id")))
+            else: results.append(_fin_import_transactions_wb(wb,secure_filename(f.filename),session.get("user_id")))
+            wb.close()
+        db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="FIN_APURACAO_IMPORT",entity_type="financial_cash_reconciliation",entity_id=str(len(files)),detail=json.dumps(results,ensure_ascii=False)[:4000])); db.session.commit()
+        return jsonify({"ok":True,"results":results})
+    except Exception as exc:
+        db.session.rollback(); return jsonify({"ok":False,"error":str(exc)}),400
+
+@app.get("/api/financeiro/apuracao/terminais")
+@login_required
+def financial_cash_reconciliation_terminals():
+    if not _financial_admin_allowed() or not _has_access("finance.apuracao"): return jsonify({"ok":False,"error":"Sem permissão."}),403
+    terms=sorted({x[0] for x in db.session.query(FinancialCashCollection.terminal).distinct().all() if x and x[0]},key=lambda x:(len(str(x)),str(x)))
+    return jsonify({"ok":True,"terminals":terms,"collections":db.session.query(func.count(FinancialCashCollection.id)).scalar() or 0,"transactions":db.session.query(func.count(FinancialATMTransaction.id)).scalar() or 0})
+
+@app.get("/api/financeiro/apuracao/coletas")
+@login_required
+def financial_cash_reconciliation_collections():
+    if not _financial_admin_allowed() or not _has_access("finance.apuracao"): return jsonify({"ok":False,"error":"Sem permissão."}),403
+    terminal=_fin_terminal(request.args.get("terminal"));
+    if not terminal:return jsonify({"ok":True,"rows":[]})
+    rows=FinancialCashCollection.query.filter_by(terminal=terminal).order_by(FinancialCashCollection.end_at).all()
+    return jsonify({"ok":True,"rows":[{"id":x.id,"terminal":x.terminal,"date":x.end_at.isoformat(),"date_label":x.end_at.strftime("%d/%m/%y %H:%M"),"collected_amount":round(float(x.collected_amount or 0),2),"processed_amount":None if x.processed_amount is None else round(float(x.processed_amount),2),"point_name":x.point_name or "","gtv":x.gtv or ""} for x in rows]})
+
+@app.get("/api/financeiro/apuracao/calcular")
+@login_required
+def financial_cash_reconciliation_calculate():
+    if not _financial_admin_allowed() or not _has_access("finance.apuracao"): return jsonify({"ok":False,"error":"Sem permissão."}),403
+    terminal=_fin_terminal(request.args.get("terminal")); a=db.session.get(FinancialCashCollection,int(request.args.get("initial_id") or 0)); b=db.session.get(FinancialCashCollection,int(request.args.get("final_id") or 0))
+    if not terminal or not a or not b or a.terminal!=terminal or b.terminal!=terminal:return jsonify({"ok":False,"error":"Selecione terminal, coleta inicial e coleta final válidos."}),400
+    if b.end_at<=a.end_at:return jsonify({"ok":False,"error":"A coleta final deve ser posterior à coleta inicial."}),400
+    base=FinancialATMTransaction.query.filter(FinancialATMTransaction.terminal==terminal,FinancialATMTransaction.transaction_at>a.end_at,FinancialATMTransaction.transaction_at<=b.end_at)
+    # Comparativo financeiro usa status A (aprovada); demais status ficam visíveis no detalhamento para auditoria.
+    approved=base.filter(func.upper(FinancialATMTransaction.status)=="A")
+    tx_count=approved.count(); tx_sum=float(db.session.query(func.coalesce(func.sum(FinancialATMTransaction.value),0)).filter(FinancialATMTransaction.terminal==terminal,FinancialATMTransaction.transaction_at>a.end_at,FinancialATMTransaction.transaction_at<=b.end_at,func.upper(FinancialATMTransaction.status)=="A").scalar() or 0)
+    all_count=base.count(); status_rows=db.session.query(FinancialATMTransaction.status,func.count(FinancialATMTransaction.id),func.coalesce(func.sum(FinancialATMTransaction.value),0)).filter(FinancialATMTransaction.terminal==terminal,FinancialATMTransaction.transaction_at>a.end_at,FinancialATMTransaction.transaction_at<=b.end_at).group_by(FinancialATMTransaction.status).all()
+    collected=float(b.collected_amount or 0); diff=round(collected-tx_sum,2); pct=round((diff/tx_sum*100),4) if tx_sum else None
+    details=approved.order_by(FinancialATMTransaction.transaction_at).limit(500).all()
+    return jsonify({"ok":True,"terminal":terminal,"initial":{"id":a.id,"at":a.end_at.isoformat(),"label":a.end_at.strftime("%d/%m/%Y %H:%M"),"amount":round(float(a.collected_amount or 0),2)},"final":{"id":b.id,"at":b.end_at.isoformat(),"label":b.end_at.strftime("%d/%m/%Y %H:%M"),"amount":round(collected,2),"processed_amount":None if b.processed_amount is None else round(float(b.processed_amount),2)},"transaction_count":tx_count,"transaction_sum":round(tx_sum,2),"all_status_count":all_count,"collected_amount":round(collected,2),"difference":diff,"difference_pct":pct,"status":"CONCILIADO" if abs(diff)<0.01 else "DIVERGENCIA","status_breakdown":[{"status":st or "—","count":int(n),"amount":round(float(v or 0),2)} for st,n,v in status_rows],"transactions":[{"at":x.transaction_at.isoformat(),"label":x.transaction_at.strftime("%d/%m/%Y %H:%M:%S"),"status":x.status or "","value":round(float(x.value or 0),2)} for x in details],"transactions_truncated":tx_count>500,"rule":"status A; após o horário final da coleta inicial e até o horário final da coleta final"})
 
 @app.post("/api/financeiro/importar.xlsx")
 @login_required

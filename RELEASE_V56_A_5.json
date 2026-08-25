@@ -1,0 +1,10 @@
+{
+  "release": "V56-A.5",
+  "date": "2026-08-25",
+  "highlights": [
+    "Financeiro > Apuração de Numerário: importação TBForte e Transações ATM, filtro Terminal > Coleta inicial > Coleta final e comparativo somatória das transações aprovadas x valor coletado na coleta final.",
+    "Perfis: subcategorias/subatividades visíveis por padrão e selecionáveis individualmente.",
+    "Lançamentos mensais: competência nova reaproveita todos os lançamentos da competência anterior do mesmo centro de custo, com compatibilidade para nomenclaturas legadas e ordem Empresa A-Z / Serviço A-Z."
+  ],
+  "base": "V56-A.4 HOTFIX3"
+}
