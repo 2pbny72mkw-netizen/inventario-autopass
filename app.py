@@ -40,7 +40,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V56-A.4"
+APP_RELEASE = "V56-A.4 HOTFIX2"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -798,18 +798,62 @@ def login_required(fn):
     return inner
 
 
-ACCESS_MODULES = ("dashboard","field","implantation","teams","users","finance","finance_dashboard","management","about_versions")
+ACCESS_GROUPS = {
+    "dashboard": ("Dashboard Geral", ("dashboard.general",)),
+    "field": ("Field", (
+        "field.dashboard","field.inventory","field.calls","field.equipment","field.evidence","field.panorama","field.chip_recarga"
+    )),
+    "implantation": ("Implantação de Hardware", (
+        "implantation.dashboard","implantation.visits","implantation.reports","implantation.emv"
+    )),
+    "teams": ("RH / Equipes", (
+        "teams.map","teams.today","teams.schedule","teams.manage","teams.export"
+    )),
+    "users": ("RH / Usuários", (
+        "users.view","users.create","users.edit","users.activate","users.delete","users.password","users.export"
+    )),
+    "finance": ("Financeiro", (
+        "finance.support","finance.collection","finance.assistance","finance.implantation","finance.entries","finance.suppliers","finance.import","finance.edit","finance.delete"
+    )),
+    "finance_dashboard": ("Dashboard Financeira", ("finance.dashboard",)),
+    "management": ("Gestão", (
+        "management.calls","management.360","management.notifications","management.diagnostics","management.settings"
+    )),
+    "about_versions": ("Sobre / Versões", ("about.versions",)),
+}
+ACCESS_MODULES = tuple(ACCESS_GROUPS.keys())
+ACCESS_SUBMODULES = tuple(k for _g,(_label,children) in ACCESS_GROUPS.items() for k in children)
+ACCESS_ALL = set(ACCESS_MODULES) | set(ACCESS_SUBMODULES)
+ACCESS_LABELS = {
+ "dashboard.general":"Dashboard Geral",
+ "field.dashboard":"Dashboard Field","field.inventory":"Inventário / Lançamento","field.calls":"Chamados","field.equipment":"Equipamentos","field.evidence":"Evidências","field.panorama":"Visão Panorâmica","field.chip_recarga":"Troca de Chips – Recarga",
+ "implantation.dashboard":"Dashboard Implantação","implantation.visits":"Visita a Campo / Relatório de Visita","implantation.reports":"Relatórios / Visitas recentes","implantation.emv":"Troca de Chips EMV – Trilhos",
+ "teams.map":"Mapa operacional","teams.today":"Operação de Hoje","teams.schedule":"Escala por dias","teams.manage":"Gestão de equipes / escala","teams.export":"Exportar dados",
+ "users.view":"Visualizar usuários","users.create":"Criar usuário","users.edit":"Editar usuário","users.activate":"Ativar / Desativar","users.delete":"Excluir / Arquivar","users.password":"Redefinir senha","users.export":"Exportar Excel",
+ "finance.dashboard":"Dashboard Financeira","finance.support":"Suporte a Campo","finance.collection":"Coleta de Valores","finance.assistance":"Assistência Técnica","finance.implantation":"Implantação de Hardware","finance.entries":"Lançamentos","finance.suppliers":"Empresas / Fornecedores","finance.import":"Importar planilha","finance.edit":"Editar lançamentos","finance.delete":"Excluir lançamentos",
+ "management.calls":"Chamados","management.360":"Central 360","management.notifications":"Notificações","management.diagnostics":"Diagnóstico","management.settings":"Configurações",
+ "about.versions":"Histórico / Versões",
+}
+
+def _expand_legacy_access(values):
+    values=set(values or ())
+    out=set(values)
+    # Compatibilidade: uma permissão antiga de módulo significa acesso a todas as subatividades do módulo.
+    for group in list(values):
+        if group in ACCESS_GROUPS:
+            out.update(ACCESS_GROUPS[group][1])
+    return out
 
 def _default_access_for_role(role):
     defaults={
-      "manager":set(ACCESS_MODULES),
-      "manager_field":{"dashboard","field","implantation","teams","finance_dashboard","management","about_versions"},
-      "technician":{"dashboard","field","about_versions"},
-      "technician_implantation":{"dashboard","field","implantation","about_versions"},
-      "consultation":{"dashboard","field","teams","about_versions"},
-      "hr":{"teams","users","about_versions"},
-      "dispatcher":{"dashboard","field","teams","management","about_versions"},
-      "atm_financial_admin":{"finance","finance_dashboard","about_versions"},
+      "manager":set(ACCESS_SUBMODULES),
+      "manager_field":{"dashboard.general","field.dashboard","field.inventory","field.calls","field.equipment","field.evidence","field.panorama","field.chip_recarga","implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","teams.map","teams.today","teams.schedule","teams.manage","teams.export","finance.dashboard","management.calls","management.360","management.notifications","management.diagnostics","about.versions"},
+      "technician":{"field.dashboard","field.inventory","field.calls","field.equipment","field.evidence","field.panorama","field.chip_recarga","about.versions"},
+      "technician_implantation":{"field.inventory","field.equipment","field.evidence","field.panorama","field.chip_recarga","implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","about.versions"},
+      "consultation":{"dashboard.general","field.dashboard","field.inventory","field.equipment","field.evidence","field.panorama","field.chip_recarga","teams.map","teams.today","teams.schedule","about.versions"},
+      "hr":{"teams.map","teams.today","teams.schedule","teams.manage","teams.export","users.view","users.create","users.edit","users.activate","users.password","users.export","about.versions"},
+      "dispatcher":{"dashboard.general","field.calls","field.chip_recarga","teams.map","teams.today","teams.schedule","management.calls","about.versions"},
+      "atm_financial_admin":{"finance.dashboard","finance.support","finance.collection","finance.assistance","finance.implantation","finance.entries","finance.suppliers","finance.import","finance.edit","finance.delete","about.versions"},
     }
     return defaults.get(role,set())
 
@@ -820,28 +864,36 @@ def _user_access_set(user=None):
     if not user:return set()
     try:
         custom=json.loads(user.access_json or "null")
-        if isinstance(custom,list): return {x for x in custom if x in ACCESS_MODULES}
+        if isinstance(custom,list):
+            return _expand_legacy_access({x for x in custom if x in ACCESS_ALL})
     except Exception: pass
     return _default_access_for_role(user.role)
 
-def _has_access(module):
+def _has_access(permission):
     if not session.get("user_id"): return False
     if session.get("role")=="manager": return True
-    return module in _user_access_set()
+    access=_user_access_set()
+    if permission in ACCESS_GROUPS:
+        return permission in access or any(x in access for x in ACCESS_GROUPS[permission][1])
+    if permission in ACCESS_SUBMODULES:
+        group=permission.split('.',1)[0]
+        # access_json legado com o pai continua liberando todas as subatividades.
+        return permission in access or group in access
+    return False
 
 def _parse_access_form(role):
-    # Sem seleção explícita, usa o padrão do perfil.
     raw=request.form.getlist("access_modules")
-    allowed={x for x in raw if x in ACCESS_MODULES}
-    # Segurança: áreas administrativas sensíveis continuam limitadas ao perfil.
-    if role=="atm_financial_admin": allowed &= {"finance","finance_dashboard","about_versions"}
-    if role=="hr": allowed &= {"teams","users","about_versions"}
-    if role in ("technician","technician_implantation"): allowed -= {"users","finance","management"}
+    allowed={x for x in raw if x in ACCESS_ALL}
+    # Se o formulário novo mandar filhos, salvamos os filhos; pais antigos permanecem aceitos por compatibilidade.
+    if role=="atm_financial_admin": allowed={x for x in allowed if x.startswith("finance.") or x in ("finance","finance_dashboard","about_versions","about.versions")}
+    if role=="hr": allowed={x for x in allowed if x.startswith("teams.") or x.startswith("users.") or x in ("teams","users","about_versions","about.versions")}
+    if role in ("technician","technician_implantation"):
+        allowed={x for x in allowed if not (x.startswith("users.") or x.startswith("finance.") or x.startswith("management.")) and x not in ("users","finance","finance_dashboard","management")}
     return sorted(allowed if request.form.get("access_config_present")=="1" else _default_access_for_role(role))
 
 @app.context_processor
 def inject_access_helpers():
-    return {"can_view": _has_access, "access_modules": ACCESS_MODULES, "user_access": _user_access_set}
+    return {"can_view": _has_access, "access_modules": ACCESS_MODULES, "access_groups": ACCESS_GROUPS, "access_labels": ACCESS_LABELS, "user_access": _user_access_set}
 
 def manager_required(fn):
     @wraps(fn)
@@ -1467,6 +1519,7 @@ def technician_checkin():
 @app.get("/api/equipes/status")
 @teams_view_required
 def teams_status_api():
+    if not (_has_access("teams.today") or _has_access("teams.map")): abort(403)
     """V56-A.3 — operação de hoje + última posição GPS + estação atual/mais próxima."""
     _ensure_team_schedule_profiles()
     local_now = datetime.now(ZoneInfo("America/Sao_Paulo"))
@@ -1547,6 +1600,7 @@ def teams_collaborators_api():
 @app.get("/api/equipes/calendario")
 @teams_view_required
 def teams_calendar_api():
+    if not _has_access("teams.schedule"): abort(403)
     """V22.1 — grade multi-dia sempre responde JSON, inclusive em erro controlado."""
     try:
         _ensure_team_schedule_profiles()
@@ -1621,6 +1675,7 @@ def teams_calendar_api():
 @app.get("/api/equipes/perfis")
 @manager_required
 def teams_profiles_api():
+    if not _has_access("teams.manage"): abort(403)
     _ensure_team_schedule_profiles()
     profiles = TeamScheduleProfile.query.order_by(
         TeamScheduleProfile.active.desc(), TeamScheduleProfile.category, TeamScheduleProfile.name
@@ -1647,6 +1702,7 @@ def teams_profiles_api():
 @app.post("/api/equipes/perfis")
 @manager_required
 def teams_profile_create_api():
+    if not _has_access("teams.manage"): abort(403)
     _ensure_team_schedule_profiles()
     data = request.get_json(silent=True) or {}
 
@@ -1726,6 +1782,7 @@ def teams_profile_create_api():
 @app.put("/api/equipes/perfis/<int:profile_id>")
 @manager_required
 def teams_profile_update_api(profile_id):
+    if not _has_access("teams.manage"): abort(403)
     _ensure_team_schedule_profiles()
     row = db.session.get(TeamScheduleProfile, profile_id)
     if not row:
@@ -1802,6 +1859,7 @@ def teams_profile_update_api(profile_id):
 @app.delete("/api/equipes/perfis/<int:profile_id>")
 @manager_required
 def teams_profile_remove_api(profile_id):
+    if not _has_access("teams.manage"): abort(403)
     _ensure_team_schedule_profiles()
     row = db.session.get(TeamScheduleProfile, profile_id)
     if not row:
@@ -1815,6 +1873,7 @@ def teams_profile_remove_api(profile_id):
 @app.get("/api/equipes/export/excel")
 @dashboard_required
 def teams_export_excel_api():
+    if not _has_access("teams.export"): abort(403)
     _ensure_team_schedule_profiles()
     start_raw = request.args.get("start", "").strip()
     days = max(1, min(31, request.args.get("days", type=int) or 14))
@@ -2468,6 +2527,7 @@ def my_profile_page():
 @app.get("/patrimonio")
 @dashboard_required
 def patrimonio_page():
+    if not _has_access("field.equipment"): abort(403)
     return render_template("patrimonio.html")
 
 
@@ -2527,6 +2587,7 @@ def v8_operation_api():
 @app.get("/api/equipes/rail-network")
 @teams_view_required
 def teams_rail_network_api():
+    if not _has_access("teams.map"): abort(403)
     """V39.7.3 — payload leve e dedicado ao mapa de Equipes.
 
     Evita usar /api/locations, que também calcula inventário, divergências e referências
@@ -2552,6 +2613,7 @@ def teams_rail_network_api():
 @app.get("/equipes")
 @teams_view_required
 def teams_page():
+    if not _has_access("teams"): abort(403)
     return render_template("teams.html")
 
 
@@ -2559,11 +2621,13 @@ def teams_page():
 @app.get("/implantacao-hardware")
 @hardware_implantation_required
 def hardware_implantation_page():
+    if not (_has_access("implantation.visits") or _has_access("implantation.reports")): abort(403)
     return render_template("hardware_implantation.html", app_release=APP_RELEASE)
 
 @app.get("/implantacao-hardware/visita-campo")
 @hardware_implantation_required
 def hardware_field_visit_page():
+    if not _has_access("implantation.visits"): abort(403)
     return render_template("hardware_field_visit.html", app_release=APP_RELEASE)
 
 @app.get("/dashboard/implantacao")
@@ -2865,6 +2929,37 @@ def _normalize_line_key(value):
     return re.sub(r"^L(?=\d{2}\s*-)", "", normalize(value))
 
 
+def _station_match_key(value):
+    """Normaliza nome de estação para casar nomes abreviados e comerciais.
+
+    Exemplos reais da base: SÉ <-> PRAÇA DA SÉ, ITAQUERA <-> CORINTHIANS-ITAQUERA
+    e BARRA FUNDA <-> PALMEIRAS-BARRA FUNDA. O casamento é por tokens inteiros
+    para evitar falsos positivos como SÉ dentro de BRESSER.
+    """
+    text_value = re.sub(r"[^A-Z0-9]+", " ", normalize(value))
+    stopwords = {"ESTACAO", "EST", "PRACA", "DA", "DE", "DO", "DAS", "DOS", "PALMEIRAS", "CORINTHIANS"}
+    return tuple(token for token in text_value.split() if token and token not in stopwords)
+
+
+def _station_matches(asset_locality, asset_code, location_name):
+    station_text = normalize(location_name)
+    station_name = normalize(asset_locality)
+    code = normalize(asset_code)
+
+    # Regras exatas/legadas primeiro. Código também pode ser o próprio nome curto.
+    if station_name and (station_name == station_text or station_name in station_text or station_text.endswith(station_name)):
+        return True
+    if code and (station_text == code or station_text.startswith(code + " ") or (" " + code + " ") in (" " + station_text + " ")):
+        return True
+
+    asset_tokens = set(_station_match_key(asset_locality))
+    loc_tokens = set(_station_match_key(location_name))
+    if not asset_tokens or not loc_tokens:
+        return False
+    smaller, larger = (asset_tokens, loc_tokens) if len(asset_tokens) <= len(loc_tokens) else (loc_tokens, asset_tokens)
+    return smaller.issubset(larger)
+
+
 def _invalidate_expected_cache():
     _expected_cache["at"] = 0.0
     _expected_cache["data"] = None
@@ -2916,11 +3011,7 @@ def _expected_assets_by_location(force=False):
             lc = normalize(loc.company)
             # V39.7.4: para Validadores, a referência da base é o TERMINAL
             # associado à linha/estação; não excluir por divergência de operador histórico.
-            station_text = normalize(loc.location)
-            matched = bool(
-                (station_name and (station_name in station_text or station_text.endswith(station_name)))
-                or (code and station_text.startswith(code + " "))
-            )
+            matched = _station_matches(asset.locality, asset.location_code or asset.station_code, loc.location)
             if matched:
                 result[loc.id][typ] += qty
                 break
@@ -4243,6 +4334,7 @@ def attachments(inventory_id):
 @app.route("/usuarios")
 @user_admin_required
 def users_page():
+    if not _has_access("users.view"): abort(403)
     active_q = User.query.filter(User.archived_at.is_(None))
     archived_q = User.query.filter(User.archived_at.isnot(None))
     if session.get("role") == "hr":
@@ -4297,6 +4389,7 @@ def _next_user_code(role):
 @app.post("/usuarios/novo")
 @user_admin_required
 def create_user():
+    if not _has_access("users.create"): abort(403)
     name = request.form.get("name", "").strip()
     username = request.form.get("username", "").strip().lower()
     password = request.form.get("password", "")
@@ -4433,6 +4526,7 @@ def _active_manager_count(exclude_user_id=None):
 @app.post("/usuarios/<int:user_id>/toggle")
 @user_admin_required
 def toggle_user(user_id):
+    if not _has_access("users.activate"): abort(403)
     user = db.session.get(User, user_id)
     if not user:
         flash("Usuário não encontrado.")
@@ -4458,6 +4552,7 @@ def toggle_user(user_id):
 @app.post("/usuarios/<int:user_id>/editar")
 @user_admin_required
 def edit_user(user_id):
+    if not _has_access("users.edit"): abort(403)
     user = db.session.get(User, user_id)
     if not user:
         flash("Usuário não encontrado.")
@@ -4657,6 +4752,7 @@ def _user_operational_history_counts(user_id):
 @app.post("/usuarios/<int:user_id>/excluir")
 @manager_required
 def delete_or_archive_user(user_id):
+    if not _has_access("users.delete"): abort(403)
     user = db.session.get(User, user_id)
     if not user:
         flash("Usuário não encontrado.")
@@ -4705,7 +4801,26 @@ def delete_or_archive_user(user_id):
     for profile in schedule_profiles:
         db.session.delete(profile)
     db.session.delete(user)
-    db.session.commit()
+    try:
+        db.session.commit()
+    except IntegrityError:
+        # Há referência histórica não contemplada pelo contador resumido: preservar rastreabilidade e arquivar.
+        db.session.rollback()
+        user = db.session.get(User, user_id)
+        if user:
+            for profile in TeamScheduleProfile.query.filter_by(user_id=user.id).all():
+                profile.active=False
+                profile.user_id=None
+                profile.updated_at=datetime.utcnow()
+            user.active=False
+            user.archived_at=datetime.utcnow()
+            user.username=f"arquivado-{user.id}-{uuid.uuid4().hex[:10]}"
+            user.password_hash=generate_password_hash(uuid.uuid4().hex + uuid.uuid4().hex)
+            user.email=None; user.phone=None; user.photo_url=None
+            db.session.commit()
+            flash(f"Usuário {user.name} possui histórico vinculado e foi arquivado com segurança em vez de excluído.")
+            return redirect(url_for("users_page"))
+        raise
 
     if old_photo_key:
         try:
@@ -4721,6 +4836,7 @@ def delete_or_archive_user(user_id):
 @app.post("/usuarios/<int:user_id>/reativar")
 @user_admin_required
 def reactivate_user(user_id):
+    if not _has_access("users.activate"): abort(403)
     user = db.session.get(User, user_id)
     if not user or not user.archived_at:
         flash("Usuário arquivado não encontrado.")
@@ -4752,6 +4868,7 @@ def reactivate_user(user_id):
 @app.get("/usuarios/exportar.xlsx")
 @user_admin_required
 def export_users_excel():
+    if not _has_access("users.export"): abort(403)
     wb = Workbook()
     ws = wb.active
     ws.title = "Cadastro de usuários"
@@ -4799,6 +4916,7 @@ def export_users_excel():
 @app.post("/usuarios/<int:user_id>/senha")
 @manager_required
 def reset_user_password(user_id):
+    if not _has_access("users.password"): abort(403)
     user = db.session.get(User, user_id)
     if not user:
         flash("Usuário não encontrado.")
@@ -7283,21 +7401,27 @@ def activities_summary_api():
         swaps=ChipSwap.query.filter_by(technician_id=uid).all()
         chip_done=sum(1 for x in swaps if x.status=="CONCLUÍDO")
         pan=PanoramaPoint.query.filter_by(created_by=uid).count()
-        activities += [
-          {"key":"inventory","title":"Inventário / Lançamento","href":"/tecnico","done":inv_today,"label":"lançamentos hoje"},
-          {"key":"chips","title":"Troca de Chip Recarga","href":"/troca-chips","done":chip_done,"label":"concluídos"},
-          {"key":"panorama","title":"Visão Panorâmica","href":"/visao-panoramica","done":pan,"label":"pontos registrados"}]
+        candidates = [
+          ("field.inventory", {"key":"inventory","title":"Inventário / Lançamento","href":"/tecnico","done":inv_today,"label":"lançamentos hoje"}),
+          ("field.chip_recarga", {"key":"chips","title":"Troca de Chip Recarga","href":"/troca-chips","done":chip_done,"label":"concluídos"}),
+          ("field.panorama", {"key":"panorama","title":"Visão Panorâmica","href":"/visao-panoramica","done":pan,"label":"pontos registrados"})]
+        activities += [item for perm,item in candidates if _has_access(perm)]
     if role in ("manager","technician_implantation"):
         emv_done=EmvChipSwap.query.filter_by(status="CONCLUÍDA").count()
-        activities.append({"key":"emv","title":"Troca de Chips EMV - Trilhos","href":"/troca-chips-emv","done":emv_done,"label":"concluídos"})
+        
+        if _has_access("implantation.emv"):
+            activities.append({"key":"emv","title":"Troca de Chips EMV - Trilhos","href":"/troca-chips-emv","done":emv_done,"label":"concluídos"})
         done=HardwareFieldVisit.query.filter_by(status="FINALIZADO").count()
-        activities.append({"key":"implantation","title":"Implantação de Hardware","href":"/implantacao-hardware","done":done,"label":"visitas finalizadas"})
+        
+        if _has_access("implantation.visits") or _has_access("implantation.reports"):
+            activities.append({"key":"implantation","title":"Implantação de Hardware","href":"/implantacao-hardware","done":done,"label":"visitas finalizadas"})
     return jsonify({"ok":True,"activities":activities})
 
 
 @app.get("/troca-chips")
 @login_required
 def chip_swap_page():
+    if not _has_access("field.chip_recarga"): abort(403)
     if session.get("role") not in ("manager", "manager_field", "technician", "consultation", "dispatcher"):
         return redirect(url_for("teams_page"))
     return render_template("chip_swap.html")
@@ -7318,14 +7442,7 @@ def _chip_swap_asset_matches_location(asset, loc):
         return False
     if _normalize_line_key(asset.line) != _normalize_line_key(loc.line):
         return False
-    station_text = normalize(loc.location)
-    station_name = normalize(asset.locality)
-    code = normalize(asset.location_code or asset.station_code)
-    if code and (station_text.startswith(code + " ") or (" " + code + " ") in (" " + station_text + " ")):
-        return True
-    if station_name and (station_name == station_text or station_name in station_text or station_text.endswith(station_name)):
-        return True
-    return False
+    return _station_matches(asset.locality, asset.location_code or asset.station_code, loc.location)
 
 _chip_swap_tables_ready = False
 _chip_swap_payload_cache = {"at": 0.0, "data": None}
@@ -7438,7 +7555,9 @@ def _chip_swap_locations_payload(force=False):
                 "test_notes": sw.test_notes if sw else "",
                 "photos": [{"id": ph.id, "url": "/uploads/"+ph.stored_name, "thumb_url": "/uploads/"+ph.stored_name+"?thumb=1", "name": ph.original_name} for ph in photos],
             })
-        total = max(len(items), int(loc.expected_validator or 0))
+        # V56-A.4 HOTFIX2: a lista detalhada é a fonte principal. O contador legado
+        # expected_validator fica apenas como fallback quando ainda não há ativos detalhados.
+        total = len(items) if items else int(loc.expected_validator or 0)
         concluded = sum(1 for i in items if i["status"] == "CONCLUÍDA")
         progress = sum(1 for i in items if i["status"] == "EM ANDAMENTO")
         pending = max(total - concluded - progress, 0)
@@ -7767,7 +7886,9 @@ def _ensure_emv_tables():
 
 @app.get("/troca-chips-emv")
 @emv_field_required
-def emv_chip_page(): return render_template("emv_chip_swap.html",app_release=APP_RELEASE)
+def emv_chip_page():
+    if not _has_access("implantation.emv"): abort(403)
+    return render_template("emv_chip_swap.html",app_release=APP_RELEASE)
 
 @app.get("/api/emv-chip-swaps")
 @login_required
@@ -7947,7 +8068,7 @@ def _financial_admin_allowed():
 @app.get("/financeiro/dashboard")
 @login_required
 def financial_dashboard_page():
-    if not _has_access("finance_dashboard"):
+    if not _has_access("finance.dashboard"):
         abort(403)
     # V55.2: para gestores, a Dashboard Financeiro é painel do shell gerencial.
     if session.get("role") in ("manager","manager_field"):
@@ -7982,6 +8103,8 @@ def financial_assistance_page():
 @app.get("/financeiro/suporte-campo/coleta-valores")
 @login_required
 def financial_cash_collection_page():
+    if not _has_access("finance.collection"):
+        return redirect(url_for("dashboard_landing"))
     if session.get("role") not in ("manager", "manager_field", "atm_financial_admin"):
         return redirect(url_for("dashboard_landing"))
     return render_template("financial_cash_collection.html", app_release=APP_RELEASE)
@@ -7991,7 +8114,7 @@ def financial_cash_collection_page():
 @app.get("/financeiro/suporte-campo")
 @login_required
 def financial_cost_management_page():
-    if not _has_access("finance") or not _financial_admin_allowed():
+    if not (_has_access("finance.entries") or _has_access("finance.support") or _has_access("finance.suppliers")) or not _financial_admin_allowed():
         return redirect(url_for("dashboard_landing"))
     return render_template("financial_cost_management.html", app_release=APP_RELEASE)
 
@@ -8411,6 +8534,7 @@ def panorama_export_pptx():
 @app.get("/visao-panoramica")
 @login_required
 def panorama_page():
+    if not _has_access("field.panorama"): abort(403)
     if session.get("role") not in ("manager", "manager_field", "technician", "consultation"):
         return redirect(url_for("activities_page" if session.get("role") == "technician_implantation" else "teams_page"))
     return render_template("panorama.html")

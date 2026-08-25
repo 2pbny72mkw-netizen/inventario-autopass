@@ -1,0 +1,10 @@
+{
+  "version": "V56-A.4 HOTFIX2",
+  "date": "2026-08-25",
+  "changes": [
+    "Troca de Chip Recarga: unifica a regra de associação dos validadores à estação",
+    "Aceita nomes equivalentes como SÉ/PRAÇA DA SÉ, ITAQUERA/CORINTHIANS-ITAQUERA e BARRA FUNDA/PALMEIRAS-BARRA FUNDA",
+    "Evita falso positivo por substring usando comparação por tokens inteiros",
+    "Contador de previstos passa a usar a base detalhada quando houver ativos e expected_validator apenas como fallback"
+  ]
+}
