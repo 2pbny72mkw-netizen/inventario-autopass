@@ -1,4 +1,4 @@
-window.AUTOPASS_TEAMS_VERSION="teams-v39-7-10";
+window.AUTOPASS_TEAMS_VERSION="teams-v56-a3";
 
 console.log('AUTOPASS Central Operacional V26 carregada');
 
@@ -136,7 +136,7 @@ async function loadTeams(){
         <span class="linkBadge ${t.linked?'linked':'unlinked'}">${t.linked?'Usuário vinculado':'Sem vínculo com Usuários'}</span>
       </div>`;
     $('teamCards').appendChild(card);
-    if($('todayTeamTable')){ const tr=document.createElement('tr'); tr.innerHTML=`<td><b>${esc(t.name)}</b></td><td>${esc(t.job_title||t.category)}</td><td>${esc(t.schedule_type||'—')}</td><td>${esc(t.shift||'—')}</td><td>${esc(t.entry||'—')}</td><td>${esc((t.lines||[]).join(' / ')||'—')}</td><td>${esc(t.freshness||'SEM SINAL')}</td><td>${esc(freshnessText(t))}</td>`; $('todayTeamTable').appendChild(tr); }
+    if($('todayTeamTable')){ const tr=document.createElement('tr'); const st=t.nearest_station||{};tr.innerHTML=`<td><b>${esc(t.name)}</b></td><td>${esc(t.job_title||t.category)}</td><td>${esc(t.company||'—')}</td><td>${esc(t.schedule_type||'—')}</td><td>${esc(t.shift||t.entry||'—')}</td><td>${esc(t.first_login||'—')}</td><td><b>${esc(t.operation_status||t.freshness||'—')}</b></td><td>${esc(t.captured_at?new Date(t.captured_at).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}):'—')}</td><td>${esc(st.name||'—')}${st.name?`<small>${esc(st.relation||'')} · ${Number(st.distance_m||0).toLocaleString('pt-BR')} m · ${esc(st.line||'')}</small>`:''}</td><td>${esc(freshnessText(t))}</td>`; $('todayTeamTable').appendChild(tr); }
 
     if(t.latitude!=null&&t.longitude!=null){
       const m=L.marker([Number(t.latitude),Number(t.longitude)],{icon:markerIcon(t)})
@@ -147,7 +147,9 @@ async function loadTeams(){
             ${esc(t.category)} · ${esc(t.shift||'')}<br>
             Entrada: ${esc(t.entry||'—')}<br>
             ${t.accuracy!=null?`Precisão GPS: ${Math.round(Number(t.accuracy))} m<br>`:''}
-            <b>Localidade:</b> ${esc(t.current_location||'—')}<br>
+            <b>${t.nearest_station?.relation==='NA ESTAÇÃO'?'Estação atual':'Estação mais próxima'}:</b> ${esc(t.nearest_station?.name||t.current_location||'—')}<br>
+            ${t.nearest_station?.line?`Linha: ${esc(t.nearest_station.line)} · ${esc(t.nearest_station.company||'')}<br>`:''}
+            ${t.nearest_station?.distance_m!=null?`Distância: ${Number(t.nearest_station.distance_m).toLocaleString('pt-BR')} m<br>`:''}
             ${esc(freshnessText(t))}
           </div>
         `,{maxWidth:260,closeButton:true});
@@ -158,6 +160,11 @@ async function loadTeams(){
   $('kCurrent').textContent=current;
   $('kAttention').textContent=attention;
   $('kNoSignal').textContent=noSignal;
+  if($('opInOperation')) $('opInOperation').textContent=d.summary?.in_operation||0;
+  if($('opLate')) $('opLate').textContent=d.summary?.late||0;
+  if($('opNoLogin')) $('opNoLogin').textContent=d.summary?.not_logged||0;
+  if($('opStale')) $('opStale').textContent=d.summary?.stale_gt10||0;
+  if($('opNoGps')) $('opNoGps').textContent=d.summary?.no_gps||0;
 
   if(markers.length){
     const bounds=L.featureGroup(markers).getBounds();
