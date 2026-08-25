@@ -1,0 +1,12 @@
+{
+  "release": "V56-A.3 HOTFIX",
+  "date": "2026-08-25",
+  "base": "V56-A.3",
+  "scope": [
+    "restaura-importacao-planilha-financeira",
+    "paginacao-padrao-10",
+    "seletor-10-25-50-100",
+    "recolher-expandir-tabelas-financeiras",
+    "preserva-filtros-e-paginacao"
+  ]
+}
