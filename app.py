@@ -20,7 +20,7 @@ import threading
 import html as html_lib
 from functools import wraps
 
-from flask import Flask, render_template, request, redirect, url_for, session, jsonify, flash, send_from_directory, Response, send_file, make_response
+from flask import Flask, render_template, request, redirect, url_for, session, jsonify, flash, send_from_directory, Response, send_file, make_response, g
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import UniqueConstraint, Index, func, case, text, and_
 from sqlalchemy.exc import IntegrityError
@@ -40,7 +40,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V56-A.5"
+APP_RELEASE = "V56-B"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -133,6 +133,30 @@ app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
 
 db = SQLAlchemy(app)
 
+# V56-B — telemetria leve. Não registra arquivos estáticos nem a própria API de telemetria.
+@app.before_request
+def _v56b_perf_start():
+    g._perf_started = time.perf_counter()
+
+@app.after_request
+def _v56b_perf_finish(response):
+    try:
+        path=request.path or ""
+        if path.startswith(("/static/","/uploads/","/api/telemetria")) or path in ("/sw.js","/favicon.ico"):
+            return response
+        started=getattr(g,"_perf_started",None)
+        if started is not None and 'PerformanceMetric' in globals():
+            ms=(time.perf_counter()-started)*1000.0
+            # amostragem integral de rotas lentas/erros e 1/4 das rápidas para reduzir overhead.
+            keep = ms >= 750 or response.status_code >= 400 or (int(time.time()*1000) % 4 == 0)
+            if keep:
+                db.session.add(PerformanceMetric(route=(request.url_rule.rule if request.url_rule else path)[:220],method=request.method,status_code=response.status_code,duration_ms=round(ms,2),user_id=session.get("user_id")))
+                db.session.commit()
+    except Exception:
+        try: db.session.rollback()
+        except Exception: pass
+    return response
+
 
 class User(db.Model):
     __tablename__ = "users"
@@ -220,6 +244,9 @@ class FinancialCashCollection(db.Model):
     declared_amount = db.Column(db.Float)
     processed_amount = db.Column(db.Float)
     processed_at = db.Column(db.DateTime)
+    processed_note_count = db.Column(db.Integer)
+    processed_media_type = db.Column(db.String(40))
+    processing_charge = db.Column(db.Float)
     source_file = db.Column(db.String(255))
     source_hash = db.Column(db.String(64), nullable=False, unique=True, index=True)
     imported_by = db.Column(db.Integer, db.ForeignKey("users.id"))
@@ -238,6 +265,17 @@ class FinancialATMTransaction(db.Model):
     imported_by = db.Column(db.Integer, db.ForeignKey("users.id"))
     imported_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     __table_args__ = (Index("ix_fin_atm_tx_terminal_datetime", "terminal", "transaction_at"),)
+
+class PerformanceMetric(db.Model):
+    __tablename__ = "performance_metrics"
+    id = db.Column(db.Integer, primary_key=True)
+    route = db.Column(db.String(220), nullable=False, index=True)
+    method = db.Column(db.String(12), nullable=False)
+    status_code = db.Column(db.Integer, nullable=False, index=True)
+    duration_ms = db.Column(db.Float, nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    __table_args__ = (Index("ix_perf_created_route", "created_at", "route"),)
 
 class OperationalAction(db.Model):
     __tablename__ = "operational_actions"
@@ -1574,7 +1612,7 @@ def teams_status_api():
             if best is None or dist < best[0]: best=(dist,loc)
         if not best:return None
         dist,loc=best
-        radius=float(os.getenv("FIELD_GPS_MAX_DISTANCE_M","600"))
+        radius=500.0
         return {"id":loc.id,"name":loc.location,"company":loc.company or "","line":loc.line or "","distance_m":round(dist),"relation":"NA ESTAÇÃO" if dist<=radius else "MAIS PRÓXIMA"}
 
     rows=[]; summary={"in_operation":0,"late":0,"not_logged":0,"stale_gt10":0,"no_gps":0,"outside_locality":0,"not_started":0}
@@ -2858,6 +2896,49 @@ def hardware_field_visit_report(visit_id):
     signature_data_uri=_visit_media_data_uri(v.signature_file) if v.signature_file else None
     tech=db.session.get(User,v.technician_id)
     return render_template("hardware_field_visit_report.html",v=v,photos=photos,photo_media=photo_media,signature_data_uri=signature_data_uri,tech=tech)
+
+@app.get("/telemetria")
+@login_required
+def telemetry_page():
+    if session.get("role") != "manager": abort(403)
+    return render_template("telemetry.html", app_release=APP_RELEASE)
+
+@app.get("/api/telemetria/resumo")
+@login_required
+def telemetry_summary_api():
+    if session.get("role") != "manager": return jsonify({"ok":False,"error":"Acesso exclusivo ADM."}),403
+    try:
+        minutes=max(5,min(int(request.args.get("minutes") or 60),1440)); since=datetime.utcnow()-timedelta(minutes=minutes)
+        q=PerformanceMetric.query.filter(PerformanceMetric.created_at>=since)
+        rows=q.order_by(PerformanceMetric.created_at.desc()).limit(10000).all()
+        vals=[float(x.duration_ms or 0) for x in rows]
+        def pct(arr,p):
+            if not arr:return 0
+            a=sorted(arr); return round(a[min(len(a)-1,max(0,int((len(a)-1)*p)))],1)
+        by={}
+        for x in rows:
+            d=by.setdefault(x.route,{"route":x.route,"count":0,"sum":0.0,"max":0.0,"errors":0,"vals":[]})
+            d["count"]+=1; d["sum"]+=float(x.duration_ms or 0); d["max"]=max(d["max"],float(x.duration_ms or 0)); d["errors"]+=1 if x.status_code>=500 else 0; d["vals"].append(float(x.duration_ms or 0))
+        route_rows=[]
+        for d in by.values():
+            route_rows.append({"route":d["route"],"count":d["count"],"avg_ms":round(d["sum"]/d["count"],1),"p95_ms":pct(d["vals"],.95),"max_ms":round(d["max"],1),"errors":d["errors"]})
+        route_rows.sort(key=lambda x:(x["p95_ms"],x["avg_ms"]),reverse=True)
+        # série em blocos de 5 minutos
+        buckets={}
+        for x in rows:
+            dt=x.created_at; key=dt.replace(minute=(dt.minute//5)*5,second=0,microsecond=0)
+            b=buckets.setdefault(key,[]); b.append(float(x.duration_ms or 0))
+        timeline=[{"time":k.strftime("%H:%M"),"avg_ms":round(sum(v)/len(v),1),"p95_ms":pct(v,.95),"requests":len(v)} for k,v in sorted(buckets.items())]
+        active_since=datetime.utcnow()-timedelta(minutes=15)
+        active_users=db.session.query(func.count(func.distinct(SessionEvent.user_id))).filter(SessionEvent.created_at>=active_since).scalar() or 0
+        table_counts={
+          "Transações ATM":FinancialATMTransaction.query.count(),"Coletas":FinancialCashCollection.query.count(),"Inventário":Inventory.query.count(),"Posições GPS":TechnicianPosition.query.count(),"Chamados":TopDeskTicket.query.count(),"Auditoria":AuditEvent.query.count()
+        }
+        errors=sum(1 for x in rows if x.status_code>=500); avg=round(sum(vals)/len(vals),1) if vals else 0; p95=pct(vals,.95)
+        health="NORMAL" if p95<1500 and errors==0 else ("ATENÇÃO" if p95<3000 and errors<3 else "CRÍTICO")
+        return jsonify({"ok":True,"release":APP_RELEASE,"generated_at":datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y %H:%M:%S"),"window_minutes":minutes,"health":health,"avg_ms":avg,"p95_ms":p95,"max_ms":round(max(vals),1) if vals else 0,"requests":len(rows),"errors_5xx":errors,"active_users_15m":int(active_users),"routes":route_rows[:20],"timeline":timeline[-24:],"table_counts":table_counts})
+    except Exception as exc:
+        return jsonify({"ok":False,"error":str(exc)}),500
 
 @app.get("/diagnostico")
 @login_required
@@ -8102,6 +8183,10 @@ def migrate_financial_v524_columns():
         for col,sql in (("trade_name","VARCHAR(180)"),("cnpj","VARCHAR(30)"),("primary_cost_center","VARCHAR(60)"),("contact_name","VARCHAR(180)"),("phone","VARCHAR(40)"),("email","VARCHAR(180)"),("pending_profile","BOOLEAN NOT NULL DEFAULT FALSE")):
             if col not in sup_cols: sup_commands.append(f"ALTER TABLE financial_suppliers ADD COLUMN {col} {sql}")
         commands.extend(sup_commands)
+        # V56-B: dados físicos do processamento TBForte para análise de numerário/cédulas.
+        cash_cols={c["name"] for c in inspector.get_columns("financial_cash_collections")} if "financial_cash_collections" in inspector.get_table_names() else set()
+        for col,sql in (("processed_note_count","INTEGER"),("processed_media_type","VARCHAR(40)"),("processing_charge","FLOAT")):
+            if col not in cash_cols: commands.append(f"ALTER TABLE financial_cash_collections ADD COLUMN {col} {sql}")
         for command in commands: db.session.execute(db.text(command))
         if commands:
             db.session.execute(db.text("UPDATE financial_monthly_costs SET cost_center='SUPORTE_CAMPO' WHERE cost_center IS NULL OR cost_center=''"))
@@ -8492,8 +8577,16 @@ def _fin_import_tbf_wb(wb, filename, user_id):
                     pd=_fin_parse_date(gv(row,"Data do Processamento")); candidates=FinancialCashCollection.query.filter_by(terminal=terminal,collection_date=pd).all() if pd else []
                 if not candidates: continue
                 declared=float(gv(row,"Valor Declarado (R$)") or 0); processed=float(gv(row,"Valor Apurado (R$)") or 0); pd=_fin_parse_date(gv(row,"Data do Processamento"))
+                media=str(gv(row,"MOEDA OU CEDULA") or "").strip()
+                try: qty_processed=int(float(gv(row,"Qtde Process") or 0))
+                except: qty_processed=0
+                try: processing_charge=float(gv(row,"Valor Total") or 0)
+                except: processing_charge=0
                 for c in candidates:
                     c.declared_amount=declared; c.processed_amount=processed; c.processed_at=datetime.combine(pd,datetime.min.time()) if pd else c.processed_at
+                    c.processed_media_type=media or None
+                    c.processed_note_count=qty_processed if "CEDULA" in normalize(media).upper() else None
+                    c.processing_charge=processing_charge
                     result["processed_updated"]+=1
             except Exception: result["errors"]+=1
     return result
@@ -8556,7 +8649,12 @@ def financial_cash_reconciliation_import():
 def financial_cash_reconciliation_terminals():
     if not _financial_admin_allowed() or not _has_access("finance.apuracao"): return jsonify({"ok":False,"error":"Sem permissão."}),403
     terms=sorted({x[0] for x in db.session.query(FinancialCashCollection.terminal).distinct().all() if x and x[0]},key=lambda x:(len(str(x)),str(x)))
-    return jsonify({"ok":True,"terminals":terms,"collections":db.session.query(func.count(FinancialCashCollection.id)).scalar() or 0,"transactions":db.session.query(func.count(FinancialATMTransaction.id)).scalar() or 0})
+    assets=BaseAsset.query.filter(BaseAsset.terminal_number.in_(terms)).all() if terms else []
+    locmap={}
+    for a in assets:
+        t=_fin_terminal(a.terminal_number)
+        if t and t not in locmap: locmap[t]={"locality":a.locality or "","company":a.company or "","line":a.line or ""}
+    return jsonify({"ok":True,"terminals":[{"terminal":t,**locmap.get(t,{"locality":"","company":"","line":""})} for t in terms],"collections":db.session.query(func.count(FinancialCashCollection.id)).scalar() or 0,"transactions":db.session.query(func.count(FinancialATMTransaction.id)).scalar() or 0})
 
 @app.get("/api/financeiro/apuracao/coletas")
 @login_required
@@ -8565,7 +8663,7 @@ def financial_cash_reconciliation_collections():
     terminal=_fin_terminal(request.args.get("terminal"));
     if not terminal:return jsonify({"ok":True,"rows":[]})
     rows=FinancialCashCollection.query.filter_by(terminal=terminal).order_by(FinancialCashCollection.end_at).all()
-    return jsonify({"ok":True,"rows":[{"id":x.id,"terminal":x.terminal,"date":x.end_at.isoformat(),"date_label":x.end_at.strftime("%d/%m/%y %H:%M"),"collected_amount":round(float(x.collected_amount or 0),2),"processed_amount":None if x.processed_amount is None else round(float(x.processed_amount),2),"point_name":x.point_name or "","gtv":x.gtv or ""} for x in rows]})
+    return jsonify({"ok":True,"rows":[{"id":x.id,"terminal":x.terminal,"date":x.end_at.isoformat(),"date_label":x.end_at.strftime("%d/%m/%y %H:%M"),"collected_amount":round(float(x.collected_amount or 0),2),"processed_amount":None if x.processed_amount is None else round(float(x.processed_amount),2),"processed_note_count":getattr(x,"processed_note_count",None),"processed_media_type":getattr(x,"processed_media_type",None) or "","point_name":x.point_name or "","gtv":x.gtv or ""} for x in rows]})
 
 @app.get("/api/financeiro/apuracao/calcular")
 @login_required
@@ -8575,13 +8673,86 @@ def financial_cash_reconciliation_calculate():
     if not terminal or not a or not b or a.terminal!=terminal or b.terminal!=terminal:return jsonify({"ok":False,"error":"Selecione terminal, coleta inicial e coleta final válidos."}),400
     if b.end_at<=a.end_at:return jsonify({"ok":False,"error":"A coleta final deve ser posterior à coleta inicial."}),400
     base=FinancialATMTransaction.query.filter(FinancialATMTransaction.terminal==terminal,FinancialATMTransaction.transaction_at>a.end_at,FinancialATMTransaction.transaction_at<=b.end_at)
-    # Comparativo financeiro usa status A (aprovada); demais status ficam visíveis no detalhamento para auditoria.
     approved=base.filter(func.upper(FinancialATMTransaction.status)=="A")
-    tx_count=approved.count(); tx_sum=float(db.session.query(func.coalesce(func.sum(FinancialATMTransaction.value),0)).filter(FinancialATMTransaction.terminal==terminal,FinancialATMTransaction.transaction_at>a.end_at,FinancialATMTransaction.transaction_at<=b.end_at,func.upper(FinancialATMTransaction.status)=="A").scalar() or 0)
+    tx_count=approved.count()
+    tx_sum=float(db.session.query(func.coalesce(func.sum(FinancialATMTransaction.value),0)).filter(FinancialATMTransaction.terminal==terminal,FinancialATMTransaction.transaction_at>a.end_at,FinancialATMTransaction.transaction_at<=b.end_at,func.upper(FinancialATMTransaction.status)=="A").scalar() or 0)
     all_count=base.count(); status_rows=db.session.query(FinancialATMTransaction.status,func.count(FinancialATMTransaction.id),func.coalesce(func.sum(FinancialATMTransaction.value),0)).filter(FinancialATMTransaction.terminal==terminal,FinancialATMTransaction.transaction_at>a.end_at,FinancialATMTransaction.transaction_at<=b.end_at).group_by(FinancialATMTransaction.status).all()
-    collected=float(b.collected_amount or 0); diff=round(collected-tx_sum,2); pct=round((diff/tx_sum*100),4) if tx_sum else None
+    collected=float(b.collected_amount or 0); processed=None if b.processed_amount is None else float(b.processed_amount); diff=round(collected-tx_sum,2); pct=round((diff/tx_sum*100),4) if tx_sum else None
+    duration_hours=max(0,(b.end_at-a.end_at).total_seconds()/3600); duration_days=duration_hours/24 if duration_hours else 0
+    avg_ticket=round(tx_sum/tx_count,2) if tx_count else 0; avg_day=round(tx_sum/duration_days,2) if duration_days else 0
+    note_count=int(getattr(b,"processed_note_count",0) or 0); avg_note=round(processed/note_count,2) if processed is not None and note_count else None
+    processed_diff=round(processed-collected,2) if processed is not None else None
+    abs_pct=abs(pct) if pct is not None else None
+    if tx_count==0: diagnosis="SEM_TRANSACOES"; diagnosis_text="Não há transações aprovadas no intervalo selecionado."
+    elif abs(diff)<0.01: diagnosis="CONCILIADO"; diagnosis_text="Valor coletado coincide com a somatória das transações aprovadas do período."
+    elif abs_pct is not None and abs_pct<=0.5: diagnosis="ATENCAO"; diagnosis_text="Há pequena divergência entre transacionado e coletado; conferir coleta/processamento."
+    else: diagnosis="DIVERGENCIA_RELEVANTE"; diagnosis_text="Divergência relevante entre o movimento transacionado e o valor coletado."
+    observations=[]
+    observations.append(f"Intervalo entre coletas: {duration_days:.1f} dia(s) ({duration_hours:.1f} h).")
+    if tx_count: observations.append(f"Ticket médio das transações: R$ {avg_ticket:,.2f}; média transacionada por dia: R$ {avg_day:,.2f}.".replace(",","X").replace(".",",").replace("X","."))
+    if note_count: observations.append(f"TBForte processou {note_count:,} cédula(s) vinculadas à coleta final.".replace(",","."))
+    if processed_diff is not None: observations.append(f"Apurado pela TBForte x coletado: diferença de R$ {processed_diff:,.2f}.".replace(",","X").replace(".",",").replace("X","."))
     details=approved.order_by(FinancialATMTransaction.transaction_at).limit(500).all()
-    return jsonify({"ok":True,"terminal":terminal,"initial":{"id":a.id,"at":a.end_at.isoformat(),"label":a.end_at.strftime("%d/%m/%Y %H:%M"),"amount":round(float(a.collected_amount or 0),2)},"final":{"id":b.id,"at":b.end_at.isoformat(),"label":b.end_at.strftime("%d/%m/%Y %H:%M"),"amount":round(collected,2),"processed_amount":None if b.processed_amount is None else round(float(b.processed_amount),2)},"transaction_count":tx_count,"transaction_sum":round(tx_sum,2),"all_status_count":all_count,"collected_amount":round(collected,2),"difference":diff,"difference_pct":pct,"status":"CONCILIADO" if abs(diff)<0.01 else "DIVERGENCIA","status_breakdown":[{"status":st or "—","count":int(n),"amount":round(float(v or 0),2)} for st,n,v in status_rows],"transactions":[{"at":x.transaction_at.isoformat(),"label":x.transaction_at.strftime("%d/%m/%Y %H:%M:%S"),"status":x.status or "","value":round(float(x.value or 0),2)} for x in details],"transactions_truncated":tx_count>500,"rule":"status A; após o horário final da coleta inicial e até o horário final da coleta final"})
+    return jsonify({"ok":True,"terminal":terminal,"initial":{"id":a.id,"at":a.end_at.isoformat(),"label":a.end_at.strftime("%d/%m/%Y %H:%M"),"amount":round(float(a.collected_amount or 0),2)},"final":{"id":b.id,"at":b.end_at.isoformat(),"label":b.end_at.strftime("%d/%m/%Y %H:%M"),"amount":round(collected,2),"processed_amount":None if processed is None else round(processed,2),"processed_note_count":note_count,"processed_media_type":getattr(b,"processed_media_type",None) or "","processing_charge":round(float(getattr(b,"processing_charge",0) or 0),2)},"transaction_count":tx_count,"transaction_sum":round(tx_sum,2),"all_status_count":all_count,"collected_amount":round(collected,2),"processed_amount":None if processed is None else round(processed,2),"processed_note_count":note_count,"difference":diff,"difference_pct":pct,"processed_difference":processed_diff,"duration_hours":round(duration_hours,2),"duration_days":round(duration_days,2),"average_ticket":avg_ticket,"average_per_day":avg_day,"average_value_per_processed_note":avg_note,"status":"CONCILIADO" if abs(diff)<0.01 else "DIVERGENCIA","diagnosis":diagnosis,"diagnosis_text":diagnosis_text,"observations":observations,"status_breakdown":[{"status":st or "—","count":int(n),"amount":round(float(v or 0),2)} for st,n,v in status_rows],"transactions":[{"at":x.transaction_at.isoformat(),"label":x.transaction_at.strftime("%d/%m/%Y %H:%M:%S"),"status":x.status or "","value":round(float(x.value or 0),2)} for x in details],"transactions_truncated":tx_count>500,"rule":"status A; após o horário final da coleta inicial e até o horário final da coleta final"})
+
+@app.get("/api/financeiro/apuracao/calcular-multiplos")
+@login_required
+def financial_cash_reconciliation_multi():
+    if not _financial_admin_allowed() or not _has_access("finance.apuracao"): return jsonify({"ok":False,"error":"Sem permissão."}),403
+    terminals=[_fin_terminal(x) for x in request.args.getlist("terminal") if _fin_terminal(x)]
+    primary=_fin_terminal(request.args.get("primary")); a=db.session.get(FinancialCashCollection,int(request.args.get("initial_id") or 0)); b=db.session.get(FinancialCashCollection,int(request.args.get("final_id") or 0))
+    if not terminals or not primary or not a or not b or a.terminal!=primary or b.terminal!=primary or b.end_at<=a.end_at: return jsonify({"ok":False,"error":"Selecione terminais e o intervalo de coletas do terminal de referência."}),400
+    out=[]
+    for terminal in terminals[:100]:
+        ia=FinancialCashCollection.query.filter(FinancialCashCollection.terminal==terminal,FinancialCashCollection.end_at<=a.end_at).order_by(FinancialCashCollection.end_at.desc()).first()
+        fb=FinancialCashCollection.query.filter(FinancialCashCollection.terminal==terminal,FinancialCashCollection.end_at>=b.end_at).order_by(FinancialCashCollection.end_at.asc()).first()
+        if not ia or not fb or fb.end_at<=ia.end_at:
+            out.append({"terminal":terminal,"status":"SEM JANELA COMPATÍVEL"}); continue
+        q=db.session.query(func.count(FinancialATMTransaction.id),func.coalesce(func.sum(FinancialATMTransaction.value),0)).filter(FinancialATMTransaction.terminal==terminal,FinancialATMTransaction.transaction_at>ia.end_at,FinancialATMTransaction.transaction_at<=fb.end_at,func.upper(FinancialATMTransaction.status)=="A").first()
+        count=int(q[0] or 0); total=float(q[1] or 0); collected=float(fb.collected_amount or 0); diff=round(collected-total,2); pct=round(diff/total*100,4) if total else None
+        hours=(fb.end_at-ia.end_at).total_seconds()/3600; days=hours/24; avg_day=round(total/days,2) if days else 0; avg_ticket=round(total/count,2) if count else 0
+        asset=BaseAsset.query.filter(BaseAsset.terminal_number==terminal).first(); note_count=int(getattr(fb,"processed_note_count",0) or 0)
+        diag="CONCILIADO" if abs(diff)<.01 else ("ATENÇÃO" if pct is not None and abs(pct)<=.5 else "DIVERGÊNCIA")
+        out.append({"terminal":terminal,"locality":(asset.locality if asset else (fb.point_name or "")),"initial":ia.end_at.strftime("%d/%m/%Y %H:%M"),"final":fb.end_at.strftime("%d/%m/%Y %H:%M"),"duration_days":round(days,2),"transaction_count":count,"transaction_sum":round(total,2),"collected_amount":round(collected,2),"processed_amount":None if fb.processed_amount is None else round(float(fb.processed_amount),2),"processed_note_count":note_count,"average_ticket":avg_ticket,"average_per_day":avg_day,"difference":diff,"difference_pct":pct,"status":diag})
+    out.sort(key=lambda x: abs(float(x.get("difference") or 0)),reverse=True)
+    return jsonify({"ok":True,"rows":out,"rule":"Para cada terminal, usa a coleta imediatamente anterior/igual ao marco inicial e a primeira coleta posterior/igual ao marco final do terminal de referência. Ordenação: maior divergência absoluta primeiro."})
+
+@app.get("/api/financeiro/apuracao/exportar.xlsx")
+@login_required
+def financial_cash_reconciliation_export():
+    if not _financial_admin_allowed() or not _has_access("finance.apuracao"): abort(403)
+    terminal=_fin_terminal(request.args.get("terminal")); a=db.session.get(FinancialCashCollection,int(request.args.get("initial_id") or 0)); b=db.session.get(FinancialCashCollection,int(request.args.get("final_id") or 0))
+    if not terminal or not a or not b or a.terminal!=terminal or b.terminal!=terminal or b.end_at<=a.end_at: return "Filtros inválidos",400
+    q=FinancialATMTransaction.query.filter(FinancialATMTransaction.terminal==terminal,FinancialATMTransaction.transaction_at>a.end_at,FinancialATMTransaction.transaction_at<=b.end_at,func.upper(FinancialATMTransaction.status)=="A")
+    txs=q.order_by(FinancialATMTransaction.transaction_at).all(); total=sum(float(x.value or 0) for x in txs); collected=float(b.collected_amount or 0); diff=collected-total; pct=diff/total if total else None
+    hours=(b.end_at-a.end_at).total_seconds()/3600; days=hours/24; asset=BaseAsset.query.filter(BaseAsset.terminal_number==terminal).first(); locality=asset.locality if asset else (b.point_name or "")
+    note_count=int(getattr(b,"processed_note_count",0) or 0); processed=None if b.processed_amount is None else float(b.processed_amount)
+    wb=Workbook(); ws=wb.active; ws.title="Apuração"; ws.append(["Terminal","Localidade","Coleta inicial","Coleta final","Dias","Qtd transações","Soma transações","Ticket médio","Média/dia","Valor coletado","Valor apurado","Qtde cédulas processadas","Dif. transações x coletado","% divergência","Dif. coletado x apurado","Status"])
+    ws.append([terminal,locality,a.end_at,b.end_at,days,len(txs),total,(total/len(txs) if txs else 0),(total/days if days else 0),collected,processed,note_count,diff,pct,(processed-collected if processed is not None else None),"CONCILIADO" if abs(diff)<.01 else "DIVERGÊNCIA"])
+    wd=wb.create_sheet("Transações"); wd.append(["Terminal","Localidade","Data/hora","Status","Valor"])
+    for x in txs: wd.append([terminal,locality,x.transaction_at,x.status,x.value])
+    for sh in wb.worksheets:
+        sh.freeze_panes="A2"; sh.auto_filter.ref=sh.dimensions
+        for c in sh[1]: c.font=Font(bold=True)
+    bio=io.BytesIO(); wb.save(bio); bio.seek(0)
+    return send_file(bio,as_attachment=True,download_name=f"apuracao_{terminal}_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+@app.get("/api/financeiro/apuracao/exportar-multiplos.xlsx")
+@login_required
+def financial_cash_reconciliation_export_multi():
+    if not _financial_admin_allowed() or not _has_access("finance.apuracao"): abort(403)
+    terminals=[_fin_terminal(x) for x in request.args.getlist("terminal") if _fin_terminal(x)]; primary=_fin_terminal(request.args.get("primary")); a=db.session.get(FinancialCashCollection,int(request.args.get("initial_id") or 0)); b=db.session.get(FinancialCashCollection,int(request.args.get("final_id") or 0))
+    if not terminals or not primary or not a or not b or a.terminal!=primary or b.terminal!=primary or b.end_at<=a.end_at:return "Filtros inválidos",400
+    wb=Workbook(); ws=wb.active; ws.title="Comparativo"; ws.append(["Terminal","Localidade","Coleta inicial","Coleta final","Dias","Qtd transações","Soma transações","Ticket médio","Média/dia","Coletado","Apurado","Qtde cédulas","Diferença","% divergência","Status"])
+    for terminal in terminals[:100]:
+        ia=FinancialCashCollection.query.filter(FinancialCashCollection.terminal==terminal,FinancialCashCollection.end_at<=a.end_at).order_by(FinancialCashCollection.end_at.desc()).first(); fb=FinancialCashCollection.query.filter(FinancialCashCollection.terminal==terminal,FinancialCashCollection.end_at>=b.end_at).order_by(FinancialCashCollection.end_at.asc()).first()
+        if not ia or not fb or fb.end_at<=ia.end_at: continue
+        cnt,total=db.session.query(func.count(FinancialATMTransaction.id),func.coalesce(func.sum(FinancialATMTransaction.value),0)).filter(FinancialATMTransaction.terminal==terminal,FinancialATMTransaction.transaction_at>ia.end_at,FinancialATMTransaction.transaction_at<=fb.end_at,func.upper(FinancialATMTransaction.status)=="A").first(); cnt=int(cnt or 0); total=float(total or 0); collected=float(fb.collected_amount or 0); diff=collected-total; days=(fb.end_at-ia.end_at).total_seconds()/86400; asset=BaseAsset.query.filter(BaseAsset.terminal_number==terminal).first(); locality=asset.locality if asset else (fb.point_name or ""); pct=diff/total if total else None
+        ws.append([terminal,locality,ia.end_at,fb.end_at,days,cnt,total,(total/cnt if cnt else 0),(total/days if days else 0),collected,fb.processed_amount,int(getattr(fb,"processed_note_count",0) or 0),diff,pct,"CONCILIADO" if abs(diff)<.01 else "DIVERGÊNCIA"])
+    ws.freeze_panes="A2"; ws.auto_filter.ref=ws.dimensions
+    for c in ws[1]: c.font=Font(bold=True)
+    bio=io.BytesIO(); wb.save(bio); bio.seek(0)
+    return send_file(bio,as_attachment=True,download_name=f"apuracao_multiplos_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 @app.post("/api/financeiro/importar.xlsx")
 @login_required
@@ -9187,6 +9358,22 @@ def migrate_v55_performance_indexes():
     # Compatibilidade com chamadas/patches anteriores.
     return migrate_v56a_topdesk_dimensions()
 
+
+
+# V56-B — índices aditivos para leituras críticas.
+try:
+    with db.engine.begin() as conn:
+        for sql in (
+            "CREATE INDEX IF NOT EXISTS ix_fin_collection_terminal_end ON financial_cash_collections (terminal, end_at)",
+            "CREATE INDEX IF NOT EXISTS ix_techpos_user_captured ON technician_positions (user_id, captured_at)",
+            "CREATE INDEX IF NOT EXISTS ix_session_user_created ON session_events (user_id, created_at)",
+            "CREATE INDEX IF NOT EXISTS ix_monthly_cost_center_comp ON financial_monthly_costs (cost_center, competence)",
+            "CREATE INDEX IF NOT EXISTS ix_perf_created_route ON performance_metrics (created_at, route)"
+        ):
+            try: conn.execute(text(sql))
+            except Exception: pass
+except Exception:
+    pass
 
 with app.app_context():
     migrate_location_reference_columns()
