@@ -134,11 +134,11 @@ app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
 db = SQLAlchemy(app)
 
 # V56-B REV — mede custo SQL por requisição sem gravar payloads/dados sensíveis.
-@event.listens_for(db.engine, "before_cursor_execute")
+# IMPORTANTE: db.engine exige application context no Flask-SQLAlchemy 3.x.
+# Os listeners são registrados uma única vez dentro do contexto para não impedir o boot do Gunicorn.
 def _perf_sql_before(conn, cursor, statement, parameters, context, executemany):
     context._v56_sql_started = time.perf_counter()
 
-@event.listens_for(db.engine, "after_cursor_execute")
 def _perf_sql_after(conn, cursor, statement, parameters, context, executemany):
     try:
         started=getattr(context,"_v56_sql_started",None)
@@ -147,6 +147,13 @@ def _perf_sql_after(conn, cursor, statement, parameters, context, executemany):
             g._perf_query_count=int(getattr(g,"_perf_query_count",0) or 0)+1
     except Exception:
         pass
+
+with app.app_context():
+    _perf_engine = db.engine
+    if not event.contains(_perf_engine, "before_cursor_execute", _perf_sql_before):
+        event.listen(_perf_engine, "before_cursor_execute", _perf_sql_before)
+    if not event.contains(_perf_engine, "after_cursor_execute", _perf_sql_after):
+        event.listen(_perf_engine, "after_cursor_execute", _perf_sql_after)
 
 # V56-B — telemetria leve. Não registra arquivos estáticos nem a própria API de telemetria.
 @app.before_request
