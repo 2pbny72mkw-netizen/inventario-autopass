@@ -1,6 +1,6 @@
-window.AUTOPASS_TEAMS_VERSION="teams-v56-d";
+window.AUTOPASS_TEAMS_VERSION="teams-v58";
 
-console.log('AUTOPASS Central Operacional V56-D carregada');
+console.log('AUTOPASS Central Operacional V58 carregada');
 
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -104,7 +104,7 @@ async function loadTeams(){
   const d=await r.json();
   if(!r.ok||!d.ok) throw new Error(d.error||'Falha ao carregar equipes.');
 
-  console.info('[V56-D] equipes/status:',d.scheduled||0,'escalado(s) em',d.date);
+  console.info('[V58] equipes/status:',d.scheduled||0,'escalado(s) em',d.date);
   $('teamDate').textContent=d.date||'—';
   $('teamClock').textContent=`${d.date||''} ${d.time||''}`.trim();
   $('kScheduled').textContent=d.scheduled||0;
@@ -395,7 +395,7 @@ function refreshCargoFilter(){
 }
 async function refreshAll(){
   const jobs=await Promise.allSettled([loadTeams(),loadCalendar(),loadProfiles()]);
-  jobs.forEach((r,i)=>{if(r.status==='rejected')console.error('[V56-D] equipes carga',i,r.reason)});
+  jobs.forEach((r,i)=>{if(r.status==='rejected')console.error('[V58] equipes carga',i,r.reason)});
 }
 
 $('refreshTeams').addEventListener('click',refreshAll);

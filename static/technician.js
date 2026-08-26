@@ -463,7 +463,7 @@ function escapeHtml(value) {
 async function loadLocations() {
   if (navigator.onLine) {
     try {
-      const r = await fetch('/api/locations', { cache: 'no-store' });
+      const r = await fetch('/api/locations?observed=1', { cache: 'no-store' });
       if (!r.ok) throw new Error('Falha ao consultar localidades.');
       locations = await r.json();
       await cacheSet('locations', locations);
@@ -1042,7 +1042,7 @@ async function syncQueue({ silent = false } = {}) {
 
   if (navigator.onLine) {
     try {
-      const r = await fetch('/api/locations', { cache: 'no-store' });
+      const r = await fetch('/api/locations?observed=1', { cache: 'no-store' });
       if (r.ok) {
         locations = await r.json();
         await cacheSet('locations', locations);
@@ -1154,7 +1154,7 @@ $('invForm').onsubmit = async e => {
     await loadAlready();
     await loadAssets();
 
-    const rr = await fetch('/api/locations', { cache: 'no-store' });
+    const rr = await fetch('/api/locations?observed=1', { cache: 'no-store' });
     if (rr.ok) {
       locations = await rr.json();
       await cacheSet('locations', locations);
@@ -1190,7 +1190,7 @@ $('completeBtn').onclick = async () => {
   const j = await r.json().catch(()=>({ok:false}));
   if (r.ok && j.ok) {
     showMsg('Localidade marcada como CONCLUÍDA após validação completa.', true);
-    const rr = await fetch('/api/locations', { cache: 'no-store' });
+    const rr = await fetch('/api/locations?observed=1', { cache: 'no-store' });
     if (rr.ok) { locations = await rr.json(); await cacheSet('locations', locations); current = locations.find(x => x.id === current.id); showInfo(); }
   } else showMsg(j.error || 'Não foi possível concluir a localidade.', false);
 };
