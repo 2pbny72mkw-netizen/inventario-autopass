@@ -1,6 +1,6 @@
-window.AUTOPASS_TEAMS_VERSION="teams-v58";
+window.AUTOPASS_TEAMS_VERSION="teams-v58-rev";
 
-console.log('AUTOPASS Central Operacional V58 carregada');
+console.log('AUTOPASS Central Operacional V58 REVISADA carregada');
 
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -37,7 +37,6 @@ function createTeamMap(){
     keepBuffer:4,
     attribution:'&copy; OpenStreetMap contributors'
   }).addTo(teamMap);
-  v391SetupTeamMap();
 
   const container=$('teamMap');
   if('ResizeObserver' in window){
@@ -395,7 +394,8 @@ function refreshCargoFilter(){
 }
 async function refreshAll(){
   const jobs=await Promise.allSettled([loadTeams(),loadCalendar(),loadProfiles()]);
-  jobs.forEach((r,i)=>{if(r.status==='rejected')console.error('[V58] equipes carga',i,r.reason)});
+  jobs.forEach((r,i)=>{if(r.status==='rejected')console.error('[V58-REV] equipes carga',i,r.reason)});
+  return jobs;
 }
 
 $('refreshTeams').addEventListener('click',refreshAll);
@@ -454,8 +454,6 @@ if($('openScheduleAdmin')){
 
 $('calendarStart').value=saoPauloISODate();
 resetScheduleForm();
-refreshAll();
-setInterval(loadTeams,120000);
 
 
 // V26 — seções operacionais sob demanda para reduzir poluição visual.
@@ -600,9 +598,43 @@ function v391SetupTeamMap(){
 }
 // V39.6 — compatibilidade dos checkboxes visíveis com as camadas Leaflet.
 function v396SyncRailChecks(){const map=teamMap;if(!map)return;v391SetupTeamMap();[['teamShowStations',v391Stations],['teamShowNames',v391StationNames],['teamShowTechs',v391TechLayer]].forEach(([id,layer])=>{const el=$(id);if(!el||!layer)return;const sync=()=>{if(!layer)return;if(el.checked&&!map.hasLayer(layer))map.addLayer(layer);if(!el.checked&&map.hasLayer(layer))map.removeLayer(layer)};el.addEventListener('change',sync);sync()});const lines=$('teamShowLines');if(lines&&v391RailLines){const sync=()=>{const layer=v391RailLines;if(!layer)return;if(lines.checked&&!map.hasLayer(layer))map.addLayer(layer);if(!lines.checked&&map.hasLayer(layer))map.removeLayer(layer)};lines.addEventListener('change',sync);sync()}v391BuildRails()}
-setTimeout(v396SyncRailChecks,500);
 
 // V40: Equipes reutiliza o componente metroferroviário compartilhado.
 async function v40AttachSharedRail(){if(!teamMap||!window.AutopassRailMap)return;try{const locs=await fetch('/api/equipes/rail-network',{cache:'no-store'}).then(r=>r.json());[v391RailLines,v391Stations,v391StationNames].forEach(l=>{try{if(l&&teamMap.hasLayer(l))teamMap.removeLayer(l)}catch(_){}});const sh=window.AutopassRailMap.attach(teamMap,locs||[]);if(!sh)return;v391RailLines=sh.lines;v391Stations=sh.stations;v391StationNames=sh.labels;const bind=(id,key)=>{const el=$(id),layer=sh[key];if(!el||!layer)return;const sync=()=>el.checked?(!teamMap.hasLayer(layer)&&teamMap.addLayer(layer)):(teamMap.hasLayer(layer)&&teamMap.removeLayer(layer));el.addEventListener('change',sync);sync()};bind('teamShowLines','lines');bind('teamShowStations','stations');bind('teamShowNames','labels');const st=sh.stats||{};v3978RailDiag(`V40.1.2 · ${st.segmentCount||0} segmento(s) · ${st.pointCount||0} pontos válidos · ${st.rejected||0} rejeitado(s)`,true)}catch(e){console.error('V40 mapa compartilhado',e);v3978RailDiag('V40 · falha ao carregar mapa compartilhado',false)}}
 // REV4: rail-network dedicado já fornece os dados necessários; evita /api/locations pesado.
 // setTimeout(v40AttachSharedRail,900);
+
+// V58 REVISADA — inicialização determinística.
+// Dados operacionais não dependem do Leaflet; o mapa é preparado somente depois
+// que todas as declarações V39/V40 deste arquivo já foram avaliadas.
+let v58TeamsStarted=false;
+async function v58StartTeams(){
+  if(v58TeamsStarted) return;
+  v58TeamsStarted=true;
+  console.info('[V58-REV] início da Central Operacional');
+
+  // 1) Carrega dados primeiro. Uma falha de mapa nunca deve zerar Equipes.
+  const dataJobs=await refreshAll();
+  const teamResult=dataJobs?.[0];
+  if(teamResult?.status==='fulfilled') console.info('[V58-REV] dados de Equipes carregados');
+
+  // 2) Mapa em fluxo isolado e protegido.
+  try{
+    createTeamMap();
+    v391SetupTeamMap();
+    v396SyncRailChecks();
+    console.info('[V58-REV] mapa inicializado');
+  }catch(err){
+    console.error('[V58-REV] mapa indisponível; dados de Equipes permanecem ativos',err);
+  }
+
+  // 3) Atualização periódica só depois da primeira carga concluída.
+  setInterval(()=>loadTeams().catch(err=>console.error('[V58-REV] atualização periódica de Equipes',err)),120000);
+}
+
+if(document.readyState==='loading'){
+  document.addEventListener('DOMContentLoaded',()=>v58StartTeams().catch(err=>console.error('[V58-REV] startup',err)),{once:true});
+}else{
+  v58StartTeams().catch(err=>console.error('[V58-REV] startup',err));
+}
+
