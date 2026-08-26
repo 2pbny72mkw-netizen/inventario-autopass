@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Central Operacional | Autopass{% endblock %}
+{% block content %}
+<section class="dashHero v60Hero"><div><span class="eyebrow">V60 · OPERAÇÃO INTEGRADA</span><h1>Central Operacional</h1><p>Raio-X da equipe escalada, presença, GPS, estação e exceções do dia em uma única visão.</p></div><div class="heroActions"><label class="v60Date">Data <input type="date" id="v60Date"></label><button class="secondary" id="v60Reload">Atualizar</button></div></section>
+<section class="v60Health card"><div><div class="v60Gauge" id="v60Gauge"><b id="v60HealthPct">—</b><small>saúde operacional</small></div></div><div><h2 id="v60Headline">Carregando operação...</h2><p class="muted" id="v60Stamp">—</p><div class="v60Mini"><span>Escalados <b id="v60Scheduled">0</b></span><span>Em operação <b id="v60Operating">0</b></span><span>Não iniciaram <b id="v60NotStarted">0</b></span><span>Sem GPS <b id="v60NoGps">0</b></span></div></div></section>
+<section class="v60Grid">
+ <article class="card"><div class="sectionHead"><div><h2>Alertas operacionais</h2><p class="muted">Prioridade automática pelas exceções encontradas.</p></div><span class="tag" id="v60AlertCount">0</span></div><div id="v60Alerts" class="v60Alerts"></div></article>
+ <article class="card"><div class="sectionHead"><div><h2>Distribuição da operação</h2><p class="muted">Situação da equipe na data selecionada.</p></div></div><div id="v60Bars" class="v60Bars"></div></article>
+</section>
+<section class="card"><div class="sectionHead"><div><h2>Equipe operacional</h2><p class="muted">Clique no colaborador para abrir a visão detalhada em Equipes.</p></div><input id="v60Search" placeholder="Buscar colaborador, estação ou status"></div><div class="scaleTableWrap"><table class="scaleTable"><thead><tr><th>Colaborador</th><th>Cargo</th><th>Escala</th><th>Login</th><th>Status</th><th>Estação / localidade</th><th>Último GPS</th><th>Ação</th></tr></thead><tbody id="v60Rows"></tbody></table></div></section>
+{% endblock %}
+{% block scripts %}<script src="{{url_for('static',filename='central_operacional.js')}}?v=v60"></script>{% endblock %}
