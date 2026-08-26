@@ -40,7 +40,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V60"
+APP_RELEASE = "V60 REV"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -474,6 +474,38 @@ class TopDeskImportBatch(db.Model):
     error_count = db.Column(db.Integer, nullable=False, default=0)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
 
+
+class PreventiveRequest(db.Model):
+    __tablename__ = "preventive_requests"
+    id = db.Column(db.Integer, primary_key=True)
+    protocol = db.Column(db.String(40), unique=True, nullable=False, index=True)
+    requester_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    location_id = db.Column(db.Integer, db.ForeignKey("locations.id"), nullable=False, index=True)
+    base_asset_id = db.Column(db.Integer, db.ForeignKey("base_assets.id"), nullable=False, index=True)
+    company = db.Column(db.String(180))
+    locality = db.Column(db.String(220), nullable=False)
+    asset_identifier = db.Column(db.String(220), nullable=False, index=True)
+    request_type = db.Column(db.String(40), nullable=False, default="PREVENTIVA")
+    service = db.Column(db.String(220), nullable=False, index=True)
+    description = db.Column(db.Text, nullable=False)
+    origin = db.Column(db.String(40), nullable=False, default="SISTEMA_CAMPO")
+    status = db.Column(db.String(50), nullable=False, default="AGUARDANDO_INTEGRACAO", index=True)
+    topdesk_number = db.Column(db.String(80), index=True)
+    topdesk_sla = db.Column(db.String(120))
+    latitude = db.Column(db.Float)
+    longitude = db.Column(db.Float)
+    gps_accuracy = db.Column(db.Float)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    updated_at = db.Column(db.DateTime)
+
+class PreventiveAttachment(db.Model):
+    __tablename__ = "preventive_attachments"
+    id = db.Column(db.Integer, primary_key=True)
+    preventive_id = db.Column(db.Integer, db.ForeignKey("preventive_requests.id", ondelete="CASCADE"), nullable=False, index=True)
+    original_name = db.Column(db.String(255), nullable=False)
+    stored_name = db.Column(db.String(500), nullable=False)
+    mime_type = db.Column(db.String(120))
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
 class Location(db.Model):
     __tablename__ = "locations"
@@ -927,7 +959,7 @@ def login_required(fn):
 ACCESS_GROUPS = {
     "dashboard": ("Dashboard Geral", ("dashboard.general",)),
     "field": ("Field", (
-        "field.dashboard","field.inventory","field.calls","field.equipment","field.evidence","field.panorama","field.chip_recarga"
+        "field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga"
     )),
     "implantation": ("Implantação de Hardware", (
         "implantation.dashboard","implantation.visits","implantation.reports","implantation.emv"
@@ -952,7 +984,7 @@ ACCESS_SUBMODULES = tuple(k for _g,(_label,children) in ACCESS_GROUPS.items() fo
 ACCESS_ALL = set(ACCESS_MODULES) | set(ACCESS_SUBMODULES)
 ACCESS_LABELS = {
  "dashboard.general":"Dashboard Geral",
- "field.dashboard":"Dashboard Field","field.inventory":"Inventário / Lançamento","field.calls":"Chamados","field.equipment":"Equipamentos","field.evidence":"Evidências","field.panorama":"Visão Panorâmica","field.chip_recarga":"Troca de Chips – Recarga",
+ "field.dashboard":"Dashboard Field","field.inventory":"Inventário / Lançamento","field.calls":"Chamados","field.preventive":"Solicitação Preventiva ATM","field.equipment":"Equipamentos","field.evidence":"Evidências","field.panorama":"Visão Panorâmica","field.chip_recarga":"Troca de Chips – Recarga",
  "implantation.dashboard":"Dashboard Implantação","implantation.visits":"Visita a Campo / Relatório de Visita","implantation.reports":"Relatórios / Visitas recentes","implantation.emv":"Troca de Chips EMV – Trilhos",
  "teams.map":"Mapa operacional","teams.today":"Operação de Hoje","teams.schedule":"Escala por dias","teams.manage":"Gestão de equipes / escala","teams.export":"Exportar dados",
  "users.view":"Visualizar usuários","users.create":"Criar usuário","users.edit":"Editar usuário","users.activate":"Ativar / Desativar","users.delete":"Excluir / Arquivar","users.password":"Redefinir senha","users.export":"Exportar Excel",
@@ -973,8 +1005,8 @@ def _expand_legacy_access(values):
 def _default_access_for_role(role):
     defaults={
       "manager":set(ACCESS_SUBMODULES),
-      "manager_field":{"dashboard.general","field.dashboard","field.inventory","field.calls","field.equipment","field.evidence","field.panorama","field.chip_recarga","implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","teams.map","teams.today","teams.schedule","teams.manage","teams.export","finance.dashboard","management.calls","management.360","management.notifications","management.diagnostics","about.versions"},
-      "technician":{"field.dashboard","field.inventory","field.calls","field.equipment","field.evidence","field.panorama","field.chip_recarga","about.versions"},
+      "manager_field":{"dashboard.general","field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","teams.map","teams.today","teams.schedule","teams.manage","teams.export","finance.dashboard","management.calls","management.360","management.notifications","management.diagnostics","about.versions"},
+      "technician":{"field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","about.versions"},
       "technician_implantation":{"field.inventory","field.equipment","field.evidence","field.panorama","field.chip_recarga","implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","about.versions"},
       "consultation":{"dashboard.general","field.dashboard","field.inventory","field.equipment","field.evidence","field.panorama","field.chip_recarga","teams.map","teams.today","teams.schedule","about.versions"},
       "hr":{"teams.map","teams.today","teams.schedule","teams.manage","teams.export","users.view","users.create","users.edit","users.activate","users.password","users.export","about.versions"},
@@ -991,7 +1023,11 @@ def _user_access_set(user=None):
     try:
         custom=json.loads(user.access_json or "null")
         if isinstance(custom,list):
-            return _expand_legacy_access({x for x in custom if x in ACCESS_ALL})
+            access=_expand_legacy_access({x for x in custom if x in ACCESS_ALL})
+            # V60 REV: RH sempre mantém as visualizações operacionais de Equipes em modo leitura,
+            # mesmo quando o access_json foi salvo antes da criação das subpermissões atuais.
+            if user.role=="hr": access.update({"teams.map","teams.today","teams.schedule"})
+            return access
     except Exception: pass
     return _default_access_for_role(user.role)
 
@@ -1229,6 +1265,77 @@ def logout():
     session.clear()
     return redirect(url_for("login"))
 
+
+def _preventive_asset_identifier(a):
+    return (a.terminal_number or a.top_id or a.asset_key or a.description or str(a.id)).strip()
+
+@app.get("/preventivas")
+@field_required
+def preventive_page():
+    if not (_has_access("field.preventive") or _has_access("field.calls")): abort(403)
+    return render_template("preventive.html", app_release=APP_RELEASE)
+
+@app.get("/api/preventivas/contexto")
+@field_required
+def preventive_context_api():
+    if not (_has_access("field.preventive") or _has_access("field.calls")): abort(403)
+    locs=Location.query.order_by(Location.company,Location.line,Location.location).all()
+    # Só oferece localidades com ATM cadastrado na base ou inventariado.
+    atm_localities={str(x.locality or '').strip().casefold() for x in BaseAsset.query.filter(func.upper(BaseAsset.equipment_type).like('%ATM%')).all() if x.locality}
+    rows=[{"id":l.id,"company":l.company,"line":l.line,"location":l.location} for l in locs if l.location.strip().casefold() in atm_localities]
+    services=["Bobina - Pouco Papel","Limpeza preventiva","Inspeção geral","Teste de comunicação","Verificação de periféricos","Outro"]
+    return jsonify({"ok":True,"locations":rows,"services":services,"request_type":"PREVENTIVA","integration":"TOPDESK_PENDENTE"})
+
+@app.get("/api/preventivas/ativos")
+@field_required
+def preventive_assets_api():
+    if not (_has_access("field.preventive") or _has_access("field.calls")): abort(403)
+    location_id=request.args.get("location_id",type=int); loc=db.session.get(Location,location_id) if location_id else None
+    if not loc:return jsonify({"ok":False,"error":"Localidade inválida."}),400
+    q=BaseAsset.query.filter(func.upper(BaseAsset.equipment_type).like('%ATM%'))
+    assets=[a for a in q.all() if (a.locality or '').strip().casefold()==loc.location.strip().casefold()]
+    rows=[]
+    for a in sorted(assets,key=lambda x:_preventive_asset_identifier(x)):
+        rows.append({"id":a.id,"identifier":_preventive_asset_identifier(a),"model":a.model or "","serial":a.serial or "","ip":a.ip_address or "","company":a.company or loc.company})
+    return jsonify({"ok":True,"location":{"id":loc.id,"company":loc.company,"line":loc.line,"location":loc.location},"assets":rows})
+
+@app.get("/api/preventivas")
+@field_required
+def preventive_list_api():
+    if not (_has_access("field.preventive") or _has_access("field.calls")): abort(403)
+    q=PreventiveRequest.query.order_by(PreventiveRequest.created_at.desc())
+    if session.get('role')=='technician':q=q.filter_by(requester_id=session.get('user_id'))
+    out=[]
+    for x in q.limit(100).all():
+        out.append({"id":x.id,"protocol":x.protocol,"locality":x.locality,"asset_identifier":x.asset_identifier,"service":x.service,"status":x.status,"topdesk_number":x.topdesk_number,"created_at":x.created_at.isoformat()+"Z"})
+    return jsonify({"ok":True,"rows":out})
+
+@app.post("/api/preventivas")
+@field_required
+def preventive_create_api():
+    if not (_has_access("field.preventive") or _has_access("field.calls")): abort(403)
+    location_id=request.form.get("location_id",type=int); asset_id=request.form.get("base_asset_id",type=int)
+    service=(request.form.get("service") or "").strip(); description=(request.form.get("description") or "").strip()
+    loc=db.session.get(Location,location_id) if location_id else None; asset=db.session.get(BaseAsset,asset_id) if asset_id else None
+    if not loc or not asset or not service or not description:return jsonify({"ok":False,"error":"Preencha localidade, ATM, serviço e descrição."}),400
+    if (asset.locality or '').strip().casefold()!=loc.location.strip().casefold():return jsonify({"ok":False,"error":"O ATM selecionado não pertence à localidade informada."}),400
+    ident=_preventive_asset_identifier(asset)
+    active=("AGUARDANDO_INTEGRACAO","ENVIANDO_TOPDESK","ABERTA_TOPDESK","EM_ATENDIMENTO")
+    dup=PreventiveRequest.query.filter(PreventiveRequest.base_asset_id==asset.id,PreventiveRequest.service==service,PreventiveRequest.status.in_(active)).order_by(PreventiveRequest.created_at.desc()).first()
+    if dup:return jsonify({"ok":False,"duplicate":True,"error":f"Já existe preventiva ativa para este ATM/serviço: {dup.topdesk_number or dup.protocol}.","existing":{"id":dup.id,"protocol":dup.protocol,"topdesk_number":dup.topdesk_number,"status":dup.status}}),409
+    now=datetime.now(ZoneInfo("America/Sao_Paulo")); protocol=f"PV-{now:%y%m%d}-{uuid.uuid4().hex[:6].upper()}"
+    lat=request.form.get("latitude",type=float); lon=request.form.get("longitude",type=float); acc=request.form.get("gps_accuracy",type=float)
+    row=PreventiveRequest(protocol=protocol,requester_id=session.get('user_id'),location_id=loc.id,base_asset_id=asset.id,company=loc.company,locality=loc.location,asset_identifier=ident,service=service,description=description,latitude=lat,longitude=lon,gps_accuracy=acc)
+    db.session.add(row); db.session.flush()
+    allowed={"image/jpeg","image/png","image/webp","application/pdf"}; folder=UPLOAD_DIR/"preventive"; folder.mkdir(parents=True,exist_ok=True)
+    for f in request.files.getlist("attachments")[:8]:
+        if not f or not f.filename:continue
+        mime=(f.mimetype or "").lower()
+        if mime not in allowed:continue
+        ext=Path(f.filename).suffix.lower()[:10]; stored=f"preventive/{row.id}_{uuid.uuid4().hex[:12]}{ext}"; target=UPLOAD_DIR/stored; target.parent.mkdir(parents=True,exist_ok=True); f.save(target)
+        db.session.add(PreventiveAttachment(preventive_id=row.id,original_name=f.filename[:255],stored_name=stored,mime_type=mime))
+    db.session.commit()
+    return jsonify({"ok":True,"id":row.id,"protocol":row.protocol,"status":row.status,"message":"Preventiva registrada. Integração TOPdesk ainda não ativada."})
 
 @app.route("/trabalho")
 @field_required
@@ -1808,9 +1915,9 @@ def teams_calendar_api():
 
 
 @app.get("/api/equipes/perfis")
-@manager_required
+@teams_view_required
 def teams_profiles_api():
-    if not _has_access("teams.manage"): abort(403)
+    if not _has_access("teams.schedule"): abort(403)
     _ensure_team_schedule_profiles()
     profiles = TeamScheduleProfile.query.order_by(
         TeamScheduleProfile.active.desc(), TeamScheduleProfile.category, TeamScheduleProfile.name
@@ -1821,6 +1928,8 @@ def teams_profiles_api():
     for p in profiles:
         u=users_by_id.get(p.user_id) if p.user_id else None
         if session.get("role")=="dispatcher" and u and u.role in ("manager","hr"):
+            continue
+        if session.get("role")=="hr" and u and u.role in ("manager","consultation","dispatcher","atm_financial_admin","hr"):
             continue
         profile_payload.append({
             "profile_id":p.id,"user_id":p.user_id,"linked_user_name":u.name if u else None,
