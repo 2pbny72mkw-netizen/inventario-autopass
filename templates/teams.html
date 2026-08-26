@@ -11,8 +11,8 @@
   </div>
   <div class="heroActions">
     <button class="secondary" id="refreshTeams" type="button">Atualizar</button>
-    <button class="secondary" id="exportScale" type="button">Exportar tabela Excel</button>
-    {% if session.get('role') == 'manager' %}
+    {% if can_view('teams.export') %}<button class="secondary" id="exportScale" type="button">Exportar tabela Excel</button>{% endif %}
+    {% if can_view('teams.manage') and session.get('role') == 'manager' %}
     <button class="primary" id="openScheduleAdmin" type="button">Gerenciar escala</button>
     {% endif %}
   </div>
@@ -28,6 +28,7 @@
 </section>
 
 <section class="card"><div class="sectionHead"><div><h2>Filtros de equipes</h2><p class="muted">Refine a visualização e a exportação dos cadastros.</p></div></div><div class="grid4"><div><label>Buscar colaborador</label><input id="v38TeamSearch" placeholder="Nome do colaborador"></div><div><label>Cargo</label><select id="v38TeamCategory"><option value="">Todos</option><option value="TECNICO">Técnico</option><option value="SUPERVISOR">Supervisor</option><option value="APOIO">Apoio</option></select></div><div><label>Situação GPS</label><select id="v38TeamGps"><option value="">Todas</option><option value="ATUAL">Atual</option><option value="ATENÇÃO">Atenção</option><option value="ATRASADO">Atrasado</option><option value="SEM SINAL">Sem sinal</option></select></div><div style="display:flex;align-items:end"><button class="secondary" id="v38ClearTeam">Limpar filtros</button></div></div></section>
+{% if can_view('teams.map') %}
 <section class="card teamMapCard">
   <div class="sectionHead">
     <div>
@@ -59,7 +60,9 @@
     <button id="teamMapExit" type="button" class="secondary teamMapExit">Sair da tela cheia</button>
   </div>
 </section>
+{% endif %}
 
+{% if can_view('teams.schedule') %}
 <section class="card scaleCard">
   <div class="sectionHead">
     <div>
@@ -88,7 +91,9 @@
     </table>
   </div>
 </section>
+{% endif %}
 
+{% if can_view('teams.today') %}
 <section class="card teamCollapsible">
   <button type="button" class="teamSectionToggle" id="toggleTodayOperational" aria-expanded="false">Ver operação de hoje <span>＋</span></button>
   <div id="todayOperationalContent" class="teamCollapsibleContent hidden">
@@ -105,8 +110,9 @@
   <div id="teamCards" class="teamCards"></div>
   </div>
 </section>
+{% endif %}
 
-{% if session.get('role') == 'manager' %}
+{% if can_view('teams.manage') and session.get('role') == 'manager' %}
 <div id="scheduleAdminModal" class="scheduleModal hidden">
   <div class="scheduleModalPanel">
     <div class="sectionHead">
@@ -204,5 +210,5 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="{{ url_for('static', filename='shared_rail_map.js') }}?v=v40-1-2"></script>
-<script src="{{ url_for('static', filename='teams.js') }}?v=teams-v56-a3"></script>
+<script src="{{ url_for('static', filename='teams.js') }}?v=teams-v56-b-rev3"></script>
 {% endblock %}
