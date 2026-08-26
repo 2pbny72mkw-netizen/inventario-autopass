@@ -1,0 +1,12 @@
+{
+  "version": "V56-C",
+  "date": "2026-08-26",
+  "type": "consolidated-functional-fix",
+  "highlights": [
+    "EMV dashboard consumes payload.rows and normalizes accented statuses",
+    "Teams Leaflet null-layer crash fixed before layer synchronization",
+    "Static cache-busting updated for manager.js and teams.js",
+    "Service worker cache namespace renewed",
+    "Navigation z-index kept above Leaflet maps"
+  ]
+}
