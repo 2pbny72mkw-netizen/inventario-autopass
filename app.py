@@ -40,7 +40,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V56-D"
+APP_RELEASE = "V58"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -59,7 +59,14 @@ EXPECTED_CACHE_TTL_SECONDS = 600
 _expected_cache = {"at": 0.0, "data": None}
 # V56-D: cache curtíssimo da visão consolidada de localidades para reduzir recomputações concorrentes.
 _LOCATIONS_API_CACHE = {"at": 0.0, "payload": None}
-_LOCATIONS_API_CACHE_TTL = int(os.getenv("LOCATIONS_API_CACHE_TTL", "20"))
+_LOCATIONS_API_CACHE_TTL = int(os.getenv("LOCATIONS_API_CACHE_TTL", "120"))
+_LOCATIONS_API_CACHE_LOCK = threading.Lock()
+# V58: sincronização de escala deixa de executar N+1 em toda leitura operacional.
+_TEAM_PROFILE_SYNC_STATE = {"at": 0.0}
+_TEAM_PROFILE_SYNC_TTL = int(os.getenv("TEAM_PROFILE_SYNC_TTL", "60"))
+_TEAM_PROFILE_SYNC_LOCK = threading.Lock()
+_FIN_TERMINALS_CACHE = {"at": 0.0, "payload": None}
+_FIN_TERMINALS_CACHE_TTL = int(os.getenv("FIN_TERMINALS_CACHE_TTL", "120"))
 UPLOAD_DIR = BASE_DIR / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 
@@ -1437,51 +1444,56 @@ def _schedule_default_anchor(group, schedule):
     return datetime.strptime(raw, "%Y-%m-%d").date()
 
 
-def _ensure_team_schedule_profiles():
-    """V42.4: sincroniza escala por usuário com upsert seguro e saneia duplicidades legadas."""
-    users = User.query.filter(User.active.is_(True)).order_by(User.name).all()
-    valid_ids=set()
-    try:
-        for u in users:
-            if normalize(u.personnel_status or "ATIVO") != "ATIVO":
-                continue
-            if u.role not in ("technician", "technician_implantation", "dispatcher", "manager"):
-                continue
-            valid_ids.add(u.id)
-            # Primeiro pelo ID; em bases legadas reaproveita o perfil com mesmo nome em vez de inserir outro.
-            row=TeamScheduleProfile.query.filter_by(user_id=u.id).first()
-            if row is None:
-                row=TeamScheduleProfile.query.filter(func.lower(TeamScheduleProfile.name)==(u.name or "").strip().lower()).order_by(TeamScheduleProfile.active.desc(),TeamScheduleProfile.id).first()
-            sched=(u.work_schedule_type or "12x36").strip()
-            shift=(u.work_shift or ("08:00-18:00" if normalize(sched)=="5X2" else "05:00-17:00")).strip()
-            ref_date=u.work_anchor_date or datetime.now(ZoneInfo("America/Sao_Paulo")).date()
-            ref_status=normalize(u.work_anchor_status or "TRABALHA")
-            anchor=ref_date if ref_status != "FOLGA" else ref_date - timedelta(days=1)
-            jt=normalize(u.job_title or "")
-            category="SUPERVISOR" if ("SUPERV" in jt or u.role=="dispatcher") else ("APOIO" if "APOIO" in jt else "TECNICO")
-            if row is None:
-                row=TeamScheduleProfile(user_id=u.id,name=u.name,active=True,category=category,schedule_type=sched,shift=shift,supervision="",entry="",lines_json="[]",anchor_date=anchor)
-                db.session.add(row)
-                db.session.flush()
-            else:
-                row.user_id=u.id; row.name=u.name; row.active=True; row.category=category; row.schedule_type=sched; row.shift=shift; row.anchor_date=anchor; row.updated_at=datetime.utcnow()
-        # Desativa somente perfis sem vínculo válido; não cria registros durante consultas.
-        for row in TeamScheduleProfile.query.all():
-            if not row.user_id or row.user_id not in valid_ids:
-                row.active=False
-        db.session.commit()
-    except IntegrityError:
-        db.session.rollback()
-        # Recuperação controlada para legado com nome duplicado: associa o registro existente ao usuário.
-        for u in users:
-            if u.id not in valid_ids: continue
-            same=TeamScheduleProfile.query.filter(func.lower(TeamScheduleProfile.name)==(u.name or "").strip().lower()).order_by(TeamScheduleProfile.id).all()
-            if not same: continue
-            keep=next((x for x in same if x.user_id==u.id),same[0])
-            keep.user_id=u.id; keep.active=True; keep.name=u.name
-            for extra in same:
-                if extra.id!=keep.id: extra.active=False
-        db.session.commit()
+def _ensure_team_schedule_profiles(force=False):
+    """V58: sincroniza perfis de escala em lote, com TTL e sem consultas N+1.
+
+    A escala continua derivada do cadastro de usuários, porém as telas de leitura não
+    fazem mais SELECT por colaborador. Uma sincronização completa custa poucas queries
+    e só roda novamente após o TTL (ou quando force=True).
+    """
+    now=time.time()
+    if not force and now-float(_TEAM_PROFILE_SYNC_STATE.get("at") or 0) < _TEAM_PROFILE_SYNC_TTL:
+        return
+    with _TEAM_PROFILE_SYNC_LOCK:
+        now=time.time()
+        if not force and now-float(_TEAM_PROFILE_SYNC_STATE.get("at") or 0) < _TEAM_PROFILE_SYNC_TTL:
+            return
+        users=(User.query.filter(User.active.is_(True),User.role.in_(("technician","technician_implantation","dispatcher","manager"))).order_by(User.name).all())
+        profiles=TeamScheduleProfile.query.order_by(TeamScheduleProfile.id).all()
+        by_uid={p.user_id:p for p in profiles if p.user_id}
+        by_name={}
+        for p in profiles:
+            by_name.setdefault((p.name or "").strip().casefold(),p)
+        valid_ids=set()
+        try:
+            today=datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+            for u in users:
+                if normalize(u.personnel_status or "ATIVO") != "ATIVO":
+                    continue
+                valid_ids.add(u.id)
+                row=by_uid.get(u.id) or by_name.get((u.name or "").strip().casefold())
+                sched=(u.work_schedule_type or "12x36").strip()
+                shift=(u.work_shift or ("08:00-18:00" if normalize(sched)=="5X2" else "05:00-17:00")).strip()
+                ref_date=u.work_anchor_date or today
+                ref_status=normalize(u.work_anchor_status or "TRABALHA")
+                anchor=ref_date if ref_status != "FOLGA" else ref_date-timedelta(days=1)
+                jt=normalize(u.job_title or "")
+                category="SUPERVISOR" if ("SUPERV" in jt or u.role=="dispatcher") else ("APOIO" if "APOIO" in jt else "TECNICO")
+                if row is None:
+                    row=TeamScheduleProfile(user_id=u.id,name=u.name,active=True,category=category,schedule_type=sched,shift=shift,supervision="",entry="",lines_json="[]",anchor_date=anchor)
+                    db.session.add(row)
+                    profiles.append(row); by_uid[u.id]=row; by_name[(u.name or "").strip().casefold()]=row
+                else:
+                    row.user_id=u.id; row.name=u.name; row.active=True; row.category=category; row.schedule_type=sched; row.shift=shift; row.anchor_date=anchor; row.updated_at=datetime.utcnow()
+            for row in profiles:
+                if row.user_id and row.user_id not in valid_ids:
+                    row.active=False
+            db.session.commit()
+            _TEAM_PROFILE_SYNC_STATE["at"]=time.time()
+        except IntegrityError:
+            db.session.rollback()
+            # legado com nomes duplicados: deixa a próxima sincronização tentar após saneamento manual.
+            _TEAM_PROFILE_SYNC_STATE["at"]=time.time()
 
 
 def _team_profile_is_scheduled(profile, target_date):
@@ -3233,10 +3245,13 @@ def _observed_reference_stats(location_id):
 @app.get("/api/locations")
 @login_required
 def api_locations():
-    # V56-D: múltiplos componentes pedem a mesma visão quase simultaneamente.
-    # Um cache de poucos segundos reduz SQL repetido sem tornar a operação perceptivelmente defasada.
-    now=time.time(); cached=_LOCATIONS_API_CACHE.get("payload")
-    if cached is not None and now-float(_LOCATIONS_API_CACHE.get("at") or 0) < _LOCATIONS_API_CACHE_TTL:
+    # V58: resposta padrão é leve. Referência observada por inventários GPS só é
+    # calculada quando explicitamente solicitada (?observed=1), usada pelo Técnico.
+    include_observed=request.args.get("observed") in ("1","true","yes")
+    cache_slot="observed" if include_observed else "light"
+    now=time.time(); cached=(_LOCATIONS_API_CACHE.get(cache_slot) or {}).get("payload")
+    cached_at=float((_LOCATIONS_API_CACHE.get(cache_slot) or {}).get("at") or 0)
+    if cached is not None and now-cached_at < _LOCATIONS_API_CACHE_TTL:
         resp=jsonify(cached); resp.headers["X-Autopass-Cache"]="HIT"; return resp
     expected_map = _expected_assets_by_location()
 
@@ -3277,24 +3292,25 @@ def api_locations():
     # REV4: calcula referências observadas em lote. A versão anterior executava
     # uma consulta por estação, elevando /api/locations para ~210 queries/request.
     observed_by_loc = {}
-    obs_rows = (
-        db.session.query(Inventory.location_id, Inventory.latitude, Inventory.longitude, Inventory.gps_accuracy)
-        .filter(Inventory.latitude.isnot(None), Inventory.longitude.isnot(None), db.or_(Inventory.gps_accuracy.is_(None), Inventory.gps_accuracy <= 80))
-        .order_by(Inventory.location_id, Inventory.created_at.desc())
-        .all()
-    )
-    obs_points = {}
-    for lid, lat, lon, acc in obs_rows:
-        bucket=obs_points.setdefault(lid,[])
-        if len(bucket)<200: bucket.append((float(lat),float(lon)))
-    import statistics
-    for lid,pts in obs_points.items():
-        if not pts: continue
-        med_lat=statistics.median([x[0] for x in pts]); med_lon=statistics.median([x[1] for x in pts])
-        clean=[x for x in pts if _haversine_m(x[0],x[1],med_lat,med_lon)<=400] or pts
-        lat=sum(x[0] for x in clean)/len(clean); lon=sum(x[1] for x in clean)/len(clean)
-        spread=max((_haversine_m(x[0],x[1],lat,lon) for x in clean),default=0)
-        observed_by_loc[lid]={"count":len(clean),"latitude":lat,"longitude":lon,"spread_m":round(spread,1)}
+    if include_observed:
+        obs_rows = (
+            db.session.query(Inventory.location_id, Inventory.latitude, Inventory.longitude, Inventory.gps_accuracy)
+            .filter(Inventory.latitude.isnot(None), Inventory.longitude.isnot(None), db.or_(Inventory.gps_accuracy.is_(None), Inventory.gps_accuracy <= 80))
+            .order_by(Inventory.location_id, Inventory.created_at.desc())
+            .all()
+        )
+        obs_points = {}
+        for lid, lat, lon, acc in obs_rows:
+            bucket=obs_points.setdefault(lid,[])
+            if len(bucket)<200: bucket.append((float(lat),float(lon)))
+        import statistics
+        for lid,pts in obs_points.items():
+            if not pts: continue
+            med_lat=statistics.median([x[0] for x in pts]); med_lon=statistics.median([x[1] for x in pts])
+            clean=[x for x in pts if _haversine_m(x[0],x[1],med_lat,med_lon)<=400] or pts
+            lat=sum(x[0] for x in clean)/len(clean); lon=sum(x[1] for x in clean)/len(clean)
+            spread=max((_haversine_m(x[0],x[1],lat,lon) for x in clean),default=0)
+            observed_by_loc[lid]={"count":len(clean),"latitude":lat,"longitude":lon,"spread_m":round(spread,1)}
 
     out = []
     for loc in rows:
@@ -3328,8 +3344,8 @@ def api_locations():
             "inoperative": int(inv["inoperative"]),
             "divergences": int(inv["divergences"]),
         })
-    _LOCATIONS_API_CACHE["payload"]=out; _LOCATIONS_API_CACHE["at"]=time.time()
-    resp=jsonify(out); resp.headers["X-Autopass-Cache"]="MISS"; return resp
+    _LOCATIONS_API_CACHE[cache_slot]={"payload":out,"at":time.time()}
+    resp=jsonify(out); resp.headers["X-Autopass-Cache"]="MISS"; resp.headers["X-Autopass-Mode"]=("observed" if include_observed else "light"); return resp
 
 
 @app.get("/api/location/<int:location_id>/inventory")
@@ -6557,17 +6573,22 @@ _TOPDESK_DASH_CACHE_TTL = 300
 def topdesk_dashboard_api():
     # V56-B REV2: cache curto por conjunto de filtros. Evita recalcular 50k chamados
     # várias vezes durante a mesma navegação/refresh da dashboard.
-    cache_key=request.query_string.decode("utf-8","ignore")
+    # V58: ignora cache-busters/timestamps do navegador; somente filtros funcionais compõem a chave.
+    ignored={"_","t","ts","timestamp","cache","cacheBust","cb"}
+    cache_key="&".join(f"{k}={v}" for k,v in sorted(request.args.items()) if k not in ignored)
     now=time.time(); cached=_TOPDESK_DASH_CACHE.get(cache_key)
     if cached and now-cached[0] < _TOPDESK_DASH_CACHE_TTL:
         payload=dict(cached[1]); payload["cache"]="HIT"; return jsonify(payload)
     # V56-D: dashboard sem filtros usa agregações SQL em vez de materializar ~50 mil objetos Python.
     # Analytics detalhado continua usando o pipeline completo quando há filtros.
     if not request.args:
-        total=int(db.session.query(func.count(TopDeskTicket.id)).scalar() or 0)
         status_expr=func.upper(func.coalesce(TopDeskTicket.status,''))
-        resolved=int(db.session.query(func.count(TopDeskTicket.id)).filter(db.or_(status_expr.like('%RESOLVID%'),status_expr.like('%FECHAD%'),status_expr.like('%CANCEL%'))).scalar() or 0)
-        assigned=int(db.session.query(func.count(TopDeskTicket.id)).filter(TopDeskTicket.assigned_technician_id.isnot(None)).scalar() or 0)
+        total,resolved,assigned=db.session.query(
+            func.count(TopDeskTicket.id),
+            func.coalesce(func.sum(case((db.or_(status_expr.like('%RESOLVID%'),status_expr.like('%FECHAD%'),status_expr.like('%CANCEL%')),1),else_=0)),0),
+            func.coalesce(func.sum(case((TopDeskTicket.assigned_technician_id.isnot(None),1),else_=0)),0)
+        ).one()
+        total=int(total or 0); resolved=int(resolved or 0); assigned=int(assigned or 0)
         by_status={k or 'Sem status':int(v) for k,v in db.session.query(TopDeskTicket.status,func.count(TopDeskTicket.id)).group_by(TopDeskTicket.status).all()}
         by_type={k or 'OUTRO':int(v) for k,v in db.session.query(TopDeskTicket.equipment_type,func.count(TopDeskTicket.id)).group_by(TopDeskTicket.equipment_type).all()}
         top_locations=[{'name':k,'count':int(v)} for k,v in db.session.query(Location.location,func.count(TopDeskTicket.id)).join(TopDeskTicket,TopDeskTicket.location_id==Location.id).group_by(Location.location).order_by(func.count(TopDeskTicket.id).desc()).limit(12).all()]
@@ -8852,18 +8873,29 @@ def financial_cash_reconciliation_import_active():
 @login_required
 def financial_cash_reconciliation_terminals():
     if not _financial_admin_allowed() or not _has_access("finance.apuracao"): return jsonify({"ok":False,"error":"Sem permissão."}),403
-    terms=sorted({x[0] for x in db.session.query(FinancialCashCollection.terminal).distinct().all() if x and x[0]},key=lambda x:(len(str(x)),str(x)))
-    assets=BaseAsset.query.filter(BaseAsset.terminal_number.in_(terms)).all() if terms else []
-    locmap={}
-    for a in assets:
-        t=_fin_terminal(a.terminal_number)
-        if t and t not in locmap: locmap[t]={"locality":a.locality or "","company":a.company or "","line":a.line or ""}
-    tx_count=db.session.query(func.count(FinancialATMTransaction.id)).scalar() or 0
-    latest_tx=db.session.query(FinancialATMTransaction).order_by(FinancialATMTransaction.transaction_at.desc()).first()
-    latest_import=db.session.query(FinancialATMTransaction).order_by(FinancialATMTransaction.imported_at.desc()).first()
-    return jsonify({"ok":True,"terminals":[{"terminal":t,**locmap.get(t,{"locality":"","company":"","line":""})} for t in terms],"collections":db.session.query(func.count(FinancialCashCollection.id)).scalar() or 0,"transactions":tx_count,
-        "latest_transaction":({"terminal":latest_tx.terminal,"at":latest_tx.transaction_at.isoformat(),"source_file":latest_tx.source_file or ""} if latest_tx else None),
-        "latest_import":({"at":latest_import.imported_at.isoformat(),"source_file":latest_import.source_file or ""} if latest_import else None)})
+    now=time.time(); cached=_FIN_TERMINALS_CACHE.get("payload")
+    if cached is not None and now-float(_FIN_TERMINALS_CACHE.get("at") or 0) < _FIN_TERMINALS_CACHE_TTL:
+        resp=jsonify(cached); resp.headers["X-Autopass-Cache"]="HIT"; return resp
+    # V58: terminais e metadados via JOIN/subquery; evita IN enorme e objetos ORM desnecessários.
+    term_sub=db.session.query(FinancialCashCollection.terminal.label("terminal")).distinct().subquery()
+    terms=[x[0] for x in db.session.query(term_sub.c.terminal).order_by(term_sub.c.terminal).all() if x and x[0]]
+    asset_rows=(db.session.query(BaseAsset.terminal_number,func.max(BaseAsset.locality),func.max(BaseAsset.company),func.max(BaseAsset.line))
+        .join(term_sub,BaseAsset.terminal_number==term_sub.c.terminal).group_by(BaseAsset.terminal_number).all())
+    locmap={_fin_terminal(t):{"locality":loc or "","company":comp or "","line":line or ""} for t,loc,comp,line in asset_rows if _fin_terminal(t)}
+    tx_count,latest_at,latest_import_at=db.session.query(func.count(FinancialATMTransaction.id),func.max(FinancialATMTransaction.transaction_at),func.max(FinancialATMTransaction.imported_at)).one()
+    latest_tx=None; latest_import=None
+    if latest_at:
+        row=db.session.query(FinancialATMTransaction.terminal,FinancialATMTransaction.source_file).filter(FinancialATMTransaction.transaction_at==latest_at).first()
+        latest_tx={"terminal":row[0] if row else "","at":latest_at.isoformat(),"source_file":row[1] if row else ""}
+    if latest_import_at:
+        src=db.session.query(FinancialATMTransaction.source_file).filter(FinancialATMTransaction.imported_at==latest_import_at).first()
+        latest_import={"at":latest_import_at.isoformat(),"source_file":src[0] if src else ""}
+    payload={"ok":True,"terminals":[{"terminal":t,**locmap.get(t,{"locality":"","company":"","line":""})} for t in terms],
+        "collections":int(db.session.query(func.count(FinancialCashCollection.id)).scalar() or 0),"transactions":int(tx_count or 0),
+        "latest_transaction":latest_tx,"latest_import":latest_import}
+    _FIN_TERMINALS_CACHE["payload"]=payload; _FIN_TERMINALS_CACHE["at"]=time.time()
+    resp=jsonify(payload); resp.headers["X-Autopass-Cache"]="MISS"; return resp
+
 
 @app.get("/api/financeiro/apuracao/coletas")
 @login_required
@@ -9579,7 +9611,9 @@ try:
             "CREATE INDEX IF NOT EXISTS ix_monthly_cost_center_comp ON financial_monthly_costs (cost_center, competence)",
             "CREATE INDEX IF NOT EXISTS ix_perf_created_route ON performance_metrics (created_at, route)",
             "CREATE INDEX IF NOT EXISTS ix_session_user_event_created ON session_events (user_id, event_type, created_at)",
-            "CREATE INDEX IF NOT EXISTS ix_team_profile_active_user ON team_schedule_profiles (active, user_id)"
+            "CREATE INDEX IF NOT EXISTS ix_team_profile_active_user ON team_schedule_profiles (active, user_id)",
+            "CREATE INDEX IF NOT EXISTS ix_fin_atm_tx_imported_at ON financial_atm_transactions (imported_at)",
+            "CREATE INDEX IF NOT EXISTS ix_fin_atm_tx_terminal_status_at ON financial_atm_transactions (terminal, status, transaction_at)"
         ):
             try: conn.execute(text(sql))
             except Exception: pass
