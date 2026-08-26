@@ -5,7 +5,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{% block title %}Sistema de Gestão Suporte a Campo{% endblock %}</title>
-<link rel="stylesheet" href="{{url_for('static',filename='app.css')}}?v=v60">
+<link rel="stylesheet" href="{{url_for('static',filename='app.css')}}?v=v60-rev">
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#17345d">
 </head>
@@ -27,6 +27,7 @@
         {% if can_view('field.dashboard') %}<a href="/dashboard/field">Dashboard Field</a>{% endif %}
         {% if can_view('field.inventory') and session.get('role') in ('manager','manager_field','technician','technician_implantation','consultation') %}<a href="/tecnico">Inventário</a>{% endif %}
         {% if can_view('field.calls') and session.get('role') in ('technician','manager','manager_field','dispatcher') %}<a href="/trabalho">Chamados</a>{% endif %}
+        {% if can_view('field.preventive') and session.get('role') in ('technician','manager','manager_field') %}<a href="/preventivas">Preventiva ATM</a>{% endif %}
         {% if can_view('field.equipment') %}<a href="/patrimonio">Equipamentos</a>{% endif %}
         {% if can_view('field.evidence') %}<a href="/evidencias-campo">Evidências</a>{% endif %}
         {% if can_view('field.panorama') %}<a href="/visao-panoramica">Visão Panorâmica</a>{% endif %}
@@ -64,7 +65,7 @@ document.getElementById('installPwa')?.addEventListener('click',async()=>{if(!v5
 if('serviceWorker' in navigator && (location.protocol==='https:' || location.hostname==='localhost')){
   window.addEventListener('load',async()=>{
     try{
-      const reg=await navigator.serviceWorker.register('/sw.js?v=v60',{scope:'/',updateViaCache:'none'});
+      const reg=await navigator.serviceWorker.register('/sw.js?v=v60-rev',{scope:'/',updateViaCache:'none'});
       await reg.update();
     }catch(err){console.warn('Falha ao atualizar Service Worker',err);}
   },{once:true});

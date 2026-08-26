@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Solicitação Preventiva ATM | Autopass{% endblock %}
+{% block content %}
+<section class="dashHero"><div><span class="eyebrow">V60 REV · SOLICITAÇÃO = PREVENTIVA</span><h1>Abrir Preventiva ATM</h1><p>Fluxo interno preparado para integração TOPdesk. Os dados já conhecidos são preenchidos pelo sistema.</p></div><span class="tag">TOPdesk · preparação</span></section>
+<section class="card preventiveNotice"><b>Escopo desta etapa</b><span>Somente Solicitação ATM do tipo Preventiva. O protocolo é interno até a ativação da API TOPdesk.</span></section>
+<section class="card">
+<form id="preventiveForm" class="preventiveForm">
+<div class="grid3"><div><label>Localidade *</label><select id="pvLocation" name="location_id" required><option value="">Selecione</option></select></div><div><label>ATM / ID *</label><select id="pvAsset" name="base_asset_id" required disabled><option value="">Selecione a localidade</option></select></div><div><label>Tipo de requisição</label><input value="Preventiva" readonly></div></div>
+<div class="grid2"><div><label>Serviço *</label><select id="pvService" name="service" required><option value="">Selecione</option></select></div><div><label>Origem</label><input value="Sistema de Gestão de Campo" readonly></div></div>
+<div><label>Descrição *</label><textarea id="pvDescription" name="description" rows="5" required placeholder="Descreva a necessidade preventiva e a condição encontrada."></textarea></div>
+<div><label>Evidências</label><input id="pvFiles" name="attachments" type="file" accept="image/jpeg,image/png,image/webp,application/pdf" multiple><small>Até 8 arquivos. Fotos e PDF nesta etapa.</small></div>
+<input type="hidden" name="latitude" id="pvLat"><input type="hidden" name="longitude" id="pvLon"><input type="hidden" name="gps_accuracy" id="pvAcc">
+<div class="preventiveActions"><button type="button" class="secondary" id="pvGps">Capturar GPS</button><span id="pvGpsState" class="muted">GPS não capturado</span><button class="primary" type="submit" id="pvSubmit">Registrar preventiva</button></div>
+</form><div id="pvMessage"></div>
+</section>
+<section class="card"><div class="sectionHead"><div><h2>Preventivas recentes</h2><p class="muted">Protocolos internos e, futuramente, o número oficial TOPdesk.</p></div><button class="secondary" id="pvReload" type="button">Atualizar</button></div><div class="scaleTableWrap"><table class="scaleTable"><thead><tr><th>Protocolo</th><th>Localidade</th><th>ATM</th><th>Serviço</th><th>Status</th><th>TOPdesk</th><th>Data</th></tr></thead><tbody id="pvRows"></tbody></table></div></section>
+{% endblock %}
+{% block scripts %}<script src="{{url_for('static',filename='preventive.js')}}?v=v60-rev"></script>{% endblock %}

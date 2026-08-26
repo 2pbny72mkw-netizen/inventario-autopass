@@ -6,7 +6,7 @@
 <button class="workType incident active" data-kind="INCIDENTE"><span>⚠</span><b>Incidentes</b><small>Prioridade</small><strong id="cntIncident">0</strong></button>
 <button class="workType" data-kind="SOLICITACAO"><span>▤</span><b>Solicitações</b><small>Atendimentos</small><strong id="cntRequest">0</strong></button>
 <a class="workType" href="/tecnico"><span>◫</span><b>Inventário</b><small>Levantamento</small><strong>→</strong></a>
-<button class="workType" data-kind="PREVENTIVA"><span>✓</span><b>Preventiva</b><small>Programadas</small><strong>0</strong></button>
+<a class="workType" href="/preventivas"><span>✓</span><b>Preventiva</b><small>Solicitação ATM</small><strong>→</strong></a>
 </div>
 <section class="card"><div class="sectionHead"><div><h2 id="workTitle">Incidentes atribuídos</h2><p class="muted">Ordenados por prioridade. Atualize o status conforme o atendimento.</p></div><button id="reloadWork" class="secondary">Atualizar</button></div><div id="workList" class="workList"></div></section>
 {% endblock %}
