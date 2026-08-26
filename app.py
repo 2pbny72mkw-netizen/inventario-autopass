@@ -40,7 +40,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V56-B REV3"
+APP_RELEASE = "V56-B REV4"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -3248,6 +3248,28 @@ def api_locations():
 
     rows = Location.query.order_by(Location.company, Location.line, Location.location).all()
 
+    # REV4: calcula referências observadas em lote. A versão anterior executava
+    # uma consulta por estação, elevando /api/locations para ~210 queries/request.
+    observed_by_loc = {}
+    obs_rows = (
+        db.session.query(Inventory.location_id, Inventory.latitude, Inventory.longitude, Inventory.gps_accuracy)
+        .filter(Inventory.latitude.isnot(None), Inventory.longitude.isnot(None), db.or_(Inventory.gps_accuracy.is_(None), Inventory.gps_accuracy <= 80))
+        .order_by(Inventory.location_id, Inventory.created_at.desc())
+        .all()
+    )
+    obs_points = {}
+    for lid, lat, lon, acc in obs_rows:
+        bucket=obs_points.setdefault(lid,[])
+        if len(bucket)<200: bucket.append((float(lat),float(lon)))
+    import statistics
+    for lid,pts in obs_points.items():
+        if not pts: continue
+        med_lat=statistics.median([x[0] for x in pts]); med_lon=statistics.median([x[1] for x in pts])
+        clean=[x for x in pts if _haversine_m(x[0],x[1],med_lat,med_lon)<=400] or pts
+        lat=sum(x[0] for x in clean)/len(clean); lon=sum(x[1] for x in clean)/len(clean)
+        spread=max((_haversine_m(x[0],x[1],lat,lon) for x in clean),default=0)
+        observed_by_loc[lid]={"count":len(clean),"latitude":lat,"longitude":lon,"spread_m":round(spread,1)}
+
     out = []
     for loc in rows:
         inv = inv_by_loc.get(loc.id, {
@@ -3275,7 +3297,7 @@ def api_locations():
             "reference_longitude": loc.reference_longitude,
             "reference_source": loc.reference_source,
             "reference_updated_at": loc.reference_updated_at.isoformat(timespec="seconds") if loc.reference_updated_at else None,
-            "observed_reference": _observed_reference_stats(loc.id),
+            "observed_reference": observed_by_loc.get(loc.id,{"count":0,"latitude":None,"longitude":None,"spread_m":None}),
             "inventoried": int(inv["total"]),
             "inoperative": int(inv["inoperative"]),
             "divergences": int(inv["divergences"]),
@@ -8796,7 +8818,12 @@ def financial_cash_reconciliation_terminals():
     for a in assets:
         t=_fin_terminal(a.terminal_number)
         if t and t not in locmap: locmap[t]={"locality":a.locality or "","company":a.company or "","line":a.line or ""}
-    return jsonify({"ok":True,"terminals":[{"terminal":t,**locmap.get(t,{"locality":"","company":"","line":""})} for t in terms],"collections":db.session.query(func.count(FinancialCashCollection.id)).scalar() or 0,"transactions":db.session.query(func.count(FinancialATMTransaction.id)).scalar() or 0})
+    tx_count=db.session.query(func.count(FinancialATMTransaction.id)).scalar() or 0
+    latest_tx=db.session.query(FinancialATMTransaction).order_by(FinancialATMTransaction.transaction_at.desc()).first()
+    latest_import=db.session.query(FinancialATMTransaction).order_by(FinancialATMTransaction.imported_at.desc()).first()
+    return jsonify({"ok":True,"terminals":[{"terminal":t,**locmap.get(t,{"locality":"","company":"","line":""})} for t in terms],"collections":db.session.query(func.count(FinancialCashCollection.id)).scalar() or 0,"transactions":tx_count,
+        "latest_transaction":({"terminal":latest_tx.terminal,"at":latest_tx.transaction_at.isoformat(),"source_file":latest_tx.source_file or ""} if latest_tx else None),
+        "latest_import":({"at":latest_import.imported_at.isoformat(),"source_file":latest_import.source_file or ""} if latest_import else None)})
 
 @app.get("/api/financeiro/apuracao/coletas")
 @login_required
