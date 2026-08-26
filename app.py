@@ -20,9 +20,9 @@ import threading
 import html as html_lib
 from functools import wraps
 
-from flask import Flask, render_template, request, redirect, url_for, session, jsonify, flash, send_from_directory, Response, send_file, make_response, g
+from flask import Flask, has_request_context, render_template, request, redirect, url_for, session, jsonify, flash, send_from_directory, Response, send_file, make_response, g
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import UniqueConstraint, Index, func, case, text, and_
+from sqlalchemy import UniqueConstraint, Index, func, case, text, and_, event
 from sqlalchemy.exc import IntegrityError
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -40,7 +40,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V56-B"
+APP_RELEASE = "V56-B REV"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -133,10 +133,27 @@ app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
 
 db = SQLAlchemy(app)
 
+# V56-B REV — mede custo SQL por requisição sem gravar payloads/dados sensíveis.
+@event.listens_for(db.engine, "before_cursor_execute")
+def _perf_sql_before(conn, cursor, statement, parameters, context, executemany):
+    context._v56_sql_started = time.perf_counter()
+
+@event.listens_for(db.engine, "after_cursor_execute")
+def _perf_sql_after(conn, cursor, statement, parameters, context, executemany):
+    try:
+        started=getattr(context,"_v56_sql_started",None)
+        if started is not None and has_request_context():
+            g._perf_sql_ms=float(getattr(g,"_perf_sql_ms",0) or 0)+(time.perf_counter()-started)*1000.0
+            g._perf_query_count=int(getattr(g,"_perf_query_count",0) or 0)+1
+    except Exception:
+        pass
+
 # V56-B — telemetria leve. Não registra arquivos estáticos nem a própria API de telemetria.
 @app.before_request
 def _v56b_perf_start():
     g._perf_started = time.perf_counter()
+    g._perf_sql_ms = 0.0
+    g._perf_query_count = 0
 
 @app.after_request
 def _v56b_perf_finish(response):
@@ -150,7 +167,7 @@ def _v56b_perf_finish(response):
             # amostragem integral de rotas lentas/erros e 1/4 das rápidas para reduzir overhead.
             keep = ms >= 750 or response.status_code >= 400 or (int(time.time()*1000) % 4 == 0)
             if keep:
-                db.session.add(PerformanceMetric(route=(request.url_rule.rule if request.url_rule else path)[:220],method=request.method,status_code=response.status_code,duration_ms=round(ms,2),user_id=session.get("user_id")))
+                db.session.add(PerformanceMetric(route=(request.url_rule.rule if request.url_rule else path)[:220],method=request.method,status_code=response.status_code,duration_ms=round(ms,2),sql_ms=round(float(getattr(g,"_perf_sql_ms",0) or 0),2),query_count=int(getattr(g,"_perf_query_count",0) or 0),user_id=session.get("user_id")))
                 db.session.commit()
     except Exception:
         try: db.session.rollback()
@@ -273,6 +290,8 @@ class PerformanceMetric(db.Model):
     method = db.Column(db.String(12), nullable=False)
     status_code = db.Column(db.Integer, nullable=False, index=True)
     duration_ms = db.Column(db.Float, nullable=False, index=True)
+    sql_ms = db.Column(db.Float, nullable=False, default=0)
+    query_count = db.Column(db.Integer, nullable=False, default=0)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
     __table_args__ = (Index("ix_perf_created_route", "created_at", "route"),)
@@ -1619,7 +1638,7 @@ def teams_status_api():
     for member in scheduled:
         user=db.session.get(User,member.get("user_id")) if member.get("user_id") else None
         if user is not None and (not user.active or normalize(user.personnel_status or "ATIVO") != "ATIVO"): continue
-        pos=_team_latest_position(user.id if user else None, only_today=False)
+        pos=_team_latest_position(user.id if user else None, only_today=True)
         minutes=None
         if pos: minutes=max(0,int((now_utc-pos.captured_at).total_seconds()//60))
         today_login=(SessionEvent.query.filter(SessionEvent.user_id==user.id,SessionEvent.event_type=="LOGIN",SessionEvent.created_at>=start_utc,SessionEvent.created_at<end_utc).order_by(SessionEvent.created_at).first() if user else None)
@@ -1644,7 +1663,9 @@ def teams_status_api():
             operation_status="EM OPERAÇÃO"; summary["in_operation"]+=1
         if station and station["relation"]=="MAIS PRÓXIMA": summary["outside_locality"]+=1
         freshness="SEM SINAL" if minutes is None else ("ATUAL" if minutes<=5 else ("ATENÇÃO" if minutes<=15 else "ATRASADO"))
-        rows.append({**member,"photo_url":(f"/usuarios/{user.id}/foto" if user and user.photo_url else None),"photo_version":(str(user.photo_url) if user and user.photo_url else None),"latitude":pos.latitude if pos else None,"longitude":pos.longitude if pos else None,"accuracy":pos.accuracy if pos else None,"captured_at":(pos.captured_at.isoformat()+"Z") if pos else None,"minutes_since":minutes,"freshness":freshness,"first_login":login_local.strftime("%H:%M") if login_local else None,"late_minutes":late_minutes,"operation_status":operation_status,"nearest_station":station,"current_location":station["name"] if station else None})
+        gps_today=(TechnicianPosition.query.filter(TechnicianPosition.user_id==user.id,TechnicianPosition.captured_at>=start_utc,TechnicianPosition.captured_at<end_utc).count() if user else 0)
+        login_events=(SessionEvent.query.filter(SessionEvent.user_id==user.id,SessionEvent.created_at>=start_utc,SessionEvent.created_at<end_utc).count() if user else 0)
+        rows.append({**member,"gps_points_today":gps_today,"session_events_today":login_events,"photo_url":(f"/usuarios/{user.id}/foto" if user and user.photo_url else None),"photo_version":(str(user.photo_url) if user and user.photo_url else None),"latitude":pos.latitude if pos else None,"longitude":pos.longitude if pos else None,"accuracy":pos.accuracy if pos else None,"captured_at":(pos.captured_at.isoformat()+"Z") if pos else None,"minutes_since":minutes,"freshness":freshness,"first_login":login_local.strftime("%H:%M") if login_local else None,"late_minutes":late_minutes,"operation_status":operation_status,"nearest_station":station,"current_location":station["name"] if station else None})
     counts={}
     for row in rows: counts[row["category"]]=counts.get(row["category"],0)+1
     return jsonify({"ok":True,"date":target_date.isoformat(),"time":local_now.strftime("%H:%M"),"scheduled":len(rows),"counts_by_category":counts,"summary":summary,"technicians":rows})
@@ -2917,11 +2938,11 @@ def telemetry_summary_api():
             a=sorted(arr); return round(a[min(len(a)-1,max(0,int((len(a)-1)*p)))],1)
         by={}
         for x in rows:
-            d=by.setdefault(x.route,{"route":x.route,"count":0,"sum":0.0,"max":0.0,"errors":0,"vals":[]})
-            d["count"]+=1; d["sum"]+=float(x.duration_ms or 0); d["max"]=max(d["max"],float(x.duration_ms or 0)); d["errors"]+=1 if x.status_code>=500 else 0; d["vals"].append(float(x.duration_ms or 0))
+            d=by.setdefault(x.route,{"route":x.route,"count":0,"sum":0.0,"max":0.0,"errors":0,"vals":[],"sql_sum":0.0,"queries":0})
+            d["count"]+=1; d["sum"]+=float(x.duration_ms or 0); d["max"]=max(d["max"],float(x.duration_ms or 0)); d["errors"]+=1 if x.status_code>=500 else 0; d["vals"].append(float(x.duration_ms or 0)); d["sql_sum"]+=float(getattr(x,"sql_ms",0) or 0); d["queries"]+=int(getattr(x,"query_count",0) or 0)
         route_rows=[]
         for d in by.values():
-            route_rows.append({"route":d["route"],"count":d["count"],"avg_ms":round(d["sum"]/d["count"],1),"p95_ms":pct(d["vals"],.95),"max_ms":round(d["max"],1),"errors":d["errors"]})
+            route_rows.append({"route":d["route"],"count":d["count"],"avg_ms":round(d["sum"]/d["count"],1),"p95_ms":pct(d["vals"],.95),"max_ms":round(d["max"],1),"avg_sql_ms":round(d["sql_sum"]/d["count"],1),"avg_queries":round(d["queries"]/d["count"],1),"errors":d["errors"]})
         route_rows.sort(key=lambda x:(x["p95_ms"],x["avg_ms"]),reverse=True)
         # série em blocos de 5 minutos
         buckets={}
@@ -8025,18 +8046,22 @@ def emv_chip_list():
     _ensure_emv_tables(); swap_rows=EmvChipSwap.query.all(); swaps={x.terminal:x for x in swap_rows}; rows=[]
     user_ids={uid for x in swap_rows for uid in (x.technician_id,getattr(x,"completed_by_id",None)) if uid}; users={u.id:u for u in User.query.filter(User.id.in_(user_ids)).all()} if user_ids else {}
     network_rows=_load_station_network_rows()
+    station_names={}
+    for nr in network_rows:
+        sn=str(nr.get("station") or "")
+        if " - " in sn: station_names.setdefault(sn.split(" - ",1)[0].strip().upper(),sn.split(" - ",1)[1])
+    swap_ids=[x.id for x in swap_rows]
+    photo_map={}
+    if swap_ids:
+        for ph in EmvChipSwapPhoto.query.filter(EmvChipSwapPhoto.swap_id.in_(swap_ids)).order_by(EmvChipSwapPhoto.created_at).all(): photo_map.setdefault(ph.swap_id,[]).append(ph)
     for r in _v41_emv_rows():
         sw=swaps.get(r["terminal"]); d=dict(r)
         # Ex.: 701-EST => EST - Estudantes
         station_code=str(r.get("station") or "").split('-')[-1].strip().upper()
-        station_name=""
-        for nr in network_rows:
-            sn=str(nr.get("station") or "")
-            if sn.upper().startswith(station_code+" -"):
-                station_name=sn.split(" - ",1)[1]; break
+        station_name=station_names.get(station_code,"")
         photos=[]
         if sw:
-            for ph in EmvChipSwapPhoto.query.filter_by(swap_id=sw.id).order_by(EmvChipSwapPhoto.created_at).all():
+            for ph in photo_map.get(sw.id,[]):
                 photos.append({"id":ph.id,"name":ph.original_name,"url":url_for("uploaded",name=ph.stored_name),"created_at":ph.created_at.isoformat() if ph.created_at else None})
         tech=users.get(sw.technician_id) if sw else None; completer=users.get(getattr(sw,"completed_by_id",None)) if sw else None
         d.update({"status":sw.status if sw else "PENDENTE","test_result":sw.test_result if sw else None,"notes":sw.notes if sw else "","swap_id":sw.id if sw else None,"station_name":station_name,"photos":photos,"technician":tech.name if tech else "","completed_by":completer.name if completer else (tech.name if sw and sw.completed_at and tech else ""),"completed_by_role":completer.role if completer else (tech.role if sw and sw.completed_at and tech else ""),"completed_at":sw.completed_at.isoformat() if sw and sw.completed_at else None,"updated_at":sw.updated_at.isoformat() if sw and sw.updated_at else None})
@@ -8045,7 +8070,7 @@ def emv_chip_list():
     base_terms={str(x.get("terminal") or "") for x in _v41_emv_rows()}
     for sw in swap_rows:
         if not getattr(sw,"manual_entry",False) or sw.terminal in base_terms: continue
-        photos=[{"id":ph.id,"name":ph.original_name,"url":url_for("uploaded",name=ph.stored_name),"created_at":ph.created_at.isoformat() if ph.created_at else None} for ph in EmvChipSwapPhoto.query.filter_by(swap_id=sw.id).order_by(EmvChipSwapPhoto.created_at).all()]
+        photos=[{"id":ph.id,"name":ph.original_name,"url":url_for("uploaded",name=ph.stored_name),"created_at":ph.created_at.isoformat() if ph.created_at else None} for ph in photo_map.get(sw.id,[])]
         tech=users.get(sw.technician_id); completer=users.get(getattr(sw,"completed_by_id",None))
         rows.append({"company":sw.company or "","line":sw.line or "","station":sw.station or "","station_name":sw.station or "","terminal":sw.terminal,"block_number":sw.block_number or "","version":"","ip":"","mask":"","gateway":"","dns1":"","dns2":"","group":"","manual_entry":True,"status":sw.status or "PENDENTE","test_result":sw.test_result,"notes":sw.notes or "","swap_id":sw.id,"photos":photos,"technician":tech.name if tech else "","completed_by":completer.name if completer else "","completed_at":sw.completed_at.isoformat() if sw.completed_at else None,"updated_at":sw.updated_at.isoformat() if sw.updated_at else None})
     return jsonify({"ok":True,"rows":rows})
@@ -9376,6 +9401,17 @@ except Exception:
     pass
 
 with app.app_context():
+    # V56-B REV: migração aditiva da telemetria detalhada.
+    try:
+        insp=db.inspect(db.engine)
+        if insp.has_table("performance_metrics"):
+            cols={c["name"] for c in insp.get_columns("performance_metrics")}
+            with db.engine.begin() as conn:
+                if "sql_ms" not in cols: conn.execute(text("ALTER TABLE performance_metrics ADD COLUMN sql_ms FLOAT DEFAULT 0"))
+                if "query_count" not in cols: conn.execute(text("ALTER TABLE performance_metrics ADD COLUMN query_count INTEGER DEFAULT 0"))
+    except Exception:
+        try: db.session.rollback()
+        except Exception: pass
     migrate_location_reference_columns()
     migrate_panorama_status_column()
     # V39.7.1: não deixa a criação das novas tabelas de Troca de Chips bloquear o startup.
