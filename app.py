@@ -40,7 +40,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V58"
+APP_RELEASE = "V58-REV"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -1509,8 +1509,9 @@ def _team_profile_is_scheduled(profile, target_date):
     return delta >= 0 and delta % 2 == 0
 
 
-def _profile_to_dict(profile):
-    user = db.session.get(User, profile.user_id) if profile.user_id else None
+def _profile_to_dict(profile, user=None):
+    if user is None and profile.user_id:
+        user = db.session.get(User, profile.user_id)
     # Perfil vinculado a usuário inativo deixa de participar da visão operacional.
     linked_user_active = bool(user and user.active)
     return {
@@ -1771,7 +1772,7 @@ def teams_calendar_api():
                     "shift": (p.shift or "") if scheduled else "FOLGA",
                     "status_override": personnel_status if personnel_status != "ATIVO" else None,
                 })
-            row = _profile_to_dict(p)
+            row = _profile_to_dict(p, linked_user)
             row["days"] = day_rows
             rows.append(row)
 

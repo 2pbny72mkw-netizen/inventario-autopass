@@ -1,6 +1,6 @@
-window.AUTOPASS_TEAMS_VERSION="teams-v39-7-6";
+window.AUTOPASS_TEAMS_VERSION="teams-v58-rev";
 
-console.log('AUTOPASS Central Operacional V26 carregada');
+console.log('AUTOPASS Central Operacional V58 REVISADA carregada');
 
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -13,6 +13,7 @@ const weekday=s=>{
   const d=new Date(`${s}T12:00:00`);
   return ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'][d.getDay()];
 };
+function saoPauloISODate(){try{return new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date())}catch(_){const d=new Date(Date.now()-3*3600000);return d.toISOString().slice(0,10)}}
 
 let teamMap=null;
 let tileLayer=null;
@@ -24,7 +25,7 @@ function createTeamMap(){
   if(teamMap) return;
   teamMap=L.map('teamMap',{
     scrollWheelZoom:true,
-    preferCanvas:true,
+    preferCanvas:false,
     zoomControl:true
   }).setView([-23.5505,-46.6333],10);
 
@@ -36,7 +37,6 @@ function createTeamMap(){
     keepBuffer:4,
     attribution:'&copy; OpenStreetMap contributors'
   }).addTo(teamMap);
-  v391SetupTeamMap();
 
   const container=$('teamMap');
   if('ResizeObserver' in window){
@@ -103,6 +103,7 @@ async function loadTeams(){
   const d=await r.json();
   if(!r.ok||!d.ok) throw new Error(d.error||'Falha ao carregar equipes.');
 
+  console.info('[V58] equipes/status:',d.scheduled||0,'escalado(s) em',d.date);
   $('teamDate').textContent=d.date||'—';
   $('teamClock').textContent=`${d.date||''} ${d.time||''}`.trim();
   $('kScheduled').textContent=d.scheduled||0;
@@ -136,7 +137,7 @@ async function loadTeams(){
         <span class="linkBadge ${t.linked?'linked':'unlinked'}">${t.linked?'Usuário vinculado':'Sem vínculo com Usuários'}</span>
       </div>`;
     $('teamCards').appendChild(card);
-    if($('todayTeamTable')){ const tr=document.createElement('tr'); tr.innerHTML=`<td><b>${esc(t.name)}</b></td><td>${esc(t.job_title||t.category)}</td><td>${esc(t.schedule_type||'—')}</td><td>${esc(t.shift||'—')}</td><td>${esc(t.entry||'—')}</td><td>${esc((t.lines||[]).join(' / ')||'—')}</td><td>${esc(t.freshness||'SEM SINAL')}</td><td>${esc(freshnessText(t))}</td>`; $('todayTeamTable').appendChild(tr); }
+    if($('todayTeamTable')){ const tr=document.createElement('tr'); const st=t.nearest_station||{};tr.innerHTML=`<td><b>${esc(t.name)}</b></td><td>${esc(t.job_title||t.category)}</td><td>${esc(t.company||'—')}</td><td>${esc(t.schedule_type||'—')}</td><td>${esc(t.shift||t.entry||'—')}</td><td>${esc(t.first_login||'—')}</td><td><b>${esc(t.operation_status||t.freshness||'—')}</b></td><td>${esc(t.captured_at?new Date(t.captured_at).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}):'—')}</td><td>${esc(st.name||'—')}${st.name?`<small>${esc(st.relation||'')} · ${Number(st.distance_m||0).toLocaleString('pt-BR')} m · ${esc(st.line||'')}</small>`:''}</td><td>${esc(freshnessText(t))}</td>`; $('todayTeamTable').appendChild(tr); }
 
     if(t.latitude!=null&&t.longitude!=null){
       const m=L.marker([Number(t.latitude),Number(t.longitude)],{icon:markerIcon(t)})
@@ -147,7 +148,9 @@ async function loadTeams(){
             ${esc(t.category)} · ${esc(t.shift||'')}<br>
             Entrada: ${esc(t.entry||'—')}<br>
             ${t.accuracy!=null?`Precisão GPS: ${Math.round(Number(t.accuracy))} m<br>`:''}
-            <b>Localidade:</b> ${esc(t.current_location||'—')}<br>
+            <b>${t.nearest_station?.relation==='NA ESTAÇÃO'?'Estação atual':'Estação mais próxima'}:</b> ${esc(t.nearest_station?.name||t.current_location||'—')}<br>
+            ${t.nearest_station?.line?`Linha: ${esc(t.nearest_station.line)} · ${esc(t.nearest_station.company||'')}<br>`:''}
+            ${t.nearest_station?.distance_m!=null?`Distância: ${Number(t.nearest_station.distance_m).toLocaleString('pt-BR')} m<br>`:''}
             ${esc(freshnessText(t))}
           </div>
         `,{maxWidth:260,closeButton:true});
@@ -158,6 +161,11 @@ async function loadTeams(){
   $('kCurrent').textContent=current;
   $('kAttention').textContent=attention;
   $('kNoSignal').textContent=noSignal;
+  if($('opInOperation')) $('opInOperation').textContent=d.summary?.in_operation||0;
+  if($('opLate')) $('opLate').textContent=d.summary?.late||0;
+  if($('opNoLogin')) $('opNoLogin').textContent=d.summary?.not_logged||0;
+  if($('opStale')) $('opStale').textContent=d.summary?.stale_gt10||0;
+  if($('opNoGps')) $('opNoGps').textContent=d.summary?.no_gps||0;
 
   if(markers.length){
     const bounds=L.featureGroup(markers).getBounds();
@@ -173,7 +181,7 @@ async function loadCalendar(){
     start:$('calendarStart').value,
     days:$('calendarDays').value
   });
-  if($('calendarCategory').value) params.set('cargo',$('calendarCategory').value);
+  const cargos=v40SelectedCargos(); if(cargos.length) params.set('cargo',cargos.join(','));
 
   const r=await fetch(`/api/equipes/calendario?${params.toString()}`,{cache:'no-store',headers:{'Accept':'application/json'}});
   const contentType=String(r.headers.get('content-type')||'');
@@ -231,6 +239,7 @@ async function loadProfiles(){
   const active=profilesCache.filter(p=>p.active).length;
   $('linkSummary').textContent=`${linked}/${active} com usuário vinculado`;
   renderProfiles();
+  refreshCargoFilter();
 }
 function renderProfiles(){
   const q=String($('scheduleSearch')?.value||'').toUpperCase();
@@ -345,7 +354,7 @@ function exportScale(){
     start:$('calendarStart').value,
     days:$('calendarDays').value
   });
-  if($('calendarCategory').value) params.set('cargo',$('calendarCategory').value);
+  const cargos=v40SelectedCargos(); if(cargos.length) params.set('cargo',cargos.join(','));
   window.location.href=`/api/equipes/export/excel?${params.toString()}`;
 }
 
@@ -374,22 +383,26 @@ function syncFullscreenButtons(){
 }
 document.addEventListener('fullscreenchange',syncFullscreenButtons);
 
+function v40SelectedCargos(){return [...document.querySelectorAll('#calendarCargoOptions input:checked')].map(x=>x.value)}
+function v40CargoSummary(){const a=v40SelectedCargos(),all=document.querySelectorAll('#calendarCargoOptions input').length;const el=$('calendarCargoSummary');if(el)el.textContent=!a.length||a.length===all?'Todos os cargos':a.length===1?a[0]:`${a.length} cargos selecionados`}
 function refreshCargoFilter(){
-  const sel=$('calendarCategory'); if(!sel) return;
-  const keep=sel.value;
+  const box=$('calendarCargoOptions'); if(!box) return;
+  const keep=new Set(v40SelectedCargos());
   const cargos=[...new Set(profilesCache.map(p=>String(p.job_title||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'pt-BR'));
-  sel.innerHTML='<option value="">Todos os cargos</option>'+cargos.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('');
-  if(cargos.includes(keep)) sel.value=keep;
+  box.innerHTML=cargos.map(c=>`<label class="cargoCheck"><input type="checkbox" value="${esc(c)}" ${!keep.size||keep.has(c)?'checked':''}> <span>${esc(c)}</span></label>`).join('');
+  box.querySelectorAll('input').forEach(x=>x.addEventListener('change',()=>{v40CargoSummary();reloadCalendarVisible()}));v40CargoSummary();
 }
 async function refreshAll(){
-  await Promise.allSettled([loadTeams(),loadCalendar(),loadProfiles()]);
+  const jobs=await Promise.allSettled([loadTeams(),loadCalendar(),loadProfiles()]);
+  jobs.forEach((r,i)=>{if(r.status==='rejected')console.error('[V58-REV] equipes carga',i,r.reason)});
+  return jobs;
 }
 
 $('refreshTeams').addEventListener('click',refreshAll);
 $('exportScale').addEventListener('click',exportScale);
 const reloadCalendarVisible=()=>{ if($('calendarRangeSummary')) $('calendarRangeSummary').textContent='Atualizando período...'; loadCalendar().catch(err=>{console.error(err); if($('calendarRangeSummary')) $('calendarRangeSummary').innerHTML=`<b>Erro:</b> ${esc(err.message)}`;}); };
 $('reloadCalendar').addEventListener('click',reloadCalendarVisible);
-$('calendarCategory').addEventListener('change',reloadCalendarVisible);
+$('cargoAll')?.addEventListener('click',()=>{document.querySelectorAll('#calendarCargoOptions input').forEach(x=>x.checked=true);v40CargoSummary();reloadCalendarVisible()});$('cargoClear')?.addEventListener('click',()=>{document.querySelectorAll('#calendarCargoOptions input').forEach(x=>x.checked=false);v40CargoSummary();reloadCalendarVisible()});
 $('calendarDays').addEventListener('change',reloadCalendarVisible);
 $('calendarStart').addEventListener('change',reloadCalendarVisible);
 
@@ -420,15 +433,27 @@ if($('openScheduleAdmin')){
   });
   $('scheduleUser').addEventListener('change',()=>{
     const u=usersCache.find(x=>String(x.id)===$('scheduleUser').value);
-    if(u) $('scheduleName').value=u.name;
+    if(!u) return;
+    $('scheduleName').value=u.name||'';
+    if(u.job_title){
+      const title=String(u.job_title).toUpperCase();
+      if(title.includes('SUPERV')) $('scheduleCategory').value='SUPERVISOR';
+      else if(title.includes('APOIO')) $('scheduleCategory').value='APOIO';
+      else $('scheduleCategory').value='TECNICO';
+    }
+    const active=profilesCache.find(p=>String(p.user_id)===String(u.id)&&p.active);
+    if(active){
+      $('scheduleType').value=active.schedule_type||$('scheduleType').value;
+      $('scheduleShift').value=active.shift||$('scheduleShift').value;
+      $('scheduleEntry').value=active.entry||'';
+      $('scheduleLines').value=(active.lines||[]).join(', ');
+      $('scheduleSupervision').value=active.supervision||'';
+    }
   });
 }
 
-const today=new Date();
-$('calendarStart').value=today.toISOString().slice(0,10);
+$('calendarStart').value=saoPauloISODate();
 resetScheduleForm();
-refreshAll();
-setInterval(loadTeams,120000);
 
 
 // V26 — seções operacionais sob demanda para reduzir poluição visual.
@@ -444,14 +469,40 @@ function bindTeamCollapsible(buttonId, contentId){
 bindTeamCollapsible('toggleTodayOperational','todayOperationalContent');
 bindTeamCollapsible('toggleExpectedTeam','expectedTeamContent');
 
-// V39.6 — autocomplete de colaborador ligado ao cadastro de usuários.
-async function v396LoadCollaborators(){try{const r=await fetch('/api/equipes/colaboradores',{cache:'no-store'});const d=await r.json();const dl=$('v396Collaborators');if(dl&&d.ok)dl.innerHTML=(d.users||[]).map(u=>`<option value="${esc(u.name)}"></option>`).join('')}catch(e){console.warn('autocomplete colaboradores',e)}}
+// V39.7.8 — autocomplete de colaborador com preenchimento automático pelo cadastro.
+let v3978Collaborators=[];
+async function v396LoadCollaborators(){
+  try{
+    const r=await fetch('/api/equipes/colaboradores',{cache:'no-store'}); const d=await r.json();
+    v3978Collaborators=d.ok?(d.users||[]):[];
+    const dl=$('v396Collaborators');
+    if(dl) dl.innerHTML=v3978Collaborators.map(u=>`<option value="${esc(u.name)}">${esc([u.job_title,u.company,u.shift].filter(Boolean).join(' · '))}</option>`).join('');
+    const cargo=$('v38TeamCategory');
+    if(cargo){
+      const keep=cargo.value;
+      const cargos=[...new Set(v3978Collaborators.map(u=>String(u.job_title||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'pt-BR'));
+      cargo.innerHTML='<option value="">Todos os cargos</option>'+cargos.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('');
+      if(cargos.includes(keep)) cargo.value=keep;
+    }
+  }catch(e){console.warn('autocomplete colaboradores',e)}
+}
+function v3978ApplySelectedCollaborator(){
+  const q=String($('v38TeamSearch')?.value||'').trim();
+  const u=v3978Collaborators.find(x=>String(x.name||'').localeCompare(q,'pt-BR',{sensitivity:'base'})===0);
+  const box=$('v3978CollaboratorInfo');
+  if(!u){ if(box){box.classList.add('hidden');box.innerHTML='';} return; }
+  if($('v38TeamCategory')&&u.job_title) $('v38TeamCategory').value=u.job_title;
+  if(box){
+    box.classList.remove('hidden');
+    box.innerHTML=`<b>${esc(u.name)}</b><span>Cargo: ${esc(u.job_title||'—')}</span><span>Empresa: ${esc(u.company||'—')}</span><span>Escala: ${esc(u.schedule_type||'—')}</span><span>Turno: ${esc(u.shift||'—')}</span><span>Entrada: ${esc(u.entry||'—')}</span>${u.lines?.length?`<span>Linhas: ${esc(u.lines.join(' / '))}</span>`:''}`;
+  }
+}
 v396LoadCollaborators();
 
 // V38 — malha metroferroviária também no mapa de equipes
-async function v38DrawRailNetwork(){try{const locs=await fetch('/api/locations',{cache:'no-store'}).then(r=>r.json());const colors={'1':'#005ca9','2':'#008c5a','3':'#ee3338','4':'#f4b800','5':'#7651a2','6':'#f28c00','7':'#9b0058','8':'#8b8b8b','9':'#008c7d','10':'#00a5b5','11':'#e94b24','12':'#1455a0','13':'#008b68','15':'#9a9a9a','17':'#8a7627'};const groups={};(locs||[]).forEach(x=>{if(x.reference_latitude==null||x.reference_longitude==null)return;const m=String(x.line||'').match(/(?:^|\D)(1[0-7]|[1-9])(?:\D|$)/);if(!m)return;(groups[m[1]]??=[]).push(x)});Object.entries(groups).forEach(([n,a])=>{if(a.length<2)return;const pts=a.map(x=>[Number(x.reference_latitude),Number(x.reference_longitude)]);L.polyline(pts,{color:colors[n]||'#64748b',weight:5,opacity:.85}).addTo(teamMap)})}catch(e){console.warn('V38 trilhos equipes',e)}}
+async function v38DrawRailNetwork(){try{const locs=await fetch('/api/equipes/rail-network',{cache:'no-store'}).then(r=>r.json());const colors={'1':'#005ca9','2':'#008c5a','3':'#ee3338','4':'#f4b800','5':'#7651a2','6':'#f28c00','7':'#9b0058','8':'#8b8b8b','9':'#008c7d','10':'#00a5b5','11':'#e94b24','12':'#1455a0','13':'#008b68','15':'#9a9a9a','17':'#8a7627'};const groups={};(locs||[]).forEach(x=>{if(x.reference_latitude==null||x.reference_longitude==null)return;const m=String(x.line||'').match(/(?:^|\D)(1[0-7]|[1-9])(?:\D|$)/);if(!m)return;(groups[m[1]]??=[]).push(x)});Object.entries(groups).forEach(([n,a])=>{if(a.length<2)return;const pts=a.map(x=>[Number(x.reference_latitude),Number(x.reference_longitude)]);L.polyline(pts,{color:colors[n]||'#64748b',weight:5,opacity:.85}).addTo(teamMap)})}catch(e){console.warn('V38 trilhos equipes',e)}}
 function v38ApplyTeamFilter(){const q=String($('v38TeamSearch')?.value||'').toLowerCase(),cat=$('v38TeamCategory')?.value||'',gps=$('v38TeamGps')?.value||'';document.querySelectorAll('#todayTeamTable tr').forEach(tr=>{const txt=tr.textContent.toLowerCase();tr.style.display=(!q||txt.includes(q))&&(!cat||txt.includes(cat.toLowerCase()))&&(!gps||txt.includes(gps.toLowerCase()))?'':'none'});document.querySelectorAll('#teamCards > *').forEach(el=>{const txt=el.textContent.toLowerCase();el.style.display=(!q||txt.includes(q))&&(!cat||txt.includes(cat.toLowerCase()))&&(!gps||txt.includes(gps.toLowerCase()))?'':'none'})}
-['v38TeamSearch','v38TeamCategory','v38TeamGps'].forEach(id=>$(id)?.addEventListener(id==='v38TeamSearch'?'input':'change',v38ApplyTeamFilter));$('v38ClearTeam')?.addEventListener('click',()=>{['v38TeamSearch','v38TeamCategory','v38TeamGps'].forEach(id=>$(id).value='');v38ApplyTeamFilter()});
+['v38TeamSearch','v38TeamCategory','v38TeamGps'].forEach(id=>$(id)?.addEventListener(id==='v38TeamSearch'?'input':'change',()=>{if(id==='v38TeamSearch')v3978ApplySelectedCollaborator();v38ApplyTeamFilter();}));$('v38ClearTeam')?.addEventListener('click',()=>{['v38TeamSearch','v38TeamCategory','v38TeamGps'].forEach(id=>$(id).value='');v38ApplyTeamFilter()});
 
 
 // V39.1 substitui os controles V38.1 por controles nativos Leaflet.
@@ -480,34 +531,110 @@ const V391_FALLBACK={
 function v391LineNo(v){const t=String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase();const m=t.match(/(?:^|\D)(1[0-7]|[1-9])(?:\D|$)/);if(m)return String(Number(m[1]));const a={AZUL:'1',VERDE:'2',VERMELHA:'3',AMARELA:'4',LILAS:'5',LARANJA:'6',RUBI:'7',DIAMANTE:'8',ESMERALDA:'9',TURQUESA:'10',CORAL:'11',SAFIRA:'12',JADE:'13',PRATA:'15',OURO:'17'};return Object.entries(a).find(([k])=>t.includes(k))?.[1]||''}
 function v391Dist(a,b){const R=6371000,p=x=>x*Math.PI/180,dlat=p(+b.reference_latitude-+a.reference_latitude),dlon=p(+b.reference_longitude-+a.reference_longitude),x=Math.sin(dlat/2)**2+Math.cos(p(+a.reference_latitude))*Math.cos(p(+b.reference_latitude))*Math.sin(dlon/2)**2;return 2*R*Math.asin(Math.sqrt(x))}
 function v391Sequence(a){if(a.length<3)return [...a];const pool=[...a], seq=[pool.shift()];while(pool.length){const last=seq[seq.length-1];let bi=0,bd=Infinity;pool.forEach((c,i)=>{const d=v391Dist(last,c);if(d<bd){bd=d;bi=i}});seq.push(pool.splice(bi,1)[0])}return seq}
-async function v391BuildRails(){
+let v3978RailSource={},v3978RailPointCount=0;
+function v3978RailDiag(msg,ok=true){const e=$('teamRailDiag');if(!e)return;e.textContent=msg;e.classList.toggle('railDiagError',!ok)}
+function v39710DrawLeafletRails(sourceLabel='fallback local'){
   if(!teamMap||!v391RailLines)return;
-  v391RailLines.clearLayers();v391Stations.clearLayers();v391StationNames.clearLayers();
-  // V39.7.5: desenha a malha de contingência imediatamente. Assim as linhas aparecem mesmo se a API falhar.
-  Object.entries(V391_FALLBACK).forEach(([n,pts])=>{
-    if(pts.length<2)return;
-    L.polyline(pts,{color:'#fff',weight:12,opacity:.98,interactive:false}).addTo(v391RailLines);
-    L.polyline(pts,{color:V391_COLORS[n]||'#64748b',weight:7,opacity:1}).bindPopup(`<b>Linha ${n} — ${V391_NAMES[n]||''}</b>`).addTo(v391RailLines);
+  v391RailLines.clearLayers();
+  let lines=0,points=0;
+  Object.entries(v3978RailSource).forEach(([n,pts])=>{
+    if(!Array.isArray(pts)||pts.length<2)return;
+    const clean=pts.map(p=>[+p[0],+p[1]]).filter(p=>Number.isFinite(p[0])&&Number.isFinite(p[1]));
+    if(clean.length<2)return;
+    lines++;points+=clean.length;
+    L.polyline(clean,{color:'#fff',weight:8,opacity:.9,interactive:false,lineCap:'round',lineJoin:'round'}).addTo(v391RailLines);
+    L.polyline(clean,{color:V391_COLORS[n]||'#334155',weight:5,opacity:.96,interactive:false,lineCap:'round',lineJoin:'round'}).bindTooltip(`Linha ${n} - ${V391_NAMES[n]||''}`,{sticky:true}).addTo(v391RailLines);
   });
-  try{
-    const r=await fetch('/api/equipes/rail-network',{cache:'no-store'}); if(!r.ok)throw new Error('HTTP '+r.status); const locs=await r.json(); const groups={};
-    (locs||[]).forEach(x=>{if(x.reference_latitude==null||x.reference_longitude==null)return;const n=v391LineNo(x.line);if(!n)return;(groups[n]??=[]).push(x);const pt=[+x.reference_latitude,+x.reference_longitude];L.circleMarker(pt,{radius:5,color:'#fff',weight:2,fillColor:V391_COLORS[n]||'#64748b',fillOpacity:1}).bindTooltip(String(x.location||''),{direction:'top'}).addTo(v391Stations);L.marker(pt,{interactive:false,icon:L.divIcon({className:'stationLabelIcon',html:`<span>${esc(x.location||'')}</span>`,iconSize:null})}).addTo(v391StationNames)});
-    Object.keys(V391_FALLBACK).forEach(n=>{if(!groups[n])groups[n]=[]});
-    Object.entries(groups).forEach(([n,arr])=>{const seq=v391Sequence(arr);const pts=seq.length>=2?seq.map(x=>[+x.reference_latitude,+x.reference_longitude]):(V391_FALLBACK[n]||[]);if(pts.length<2)return;L.polyline(pts,{color:'#fff',weight:11,opacity:.96,interactive:false}).addTo(v391RailLines);L.polyline(pts,{color:V391_COLORS[n]||'#64748b',weight:6,opacity:1}).bindPopup(`<b>Linha ${n} — ${V391_NAMES[n]||''}</b>`).addTo(v391RailLines)});
-  }catch(e){console.warn('V39.1 mapa equipes',e)}
-  const cb=$('teamShowLines'); if(!cb || cb.checked){ if(!teamMap.hasLayer(v391RailLines)) teamMap.addLayer(v391RailLines); }
-  if(teamMap && v391RailLines){ v391RailLines.eachLayer(l=>{ if(l.bringToFront) l.bringToFront(); }); }
+  v3978RailPointCount=points;
+  v3978RailDiag(`Trilhos: ${sourceLabel} / ${lines} linha(s) / ${points} pontos`,lines>0);
 }
-
+function v39710ApproxStationPoint(points,index,total){
+  if(!points?.length)return null;if(points.length===1)return points[0];
+  const t=total<=1?.5:index/(total-1), pos=t*(points.length-1), a=Math.floor(pos), b=Math.min(points.length-1,a+1), f=pos-a;
+  return [points[a][0]+(points[b][0]-points[a][0])*f,points[a][1]+(points[b][1]-points[a][1])*f];
+}
+function v39710RenderStations(rows){
+  if(!v391Stations||!v391StationNames)return;
+  v391Stations.clearLayers();v391StationNames.clearLayers();
+  const byLine={};(rows||[]).forEach(x=>{const n=v391LineNo(x.line);if(n)(byLine[n]??=[]).push(x)});
+  let count=0;
+  Object.entries(byLine).forEach(([n,items])=>{
+    const real=items.filter(x=>Number.isFinite(+x.reference_latitude)&&Number.isFinite(+x.reference_longitude));
+    const usable=real.length?real:items;
+    usable.forEach((x,i)=>{
+      let pt=real.length?[+x.reference_latitude,+x.reference_longitude]:v39710ApproxStationPoint(v3978RailSource[n],i,usable.length);
+      if(!pt||!Number.isFinite(+pt[0])||!Number.isFinite(+pt[1]))return;
+      count++;
+      L.circleMarker(pt,{radius:5,color:'#fff',weight:2,fillColor:V391_COLORS[n]||'#334155',fillOpacity:1,interactive:true})
+       .bindTooltip(`${x.location||'Estação'}${real.length?'':' · posição aproximada'}`,{direction:'top'})
+       .addTo(v391Stations);
+      L.marker(pt,{interactive:false,icon:L.divIcon({className:'stationLabelIcon',html:`<span>${esc(x.location||'Estação')}</span>`,iconSize:null})}).addTo(v391StationNames);
+    });
+  });
+  return count;
+}
+async function v391BuildRails(){
+  if(!teamMap)return;
+  v3978RailSource=Object.fromEntries(Object.entries(V391_FALLBACK).map(([n,pts])=>[n,pts.map(p=>[+p[0],+p[1]])]));
+  v39710DrawLeafletRails('fallback local');
+  try{
+    let locs=[];
+    const r=await fetch('/api/equipes/rail-network',{cache:'no-store'});if(r.ok)locs=await r.json();
+    // Se a API leve não possui coordenadas, usamos /api/locations apenas para obter nomes/linhas e distribuir os marcadores sobre a malha local.
+    if(!Array.isArray(locs)||!locs.length){const rr=await fetch('/api/locations',{cache:'no-store'});if(rr.ok)locs=await rr.json();}
+    const groups={};
+    (locs||[]).forEach(x=>{if(x.reference_latitude==null||x.reference_longitude==null)return;const n=v391LineNo(x.line);if(!n)return;(groups[n]??=[]).push(x)});
+    let realLines=0;
+    Object.entries(groups).forEach(([n,arr])=>{const seq=v391Sequence(arr);if(seq.length>=2){v3978RailSource[n]=seq.map(x=>[+x.reference_latitude,+x.reference_longitude]);realLines++}});
+    v39710DrawLeafletRails(realLines?'base geográfica':'fallback local');
+    const stations=v39710RenderStations(locs||[]);
+    if(stations) v3978RailDiag(`${$('teamRailDiag')?.textContent||''} · ${stations} estação(ões)`,true);
+  }catch(e){console.warn('V39.7.10 rail/stations API; usando fallback local',e);v39710DrawLeafletRails('fallback local')}
+}
 function v391SetupTeamMap(){
   if(!teamMap||v391RailLines)return;
-  if(!teamMap.getPane('railLinesPane'))teamMap.createPane('railLinesPane');teamMap.getPane('railLinesPane').style.zIndex=650;teamMap.getPane('railLinesPane').style.pointerEvents='auto';if(!teamMap.getPane('railStationsPane'))teamMap.createPane('railStationsPane');teamMap.getPane('railStationsPane').style.zIndex=660;v391RailLines=L.layerGroup().addTo(teamMap);v391Stations=L.layerGroup().addTo(teamMap);v391StationNames=L.layerGroup();v391TechLayer=L.layerGroup().addTo(teamMap);v391Accuracy=L.layerGroup();
-  v391LayerControl=L.control.layers(null,{'Linhas':v391RailLines,'Estações':v391Stations,'Nomes das estações':v391StationNames,'Técnicos (GPS)':v391TechLayer,'Precisão GPS (auditoria)':v391Accuracy},{collapsed:false,position:'bottomright'}).addTo(teamMap);
-  v391Legend=L.control({position:'topleft'});v391Legend.onAdd=()=>{const d=L.DomUtil.create('div','autopass-rail-legend');d.innerHTML='<h4>Linhas Metroferroviárias</h4>'+Object.keys(V391_COLORS).map(n=>`<div class="row"><span class="swatch" style="background:${V391_COLORS[n]}"></span><b>${n}</b><span>${V391_NAMES[n]}</span></div>`).join('');L.DomEvent.disableClickPropagation(d);L.DomEvent.disableScrollPropagation(d);return d};v391Legend.addTo(teamMap);
-  v391BuildRails(); setTimeout(v391BuildRails,900);
+  v391RailLines=L.layerGroup().addTo(teamMap);v391Stations=L.layerGroup().addTo(teamMap);v391StationNames=L.layerGroup();v391TechLayer=L.layerGroup().addTo(teamMap);v391Accuracy=L.layerGroup();
+  v391BuildRails();
+}
+// V39.6 — compatibilidade dos checkboxes visíveis com as camadas Leaflet.
+function v396SyncRailChecks(){const map=teamMap;if(!map)return;v391SetupTeamMap();[['teamShowStations',v391Stations],['teamShowNames',v391StationNames],['teamShowTechs',v391TechLayer]].forEach(([id,layer])=>{const el=$(id);if(!el||!layer)return;const sync=()=>{if(!layer)return;if(el.checked&&!map.hasLayer(layer))map.addLayer(layer);if(!el.checked&&map.hasLayer(layer))map.removeLayer(layer)};el.addEventListener('change',sync);sync()});const lines=$('teamShowLines');if(lines&&v391RailLines){const sync=()=>{const layer=v391RailLines;if(!layer)return;if(lines.checked&&!map.hasLayer(layer))map.addLayer(layer);if(!lines.checked&&map.hasLayer(layer))map.removeLayer(layer)};lines.addEventListener('change',sync);sync()}v391BuildRails()}
+
+// V40: Equipes reutiliza o componente metroferroviário compartilhado.
+async function v40AttachSharedRail(){if(!teamMap||!window.AutopassRailMap)return;try{const locs=await fetch('/api/equipes/rail-network',{cache:'no-store'}).then(r=>r.json());[v391RailLines,v391Stations,v391StationNames].forEach(l=>{try{if(l&&teamMap.hasLayer(l))teamMap.removeLayer(l)}catch(_){}});const sh=window.AutopassRailMap.attach(teamMap,locs||[]);if(!sh)return;v391RailLines=sh.lines;v391Stations=sh.stations;v391StationNames=sh.labels;const bind=(id,key)=>{const el=$(id),layer=sh[key];if(!el||!layer)return;const sync=()=>el.checked?(!teamMap.hasLayer(layer)&&teamMap.addLayer(layer)):(teamMap.hasLayer(layer)&&teamMap.removeLayer(layer));el.addEventListener('change',sync);sync()};bind('teamShowLines','lines');bind('teamShowStations','stations');bind('teamShowNames','labels');const st=sh.stats||{};v3978RailDiag(`V40.1.2 · ${st.segmentCount||0} segmento(s) · ${st.pointCount||0} pontos válidos · ${st.rejected||0} rejeitado(s)`,true)}catch(e){console.error('V40 mapa compartilhado',e);v3978RailDiag('V40 · falha ao carregar mapa compartilhado',false)}}
+// REV4: rail-network dedicado já fornece os dados necessários; evita /api/locations pesado.
+// setTimeout(v40AttachSharedRail,900);
+
+// V58 REVISADA — inicialização determinística.
+// Dados operacionais não dependem do Leaflet; o mapa é preparado somente depois
+// que todas as declarações V39/V40 deste arquivo já foram avaliadas.
+let v58TeamsStarted=false;
+async function v58StartTeams(){
+  if(v58TeamsStarted) return;
+  v58TeamsStarted=true;
+  console.info('[V58-REV] início da Central Operacional');
+
+  // 1) Carrega dados primeiro. Uma falha de mapa nunca deve zerar Equipes.
+  const dataJobs=await refreshAll();
+  const teamResult=dataJobs?.[0];
+  if(teamResult?.status==='fulfilled') console.info('[V58-REV] dados de Equipes carregados');
+
+  // 2) Mapa em fluxo isolado e protegido.
+  try{
+    createTeamMap();
+    v391SetupTeamMap();
+    v396SyncRailChecks();
+    console.info('[V58-REV] mapa inicializado');
+  }catch(err){
+    console.error('[V58-REV] mapa indisponível; dados de Equipes permanecem ativos',err);
+  }
+
+  // 3) Atualização periódica só depois da primeira carga concluída.
+  setInterval(()=>loadTeams().catch(err=>console.error('[V58-REV] atualização periódica de Equipes',err)),120000);
 }
 
+if(document.readyState==='loading'){
+  document.addEventListener('DOMContentLoaded',()=>v58StartTeams().catch(err=>console.error('[V58-REV] startup',err)),{once:true});
+}else{
+  v58StartTeams().catch(err=>console.error('[V58-REV] startup',err));
+}
 
-// V39.6 — compatibilidade dos checkboxes visíveis com as camadas Leaflet.
-function v396SyncRailChecks(){const map=teamMap;if(!map)return;[['teamShowLines',v391RailLines],['teamShowStations',v391Stations],['teamShowNames',v391StationNames],['teamShowTechs',v391TechLayer]].forEach(([id,layer])=>{const el=$(id);if(!el||!layer)return;const sync=()=>{if(el.checked&&!map.hasLayer(layer))map.addLayer(layer);if(!el.checked&&map.hasLayer(layer))map.removeLayer(layer)};el.addEventListener('change',sync);sync()});v391BuildRails()}
-setTimeout(v396SyncRailChecks,500);
