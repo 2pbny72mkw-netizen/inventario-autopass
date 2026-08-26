@@ -136,7 +136,7 @@ async function loadTeams(){
         <span class="linkBadge ${t.linked?'linked':'unlinked'}">${t.linked?'Usuário vinculado':'Sem vínculo com Usuários'}</span>
       </div>`;
     $('teamCards').appendChild(card);
-    if($('todayTeamTable')){ const tr=document.createElement('tr'); tr.innerHTML=`<td><b>${esc(t.name)}</b></td><td>${esc(t.job_title||t.category)}</td><td>${esc(t.schedule_type||'—')}</td><td>${esc(t.shift||'—')}</td><td>${esc(t.entry||'—')}</td><td>${esc((t.lines||[]).join(' / ')||'—')}</td><td>${esc(t.freshness||'SEM SINAL')}</td><td>${esc(freshnessText(t))}</td>`; $('todayTeamTable').appendChild(tr); }
+    if($('todayTeamTable')){ const tr=document.createElement('tr'); tr.innerHTML=`<td><b>${esc(t.name)}</b></td><td>${esc(t.job_title||t.category)}</td><td>${esc(t.schedule_type||'—')}</td><td>${esc(t.shift||'—')}</td><td>${esc(t.entry||'—')}</td><td>${esc((t.lines||[]).join(' / ')||'—')}</td><td>${esc(t.operation_status||t.freshness||'SEM SINAL')}</td><td>${esc(t.current_location||'—')} · ${esc(freshnessText(t))}</td>`; $('todayTeamTable').appendChild(tr); }
 
     if(t.latitude!=null&&t.longitude!=null){
       const m=L.marker([Number(t.latitude),Number(t.longitude)],{icon:markerIcon(t)})
@@ -147,7 +147,10 @@ async function loadTeams(){
             ${esc(t.category)} · ${esc(t.shift||'')}<br>
             Entrada: ${esc(t.entry||'—')}<br>
             ${t.accuracy!=null?`Precisão GPS: ${Math.round(Number(t.accuracy))} m<br>`:''}
-            <b>Localidade:</b> ${esc(t.current_location||'—')}<br>
+            <b>Localidade/estação:</b> ${esc(t.current_location||'—')}${t.nearest_station?.distance_m!=null?` · ${esc(t.nearest_station.relation)} · ${Number(t.nearest_station.distance_m).toLocaleString('pt-BR')} m`:''}<br>
+            <b>Status:</b> ${esc(t.operation_status||'—')}<br>
+            Login: ${esc(t.first_login||'—')}${t.late_minutes?` · atraso ${t.late_minutes} min`:''}<br>
+            GPS hoje: ${Number(t.gps_points_today||0).toLocaleString('pt-BR')} posição(ões)<br>
             ${esc(freshnessText(t))}
           </div>
         `,{maxWidth:260,closeButton:true});
