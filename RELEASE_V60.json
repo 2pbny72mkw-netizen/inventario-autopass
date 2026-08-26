@@ -1,0 +1,14 @@
+{
+  "version": "V60",
+  "name": "Operação Integrada",
+  "date": "2026-08-26",
+  "baseline": "V59 homologada",
+  "highlights": [
+    "Nova Central Operacional baseada na mesma fonte de verdade de Equipes.",
+    "Saúde operacional, alertas automáticos, distribuição por status e drill-down para Equipes.",
+    "Consulta operacional por data preservada e integrada ao painel executivo.",
+    "Refinamento visual de gráficos por estação: nomes preservados e barras mais compactas.",
+    "Cache-busting e service worker renovados para V60.",
+    "Mantém Telemetria restrita ao perfil ADM/Gestor."
+  ]
+}

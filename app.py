@@ -40,7 +40,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V59"
+APP_RELEASE = "V60"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -2766,6 +2766,15 @@ def teams_rail_network_api():
 def teams_page():
     if not _has_access("teams"): abort(403)
     return render_template("teams.html")
+
+
+@app.get("/central-operacional")
+@teams_view_required
+def central_operacional_page():
+    # V60: painel executivo operacional. Usa a mesma fonte de verdade de Equipes,
+    # evitando uma segunda regra de escala/GPS e números divergentes.
+    if not _has_access("teams.today"): abort(403)
+    return render_template("central_operacional.html", app_release=APP_RELEASE)
 
 
 
