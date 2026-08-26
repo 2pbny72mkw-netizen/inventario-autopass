@@ -40,7 +40,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V60 REV"
+APP_RELEASE = "V60 REV2"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -66,7 +66,18 @@ _TEAM_PROFILE_SYNC_STATE = {"at": 0.0}
 _TEAM_PROFILE_SYNC_TTL = int(os.getenv("TEAM_PROFILE_SYNC_TTL", "60"))
 _TEAM_PROFILE_SYNC_LOCK = threading.Lock()
 _FIN_TERMINALS_CACHE = {"at": 0.0, "payload": None}
-_FIN_TERMINALS_CACHE_TTL = int(os.getenv("FIN_TERMINALS_CACHE_TTL", "120"))
+_FIN_TERMINALS_CACHE_TTL = int(os.getenv("FIN_TERMINALS_CACHE_TTL", "900"))
+FIN_COST_CENTERS = [
+    {"key":"SUPORTE_CAMPO","id":"CVD0011","label":"SUPORTE E CAMPO"},
+    {"key":"ASSISTENCIA_TECNICA","id":"CFD0024","label":"ASSISTENCIA TECNICA"},
+    {"key":"IMPLANTACAO_HARDWARE","id":"CVD0016","label":"IMPLANTAÇÃO HW"},
+    {"key":"MECANICA","id":"CFD0025","label":"MECANICA"},
+    {"key":"ENGENHARIA_HW","id":"CVD0017","label":"ENGENHARIA HW"},
+    {"key":"LINHA_17","id":"CVD0020","label":"LINHA 17"},
+]
+FIN_COST_CENTER_BY_KEY = {x["key"]:x for x in FIN_COST_CENTERS}
+FIN_COST_CENTER_BY_ID = {x["id"]:x for x in FIN_COST_CENTERS}
+
 UPLOAD_DIR = BASE_DIR / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 
@@ -244,6 +255,7 @@ class FinancialSupplier(db.Model):
     trade_name = db.Column(db.String(180))
     cnpj = db.Column(db.String(30), index=True)
     primary_cost_center = db.Column(db.String(60))
+    cost_center_id = db.Column(db.String(20), index=True)
     contact_name = db.Column(db.String(180))
     phone = db.Column(db.String(40))
     email = db.Column(db.String(180))
@@ -271,6 +283,7 @@ class FinancialMonthlyCost(db.Model):
     amount = db.Column(db.Float, nullable=False, default=0)
     forecast_amount = db.Column(db.Float)
     cost_center = db.Column(db.String(60), nullable=False, default="SUPORTE_CAMPO", index=True)
+    cost_center_id = db.Column(db.String(20), index=True)
     project = db.Column(db.String(220))
     service_text = db.Column(db.String(300))
     allocation_json = db.Column(db.Text, nullable=False, default="{}")
@@ -1016,6 +1029,10 @@ def _default_access_for_role(role):
     return defaults.get(role,set())
 
 def _user_access_set(user=None):
+    # V60 REV2: evita N+1 no Jinja. can_view() é chamado muitas vezes por página;
+    # o conjunto de permissões fica em cache durante a própria requisição.
+    if user is None and has_request_context() and hasattr(g, "_autopass_access_set"):
+        return g._autopass_access_set
     if user is None:
         uid=session.get("user_id")
         user=db.session.get(User,uid) if uid else None
@@ -1027,9 +1044,12 @@ def _user_access_set(user=None):
             # V60 REV: RH sempre mantém as visualizações operacionais de Equipes em modo leitura,
             # mesmo quando o access_json foi salvo antes da criação das subpermissões atuais.
             if user.role=="hr": access.update({"teams.map","teams.today","teams.schedule"})
+            if has_request_context(): g._autopass_access_set=access
             return access
     except Exception: pass
-    return _default_access_for_role(user.role)
+    access=_default_access_for_role(user.role)
+    if has_request_context(): g._autopass_access_set=access
+    return access
 
 def _has_access(permission):
     if not session.get("user_id"): return False
@@ -7828,7 +7848,7 @@ def _chip_swap_asset_matches_location(asset, loc):
 
 _chip_swap_tables_ready = False
 _chip_swap_payload_cache = {"at": 0.0, "data": None}
-CHIP_SWAP_CACHE_TTL_SECONDS = 20
+CHIP_SWAP_CACHE_TTL_SECONDS = 120
 
 def _ensure_chip_swap_tables():
     """Verifica/cria as tabelas uma única vez por processo do Gunicorn."""
@@ -7885,10 +7905,8 @@ def _chip_swap_locations_payload(force=False):
     # mas lista detalhada vazia na Troca de Chip Recarga.
     validator_sentinel = BaseAsset.query.filter_by(asset_key="L03-PSE-VAL-325-TMB").first()
     if validator_sentinel is None:
-        try:
-            sync_base_assets_1408(force=True)
-        except Exception as exc:
-            app.logger.exception("HOTFIX3: falha ao sincronizar base detalhada de validadores: %s", exc)
+        # V60 REV2 PERFORMANCE: nunca executa sincronização pesada dentro de uma requisição.
+        app.logger.warning("V60 REV2: base detalhada de validadores sem sentinela; sincronização deve ocorrer fora do request.")
 
     validator_assets = BaseAsset.query.filter(
         func.upper(func.coalesce(BaseAsset.equipment_type, '')).like('%VALID%')
@@ -8466,24 +8484,59 @@ def migrate_financial_v524_columns():
         if "project" not in cols: commands.append("ALTER TABLE financial_monthly_costs ADD COLUMN project VARCHAR(220)")
         if "service_text" not in cols: commands.append("ALTER TABLE financial_monthly_costs ADD COLUMN service_text VARCHAR(300)")
         if "invoice_number" not in cols: commands.append("ALTER TABLE financial_monthly_costs ADD COLUMN invoice_number VARCHAR(120)")
+        if "cost_center_id" not in cols: commands.append("ALTER TABLE financial_monthly_costs ADD COLUMN cost_center_id VARCHAR(20)")
         user_cols={c["name"] for c in inspector.get_columns("users")} if "users" in inspector.get_table_names() else set()
         if "access_json" not in user_cols: commands.append("ALTER TABLE users ADD COLUMN access_json TEXT")
         # V55.2: cadastro financeiro enriquecido para importação de empresas.
         sup_cols={c["name"] for c in inspector.get_columns("financial_suppliers")} if "financial_suppliers" in inspector.get_table_names() else set()
         sup_commands=[]
-        for col,sql in (("trade_name","VARCHAR(180)"),("cnpj","VARCHAR(30)"),("primary_cost_center","VARCHAR(60)"),("contact_name","VARCHAR(180)"),("phone","VARCHAR(40)"),("email","VARCHAR(180)"),("pending_profile","BOOLEAN NOT NULL DEFAULT FALSE")):
+        for col,sql in (("trade_name","VARCHAR(180)"),("cnpj","VARCHAR(30)"),("primary_cost_center","VARCHAR(60)"),("cost_center_id","VARCHAR(20)"),("contact_name","VARCHAR(180)"),("phone","VARCHAR(40)"),("email","VARCHAR(180)"),("pending_profile","BOOLEAN NOT NULL DEFAULT FALSE")):
             if col not in sup_cols: sup_commands.append(f"ALTER TABLE financial_suppliers ADD COLUMN {col} {sql}")
         commands.extend(sup_commands)
         # V56-B: dados físicos do processamento TBForte para análise de numerário/cédulas.
         cash_cols={c["name"] for c in inspector.get_columns("financial_cash_collections")} if "financial_cash_collections" in inspector.get_table_names() else set()
         for col,sql in (("processed_note_count","INTEGER"),("processed_media_type","VARCHAR(40)"),("processing_charge","FLOAT")):
             if col not in cash_cols: commands.append(f"ALTER TABLE financial_cash_collections ADD COLUMN {col} {sql}")
+        # Índices de leitura pesada observados na Telemetria V60.
+        tables=set(inspector.get_table_names())
+        if "financial_atm_transactions" in tables:
+            commands.extend([
+                "CREATE INDEX IF NOT EXISTS ix_fin_tx_imported_at ON financial_atm_transactions (imported_at)",
+                "CREATE INDEX IF NOT EXISTS ix_fin_tx_source_file ON financial_atm_transactions (source_file)",
+            ])
+        commands.extend([
+            "CREATE INDEX IF NOT EXISTS ix_fin_monthly_supplier_comp ON financial_monthly_costs (supplier_id, competence)",
+            "CREATE INDEX IF NOT EXISTS ix_fin_monthly_center_comp ON financial_monthly_costs (cost_center, competence)",
+        ])
         for command in commands: db.session.execute(db.text(command))
         if commands:
             db.session.execute(db.text("UPDATE financial_monthly_costs SET cost_center='SUPORTE_CAMPO' WHERE cost_center IS NULL OR cost_center=''"))
+            # Backfill dos IDs oficiais de centro de custo informados para V60 REV2.
+            for cc in FIN_COST_CENTERS:
+                db.session.execute(db.text("UPDATE financial_monthly_costs SET cost_center_id=:ccid WHERE UPPER(cost_center)=:ckey AND (cost_center_id IS NULL OR cost_center_id='')"), {"ccid":cc["id"],"ckey":cc["key"]})
+                db.session.execute(db.text("UPDATE financial_suppliers SET cost_center_id=:ccid WHERE UPPER(primary_cost_center)=:ckey AND (cost_center_id IS NULL OR cost_center_id='')"), {"ccid":cc["id"],"ckey":cc["key"]})
             db.session.commit()
     except Exception:
         db.session.rollback(); raise
+
+
+
+def _fin_norm_supplier_name(value):
+    return re.sub(r"[^A-Z0-9]+","", normalize(value or ""))
+
+def _fin_cost_center_id_for_key(key):
+    return (FIN_COST_CENTER_BY_KEY.get((key or "").strip().upper()) or {}).get("id","")
+
+def _fin_supplier_pending(row):
+    return not bool((row.name or "").strip() and getattr(row,"cnpj",None) and getattr(row,"primary_cost_center",None) and getattr(row,"cost_center_id",None) and (getattr(row,"contact_name",None) or getattr(row,"email",None) or getattr(row,"phone",None)))
+
+def _fin_supplier_duplicates(suppliers):
+    groups={}
+    for s in suppliers:
+        cnpj=re.sub(r"\D","",getattr(s,"cnpj",None) or "")
+        key=("CNPJ:"+cnpj) if len(cnpj)>=8 else ("NOME:"+_fin_norm_supplier_name(s.name))
+        if key and key not in ("NOME:","CNPJ:"): groups.setdefault(key,[]).append(s)
+    return {k:v for k,v in groups.items() if len(v)>1}
 
 def _financial_admin_allowed():
     return session.get("role") in ("manager", "atm_financial_admin")
@@ -8600,7 +8653,22 @@ def financial_catalog_api():
         if key and key not in products: products.append(key)
     for fallback in ("ATM","POS","RECARGA","RACK","BLOQUEIO","TDI","OUTROS"):
         if fallback not in products: products.append(fallback)
-    return jsonify({"ok":True,"suppliers":[{"id":x.id,"name":x.name,"trade_name":getattr(x,"trade_name",None),"cnpj":getattr(x,"cnpj",None),"primary_cost_center":getattr(x,"primary_cost_center",None),"contact_name":getattr(x,"contact_name",None),"phone":getattr(x,"phone",None),"email":getattr(x,"email",None),"pending_profile":bool(getattr(x,"pending_profile",False)),"active":x.active} for x in suppliers],"services":[{"id":x.id,"supplier_id":x.supplier_id,"name":x.name,"description":x.description or "","category":x.category or "OUTROS","active":x.active} for x in services],"products":products})
+    dup_groups=_fin_supplier_duplicates(suppliers)
+    dup_ids={s.id for grp in dup_groups.values() for s in grp}
+    sup_rows=[]
+    dirty=False
+    for x in suppliers:
+        pending=_fin_supplier_pending(x)
+        if bool(getattr(x,"pending_profile",False))!=pending:
+            x.pending_profile=pending; dirty=True
+        sup_rows.append({"id":x.id,"name":x.name,"trade_name":getattr(x,"trade_name",None),"cnpj":getattr(x,"cnpj",None),
+            "primary_cost_center":getattr(x,"primary_cost_center",None),"cost_center_id":getattr(x,"cost_center_id",None),
+            "contact_name":getattr(x,"contact_name",None),"phone":getattr(x,"phone",None),"email":getattr(x,"email",None),
+            "pending_profile":pending,"duplicate":x.id in dup_ids,"active":x.active})
+    if dirty: db.session.commit()
+    return jsonify({"ok":True,"suppliers":sup_rows,
+        "services":[{"id":x.id,"supplier_id":x.supplier_id,"name":x.name,"description":x.description or "","category":x.category or "OUTROS","active":x.active} for x in services],
+        "products":products,"cost_centers":FIN_COST_CENTERS,"duplicate_groups":len(dup_groups)})
 
 @app.post("/api/financeiro/fornecedores")
 @login_required
@@ -8608,11 +8676,21 @@ def financial_supplier_create_api():
     if not _financial_admin_allowed(): return jsonify({"ok":False,"error":"Sem permissão."}),403
     d=request.get_json(silent=True) or {}; name=(d.get("name") or "").strip()
     if not name: return jsonify({"ok":False,"error":"Informe a empresa/fornecedor."}),400
-    row=FinancialSupplier.query.filter(func.lower(FinancialSupplier.name)==name.lower()).first()
+    cnpj=re.sub(r"\D","",(d.get("cnpj") or ""))
+    candidates=FinancialSupplier.query.all()
+    row=next((x for x in candidates if _fin_norm_supplier_name(x.name)==_fin_norm_supplier_name(name)),None)
+    if not row and cnpj:
+        row=next((x for x in candidates if re.sub(r"\D","",getattr(x,"cnpj",None) or "")==cnpj),None)
     if row:
         if not row.active: row.active=True; db.session.commit()
-        return jsonify({"ok":True,"id":row.id,"existing":True})
-    row=FinancialSupplier(name=name,created_by=session.get("user_id"));db.session.add(row);db.session.flush()
+        return jsonify({"ok":True,"id":row.id,"existing":True,"message":"Cadastro já existente; o registro original foi preservado."})
+    center=(d.get("primary_cost_center") or "").strip().upper() or None
+    center_id=(d.get("cost_center_id") or _fin_cost_center_id_for_key(center)).strip().upper() or None
+    row=FinancialSupplier(name=name,trade_name=(d.get("trade_name") or "").strip() or None,cnpj=(d.get("cnpj") or "").strip() or None,
+        primary_cost_center=center,cost_center_id=center_id,contact_name=(d.get("contact_name") or "").strip() or None,
+        phone=(d.get("phone") or "").strip() or None,email=(d.get("email") or "").strip() or None,created_by=session.get("user_id"))
+    row.pending_profile=_fin_supplier_pending(row)
+    db.session.add(row);db.session.flush()
     db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="FIN_SUPPLIER_CREATE",entity_type="financial_supplier",entity_id=str(row.id),detail=name));db.session.commit()
     return jsonify({"ok":True,"id":row.id})
 
@@ -8627,14 +8705,75 @@ def financial_supplier_update_api(row_id):
     row.name=(d.get("name") or row.name or "").strip()
     row.trade_name=(d.get("trade_name") or "").strip() or None
     row.cnpj=(d.get("cnpj") or "").strip() or None
-    row.primary_cost_center=(d.get("primary_cost_center") or "").strip() or None
+    row.primary_cost_center=(d.get("primary_cost_center") or "").strip().upper() or None
+    row.cost_center_id=(d.get("cost_center_id") or _fin_cost_center_id_for_key(row.primary_cost_center)).strip().upper() or None
     row.contact_name=(d.get("contact_name") or "").strip() or None
     row.phone=(d.get("phone") or "").strip() or None
     row.email=(d.get("email") or "").strip() or None
     if "active" in d: row.active=bool(d.get("active"))
-    row.pending_profile=bool(d.get("pending_profile",False))
+    row.pending_profile=_fin_supplier_pending(row)
     db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="FIN_SUPPLIER_UPDATE",entity_type="financial_supplier",entity_id=str(row.id),detail=f"{old} -> {row.name}"));db.session.commit()
     return jsonify({"ok":True})
+
+@app.get("/api/financeiro/pendencias-cadastro")
+@login_required
+def financial_pending_profiles_api():
+    if session.get("role") not in ("manager","manager_field","atm_financial_admin"): return jsonify({"ok":False,"error":"Sem permissão."}),403
+    suppliers=FinancialSupplier.query.order_by(FinancialSupplier.name).all()
+    duplicates=_fin_supplier_duplicates(suppliers); dup_ids={s.id for grp in duplicates.values() for s in grp}
+    rows=[]
+    for s in suppliers:
+        missing=[]
+        if not getattr(s,"cnpj",None): missing.append("CNPJ")
+        if not getattr(s,"primary_cost_center",None): missing.append("Centro de custo")
+        if not getattr(s,"cost_center_id",None): missing.append("ID centro de custo")
+        if not (getattr(s,"contact_name",None) or getattr(s,"email",None) or getattr(s,"phone",None)): missing.append("Contato")
+        if s.id in dup_ids: missing.append("Possível duplicidade")
+        if missing or s.active is False:
+            rows.append({"id":s.id,"name":s.name,"missing":missing,"active":s.active is not False,"duplicate":s.id in dup_ids})
+    return jsonify({"ok":True,"rows":rows,"count":len(rows)})
+
+@app.post("/api/financeiro/fornecedores/consolidar-duplicados")
+@login_required
+def financial_supplier_merge_duplicates_api():
+    if session.get("role")!="manager": return jsonify({"ok":False,"error":"Consolidação restrita ao ADM."}),403
+    suppliers=FinancialSupplier.query.order_by(FinancialSupplier.id).all()
+    groups=_fin_supplier_duplicates(suppliers); merged=0
+    try:
+        for _,grp in groups.items():
+            primary=sorted(grp,key=lambda s:(not bool(getattr(s,"cnpj",None)), not bool(getattr(s,"contact_name",None) or getattr(s,"email",None)), s.id))[0]
+            for dup in grp:
+                if dup.id==primary.id: continue
+                services=FinancialService.query.filter_by(supplier_id=dup.id).all()
+                for svc in services:
+                    existing=FinancialService.query.filter(FinancialService.supplier_id==primary.id,func.lower(FinancialService.name)==(svc.name or "").lower()).first()
+                    if existing:
+                        FinancialMonthlyCost.query.filter_by(service_id=svc.id).update({"service_id":existing.id,"supplier_id":primary.id},synchronize_session=False)
+                        db.session.delete(svc)
+                    else:
+                        svc.supplier_id=primary.id
+                        FinancialMonthlyCost.query.filter_by(service_id=svc.id).update({"supplier_id":primary.id},synchronize_session=False)
+                FinancialMonthlyCost.query.filter_by(supplier_id=dup.id).update({"supplier_id":primary.id},synchronize_session=False)
+                for attr in ("trade_name","cnpj","primary_cost_center","cost_center_id","contact_name","phone","email"):
+                    if not getattr(primary,attr,None) and getattr(dup,attr,None): setattr(primary,attr,getattr(dup,attr))
+                db.session.delete(dup); merged+=1
+            primary.pending_profile=_fin_supplier_pending(primary)
+        db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="FIN_SUPPLIER_DEDUP",entity_type="financial_supplier",entity_id="batch",detail=f"{merged} cadastro(s) duplicado(s) consolidado(s)"))
+        db.session.commit()
+        return jsonify({"ok":True,"merged":merged,"groups":len(groups)})
+    except Exception as exc:
+        db.session.rollback(); return jsonify({"ok":False,"error":str(exc)}),500
+
+@app.get("/api/financeiro/fornecedores/<int:row_id>/padroes")
+@login_required
+def financial_supplier_patterns_api(row_id):
+    if session.get("role") not in ("manager","manager_field","atm_financial_admin"): return jsonify({"ok":False,"error":"Sem permissão."}),403
+    supplier=db.session.get(FinancialSupplier,row_id)
+    if not supplier:return jsonify({"ok":False,"error":"Fornecedor não encontrado."}),404
+    rows=FinancialMonthlyCost.query.filter_by(supplier_id=row_id).order_by(FinancialMonthlyCost.competence.desc(),FinancialMonthlyCost.updated_at.desc()).limit(8).all()
+    sups={row_id:supplier.name}; svcs={x.id:x.name for x in FinancialService.query.filter_by(supplier_id=row_id).all()}
+    return jsonify({"ok":True,"services":[{"id":x.id,"name":x.name} for x in FinancialService.query.filter_by(supplier_id=row_id,active=True).order_by(FinancialService.name).all()],
+        "patterns":[_fin_payload(x,{},sups,svcs) for x in rows]})
 
 @app.delete("/api/financeiro/fornecedores/<int:row_id>")
 @login_required
@@ -8673,10 +8812,10 @@ def _fin_service_for_text(supplier_id, service_text):
     return row
 
 def _fin_payload(row, users=None, sups=None, svcs=None):
-    users=users or {u.id:u.name for u in User.query.all()}; sups=sups or {x.id:x.name for x in FinancialSupplier.query.all()}; svcs=svcs or {x.id:x.name for x in FinancialService.query.all()}
+    users={u.id:u.name for u in User.query.all()} if users is None else users; sups={x.id:x.name for x in FinancialSupplier.query.all()} if sups is None else sups; svcs={x.id:x.name for x in FinancialService.query.all()} if svcs is None else svcs
     try: alloc=json.loads(row.allocation_json or "{}")
     except: alloc={}
-    return {"id":row.id,"competence":row.competence,"cost_center":getattr(row,"cost_center",None) or "SUPORTE_CAMPO","project":getattr(row,"project",None) or "","supplier_id":row.supplier_id,"supplier":sups.get(row.supplier_id,""),"service":getattr(row,"service_text",None) or svcs.get(row.service_id,""),"amount":round(float(row.amount or 0),2),"forecast_amount":None if getattr(row,"forecast_amount",None) is None else round(float(row.forecast_amount),2),"allocation":alloc,"invoice_number":getattr(row,"invoice_number",None) or "","notes":row.notes or "","updated_by":users.get(row.updated_by or row.created_by,""),"updated_at":row.updated_at.isoformat()+"Z"}
+    return {"id":row.id,"competence":row.competence, "cost_center":getattr(row,"cost_center",None) or "SUPORTE_CAMPO","cost_center_id":getattr(row,"cost_center_id",None) or _fin_cost_center_id_for_key(getattr(row,"cost_center",None) or "SUPORTE_CAMPO"),"project":getattr(row,"project",None) or "","supplier_id":row.supplier_id,"supplier":sups.get(row.supplier_id,""),"service":getattr(row,"service_text",None) or svcs.get(row.service_id,""),"amount":round(float(row.amount or 0),2),"forecast_amount":None if getattr(row,"forecast_amount",None) is None else round(float(row.forecast_amount),2),"allocation":alloc,"invoice_number":getattr(row,"invoice_number",None) or "","notes":row.notes or "","updated_by":users.get(row.updated_by or row.created_by,""),"updated_at":row.updated_at.isoformat()+"Z"}
 
 @app.route("/api/financeiro/lancamentos",methods=["GET","POST"])
 @login_required
@@ -8688,7 +8827,7 @@ def financial_monthly_costs_api():
         users={u.id:u.name for u in User.query.all()}; sups={x.id:x.name for x in FinancialSupplier.query.all()}; svcs={x.id:x.name for x in FinancialService.query.all()}
         return jsonify({"ok":True,"rows":[_fin_payload(x,users,sups,svcs) for x in q.order_by(FinancialMonthlyCost.competence.desc(),FinancialMonthlyCost.id.desc()).all()]})
     if not _financial_admin_allowed(): return jsonify({"ok":False,"error":"Sem permissão."}),403
-    d=request.get_json(silent=True) or {}; comp=(d.get("competence") or "").strip(); sid=int(d.get("supplier_id") or 0); service_text=(d.get("service") or "").strip(); center=(d.get("cost_center") or "SUPORTE_CAMPO").strip().upper(); project=(d.get("project") or "").strip()
+    d=request.get_json(silent=True) or {}; comp=(d.get("competence") or "").strip(); sid=int(d.get("supplier_id") or 0); service_text=(d.get("service") or "").strip(); center=(d.get("cost_center") or "SUPORTE_CAMPO").strip().upper(); center_id=(d.get("cost_center_id") or _fin_cost_center_id_for_key(center)).strip().upper(); project=(d.get("project") or "").strip()
     try:
         amount=round(float(str(d.get("amount") or 0).replace(",",".")),2); forecast=d.get("forecast_amount"); forecast=None if forecast in (None,"") else round(float(str(forecast).replace(",",".")),2); alloc={str(k).upper():round(float(v or 0),2) for k,v in (d.get("allocation") or {}).items() if float(v or 0)>0}
     except: return jsonify({"ok":False,"error":"Valor/rateio inválido."}),400
@@ -8698,7 +8837,7 @@ def financial_monthly_costs_api():
     total=round(sum(alloc.values()),2)
     if not alloc or abs(total-100)>0.001: return jsonify({"ok":False,"error":f"O rateio deve totalizar 100%. Atual: {total:.2f}%."}),400
     service=_fin_service_for_text(sid,service_text)
-    row=FinancialMonthlyCost(competence=comp,supplier_id=sid,service_id=service.id,service_text=service_text,amount=amount,forecast_amount=forecast,cost_center=center,project=project,allocation_json=json.dumps(alloc,ensure_ascii=False),invoice_number=(d.get("invoice_number") or "").strip(),notes=(d.get("notes") or "").strip(),created_by=session.get("user_id"),updated_by=session.get("user_id"));db.session.add(row);db.session.flush()
+    row=FinancialMonthlyCost(competence=comp,supplier_id=sid,service_id=service.id,service_text=service_text,amount=amount,forecast_amount=forecast,cost_center=center,cost_center_id=center_id,project=project,allocation_json=json.dumps(alloc,ensure_ascii=False),invoice_number=(d.get("invoice_number") or "").strip(),notes=(d.get("notes") or "").strip(),created_by=session.get("user_id"),updated_by=session.get("user_id"));db.session.add(row);db.session.flush()
     db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="FIN_MONTHLY_COST_CREATE",entity_type="financial_monthly_cost",entity_id=str(row.id),detail=f"{comp} · {center} · {supplier.name} · {service_text} · R$ {amount:.2f}"));db.session.commit();return jsonify({"ok":True,"id":row.id})
 
 @app.route("/api/financeiro/lancamentos/<int:row_id>",methods=["PUT","DELETE"])
@@ -8710,7 +8849,7 @@ def financial_monthly_cost_update_api(row_id):
         if session.get("role")!="manager": return jsonify({"ok":False,"error":"Somente ADM pode excluir lançamento."}),403
         detail=f"{row.competence} · R$ {row.amount:.2f}";db.session.delete(row);db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="FIN_MONTHLY_COST_DELETE",entity_type="financial_monthly_cost",entity_id=str(row_id),detail=detail));db.session.commit();return jsonify({"ok":True})
     if not _financial_admin_allowed(): return jsonify({"ok":False,"error":"Sem permissão."}),403
-    d=request.get_json(silent=True) or {}; sid=int(d.get("supplier_id") or row.supplier_id); service_text=(d.get("service") or getattr(row,"service_text",None) or "").strip(); center=(d.get("cost_center") or getattr(row,"cost_center",None) or "SUPORTE_CAMPO").strip().upper(); project=(d.get("project",getattr(row,"project",None)) or "").strip(); comp=(d.get("competence") or row.competence).strip()
+    d=request.get_json(silent=True) or {}; sid=int(d.get("supplier_id") or row.supplier_id); service_text=(d.get("service") or getattr(row,"service_text",None) or "").strip(); center=(d.get("cost_center") or getattr(row,"cost_center",None) or "SUPORTE_CAMPO").strip().upper(); center_id=(d.get("cost_center_id") or getattr(row,"cost_center_id",None) or _fin_cost_center_id_for_key(center)).strip().upper(); project=(d.get("project",getattr(row,"project",None)) or "").strip(); comp=(d.get("competence") or row.competence).strip()
     try:
         amount=round(float(str(d.get("amount",row.amount)).replace(",",".")),2); forecast=d.get("forecast_amount",getattr(row,"forecast_amount",None)); forecast=None if forecast in (None,"") else round(float(str(forecast).replace(",",".")),2); alloc={str(k).upper():round(float(v or 0),2) for k,v in (d.get("allocation") or json.loads(row.allocation_json or "{}")).items() if float(v or 0)>0}
     except: return jsonify({"ok":False,"error":"Valor/rateio inválido."}),400
@@ -8719,7 +8858,7 @@ def financial_monthly_cost_update_api(row_id):
     supplier=db.session.get(FinancialSupplier,sid); service=_fin_service_for_text(sid,service_text) if supplier else None
     if not supplier or not service:return jsonify({"ok":False,"error":"Fornecedor/serviço inválido."}),400
     before=f"{row.competence} · R$ {row.amount:.2f}"
-    row.competence=comp;row.supplier_id=sid;row.service_id=service.id;row.service_text=service_text;row.amount=amount;row.forecast_amount=forecast;row.cost_center=center;row.project=project;row.allocation_json=json.dumps(alloc,ensure_ascii=False);row.invoice_number=(d.get("invoice_number",getattr(row,"invoice_number",None)) or "").strip();row.notes=(d.get("notes",row.notes) or "").strip();row.updated_by=session.get("user_id");row.updated_at=datetime.utcnow()
+    row.competence=comp;row.supplier_id=sid;row.service_id=service.id;row.service_text=service_text;row.amount=amount;row.forecast_amount=forecast;row.cost_center=center;row.cost_center_id=center_id;row.project=project;row.allocation_json=json.dumps(alloc,ensure_ascii=False);row.invoice_number=(d.get("invoice_number",getattr(row,"invoice_number",None)) or "").strip();row.notes=(d.get("notes",row.notes) or "").strip();row.updated_by=session.get("user_id");row.updated_at=datetime.utcnow()
     db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="FIN_MONTHLY_COST_EDIT",entity_type="financial_monthly_cost",entity_id=str(row.id),detail=f"antes: {before} | depois: {comp} · {center} · R$ {amount:.2f}"));db.session.commit();return jsonify({"ok":True})
 
 
@@ -8766,8 +8905,8 @@ def financial_monthly_batch_api():
             service=_fin_service_for_text(sid,service_text)
             row=db.session.get(FinancialMonthlyCost,int(item["id"])) if item.get("id") else None
             if row is None:
-                row=FinancialMonthlyCost(competence=comp,supplier_id=sid,service_id=service.id,cost_center=center,created_by=session.get("user_id")); db.session.add(row)
-            row.competence=comp; row.supplier_id=sid; row.service_id=service.id; row.service_text=service_text; row.amount=amount; row.forecast_amount=forecast; row.cost_center=center; row.project=(item.get("project") or "").strip(); row.invoice_number=(item.get("invoice_number") or "").strip(); row.allocation_json=json.dumps(alloc,ensure_ascii=False); row.notes=(item.get("notes") or "").strip(); row.updated_by=session.get("user_id"); row.updated_at=datetime.utcnow(); saved+=1
+                row=FinancialMonthlyCost(competence=comp,supplier_id=sid,service_id=service.id,cost_center=center,cost_center_id=(item.get("cost_center_id") or _fin_cost_center_id_for_key(center)),created_by=session.get("user_id")); db.session.add(row)
+            row.competence=comp; row.supplier_id=sid; row.service_id=service.id; row.service_text=service_text; row.amount=amount; row.forecast_amount=forecast; row.cost_center=center; row.cost_center_id=(item.get("cost_center_id") or _fin_cost_center_id_for_key(center)); row.project=(item.get("project") or "").strip(); row.invoice_number=(item.get("invoice_number") or "").strip(); row.allocation_json=json.dumps(alloc,ensure_ascii=False); row.notes=(item.get("notes") or "").strip(); row.updated_by=session.get("user_id"); row.updated_at=datetime.utcnow(); saved+=1
         db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="FIN_MONTHLY_BATCH_SAVE",entity_type="financial_monthly_cost",entity_id=comp,detail=f"{center} · {saved} salvo(s) · {deleted} excluído(s)")); db.session.commit()
         return jsonify({"ok":True,"saved":saved,"deleted":deleted})
     except Exception as exc:
@@ -9013,7 +9152,11 @@ def financial_cash_reconciliation_terminals():
     asset_rows=(db.session.query(BaseAsset.terminal_number,func.max(BaseAsset.locality),func.max(BaseAsset.company),func.max(BaseAsset.line))
         .join(term_sub,BaseAsset.terminal_number==term_sub.c.terminal).group_by(BaseAsset.terminal_number).all())
     locmap={_fin_terminal(t):{"locality":loc or "","company":comp or "","line":line or ""} for t,loc,comp,line in asset_rows if _fin_terminal(t)}
-    tx_count,latest_at,latest_import_at=db.session.query(func.count(FinancialATMTransaction.id),func.max(FinancialATMTransaction.transaction_at),func.max(FinancialATMTransaction.imported_at)).one()
+    # V60 REV2 PERFORMANCE: evita COUNT(*) em >500 mil transações.
+    # O importador é append-only; MAX(id) fornece o volume operacional sem varredura integral.
+    tx_count=int(db.session.query(func.max(FinancialATMTransaction.id)).scalar() or 0)
+    latest_at=db.session.query(func.max(FinancialATMTransaction.transaction_at)).scalar()
+    latest_import_at=db.session.query(func.max(FinancialATMTransaction.imported_at)).scalar()
     latest_tx=None; latest_import=None
     if latest_at:
         row=db.session.query(FinancialATMTransaction.terminal,FinancialATMTransaction.source_file).filter(FinancialATMTransaction.transaction_at==latest_at).first()
@@ -9148,9 +9291,9 @@ def financial_import_xlsx():
         if not sup: sup=FinancialSupplier(name=name,created_by=session.get('user_id'));db.session.add(sup);created_sup+=1
         else: updated_sup+=1
         sup.trade_name=str(val(ws,r,h,"Nome Fantasia") or '').strip() or None; sup.cnpj=str(val(ws,r,h,"CNPJ") or '').strip() or None
-        sup.primary_cost_center=str(val(ws,r,h,"Centro de Custo Principal") or '').strip() or None; sup.contact_name=str(val(ws,r,h,"Contato") or '').strip() or None
+        sup.primary_cost_center=str(val(ws,r,h,"Centro de Custo Principal") or '').strip().upper() or None; sup.cost_center_id=str(val(ws,r,h,"ID Centro de Custo") or _fin_cost_center_id_for_key(sup.primary_cost_center)).strip().upper() or None; sup.contact_name=str(val(ws,r,h,"Contato") or '').strip() or None
         sup.phone=str(val(ws,r,h,"Telefone") or '').strip() or None; sup.email=str(val(ws,r,h,"E-mail") or '').strip() or None
-        sup.pending_profile=not bool(sup.cnpj and sup.contact_name and (sup.phone or sup.email)); pending_sup+=1 if sup.pending_profile else 0
+        sup.pending_profile=_fin_supplier_pending(sup); pending_sup+=1 if sup.pending_profile else 0
     db.session.flush()
     ws=wb["Lançamentos"]; h=headers(ws)
     prodcols=[("Produto 1","Rateio 1 %"),("Produto 2","Rateio 2 %"),("Produto 3","Rateio 3 %"),("Produto 4","Rateio 4 %"),("Produto 5","Rateio 5 %"),("Produto 6","Rateio 6 %")]
@@ -9178,7 +9321,7 @@ def financial_import_xlsx():
             exists=FinancialMonthlyCost.query.filter_by(competence=comp,supplier_id=sup.id).filter(func.abs(FinancialMonthlyCost.amount-amount)<0.01,func.lower(FinancialMonthlyCost.service_text)==service.lower()).first()
             if exists: duplicates+=1; continue
             svc=_fin_service_for_text(sup.id,service)
-            row=FinancialMonthlyCost(competence=comp,supplier_id=sup.id,service_id=svc.id,service_text=service,amount=round(amount,2),forecast_amount=None if forecast is None else round(forecast,2),cost_center=center,project=str(val(ws,r,h,"Projeto") or '').strip(),allocation_json=json.dumps(alloc,ensure_ascii=False),notes=str(val(ws,r,h,"Observação / Justificativa") or '').strip(),created_by=session.get('user_id'),updated_by=session.get('user_id'))
+            row=FinancialMonthlyCost(competence=comp,supplier_id=sup.id,service_id=svc.id,service_text=service,amount=round(amount,2),forecast_amount=None if forecast is None else round(forecast,2),cost_center=center,cost_center_id=str(val(ws,r,h,"ID Centro de Custo") or _fin_cost_center_id_for_key(center)).strip().upper(),project=str(val(ws,r,h,"Projeto") or '').strip(),invoice_number=str(val(ws,r,h,"NF / Documento") or '').strip(),allocation_json=json.dumps(alloc,ensure_ascii=False),notes=str(val(ws,r,h,"Observação / Justificativa") or '').strip(),created_by=session.get('user_id'),updated_by=session.get('user_id'))
             db.session.add(row); created_cost+=1
         except Exception: errors+=1
     db.session.commit(); _td_cache_clear()
@@ -9193,13 +9336,13 @@ def financial_export_xlsx():
     if comps:q=q.filter(FinancialMonthlyCost.competence.in_(comps))
     if center!='ALL':q=q.filter_by(cost_center=center)
     rows=q.order_by(FinancialMonthlyCost.competence,FinancialMonthlyCost.id).all(); sups={x.id:x.name for x in FinancialSupplier.query.all()}
-    wb=Workbook(); ws=wb.active;ws.title='Lançamentos';ws.append(['Competência','Centro de Custo','Fornecedor','Serviço','Projeto','Realizado','Forecast','Produto','Rateio %','Valor Rateado'])
+    wb=Workbook(); ws=wb.active;ws.title='Lançamentos';ws.append(['Competência','Centro de Custo','ID Centro de Custo','Fornecedor','Serviço','Projeto','Realizado','Forecast','Produto','Rateio %','Valor Rateado'])
     for x in rows:
         alloc=json.loads(x.allocation_json or '{}')
         pairs=alloc.items() if product=='ALL' else [(product,alloc.get(product,0))]
         for pr,pct in pairs:
             if not pct: continue
-            ws.append([x.competence,x.cost_center,sups.get(x.supplier_id,''),x.service_text or '',x.project or '',x.amount,x.forecast_amount,pr,pct,round(x.amount*float(pct)/100,2)])
+            ws.append([x.competence,x.cost_center,getattr(x,'cost_center_id',None) or _fin_cost_center_id_for_key(x.cost_center),sups.get(x.supplier_id,''),x.service_text or '',x.project or '',x.amount,x.forecast_amount,pr,pct,round(x.amount*float(pct)/100,2)])
     bio=io.BytesIO();wb.save(bio);bio.seek(0);return send_file(bio,as_attachment=True,download_name='dashboard_financeiro_v55_2.xlsx',mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 @app.get("/api/panoramas/export.xlsx")
