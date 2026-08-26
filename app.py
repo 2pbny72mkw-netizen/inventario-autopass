@@ -40,7 +40,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V56-B REV"
+APP_RELEASE = "V56-B REV2"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -75,6 +75,24 @@ app.secret_key = os.environ.get("INVENTARIO_SECRET_KEY", "chave-local-apenas-par
 # e não substitui o registro persistente TopDeskImportBatch concluído.
 TOPDESK_IMPORT_JOBS = {}
 TOPDESK_IMPORT_LOCK = threading.Lock()
+
+# V56-B REV2 — importação financeira desacoplada da requisição HTTP.
+FIN_IMPORT_JOBS = {}
+FIN_IMPORT_LOCK = threading.Lock()
+FIN_IMPORT_DIR = UPLOAD_DIR / "finance_import_jobs"
+FIN_IMPORT_DIR.mkdir(exist_ok=True)
+
+def _fin_job_update(job_id, **changes):
+    with FIN_IMPORT_LOCK:
+        job=FIN_IMPORT_JOBS.get(job_id)
+        if job:
+            job.update(changes)
+            job["updated_at"]=datetime.utcnow().isoformat()+"Z"
+
+def _fin_job_snapshot(job_id):
+    with FIN_IMPORT_LOCK:
+        job=FIN_IMPORT_JOBS.get(job_id)
+        return dict(job) if job else None
 
 def _td_job_update(job_id, **changes):
     with TOPDESK_IMPORT_LOCK:
@@ -1503,15 +1521,17 @@ def _profile_to_dict(profile):
 def _schedule_today_db(target_date=None):
     _ensure_team_schedule_profiles()
     target_date = target_date or datetime.now(ZoneInfo("America/Sao_Paulo")).date()
-    return [
-        _profile_to_dict(p)
-        for p in TeamScheduleProfile.query.filter_by(active=True).order_by(
-            TeamScheduleProfile.category, TeamScheduleProfile.name
-        ).all()
-        if _team_profile_is_scheduled(p, target_date)
-        and (not p.user_id or (db.session.get(User, p.user_id) and db.session.get(User, p.user_id).active
-        and normalize(db.session.get(User, p.user_id).personnel_status or "ATIVO") == "ATIVO"))
-    ]
+    profiles=TeamScheduleProfile.query.filter_by(active=True).order_by(TeamScheduleProfile.category,TeamScheduleProfile.name).all()
+    user_ids={p.user_id for p in profiles if p.user_id}
+    users={u.id:u for u in User.query.filter(User.id.in_(user_ids)).all()} if user_ids else {}
+    out=[]
+    for p in profiles:
+        if not _team_profile_is_scheduled(p,target_date): continue
+        u=users.get(p.user_id) if p.user_id else None
+        if p.user_id and (not u or not u.active or normalize(u.personnel_status or "ATIVO")!="ATIVO"): continue
+        d={"profile_id":p.id,"user_id":p.user_id,"linked_user_name":u.name if u else None,"linked":bool(u and u.active),"name":p.name,"category":p.category or "TECNICO","schedule_type":p.schedule_type or "12x36","shift":p.shift,"supervision":p.supervision or "","entry":p.entry or "","lines":p.lines,"anchor_date":p.anchor_date.isoformat() if p.anchor_date else None,"active":bool(p.active),"company":(u.company if u else "") or "","job_title":(u.job_title if u else "") or "","personnel_status":(u.personnel_status if u else "ATIVO") or "ATIVO","personnel_status_note":(u.personnel_status_note if u else "") or "","source":"CADASTRO_USUARIO" if u else "LEGADO_ESCALA"}
+        out.append(d)
+    return out
 
 
 def _team_latest_position(user_id, only_today=True):
@@ -1618,61 +1638,45 @@ def technician_checkin():
 @teams_view_required
 def teams_status_api():
     if not (_has_access("teams.today") or _has_access("teams.map")): abort(403)
-    """V56-A.3 — operação de hoje + última posição GPS + estação atual/mais próxima."""
     _ensure_team_schedule_profiles()
-    local_now = datetime.now(ZoneInfo("America/Sao_Paulo"))
-    target_date = local_now.date()
-    scheduled = _schedule_today_db(target_date)
-    now_utc = datetime.utcnow()
-    start_local=datetime.combine(target_date, datetime.min.time(), tzinfo=ZoneInfo("America/Sao_Paulo"))
-    start_utc=start_local.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
-    end_utc=(start_local+timedelta(days=1)).astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+    local_now=datetime.now(ZoneInfo("America/Sao_Paulo")); target_date=local_now.date(); scheduled=_schedule_today_db(target_date)
+    now_utc=datetime.utcnow(); start_local=datetime.combine(target_date,datetime.min.time(),tzinfo=ZoneInfo("America/Sao_Paulo")); start_utc=start_local.astimezone(ZoneInfo("UTC")).replace(tzinfo=None); end_utc=(start_local+timedelta(days=1)).astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+    user_ids={int(m["user_id"]) for m in scheduled if m.get("user_id")}
+    users={u.id:u for u in User.query.filter(User.id.in_(user_ids)).all()} if user_ids else {}
+    # Última posição do dia por usuário em uma consulta + join.
+    pos_map={}
+    if user_ids:
+        sub=(db.session.query(TechnicianPosition.user_id,func.max(TechnicianPosition.captured_at).label("mx")).filter(TechnicianPosition.user_id.in_(user_ids),TechnicianPosition.captured_at>=start_utc,TechnicianPosition.captured_at<end_utc).group_by(TechnicianPosition.user_id).subquery())
+        for p in db.session.query(TechnicianPosition).join(sub,and_(TechnicianPosition.user_id==sub.c.user_id,TechnicianPosition.captured_at==sub.c.mx)).all(): pos_map[p.user_id]=p
+    login_map={}; login_counts={}; gps_counts={}
+    if user_ids:
+        for uid,first_at,n in db.session.query(SessionEvent.user_id,func.min(SessionEvent.created_at),func.count(SessionEvent.id)).filter(SessionEvent.user_id.in_(user_ids),SessionEvent.created_at>=start_utc,SessionEvent.created_at<end_utc).group_by(SessionEvent.user_id).all(): login_map[uid]=first_at; login_counts[uid]=int(n)
+        gps_counts={uid:int(n) for uid,n in db.session.query(TechnicianPosition.user_id,func.count(TechnicianPosition.id)).filter(TechnicianPosition.user_id.in_(user_ids),TechnicianPosition.captured_at>=start_utc,TechnicianPosition.captured_at<end_utc).group_by(TechnicianPosition.user_id).all()}
     stations=Location.query.filter(Location.reference_latitude.isnot(None),Location.reference_longitude.isnot(None)).all()
-
-    def nearest_station(lat, lon):
-        if lat is None or lon is None or not stations: return None
+    def nearest_station(lat,lon):
+        if lat is None or lon is None:return None
         best=None
         for loc in stations:
             try: dist=_haversine_m(float(lat),float(lon),float(loc.reference_latitude),float(loc.reference_longitude))
             except Exception: continue
-            if best is None or dist < best[0]: best=(dist,loc)
+            if best is None or dist<best[0]: best=(dist,loc)
         if not best:return None
-        dist,loc=best
-        radius=500.0
-        return {"id":loc.id,"name":loc.location,"company":loc.company or "","line":loc.line or "","distance_m":round(dist),"relation":"NA ESTAÇÃO" if dist<=radius else "MAIS PRÓXIMA"}
-
+        dist,loc=best; return {"id":loc.id,"name":loc.location,"company":loc.company or "","line":loc.line or "","distance_m":round(dist),"relation":"NA ESTAÇÃO" if dist<=500 else "MAIS PRÓXIMA"}
     rows=[]; summary={"in_operation":0,"late":0,"not_logged":0,"stale_gt10":0,"no_gps":0,"outside_locality":0,"not_started":0}
     for member in scheduled:
-        user=db.session.get(User,member.get("user_id")) if member.get("user_id") else None
-        if user is not None and (not user.active or normalize(user.personnel_status or "ATIVO") != "ATIVO"): continue
-        pos=_team_latest_position(user.id if user else None, only_today=True)
-        minutes=None
-        if pos: minutes=max(0,int((now_utc-pos.captured_at).total_seconds()//60))
-        today_login=(SessionEvent.query.filter(SessionEvent.user_id==user.id,SessionEvent.event_type=="LOGIN",SessionEvent.created_at>=start_utc,SessionEvent.created_at<end_utc).order_by(SessionEvent.created_at).first() if user else None)
-        shift=(member.get("shift") or member.get("entry") or "").strip(); m=re.search(r'(\d{1,2}):(\d{2})',shift)
-        expected_local=None
-        if m:
-            expected_local=datetime.combine(target_date,datetime.min.time(),tzinfo=ZoneInfo("America/Sao_Paulo")).replace(hour=int(m.group(1)),minute=int(m.group(2)))
-        login_local=today_login.created_at.replace(tzinfo=ZoneInfo("UTC")).astimezone(ZoneInfo("America/Sao_Paulo")) if today_login else None
-        late_minutes=max(0,int((login_local-expected_local).total_seconds()//60)) if login_local and expected_local else 0
-        station=nearest_station(pos.latitude,pos.longitude) if pos else None
-        if expected_local and local_now < expected_local and not today_login:
-            operation_status="AINDA NÃO INICIOU"; summary["not_started"]+=1
-        elif not today_login:
-            operation_status="NÃO LOGOU"; summary["not_logged"]+=1
-        elif not pos:
-            operation_status="SEM GPS"; summary["no_gps"]+=1
-        elif minutes is not None and minutes>10:
-            operation_status="SEM POSIÇÃO >10 MIN"; summary["stale_gt10"]+=1
-        elif late_minutes>0:
-            operation_status=f"ATRASADO {late_minutes} MIN"; summary["late"]+=1
-        else:
-            operation_status="EM OPERAÇÃO"; summary["in_operation"]+=1
+        uid=member.get("user_id"); user=users.get(uid); pos=pos_map.get(uid); minutes=max(0,int((now_utc-pos.captured_at).total_seconds()//60)) if pos else None
+        shift=(member.get("shift") or member.get("entry") or "").strip(); m=re.search(r'(\d{1,2}):(\d{2})',shift); expected_local=None
+        if m: expected_local=datetime.combine(target_date,datetime.min.time(),tzinfo=ZoneInfo("America/Sao_Paulo")).replace(hour=int(m.group(1)),minute=int(m.group(2)))
+        first_at=login_map.get(uid); login_local=first_at.replace(tzinfo=ZoneInfo("UTC")).astimezone(ZoneInfo("America/Sao_Paulo")) if first_at else None; late_minutes=max(0,int((login_local-expected_local).total_seconds()//60)) if login_local and expected_local else 0; station=nearest_station(pos.latitude,pos.longitude) if pos else None
+        if expected_local and local_now<expected_local and not login_local: operation_status="AINDA NÃO INICIOU"; summary["not_started"]+=1
+        elif not login_local: operation_status="NÃO LOGOU"; summary["not_logged"]+=1
+        elif not pos: operation_status="SEM GPS"; summary["no_gps"]+=1
+        elif minutes is not None and minutes>10: operation_status="SEM POSIÇÃO >10 MIN"; summary["stale_gt10"]+=1
+        elif late_minutes>0: operation_status=f"ATRASADO {late_minutes} MIN"; summary["late"]+=1
+        else: operation_status="EM OPERAÇÃO"; summary["in_operation"]+=1
         if station and station["relation"]=="MAIS PRÓXIMA": summary["outside_locality"]+=1
         freshness="SEM SINAL" if minutes is None else ("ATUAL" if minutes<=5 else ("ATENÇÃO" if minutes<=15 else "ATRASADO"))
-        gps_today=(TechnicianPosition.query.filter(TechnicianPosition.user_id==user.id,TechnicianPosition.captured_at>=start_utc,TechnicianPosition.captured_at<end_utc).count() if user else 0)
-        login_events=(SessionEvent.query.filter(SessionEvent.user_id==user.id,SessionEvent.created_at>=start_utc,SessionEvent.created_at<end_utc).count() if user else 0)
-        rows.append({**member,"gps_points_today":gps_today,"session_events_today":login_events,"photo_url":(f"/usuarios/{user.id}/foto" if user and user.photo_url else None),"photo_version":(str(user.photo_url) if user and user.photo_url else None),"latitude":pos.latitude if pos else None,"longitude":pos.longitude if pos else None,"accuracy":pos.accuracy if pos else None,"captured_at":(pos.captured_at.isoformat()+"Z") if pos else None,"minutes_since":minutes,"freshness":freshness,"first_login":login_local.strftime("%H:%M") if login_local else None,"late_minutes":late_minutes,"operation_status":operation_status,"nearest_station":station,"current_location":station["name"] if station else None})
+        rows.append({**member,"gps_points_today":gps_counts.get(uid,0),"session_events_today":login_counts.get(uid,0),"photo_url":(f"/usuarios/{user.id}/foto" if user and user.photo_url else None),"photo_version":(str(user.photo_url) if user and user.photo_url else None),"latitude":pos.latitude if pos else None,"longitude":pos.longitude if pos else None,"accuracy":pos.accuracy if pos else None,"captured_at":(pos.captured_at.isoformat()+"Z") if pos else None,"minutes_since":minutes,"freshness":freshness,"first_login":login_local.strftime("%H:%M") if login_local else None,"late_minutes":late_minutes,"operation_status":operation_status,"nearest_station":station,"current_location":station["name"] if station else None})
     counts={}
     for row in rows: counts[row["category"]]=counts.get(row["category"],0)+1
     return jsonify({"ok":True,"date":target_date.isoformat(),"time":local_now.strftime("%H:%M"),"scheduled":len(rows),"counts_by_category":counts,"summary":summary,"technicians":rows})
@@ -3371,18 +3375,22 @@ def _station_technical_config(loc):
             return dict(r)
     return {}
 
+_block_config_cache = None
 def _block_technical_config(prefix):
-    """Retorna configuração pelo prefixo; usa a Tabela Estações como fallback."""
+    """Retorna configuração pelo prefixo; V56-B REV2 mantém JSON em memória."""
+    global _block_config_cache
     key = re.sub(r"\D", "", str(prefix or ""))
     if not key:
         return {}
-    try:
-        source = DATA_DIR / "block_config_v18.json"
-        payload = json.loads(source.read_text(encoding="utf-8")) if source.exists() else {}
-        hit=(payload.get("by_prefix") or {}).get(key, {}) or {}
-        if hit: return hit
-    except Exception:
-        pass
+    if _block_config_cache is None:
+        try:
+            source = DATA_DIR / "block_config_v18.json"
+            payload = json.loads(source.read_text(encoding="utf-8")) if source.exists() else {}
+            _block_config_cache = payload.get("by_prefix") or {}
+        except Exception:
+            _block_config_cache = {}
+    hit=_block_config_cache.get(key, {}) or {}
+    if hit: return hit
     for r in _load_station_network_rows():
         if r.get("prefix")==key:
             return dict(r)
@@ -6490,9 +6498,18 @@ def topdesk_analytics_api():
     return jsonify(payload)
 
 
+_TOPDESK_DASH_CACHE = {}
+_TOPDESK_DASH_CACHE_TTL = 60
+
 @app.get("/api/topdesk/dashboard")
 @dashboard_required
 def topdesk_dashboard_api():
+    # V56-B REV2: cache curto por conjunto de filtros. Evita recalcular 50k chamados
+    # várias vezes durante a mesma navegação/refresh da dashboard.
+    cache_key=request.query_string.decode("utf-8","ignore")
+    now=time.time(); cached=_TOPDESK_DASH_CACHE.get(cache_key)
+    if cached and now-cached[0] < _TOPDESK_DASH_CACHE_TTL:
+        payload=dict(cached[1]); payload["cache"]="HIT"; return jsonify(payload)
     rows=_td_filter_rows(request.args); tickets=[x[0] for x in rows]; total=len(tickets); openrows=[t for t in tickets if _ticket_open(t)]; resolved=total-len(openrows)
     by_status={}; by_type={}; by_location={}; assigned=0
     for t,dt,line,location,model in rows:
@@ -6501,7 +6518,12 @@ def topdesk_dashboard_api():
         if t.assigned_technician_id: assigned+=1
         if location: by_location[location]=by_location.get(location,0)+1
     top_locations=sorted(by_location.items(),key=lambda x:x[1],reverse=True)[:12]
-    return jsonify({"ok":True,"total":total,"open":len(openrows),"resolved":resolved,"assigned":assigned,"unassigned":total-assigned,"by_status":by_status,"by_type":by_type,"top_locations":[{"name":k,"count":v} for k,v in top_locations]})
+    payload={"ok":True,"cache":"MISS","total":total,"open":len(openrows),"resolved":resolved,"assigned":assigned,"unassigned":total-assigned,"by_status":by_status,"by_type":by_type,"top_locations":[{"name":k,"count":v} for k,v in top_locations]}
+    _TOPDESK_DASH_CACHE[cache_key]=(now,payload)
+    if len(_TOPDESK_DASH_CACHE)>40:
+        for k,v in list(_TOPDESK_DASH_CACHE.items()):
+            if now-v[0] > _TOPDESK_DASH_CACHE_TTL: _TOPDESK_DASH_CACHE.pop(k,None)
+    return jsonify(payload)
 
 
 @app.get("/topdesk/export.xlsx")
@@ -8655,26 +8677,69 @@ def financial_cash_reconciliation_page():
         return redirect(url_for("dashboard_landing"))
     return render_template("financial_cash_reconciliation.html",app_release=APP_RELEASE)
 
+def _financial_import_worker(job_id, paths, filenames, user_id):
+    with app.app_context():
+        results=[]
+        try:
+            total_files=len(paths)
+            _fin_job_update(job_id,status="PROCESSANDO",progress=2,message="Processamento iniciado",current_file=1,total_files=total_files)
+            for idx,(path,filename) in enumerate(zip(paths,filenames),start=1):
+                base_pct=int((idx-1)/max(total_files,1)*90)+5
+                _fin_job_update(job_id,current_file=idx,current_filename=filename,progress=base_pct,message=f"Lendo {filename}")
+                wb=load_workbook(path,read_only=True,data_only=True)
+                upper=[x.upper() for x in wb.sheetnames]
+                if any(x.startswith("TRANSPORTE") for x in upper):
+                    result=_fin_import_tbf_wb(wb,filename,user_id)
+                else:
+                    result=_fin_import_transactions_wb(wb,filename,user_id)
+                wb.close(); db.session.commit(); results.append(result)
+                _fin_job_update(job_id,results=results,progress=min(95,int(idx/max(total_files,1)*90)+5),message=f"{filename} concluído")
+            db.session.add(AuditEvent(user_id=user_id,event_type="FIN_APURACAO_IMPORT",entity_type="financial_cash_reconciliation",entity_id=str(len(paths)),detail=json.dumps(results,ensure_ascii=False)[:4000])); db.session.commit()
+            tx_count=db.session.query(func.count(FinancialATMTransaction.id)).scalar() or 0
+            col_count=db.session.query(func.count(FinancialCashCollection.id)).scalar() or 0
+            _fin_job_update(job_id,status="CONCLUIDO",progress=100,message="Importação concluída",results=results,transactions=int(tx_count),collections=int(col_count),finished_at=datetime.utcnow().isoformat()+"Z")
+        except Exception as exc:
+            db.session.rollback()
+            app.logger.exception("Falha importação financeira background")
+            _fin_job_update(job_id,status="FALHOU",progress=0,message="Importação interrompida",error=str(exc),results=results,finished_at=datetime.utcnow().isoformat()+"Z")
+        finally:
+            for path in paths:
+                try: Path(path).unlink(missing_ok=True)
+                except Exception: pass
+
 @app.post("/api/financeiro/apuracao/importar")
 @login_required
 def financial_cash_reconciliation_import():
     if not _financial_admin_allowed() or not _has_access("finance.apuracao"):
         return jsonify({"ok":False,"error":"Sem permissão."}),403
-    files=request.files.getlist("files") or ([request.files.get("file")] if request.files.get("file") else [])
-    files=[f for f in files if f and f.filename]
-    if not files:return jsonify({"ok":False,"error":"Selecione uma ou mais planilhas Excel."}),400
-    results=[]
+    uploaded=request.files.getlist("files") or ([request.files.get("file")] if request.files.get("file") else [])
+    uploaded=[f for f in uploaded if f and f.filename]
+    if not uploaded:return jsonify({"ok":False,"error":"Selecione uma ou mais planilhas Excel."}),400
+    job_id=uuid.uuid4().hex
+    paths=[]; names=[]
     try:
-        for f in files:
-            wb=load_workbook(f.stream,read_only=True,data_only=True)
-            upper=[x.upper() for x in wb.sheetnames]
-            if any(x.startswith("TRANSPORTE") for x in upper): results.append(_fin_import_tbf_wb(wb,secure_filename(f.filename),session.get("user_id")))
-            else: results.append(_fin_import_transactions_wb(wb,secure_filename(f.filename),session.get("user_id")))
-            wb.close()
-        db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="FIN_APURACAO_IMPORT",entity_type="financial_cash_reconciliation",entity_id=str(len(files)),detail=json.dumps(results,ensure_ascii=False)[:4000])); db.session.commit()
-        return jsonify({"ok":True,"results":results})
+        for i,f in enumerate(uploaded,1):
+            name=secure_filename(f.filename) or f"arquivo_{i}.xlsx"
+            path=FIN_IMPORT_DIR / f"{job_id}_{i}_{name}"
+            f.save(path); paths.append(str(path)); names.append(name)
+        with FIN_IMPORT_LOCK:
+            FIN_IMPORT_JOBS[job_id]={"job_id":job_id,"status":"NA_FILA","progress":1,"message":"Arquivos recebidos. Preparando importação...","files":names,"current_file":0,"total_files":len(names),"results":[],"created_at":datetime.utcnow().isoformat()+"Z","updated_at":datetime.utcnow().isoformat()+"Z"}
+        threading.Thread(target=_financial_import_worker,args=(job_id,paths,names,session.get("user_id")),daemon=True,name=f"fin-import-{job_id[:8]}").start()
+        return jsonify({"ok":True,"background":True,"job_id":job_id,"message":"Importação iniciada em segundo plano. Você pode sair desta página."}),202
     except Exception as exc:
-        db.session.rollback(); return jsonify({"ok":False,"error":str(exc)}),400
+        for path in paths:
+            try: Path(path).unlink(missing_ok=True)
+            except Exception: pass
+        return jsonify({"ok":False,"error":str(exc)}),400
+
+@app.get("/api/financeiro/apuracao/importar/<job_id>/status")
+@login_required
+def financial_cash_reconciliation_import_status(job_id):
+    if not _financial_admin_allowed() or not _has_access("finance.apuracao"):
+        return jsonify({"ok":False,"error":"Sem permissão."}),403
+    job=_fin_job_snapshot(job_id)
+    if not job:return jsonify({"ok":False,"error":"Importação não encontrada ou servidor reiniciado."}),404
+    return jsonify({"ok":True,**job})
 
 @app.get("/api/financeiro/apuracao/terminais")
 @login_required
@@ -9400,7 +9465,9 @@ try:
             "CREATE INDEX IF NOT EXISTS ix_techpos_user_captured ON technician_positions (user_id, captured_at)",
             "CREATE INDEX IF NOT EXISTS ix_session_user_created ON session_events (user_id, created_at)",
             "CREATE INDEX IF NOT EXISTS ix_monthly_cost_center_comp ON financial_monthly_costs (cost_center, competence)",
-            "CREATE INDEX IF NOT EXISTS ix_perf_created_route ON performance_metrics (created_at, route)"
+            "CREATE INDEX IF NOT EXISTS ix_perf_created_route ON performance_metrics (created_at, route)",
+            "CREATE INDEX IF NOT EXISTS ix_session_user_event_created ON session_events (user_id, event_type, created_at)",
+            "CREATE INDEX IF NOT EXISTS ix_team_profile_active_user ON team_schedule_profiles (active, user_id)"
         ):
             try: conn.execute(text(sql))
             except Exception: pass
