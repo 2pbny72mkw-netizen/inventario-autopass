@@ -1,0 +1,15 @@
+{
+  "release": "V56-D",
+  "focus": "Performance & Consolidação Operacional",
+  "date": "2026-08-26",
+  "files": [
+    "app.py",
+    "static/manager.js",
+    "static/teams.js",
+    "templates/manager.html",
+    "templates/teams.html",
+    "templates/telemetry.html",
+    "static/app.css",
+    "sw.js"
+  ]
+}

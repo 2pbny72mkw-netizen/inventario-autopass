@@ -40,7 +40,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V56-C"
+APP_RELEASE = "V56-D"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -57,6 +57,9 @@ OFFICIAL_PARK_TOTAL = sum(OFFICIAL_PARK.values())  # 3.801
 TECHNICAL_TDI_TOTAL = int(os.getenv("TECHNICAL_TDI_TOTAL", "80"))
 EXPECTED_CACHE_TTL_SECONDS = 600
 _expected_cache = {"at": 0.0, "data": None}
+# V56-D: cache curtíssimo da visão consolidada de localidades para reduzir recomputações concorrentes.
+_LOCATIONS_API_CACHE = {"at": 0.0, "payload": None}
+_LOCATIONS_API_CACHE_TTL = int(os.getenv("LOCATIONS_API_CACHE_TTL", "20"))
 UPLOAD_DIR = BASE_DIR / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 
@@ -109,7 +112,7 @@ def _td_job_snapshot(job_id):
 # de chamados a cada repaint/filtro idêntico. É invalidado ao fim de cada importação.
 TOPDESK_ANALYTICS_CACHE = {}
 TOPDESK_ANALYTICS_CACHE_LOCK = threading.Lock()
-TOPDESK_ANALYTICS_TTL = int(os.getenv("TOPDESK_ANALYTICS_TTL", "180"))
+TOPDESK_ANALYTICS_TTL = int(os.getenv("TOPDESK_ANALYTICS_TTL", "300"))
 
 # V56-A.1: estado operacional do backfill TopDesk.
 # Deve existir antes das rotas, migrações e do startup que o consultam.
@@ -1727,25 +1730,26 @@ def teams_calendar_api():
             TeamScheduleProfile.category, TeamScheduleProfile.name
         ).all()
 
+        # V56-D: carrega os usuários vinculados em lote. Evita 1-2 SELECTs por perfil
+        # em cada atualização da grade de escala.
+        profile_user_ids = {p.user_id for p in profiles if p.user_id}
+        calendar_users = {u.id: u for u in User.query.filter(User.id.in_(profile_user_ids)).all()} if profile_user_ids else {}
         active_profiles = []
         for p in profiles:
-            if p.user_id:
-                user = db.session.get(User, p.user_id)
-                if not user or not user.active:
-                    continue
+            user = calendar_users.get(p.user_id) if p.user_id else None
+            if p.user_id and (not user or not user.active):
+                continue
             if category and normalize(p.category) != category:
                 continue
-            if cargos:
-                u = db.session.get(User, p.user_id) if p.user_id else None
-                if not u or (u.job_title or "").strip().casefold() not in cargos:
-                    continue
+            if cargos and (not user or (user.job_title or "").strip().casefold() not in cargos):
+                continue
             active_profiles.append(p)
 
         date_list = [start_date + timedelta(days=i) for i in range(days)]
         rows = []
         for p in active_profiles:
             day_rows = []
-            linked_user = db.session.get(User, p.user_id) if p.user_id else None
+            linked_user = calendar_users.get(p.user_id) if p.user_id else None
             personnel_status = normalize(linked_user.personnel_status or "ATIVO") if linked_user else "ATIVO"
             for d in date_list:
                 scheduled = bool(_team_profile_is_scheduled(p, d)) if personnel_status == "ATIVO" else False
@@ -1787,9 +1791,25 @@ def teams_profiles_api():
         TeamScheduleProfile.active.desc(), TeamScheduleProfile.category, TeamScheduleProfile.name
     ).all()
     users = User.query.filter(User.active.is_(True)).order_by(User.name).all()
+    users_by_id={u.id:u for u in users}
+    profile_payload=[]
+    for p in profiles:
+        u=users_by_id.get(p.user_id) if p.user_id else None
+        if session.get("role")=="dispatcher" and u and u.role in ("manager","hr"):
+            continue
+        profile_payload.append({
+            "profile_id":p.id,"user_id":p.user_id,"linked_user_name":u.name if u else None,
+            "linked":bool(u and u.active),"name":p.name,"category":p.category or "TECNICO",
+            "schedule_type":p.schedule_type or "12x36","shift":p.shift,"supervision":p.supervision or "",
+            "entry":p.entry or "","lines":p.lines,"anchor_date":p.anchor_date.isoformat() if p.anchor_date else None,
+            "active":bool(p.active),"company":(u.company if u else "") or "","job_title":(u.job_title if u else "") or "",
+            "personnel_status":(u.personnel_status if u else "ATIVO") or "ATIVO",
+            "personnel_status_note":(u.personnel_status_note if u else "") or "",
+            "source":"CADASTRO_USUARIO" if u else "LEGADO_ESCALA"
+        })
     return jsonify({
         "ok": True,
-        "profiles": [_profile_to_dict(p) for p in profiles if not (session.get("role")=="dispatcher" and p.user_id and (db.session.get(User,p.user_id) and db.session.get(User,p.user_id).role in ("manager","hr")))],
+        "profiles": profile_payload,
         "users": [
             {
                 "id": u.id,
@@ -2970,7 +2990,8 @@ def telemetry_summary_api():
         }
         errors=sum(1 for x in rows if x.status_code>=500); avg=round(sum(vals)/len(vals),1) if vals else 0; p95=pct(vals,.95)
         health="NORMAL" if p95<1500 and errors==0 else ("ATENÇÃO" if p95<3000 and errors<3 else "CRÍTICO")
-        return jsonify({"ok":True,"release":APP_RELEASE,"generated_at":datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y %H:%M:%S"),"window_minutes":minutes,"health":health,"avg_ms":avg,"p95_ms":p95,"max_ms":round(max(vals),1) if vals else 0,"requests":len(rows),"errors_5xx":errors,"active_users_15m":int(active_users),"routes":route_rows[:20],"timeline":timeline[-24:],"table_counts":table_counts})
+        top5=[dict(x,app_ms=max(0,round(float(x.get("avg_ms") or 0)-float(x.get("avg_sql_ms") or 0),1))) for x in route_rows[:5]]
+        return jsonify({"ok":True,"release":APP_RELEASE,"generated_at":datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y %H:%M:%S"),"window_minutes":minutes,"health":health,"avg_ms":avg,"p95_ms":p95,"max_ms":round(max(vals),1) if vals else 0,"requests":len(rows),"errors_5xx":errors,"active_users_15m":int(active_users),"routes":route_rows[:20],"top5":top5,"timeline":timeline[-24:],"table_counts":table_counts})
     except Exception as exc:
         return jsonify({"ok":False,"error":str(exc)}),500
 
@@ -3212,6 +3233,11 @@ def _observed_reference_stats(location_id):
 @app.get("/api/locations")
 @login_required
 def api_locations():
+    # V56-D: múltiplos componentes pedem a mesma visão quase simultaneamente.
+    # Um cache de poucos segundos reduz SQL repetido sem tornar a operação perceptivelmente defasada.
+    now=time.time(); cached=_LOCATIONS_API_CACHE.get("payload")
+    if cached is not None and now-float(_LOCATIONS_API_CACHE.get("at") or 0) < _LOCATIONS_API_CACHE_TTL:
+        resp=jsonify(cached); resp.headers["X-Autopass-Cache"]="HIT"; return resp
     expected_map = _expected_assets_by_location()
 
     # Inventário agregado em consultas pequenas, sem outer join pesado em todas as colunas.
@@ -3302,7 +3328,8 @@ def api_locations():
             "inoperative": int(inv["inoperative"]),
             "divergences": int(inv["divergences"]),
         })
-    return jsonify(out)
+    _LOCATIONS_API_CACHE["payload"]=out; _LOCATIONS_API_CACHE["at"]=time.time()
+    resp=jsonify(out); resp.headers["X-Autopass-Cache"]="MISS"; return resp
 
 
 @app.get("/api/location/<int:location_id>/inventory")
@@ -6523,7 +6550,7 @@ def topdesk_analytics_api():
 
 
 _TOPDESK_DASH_CACHE = {}
-_TOPDESK_DASH_CACHE_TTL = 60
+_TOPDESK_DASH_CACHE_TTL = 300
 
 @app.get("/api/topdesk/dashboard")
 @dashboard_required
@@ -6534,6 +6561,19 @@ def topdesk_dashboard_api():
     now=time.time(); cached=_TOPDESK_DASH_CACHE.get(cache_key)
     if cached and now-cached[0] < _TOPDESK_DASH_CACHE_TTL:
         payload=dict(cached[1]); payload["cache"]="HIT"; return jsonify(payload)
+    # V56-D: dashboard sem filtros usa agregações SQL em vez de materializar ~50 mil objetos Python.
+    # Analytics detalhado continua usando o pipeline completo quando há filtros.
+    if not request.args:
+        total=int(db.session.query(func.count(TopDeskTicket.id)).scalar() or 0)
+        status_expr=func.upper(func.coalesce(TopDeskTicket.status,''))
+        resolved=int(db.session.query(func.count(TopDeskTicket.id)).filter(db.or_(status_expr.like('%RESOLVID%'),status_expr.like('%FECHAD%'),status_expr.like('%CANCEL%'))).scalar() or 0)
+        assigned=int(db.session.query(func.count(TopDeskTicket.id)).filter(TopDeskTicket.assigned_technician_id.isnot(None)).scalar() or 0)
+        by_status={k or 'Sem status':int(v) for k,v in db.session.query(TopDeskTicket.status,func.count(TopDeskTicket.id)).group_by(TopDeskTicket.status).all()}
+        by_type={k or 'OUTRO':int(v) for k,v in db.session.query(TopDeskTicket.equipment_type,func.count(TopDeskTicket.id)).group_by(TopDeskTicket.equipment_type).all()}
+        top_locations=[{'name':k,'count':int(v)} for k,v in db.session.query(Location.location,func.count(TopDeskTicket.id)).join(TopDeskTicket,TopDeskTicket.location_id==Location.id).group_by(Location.location).order_by(func.count(TopDeskTicket.id).desc()).limit(12).all()]
+        payload={"ok":True,"cache":"MISS","mode":"SQL_AGG","total":total,"open":max(0,total-resolved),"resolved":resolved,"assigned":assigned,"unassigned":max(0,total-assigned),"by_status":by_status,"by_type":by_type,"top_locations":top_locations}
+        _TOPDESK_DASH_CACHE[cache_key]=(now,payload)
+        return jsonify(payload)
     rows=_td_filter_rows(request.args); tickets=[x[0] for x in rows]; total=len(tickets); openrows=[t for t in tickets if _ticket_open(t)]; resolved=total-len(openrows)
     by_status={}; by_type={}; by_location={}; assigned=0
     for t,dt,line,location,model in rows:
