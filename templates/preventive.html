@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Solicitação Preventiva ATM | Autopass{% endblock %}
 {% block content %}
-<section class="dashHero"><div><span class="eyebrow">V60 REV · SOLICITAÇÃO = PREVENTIVA</span><h1>Abrir Preventiva ATM</h1><p>Fluxo interno preparado para integração TOPdesk. Os dados já conhecidos são preenchidos pelo sistema.</p></div><span class="tag">TOPdesk · preparação</span></section>
+<section class="dashHero"><div><span class="eyebrow">V60 REV2 · SOLICITAÇÃO = PREVENTIVA</span><h1>Abrir Preventiva ATM</h1><p>Fluxo interno preparado para integração TOPdesk. Os dados já conhecidos são preenchidos pelo sistema.</p></div><span class="tag">TOPdesk · preparação</span></section>
 <section class="card preventiveNotice"><b>Escopo desta etapa</b><span>Somente Solicitação ATM do tipo Preventiva. O protocolo é interno até a ativação da API TOPdesk.</span></section>
 <section class="card">
 <form id="preventiveForm" class="preventiveForm">
@@ -15,4 +15,4 @@
 </section>
 <section class="card"><div class="sectionHead"><div><h2>Preventivas recentes</h2><p class="muted">Protocolos internos e, futuramente, o número oficial TOPdesk.</p></div><button class="secondary" id="pvReload" type="button">Atualizar</button></div><div class="scaleTableWrap"><table class="scaleTable"><thead><tr><th>Protocolo</th><th>Localidade</th><th>ATM</th><th>Serviço</th><th>Status</th><th>TOPdesk</th><th>Data</th></tr></thead><tbody id="pvRows"></tbody></table></div></section>
 {% endblock %}
-{% block scripts %}<script src="{{url_for('static',filename='preventive.js')}}?v=v60-rev"></script>{% endblock %}
+{% block scripts %}<script src="{{url_for('static',filename='preventive.js')}}?v=v60-rev2"></script>{% endblock %}
