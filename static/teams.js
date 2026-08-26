@@ -1,4 +1,4 @@
-window.AUTOPASS_TEAMS_VERSION="teams-v56-a3";
+window.AUTOPASS_TEAMS_VERSION="teams-v56-b-rev4";
 
 console.log('AUTOPASS Central Operacional V26 carregada');
 
@@ -602,4 +602,5 @@ setTimeout(v396SyncRailChecks,500);
 
 // V40: Equipes reutiliza o componente metroferroviário compartilhado.
 async function v40AttachSharedRail(){if(!teamMap||!window.AutopassRailMap)return;try{const locs=await fetch('/api/locations',{cache:'no-store'}).then(r=>r.json());[v391RailLines,v391Stations,v391StationNames].forEach(l=>{try{if(l&&teamMap.hasLayer(l))teamMap.removeLayer(l)}catch(_){}});const sh=window.AutopassRailMap.attach(teamMap,locs||[]);if(!sh)return;v391RailLines=sh.lines;v391Stations=sh.stations;v391StationNames=sh.labels;const bind=(id,key)=>{const el=$(id),layer=sh[key];if(!el||!layer)return;const sync=()=>el.checked?(!teamMap.hasLayer(layer)&&teamMap.addLayer(layer)):(teamMap.hasLayer(layer)&&teamMap.removeLayer(layer));el.addEventListener('change',sync);sync()};bind('teamShowLines','lines');bind('teamShowStations','stations');bind('teamShowNames','labels');const st=sh.stats||{};v3978RailDiag(`V40.1.2 · ${st.segmentCount||0} segmento(s) · ${st.pointCount||0} pontos válidos · ${st.rejected||0} rejeitado(s)`,true)}catch(e){console.error('V40 mapa compartilhado',e);v3978RailDiag('V40 · falha ao carregar mapa compartilhado',false)}}
-setTimeout(v40AttachSharedRail,900);
+// REV4: rail-network dedicado já fornece os dados necessários; evita /api/locations pesado.
+// setTimeout(v40AttachSharedRail,900);
