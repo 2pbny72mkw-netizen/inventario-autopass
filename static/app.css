@@ -1698,3 +1698,6 @@ body.mapFullscreenOpen .topbar{z-index:20!important;}
 
 /* V56-D stacking: menus sempre acima de Leaflet. */
 .topbar,.siteHeader,.appHeader,header{position:relative;z-index:3000}.navDropdown,.dropdownMenu,.topNavMenu{z-index:3200!important}.leaflet-container{z-index:1}.leaflet-control{z-index:500}
+
+/* V59 · Operação 2.0 */
+.v59OpsDate{display:flex;align-items:end;gap:8px;flex-wrap:wrap}.v59OpsDate label{display:grid;gap:4px;font-size:12px;font-weight:700}.v59OpsDate input{min-width:145px}.todayOpsKpis{flex-wrap:wrap}
