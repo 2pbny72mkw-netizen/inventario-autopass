@@ -40,7 +40,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V56-B REV2"
+APP_RELEASE = "V56-B REV3"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -1451,7 +1451,9 @@ def _ensure_team_schedule_profiles():
                 row=TeamScheduleProfile.query.filter(func.lower(TeamScheduleProfile.name)==(u.name or "").strip().lower()).order_by(TeamScheduleProfile.active.desc(),TeamScheduleProfile.id).first()
             sched=(u.work_schedule_type or "12x36").strip()
             shift=(u.work_shift or ("08:00-18:00" if normalize(sched)=="5X2" else "05:00-17:00")).strip()
-            anchor=u.work_anchor_date or datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+            ref_date=u.work_anchor_date or datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+            ref_status=normalize(u.work_anchor_status or "TRABALHA")
+            anchor=ref_date if ref_status != "FOLGA" else ref_date - timedelta(days=1)
             jt=normalize(u.job_title or "")
             category="SUPERVISOR" if ("SUPERV" in jt or u.role=="dispatcher") else ("APOIO" if "APOIO" in jt else "TECNICO")
             if row is None:
@@ -1650,7 +1652,7 @@ def teams_status_api():
         for p in db.session.query(TechnicianPosition).join(sub,and_(TechnicianPosition.user_id==sub.c.user_id,TechnicianPosition.captured_at==sub.c.mx)).all(): pos_map[p.user_id]=p
     login_map={}; login_counts={}; gps_counts={}
     if user_ids:
-        for uid,first_at,n in db.session.query(SessionEvent.user_id,func.min(SessionEvent.created_at),func.count(SessionEvent.id)).filter(SessionEvent.user_id.in_(user_ids),SessionEvent.created_at>=start_utc,SessionEvent.created_at<end_utc).group_by(SessionEvent.user_id).all(): login_map[uid]=first_at; login_counts[uid]=int(n)
+        for uid,first_at,n in db.session.query(SessionEvent.user_id,func.min(SessionEvent.created_at),func.count(SessionEvent.id)).filter(SessionEvent.user_id.in_(user_ids),SessionEvent.event_type=="LOGIN",SessionEvent.created_at>=start_utc,SessionEvent.created_at<end_utc).group_by(SessionEvent.user_id).all(): login_map[uid]=first_at; login_counts[uid]=int(n)
         gps_counts={uid:int(n) for uid,n in db.session.query(TechnicianPosition.user_id,func.count(TechnicianPosition.id)).filter(TechnicianPosition.user_id.in_(user_ids),TechnicianPosition.captured_at>=start_utc,TechnicianPosition.captured_at<end_utc).group_by(TechnicianPosition.user_id).all()}
     stations=Location.query.filter(Location.reference_latitude.isnot(None),Location.reference_longitude.isnot(None)).all()
     def nearest_station(lat,lon):
@@ -8031,19 +8033,40 @@ def chip_swap_export_xlsx():
 _emv_base_rows_cache = None
 def _v41_emv_rows():
     global _emv_base_rows_cache
-    if _emv_base_rows_cache is not None:
+    if _emv_base_rows_cache:
         return _emv_base_rows_cache
-    path = BASE_DIR / "data_emv.xlsx"
-    if not path.exists(): _emv_base_rows_cache=[]; return []
-    wb=load_workbook(path,read_only=True,data_only=True); ws=wb.active
-    headers=[str(x or "").strip().lower() for x in next(ws.iter_rows(values_only=True))]
+    candidates=[BASE_DIR / "data_emv.xlsx", DATA_DIR / "data_emv.xlsx"]
+    path=next((x for x in candidates if x.exists()),None)
     rows=[]
-    for vals in ws.iter_rows(values_only=True):
-        d=dict(zip(headers,vals)); terminal=str(d.get("terminal") or "").split('.')[0]
-        if not terminal: continue
-        cfg=_block_technical_config(terminal)
-        rows.append({"tp_id":d.get("tp_id"),"company":d.get("empresa") or "","terminal":terminal,"version":d.get("versão") or "","ip":d.get("ip") or cfg.get("ip") or "","station":d.get("estação") or "","line":d.get("linha") or "","mask":cfg.get("mask") or "","gateway":cfg.get("gateway") or "","dns1":cfg.get("dns1") or "","dns2":cfg.get("dns2") or "","group":cfg.get("group") or "","blocking_number":cfg.get("blocking_number") or terminal[-2:]})
-    _emv_base_rows_cache=rows
+    network_by_prefix={str(r.get("prefix") or ""):r for r in _load_station_network_rows() if r.get("prefix")}
+    block_cfg={}
+    try:
+        source=DATA_DIR / "block_config_v18.json"
+        payload=json.loads(source.read_text(encoding="utf-8")) if source.exists() else {}
+        block_cfg=payload.get("by_prefix") or {}
+    except Exception:
+        block_cfg={}
+    if path:
+        wb=load_workbook(path,read_only=True,data_only=True); ws=wb.active
+        headers=[str(x or "").strip().lower() for x in next(ws.iter_rows(values_only=True))]
+        for vals in ws.iter_rows(min_row=2,values_only=True):
+            d=dict(zip(headers,vals)); terminal=str(d.get("terminal") or "").split('.')[0].strip()
+            if not terminal: continue
+            key=re.sub(r"\D","",terminal); cfg=block_cfg.get(key) or network_by_prefix.get(key) or {}
+            rows.append({"tp_id":d.get("tp_id"),"company":d.get("empresa") or "","terminal":terminal,"version":d.get("versão") or "","ip":d.get("ip") or cfg.get("ip") or "","station":d.get("estação") or "","line":d.get("linha") or "","mask":cfg.get("mask") or "","gateway":cfg.get("gateway") or "","dns1":cfg.get("dns1") or "","dns2":cfg.get("dns2") or "","group":cfg.get("group") or "","blocking_number":cfg.get("blocking_number") or terminal[-2:]})
+        wb.close()
+    # Fallback defensivo: se o arquivo não estiver no deploy, usa a base de ativos de Bloqueio.
+    if not rows:
+        try:
+            assets=BaseAsset.query.filter(func.upper(BaseAsset.equipment_type).like("%BLOQ%")).all()
+            for a in assets:
+                terminal=str(a.terminal_number or a.asset_identifier or "").strip()
+                if not terminal: continue
+                rows.append({"tp_id":None,"company":a.company or "","terminal":terminal,"version":"","ip":getattr(a,"ip_address",None) or "","station":a.locality or "","line":a.line or "","mask":"","gateway":"","dns1":"","dns2":"","group":"","blocking_number":terminal[-2:]})
+        except Exception as exc:
+            app.logger.warning("Fallback base EMV indisponível: %s",exc)
+    if rows:
+        _emv_base_rows_cache=rows
     return rows
 
 def _ensure_emv_tables():
@@ -8645,30 +8668,41 @@ def _fin_import_tbf_wb(wb, filename, user_id):
             except Exception: result["errors"]+=1
     return result
 
-def _fin_import_transactions_wb(wb, filename, user_id):
+def _fin_import_transactions_wb(wb, filename, user_id, job_id=None):
     ws=wb[wb.sheetnames[0]]; header=next(ws.iter_rows(min_row=1,max_row=1,values_only=True)); headers={str(v or "").strip().upper():i for i,v in enumerate(header)}
     required={"ATM","CTM_DATETIME_TZ","CTD_VALUE"}
     if not required.issubset(headers): raise ValueError("Planilha de transações sem colunas ATM, ctm_datetime_tz e ctd_value.")
-    out=[]; errors=0; total=0
+    out=[]; errors=0; total=0; inserted_total=0; started=time.monotonic(); total_rows=max(0,(ws.max_row or 1)-1)
     def gv(row,key):
         i=headers.get(key.upper()); return row[i] if i is not None and i<len(row) else None
+    def publish(force=False):
+        if not job_id: return
+        elapsed=max(0.001,time.monotonic()-started); rate=total/elapsed
+        pct=(total/max(total_rows,1))*88.0 if total_rows else 0
+        eta=max(0,(total_rows-total)/rate) if total_rows and rate>0 else None
+        _fin_job_update(job_id,stage="TRANSACOES",rows_total=total_rows,rows_processed=total,rows_inserted=inserted_total,rows_errors=errors,rows_per_second=round(rate,1),eta_seconds=None if eta is None else int(eta),heartbeat_at=datetime.utcnow().isoformat()+"Z",progress=min(94,5+int(pct)),message=f"Transações: {total:,} de {total_rows:,} linhas processadas".replace(",","."))
     for row in ws.iter_rows(min_row=2,values_only=True):
         total+=1
         try:
             terminal=_fin_terminal(gv(row,"ATM")); dt=gv(row,"ctm_datetime_tz")
             if not isinstance(dt,datetime):
                 d=_fin_parse_date(gv(row,"data")); dt=_fin_dt(d,gv(row,"hora"))
-            if not terminal or not dt: continue
+            if not terminal or not dt:
+                if total%2000==0: publish()
+                continue
             status=str(gv(row,"ctm_status") or "").strip().upper(); value=float(gv(row,"ctd_value") or 0); cpm=str(gv(row,"cpm_id") or "").strip()
             sh=_fin_hash("TX",terminal,dt.isoformat(),status,value,cpm)
             out.append({"terminal":terminal,"transaction_at":dt,"status":status or None,"value":value,"cpm_id":cpm or None,"source_file":filename,"source_hash":sh,"imported_by":user_id,"imported_at":datetime.utcnow()})
-            if len(out)>=10000:
-                _fin_bulk_ignore(FinancialATMTransaction,out); db.session.flush(); out=[]
-        except Exception: errors+=1
-    inserted=_fin_bulk_ignore(FinancialATMTransaction,out); db.session.flush()
-    # rowcount de chunks anteriores não é acumulado aqui; devolve total persistido deste arquivo por source_file para diagnóstico.
-    persisted=db.session.query(func.count(FinancialATMTransaction.id)).filter(FinancialATMTransaction.source_file==filename).scalar() or inserted
-    return {"kind":"TRANSACOES","rows_read":total,"transactions":int(persisted),"errors":errors}
+            if len(out)>=2000:
+                inserted_total += _fin_bulk_ignore(FinancialATMTransaction,out,chunk=1000); db.session.commit(); out=[]; publish()
+        except Exception:
+            errors+=1
+            if total%2000==0: publish()
+    if out:
+        inserted_total += _fin_bulk_ignore(FinancialATMTransaction,out,chunk=1000); db.session.commit()
+    publish(True)
+    persisted=db.session.query(func.count(FinancialATMTransaction.id)).filter(FinancialATMTransaction.source_file==filename).scalar() or 0
+    return {"kind":"TRANSACOES","rows_read":total,"transactions":int(persisted),"inserted":int(inserted_total),"duplicates":max(0,total-errors-inserted_total),"errors":errors}
 
 @app.get("/financeiro/apuracao")
 @login_required
@@ -8682,16 +8716,16 @@ def _financial_import_worker(job_id, paths, filenames, user_id):
         results=[]
         try:
             total_files=len(paths)
-            _fin_job_update(job_id,status="PROCESSANDO",progress=2,message="Processamento iniciado",current_file=1,total_files=total_files)
+            _fin_job_update(job_id,status="PROCESSANDO",progress=2,message="Processamento iniciado",stage="PREPARANDO",current_file=1,total_files=total_files,rows_total=0,rows_processed=0,rows_inserted=0,rows_errors=0,rows_per_second=0,eta_seconds=None,heartbeat_at=datetime.utcnow().isoformat()+"Z")
             for idx,(path,filename) in enumerate(zip(paths,filenames),start=1):
                 base_pct=int((idx-1)/max(total_files,1)*90)+5
-                _fin_job_update(job_id,current_file=idx,current_filename=filename,progress=base_pct,message=f"Lendo {filename}")
+                _fin_job_update(job_id,current_file=idx,current_filename=filename,progress=base_pct,stage="LENDO_ARQUIVO",message=f"Lendo {filename}",heartbeat_at=datetime.utcnow().isoformat()+"Z")
                 wb=load_workbook(path,read_only=True,data_only=True)
                 upper=[x.upper() for x in wb.sheetnames]
                 if any(x.startswith("TRANSPORTE") for x in upper):
                     result=_fin_import_tbf_wb(wb,filename,user_id)
                 else:
-                    result=_fin_import_transactions_wb(wb,filename,user_id)
+                    result=_fin_import_transactions_wb(wb,filename,user_id,job_id=job_id)
                 wb.close(); db.session.commit(); results.append(result)
                 _fin_job_update(job_id,results=results,progress=min(95,int(idx/max(total_files,1)*90)+5),message=f"{filename} concluído")
             db.session.add(AuditEvent(user_id=user_id,event_type="FIN_APURACAO_IMPORT",entity_type="financial_cash_reconciliation",entity_id=str(len(paths)),detail=json.dumps(results,ensure_ascii=False)[:4000])); db.session.commit()
@@ -8723,7 +8757,7 @@ def financial_cash_reconciliation_import():
             path=FIN_IMPORT_DIR / f"{job_id}_{i}_{name}"
             f.save(path); paths.append(str(path)); names.append(name)
         with FIN_IMPORT_LOCK:
-            FIN_IMPORT_JOBS[job_id]={"job_id":job_id,"status":"NA_FILA","progress":1,"message":"Arquivos recebidos. Preparando importação...","files":names,"current_file":0,"total_files":len(names),"results":[],"created_at":datetime.utcnow().isoformat()+"Z","updated_at":datetime.utcnow().isoformat()+"Z"}
+            FIN_IMPORT_JOBS[job_id]={"job_id":job_id,"user_id":session.get("user_id"),"status":"NA_FILA","progress":1,"stage":"UPLOAD_CONCLUIDO","message":"Arquivos recebidos. Preparando importação...","files":names,"current_file":0,"total_files":len(names),"results":[],"rows_total":0,"rows_processed":0,"rows_inserted":0,"rows_errors":0,"rows_per_second":0,"eta_seconds":None,"heartbeat_at":datetime.utcnow().isoformat()+"Z","created_at":datetime.utcnow().isoformat()+"Z","updated_at":datetime.utcnow().isoformat()+"Z"}
         threading.Thread(target=_financial_import_worker,args=(job_id,paths,names,session.get("user_id")),daemon=True,name=f"fin-import-{job_id[:8]}").start()
         return jsonify({"ok":True,"background":True,"job_id":job_id,"message":"Importação iniciada em segundo plano. Você pode sair desta página."}),202
     except Exception as exc:
@@ -8740,6 +8774,17 @@ def financial_cash_reconciliation_import_status(job_id):
     job=_fin_job_snapshot(job_id)
     if not job:return jsonify({"ok":False,"error":"Importação não encontrada ou servidor reiniciado."}),404
     return jsonify({"ok":True,**job})
+
+@app.get("/api/financeiro/apuracao/importar/active")
+@login_required
+def financial_cash_reconciliation_import_active():
+    if not _financial_admin_allowed() or not _has_access("finance.apuracao"):
+        return jsonify({"ok":False,"error":"Sem permissão."}),403
+    uid=session.get("user_id")
+    with FIN_IMPORT_LOCK:
+        jobs=[dict(v) for v in FIN_IMPORT_JOBS.values() if v.get("user_id")==uid and v.get("status") in ("NA_FILA","PROCESSANDO")]
+    jobs.sort(key=lambda x:x.get("created_at") or "",reverse=True)
+    return jsonify({"ok":True,"job":jobs[0] if jobs else None})
 
 @app.get("/api/financeiro/apuracao/terminais")
 @login_required
