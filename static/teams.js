@@ -597,7 +597,7 @@ function v391SetupTeamMap(){
   v391BuildRails();
 }
 // V39.6 — compatibilidade dos checkboxes visíveis com as camadas Leaflet.
-function v396SyncRailChecks(){const map=teamMap;if(!map)return;[['teamShowStations',v391Stations],['teamShowNames',v391StationNames],['teamShowTechs',v391TechLayer]].forEach(([id,layer])=>{const el=$(id);if(!el||!layer)return;const sync=()=>{if(el.checked&&!map.hasLayer(layer))map.addLayer(layer);if(!el.checked&&map.hasLayer(layer))map.removeLayer(layer)};el.addEventListener('change',sync);sync()});const lines=$('teamShowLines');if(lines){const sync=()=>{if(lines.checked&&!map.hasLayer(v391RailLines))map.addLayer(v391RailLines);if(!lines.checked&&map.hasLayer(v391RailLines))map.removeLayer(v391RailLines)};lines.addEventListener('change',sync);sync()}v391BuildRails()}
+function v396SyncRailChecks(){const map=teamMap;if(!map)return;v391SetupTeamMap();[['teamShowStations',v391Stations],['teamShowNames',v391StationNames],['teamShowTechs',v391TechLayer]].forEach(([id,layer])=>{const el=$(id);if(!el||!layer)return;const sync=()=>{if(!layer)return;if(el.checked&&!map.hasLayer(layer))map.addLayer(layer);if(!el.checked&&map.hasLayer(layer))map.removeLayer(layer)};el.addEventListener('change',sync);sync()});const lines=$('teamShowLines');if(lines&&v391RailLines){const sync=()=>{const layer=v391RailLines;if(!layer)return;if(lines.checked&&!map.hasLayer(layer))map.addLayer(layer);if(!lines.checked&&map.hasLayer(layer))map.removeLayer(layer)};lines.addEventListener('change',sync);sync()}v391BuildRails()}
 setTimeout(v396SyncRailChecks,500);
 
 // V40: Equipes reutiliza o componente metroferroviário compartilhado.
