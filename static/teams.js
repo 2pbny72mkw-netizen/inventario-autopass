@@ -402,27 +402,27 @@ async function refreshAll(){
   return jobs;
 }
 
-$('refreshTeams').addEventListener('click',refreshAll);
+$('refreshTeams')?.addEventListener('click',refreshAll);
 if($('reloadOperationDate')) $('reloadOperationDate').addEventListener('click',()=>loadTeams($('operationDate')?.value).catch(err=>console.error('[V59] consulta operacional',err)));
 if($('operationDate')) $('operationDate').addEventListener('change',()=>loadTeams($('operationDate').value).catch(err=>console.error('[V59] consulta operacional',err)));
-$('exportScale').addEventListener('click',exportScale);
+$('exportScale')?.addEventListener('click',exportScale);
 const reloadCalendarVisible=()=>{ if($('calendarRangeSummary')) $('calendarRangeSummary').textContent='Atualizando período...'; loadCalendar().catch(err=>{console.error(err); if($('calendarRangeSummary')) $('calendarRangeSummary').innerHTML=`<b>Erro:</b> ${esc(err.message)}`;}); };
-$('reloadCalendar').addEventListener('click',reloadCalendarVisible);
+$('reloadCalendar')?.addEventListener('click',reloadCalendarVisible);
 $('cargoAll')?.addEventListener('click',()=>{document.querySelectorAll('#calendarCargoOptions input').forEach(x=>x.checked=true);v40CargoSummary();reloadCalendarVisible()});$('cargoClear')?.addEventListener('click',()=>{document.querySelectorAll('#calendarCargoOptions input').forEach(x=>x.checked=false);v40CargoSummary();reloadCalendarVisible()});
-$('calendarDays').addEventListener('change',reloadCalendarVisible);
-$('calendarStart').addEventListener('change',reloadCalendarVisible);
+$('calendarDays')?.addEventListener('change',reloadCalendarVisible);
+$('calendarStart')?.addEventListener('change',reloadCalendarVisible);
 
-$('toggleTeamMap').addEventListener('click',()=>{
+$('toggleTeamMap')?.addEventListener('click',()=>{
   const wrap=$('teamMapWrap');
   const collapsed=wrap.classList.toggle('teamMapCollapsed');
   $('toggleTeamMap').textContent=collapsed?'Mostrar mapa':'Ocultar mapa';
   if(!collapsed) rebuildMapIfNeeded();
 });
-$('teamMapFull').addEventListener('click',()=>{
+$('teamMapFull')?.addEventListener('click',()=>{
   if(document.fullscreenElement||$('teamMapWrap').classList.contains('teamMapFullscreenFallback')) exitMapFullscreen();
   else enterMapFullscreen();
 });
-$('teamMapExit').addEventListener('click',exitMapFullscreen);
+$('teamMapExit')?.addEventListener('click',exitMapFullscreen);
 
 if($('openScheduleAdmin')){
   $('openScheduleAdmin').addEventListener('click',()=>{
