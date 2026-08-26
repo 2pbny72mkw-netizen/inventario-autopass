@@ -1,0 +1,14 @@
+{
+  "version": "V59",
+  "name": "Operação 2.0 + Consolidação Executiva",
+  "date": "2026-08-26",
+  "highlights": [
+    "Visões Panorâmicas: corrige ReferenceError de normalização de status e restaura KPIs/progresso.",
+    "Equipes: consulta operacional por data, mantendo a carga de dados independente do mapa.",
+    "Operação por data: login, GPS, estação/localidade, atraso, sem sinal e equipe prevista.",
+    "Novos indicadores: fora de estação e ainda não iniciou.",
+    "Timezone operacional padronizado em America/Sao_Paulo.",
+    "Cache-busting e service worker renovados para V59."
+  ],
+  "baseline": "V58_REVISADA"
+}

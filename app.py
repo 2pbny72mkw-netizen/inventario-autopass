@@ -40,7 +40,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V58-REV"
+APP_RELEASE = "V59"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -61,7 +61,7 @@ _expected_cache = {"at": 0.0, "data": None}
 _LOCATIONS_API_CACHE = {"at": 0.0, "payload": None}
 _LOCATIONS_API_CACHE_TTL = int(os.getenv("LOCATIONS_API_CACHE_TTL", "120"))
 _LOCATIONS_API_CACHE_LOCK = threading.Lock()
-# V58: sincronização de escala deixa de executar N+1 em toda leitura operacional.
+# V59: Operação 2.0 — consolidação da escala, histórico operacional e leitura em lote.
 _TEAM_PROFILE_SYNC_STATE = {"at": 0.0}
 _TEAM_PROFILE_SYNC_TTL = int(os.getenv("TEAM_PROFILE_SYNC_TTL", "60"))
 _TEAM_PROFILE_SYNC_LOCK = threading.Lock()
@@ -1657,8 +1657,20 @@ def technician_checkin():
 def teams_status_api():
     if not (_has_access("teams.today") or _has_access("teams.map")): abort(403)
     _ensure_team_schedule_profiles()
-    local_now=datetime.now(ZoneInfo("America/Sao_Paulo")); target_date=local_now.date(); scheduled=_schedule_today_db(target_date)
-    now_utc=datetime.utcnow(); start_local=datetime.combine(target_date,datetime.min.time(),tzinfo=ZoneInfo("America/Sao_Paulo")); start_utc=start_local.astimezone(ZoneInfo("UTC")).replace(tzinfo=None); end_utc=(start_local+timedelta(days=1)).astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+    local_now=datetime.now(ZoneInfo("America/Sao_Paulo"))
+    date_raw=(request.args.get("date") or "").strip()
+    try:
+        target_date=datetime.strptime(date_raw,"%Y-%m-%d").date() if date_raw else local_now.date()
+    except ValueError:
+        return jsonify({"ok":False,"error":"Data operacional inválida."}),400
+    scheduled=_schedule_today_db(target_date)
+    # V59: para datas passadas, a análise considera o encerramento daquele dia;
+    # para hoje, usa o relógio real de São Paulo. Datas futuras não marcam ausência/atraso.
+    is_today=(target_date==local_now.date())
+    is_future=(target_date>local_now.date())
+    effective_local_now=(local_now if is_today else datetime.combine(target_date,datetime.max.time(),tzinfo=ZoneInfo("America/Sao_Paulo")))
+    now_utc=effective_local_now.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+    start_local=datetime.combine(target_date,datetime.min.time(),tzinfo=ZoneInfo("America/Sao_Paulo")); start_utc=start_local.astimezone(ZoneInfo("UTC")).replace(tzinfo=None); end_utc=(start_local+timedelta(days=1)).astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
     user_ids={int(m["user_id"]) for m in scheduled if m.get("user_id")}
     users={u.id:u for u in User.query.filter(User.id.in_(user_ids)).all()} if user_ids else {}
     # Última posição do dia por usuário em uma consulta + join.
@@ -1686,7 +1698,7 @@ def teams_status_api():
         shift=(member.get("shift") or member.get("entry") or "").strip(); m=re.search(r'(\d{1,2}):(\d{2})',shift); expected_local=None
         if m: expected_local=datetime.combine(target_date,datetime.min.time(),tzinfo=ZoneInfo("America/Sao_Paulo")).replace(hour=int(m.group(1)),minute=int(m.group(2)))
         first_at=login_map.get(uid); login_local=first_at.replace(tzinfo=ZoneInfo("UTC")).astimezone(ZoneInfo("America/Sao_Paulo")) if first_at else None; late_minutes=max(0,int((login_local-expected_local).total_seconds()//60)) if login_local and expected_local else 0; station=nearest_station(pos.latitude,pos.longitude) if pos else None
-        if expected_local and local_now<expected_local and not login_local: operation_status="AINDA NÃO INICIOU"; summary["not_started"]+=1
+        if (is_future or (expected_local and effective_local_now<expected_local)) and not login_local: operation_status="AINDA NÃO INICIOU"; summary["not_started"]+=1
         elif not login_local: operation_status="NÃO LOGOU"; summary["not_logged"]+=1
         elif not pos: operation_status="SEM GPS"; summary["no_gps"]+=1
         elif minutes is not None and minutes>10: operation_status="SEM POSIÇÃO >10 MIN"; summary["stale_gt10"]+=1
@@ -1697,7 +1709,7 @@ def teams_status_api():
         rows.append({**member,"gps_points_today":gps_counts.get(uid,0),"session_events_today":login_counts.get(uid,0),"photo_url":(f"/usuarios/{user.id}/foto" if user and user.photo_url else None),"photo_version":(str(user.photo_url) if user and user.photo_url else None),"latitude":pos.latitude if pos else None,"longitude":pos.longitude if pos else None,"accuracy":pos.accuracy if pos else None,"captured_at":(pos.captured_at.isoformat()+"Z") if pos else None,"minutes_since":minutes,"freshness":freshness,"first_login":login_local.strftime("%H:%M") if login_local else None,"late_minutes":late_minutes,"operation_status":operation_status,"nearest_station":station,"current_location":station["name"] if station else None})
     counts={}
     for row in rows: counts[row["category"]]=counts.get(row["category"],0)+1
-    return jsonify({"ok":True,"date":target_date.isoformat(),"time":local_now.strftime("%H:%M"),"scheduled":len(rows),"counts_by_category":counts,"summary":summary,"technicians":rows})
+    return jsonify({"ok":True,"date":target_date.isoformat(),"time":(local_now.strftime("%H:%M") if is_today else "23:59"),"is_today":is_today,"is_future":is_future,"scheduled":len(rows),"counts_by_category":counts,"summary":summary,"technicians":rows})
 
 
 @app.get("/api/equipes/colaboradores")

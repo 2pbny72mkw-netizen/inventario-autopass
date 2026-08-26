@@ -1,6 +1,6 @@
 window.AUTOPASS_TEAMS_VERSION="teams-v58-rev";
 
-console.log('AUTOPASS Central Operacional V58 REVISADA carregada');
+console.log('AUTOPASS Operação 2.0 V59 carregada');
 
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -97,21 +97,23 @@ function markerIcon(t){
     iconSize:L.point(52,52), iconAnchor:L.point(26,26), popupAnchor:L.point(0,-28)
   });
 }
-async function loadTeams(){
-  createTeamMap();
-  const r=await fetch('/api/equipes/status',{cache:'no-store'});
+async function loadTeams(dateOverride){
+  const selected=dateOverride||$('operationDate')?.value||'';
+  const url='/api/equipes/status'+(selected?'?date='+encodeURIComponent(selected):'');
+  const r=await fetch(url,{cache:'no-store'});
   const d=await r.json();
   if(!r.ok||!d.ok) throw new Error(d.error||'Falha ao carregar equipes.');
 
-  console.info('[V58] equipes/status:',d.scheduled||0,'escalado(s) em',d.date);
+  console.info('[V59] equipes/status:',d.scheduled||0,'escalado(s) em',d.date,'hoje=',!!d.is_today);
   $('teamDate').textContent=d.date||'—';
+  if($('operationDate')&&!$('operationDate').value)$('operationDate').value=d.date||'';
   $('teamClock').textContent=`${d.date||''} ${d.time||''}`.trim();
   $('kScheduled').textContent=d.scheduled||0;
   $('kSupervisors').textContent=d.counts_by_category?.SUPERVISOR||0;
   $('kSupport').textContent=d.counts_by_category?.APOIO||0;
 
   let current=0,attention=0,noSignal=0;
-  markers.forEach(m=>{try{(v391TechLayer||teamMap).removeLayer(m)}catch(_e){}});
+  markers.forEach(m=>{try{if(teamMap)(v391TechLayer||teamMap).removeLayer(m)}catch(_e){}});
   markers=[];
 
   $('teamCards').innerHTML='';
@@ -139,7 +141,7 @@ async function loadTeams(){
     $('teamCards').appendChild(card);
     if($('todayTeamTable')){ const tr=document.createElement('tr'); const st=t.nearest_station||{};tr.innerHTML=`<td><b>${esc(t.name)}</b></td><td>${esc(t.job_title||t.category)}</td><td>${esc(t.company||'—')}</td><td>${esc(t.schedule_type||'—')}</td><td>${esc(t.shift||t.entry||'—')}</td><td>${esc(t.first_login||'—')}</td><td><b>${esc(t.operation_status||t.freshness||'—')}</b></td><td>${esc(t.captured_at?new Date(t.captured_at).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}):'—')}</td><td>${esc(st.name||'—')}${st.name?`<small>${esc(st.relation||'')} · ${Number(st.distance_m||0).toLocaleString('pt-BR')} m · ${esc(st.line||'')}</small>`:''}</td><td>${esc(freshnessText(t))}</td>`; $('todayTeamTable').appendChild(tr); }
 
-    if(t.latitude!=null&&t.longitude!=null){
+    if(teamMap&&window.L&&t.latitude!=null&&t.longitude!=null){
       const m=L.marker([Number(t.latitude),Number(t.longitude)],{icon:markerIcon(t)})
         .addTo(v391TechLayer||teamMap)
         .bindPopup(`
@@ -166,14 +168,16 @@ async function loadTeams(){
   if($('opNoLogin')) $('opNoLogin').textContent=d.summary?.not_logged||0;
   if($('opStale')) $('opStale').textContent=d.summary?.stale_gt10||0;
   if($('opNoGps')) $('opNoGps').textContent=d.summary?.no_gps||0;
+  if($('opOutside')) $('opOutside').textContent=d.summary?.outside_locality||0;
+  if($('opNotStarted')) $('opNotStarted').textContent=d.summary?.not_started||0;
 
-  if(markers.length){
+  if(teamMap&&markers.length){
     const bounds=L.featureGroup(markers).getBounds();
     if(bounds.isValid()) teamMap.fitBounds(bounds.pad(.18),{maxZoom:15});
-  }else{
+  }else if(teamMap){
     teamMap.setView([-23.5505,-46.6333],10);
   }
-  rebuildMapIfNeeded();
+  if(teamMap) rebuildMapIfNeeded();
 }
 
 async function loadCalendar(){
@@ -399,6 +403,8 @@ async function refreshAll(){
 }
 
 $('refreshTeams').addEventListener('click',refreshAll);
+if($('reloadOperationDate')) $('reloadOperationDate').addEventListener('click',()=>loadTeams($('operationDate')?.value).catch(err=>console.error('[V59] consulta operacional',err)));
+if($('operationDate')) $('operationDate').addEventListener('change',()=>loadTeams($('operationDate').value).catch(err=>console.error('[V59] consulta operacional',err)));
 $('exportScale').addEventListener('click',exportScale);
 const reloadCalendarVisible=()=>{ if($('calendarRangeSummary')) $('calendarRangeSummary').textContent='Atualizando período...'; loadCalendar().catch(err=>{console.error(err); if($('calendarRangeSummary')) $('calendarRangeSummary').innerHTML=`<b>Erro:</b> ${esc(err.message)}`;}); };
 $('reloadCalendar').addEventListener('click',reloadCalendarVisible);
@@ -611,30 +617,30 @@ let v58TeamsStarted=false;
 async function v58StartTeams(){
   if(v58TeamsStarted) return;
   v58TeamsStarted=true;
-  console.info('[V58-REV] início da Central Operacional');
+  console.info('[V59] início da Operação 2.0');
 
   // 1) Carrega dados primeiro. Uma falha de mapa nunca deve zerar Equipes.
   const dataJobs=await refreshAll();
   const teamResult=dataJobs?.[0];
-  if(teamResult?.status==='fulfilled') console.info('[V58-REV] dados de Equipes carregados');
+  if(teamResult?.status==='fulfilled') console.info('[V59] dados de Equipes carregados');
 
   // 2) Mapa em fluxo isolado e protegido.
   try{
     createTeamMap();
     v391SetupTeamMap();
     v396SyncRailChecks();
-    console.info('[V58-REV] mapa inicializado');
+    console.info('[V59] mapa inicializado');
   }catch(err){
-    console.error('[V58-REV] mapa indisponível; dados de Equipes permanecem ativos',err);
+    console.error('[V59] mapa indisponível; dados de Equipes permanecem ativos',err);
   }
 
   // 3) Atualização periódica só depois da primeira carga concluída.
-  setInterval(()=>loadTeams().catch(err=>console.error('[V58-REV] atualização periódica de Equipes',err)),120000);
+  setInterval(()=>loadTeams().catch(err=>console.error('[V59] atualização periódica de Equipes',err)),120000);
 }
 
 if(document.readyState==='loading'){
-  document.addEventListener('DOMContentLoaded',()=>v58StartTeams().catch(err=>console.error('[V58-REV] startup',err)),{once:true});
+  document.addEventListener('DOMContentLoaded',()=>v58StartTeams().catch(err=>console.error('[V59] startup',err)),{once:true});
 }else{
-  v58StartTeams().catch(err=>console.error('[V58-REV] startup',err));
+  v58StartTeams().catch(err=>console.error('[V59] startup',err));
 }
 

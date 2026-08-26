@@ -1,4 +1,4 @@
-window.AUTOPASS_MANAGER_VERSION='dashboard-v42-4';
+window.AUTOPASS_MANAGER_VERSION='dashboard-v55-0';
 console.log('AUTOPASS Dashboard Executivo V25 carregado');
 let locations=[];
 let dashboardData=null;
@@ -452,7 +452,7 @@ function renderGpsMap(items){
     const techInitials=String(x.technician||'?').trim().split(/\s+/).slice(0,2).map(v=>v[0]||'').join('').toUpperCase();
     const markerIcon=L.divIcon({
       className:'',
-      html:`<div class="gpsTechAvatar" style="outline:3px solid ${color}">${x.technician_photo_url?`<img src="${esc(x.technician_photo_url)}" alt="">`:`<span>${esc(techInitials)}</span>`}</div>`,
+      html:`<div class="gpsTechAvatar" style="outline:3px solid ${color}">${x.technician_photo_url?`<img loading="lazy" src="${esc(x.technician_photo_url)}?thumb=1" alt="">`:`<span>${esc(techInitials)}</span>`}</div>`,
       iconSize:[40,40],iconAnchor:[20,20]
     });
     const marker=L.marker([lat,lon],{icon:markerIcon}).addTo(gpsPointLayer);
@@ -754,12 +754,8 @@ function renderExecutiveFilters(){
   if([...line.options].some(o=>o.value===oldL))line.value=oldL;
 }
 function executiveFilteredLocations(){
-  const c=$('execCompany')?.value||'',line=$('execLine')?.value||'',type=$('execType')?.value||'';
-  return locations.filter(x=>
-    (!c||x.company===c)&&
-    (!line||x.line===line)&&
-    (!type||Number((x.expected_by_type||{})[type]||0)>0||Number((x.inventoried_by_type||{})[type]||0)>0)
-  );
+  const c=$('execCompany')?.value||'',line=$('execLine')?.value||'',type=$('execType')?.value||'',status=$('execStatus')?.value||'';
+  return locations.filter(x=>{const st=String(x.survey_status||'').toUpperCase().replace('CONCLUÍDA','CONCLUIDA');return (!c||x.company===c)&&(!line||x.line===line)&&(!type||Number((x.expected_by_type||{})[type]||0)>0||Number((x.inventoried_by_type||{})[type]||0)>0)&&(!status||st===status);});
 }
 
 function renderExecutiveAnalytics(rows,type){
@@ -805,6 +801,8 @@ function renderV21ExecutiveCharts(rows,type){
 
 function renderV22Cockpit(){
   if(!dashboardData||!$('v22ExecutiveCockpit')) return;
+  const erows=executiveFilteredLocations(),active=!!(($('execCompany')?.value||'')||($('execLine')?.value||'')||($('execType')?.value||'')||($('execStatus')?.value||''));
+  if(active){const sts={};erows.forEach(x=>{const k=String(x.survey_status||'SEM STATUS');sts[k]=(sts[k]||0)+1});const vals=Object.entries(sts),mx=Math.max(1,...vals.map(x=>x[1]));$('v22Trend').innerHTML=vals.map(([k,v])=>`<div class="v22TrendCol"><b>${fmt(v)}</b><i style="height:${Math.max(8,v/mx*100)}%"></i><small>${esc(k.slice(0,7))}</small></div>`).join('');$('v22Productivity').innerHTML='<div class="muted">Produtividade individual não é inferida do filtro de localidade. Use o recorte operacional detalhado.</div>';const m=filteredLocationMetrics(erows,$('execType')?.value||'');$('v22EvidenceQuality').innerHTML=`<div class="v22EvidenceHero"><b>${erows.length}</b><span>localidades no recorte</span></div><div class="v22EvidenceRows"><span>Divergências <b>${fmt(m.divergences)}</b></span><span>Inoperantes <b>${fmt(m.inoperative)}</b></span></div>`;return;}
   const trend=dashboardData.trend_14d||[]; const max=Math.max(1,...trend.map(x=>Number(x.count||0)));
   $('v22Trend').innerHTML=trend.map(x=>{const h=Math.max(4,Math.round(Number(x.count||0)/max*100)); const d=new Date(x.date+'T12:00:00'); return `<div class="v22TrendCol"><b>${fmt(x.count||0)}</b><i style="height:${h}%"></i><small>${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}</small></div>`}).join('');
   const tech=dashboardData.top_technicians_14d||[]; const tmax=Math.max(1,...tech.map(x=>Number(x.count||0)));
@@ -847,6 +845,18 @@ function renderV25ExecutiveBI(){
   $('v25CompetitionBars').innerHTML=entries.length?entries.map(([k,v])=>`<div class="v25CompanyRow"><span>${esc(k)}</span><div class="v25CompanyTrack"><i style="width:${Math.round(Number(v)/m*100)}%"></i></div><b>${fmt(v)}</b></div>`).join(''):'<div class="muted">Nenhuma quantidade estruturada de concorrência encontrada nas evidências importadas.</div>';
 }
 
+function renderV526FilteredBI(rows,type){
+  const active=!!(($('execCompany')?.value||'')||($('execLine')?.value||'')||($('execStatus')?.value||'')||type);
+  if(!active)return;
+  const m=filteredLocationMetrics(rows,type),types=type?[type]:['ATM','VALIDADOR','POS','BLOQUEIO'];
+  const mix=types.map(t=>[typeLabel(t),Number(m.byType[t]?.e||m.byType[t]?.i||0)]).filter(x=>x[1]>0);
+  const mt=mix.reduce((a,x)=>a+x[1],0)||1;
+  if($('v25MixLegend'))$('v25MixLegend').innerHTML=mix.map(x=>`<span>${esc(x[0])}<b>${fmt(x[1])}</b></span>`).join('');
+  if($('v25MixPct'))$('v25MixPct').textContent=(m.expected?Math.round(m.inventoried/m.expected*100):0)+'%';
+  const groups={};rows.forEach(x=>{const k=x.company||'Não informado';groups[k]=(groups[k]||0)+1});const arr=Object.entries(groups).sort((a,b)=>b[1]-a[1]),mx=Math.max(1,...arr.map(x=>x[1]));
+  if($('v25CompanyCompare'))$('v25CompanyCompare').innerHTML=arr.map(([k,v])=>`<div class="v25CompanyRow"><span>${esc(k)}</span><div class="v25CompanyTrack"><i style="width:${v/mx*100}%"></i></div><b>${fmt(v)}</b></div>`).join('')||'<span class="muted">Sem dados no recorte.</span>';
+  if($('v25Attention'))$('v25Attention').innerHTML=`<article><b>${fmt(m.divergences)}</b><span>Divergências</span></article><article><b>${fmt(m.inoperative)}</b><span>Inoperantes</span></article><article><b>${fmt(rows.filter(x=>String(x.survey_status||'').toUpperCase()==='PENDENTE').length)}</b><span>Localidades pendentes</span></article><article><b>${fmt(rows.length)}</b><span>Localidades no recorte</span></article>`;
+}
 function updateExecutiveView(){
   if(!dashboardData) return;
   renderV25ExecutiveBI();
@@ -854,6 +864,7 @@ function updateExecutiveView(){
   const c=$('execCompany')?.value||'', line=$('execLine')?.value||'', type=$('execType')?.value||'';
   const noGeoFilters=!c&&!line;
   const rows=executiveFilteredLocations();
+  renderV526FilteredBI(rows,type);
 
   // Sem Empresa/Linha usamos os denominadores oficiais para os Big Numbers.
   if(noGeoFilters){
@@ -1006,6 +1017,7 @@ if($('execCompany')) $('execCompany').onchange=()=>{
   applyExecutiveFilterToTable();
 };
 if($('execLine')) $('execLine').onchange=applyExecutiveFilterToTable;
+if($('execStatus')) $('execStatus').onchange=()=>{applyExecutiveFilterToTable();dashPanLocations();};
 if($('execType')) $('execType').onchange=()=>{
   document.querySelectorAll('.equipmentBig').forEach(x=>x.classList.toggle('active',x.dataset.type===$('execType').value));
   updateExecutiveView();
@@ -1015,6 +1027,7 @@ if($('execReset')) $('execReset').onclick=()=>{
   renderExecutiveFilters();
   $('execLine').value='';
   $('execType').value='';
+  if($('execStatus'))$('execStatus').value='';
   document.querySelectorAll('.equipmentBig').forEach(x=>x.classList.remove('active'));
   applyExecutiveFilterToTable();
 };
@@ -1099,10 +1112,11 @@ function v23StartTv(){
   v23TvTimer=setInterval(v343SyncTv,5000);
 }
 function initV23DashboardNav(){
-  document.querySelectorAll('.v23Nav').forEach(btn=>btn.addEventListener('click',()=>v23SetView(btn.dataset.v23View)));
+  document.querySelectorAll('.v23Nav[data-v23-view]').forEach(btn=>btn.addEventListener('click',()=>v23SetView(btn.dataset.v23View))); // V49.2: links externos usam href real
   $('v23TvBtn')?.addEventListener('click',()=>{ window.open('/gerencial/tv','_blank','noopener'); });
   document.addEventListener('fullscreenchange',()=>{if(!document.fullscreenElement && document.body.classList.contains('v23TvMode'))v23StopTv();});
-  v23SetView('overview');
+  const initialView=new URLSearchParams(window.location.search).get('view')||'overview';
+  v23SetView(initialView);
 }
 
 initV23DashboardNav();
@@ -1142,10 +1156,10 @@ async function loadV30Contracts(){
     const sel=document.getElementById('v30Contract'); const before=sel.value;
     const opts=['<option value="">Todos</option>',...(d.contracts||[]).map(x=>`<option value="${esc(x)}">${esc(x)}</option>`)]; sel.innerHTML=opts.join(''); if([...sel.options].some(o=>o.value===before))sel.value=before;
     document.getElementById('v30ContractCount').textContent=fmt(d.count||0);
-    const risk=(d.assets||[]).filter(x=>['VENCIDO','ATÉ 30 DIAS','31–60 DIAS','61–90 DIAS'].includes(x.contract_status)).length;
+    const risk=(d.assets||[]).filter(x=>String(x.contract_end||'').trim()).length;
     document.getElementById('v30ContractRisk').textContent=fmt(risk);
-    const groups={}; (d.assets||[]).forEach(x=>groups[x.contract_status]=(groups[x.contract_status]||0)+1); const max=Math.max(1,...Object.values(groups));
-    box.innerHTML=Object.entries(groups).map(([k,v])=>`<div class="v30ContractRow"><span>${esc(k)}</span><div><i style="width:${Math.round(v/max*100)}%"></i></div><b>${fmt(v)}</b></div>`).join('')||'<span class="muted">Nenhum ATM no recorte.</span>';
+    const groups={}; (d.assets||[]).forEach(x=>{const k=x.contract||'Sem contrato';groups[k]=(groups[k]||0)+1}); const max=Math.max(1,...Object.values(groups));
+    box.innerHTML=Object.entries(groups).map(([k,v],i)=>`<div class="v30ContractRow"><span>${esc(k)}</span><div><i style="width:${Math.round(v/max*100)}%;background:${atmPalette[i%atmPalette.length]}"></i></div><b>${fmt(v)}</b></div>`).join('')||'<span class="muted">Nenhum ATM no recorte.</span>';
   }catch(err){box.innerHTML='<span class="muted">Não foi possível carregar contratos ATM.</span>'}
 }
 ['v30Contract','v30Horizon'].forEach(id=>document.getElementById(id)?.addEventListener('change',loadV30Contracts));
@@ -1258,18 +1272,23 @@ document.addEventListener('DOMContentLoaded',v39LoadTopdesk);
 // V40.1.3 — Visões panorâmicas com status, progresso e filtros no Dashboard.
 let dashPanData=[];
 const dashPanEsc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
+// V59 — normalização compartilhada de status. Evita acoplamento Panorâmica <-> EMV.
+function v59NormStatus(value){
+  return String(value||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toUpperCase();
+}
+
 function dashPanFiltered(includeStatus=true){
   const c=document.getElementById('dashPanCompany')?.value||'';
   const l=document.getElementById('dashPanLine')?.value||'';
   const st=document.getElementById('dashPanStatus')?.value||'';
-  return dashPanData.filter(x=>(!c||x.company===c)&&(!l||x.line===l)&&(!includeStatus||!st||x.status===st));
+  const gc=document.getElementById('execCompany')?.value||'',gl=document.getElementById('execLine')?.value||'',gs=document.getElementById('execStatus')?.value||'';return dashPanData.filter(x=>(!gc||x.company===gc)&&(!gl||x.line===gl)&&(!c||x.company===c)&&(!l||x.line===l)&&(!includeStatus||!st||x.status===st)&&(!gs||String(x.status||'').toUpperCase().replace('CONCLUÍDA','CONCLUIDA')===gs));
 }
 function dashPanFill(id,vals,label){const e=document.getElementById(id);if(!e)return;const cur=e.value;e.innerHTML=`<option value="">${label}</option>`+[...new Set(vals.filter(Boolean))].sort((a,b)=>String(a).localeCompare(String(b),'pt-BR')).map(v=>`<option value="${dashPanEsc(v)}">${dashPanEsc(v)}</option>`).join('');if([...e.options].some(o=>o.value===cur))e.value=cur}
 function dashPanRenderSummary(){
   const a=dashPanFiltered(true), total=a.length;
-  const done=a.filter(x=>x.status==='CONCLUÍDA').length;
-  const progress=a.filter(x=>x.status==='EM ANDAMENTO').length;
-  const pending=a.filter(x=>x.status==='PENDENTE').length;
+  const done=a.filter(x=>v59NormStatus(x.status)==='CONCLUIDA').length;
+  const progress=a.filter(x=>v59NormStatus(x.status)==='EM ANDAMENTO').length;
+  const pending=a.filter(x=>v59NormStatus(x.status)==='PENDENTE').length;
   const photos=a.reduce((n,x)=>n+Number(x.photo_count||0),0);
   const pct=n=>total?Math.round(n*1000/total)/10:0;
   const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v};
@@ -1281,13 +1300,13 @@ function dashPanRenderSummary(){
   const bd=document.getElementById('dashPanBarDone'),bp=document.getElementById('dashPanBarProgress'),bn=document.getElementById('dashPanBarPending');
   if(bd)bd.style.width=pct(done)+'%';if(bp)bp.style.width=pct(progress)+'%';if(bn)bn.style.width=pct(pending)+'%';
 }
-function dashPanLocations(){
+function dashPanLocations(){const gc=document.getElementById('execCompany')?.value||'',gl=document.getElementById('execLine')?.value||'';if(gc&&document.getElementById('dashPanCompany'))document.getElementById('dashPanCompany').value=gc;if(gl&&document.getElementById('dashPanLine'))document.getElementById('dashPanLine').value=gl;
   const a=dashPanFiltered(true),el=document.getElementById('dashPanLocation');if(!el)return;
   const cur=el.value;el.innerHTML='<option value="">Selecione</option>'+a.map(x=>`<option value="${x.id}">${dashPanEsc(x.location)} · ${dashPanEsc(x.status)}</option>`).join('');if([...el.options].some(o=>o.value===cur))el.value=cur;
   if(!el.value){const g=document.getElementById('dashPanGallery');if(g)g.innerHTML='<p class="muted">Selecione uma localidade para visualizar as fotos.</p>'}
   dashPanRenderSummary();
 }
-function dashPanShow(){const id=+document.getElementById('dashPanLocation')?.value,x=dashPanData.find(a=>a.id===id),g=document.getElementById('dashPanGallery');if(!g)return;if(!x){g.innerHTML='<p class="muted">Selecione uma localidade para visualizar as fotos.</p>';return}const photos=(x.points||[]).flatMap(p=>(p.photos||[]).map(ph=>`<figure><a href="${dashPanEsc(ph.url)}" target="_blank"><img loading="lazy" src="${dashPanEsc(ph.url)}"></a><figcaption><b>${dashPanEsc(p.name)}</b><br>${dashPanEsc(ph.uploaded_by)} · ${new Date(ph.created_at).toLocaleString('pt-BR')}</figcaption></figure>`));g.innerHTML=photos.join('')||`<div class="dashPanEmpty"><b>${dashPanEsc(x.location)}</b><span>${dashPanEsc(x.status)} · nenhuma foto registrada.</span></div>`}
+function dashPanShow(){const id=+document.getElementById('dashPanLocation')?.value,x=dashPanData.find(a=>a.id===id),g=document.getElementById('dashPanGallery');if(!g)return;if(!x){g.innerHTML='<p class="muted">Selecione uma localidade para visualizar as fotos.</p>';return}const photos=(x.points||[]).flatMap(p=>(p.photos||[]).map(ph=>`<figure><a href="${dashPanEsc(ph.url)}" target="_blank"><img loading="lazy" decoding="async" src="${dashPanEsc(ph.thumb_url||ph.url)}"></a><figcaption><b>${dashPanEsc(p.name)}</b><br>${dashPanEsc(ph.uploaded_by)} · ${new Date(ph.created_at).toLocaleString('pt-BR')}</figcaption></figure>`));g.innerHTML=photos.join('')||`<div class="dashPanEmpty"><b>${dashPanEsc(x.location)}</b><span>${dashPanEsc(x.status)} · nenhuma foto registrada.</span></div>`}
 async function dashPanLoad(){try{const r=await fetch('/api/panoramas',{cache:'no-store'});if(!r.ok)throw new Error('HTTP '+r.status);const d=await r.json();dashPanData=d.locations||[];dashPanFill('dashPanCompany',dashPanData.map(x=>x.company),'Todas');dashPanFill('dashPanLine',dashPanData.map(x=>x.line),'Todas');dashPanLocations()}catch(e){console.warn('panorama dashboard',e);const g=document.getElementById('dashPanGallery');if(g)g.innerHTML='<p class="muted">Não foi possível carregar o progresso das visões panorâmicas.</p>'}}
 document.getElementById('dashPanCompany')?.addEventListener('change',()=>{const c=document.getElementById('dashPanCompany')?.value||'';dashPanFill('dashPanLine',dashPanData.filter(x=>!c||x.company===c).map(x=>x.line),'Todas');dashPanLocations()});
 document.getElementById('dashPanLine')?.addEventListener('change',dashPanLocations);document.getElementById('dashPanStatus')?.addEventListener('change',dashPanLocations);document.getElementById('dashPanLocation')?.addEventListener('change',dashPanShow);dashPanLoad();
@@ -1315,48 +1334,98 @@ async function loadChipDashboard(){try{const j=await fetch('/api/chip-swaps/dash
 
 document.getElementById('chipDashExportPending')?.addEventListener('click',()=>{const f=chipDashFilteredRows();const p=new URLSearchParams({pending_only:'1'});if(f.op)p.set('operation',f.op);if(f.c)p.set('company',f.c);if(f.l)p.set('line',f.l);if(f.loc)p.set('location',f.loc);if(f.test)p.set('test_result',f.test);window.location.href='/api/chip-swaps/export.xlsx?'+p.toString()});
 
-// V41.3 — Dashboard EMV sincronizado com filtros executivos
+// V58 — Dashboard EMV: uma única implementação, aderente ao contrato real {ok, rows[]}.
 let emvDashRows=[];
-function emvDashFiltered(){const c=document.getElementById('execCompany')?.value||'',l=document.getElementById('execLine')?.value||'',st=document.getElementById('execStatus')?.value||'',t=document.getElementById('execType')?.value||'';if(t&&t!=='BLOQUEIO')return [];return emvDashRows.filter(x=>(!c||v413LooseMatch(x.company,c))&&(!l||v413LooseMatch(x.line,l))&&(!st||(st==='CONCLUIDA'?x.status==='CONCLUÍDA':st==='PENDENTE'?x.status==='PENDENTE':st==='EM ANDAMENTO'?x.status==='EM ANDAMENTO':st==='SEM REGISTRO'?!x.swap_id:true)))}
-function renderEmvDashboard(){const rows=emvDashFiltered(),total=rows.length,done=rows.filter(x=>x.status==='CONCLUÍDA').length,progress=rows.filter(x=>x.status==='EM ANDAMENTO').length,pend=rows.filter(x=>x.status==='PENDENTE').length,pct=total?Math.round(done/total*1000)/10:0;const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v};set('emvDashTotal',total);set('emvDashDone',done);set('emvDashPending',pend+progress);set('emvDashPct',pct+'%');set('emvDashDonePct',pct+'%');set('emvDashText',`${done} de ${total} bloqueios concluídos · ${progress} em andamento · ${pend} pendentes.`);const bd=document.getElementById('emvBarDone'),bp=document.getElementById('emvBarPending');if(bd)bd.style.width=pct+'%';if(bp)bp.style.width=(100-pct)+'%';const days={};rows.filter(x=>x.completed_at).forEach(x=>{const d=x.completed_at.slice(0,10);days[d]=(days[d]||0)+1});let cumulative=0;const data=Object.entries(days).sort().map(([d,n])=>({d,n,c:(cumulative+=n)})),el=document.getElementById('emvEvolution');if(el){if(!data.length){el.innerHTML='<p class="muted">Ainda não há histórico de conclusões para os filtros selecionados.</p>'}else{const max=Math.max(...data.map(x=>x.c),1);el.innerHTML=data.map(x=>`<div class="emvEvolutionRow"><span>${x.d.split('-').reverse().join('/')}</span><div><i style="width:${x.c/max*100}%"></i></div><b>${x.c}</b></div>`).join('')}}const link=document.querySelector('[data-v23-panel="emv"] a[href^="/api/emv-chip-swaps/export.xlsx"]');if(link){const p=new URLSearchParams();const c=document.getElementById('execCompany')?.value||'',l=document.getElementById('execLine')?.value||'',st=document.getElementById('execStatus')?.value||'';if(c)p.set('company',c);if(l)p.set('line',l);if(st)p.set('status',st==='CONCLUIDA'?'CONCLUÍDA':st);link.href='/api/emv-chip-swaps/export.xlsx?'+p.toString()}}
-async function loadEmvDashboard(){const panel=document.querySelector('[data-v23-panel="emv"]');if(!panel)return;try{const j=await (await fetch('/api/emv-chip-swaps',{cache:'no-store'})).json();emvDashRows=j.rows||[];renderEmvDashboard()}catch(e){console.warn('EMV dashboard',e)}}
-['execCompany','execLine','execStatus','execType'].forEach(id=>document.getElementById(id)?.addEventListener('change',()=>{chipDashRender();renderEmvDashboard()}));loadEmvDashboard();
+const emvNorm=v=>String(v??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toUpperCase().replace(/_/g,' ');
+function emvFill(id,vals,label){const e=document.getElementById(id);if(!e)return;const cur=e.value;e.innerHTML=`<option value="">${label}</option>`+[...new Set((vals||[]).filter(Boolean))].sort((a,b)=>String(a).localeCompare(String(b),'pt-BR')).map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('');if([...e.options].some(o=>o.value===cur))e.value=cur}
+function emvDashFiltered(){const c=document.getElementById('emvDashCompany')?.value||'',l=document.getElementById('emvDashLine')?.value||'',station=document.getElementById('emvDashStation')?.value||'',st=document.getElementById('emvDashStatus')?.value||'',result=document.getElementById('emvDashResult')?.value||'';return emvDashRows.filter(x=>(!c||x.company===c)&&(!l||x.line===l)&&(!station||(x.station_name||x.station)===station)&&(!st||emvNorm(x.status)===emvNorm(st))&&(!result||String(x.test_result||'')===result))}
+function renderEmvDashboard(){if(!document.getElementById('emvDashPanel'))return;const c=document.getElementById('emvDashCompany')?.value||'',l=document.getElementById('emvDashLine')?.value||'';emvFill('emvDashCompany',emvDashRows.map(x=>x.company),'Todas');emvFill('emvDashLine',emvDashRows.filter(x=>!c||x.company===c).map(x=>x.line),'Todas');emvFill('emvDashStation',emvDashRows.filter(x=>(!c||x.company===c)&&(!l||x.line===l)).map(x=>x.station_name||x.station),'Todas');const rows=emvDashFiltered(),total=rows.length,done=rows.filter(x=>emvNorm(x.status)==='CONCLUIDA').length,prog=rows.filter(x=>emvNorm(x.status)==='EM ANDAMENTO').length,pend=Math.max(0,total-done-prog),pct=total?done/total*100:0;const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v};[['emvDashTotal',total],['emvDashDone',done],['emvDashProgressN',prog],['emvDashPending',pend],['emvLegendDone',done],['emvLegendProgress',prog],['emvLegendPending',pend]].forEach(([id,v])=>set(id,Number(v).toLocaleString('pt-BR')));set('emvDashPct',pct.toFixed(1).replace('.',',')+'%');set('emvDonutPct',Math.round(pct)+'%');set('emvDonutTotal',total.toLocaleString('pt-BR')+' total');const bar=document.getElementById('emvDashBar');if(bar)bar.style.width=pct+'%';const donut=document.getElementById('emvDashDonut');if(donut)donut.style.background=`conic-gradient(#22a66a 0 ${pct}%,#e7edf4 ${pct}% 100%)`;[['emvChartDone',done],['emvChartProgress',prog],['emvChartPending',pend]].forEach(([id,n])=>{const e=document.getElementById(id);if(e)e.style.width=(total?n/total*100:0)+'%'});const group=(fn,completedOnly=false)=>{const m={};rows.filter(x=>!completedOnly||emvNorm(x.status)==='CONCLUIDA').forEach(x=>{const k=fn(x)||'Não informado';m[k]=(m[k]||0)+1});return Object.entries(m).sort((a,b)=>b[1]-a[1]).slice(0,20)};const stationRows=group(x=>x.station_name||x.station);const stationMax=Math.max(1,...stationRows.map(x=>x[1]));const se=document.getElementById('emvDashStations');if(se)se.innerHTML=stationRows.map(([k,v])=>`<div class="emvEvolutionRow"><span>${esc(k)}</span><div><i style="width:${v/stationMax*100}%"></i></div><b>${v}</b></div>`).join('')||'<p class="muted">Sem dados.</p>';const techRows=group(x=>x.completed_by||x.technician,true);const techMax=Math.max(1,...techRows.map(x=>x[1]));const te=document.getElementById('emvDashTechs');if(te)te.innerHTML=techRows.map(([k,v])=>`<div class="emvEvolutionRow"><span>${esc(k)}</span><div><i style="width:${v/techMax*100}%"></i></div><b>${v}</b></div>`).join('')||'<p class="muted">Sem atividade registrada.</p>';const link=document.querySelector('#emvDashPanel a[href^="/api/emv-chip-swaps/export.xlsx"]');if(link){const p=new URLSearchParams();if(c)p.set('company',c);if(l)p.set('line',l);const station=document.getElementById('emvDashStation')?.value||'',st=document.getElementById('emvDashStatus')?.value||'',res=document.getElementById('emvDashResult')?.value||'';if(station)p.set('station',station);if(st)p.set('status',st==='CONCLUIDA'?'CONCLUÍDA':st);if(res)p.set('test_result',res);link.href='/api/emv-chip-swaps/export.xlsx?'+p.toString()}}
+async function loadEmvDashboard(){if(!document.getElementById('emvDashPanel'))return;try{const r=await fetch('/api/emv-chip-swaps',{cache:'no-store',headers:{Accept:'application/json'}});if(!r.ok)throw new Error('HTTP '+r.status);const j=await r.json();emvDashRows=Array.isArray(j)?j:(Array.isArray(j?.rows)?j.rows:[]);console.info('[V59] EMV API:',emvDashRows.length,'registro(s) recebidos');renderEmvDashboard()}catch(e){console.error('[V59] EMV dashboard',e)}}
+['emvDashCompany','emvDashLine','emvDashStation','emvDashStatus','emvDashResult'].forEach(id=>document.getElementById(id)?.addEventListener('change',renderEmvDashboard));loadEmvDashboard();
 
-// V44.0 — Dashboard 2.0 consolidada / Inventário ATM 360.
+// V43.0 — Dashboard 2.0 / Inventário ATM 360.
 let atmDashData=null;
 const atmPalette=['#1d4ed8','#0891b2','#7c3aed','#059669','#d97706','#dc2626','#475569'];
 function atmEsc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-function atmParams(){const p=new URLSearchParams();[['company','atmFCompany'],['line','atmFLine'],['locality','atmFLocation'],['model','atmFModel'],['contract','atmFContract'],['ownership','atmFOwnership'],['status','atmFStatus']].forEach(([k,id])=>{const e=document.getElementById(id);if(e?.value)p.set(k,e.value)});return p}
+function atmParams(){const p=new URLSearchParams();const pageQ=new URLSearchParams(window.location.search);if(pageQ.get('teamviewer_missing')==='1')p.set('teamviewer_missing','1');[['company','atmFCompany'],['line','atmFLine'],['locality','atmFLocation'],['model','atmFModel'],['contract','atmFContract'],['ownership','atmFOwnership'],['status','atmFStatus']].forEach(([k,id])=>{const e=document.getElementById(id);if(e?.value)p.set(k,e.value)});return p}
 function atmFill(id,values,label){const e=document.getElementById(id);if(!e)return;const old=e.value;e.innerHTML=`<option value="">${label}</option>`+(values||[]).map(v=>`<option value="${atmEsc(v)}">${atmEsc(v)}</option>`).join('');if([...e.options].some(o=>o.value===old))e.value=old}
 function atmSetFilter(id,value){const f=document.getElementById(id);if(!f)return; if(![...f.options].some(o=>o.value===value))f.add(new Option(value,value));f.value=value;loadAtmDashboard(false)}
-function atmBars(id,obj,filterId,limit=0){const e=document.getElementById(id);if(!e)return;let a=Object.entries(obj||{}).sort((x,y)=>y[1]-x[1]);if(limit)a=a.slice(0,limit);const m=Math.max(1,...a.map(x=>x[1]));e.innerHTML=a.map(([k,v])=>`<button class="barRow v424ClickableBar" data-value="${atmEsc(k)}"><span title="${atmEsc(k)}">${atmEsc(k)}</span><i><b style="width:${v/m*100}%"></b></i><strong>${v}</strong></button>`).join('')||'<p class="muted">Sem dados.</p>';e.querySelectorAll('button').forEach(b=>b.onclick=()=>atmSetFilter(filterId,b.dataset.value))}
+function atmBars(id,obj,filterId,limit=0){const e=document.getElementById(id);if(!e)return;let a=Object.entries(obj||{}).sort((x,y)=>y[1]-x[1]);if(limit)a=a.slice(0,limit);const m=Math.max(1,...a.map(x=>x[1]));e.innerHTML=a.map(([k,v],i)=>`<button class="barRow v424ClickableBar" data-value="${atmEsc(k)}"><span title="${atmEsc(k)}">${atmEsc(k)}</span><i><b style="width:${v/m*100}%;background:${atmPalette[i%atmPalette.length]}"></b></i><strong>${v}</strong></button>`).join('')||'<p class="muted">Sem dados.</p>';e.querySelectorAll('button').forEach(b=>b.onclick=()=>atmSetFilter(filterId,b.dataset.value))}
 function atmColumns(obj){const e=document.getElementById('atmColumnOperator');if(!e)return;const a=Object.entries(obj||{}).sort((x,y)=>y[1]-x[1]).slice(0,10),m=Math.max(1,...a.map(x=>x[1]));e.innerHTML=a.map(([k,v],i)=>`<button class="v430Column" data-value="${atmEsc(k)}"><b>${v}</b><i style="height:${Math.max(8,v/m*82)}%;--bar:${atmPalette[i%atmPalette.length]}"></i><span title="${atmEsc(k)}">${atmEsc(k)}</span></button>`).join('');e.querySelectorAll('button').forEach(b=>b.onclick=()=>atmSetFilter('atmFCompany',b.dataset.value))}
 function atmDonut(obj,id,legendId,filterId){const entries=Object.entries(obj||{}).sort((a,b)=>b[1]-a[1]),total=entries.reduce((a,x)=>a+x[1],0)||1;let at=0,parts=[];entries.slice(0,6).forEach(([k,v],i)=>{const n=at+v/total*100;parts.push(`${atmPalette[i%atmPalette.length]} ${at}% ${n}%`);at=n});if(at<100)parts.push(`#e8eef5 ${at}% 100%`);const d=document.getElementById(id);if(d)d.style.background=`conic-gradient(${parts.join(',')})`;const l=document.getElementById(legendId);if(l){l.innerHTML=entries.slice(0,6).map(([k,v],i)=>`<button data-value="${atmEsc(k)}"><i style="background:${atmPalette[i%atmPalette.length]}"></i>${atmEsc(k)} <b>${v}</b></button>`).join('');l.querySelectorAll('button').forEach(b=>b.onclick=()=>atmSetFilter(filterId,b.dataset.value))}}
 function atmHeatmap(obj){const e=document.getElementById('atmLineHeatmap');if(!e)return;const a=Object.entries(obj||{}).sort((x,y)=>y[1]-x[1]).slice(0,12),m=Math.max(1,...a.map(x=>x[1]));e.innerHTML=a.map(([k,v],i)=>`<button class="v430Heat" data-value="${atmEsc(k)}" style="--intensity:${20+Math.round(v/m*60)}%;--heat:${atmPalette[i%4]}"><b>${v}</b><span>${atmEsc(k)}</span></button>`).join('');e.querySelectorAll('button').forEach(b=>b.onclick=()=>atmSetFilter('atmFLine',b.dataset.value))}
 function atmContracts(d){const e=document.getElementById('atmContractStack');if(!e)return;const rows=d.assets||[],map={};rows.forEach(x=>{const k=x.contract||'SEM CONTRATO';map[k]??={total:0,leasing:0};map[k].total++;if(String(x.ownership).toUpperCase()==='LEASING')map[k].leasing++});const a=Object.entries(map).sort((x,y)=>y[1].total-x[1].total).slice(0,10),m=Math.max(1,...a.map(x=>x[1].total));e.innerHTML=a.map(([k,v])=>`<button class="v430StackRow" data-value="${atmEsc(k)}"><div class="v430StackLabel"><span>${atmEsc(k)}</span><b>${v.total}</b></div><div class="v430StackBar" style="width:${Math.max(18,v.total/m*100)}%"><i style="width:${(v.total-v.leasing)/v.total*100}%"></i><i style="width:${v.leasing/v.total*100}%"></i></div></button>`).join('');e.querySelectorAll('button').forEach(b=>b.onclick=()=>atmSetFilter('atmFContract',b.dataset.value))}
 function atmDrill(d){const e=document.getElementById('atmDrillCards');if(!e)return;const loc=Object.entries(d.locations||{}).sort((a,b)=>b[1]-a[1]).slice(0,12);e.innerHTML=loc.map(([k,v])=>`<button data-value="${atmEsc(k)}"><small>LOCALIDADE</small><b>${v} ATM${v!==1?'s':''}</b><span>${atmEsc(k)}</span></button>`).join('');e.querySelectorAll('button').forEach(b=>b.onclick=()=>atmSetFilter('atmFLocation',b.dataset.value))}
-async function loadAtmDashboard(fillOptions=true){const r=await fetch('/api/dashboard/inventory-atm?'+atmParams(),{cache:'no-store'}),d=await r.json();if(!d.ok)return;atmDashData=d;atmFill('atmFCompany',d.options.companies,'Todas operadoras');atmFill('atmFLine',d.options.lines,'Todas linhas');atmFill('atmFLocation',d.options.localities,'Todas localidades');atmFill('atmFModel',d.options.models,'Todos modelos');atmFill('atmFContract',d.options.contracts,'Todos contratos');atmFill('atmFOwnership',d.options.ownership,'Todo tipo de posse');atmFill('atmFStatus',d.options.statuses,'Todos status');
-const assets=d.assets||[],set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v};set('atmKTotal',d.total);set('atmKAllocated',d.allocated||0);set('atmKStock',d.stock||0);set('atmKCptmStations',d.cptm_stations||0);set('atmKMetroStations',d.metro_stations||0);set('atmKTeamviewer',d.teamviewer_count||0);set('atmRowsTag',d.total+' ATMs');set('atmDonutTotal',d.total);set('atmAllocationA',d.allocated||0);set('atmAllocationS',d.stock||0);const pct=d.total?Math.round((d.allocated||0)/d.total*100):0;set('atmAllocationPct',pct+'%');const ring=document.getElementById('atmAllocationRing');if(ring)ring.style.setProperty('--pct',pct+'%');const leasing=assets.filter(x=>String(x.ownership).toUpperCase()==='LEASING').length;set('atmLeasingCount',leasing);
-atmColumns(d.operators);atmDonut(d.models,'atmModelDonut','atmModelLegend','atmFModel');atmDonut(d.ownership,'atmOwnershipDonut','atmOwnershipLegend','atmFOwnership');atmBars('atmLocationRanking',d.locations,'atmFLocation',10);atmHeatmap(d.lines);atmContracts(d);atmDrill(d);
-const cov=document.getElementById('atmCoverageTiles');if(cov){cov.innerHTML=`<button data-company="CPTM"><b>${d.cptm_stations||0}</b><span>CPTM</span><small>estações com ATM</small></button><button data-company="METRÔ"><b>${d.metro_stations||0}</b><span>Metrô</span><small>estações com ATM</small></button>`;cov.querySelectorAll('button').forEach(b=>b.onclick=()=>atmSetFilter('atmFCompany',b.dataset.company))}
-set('atmDrillTitle',document.getElementById('atmFLocation')?.value||document.getElementById('atmFLine')?.value||document.getElementById('atmFCompany')?.value||'Explorar parque');const body=document.getElementById('atmRows');body.innerHTML=assets.map((x,i)=>`<tr class="atmAssetRow" data-index="${i}"><td>${atmEsc(x.company)}</td><td>${atmEsc(x.line)}</td><td><b>${atmEsc(x.locality)}</b></td><td><button class="atmAssetLink" data-index="${i}">${atmEsc(x.asset_key)}</button></td><td>${atmEsc(x.model)}</td><td>${atmEsc(x.contract)}</td><td>${atmEsc(x.ownership)}</td><td>${atmEsc(x.teamviewer||'—')}</td><td><code>${atmEsc(x.teamviewer_id||'—')}</code></td><td><code>${atmEsc(x.ip||'—')}</code></td><td>${atmEsc(x.status)}</td></tr>`).join('')||'<tr><td colspan="11">Sem ATMs no recorte.</td></tr>';body.querySelectorAll('.atmAssetLink').forEach(b=>b.onclick=()=>atmOpen360(assets[Number(b.dataset.index)]));atmOpenLocation360(d)}
-function atmOpenLocation360(d){const loc=document.getElementById('atmFLocation')?.value||'';const p=document.getElementById('atmLocation360'),b=document.getElementById('atmLocation360Body');if(!p||!b){return}if(!loc){p.hidden=true;return}const rows=(d.assets||[]).filter(x=>x.locality===loc),models=new Set(rows.map(x=>x.model).filter(Boolean)),contracts=new Set(rows.map(x=>x.contract).filter(Boolean)),tv=rows.filter(x=>x.teamviewer_id).length,company=rows[0]?.company||'—',line=rows[0]?.line||'—';document.getElementById('atmLocation360Title').textContent=loc+' · Localidade 360°';const items=[['Operação',company],['Linha',line],['ATMs',rows.length],['Modelos',models.size],['Contratos',contracts.size],['Com TeamViewer',tv]];b.innerHTML=items.map(([k,v])=>`<article><small>${atmEsc(k)}</small><b>${atmEsc(v)}</b></article>`).join('')+`<article class="atm360Wide"><small>Próximo nível</small><b>Equipamentos da localidade</b><button class="miniBtn" id="atmLocShowAssets">Ver ATMs</button></article>`;p.hidden=false;document.getElementById('atmLocShowAssets')?.addEventListener('click',()=>{document.getElementById('atmAssetDetails')?.setAttribute('open','');document.getElementById('atmAssetDetails')?.scrollIntoView({behavior:'smooth'})})}
-function atmOpen360(x){if(!x)return;const p=document.getElementById('atm360Panel'),b=document.getElementById('atm360Body');document.getElementById('atm360Title').textContent=(x.asset_key||'ATM')+' · ATM 360°';const items=[['Operação',x.company],['Linha',x.line],['Localidade',x.locality],['Modelo',x.model],['Série',x.serial],['Fornecedor',x.supplier],['Contrato',x.contract],['Posse',x.ownership],['Status',x.status],['IP',x.ip],['Aplicação',x.application],['TeamViewer',x.teamviewer],['ID TeamViewer',x.teamviewer_id],['ID TOP',x.id_top]];b.innerHTML=items.map(([k,v])=>`<article><small>${atmEsc(k)}</small><b>${atmEsc(v||'—')}</b>${k==='ID TeamViewer'&&v?`<button class="miniBtn atmCopyTV" data-value="${atmEsc(v)}">Copiar ID</button>`:''}</article>`).join('');p.hidden=false;p.scrollIntoView({behavior:'smooth',block:'nearest'});b.querySelector('.atmCopyTV')?.addEventListener('click',async e=>{try{await navigator.clipboard.writeText(e.currentTarget.dataset.value);e.currentTarget.textContent='Copiado'}catch(_e){prompt('ID TeamViewer:',e.currentTarget.dataset.value)}})}
-const atmFilterIds=['atmFCompany','atmFLine','atmFLocation','atmFModel','atmFContract','atmFOwnership','atmFStatus'];
-if(document.getElementById('atmClear')){atmFilterIds.forEach(id=>document.getElementById(id)?.addEventListener('change',()=>loadAtmDashboard(true)));document.getElementById('atmClear').onclick=()=>{atmFilterIds.forEach(id=>document.getElementById(id).value='');loadAtmDashboard(true)};document.getElementById('atmDashRefresh').onclick=()=>loadAtmDashboard(true);document.getElementById('atmShowLocations').onclick=()=>{document.getElementById('atmAssetDetails')?.setAttribute('open','');document.getElementById('atmDrillTitle')?.scrollIntoView({behavior:'smooth'})};document.getElementById('atm360Close')?.addEventListener('click',()=>document.getElementById('atm360Panel').hidden=true);document.getElementById('atmLocation360Close')?.addEventListener('click',()=>document.getElementById('atmLocation360').hidden=true);document.getElementById('atmDashExport').onclick=()=>{if(!atmDashData)return;const rows=[['Operadora','Linha','Localidade','ATM','Modelo','Contrato','Posse','TeamViewer','ID TeamViewer','IP','Status'],...(atmDashData.assets||[]).map(x=>[x.company,x.line,x.locality,x.asset_key,x.model,x.contract,x.ownership,x.teamviewer,x.teamviewer_id,x.ip,x.status])];const csv=rows.map(r=>r.map(v=>'"'+String(v??'').replaceAll('"','""')+'"').join(';')).join('\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\ufeff'+csv],{type:'text/csv'}));a.download='dashboard_atm_v45.csv';a.click()};loadAtmDashboard(true)}
+async function loadAtmDashboard(fillOptions=true){
+  const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v};
+  try{
+    const r=await fetch('/api/dashboard/inventory-atm?'+atmParams(),{cache:'no-store',headers:{'Accept':'application/json'}});
+    if(!r.ok)throw new Error(`HTTP ${r.status}`);
+    const d=await r.json();
+    if(!d.ok)throw new Error(d.error||'API ATM retornou erro');
+    atmDashData=d;
+    const opts=d.options||{};
+    if(fillOptions){
+      atmFill('atmFCompany',opts.companies||[],'Todas operadoras');
+      atmFill('atmFLine',opts.lines||[],'Todas linhas');
+      atmFill('atmFLocation',opts.localities||[],'Todas localidades');
+      atmFill('atmFModel',opts.models||[],'Todos modelos');
+      atmFill('atmFContract',opts.contracts||[],'Todos contratos');
+      atmFill('atmFOwnership',opts.ownership||[],'Todo tipo de posse');
+      atmFill('atmFStatus',opts.statuses||[],'Todos status');
+    }
+    const assets=Array.isArray(d.assets)?d.assets:[];
+    const total=Number.isFinite(Number(d.total))?Number(d.total):assets.length;
+    const allocated=Number.isFinite(Number(d.allocated))?Number(d.allocated):assets.filter(x=>!x.stock).length;
+    const stock=Number.isFinite(Number(d.stock))?Number(d.stock):assets.filter(x=>x.stock).length;
+    set('atmKTotal',total);set('atmKAllocated',allocated);set('atmKStock',stock);
+    set('atmKCptmStations',d.cptm_stations||0);set('atmKMetroStations',d.metro_stations||0);set('atmKTeamviewer',d.teamviewer_count||0);
+    set('atmRowsTag',`${total} ATMs · API ${d.release||'—'}`);set('atmDonutTotal',total);set('atmAllocationA',allocated);set('atmAllocationS',stock);
+    const pct=total?Math.round(allocated/total*100):0;set('atmAllocationPct',pct+'%');
+    const ring=document.getElementById('atmAllocationRing');if(ring)ring.style.setProperty('--pct',pct+'%');
+    const leasing=assets.filter(x=>String(x.ownership).toUpperCase()==='LEASING').length;set('atmLeasingCount',leasing);
+    atmColumns(d.operators||{});atmDonut(d.models||{},'atmModelDonut','atmModelLegend','atmFModel');atmDonut(d.ownership||{},'atmOwnershipDonut','atmOwnershipLegend','atmFOwnership');atmBars('atmLocationRanking',d.locations||{},'atmFLocation',10);atmHeatmap(d.lines||{});atmContracts(d);atmDrill(d);
+    const cov=document.getElementById('atmCoverageTiles');if(cov){cov.innerHTML=`<button data-company="CPTM"><b>${d.cptm_stations||0}</b><span>CPTM</span><small>estações com ATM</small></button><button data-company="METRÔ"><b>${d.metro_stations||0}</b><span>Metrô</span><small>estações com ATM</small></button>`;cov.querySelectorAll('button').forEach(b=>b.onclick=()=>atmSetFilter('atmFCompany',b.dataset.company))}
+    set('atmDrillTitle',document.getElementById('atmFLocation')?.value||document.getElementById('atmFLine')?.value||document.getElementById('atmFCompany')?.value||'Explorar parque');
+    const rowsEl=document.getElementById('atmRows');if(rowsEl)rowsEl.innerHTML=assets.map(x=>`<tr><td>${atmEsc(x.company)}</td><td>${atmEsc(x.line)}</td><td><b>${atmEsc(x.locality)}</b></td><td>${atmEsc(x.asset_key)}</td><td>${atmEsc(x.model)}</td><td>${atmEsc(x.contract)}</td><td>${atmEsc(x.ownership)}</td><td>${atmEsc(x.teamviewer||'—')}</td><td><code>${atmEsc(x.teamviewer_id||'—')}</code></td><td><code>${atmEsc(x.ip||'—')}</code></td><td>${atmEsc(x.status)}</td></tr>`).join('')||'<tr><td colspan="11">Sem ATMs no recorte.</td></tr>';
+  }catch(err){
+    console.error('Dashboard ATM V50.3:',err);
+    ['atmKTotal','atmKAllocated','atmKStock','atmKCptmStations','atmKMetroStations','atmKTeamviewer'].forEach(id=>set(id,'—'));
+    set('atmRowsTag','Erro ao carregar dados');
+    const rowsEl=document.getElementById('atmRows');if(rowsEl)rowsEl.innerHTML=`<tr><td colspan="11"><b>Erro ao carregar a base ATM.</b> ${atmEsc(err.message||err)}</td></tr>`;
+  }
+}
 
+function initAtmDashboardV503(){
+  const panel=document.querySelector('[data-v23-panel="atm-inventory"]')||document.getElementById('atmKTotal');
+  if(!panel)return;
+  ['atmFCompany','atmFLine','atmFLocation','atmFModel','atmFContract','atmFOwnership','atmFStatus'].forEach(id=>document.getElementById(id)?.addEventListener('change',()=>loadAtmDashboard(true)));
+  document.getElementById('atmClear')?.addEventListener('click',()=>{['atmFCompany','atmFLine','atmFLocation','atmFModel','atmFContract','atmFOwnership','atmFStatus'].forEach(id=>{const e=document.getElementById(id);if(e)e.value=''});const q=new URLSearchParams(window.location.search);q.delete('teamviewer_missing');q.set('view','atm-inventory');history.replaceState(null,'',window.location.pathname+'?'+q.toString());loadAtmDashboard(true)});
+  document.getElementById('atmDashRefresh')?.addEventListener('click',()=>loadAtmDashboard(true));
+  document.getElementById('atmShowLocations')?.addEventListener('click',()=>{document.getElementById('atmAssetDetails')?.setAttribute('open','');document.getElementById('atmDrillTitle')?.scrollIntoView({behavior:'smooth'})});
+  document.getElementById('atmDashExport')?.addEventListener('click',()=>{if(!atmDashData)return;const rows=[['Operadora','Linha','Localidade','ATM','Modelo','Contrato','Posse','TeamViewer','ID TeamViewer','IP','Status'],...(atmDashData.assets||[]).map(x=>[x.company,x.line,x.locality,x.asset_key,x.model,x.contract,x.ownership,x.teamviewer,x.teamviewer_id,x.ip,x.status])];const csv=rows.map(r=>r.map(v=>'"'+String(v??'').replaceAll('"','""')+'"').join(';')).join('\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\ufeff'+csv],{type:'text/csv'}));a.download='dashboard_atm_v50_3.csv';a.click()});
+  loadAtmDashboard(true);
+}
+initAtmDashboardV503();
+
+
+// V50.4 — restaura carregamento da Dashboard Financeiro ATM
 // V46.0 — Dashboard Financeiro ATM (ADM)
 (function(){
  const panel=document.querySelector('[data-v23-panel="atm-financial"]'); if(!panel)return;
  const brl=v=>Number(v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
  const esc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
- function bars(el,rows,valueKey,labelFn){const max=Math.max(1,...rows.map(x=>Number(x[valueKey]||0)));el.innerHTML=rows.map((x,i)=>`<button class="v460Bar"><span>${esc(x.model)}</span><i><b style="width:${Math.max(3,Number(x[valueKey]||0)/max*100)}%"></b></i><strong>${labelFn(x[valueKey])}</strong></button>`).join('')}
+ const modelColors={'MINIWALL':'#2563eb','MK':'#10b981','MKNEO':'#f59e0b','TCI':'#8b5cf6','TCINEO':'#ef4444','TCIPLUS':'#06b6d4'};function bars(el,rows,valueKey,labelFn){const max=Math.max(1,...rows.map(x=>Number(x[valueKey]||0)));el.innerHTML=rows.map((x,i)=>`<button class="v460Bar"><span>${esc(x.model)}</span><i><b style="width:${Math.max(3,Number(x[valueKey]||0)/max*100)}%;background:${modelColors[String(x.model).toUpperCase()]||'#64748b'}"></b></i><strong>${labelFn(x[valueKey])}</strong></button>`).join('')}
  async function load(){const r=await fetch('/api/dashboard/atm-financial',{cache:'no-store'}),d=await r.json();if(!d.ok)return;
   const t=d.totals||{};document.getElementById('finParkValue').textContent=brl(t.park_value);document.getElementById('finParkQty').textContent=`${t.park_qty} ATMs`;document.getElementById('finContractValue').textContent=brl(t.contract_value);document.getElementById('finContractQty').textContent=`${t.contract_qty} ATMs`;document.getElementById('finBilledValue').textContent=brl(t.billed_value);document.getElementById('finBilledQty').textContent=`${t.billed_qty} ATMs`;document.getElementById('finNotBilled').textContent=t.not_billed||0;
   bars(document.getElementById('finModelBars'),d.models,'total_value',brl);bars(document.getElementById('finUnitBars'),d.models,'unit_value',brl);
-  const sum=(d.contracts||[]).reduce((a,x)=>a+Number(x.value||0),0)||1;let acc=0;const colors=['#1677ff','#16c784','#8a69ff','#ff9f1c'];const stops=(d.contracts||[]).map((x,i)=>{const a=acc/sum*100;acc+=Number(x.value||0);return `${colors[i%colors.length]} ${a}% ${acc/sum*100}%`}).join(',');document.getElementById('finContractDonut').innerHTML=`<div class="v460FinDonut" style="background:conic-gradient(${stops})"><div><b>${brl(sum)}</b><small>mensal</small></div></div><div class="v460FinLegend">${(d.contracts||[]).map((x,i)=>`<span><i style="background:${colors[i%colors.length]}"></i>${esc(x.contract)} <b>${x.qty}</b> · ${brl(x.value)}</span>`).join('')}</div>`;
-  document.getElementById('finCompare').innerHTML=(d.comparison||[]).map(x=>`<div><b>${esc(x.model)}</b><span>Parque <strong>${x.park_qty}</strong></span><span>Contrato <strong>${x.contract_qty}</strong></span><span>Faturado <strong>${x.billed_qty}</strong></span></div>`).join('');
+  const contracts=(d.contracts||[]).slice().sort((a,b)=>Number(b.value||0)-Number(a.value||0)),cmax=Math.max(1,...contracts.map(x=>Number(x.value||0)));const cb=document.getElementById('finContractBars');if(cb)cb.innerHTML=contracts.map((x,i)=>`<div class="v526ContractRow"><span title="${esc(x.contract)}">${esc(x.contract)}</span><i><b style="width:${Math.max(2,Number(x.value||0)/cmax*100)}%;background:${['#2563eb','#10b981','#f59e0b','#8b5cf6','#ef4444','#06b6d4'][i%6]}"></b></i><strong>${brl(x.value)} · ${x.qty} ATM${x.qty===1?'':'s'}</strong></div>`).join('')||'<p class="muted">Sem contratos no recorte.</p>';
+  const cmp=d.comparison||[];document.getElementById('finCompare').innerHTML=cmp.map((x,i)=>{const mx=Math.max(1,+x.park_qty||0,+x.contract_qty||0,+x.billed_qty||0),pct=(+x.park_qty?Math.round((+x.billed_qty)/(+x.park_qty)*1000)/10:0);return `<div class="v551CompareCard"><b>${esc(x.model)}</b><div class="v551CmpRow"><span>Parque</span><i><em style="width:${(+x.park_qty||0)/mx*100}%;background:#2563eb"></em></i><strong>${x.park_qty}</strong></div><div class="v551CmpRow"><span>Contratado</span><i><em style="width:${(+x.contract_qty||0)/mx*100}%;background:#f59e0b"></em></i><strong>${x.contract_qty}</strong></div><div class="v551CmpRow"><span>Faturado</span><i><em style="width:${(+x.billed_qty||0)/mx*100}%;background:#10b981"></em></i><strong>${x.billed_qty}</strong></div><small>${pct}% do parque faturado · diferença ${(+x.billed_qty)-(+x.park_qty)}</small></div>`}).join('');const dbx=document.getElementById('finDivergenceBars');if(dbx){const dr=cmp.map(x=>({model:x.model,d:Math.abs(Number(x.park_qty)-Number(x.billed_qty)),signed:Number(x.billed_qty)-Number(x.park_qty)})).sort((a,b)=>b.d-a.d),dm=Math.max(1,...dr.map(x=>x.d));dbx.innerHTML='<h3>Divergências por modelo</h3>'+dr.map(x=>`<div class="v526DivRow"><span>${esc(x.model)}</span><i><b style="width:${x.d/dm*100}%"></b></i><strong>${x.signed>0?'+':''}${x.signed}</strong></div>`).join('')}
   document.getElementById('finRows').innerHTML=(d.models||[]).map(x=>`<tr><td><b>${esc(x.model)}</b></td><td>${x.leasing}</td><td>${x.non_leasing}</td><td>${x.stock}</td><td>${x.other}</td><td>${x.subtotal}</td><td>${brl(x.unit_value)}</td><td><b>${brl(x.total_value)}</b></td></tr>`).join('');
+  const sc=d.supplier_costs||{}, suppliers=sc.suppliers||[]; const st=sc.totals||{};
+  const fst=document.getElementById('finSupplierTotal'),fsc=document.getElementById('finSupplierCount'),fsr=document.getElementById('finSupplierRows');
+  if(fst)fst.textContent=brl(st.period_value); if(fsc)fsc.textContent=suppliers.length;
+  if(fsr)fsr.innerHTML=suppliers.map(x=>`<tr><td><b>${esc(x.supplier)}</b></td><td>${esc(x.description)}</td><td>${brl(x.avg_jan_jun_2026)}</td><td><b>${brl(x.period_value)}</b></td><td>${esc(x.category)}</td><td>${x.allocation_rule==='RATEIO'?'ATM 70% · POS 15% · Recarga 5% · Rack 9% · Outros 1%':esc(Object.keys(x.allocation_percentages||{})[0]||x.category)+' 100%'}</td></tr>`).join('');
  }
  document.querySelector('[data-v23-view="atm-financial"]')?.addEventListener('click',load);load();
 })();
