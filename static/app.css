@@ -1695,3 +1695,6 @@ body.mapFullscreenOpen #gpsMap .autopassMapFullscreenControl{
 #teamMap,.teamMap,#gpsMap,.leaflet-container{position:relative;z-index:1!important;}
 .leaflet-control-container{z-index:40!important;}
 body.mapFullscreenOpen .topbar{z-index:20!important;}
+
+/* V56-D stacking: menus sempre acima de Leaflet. */
+.topbar,.siteHeader,.appHeader,header{position:relative;z-index:3000}.navDropdown,.dropdownMenu,.topNavMenu{z-index:3200!important}.leaflet-container{z-index:1}.leaflet-control{z-index:500}
