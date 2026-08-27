@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Troca de Chips | Inventário Autopass{% endblock %}
 {% block content %}
+<style>.activityNav{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin:0 0 14px}.activityNav a{padding:9px 14px;border:1px solid #cbd5e1;border-radius:10px;text-decoration:none;font-weight:800;background:#fff;color:#17345d}.activityNav a.active{background:#17345d;color:#fff;border-color:#17345d}</style><nav class="activityNav"><a class="active" href="/troca-chips">Atividade</a><a href="/dashboard#chipDashPanel">Dashboard</a><a href="/api/chip-swaps/export.xlsx">Exportar</a></nav>
 <section class="card chipSwapPage">
   <div class="sectionHead"><div><span class="eyebrow">ATIVIDADE DE CAMPO</span><h1>Troca de Chip Recarga · Validadores</h1><p class="muted">Selecione empresa, linha e localidade; escolha o validador, registre a troca e anexe a evidência. GPS não é obrigatório nesta atividade.</p></div></div>
   <div class="grid5 chipFilters">

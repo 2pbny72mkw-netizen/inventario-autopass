@@ -1,4 +1,5 @@
 {% extends "base.html" %}{% block title %}Troca de Chips Garagem{% endblock %}{% block content %}
+<style>.activityNav{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin:0 0 14px}.activityNav a{padding:9px 14px;border:1px solid #cbd5e1;border-radius:10px;text-decoration:none;font-weight:800;background:#fff;color:#17345d}.activityNav a.active{background:#17345d;color:#fff;border-color:#17345d}</style><nav class="activityNav"><a class="active" href="/troca-chips-garagem">Atividade</a><a href="/troca-chips-garagem/dashboard">Dashboard</a><a href="/api/garage-chip-swaps/export.xlsx">Exportar</a></nav>
 <div class="pageHead"><span class="eyebrow">IMPLANTAÇÃO · ATIVIDADE · {{ app_release }}</span><h1>Troca de Chips — Garagem</h1><p>Mesmo padrão operacional da Troca de Chips EMV. Base inicial: 457 terminais. O IP permanece armazenado, mas não participa do fluxo operacional.</p></div>
 <section class="card">
   <div class="sectionHead"><div></div><a class="buttonLink" href="/troca-chips-garagem/dashboard">Dashboard</a></div>
@@ -23,4 +24,4 @@
   <p id="gSummary" class="muted">0 / 0 concluídos · 0%</p>
 </section>
 <section class="card"><div class="sectionHead"><div><h2>Terminais da base</h2><p class="muted">Registre resultado, evidência e observação. Uma evidência conclui a troca do terminal.</p></div></div><div id="gRows" class="chipValidatorGrid"><p class="muted">Carregando...</p></div></section>
-{% endblock %}{% block scripts %}<script>window.CHIP_ROLE={{ session.get("role")|tojson }};</script><script src="/static/garage_chip_swap.js?v=v62-rev3"></script>{% endblock %}
+{% endblock %}{% block scripts %}<script>window.CHIP_ROLE={{ session.get("role")|tojson }};</script><script src="/static/garage_chip_swap.js?v=v62-rev4"></script>{% endblock %}
