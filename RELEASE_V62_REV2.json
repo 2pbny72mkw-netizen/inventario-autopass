@@ -1,0 +1,15 @@
+{
+  "version": "V62 REV2",
+  "date": "2026-08-27",
+  "focus": "stability-memory",
+  "changes": [
+    "Streaming de evidencias para R2 sem carregar fotos inteiras na RAM",
+    "Limite individual de 15 MB e limite total de 40 MB por requisicao de atividade",
+    "Protecao aplicada a EMV, Recarga, Garagem, Panoramica, Inventario e Relatorio de Visita",
+    "EMV com rollback e resposta JSON controlada em falhas de upload",
+    "Indice em memoria por terminal para localizar a base EMV sem varrer todos os registros",
+    "Mídias R2 deixam de ser carregadas na RAM do worker e passam por URL temporária assinada",
+    "Galeria EMV com lazy loading e cache-busting específico",
+    "ADM pode retificar status EMV sem justificativa; Gestor Field mantém auditoria por motivo"
+  ]
+}

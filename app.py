@@ -40,7 +40,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V62 REV1"
+APP_RELEASE = "V62 REV2"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -3043,6 +3043,7 @@ def hardware_implantation_summary_api():
 @app.post("/api/implantacao-hardware/visitas")
 @hardware_implantation_required
 def hardware_field_visit_save_api():
+    if _activity_request_too_large(): return jsonify({"ok":False,"error":f"Envio excede {_ACTIVITY_REQUEST_MAX_MB} MB. Envie menos fotos por vez."}),413
     f=request.form
     required=("client","project","location_name","visit_date","reason")
     missing=[k for k in required if not (f.get(k) or "").strip()]
@@ -3079,9 +3080,7 @@ def hardware_field_visit_save_api():
     for ph in request.files.getlist("photos"):
         if not ph or not ph.filename: continue
         ext=Path(secure_filename(ph.filename)).suffix.lower() or ".jpg"; name=f"visit_{visit.id}_{uuid.uuid4().hex}{ext}"
-        if _r2_available():
-            data=ph.read(); key=f"hardware-visits/{datetime.utcnow().strftime('%Y/%m')}/{name}";_r2_put_bytes(key,data,ph.mimetype or mimetypes.guess_type(name)[0] or "application/octet-stream");name="r2__"+key
-        else: ph.save(UPLOAD_DIR/name)
+        name=_store_uploaded_file(ph,"hardware-visits",name,ph.mimetype or mimetypes.guess_type(name)[0] or "application/octet-stream")
         db.session.add(HardwareFieldVisitPhoto(visit_id=visit.id,stored_name=name,original_name=ph.filename,category="EVIDÊNCIA"))
     db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="HARDWARE_FIELD_VISIT_SAVE",entity_type="hardware_field_visit",entity_id=str(visit.id),detail=f"{visit.report_code} · {visit.status}"))
     db.session.commit()
@@ -3803,6 +3802,7 @@ def _optional_iso_datetime(value):
 @app.post("/api/inventory")
 @field_required
 def create_inventory():
+    if _activity_request_too_large(): return jsonify({"ok":False,"error":f"Envio excede {_ACTIVITY_REQUEST_MAX_MB} MB. Envie menos evidências por vez."}),413
     location_id = request.form.get("location_id", type=int)
     equipment_type = request.form.get("equipment_type", "").strip()
     base_asset_id = request.form.get("base_asset_id", type=int)
@@ -3916,13 +3916,7 @@ def create_inventory():
                 continue
             safe = secure_filename(f.filename)
             stored = f"{inv.id}_{secrets.token_hex(6)}_{safe}"
-            if _r2_available():
-                data = f.read()
-                key = f"inventory/{datetime.utcnow().strftime('%Y/%m')}/{stored}"
-                _r2_put_bytes(key, data, f.mimetype or "application/octet-stream")
-                stored = "r2__" + key
-            else:
-                f.save(UPLOAD_DIR / stored)
+            stored = _store_uploaded_file(f, "inventory", stored, f.mimetype or "application/octet-stream")
             db.session.add(Attachment(
                 inventory_id=inv.id,
                 original_name=f.filename,
@@ -3967,6 +3961,7 @@ def get_inventory_admin(inventory_id):
 @app.route("/api/inventory/<int:inventory_id>", methods=["PUT", "PATCH"])
 @field_required
 def update_inventory(inventory_id):
+    if _activity_request_too_large(): return jsonify({"ok":False,"error":f"Envio excede {_ACTIVITY_REQUEST_MAX_MB} MB. Envie menos evidências por vez."}),413
     inv = db.session.get(Inventory, inventory_id)
     if not inv:
         return jsonify({"ok": False, "error": "Registro não encontrado."}), 404
@@ -4065,13 +4060,7 @@ def update_inventory(inventory_id):
             continue
         safe = secure_filename(f.filename) or f"evidencia_{secrets.token_hex(4)}.jpg"
         stored = f"{inv.id}_{secrets.token_hex(6)}_{safe}"
-        if _r2_available():
-            data = f.read()
-            key = f"inventory/{datetime.utcnow().strftime('%Y/%m')}/{stored}"
-            _r2_put_bytes(key, data, f.mimetype or "application/octet-stream")
-            stored = "r2__" + key
-        else:
-            f.save(UPLOAD_DIR / stored)
+        stored = _store_uploaded_file(f, "inventory", stored, f.mimetype or "application/octet-stream")
         db.session.add(Attachment(inventory_id=inv.id, original_name=f.filename, stored_name=stored, mime_type=f.mimetype))
         added_photos += 1
     detail = f"Registro editado por {session.get('name','usuário')}; {added_photos} nova(s) evidência(s)"
@@ -4717,20 +4706,36 @@ def _cached_media_response(raw, mimetype, filename=None, thumb=False):
 @app.route("/uploads/<path:name>")
 @login_required
 def uploaded(name):
-    # V26: anexos novos podem viver no R2. O prefixo r2__ mantém compatibilidade
-    # com a coluna stored_name já existente, sem migração destrutiva do banco.
+    # V62 REV2: nunca baixar objetos R2 grandes para a RAM do worker.
+    # Após validar a sessão, o backend entrega uma URL temporária assinada e o
+    # navegador baixa a mídia diretamente do R2. Isso evita OOM e libera o único
+    # worker Gunicorn para atender a operação de campo.
     if name.startswith("r2__"):
         key = name[4:]
         try:
-            raw = _r2_get_bytes(key)
-            ext = Path(key).suffix.lower()
-            mime = {".jpg":"image/jpeg",".jpeg":"image/jpeg",".png":"image/png",".webp":"image/webp",".mp4":"video/mp4"}.get(ext,"application/octet-stream")
-            return _cached_media_response(raw,mime,Path(key).name,thumb=request.args.get("thumb")=="1")
+            url = r2_client().generate_presigned_url(
+                "get_object",
+                Params={"Bucket": os.environ["R2_BUCKET_NAME"], "Key": key},
+                ExpiresIn=900,
+            )
+            resp = redirect(url, code=302)
+            resp.headers["Cache-Control"] = "private, max-age=300"
+            return resp
         except Exception:
+            app.logger.exception("Falha ao gerar URL temporária R2 para %s", key)
             abort(404)
     path=UPLOAD_DIR/name
-    if request.args.get("thumb")=="1" and path.exists() and mimetypes.guess_type(name)[0] and mimetypes.guess_type(name)[0].startswith("image/"):
-        return _cached_media_response(path.read_bytes(),mimetypes.guess_type(name)[0],Path(name).name,thumb=True)
+    # Para arquivos locais, miniaturas antigas continuam disponíveis, mas sem
+    # materializar o original em bytes quando não houver necessidade.
+    if request.args.get("thumb") == "1" and path.exists():
+        mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
+        if mime.startswith("image/"):
+            try:
+                # Thumbnail local é usada apenas para arquivos locais; estes são
+                # poucos e não são a origem do incidente de memória observado.
+                return _cached_media_response(path.read_bytes(), mime, Path(name).name, thumb=True)
+            except Exception:
+                pass
     return send_from_directory(UPLOAD_DIR,name,max_age=604800)
 
 
@@ -5836,6 +5841,57 @@ def _r2_put_bytes(key, data, content_type=None):
     if content_type:
         kwargs["ContentType"] = content_type
     r2_client().put_object(**kwargs)
+
+
+# V62 REV2 — uploads de evidências com memória limitada.
+# Nunca materializa a foto inteira em bytes antes de enviá-la ao R2.
+_ACTIVITY_UPLOAD_MAX_MB = max(1, int(os.environ.get("ACTIVITY_UPLOAD_MAX_MB", "15") or 15))
+_ACTIVITY_REQUEST_MAX_MB = max(_ACTIVITY_UPLOAD_MAX_MB, int(os.environ.get("ACTIVITY_REQUEST_MAX_MB", "40") or 40))
+
+def _uploaded_file_size(upload):
+    try:
+        stream = upload.stream
+        pos = stream.tell()
+        stream.seek(0, 2)
+        size = int(stream.tell() or 0)
+        stream.seek(pos)
+        return size
+    except Exception:
+        return 0
+
+def _activity_request_too_large():
+    size = int(request.content_length or 0)
+    return bool(size and size > _ACTIVITY_REQUEST_MAX_MB * 1024 * 1024)
+
+def _store_uploaded_file(upload, folder, stored_name, content_type=None, max_mb=None):
+    """Persiste FileStorage sem f.read(), evitando duplicar imagens grandes na RAM.
+    Retorna o stored_name local ou r2__<key>.
+    """
+    if not upload or not getattr(upload, "filename", None):
+        raise ValueError("Arquivo inválido.")
+    limit_mb = int(max_mb or _ACTIVITY_UPLOAD_MAX_MB)
+    size = _uploaded_file_size(upload)
+    if size and size > limit_mb * 1024 * 1024:
+        raise ValueError(f"O arquivo {upload.filename} excede {limit_mb} MB. Reduza a resolução e tente novamente.")
+    mime = content_type or upload.mimetype or "application/octet-stream"
+    try:
+        upload.stream.seek(0)
+    except Exception:
+        pass
+    if _r2_available():
+        key = f"{folder}/{datetime.utcnow().strftime('%Y/%m')}/{stored_name}"
+        kwargs = {
+            "Bucket": os.environ["R2_BUCKET_NAME"],
+            "Key": key,
+            "Body": upload.stream,
+            "ContentType": mime,
+        }
+        if size:
+            kwargs["ContentLength"] = size
+        r2_client().put_object(**kwargs)
+        return "r2__" + key
+    upload.save(UPLOAD_DIR / stored_name)
+    return stored_name
 
 
 def _r2_get_bytes(key):
@@ -8042,6 +8098,7 @@ def chip_swap_list_api():
 @app.post("/api/chip-swaps/<int:location_id>/<int:base_asset_id>")
 @field_required
 def chip_swap_save_api(location_id, base_asset_id):
+    if _activity_request_too_large(): return jsonify({"ok":False,"error":f"Envio excede {_ACTIVITY_REQUEST_MAX_MB} MB. Envie menos fotos por vez."}),413
     _ensure_chip_swap_tables()
     loc = db.session.get(Location, location_id)
     asset = db.session.get(BaseAsset, base_asset_id)
@@ -8075,11 +8132,7 @@ def chip_swap_save_api(location_id, base_asset_id):
     for f in files:
         safe = secure_filename(f.filename) or f"chip_{secrets.token_hex(4)}.jpg"
         stored = f"chip_{sw.id}_{secrets.token_hex(6)}_{safe}"
-        if _r2_available():
-            data = f.read(); key = f"chip-swaps/{datetime.utcnow().strftime('%Y/%m')}/{stored}"
-            _r2_put_bytes(key, data, f.mimetype or "application/octet-stream"); stored = "r2__" + key
-        else:
-            f.save(UPLOAD_DIR/stored)
+        stored = _store_uploaded_file(f, "chip-swaps", stored, f.mimetype or "application/octet-stream")
         db.session.add(ChipSwapPhoto(chip_swap_id=sw.id, original_name=f.filename, stored_name=stored, mime_type=f.mimetype, uploaded_by=session["user_id"]))
     db.session.flush()
     photo_count = ChipSwapPhoto.query.filter_by(chip_swap_id=sw.id).count()
@@ -8171,15 +8224,9 @@ def chip_swap_replace_photo_api(photo_id):
     safe=secure_filename(f.filename) or f"chip_{secrets.token_hex(4)}.jpg"
     stored=f"chip_{sw.id}_{secrets.token_hex(6)}_{safe}"
     try:
-        if _r2_available():
-            data=f.read()
-            if not data:
-                return jsonify({"ok":False,"error":"Arquivo vazio."}),400
-            key=f"chip-swaps/{datetime.utcnow().strftime('%Y/%m')}/{stored}"
-            _r2_put_bytes(key,data,f.mimetype or "application/octet-stream")
-            stored="r2__"+key
-        else:
-            f.save(UPLOAD_DIR/stored)
+        if _uploaded_file_size(f) == 0:
+            return jsonify({"ok":False,"error":"Arquivo vazio."}),400
+        stored=_store_uploaded_file(f,"chip-swaps",stored,f.mimetype or "application/octet-stream")
         old_stored=ph.stored_name
         ph.original_name=f.filename;ph.stored_name=stored;ph.mime_type=f.mimetype;ph.uploaded_by=session["user_id"];ph.created_at=datetime.utcnow()
         sw.status="CONCLUÍDA";sw.completed_at=sw.completed_at or datetime.utcnow();sw.updated_at=datetime.utcnow()
@@ -8383,6 +8430,13 @@ def _v41_emv_rows():
     if rows: _emv_base_rows_cache=rows
     return rows
 
+_emv_base_by_terminal_cache = None
+def _v41_emv_by_terminal():
+    global _emv_base_by_terminal_cache
+    if _emv_base_by_terminal_cache is None:
+        _emv_base_by_terminal_cache = {str(x.get("terminal") or ""): x for x in _v41_emv_rows() if x.get("terminal")}
+    return _emv_base_by_terminal_cache
+
 def _ensure_emv_tables():
     EmvChipSwap.__table__.create(bind=db.engine,checkfirst=True); EmvChipSwapPhoto.__table__.create(bind=db.engine,checkfirst=True)
     try:
@@ -8437,6 +8491,7 @@ def garage_chip_list_api():
 @app.post('/api/garage-chip-swaps/<int:base_id>')
 @field_required
 def garage_chip_save_api(base_id):
+    if _activity_request_too_large(): return jsonify({"ok":False,"error":f"Envio excede {_ACTIVITY_REQUEST_MAX_MB} MB. Envie menos fotos por vez."}),413
     b=db.session.get(GarageChipBase,base_id)
     if not b:return jsonify({'ok':False,'error':'Terminal não encontrado na base.'}),404
     sw=GarageChipSwap.query.filter_by(base_id=base_id).first()
@@ -8446,9 +8501,7 @@ def garage_chip_save_api(base_id):
     files=[f for f in request.files.getlist('photos') if f and f.filename]
     for f in files:
         safe=secure_filename(f.filename) or f'garage_{secrets.token_hex(4)}.jpg'; stored=f'garage_{sw.id}_{secrets.token_hex(6)}_{safe}'
-        if _r2_available():
-            data=f.read(); key=f'garage-chip-swaps/{datetime.utcnow().strftime("%Y/%m")}/{stored}'; _r2_put_bytes(key,data,f.mimetype or 'application/octet-stream'); stored='r2__'+key
-        else:f.save(UPLOAD_DIR/stored)
+        stored=_store_uploaded_file(f,'garage-chip-swaps',stored,f.mimetype or 'application/octet-stream')
         db.session.add(GarageChipPhoto(swap_id=sw.id,original_name=f.filename,stored_name=stored,mime_type=f.mimetype,uploaded_by=session['user_id']))
     if files or GarageChipPhoto.query.filter_by(swap_id=sw.id).count(): sw.status='CONCLUÍDA'; sw.completed_at=sw.completed_at or datetime.utcnow()
     db.session.commit(); return jsonify({'ok':True,'status':sw.status})
@@ -8512,7 +8565,7 @@ def emv_chip_list():
         photos=[]
         if sw:
             for ph in photo_map.get(sw.id,[]):
-                photos.append({"id":ph.id,"name":ph.original_name,"url":url_for("uploaded",name=ph.stored_name),"created_at":ph.created_at.isoformat() if ph.created_at else None})
+                photos.append({"id":ph.id,"name":ph.original_name,"url":url_for("uploaded",name=ph.stored_name),"thumb_url":url_for("uploaded",name=ph.stored_name,thumb=1),"created_at":ph.created_at.isoformat() if ph.created_at else None})
         tech=users.get(sw.technician_id) if sw else None; completer=users.get(getattr(sw,"completed_by_id",None)) if sw else None
         d.update({"status":sw.status if sw else "PENDENTE","test_result":sw.test_result if sw else None,"notes":sw.notes if sw else "","swap_id":sw.id if sw else None,"station_name":station_name,"photos":photos,"technician":tech.name if tech else "","completed_by":completer.name if completer else (tech.name if sw and sw.completed_at and tech else ""),"completed_by_role":completer.role if completer else (tech.role if sw and sw.completed_at and tech else ""),"completed_at":sw.completed_at.isoformat() if sw and sw.completed_at else None,"updated_at":sw.updated_at.isoformat() if sw and sw.updated_at else None})
         rows.append(d)
@@ -8520,7 +8573,7 @@ def emv_chip_list():
     base_terms={str(x.get("terminal") or "") for x in _v41_emv_rows()}
     for sw in swap_rows:
         if not getattr(sw,"manual_entry",False) or sw.terminal in base_terms: continue
-        photos=[{"id":ph.id,"name":ph.original_name,"url":url_for("uploaded",name=ph.stored_name),"created_at":ph.created_at.isoformat() if ph.created_at else None} for ph in photo_map.get(sw.id,[])]
+        photos=[{"id":ph.id,"name":ph.original_name,"url":url_for("uploaded",name=ph.stored_name),"thumb_url":url_for("uploaded",name=ph.stored_name,thumb=1),"created_at":ph.created_at.isoformat() if ph.created_at else None} for ph in photo_map.get(sw.id,[])]
         tech=users.get(sw.technician_id); completer=users.get(getattr(sw,"completed_by_id",None))
         rows.append({"company":sw.company or "","line":sw.line or "","station":sw.station or "","station_name":sw.station or "","terminal":sw.terminal,"block_number":sw.block_number or "","version":"","ip":"","mask":"","gateway":"","dns1":"","dns2":"","group":"","manual_entry":True,"status":sw.status or "PENDENTE","test_result":sw.test_result,"notes":sw.notes or "","swap_id":sw.id,"photos":photos,"technician":tech.name if tech else "","completed_by":completer.name if completer else "","completed_at":sw.completed_at.isoformat() if sw.completed_at else None,"updated_at":sw.updated_at.isoformat() if sw.updated_at else None})
     return jsonify({"ok":True,"rows":rows})
@@ -8540,35 +8593,76 @@ def emv_chip_manual_create():
 @app.post("/api/emv-chip-swaps/<terminal>")
 @emv_field_required
 def emv_chip_save(terminal):
-    _ensure_emv_tables(); base=next((x for x in _v41_emv_rows() if x["terminal"]==terminal),None)
+    # V62 REV2: proteção contra OOM em upload de fotos.
+    # O limite é validado antes de request.form/request.files serem materializados.
+    if _activity_request_too_large():
+        return jsonify({"ok":False,"error":f"Envio excede {_ACTIVITY_REQUEST_MAX_MB} MB. Envie menos fotos por vez."}),413
+    _ensure_emv_tables()
+    base=_v41_emv_by_terminal().get(str(terminal))
     sw=EmvChipSwap.query.filter_by(terminal=terminal).first()
-    if not base and not (sw and getattr(sw,"manual_entry",False)): return jsonify({"ok":False,"error":"Bloqueio EMV não encontrado na base."}),404
+    if not base and not (sw and getattr(sw,"manual_entry",False)):
+        return jsonify({"ok":False,"error":"Bloqueio EMV não encontrado na base."}),404
     if sw and (sw.status or "").upper().replace("CONCLUIDA","CONCLUÍDA")=="CONCLUÍDA" and session.get("role") in ("technician","technician_implantation"):
         return jsonify({"ok":False,"error":"Registro concluído e bloqueado. Solicite ao Gestor/ADM a reabertura para EM ANDAMENTO."}),409
-    if not sw: sw=EmvChipSwap(terminal=terminal,technician_id=session["user_id"]);db.session.add(sw);db.session.flush()
-    sw.technician_id=session["user_id"];sw.test_result=(request.form.get("test_result") or "").strip();sw.notes=(request.form.get("notes") or "").strip();sw.latitude=_optional_float(request.form.get("latitude"));sw.longitude=_optional_float(request.form.get("longitude"));sw.gps_accuracy=_optional_float(request.form.get("gps_accuracy"));sw.updated_at=datetime.utcnow()
-    if sw.test_result and sw.test_result!="TESTADO_OK" and not sw.notes: return jsonify({"ok":False,"error":"Para resultado diferente de OK, a observação é obrigatória."}),400
-    for f in [x for x in request.files.getlist("photos") if x and x.filename]:
-        safe=secure_filename(f.filename) or f"emv_{secrets.token_hex(4)}.jpg";stored=f"emv_{sw.id}_{secrets.token_hex(6)}_{safe}"
-        if _r2_available(): data=f.read();key=f"emv-chip-swaps/{datetime.utcnow().strftime('%Y/%m')}/{stored}";_r2_put_bytes(key,data,f.mimetype or "application/octet-stream");stored="r2__"+key
-        else: f.save(UPLOAD_DIR/stored)
-        db.session.add(EmvChipSwapPhoto(swap_id=sw.id,original_name=f.filename,stored_name=stored,mime_type=f.mimetype,uploaded_by=session["user_id"]))
-    db.session.flush(); photos=EmvChipSwapPhoto.query.filter_by(swap_id=sw.id).count();sw.status="CONCLUÍDA" if photos else "PENDENTE";sw.completed_at=datetime.utcnow() if photos else None;sw.completed_by_id=session.get("user_id") if photos else None
-    db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="EMV_CHIP_SWAP_UPDATE",entity_type="emv_chip_swap",entity_id=str(sw.id),detail=f"{terminal} · {sw.status} · teste {sw.test_result or '—'} · {photos} foto(s)"));db.session.commit()
-    return jsonify({"ok":True,"status":sw.status,"photo_count":photos})
+    files=[x for x in request.files.getlist("photos") if x and x.filename]
+    try:
+        # Valida cada arquivo antes de alterar o registro.
+        for f in files:
+            size=_uploaded_file_size(f)
+            if size and size > _ACTIVITY_UPLOAD_MAX_MB*1024*1024:
+                return jsonify({"ok":False,"error":f"A foto {f.filename} excede {_ACTIVITY_UPLOAD_MAX_MB} MB. Reduza a resolução e tente novamente."}),413
+        if not sw:
+            sw=EmvChipSwap(terminal=terminal,technician_id=session["user_id"])
+            db.session.add(sw);db.session.flush()
+        sw.technician_id=session["user_id"]
+        sw.test_result=(request.form.get("test_result") or "").strip()
+        sw.notes=(request.form.get("notes") or "").strip()
+        sw.latitude=_optional_float(request.form.get("latitude"))
+        sw.longitude=_optional_float(request.form.get("longitude"))
+        sw.gps_accuracy=_optional_float(request.form.get("gps_accuracy"))
+        sw.updated_at=datetime.utcnow()
+        if sw.test_result and sw.test_result!="TESTADO_OK" and not sw.notes:
+            db.session.rollback()
+            return jsonify({"ok":False,"error":"Para resultado diferente de OK, a observação é obrigatória."}),400
+        for f in files:
+            safe=secure_filename(f.filename) or f"emv_{secrets.token_hex(4)}.jpg"
+            stored=f"emv_{sw.id}_{secrets.token_hex(6)}_{safe}"
+            stored=_store_uploaded_file(f,"emv-chip-swaps",stored,f.mimetype or "application/octet-stream")
+            db.session.add(EmvChipSwapPhoto(swap_id=sw.id,original_name=f.filename,stored_name=stored,mime_type=f.mimetype,uploaded_by=session["user_id"]))
+            # Libera referências do upload antes de processar a próxima evidência.
+            try: f.close()
+            except Exception: pass
+        db.session.flush()
+        photos=EmvChipSwapPhoto.query.filter_by(swap_id=sw.id).count()
+        sw.status="CONCLUÍDA" if photos else "PENDENTE"
+        sw.completed_at=datetime.utcnow() if photos else None
+        sw.completed_by_id=session.get("user_id") if photos else None
+        db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="EMV_CHIP_SWAP_UPDATE",entity_type="emv_chip_swap",entity_id=str(sw.id),detail=f"{terminal} · {sw.status} · teste {sw.test_result or '—'} · {photos} foto(s)"))
+        db.session.commit()
+        return jsonify({"ok":True,"status":sw.status,"photo_count":photos})
+    except ValueError as exc:
+        db.session.rollback()
+        return jsonify({"ok":False,"error":str(exc)}),413
+    except Exception as exc:
+        db.session.rollback()
+        app.logger.exception("V62 REV2 falha controlada ao salvar EMV %s",terminal)
+        return jsonify({"ok":False,"error":"Não foi possível salvar a troca EMV. Tente novamente com menos fotos.","detail":str(exc)[:160]}),500
 
 @app.post("/api/emv-chip-swaps/<terminal>/admin-status")
 @login_required
 def emv_chip_admin_status(terminal):
-    if session.get("role") not in ("manager","manager_field"): return jsonify({"ok":False,"error":"Alteração administrativa restrita ao Gestor/ADM."}),403
+    role=session.get("role")
+    if role not in ("manager","manager_field"): return jsonify({"ok":False,"error":"Alteração administrativa restrita ao Gestor/ADM."}),403
     _ensure_emv_tables(); sw=EmvChipSwap.query.filter_by(terminal=terminal).first(); d=request.get_json(silent=True) or {}; new=(d.get("status") or "").strip().upper().replace("CONCLUIDA","CONCLUÍDA"); reason=(d.get("reason") or "").strip()
     if not sw: return jsonify({"ok":False,"error":"Registro não encontrado."}),404
     if new not in {"PENDENTE","EM ANDAMENTO","CONCLUÍDA"}: return jsonify({"ok":False,"error":"Status inválido."}),400
-    if not reason: return jsonify({"ok":False,"error":"Informe o motivo da alteração."}),400
+    # ADM (role=manager) pode retificar o status sem justificativa; Gestor Field
+    # mantém justificativa obrigatória para preservar a auditoria operacional.
+    if role != "manager" and not reason: return jsonify({"ok":False,"error":"Informe o motivo da alteração."}),400
     old=sw.status; sw.status=new; sw.updated_at=datetime.utcnow()
     if new=="CONCLUÍDA": sw.completed_at=sw.completed_at or datetime.utcnow(); sw.completed_by_id=sw.completed_by_id or session.get("user_id")
     else: sw.completed_at=None
-    db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="EMV_CHIP_SWAP_ADMIN_STATUS",entity_type="emv_chip_swap",entity_id=str(sw.id),detail=f"{terminal} · {old} -> {new} · motivo: {reason}"));db.session.commit();return jsonify({"ok":True,"status":new})
+    db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="EMV_CHIP_SWAP_ADMIN_STATUS",entity_type="emv_chip_swap",entity_id=str(sw.id),detail=f"{terminal} · {old} -> {new} · motivo: {reason or 'retificação ADM'}"));db.session.commit();return jsonify({"ok":True,"status":new})
 
 @app.delete("/api/emv-chip-swaps/photos/<int:photo_id>")
 @emv_field_required
@@ -9668,6 +9762,7 @@ def panorama_list_api():
 @app.post("/api/panoramas/<int:location_id>/points")
 @field_required
 def panorama_upload_api(location_id):
+    if _activity_request_too_large(): return jsonify({"ok":False,"error":f"Envio excede {_ACTIVITY_REQUEST_MAX_MB} MB. Envie menos fotos por vez."}),413
     # V40.1: upload panorâmico com resposta JSON garantida para o mobile.
     # Antes, qualquer falha de storage/R2 escapava como HTML 500 e o JavaScript
     # ficava sem feedback ao tocar em "Salvar fotos".
@@ -9712,15 +9807,7 @@ def panorama_upload_api(location_id):
             safe=secure_filename(f.filename) or f"panorama_{secrets.token_hex(4)}.jpg"
             stored=f"pan_{pt.id}_{secrets.token_hex(6)}_{safe}"
             mime=f.mimetype or "application/octet-stream"
-            if _r2_available():
-                data=f.read()
-                if not data:
-                    continue
-                key=f"panorama/{datetime.utcnow().strftime('%Y/%m')}/{stored}"
-                _r2_put_bytes(key,data,mime)
-                stored="r2__"+key
-            else:
-                f.save(UPLOAD_DIR/stored)
+            stored=_store_uploaded_file(f,"panorama",stored,mime)
             db.session.add(PanoramaPhoto(
                 point_id=pt.id,original_name=f.filename,stored_name=stored,mime_type=mime,
                 uploaded_by=session["user_id"],latitude=lat,longitude=lon
