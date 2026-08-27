@@ -20,7 +20,7 @@ import threading
 import html as html_lib
 from functools import wraps
 
-from flask import Flask, has_request_context, render_template, request, redirect, url_for, session, jsonify, flash, send_from_directory, Response, send_file, make_response, g
+from flask import Flask, has_request_context, render_template, request, redirect, url_for, session, jsonify, flash, send_from_directory, Response, send_file, make_response, g, abort
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import UniqueConstraint, Index, func, case, text, and_, event
 from sqlalchemy.exc import IntegrityError
@@ -40,7 +40,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V60 REV3"
+APP_RELEASE = "V62"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -721,6 +721,22 @@ class GarageChipPhoto(db.Model):
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
 
 
+class DashboardDefinition(db.Model):
+    __tablename__ = "dashboard_definitions"
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(180), nullable=False)
+    slug = db.Column(db.String(180), nullable=False, unique=True, index=True)
+    data_source = db.Column(db.String(80), nullable=False, default="TOPDESK", index=True)
+    config_json = db.Column(db.Text, nullable=False, default="{}")
+    published = db.Column(db.Boolean, nullable=False, default=False, index=True)
+    tv_enabled = db.Column(db.Boolean, nullable=False, default=False, index=True)
+    tv_order = db.Column(db.Integer, nullable=False, default=0)
+    tv_seconds = db.Column(db.Integer, nullable=False, default=30)
+    allowed_roles_json = db.Column(db.Text, nullable=False, default="[]")
+    created_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
 class EmvChipSwap(db.Model):
     __tablename__ = "emv_chip_swaps"
     id = db.Column(db.Integer, primary_key=True)
@@ -1008,7 +1024,7 @@ ACCESS_GROUPS = {
         "field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga"
     )),
     "implantation": ("Implantação de Hardware", (
-        "implantation.dashboard","implantation.visits","implantation.reports","implantation.emv"
+        "implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage"
     )),
     "teams": ("RH / Equipes", (
         "teams.map","teams.today","teams.schedule","teams.manage","teams.export"
@@ -1031,7 +1047,7 @@ ACCESS_ALL = set(ACCESS_MODULES) | set(ACCESS_SUBMODULES)
 ACCESS_LABELS = {
  "dashboard.general":"Dashboard Geral",
  "field.dashboard":"Dashboard Field","field.inventory":"Inventário / Lançamento","field.calls":"Chamados","field.preventive":"Solicitação Preventiva ATM","field.equipment":"Equipamentos","field.evidence":"Evidências","field.panorama":"Visão Panorâmica","field.chip_recarga":"Troca de Chips – Recarga",
- "implantation.dashboard":"Dashboard Implantação","implantation.visits":"Visita a Campo / Relatório de Visita","implantation.reports":"Relatórios / Visitas recentes","implantation.emv":"Troca de Chips EMV – Trilhos",
+ "implantation.dashboard":"Dashboard Implantação","implantation.visits":"Visita a Campo / Relatório de Visita","implantation.reports":"Relatórios / Visitas recentes","implantation.emv":"Troca de Chips EMV – Trilhos","implantation.garage":"Troca de Chips Garagem",
  "teams.map":"Mapa operacional","teams.today":"Operação de Hoje","teams.schedule":"Escala por dias","teams.manage":"Gestão de equipes / escala","teams.export":"Exportar dados",
  "users.view":"Visualizar usuários","users.create":"Criar usuário","users.edit":"Editar usuário","users.activate":"Ativar / Desativar","users.delete":"Excluir / Arquivar","users.password":"Redefinir senha","users.export":"Exportar Excel",
  "finance.dashboard":"Dashboard Financeira","finance.support":"Suporte a Campo","finance.collection":"Coleta de Valores","finance.apuracao":"Apuração de Numerário","finance.assistance":"Assistência Técnica","finance.implantation":"Implantação de Hardware","finance.entries":"Lançamentos","finance.suppliers":"Empresas / Fornecedores","finance.import":"Importar planilha","finance.edit":"Editar lançamentos","finance.delete":"Excluir lançamentos",
@@ -1051,9 +1067,9 @@ def _expand_legacy_access(values):
 def _default_access_for_role(role):
     defaults={
       "manager":set(ACCESS_SUBMODULES),
-      "manager_field":{"dashboard.general","field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","teams.map","teams.today","teams.schedule","teams.manage","teams.export","finance.dashboard","management.calls","management.360","management.notifications","management.diagnostics","about.versions"},
+      "manager_field":{"dashboard.general","field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage","teams.map","teams.today","teams.schedule","teams.manage","teams.export","finance.dashboard","management.calls","management.360","management.notifications","management.diagnostics","about.versions"},
       "technician":{"field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","about.versions"},
-      "technician_implantation":{"field.inventory","field.equipment","field.evidence","field.panorama","field.chip_recarga","implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","about.versions"},
+      "technician_implantation":{"field.inventory","field.equipment","field.evidence","field.panorama","field.chip_recarga","implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage","about.versions"},
       "consultation":{"dashboard.general","field.dashboard","field.inventory","field.equipment","field.evidence","field.panorama","field.chip_recarga","teams.map","teams.today","teams.schedule","about.versions"},
       "hr":{"teams.map","teams.today","teams.schedule","teams.manage","teams.export","users.view","users.create","users.edit","users.activate","users.password","users.export","about.versions"},
       "dispatcher":{"dashboard.general","field.calls","field.chip_recarga","teams.map","teams.today","teams.schedule","management.calls","about.versions"},
@@ -8297,12 +8313,13 @@ def chip_swap_export_xlsx():
 
 _emv_base_rows_cache = None
 def _v41_emv_rows():
+    """V62: base EMV consolidada. Mescla a base histórica com a planilha completa de não migrados.
+    Normaliza espaços/aliases de empresa e infere Linha 8/9 pelo prefixo das estações 5xx/6xx.
+    """
     global _emv_base_rows_cache
     if _emv_base_rows_cache:
         return _emv_base_rows_cache
-    candidates=[BASE_DIR / "data_emv.xlsx", DATA_DIR / "data_emv.xlsx"]
-    path=next((x for x in candidates if x.exists()),None)
-    rows=[]
+    candidates=[BASE_DIR / "data_emv.xlsx", DATA_DIR / "data_emv.xlsx", BASE_DIR / "CHIPS NÃO MIGRADOS.xlsx", DATA_DIR / "CHIPS NÃO MIGRADOS.xlsx"]
     network_by_prefix={str(r.get("prefix") or ""):r for r in _load_station_network_rows() if r.get("prefix")}
     block_cfg={}
     try:
@@ -8311,27 +8328,56 @@ def _v41_emv_rows():
         block_cfg=payload.get("by_prefix") or {}
     except Exception:
         block_cfg={}
-    if path:
-        wb=load_workbook(path,read_only=True,data_only=True); ws=wb.active
-        headers=[str(x or "").strip().lower() for x in next(ws.iter_rows(values_only=True))]
-        for vals in ws.iter_rows(min_row=2,values_only=True):
-            d=dict(zip(headers,vals)); terminal=str(d.get("terminal") or "").split('.')[0].strip()
-            if not terminal: continue
-            key=re.sub(r"\D","",terminal); cfg=block_cfg.get(key) or network_by_prefix.get(key) or {}
-            rows.append({"tp_id":d.get("tp_id"),"company":d.get("empresa") or "","terminal":terminal,"version":d.get("versão") or "","ip":d.get("ip") or cfg.get("ip") or "","station":d.get("estação") or "","line":d.get("linha") or "","mask":cfg.get("mask") or "","gateway":cfg.get("gateway") or "","dns1":cfg.get("dns1") or "","dns2":cfg.get("dns2") or "","group":cfg.get("group") or "","blocking_number":cfg.get("blocking_number") or terminal[-2:]})
-        wb.close()
-    # Fallback defensivo: se o arquivo não estiver no deploy, usa a base de ativos de Bloqueio.
+    merged={}
+    def clean_company(v):
+        x=" ".join(str(v or "").strip().split())
+        aliases={
+          "VIA MOBILIDADE LINHAS 8 E 9":"VIA MOBILIDADE LINHAS 8 E 9",
+          "VIA MOBILIDADE LINHA 8 E 9":"VIA MOBILIDADE LINHAS 8 E 9",
+          "VIAMOBILIDADE LINHAS 8 E 9":"VIA MOBILIDADE LINHAS 8 E 9",
+        }
+        return aliases.get(x.upper(),x)
+    def infer_line(company,station,raw_line):
+        if str(raw_line or "").strip(): return str(raw_line).strip()
+        st=str(station or "").strip(); co=clean_company(company).upper()
+        if co=="VIA MOBILIDADE LINHAS 8 E 9":
+            m=re.match(r"(\d{3})",st)
+            if m:
+                n=int(m.group(1))
+                if 500 <= n < 600: return "Linha 8 Diamante"
+                if 600 <= n < 700: return "Linha 9 Esmeralda"
+            return "Linhas 8 e 9"
+        return ""
+    for path in candidates:
+        if not path.exists(): continue
+        try:
+            wb=load_workbook(path,read_only=True,data_only=True); ws=wb.active
+            headers=[str(x or "").strip().lower() for x in next(ws.iter_rows(values_only=True))]
+            for vals in ws.iter_rows(min_row=2,values_only=True):
+                d=dict(zip(headers,vals)); terminal=str(d.get("terminal") or "").split('.')[0].strip()
+                if not terminal: continue
+                key=re.sub(r"\D","",terminal); cfg=block_cfg.get(key) or network_by_prefix.get(key) or {}
+                company=clean_company(d.get("empresa") or "")
+                station=str(d.get("estação") or d.get("estacao") or "").strip()
+                line=infer_line(company,station,d.get("linha"))
+                row={"tp_id":d.get("tp_id"),"company":company,"terminal":terminal,"version":str(d.get("versão") or d.get("versao") or "").strip(),"ip":str(d.get("ip") or cfg.get("ip") or "").strip(),"station":station,"line":line,"mask":cfg.get("mask") or "","gateway":cfg.get("gateway") or "","dns1":cfg.get("dns1") or "","dns2":cfg.get("dns2") or "","group":cfg.get("group") or "","blocking_number":cfg.get("blocking_number") or terminal[-2:]}
+                if terminal in merged:
+                    old=merged[terminal]
+                    for k,v in row.items():
+                        if v not in (None,""): old[k]=v
+                else: merged[terminal]=row
+            wb.close()
+        except Exception as exc:
+            app.logger.warning("V62 falha lendo base EMV %s: %s",path.name,exc)
+    rows=list(merged.values())
     if not rows:
         try:
             assets=BaseAsset.query.filter(func.upper(BaseAsset.equipment_type).like("%BLOQ%")).all()
             for a in assets:
                 terminal=str(a.terminal_number or a.asset_identifier or "").strip()
-                if not terminal: continue
-                rows.append({"tp_id":None,"company":a.company or "","terminal":terminal,"version":"","ip":getattr(a,"ip_address",None) or "","station":a.locality or "","line":a.line or "","mask":"","gateway":"","dns1":"","dns2":"","group":"","blocking_number":terminal[-2:]})
-        except Exception as exc:
-            app.logger.warning("Fallback base EMV indisponível: %s",exc)
-    if rows:
-        _emv_base_rows_cache=rows
+                if terminal: rows.append({"tp_id":None,"company":clean_company(a.company),"terminal":terminal,"version":"","ip":getattr(a,"ip_address",None) or "","station":a.locality or "","line":a.line or "","mask":"","gateway":"","dns1":"","dns2":"","group":"","blocking_number":terminal[-2:]})
+        except Exception as exc: app.logger.warning("Fallback base EMV indisponível: %s",exc)
+    if rows: _emv_base_rows_cache=rows
     return rows
 
 def _ensure_emv_tables():
@@ -8408,12 +8454,28 @@ def garage_chip_save_api(base_id):
 @login_required
 def garage_chip_dashboard_api():
     rows=_garage_payload(); total=len(rows); done=sum(x['status']=='CONCLUÍDA' for x in rows); prog=sum(x['status']=='EM ANDAMENTO' for x in rows)
-    by_company={}; by_tech={}
+    by_company={}; by_tech={}; by_model={}; by_status={}; by_result={}
     for x in rows:
-        c=by_company.setdefault(x['company'],{'company':x['company'],'total':0,'concluded':0});c['total']+=1;c['concluded']+=x['status']=='CONCLUÍDA'
+        c=by_company.setdefault(x['company'],{'company':x['company'],'name':x['company'],'total':0,'concluded':0,'count':0});c['total']+=1;c['count']+=1;c['concluded']+=x['status']=='CONCLUÍDA'
         if x['technician']:
-            t=by_tech.setdefault(x['technician'],{'name':x['technician'],'total':0,'concluded':0});t['total']+=1;t['concluded']+=x['status']=='CONCLUÍDA'
-    return jsonify({'ok':True,'summary':{'total':total,'concluded':done,'in_progress':prog,'pending':total-done-prog,'percent':round(done*100/total,1) if total else 0},'companies':list(by_company.values()),'technicians':list(by_tech.values())})
+            t=by_tech.setdefault(x['technician'],{'name':x['technician'],'total':0,'concluded':0,'count':0});t['total']+=1;t['count']+=1;t['concluded']+=x['status']=='CONCLUÍDA'
+        mk=x.get('model') or 'Não informado'; by_model[mk]=by_model.get(mk,0)+1
+        st=x.get('status') or 'PENDENTE'; by_status[st]=by_status.get(st,0)+1
+        rs=x.get('test_result') or 'Não informado'; by_result[rs]=by_result.get(rs,0)+1
+    pack=lambda d:[{'name':k,'count':v} for k,v in sorted(d.items(),key=lambda z:z[1],reverse=True)]
+    return jsonify({'ok':True,'summary':{'total':total,'concluded':done,'in_progress':prog,'pending':total-done-prog,'percent':round(done*100/total,1) if total else 0},'companies':list(by_company.values()),'technicians':list(by_tech.values()),'models':pack(by_model),'statuses':pack(by_status),'results':pack(by_result)})
+
+@app.get('/api/garage-chip-swaps/export.xlsx')
+@login_required
+def garage_chip_export_xlsx():
+    rows=_garage_payload(); company=(request.args.get('company') or '').strip(); model=(request.args.get('model') or '').strip(); status=(request.args.get('status') or '').strip(); technician=(request.args.get('technician') or '').strip()
+    rows=[x for x in rows if (not company or x.get('company')==company) and (not model or x.get('model')==model) and (not status or x.get('status')==status) and (not technician or x.get('technician')==technician)]
+    wb=Workbook(); ws=wb.active; ws.title='Troca Chips Garagem'; ws.append(['Empresa','Terminal','Modelo','Status','Resultado','Técnico','Observações','Evidências'])
+    for x in rows: ws.append([x.get('company'),x.get('terminal'),x.get('model'),x.get('status'),x.get('test_result'),x.get('technician'),x.get('notes'),len(x.get('photos') or [])])
+    for cell in ws[1]: cell.font=Font(bold=True,color='FFFFFF'); cell.fill=PatternFill('solid',fgColor='17365D')
+    ws.freeze_panes='A2'; ws.auto_filter.ref=ws.dimensions
+    for col in range(1,ws.max_column+1): ws.column_dimensions[get_column_letter(col)].width=24
+    bio=io.BytesIO(); wb.save(bio); bio.seek(0); return send_file(bio,as_attachment=True,download_name=f"troca_chips_garagem_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 @app.get('/troca-chips-garagem/dashboard')
 @login_required
@@ -9975,6 +10037,123 @@ def migrate_v55_performance_indexes():
     return migrate_v56a_topdesk_dimensions()
 
 
+
+# V62 — Dashboard Builder. Alteração/criação exclusivamente ADM (role=manager).
+DASHBOARD_CATALOG = {
+    "TOPDESK": {
+        "label":"Chamados TOPdesk",
+        "filters":["period","line","location","equipment_type","category","subcategory","operator","status"],
+        "dimensions":["failure","line","location","model","object","operator"],
+        "widgets":["kpi_tickets","kpi_objects","kpi_locations","monthly","rank_failure","rank_location","rank_model","rank_object","productivity","table"]
+    },
+    "GARAGE": {
+        "label":"Troca de Chips Garagem",
+        "filters":["company","model","status","technician"],
+        "dimensions":["company","model","status","technician"],
+        "widgets":["kpi_total","kpi_concluded","kpi_pending","progress","rank_company","rank_technician"]
+    },
+    "EMV": {
+        "label":"Troca de Chips EMV – Trilhos",
+        "filters":["company","line","station","status","test_result","technician"],
+        "dimensions":["company","line","station","status","test_result","technician"],
+        "widgets":["kpi_total","kpi_concluded","kpi_pending","progress","rank_station","rank_technician"]
+    }
+}
+
+def _dashboard_admin_required():
+    if session.get("role") != "manager": abort(403)
+
+def _dash_cfg(row):
+    try: cfg=json.loads(row.config_json or "{}")
+    except Exception: cfg={}
+    try: roles=json.loads(row.allowed_roles_json or "[]")
+    except Exception: roles=[]
+    return {"id":row.id,"name":row.name,"slug":row.slug,"data_source":row.data_source,"config":cfg,"published":bool(row.published),"tv_enabled":bool(row.tv_enabled),"tv_order":row.tv_order or 0,"tv_seconds":row.tv_seconds or 30,"allowed_roles":roles}
+
+def _dashboard_visible(row):
+    if session.get("role")=="manager": return True
+    if not row.published: return False
+    try: roles=json.loads(row.allowed_roles_json or "[]")
+    except Exception: roles=[]
+    return not roles or session.get("role") in roles
+
+@app.context_processor
+def _v62_dashboard_context():
+    try:
+        rows=DashboardDefinition.query.filter_by(published=True).order_by(DashboardDefinition.name).all() if session.get("user_id") else []
+        return {"custom_dashboards":[_dash_cfg(x) for x in rows if _dashboard_visible(x)]}
+    except Exception:
+        return {"custom_dashboards":[]}
+
+@app.get('/configuracoes/dashboards')
+@login_required
+def dashboard_builder_page():
+    _dashboard_admin_required()
+    return render_template('dashboard_builder.html',app_release=APP_RELEASE,catalog=DASHBOARD_CATALOG)
+
+@app.get('/api/dashboard-configs')
+@login_required
+def dashboard_configs_api():
+    _dashboard_admin_required()
+    return jsonify({"ok":True,"catalog":DASHBOARD_CATALOG,"dashboards":[_dash_cfg(x) for x in DashboardDefinition.query.order_by(DashboardDefinition.name).all()]})
+
+@app.post('/api/dashboard-configs')
+@login_required
+def dashboard_configs_save():
+    _dashboard_admin_required(); p=request.get_json(silent=True) or {}; name=str(p.get('name') or '').strip()
+    if not name: return jsonify({'error':'Informe o nome da dashboard.'}),400
+    slug=re.sub(r'[^a-z0-9]+','-',unicodedata.normalize('NFKD',name).encode('ascii','ignore').decode().lower()).strip('-') or f'dashboard-{int(time.time())}'
+    rid=p.get('id'); row=db.session.get(DashboardDefinition,int(rid)) if rid else None
+    if not row:
+        base=slug; n=2
+        while DashboardDefinition.query.filter_by(slug=slug).first(): slug=f'{base}-{n}'; n+=1
+        row=DashboardDefinition(name=name,slug=slug,created_by=session['user_id']); db.session.add(row)
+    row.name=name; row.data_source=str(p.get('data_source') or 'TOPDESK').upper(); row.config_json=json.dumps(p.get('config') or {},ensure_ascii=False)
+    row.published=bool(p.get('published')); row.tv_enabled=bool(p.get('tv_enabled')); row.tv_order=int(p.get('tv_order') or 0); row.tv_seconds=max(10,min(600,int(p.get('tv_seconds') or 30)))
+    row.allowed_roles_json=json.dumps(p.get('allowed_roles') or [],ensure_ascii=False); row.updated_at=datetime.utcnow(); db.session.commit()
+    return jsonify({'ok':True,'dashboard':_dash_cfg(row)})
+
+@app.delete('/api/dashboard-configs/<int:dashboard_id>')
+@login_required
+def dashboard_configs_delete(dashboard_id):
+    _dashboard_admin_required(); row=db.session.get(DashboardDefinition,dashboard_id)
+    if not row: return jsonify({'error':'Dashboard não encontrada.'}),404
+    db.session.delete(row); db.session.commit(); return jsonify({'ok':True})
+
+@app.get('/dashboards/<slug>')
+@login_required
+def custom_dashboard_page(slug):
+    row=DashboardDefinition.query.filter_by(slug=slug).first_or_404()
+    if not _dashboard_visible(row): abort(403)
+    return render_template('custom_dashboard.html',app_release=APP_RELEASE,dashboard=_dash_cfg(row),catalog=DASHBOARD_CATALOG)
+
+@app.get('/modo-tv/dashboards')
+@login_required
+def custom_dashboard_tv_page():
+    rows=DashboardDefinition.query.filter_by(published=True,tv_enabled=True).order_by(DashboardDefinition.tv_order,DashboardDefinition.name).all()
+    rows=[_dash_cfg(x) for x in rows if _dashboard_visible(x)]
+    return render_template('dashboard_tv.html',app_release=APP_RELEASE,dashboards=rows)
+
+@app.get('/api/dashboard-builder/source/<source>')
+@login_required
+def dashboard_builder_source(source):
+    source=source.upper(); cfg=DASHBOARD_CATALOG.get(source)
+    if not cfg: return jsonify({'error':'Fonte não suportada'}),404
+    # TOPdesk usa o analytics já otimizado e aceita os mesmos filtros.
+    if source=='TOPDESK':
+        return topdesk_analytics_api()
+    if source=='GARAGE':
+        return garage_chip_dashboard_api()
+    if source=='EMV':
+        rows=emv_chip_list().get_json().get('rows',[])
+        total=len(rows); done=sum(x.get('status')=='CONCLUÍDA' for x in rows); prog=sum(x.get('status')=='EM ANDAMENTO' for x in rows)
+        def rank(key):
+            d={}
+            for x in rows:
+                k=str(x.get(key) or 'Não informado'); d[k]=d.get(k,0)+1
+            return [{'name':k,'count':v} for k,v in sorted(d.items(),key=lambda z:z[1],reverse=True)[:30]]
+        return jsonify({'ok':True,'kpis':{'total':total,'concluded':done,'pending':total-done-prog,'in_progress':prog},'stations':rank('station'),'companies':rank('company'),'lines':rank('line'),'technicians':rank('technician')})
+    return jsonify({'ok':True})
 
 # V56-B — índices aditivos para leituras críticas.
 try:
