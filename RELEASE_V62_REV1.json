@@ -1,0 +1,15 @@
+{
+  "version": "V62 REV1",
+  "date": "2026-08-27",
+  "scope": [
+    "Correção terminológica: Valor Recolhido",
+    "Linha 7 Rubi exibida como TIC TRENS S.A. no módulo EMV",
+    "Coleta inicial/final exibem Valor Apurado",
+    "Somatória das transações considera todos os status",
+    "Legenda unificada: Apurado, Declarado, Recolhido e Transações",
+    "Comparativos: Transações x Apurado, Transações x Declarado e Apurado x Declarado",
+    "Comparativo geral para múltiplos ATMs com Igual/Maior/Menor e somatórias",
+    "Exportações Excel ajustadas aos novos conceitos",
+    "Indicador de integridade da base e proteção contra duplicidades exatas"
+  ]
+}
