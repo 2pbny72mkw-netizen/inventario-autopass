@@ -20,8 +20,11 @@
     <button class="v23Nav" data-v23-view="chips">▣ <span>Troca de Chip Recarga</span></button>
 <div class="v42SideGroup">IMPLANTAÇÃO</div>
     <button class="v23Nav" data-v23-view="emv">▣ <span>Troca Chips EMV · Trilhos</span></button>
+    <a class="v23Nav v62SideLink" href="/troca-chips-garagem">▣ <span>Troca Chips Garagem</span></a>
+    <a class="v23Nav v62SideLink" href="/troca-chips-garagem/dashboard">▦ <span>Dashboard Garagem</span></a>
     <button class="v23Nav" data-v23-view="implantation-dashboard">⌁ <span>Dashboard Implantação</span></button><div class="v42SideGroup">OPERAÇÃO</div><button class="v23Nav" data-v23-view="ranking">↗ <span>Ranking</span></button>
     <button class="v23Nav" data-v23-view="competition">◉ <span>Concorrência</span></button>
+    {% if custom_dashboards|default([]) %}<div class="v42SideGroup">DASHBOARDS PERSONALIZADAS</div>{% for d in custom_dashboards %}<a class="v23Nav v62SideLink" href="/dashboards/{{ d.slug }}">▦ <span>{{ d.name }}</span></a>{% endfor %}{% endif %}
     <div class="v23SidebarSpacer"></div>
     <button class="v23TvBtn" id="v23TvBtn" type="button">▣ <span>Modo TV</span></button>
   </aside>

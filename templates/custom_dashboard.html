@@ -1,0 +1,4 @@
+{% extends "base.html" %}{% block title %}{{ dashboard.name }} | {{ app_release }}{% endblock %}{% block content %}
+<div class="pageHead"><span class="eyebrow">DASHBOARD PERSONALIZADA · {{ app_release }}</span><h1>{{ dashboard.name }}</h1><p>Fonte: {{ catalog[dashboard.data_source].label }}</p></div>
+<section class="card"><div id="v62RuntimeFilters" class="v62RuntimeFilters"></div></section><div id="v62Runtime" class="v62Runtime"></div>
+{% endblock %}{% block scripts %}<script>window.V62_DASH={{ dashboard|tojson }};window.V62_CATALOG={{ catalog|tojson }};</script><script src="/static/custom_dashboard.js?v=v62"></script>{% endblock %}

@@ -5,7 +5,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{% block title %}Sistema de Gestão Suporte a Campo{% endblock %}</title>
-<link rel="stylesheet" href="{{url_for('static',filename='app.css')}}?v=v60-rev2">
+<link rel="stylesheet" href="{{url_for('static',filename='app.css')}}?v=v62">
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#17345d">
 </head>
@@ -31,19 +31,19 @@
         {% if can_view('field.equipment') %}<a href="/patrimonio">Equipamentos</a>{% endif %}
         {% if can_view('field.evidence') %}<a href="/evidencias-campo">Evidências</a>{% endif %}
         {% if can_view('field.panorama') %}<a href="/visao-panoramica">Visão Panorâmica</a>{% endif %}
-        {% if can_view('field.chip_recarga') %}<a href="/troca-chips">Troca de Chips Recarga</a><a href="/troca-chips-garagem">Troca de Chips Garagem</a>{% endif %}
+        {% if can_view('field.chip_recarga') %}<a href="/troca-chips">Troca de Chips Recarga</a>{% endif %}
       </div></div>{% endif %}
       {% if can_view('implantation') %}
       <div class="navDrop"><button type="button" class="navDropBtn">Implantação de Hardware ▾</button><div class="navDropMenu">
         {% if can_view('implantation.dashboard') %}<a href="/dashboard/implantacao">Dashboard Implantação</a>{% endif %}
         {% if can_view('implantation.visits') or can_view('implantation.reports') %}<a href="/implantacao-hardware">Visitas / Relatórios</a>{% endif %}
-        {% if can_view('implantation.emv') %}<a href="/troca-chips-emv">Troca de Chips EMV - Trilhos</a>{% endif %}
+        {% if can_view('implantation.emv') %}<a href="/troca-chips-emv">Troca de Chips EMV - Trilhos</a>{% endif %}{% if can_view('implantation.garage') or session.get('role') == 'manager' %}<a href="/troca-chips-garagem">Troca de Chips Garagem</a><a href="/troca-chips-garagem/dashboard">Dashboard Chips Garagem</a>{% endif %}
       </div></div>{% endif %}
       {% if can_view('teams') or can_view('users') %}
       <div class="navDrop"><button type="button" class="navDropBtn">RH ▾</button><div class="navDropMenu">
         {% if can_view('teams') %}<a href="/equipes">Equipes</a>{% endif %}{% if can_view('users.view') %}<a href="/usuarios">Usuários</a>{% endif %}
       </div></div>{% endif %}
-      {% if can_view('management') %}<div class="navDrop"><button type="button" class="navDropBtn">Gestão ▾</button><div class="navDropMenu">{% if can_view('teams.today') %}<a href="/central-operacional">Central Operacional</a>{% endif %}{% if can_view('management.calls') %}<a href="/topdesk">Chamados</a>{% endif %}{% if can_view('management.360') %}<a href="/gestao-360">Central 360</a>{% endif %}{% if can_view('management.notifications') %}<a href="/notificacoes" id="notificationBell">Notificações <span id="notificationCount" hidden>0</span></a>{% endif %}{% if can_view('management.diagnostics') %}<a href="/diagnostico">Diagnóstico</a>{% endif %}{% if can_view('management.settings') %}<a href="/configuracoes">Configurações</a>{% endif %}{% if session.get('role') == 'manager' %}<a href="/telemetria">Telemetria</a>{% endif %}</div></div>{% endif %}{% if session.get('role') in ('manager','manager_field','technician','technician_implantation') %}<button type="button" id="installPwa" class="navInstall" hidden>Instalar App</button>{% endif %}{% if can_view('finance') or can_view('finance_dashboard') %}<div class="navDrop"><button type="button" class="navDropBtn">Financeiro ▾</button><div class="navDropMenu">{% if can_view('finance.dashboard') %}<a href="/financeiro/dashboard">Dashboard Financeiro</a>{% endif %}{% if can_view('finance.entries') or can_view('finance.support') or can_view('finance.suppliers') %}<a href="/financeiro/lancamentos">Lançamentos</a>{% endif %}{% if can_view('finance.collection') %}<a href="/financeiro/coleta-valores">Coleta de Valores</a>{% endif %}{% if can_view('finance.apuracao') %}<a href="/financeiro/apuracao">Apuração</a>{% endif %}</div></div>{% endif %}<a href="/meu-perfil" class="navProfile navRightStart">Meu Perfil</a>{% if can_view('about.versions') %}<a href="/sobre">Sobre</a>{% endif %}
+      {% if can_view('management') %}<div class="navDrop"><button type="button" class="navDropBtn">Gestão ▾</button><div class="navDropMenu">{% if can_view('teams.today') %}<a href="/central-operacional">Central Operacional</a>{% endif %}{% if can_view('management.calls') %}<a href="/topdesk">Chamados</a>{% endif %}{% if can_view('management.360') %}<a href="/gestao-360">Central 360</a>{% endif %}{% if can_view('management.notifications') %}<a href="/notificacoes" id="notificationBell">Notificações <span id="notificationCount" hidden>0</span></a>{% endif %}{% if can_view('management.diagnostics') %}<a href="/diagnostico">Diagnóstico</a>{% endif %}{% if can_view('management.settings') %}<a href="/configuracoes">Configurações</a>{% endif %}{% if session.get('role') == 'manager' %}<a href="/configuracoes/dashboards">Configurações Dashboards</a><a href="/telemetria">Telemetria</a>{% endif %}{% for d in custom_dashboards|default([]) %}<a href="/dashboards/{{ d.slug }}">{{ d.name }}</a>{% endfor %}{% if custom_dashboards|default([])|selectattr('tv_enabled')|list|length %}<a href="/modo-tv/dashboards">Modo TV Dashboards</a>{% endif %}</div></div>{% endif %}{% if session.get('role') in ('manager','manager_field','technician','technician_implantation') %}<button type="button" id="installPwa" class="navInstall" hidden>Instalar App</button>{% endif %}{% if can_view('finance') or can_view('finance_dashboard') %}<div class="navDrop"><button type="button" class="navDropBtn">Financeiro ▾</button><div class="navDropMenu">{% if can_view('finance.dashboard') %}<a href="/financeiro/dashboard">Dashboard Financeiro</a>{% endif %}{% if can_view('finance.entries') or can_view('finance.support') or can_view('finance.suppliers') %}<a href="/financeiro/lancamentos">Lançamentos</a>{% endif %}{% if can_view('finance.collection') %}<a href="/financeiro/coleta-valores">Coleta de Valores</a>{% endif %}{% if can_view('finance.apuracao') %}<a href="/financeiro/apuracao">Apuração</a>{% endif %}</div></div>{% endif %}<a href="/meu-perfil" class="navProfile navRightStart">Meu Perfil</a>{% if can_view('about.versions') %}<a href="/sobre">Sobre</a>{% endif %}
       <a href="/logout">Sair</a>
     </nav>
   </div>
@@ -65,7 +65,7 @@ document.getElementById('installPwa')?.addEventListener('click',async()=>{if(!v5
 if('serviceWorker' in navigator && (location.protocol==='https:' || location.hostname==='localhost')){
   window.addEventListener('load',async()=>{
     try{
-      const reg=await navigator.serviceWorker.register('/sw.js?v=v60-rev2',{scope:'/',updateViaCache:'none'});
+      const reg=await navigator.serviceWorker.register('/sw.js?v=v62',{scope:'/',updateViaCache:'none'});
       await reg.update();
     }catch(err){console.warn('Falha ao atualizar Service Worker',err);}
   },{once:true});
