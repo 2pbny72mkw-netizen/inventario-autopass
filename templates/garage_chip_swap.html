@@ -1,6 +1,26 @@
 {% extends "base.html" %}{% block title %}Troca de Chips Garagem{% endblock %}{% block content %}
-<section class="card chipSwapPage"><div class="sectionHead"><div><span class="eyebrow">ATIVIDADE DE CAMPO · {{ app_release }}</span><h1>Troca de Chips — Garagem</h1><p class="muted">Mesmo padrão operacional da Troca de Chips Recarga. Base inicial: 457 terminais. O IP permanece armazenado, mas não participa do fluxo operacional.</p></div><a class="buttonLink" href="/troca-chips-garagem/dashboard">Dashboard</a></div>
-<div class="grid5 chipFilters"><div><label>Empresa</label><select id="gCompany"><option value="">Todas</option></select></div><div><label>Terminal</label><input id="gTerminal" placeholder="Buscar terminal"></div><div><label>Modelo</label><select id="gModel"><option value="">Todos</option></select></div><div><label>Status</label><select id="gStatus"><option value="">Todos</option><option>PENDENTE</option><option>EM ANDAMENTO</option><option>CONCLUÍDA</option></select></div><div class="chipFilterAction"><button class="secondary" id="gClear">Limpar filtros</button></div></div></section>
-<section class="kpis chipSwapKpis"><article class="kpi"><span>Terminais</span><b id="gTotal">0</b></article><article class="kpi successKpi"><span>Concluídos</span><b id="gDone">0</b></article><article class="kpi warningKpi"><span>Em andamento</span><b id="gProg">0</b></article><article class="kpi dangerKpi"><span>Pendentes</span><b id="gPend">0</b></article></section>
-<section class="card"><div class="sectionHead"><div><h2>Terminais da base</h2><p class="muted">Registre resultado, evidência e observação. Uma evidência conclui a troca do terminal.</p></div><b id="gPct">0%</b></div><div class="chipDashProgress"><i id="gBar" style="width:0%"></i></div><div id="gRows" class="chipValidatorGrid"><p class="muted">Carregando...</p></div></section>
-{% endblock %}{% block scripts %}<script>window.CHIP_ROLE={{ session.get("role")|tojson }};</script><script src="/static/garage_chip_swap.js?v=v60-rev3"></script>{% endblock %}
+<div class="pageHead"><span class="eyebrow">IMPLANTAÇÃO · ATIVIDADE · {{ app_release }}</span><h1>Troca de Chips — Garagem</h1><p>Mesmo padrão operacional da Troca de Chips EMV. Base inicial: 457 terminais. O IP permanece armazenado, mas não participa do fluxo operacional.</p></div>
+<section class="card">
+  <div class="sectionHead"><div></div><a class="buttonLink" href="/troca-chips-garagem/dashboard">Dashboard</a></div>
+  <div class="grid4 chipFilters"><div><label>Empresa</label><select id="gCompany"><option value="">Todas</option></select></div><div><label>Terminal</label><input id="gTerminal" placeholder="Buscar terminal"></div><div><label>Modelo</label><select id="gModel"><option value="">Todos</option></select></div><div><label>Status</label><select id="gStatus"><option value="">Todos</option><option>PENDENTE</option><option>EM ANDAMENTO</option><option>CONCLUÍDA</option></select></div></div>
+  <div style="margin-top:10px"><button class="secondary" id="gClear">Limpar filtros</button></div>
+  <div class="emvActivityKpis">
+    <article><small>Terminais</small><b id="gTotal">0</b></article>
+    <article class="done"><small>Concluídos</small><b id="gDone">0</b></article>
+    <article class="progress"><small>Em andamento</small><b id="gProg">0</b></article>
+    <article class="pending"><small>Pendentes</small><b id="gPend">0</b></article>
+    <article class="pct"><small>Progresso</small><b id="gPct">0%</b></article>
+  </div>
+  <div class="emvActivityVisual">
+    <div class="emvActivityDonut" id="gDonut"><div><b id="gDonutPct">0%</b><span>concluído</span></div></div>
+    <div class="emvActivityBars">
+      <div><span>Concluídos</span><div><i class="done" id="gDoneBar"></i></div><b id="gDoneRatio">0 / 0</b></div>
+      <div><span>Em andamento</span><div><i class="progress" id="gProgBar"></i></div><b id="gProgRatio">0 / 0</b></div>
+      <div><span>Pendentes</span><div><i class="pending" id="gPendBar"></i></div><b id="gPendRatio">0 / 0</b></div>
+    </div>
+  </div>
+  <div class="chipDashProgress" style="margin-top:14px"><i id="gBar" style="width:0%"></i></div>
+  <p id="gSummary" class="muted">0 / 0 concluídos · 0%</p>
+</section>
+<section class="card"><div class="sectionHead"><div><h2>Terminais da base</h2><p class="muted">Registre resultado, evidência e observação. Uma evidência conclui a troca do terminal.</p></div></div><div id="gRows" class="chipValidatorGrid"><p class="muted">Carregando...</p></div></section>
+{% endblock %}{% block scripts %}<script>window.CHIP_ROLE={{ session.get("role")|tojson }};</script><script src="/static/garage_chip_swap.js?v=v62-rev3"></script>{% endblock %}
