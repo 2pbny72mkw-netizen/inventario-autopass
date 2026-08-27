@@ -40,7 +40,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V62 REV5"
+APP_RELEASE = "V62 REV6"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -102,6 +102,16 @@ FIN_IMPORT_JOBS = {}
 FIN_IMPORT_LOCK = threading.Lock()
 FIN_IMPORT_DIR = UPLOAD_DIR / "finance_import_jobs"
 FIN_IMPORT_DIR.mkdir(exist_ok=True)
+
+# V62 REV6 — exportações pesadas fora da requisição principal.
+PANORAMA_EXPORT_JOBS = {}
+PANORAMA_EXPORT_LOCK = threading.Lock()
+PANORAMA_EXPORT_DIR = Path(tempfile.gettempdir()) / "inventario_panorama_exports"
+PANORAMA_EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+PANORAMA_EXPORT_MAX_AGE_SECONDS = int(os.getenv("PANORAMA_EXPORT_MAX_AGE_SECONDS", "7200"))
+_STORAGE_CACHE = {"at": 0.0, "data": None}
+_STORAGE_CACHE_TTL = int(os.getenv("STORAGE_TELEMETRY_TTL", "900"))
+_STORAGE_CACHE_LOCK = threading.Lock()
 
 def _fin_job_update(job_id, **changes):
     with FIN_IMPORT_LOCK:
@@ -3162,6 +3172,120 @@ def hardware_field_visit_report(visit_id):
     tech=db.session.get(User,v.technician_id)
     return render_template("hardware_field_visit_report.html",v=v,photos=photos,photo_media=photo_media,signature_data_uri=signature_data_uri,tech=tech)
 
+def _bytes_human(value):
+    try:
+        n=float(value or 0)
+    except Exception:
+        n=0.0
+    units=("B","KB","MB","GB","TB")
+    i=0
+    while n>=1024 and i<len(units)-1:
+        n/=1024.0; i+=1
+    return f"{n:.1f} {units[i]}" if i else f"{int(n)} B"
+
+
+def _process_memory_snapshot():
+    out={"rss_bytes":None,"limit_bytes":None,"usage_pct":None,"workers":int(os.getenv("WEB_CONCURRENCY","1") or 1),"cpu_count":os.cpu_count() or 1,"load_pct":None}
+    try:
+        status=Path('/proc/self/status').read_text(errors='ignore')
+        m=re.search(r'^VmRSS:\\s+(\\d+)\\s+kB',status,re.M)
+        if m: out["rss_bytes"]=int(m.group(1))*1024
+    except Exception: pass
+    for fp in ('/sys/fs/cgroup/memory.max','/sys/fs/cgroup/memory/memory.limit_in_bytes'):
+        try:
+            raw=Path(fp).read_text().strip()
+            if raw and raw!='max':
+                val=int(raw)
+                if 0 < val < 10**15:
+                    out["limit_bytes"]=val; break
+        except Exception: pass
+    if out["rss_bytes"] is not None and out["limit_bytes"]:
+        out["usage_pct"]=round(out["rss_bytes"]*100/out["limit_bytes"],1)
+    try:
+        out["load_pct"]=round(min(999.0,os.getloadavg()[0]*100/max(1,out["cpu_count"])),1)
+    except Exception: pass
+    return out
+
+
+def _database_storage_snapshot():
+    data={"engine":"postgresql" if database_url.startswith('postgresql') else "sqlite","total_bytes":None,"limit_bytes":None,"usage_pct":None,"tables":[],"connections":None,"max_connections":None,"note":None}
+    try:
+        if data["engine"]=='postgresql':
+            data["total_bytes"]=int(db.session.execute(text("SELECT pg_database_size(current_database())")).scalar() or 0)
+            try:
+                data["connections"]=int(db.session.execute(text("SELECT count(*) FROM pg_stat_activity WHERE datname=current_database()")).scalar() or 0)
+                data["max_connections"]=int(db.session.execute(text("SHOW max_connections")).scalar() or 0)
+            except Exception: pass
+            rows=db.session.execute(text("""
+                SELECT relname,
+                       pg_total_relation_size(relid) AS total_bytes,
+                       pg_relation_size(relid) AS table_bytes,
+                       pg_indexes_size(relid) AS index_bytes,
+                       COALESCE(n_live_tup,0) AS estimated_rows
+                FROM pg_catalog.pg_statio_user_tables
+                LEFT JOIN pg_stat_user_tables USING (relid)
+                ORDER BY pg_total_relation_size(relid) DESC
+                LIMIT 15
+            """)).mappings().all()
+            data["tables"]=[{"name":r["relname"],"total_bytes":int(r["total_bytes"] or 0),"table_bytes":int(r["table_bytes"] or 0),"index_bytes":int(r["index_bytes"] or 0),"estimated_rows":int(r["estimated_rows"] or 0)} for r in rows]
+        else:
+            fp=BASE_DIR/'inventario_local.db'
+            data["total_bytes"]=fp.stat().st_size if fp.exists() else 0
+    except Exception as exc:
+        db.session.rollback()
+        data["note"]=f"Métrica parcial: {str(exc)[:140]}"
+    # Limite só é exibido quando explicitamente configurado pelo ambiente/provedor.
+    try:
+        lim_mb=float(os.getenv('DATABASE_STORAGE_LIMIT_MB','0') or 0)
+        lim_gb=float(os.getenv('DATABASE_STORAGE_LIMIT_GB','0') or 0)
+        if lim_mb>0: data["limit_bytes"]=int(lim_mb*1024*1024)
+        elif lim_gb>0: data["limit_bytes"]=int(lim_gb*1024*1024*1024)
+    except Exception: pass
+    if data.get("total_bytes") is not None and data.get("limit_bytes"):
+        data["usage_pct"]=round(data["total_bytes"]*100/data["limit_bytes"],1)
+    if not data.get("limit_bytes") and not data.get("note"):
+        data["note"]="Limite do plano não informado pela aplicação. Configure DATABASE_STORAGE_LIMIT_GB para exibir percentual disponível."
+    return data
+
+
+def _r2_storage_snapshot(force=False):
+    now=time.time()
+    with _STORAGE_CACHE_LOCK:
+        cached=_STORAGE_CACHE.get("data")
+        if cached and not force and now-float(_STORAGE_CACHE.get("at") or 0)<_STORAGE_CACHE_TTL:
+            return dict(cached)
+    data={"enabled":bool(_r2_available()),"objects":0,"total_bytes":0,"largest_bytes":0,"scanned_complete":True,"note":None}
+    if data["enabled"]:
+        try:
+            client=r2_client(); token=None; pages=0
+            while True:
+                kw={"Bucket":os.environ["R2_BUCKET_NAME"],"MaxKeys":1000}
+                if token: kw["ContinuationToken"]=token
+                resp=client.list_objects_v2(**kw); pages+=1
+                for obj in resp.get("Contents",[]):
+                    sz=int(obj.get("Size") or 0); data["objects"]+=1; data["total_bytes"]+=sz; data["largest_bytes"]=max(data["largest_bytes"],sz)
+                if not resp.get("IsTruncated"): break
+                token=resp.get("NextContinuationToken")
+                if not token or pages>=100:
+                    data["scanned_complete"]=False; data["note"]="Leitura limitada às primeiras 100.000 mídias para proteger a telemetria."; break
+        except Exception as exc:
+            data["note"]=f"R2 indisponível para medição: {str(exc)[:140]}"
+    else:
+        data["note"]="R2 não configurado nesta instância."
+    with _STORAGE_CACHE_LOCK:
+        _STORAGE_CACHE["at"]=now; _STORAGE_CACHE["data"]=dict(data)
+    return data
+
+
+def _local_storage_snapshot():
+    files=0; total=0
+    try:
+        for x in UPLOAD_DIR.rglob('*'):
+            if x.is_file(): files+=1; total+=x.stat().st_size
+    except Exception: pass
+    return {"files":files,"total_bytes":total}
+
+
 @app.get("/telemetria")
 @login_required
 def telemetry_page():
@@ -3202,7 +3326,8 @@ def telemetry_summary_api():
         errors=sum(1 for x in rows if x.status_code>=500); avg=round(sum(vals)/len(vals),1) if vals else 0; p95=pct(vals,.95)
         health="NORMAL" if p95<1500 and errors==0 else ("ATENÇÃO" if p95<3000 and errors<3 else "CRÍTICO")
         top5=[dict(x,app_ms=max(0,round(float(x.get("avg_ms") or 0)-float(x.get("avg_sql_ms") or 0),1))) for x in route_rows[:5]]
-        return jsonify({"ok":True,"release":APP_RELEASE,"generated_at":datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y %H:%M:%S"),"window_minutes":minutes,"health":health,"avg_ms":avg,"p95_ms":p95,"max_ms":round(max(vals),1) if vals else 0,"requests":len(rows),"errors_5xx":errors,"active_users_15m":int(active_users),"routes":route_rows[:20],"top5":top5,"timeline":timeline[-24:],"table_counts":table_counts})
+        storage={"database":_database_storage_snapshot(),"r2":_r2_storage_snapshot(),"local":_local_storage_snapshot(),"runtime":_process_memory_snapshot()}
+        return jsonify({"ok":True,"release":APP_RELEASE,"generated_at":datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y %H:%M:%S"),"window_minutes":minutes,"health":health,"avg_ms":avg,"p95_ms":p95,"max_ms":round(max(vals),1) if vals else 0,"requests":len(rows),"errors_5xx":errors,"active_users_15m":int(active_users),"routes":route_rows[:20],"top5":top5,"timeline":timeline[-24:],"table_counts":table_counts,"storage":storage})
     except Exception as exc:
         return jsonify({"ok":False,"error":str(exc)}),500
 
@@ -9688,12 +9813,29 @@ def _pptx_compact_image(raw, max_width=1280, max_height=900, quality=68):
     except Exception:
         return None
 
-@app.get("/api/panoramas/export.pptx")
-@login_required
-def panorama_export_pptx():
-    if session.get("role") not in ("manager", "manager_field", "technician", "consultation"):
-        return redirect(url_for("activities_page"))
-    company=(request.args.get("company") or "").strip(); line=(request.args.get("line") or "").strip(); status=(request.args.get("status") or "").strip(); search=(request.args.get("search") or "").strip().lower()
+def _panorama_export_job_update(job_id, **changes):
+    with PANORAMA_EXPORT_LOCK:
+        job=PANORAMA_EXPORT_JOBS.get(job_id)
+        if job:
+            job.update(changes); job["updated_at"]=datetime.utcnow().isoformat()+"Z"
+
+
+def _panorama_export_cleanup():
+    cutoff=time.time()-PANORAMA_EXPORT_MAX_AGE_SECONDS
+    with PANORAMA_EXPORT_LOCK:
+        old=[]
+        for jid,job in list(PANORAMA_EXPORT_JOBS.items()):
+            ts=float(job.get("created_ts") or time.time())
+            if ts<cutoff and job.get("status") not in ("PROCESSANDO","FILA"):
+                old.append((jid,job.get("path")))
+        for jid,path in old:
+            PANORAMA_EXPORT_JOBS.pop(jid,None)
+            try:
+                if path: Path(path).unlink(missing_ok=True)
+            except Exception: pass
+
+
+def _generate_panorama_pptx(company,line,status,search,output_path,progress_cb=None):
     rows=[x for x in _panorama_payload() if (not company or x.get("company")==company) and (not line or x.get("line")==line) and (not status or x.get("status")==status) and (not search or search in (x.get("location") or "").lower())]
     prs=Presentation(); prs.slide_width=Inches(13.333); prs.slide_height=Inches(7.5)
     navy=(18,52,93); teal=(51,190,190); dark=(25,38,58); light=(241,246,250)
@@ -9703,16 +9845,14 @@ def panorama_export_pptx():
         logo=STATIC_DIR/'autopass-logo.png'
         if logo.exists(): slide.shapes.add_picture(str(logo),Inches(.45),Inches(.28),width=Inches(1.65))
         textbox(slide,10.7,.34,2.1,.3,"VISÃO PANORÂMICA",10,True,navy,PP_ALIGN.RIGHT)
-    # capa
     sl=prs.slides.add_slide(prs.slide_layouts[6]); brand(sl); textbox(sl,.7,2.15,11.9,.7,"Visão Panorâmica das Estações",30,True,navy,PP_ALIGN.CENTER); textbox(sl,.8,3.0,11.7,.45,"Apresentação executiva do acervo fotográfico",17,False,dark,PP_ALIGN.CENTER)
     recorte=" · ".join([x for x in [company or "Todas as empresas",line or "Todas as linhas",status or "Todos os status"] if x]); textbox(sl,.8,4.0,11.7,.35,recorte,12,False,dark,PP_ALIGN.CENTER); textbox(sl,.8,6.65,11.7,.3,datetime.now().strftime("Gerado em %d/%m/%Y %H:%M"),9,False,dark,PP_ALIGN.CENTER)
-    # resumo
     sl=prs.slides.add_slide(prs.slide_layouts[6]); brand(sl); textbox(sl,.55,1.0,12,.45,"Resumo executivo",24,True,navy); total=len(rows); done=sum(x['status']=='CONCLUÍDA' for x in rows); prog=sum(x['status']=='EM ANDAMENTO' for x in rows); pend=sum(x['status']=='PENDENTE' for x in rows); photos=sum(x.get('photo_count',0) for x in rows)
     vals=[("Localidades",total),("Concluídas",done),("Em andamento",prog),("Pendentes",pend),("Fotos",photos)]
     for i,(lab,val) in enumerate(vals):
         x=.55+i*2.5; sh=sl.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE,Inches(x),Inches(2.0),Inches(2.2),Inches(1.35)); sh.fill.solid(); sh.fill.fore_color.rgb=__import__('pptx').dml.color.RGBColor(*light); sh.line.color.rgb=__import__('pptx').dml.color.RGBColor(205,218,230); textbox(sl,x+.12,2.18,1.95,.28,lab,10,True,dark); textbox(sl,x+.12,2.55,1.95,.48,val,24,True,navy)
     pct=round(done/total*100) if total else 0; textbox(sl,.65,4.25,12,.45,f"Progresso geral: {pct}%",20,True,teal)
-    # estações / fotos
+    processed=0; image_errors=0
     for loc in rows:
         photo_items=[]
         for pt in loc.get('points',[]):
@@ -9727,30 +9867,87 @@ def panorama_export_pptx():
                     raw=_panorama_media_bytes(ph.get('stored_name'))
                     if raw:
                         try:
-                            bio=_pptx_compact_image(raw)
-                            raw=None
-                            if bio is None:
-                                raise ValueError("Imagem inválida")
-                            # Insere a imagem compactada mantendo proporção e centralizando no quadro.
-                            with Image.open(bio) as im:
-                                iw,ih=im.size
-                            bio.seek(0)
-                            frame_w=w
-                            frame_h=h-0.32
-                            ratio=min(frame_w/max(iw,1), frame_h/max(ih,1))
-                            pic_w=max(0.1, iw*ratio)
-                            pic_h=max(0.1, ih*ratio)
-                            px=x+(frame_w-pic_w)/2
-                            py=y+(frame_h-pic_h)/2
-                            sl.shapes.add_picture(bio,Inches(px),Inches(py),width=Inches(pic_w),height=Inches(pic_h))
-                            bio.close()
+                            # REV6: compactação mais agressiva para proteger RAM/CPU no plano de 1 worker.
+                            bio=_pptx_compact_image(raw,max_width=960,max_height=720,quality=55); raw=None
+                            if bio is None: raise ValueError("Imagem inválida")
+                            with Image.open(bio) as im: iw,ih=im.size
+                            bio.seek(0); frame_w=w; frame_h=h-0.32; ratio=min(frame_w/max(iw,1),frame_h/max(ih,1)); pic_w=max(0.1,iw*ratio); pic_h=max(0.1,ih*ratio); px=x+(frame_w-pic_w)/2; py=y+(frame_h-pic_h)/2
+                            sl.shapes.add_picture(bio,Inches(px),Inches(py),width=Inches(pic_w),height=Inches(pic_h)); bio.close()
                         except Exception:
-                            textbox(sl,x,y,w,h-0.3,"Imagem indisponível",12,False,dark,PP_ALIGN.CENTER)
+                            image_errors+=1; textbox(sl,x,y,w,h-0.3,"Imagem indisponível",12,False,dark,PP_ALIGN.CENTER)
                     else:
-                        textbox(sl,x,y,w,h-0.3,"Imagem indisponível",12,False,dark,PP_ALIGN.CENTER)
-                    textbox(sl,x,y+h-.28,w,.25,(pt.get('name') if pt else 'Foto')+" · "+(ph.get('uploaded_by') or '—'),9,False,dark)
+                        image_errors+=1; textbox(sl,x,y,w,h-0.3,"Imagem indisponível",12,False,dark,PP_ALIGN.CENTER)
+                    textbox(sl,x,y+h-.28,w,.25,(pt.get('name') if pt else 'Foto')+" · "+(ph.get('uploaded_by') or '—'),9,False,dark); processed+=1
+                    if progress_cb and photos: progress_cb(processed,photos)
                 else: textbox(sl,x,y,w,h,"Nenhuma foto anexada nesta localidade.",13,False,dark,PP_ALIGN.CENTER)
-    out=io.BytesIO(); prs.save(out); out.seek(0); return send_file(out,as_attachment=True,download_name=f"visao_panoramica_{datetime.now().strftime('%Y%m%d_%H%M')}.pptx",mimetype="application/vnd.openxmlformats-officedocument.presentationml.presentation")
+    prs.save(str(output_path))
+    return {"locations":total,"photos":photos,"processed":processed,"image_errors":image_errors,"slides":len(prs.slides),"bytes":Path(output_path).stat().st_size if Path(output_path).exists() else 0}
+
+
+def _panorama_export_worker(job_id,company,line,status,search):
+    started=time.time(); path=PANORAMA_EXPORT_DIR/f"{job_id}.pptx"
+    _panorama_export_job_update(job_id,status="PROCESSANDO",started_at=datetime.utcnow().isoformat()+"Z",message="Preparando dados...",progress=1)
+    try:
+        with app.app_context():
+            def progress(done,total):
+                pct=max(2,min(95,round(done*95/max(1,total))))
+                _panorama_export_job_update(job_id,progress=pct,message=f"Processando fotos: {done}/{total}")
+            stats=_generate_panorama_pptx(company,line,status,search,path,progress)
+        _panorama_export_job_update(job_id,status="PRONTO",progress=100,message="PowerPoint pronto para baixar.",path=str(path),filename=f"visao_panoramica_{datetime.now().strftime('%Y%m%d_%H%M')}.pptx",stats=stats,duration_s=round(time.time()-started,1),finished_at=datetime.utcnow().isoformat()+"Z")
+    except Exception as exc:
+        app.logger.exception("Falha na exportação assíncrona do PowerPoint panorâmico")
+        _panorama_export_job_update(job_id,status="ERRO",progress=0,message=str(exc)[:300],duration_s=round(time.time()-started,1),finished_at=datetime.utcnow().isoformat()+"Z")
+
+
+@app.post("/api/panoramas/export.pptx/jobs")
+@login_required
+def panorama_export_pptx_job_create():
+    if session.get("role") not in ("manager","manager_field","technician","consultation"):
+        return jsonify({"ok":False,"error":"Sem permissão."}),403
+    _panorama_export_cleanup()
+    with PANORAMA_EXPORT_LOCK:
+        active=next(((jid,j) for jid,j in PANORAMA_EXPORT_JOBS.items() if j.get("status") in ("FILA","PROCESSANDO")),None)
+        if active:
+            jid,j=active
+            return jsonify({"ok":True,"job_id":jid,"status":j.get("status"),"reused":True,"message":"Já existe um PowerPoint em processamento."}),202
+        job_id=uuid.uuid4().hex
+        PANORAMA_EXPORT_JOBS[job_id]={"id":job_id,"status":"FILA","progress":0,"message":"Exportação na fila.","created_ts":time.time(),"created_at":datetime.utcnow().isoformat()+"Z","user_id":session.get("user_id")}
+    company=(request.form.get("company") or request.args.get("company") or "").strip(); line=(request.form.get("line") or request.args.get("line") or "").strip(); status=(request.form.get("status") or request.args.get("status") or "").strip(); search=(request.form.get("search") or request.args.get("search") or "").strip().lower()
+    threading.Thread(target=_panorama_export_worker,args=(job_id,company,line,status,search),daemon=True,name=f"panorama-pptx-{job_id[:8]}").start()
+    return jsonify({"ok":True,"job_id":job_id,"status":"FILA","message":"PowerPoint sendo preparado em segundo plano."}),202
+
+
+@app.get("/api/panoramas/export.pptx/jobs/<job_id>")
+@login_required
+def panorama_export_pptx_job_status(job_id):
+    _panorama_export_cleanup()
+    with PANORAMA_EXPORT_LOCK:
+        job=dict(PANORAMA_EXPORT_JOBS.get(job_id) or {})
+    if not job: return jsonify({"ok":False,"error":"Exportação não encontrada ou expirada."}),404
+    # Não expõe caminho físico interno.
+    job.pop("path",None); job.pop("user_id",None); job.pop("created_ts",None)
+    job["ok"]=True
+    if job.get("status")=="PRONTO": job["download_url"]=f"/api/panoramas/export.pptx/jobs/{job_id}/download"
+    return jsonify(job)
+
+
+@app.get("/api/panoramas/export.pptx/jobs/<job_id>/download")
+@login_required
+def panorama_export_pptx_job_download(job_id):
+    with PANORAMA_EXPORT_LOCK:
+        job=dict(PANORAMA_EXPORT_JOBS.get(job_id) or {})
+    if not job or job.get("status")!="PRONTO": return jsonify({"ok":False,"error":"Arquivo ainda não está pronto."}),409
+    path=Path(job.get("path") or "")
+    if not path.exists(): return jsonify({"ok":False,"error":"Arquivo temporário expirou."}),404
+    return send_file(path,as_attachment=True,download_name=job.get("filename") or "visao_panoramica.pptx",mimetype="application/vnd.openxmlformats-officedocument.presentationml.presentation")
+
+
+@app.get("/api/panoramas/export.pptx")
+@login_required
+def panorama_export_pptx_legacy():
+    # REV6: evita bloquear o único worker por vários minutos. O frontend usa o job assíncrono.
+    return jsonify({"ok":False,"error":"Exportação direta desativada por segurança. Use a geração em segundo plano."}),409
+
 
 @app.get("/visao-panoramica")
 @login_required
