@@ -67,52 +67,62 @@ const _panOpenLocV501=typeof openLoc==='function'?openLoc:null;
 if(_panOpenLocV501){openLoc=function(id){_panOpenLocV501(id);setTimeout(panSyncAdminStatus,0)}}
 
 
-// V62 REV5 — exportação PowerPoint com chamada explícita, cache-bust e feedback.
-function panPptUrl(){
-  const q=new URLSearchParams();
-  if($('panCompany')?.value)q.set('company',$('panCompany').value);
-  if($('panLine')?.value)q.set('line',$('panLine').value);
-  if($('panStatus')?.value)q.set('status',$('panStatus').value);
-  if($('panSearch')?.value)q.set('search',$('panSearch').value);
-  q.set('_ts',String(Date.now()));
-  return '/api/panoramas/export.pptx?'+q.toString();
+// V62 REV6 — PowerPoint assíncrono: o worker web responde imediatamente e a geração roda em background.
+function panPptFilters(){
+  const f=new URLSearchParams();
+  if($('panCompany')?.value)f.set('company',$('panCompany').value);
+  if($('panLine')?.value)f.set('line',$('panLine').value);
+  if($('panStatus')?.value)f.set('status',$('panStatus').value);
+  if($('panSearch')?.value)f.set('search',$('panSearch').value);
+  return f;
+}
+function panSleep(ms){return new Promise(r=>setTimeout(r,ms))}
+async function panStartPptJob(){
+  const r=await fetch('/api/panoramas/export.pptx/jobs',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:panPptFilters().toString(),cache:'no-store',credentials:'same-origin'});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok&&!d.job_id)throw new Error(d.error||`Falha ao iniciar exportação (${r.status}).`);
+  if(!d.job_id)throw new Error('O servidor não retornou o identificador da exportação.');
+  return d;
+}
+async function panWaitPptJob(jobId,btn){
+  const deadline=Date.now()+20*60*1000;
+  while(Date.now()<deadline){
+    const r=await fetch(`/api/panoramas/export.pptx/jobs/${jobId}?_ts=${Date.now()}`,{cache:'no-store',credentials:'same-origin'});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok)throw new Error(d.error||`Falha ao consultar exportação (${r.status}).`);
+    const pct=Math.max(0,Math.min(100,Number(d.progress||0)));
+    btn.textContent=d.status==='PRONTO'?'PowerPoint pronto':`Preparando PowerPoint... ${pct}%`;
+    if(typeof panStatus==='function')panStatus(d.message||`Preparando PowerPoint... ${pct}%`,d.status==='PRONTO');
+    if(d.status==='PRONTO')return d;
+    if(d.status==='ERRO')throw new Error(d.message||'Falha ao gerar PowerPoint.');
+    await panSleep(2000);
+  }
+  throw new Error('A geração excedeu 20 minutos e foi interrompida na tela.');
+}
+function panDownloadJob(d){
+  const a=document.createElement('a');a.href=d.download_url;a.download=d.filename||'visao_panoramica.pptx';document.body.appendChild(a);a.click();a.remove();
 }
 function bindPanPpt(btn){
-  if(!btn||btn.dataset.rev5Bound==='1')return;
-  btn.dataset.rev5Bound='1';
+  if(!btn||btn.dataset.rev6Bound==='1')return;
+  btn.dataset.rev6Bound='1';
   btn.addEventListener('click',async ev=>{
     ev.preventDefault();
     if(btn.dataset.busy==='1')return;
     const old=btn.textContent;
-    btn.dataset.busy='1';
-    btn.setAttribute('aria-busy','true');
-    btn.textContent='Gerando PowerPoint...';
+    btn.dataset.busy='1';btn.setAttribute('aria-busy','true');btn.textContent='Iniciando PowerPoint...';
     try{
-      const ctl=new AbortController();
-      const timer=setTimeout(()=>ctl.abort(),240000);
-      let r;
-      try{r=await fetch(panPptUrl(),{method:'GET',cache:'no-store',credentials:'same-origin',signal:ctl.signal})}
-      finally{clearTimeout(timer)}
-      if(!r.ok){
-        let msg=''; try{msg=(await r.text()).slice(0,220)}catch(_){ }
-        throw new Error(msg||`Falha na exportação (${r.status}).`);
-      }
-      const blob=await r.blob();
-      const cd=r.headers.get('content-disposition')||'';
-      const m=cd.match(/filename\*?=(?:UTF-8''|\")?([^\";]+)/i);
-      const name=m?decodeURIComponent(m[1].replace(/\"/g,'')):`visao_panoramica_${new Date().toISOString().slice(0,16).replace(/[-:T]/g,'')}.pptx`;
-      const url=URL.createObjectURL(blob);
-      const a=document.createElement('a');a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();
-      setTimeout(()=>URL.revokeObjectURL(url),30000);
-      if(typeof panStatus==='function')panStatus('PowerPoint gerado com sucesso.',true);
+      const job=await panStartPptJob();
+      const ready=await panWaitPptJob(job.job_id,btn);
+      panDownloadJob(ready);
+      if(typeof panStatus==='function')panStatus(`PowerPoint pronto · ${ready.stats?.slides||0} slide(s) · ${ready.duration_s||0}s`,true);
     }catch(err){
-      console.error('Panorama PowerPoint',err);
-      const msg=err?.name==='AbortError'?'A geração excedeu 4 minutos. Tente um filtro menor.':(err?.message||'Não foi possível gerar o PowerPoint.');
-      if(typeof panStatus==='function')panStatus(msg); else alert(msg);
+      console.error('Panorama PowerPoint REV6',err);
+      const msg=err?.message||'Não foi possível gerar o PowerPoint.';
+      if(typeof panStatus==='function')panStatus(msg);else alert(msg);
     }finally{
       btn.dataset.busy='0';btn.removeAttribute('aria-busy');btn.textContent=old;
     }
   });
 }
-function panBindRev5Ppt(){bindPanPpt($('panPptBtn'));bindPanPpt($('panPptNavBtn'));updatePanPptLink()}
-if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',panBindRev5Ppt);else panBindRev5Ppt();
+function panBindRev6Ppt(){bindPanPpt($('panPptBtn'));bindPanPpt($('panPptNavBtn'))}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',panBindRev6Ppt);else panBindRev6Ppt();
