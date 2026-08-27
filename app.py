@@ -40,7 +40,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V62 REV2"
+APP_RELEASE = "V62 REV4"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -9447,9 +9447,9 @@ def financial_cash_reconciliation_calculate():
     terminal=_fin_terminal(request.args.get("terminal")); a=db.session.get(FinancialCashCollection,int(request.args.get("initial_id") or 0)); b=db.session.get(FinancialCashCollection,int(request.args.get("final_id") or 0))
     if not terminal or not a or not b or a.terminal!=terminal or b.terminal!=terminal:return jsonify({"ok":False,"error":"Selecione terminal, coleta inicial e coleta final válidos."}),400
     if b.end_at<=a.end_at:return jsonify({"ok":False,"error":"A coleta final deve ser posterior à coleta inicial."}),400
-    base=FinancialATMTransaction.query.filter(FinancialATMTransaction.terminal==terminal,FinancialATMTransaction.transaction_at>a.end_at,FinancialATMTransaction.transaction_at<=b.end_at)
+    base=FinancialATMTransaction.query.filter(FinancialATMTransaction.terminal==terminal,FinancialATMTransaction.transaction_at>a.end_at,FinancialATMTransaction.transaction_at<=b.end_at,FinancialATMTransaction.status.in_(["V","A"]))
     tx_count=base.count()
-    tx_sum=float(db.session.query(func.coalesce(func.sum(FinancialATMTransaction.value),0)).filter(FinancialATMTransaction.terminal==terminal,FinancialATMTransaction.transaction_at>a.end_at,FinancialATMTransaction.transaction_at<=b.end_at).scalar() or 0)
+    tx_sum=float(db.session.query(func.coalesce(func.sum(FinancialATMTransaction.value),0)).filter(FinancialATMTransaction.terminal==terminal,FinancialATMTransaction.transaction_at>a.end_at,FinancialATMTransaction.transaction_at<=b.end_at,FinancialATMTransaction.status.in_(["V","A"])).scalar() or 0)
     status_rows=db.session.query(FinancialATMTransaction.status,func.count(FinancialATMTransaction.id),func.coalesce(func.sum(FinancialATMTransaction.value),0)).filter(FinancialATMTransaction.terminal==terminal,FinancialATMTransaction.transaction_at>a.end_at,FinancialATMTransaction.transaction_at<=b.end_at).group_by(FinancialATMTransaction.status).all()
     recollected=float(b.collected_amount or 0); declared=None if b.declared_amount is None else float(b.declared_amount); processed=None if b.processed_amount is None else float(b.processed_amount)
     diff_tx_ap=round(tx_sum-processed,2) if processed is not None else None; pct_tx_ap=round((diff_tx_ap/processed*100),4) if diff_tx_ap is not None and processed else None
@@ -9464,10 +9464,10 @@ def financial_cash_reconciliation_calculate():
     elif abs_pct is not None and abs_pct<=0.5: diagnosis="ATENCAO"; diagnosis_text="Há pequena diferença entre Valor das Transações e Valor Apurado."
     else: diagnosis="DIVERGENCIA_RELEVANTE"; diagnosis_text="Há diferença relevante entre Valor das Transações e Valor Apurado."
     observations=[f"Intervalo entre coletas: {duration_days:.1f} dia(s) ({duration_hours:.1f} h)."]
-    if tx_count: observations.append(f"{tx_count:,} transação(ões), considerando todos os status; ticket médio R$ {avg_ticket:,.2f}.".replace(",","X").replace(".",",").replace("X","."))
+    if tx_count: observations.append(f"{tx_count:,} transação(ões), considerando somente status V + A; ticket médio R$ {avg_ticket:,.2f}.".replace(",","X").replace(".",",").replace("X","."))
     if note_count: observations.append(f"TBForte processou {note_count:,} cédula(s) vinculadas à coleta final.".replace(",","."))
     details=base.order_by(FinancialATMTransaction.transaction_at).limit(500).all()
-    return jsonify({"ok":True,"terminal":terminal,"initial":{"id":a.id,"at":a.end_at.isoformat(),"label":a.end_at.strftime("%d/%m/%Y %H:%M"),"amount":None if a.processed_amount is None else round(float(a.processed_amount),2),"processed_amount":None if a.processed_amount is None else round(float(a.processed_amount),2),"declared_amount":None if a.declared_amount is None else round(float(a.declared_amount),2),"recollected_amount":round(float(a.collected_amount or 0),2)},"final":{"id":b.id,"at":b.end_at.isoformat(),"label":b.end_at.strftime("%d/%m/%Y %H:%M"),"amount":None if processed is None else round(processed,2),"processed_amount":None if processed is None else round(processed,2),"declared_amount":None if declared is None else round(declared,2),"recollected_amount":round(recollected,2),"processed_note_count":note_count,"processed_media_type":getattr(b,"processed_media_type",None) or "","processing_charge":round(float(getattr(b,"processing_charge",0) or 0),2)},"transaction_count":tx_count,"transaction_sum":round(tx_sum,2),"all_status_count":tx_count,"recollected_amount":round(recollected,2),"collected_amount":round(recollected,2),"declared_amount":None if declared is None else round(declared,2),"processed_amount":None if processed is None else round(processed,2),"processed_note_count":note_count,"difference":diff_tx_ap,"difference_pct":pct_tx_ap,"difference_tx_apurado":diff_tx_ap,"difference_tx_declarado":diff_tx_dec,"difference_apurado_declarado":diff_ap_dec,"duration_hours":round(duration_hours,2),"duration_days":round(duration_days,2),"average_ticket":avg_ticket,"average_per_day":avg_day,"average_value_per_processed_note":avg_note,"status":"CONCILIADO" if diff_tx_ap is not None and abs(diff_tx_ap)<0.01 else "DIVERGENCIA","diagnosis":diagnosis,"diagnosis_text":diagnosis_text,"observations":observations,"status_breakdown":[{"status":st or "—","count":int(n),"amount":round(float(v or 0),2)} for st,n,v in status_rows],"transactions":[{"at":x.transaction_at.isoformat(),"label":x.transaction_at.strftime("%d/%m/%Y %H:%M:%S"),"status":x.status or "","value":round(float(x.value or 0),2)} for x in details],"transactions_truncated":tx_count>500,"rule":"todos os status; após o horário final da coleta inicial e até o horário final da coleta final"})
+    return jsonify({"ok":True,"terminal":terminal,"initial":{"id":a.id,"at":a.end_at.isoformat(),"label":a.end_at.strftime("%d/%m/%Y %H:%M"),"amount":None if a.processed_amount is None else round(float(a.processed_amount),2),"processed_amount":None if a.processed_amount is None else round(float(a.processed_amount),2),"declared_amount":None if a.declared_amount is None else round(float(a.declared_amount),2),"recollected_amount":round(float(a.collected_amount or 0),2)},"final":{"id":b.id,"at":b.end_at.isoformat(),"label":b.end_at.strftime("%d/%m/%Y %H:%M"),"amount":None if processed is None else round(processed,2),"processed_amount":None if processed is None else round(processed,2),"declared_amount":None if declared is None else round(declared,2),"recollected_amount":round(recollected,2),"processed_note_count":note_count,"processed_media_type":getattr(b,"processed_media_type",None) or "","processing_charge":round(float(getattr(b,"processing_charge",0) or 0),2)},"transaction_count":tx_count,"transaction_sum":round(tx_sum,2),"all_status_count":tx_count,"recollected_amount":round(recollected,2),"collected_amount":round(recollected,2),"declared_amount":None if declared is None else round(declared,2),"processed_amount":None if processed is None else round(processed,2),"processed_note_count":note_count,"difference":diff_tx_ap,"difference_pct":pct_tx_ap,"difference_tx_apurado":diff_tx_ap,"difference_tx_declarado":diff_tx_dec,"difference_apurado_declarado":diff_ap_dec,"duration_hours":round(duration_hours,2),"duration_days":round(duration_days,2),"average_ticket":avg_ticket,"average_per_day":avg_day,"average_value_per_processed_note":avg_note,"status":"CONCILIADO" if diff_tx_ap is not None and abs(diff_tx_ap)<0.01 else "DIVERGENCIA","diagnosis":diagnosis,"diagnosis_text":diagnosis_text,"observations":observations,"status_breakdown":[{"status":st or "—","count":int(n),"amount":round(float(v or 0),2)} for st,n,v in status_rows],"transactions":[{"at":x.transaction_at.isoformat(),"label":x.transaction_at.strftime("%d/%m/%Y %H:%M:%S"),"status":x.status or "","value":round(float(x.value or 0),2)} for x in details],"transactions_truncated":tx_count>500,"rule":"Valor das Transações considera somente status V + A; após o horário final da coleta inicial e até o horário final da coleta final"})
 
 @app.get("/api/financeiro/apuracao/calcular-multiplos")
 @login_required
@@ -9482,7 +9482,7 @@ def financial_cash_reconciliation_multi():
         fb=FinancialCashCollection.query.filter(FinancialCashCollection.terminal==terminal,FinancialCashCollection.end_at>=b.end_at).order_by(FinancialCashCollection.end_at.asc()).first()
         if not ia or not fb or fb.end_at<=ia.end_at:
             out.append({"terminal":terminal,"status":"SEM JANELA COMPATÍVEL"}); continue
-        q=db.session.query(func.count(FinancialATMTransaction.id),func.coalesce(func.sum(FinancialATMTransaction.value),0)).filter(FinancialATMTransaction.terminal==terminal,FinancialATMTransaction.transaction_at>ia.end_at,FinancialATMTransaction.transaction_at<=fb.end_at).first()
+        q=db.session.query(func.count(FinancialATMTransaction.id),func.coalesce(func.sum(FinancialATMTransaction.value),0)).filter(FinancialATMTransaction.terminal==terminal,FinancialATMTransaction.transaction_at>ia.end_at,FinancialATMTransaction.transaction_at<=fb.end_at,FinancialATMTransaction.status.in_(["V","A"])).first()
         count=int(q[0] or 0); total=float(q[1] or 0); recollected=float(fb.collected_amount or 0); declared=None if fb.declared_amount is None else float(fb.declared_amount); processed=None if fb.processed_amount is None else float(fb.processed_amount)
         diff=round(total-processed,2) if processed is not None else None; pct=round(diff/processed*100,4) if diff is not None and processed else None
         hours=(fb.end_at-ia.end_at).total_seconds()/3600; days=hours/24; avg_day=round(total/days,2) if days else 0; avg_ticket=round(total/count,2) if count else 0
@@ -9499,7 +9499,41 @@ def financial_cash_reconciliation_multi():
         elif st=="SEM JANELA COMPATÍVEL": summary["no_window"]+=1
         if dv is not None: summary["sum_net"]+=float(dv)
     summary={k:(round(v,2) if isinstance(v,float) else v) for k,v in summary.items()}
-    return jsonify({"ok":True,"rows":out,"summary":summary,"rule":"Todos os status de transação. Para cada terminal, compara Valor das Transações x Valor Apurado usando a janela equivalente do terminal de referência."})
+    return jsonify({"ok":True,"rows":out,"summary":summary,"rule":"Valor das Transações considera somente status V + A. Para cada ATM, compara a janela equivalente do terminal de referência."})
+
+@app.get("/api/financeiro/apuracao/calcular-periodo")
+@login_required
+def financial_cash_reconciliation_period():
+    if not _financial_admin_allowed() or not _has_access("finance.apuracao"):
+        return jsonify({"ok":False,"error":"Sem permissão."}),403
+    terminals=list(dict.fromkeys([_fin_terminal(x) for x in request.args.getlist("terminal") if _fin_terminal(x)]))[:500]
+    try:
+        start=datetime.fromisoformat((request.args.get("start") or "").strip())
+        end=datetime.fromisoformat((request.args.get("end") or "").strip())
+    except Exception:
+        return jsonify({"ok":False,"error":"Informe data e hora inicial e final válidas."}),400
+    if not terminals:return jsonify({"ok":False,"error":"Selecione uma ou mais ATMs."}),400
+    if end<=start:return jsonify({"ok":False,"error":"O período final deve ser posterior ao inicial."}),400
+    out=[]
+    for terminal in terminals:
+        ia=FinancialCashCollection.query.filter(FinancialCashCollection.terminal==terminal,FinancialCashCollection.end_at<=start).order_by(FinancialCashCollection.end_at.desc()).first()
+        fb=FinancialCashCollection.query.filter(FinancialCashCollection.terminal==terminal,FinancialCashCollection.end_at<=end,FinancialCashCollection.end_at>start).order_by(FinancialCashCollection.end_at.desc()).first()
+        q=db.session.query(func.count(FinancialATMTransaction.id),func.coalesce(func.sum(FinancialATMTransaction.value),0)).filter(FinancialATMTransaction.terminal==terminal,FinancialATMTransaction.transaction_at>=start,FinancialATMTransaction.transaction_at<=end,FinancialATMTransaction.status.in_(["V","A"])).first()
+        count=int(q[0] or 0); total=float(q[1] or 0); processed=None if not fb or fb.processed_amount is None else float(fb.processed_amount); recollected=None if not fb else float(fb.collected_amount or 0); declared=None if not fb or fb.declared_amount is None else float(fb.declared_amount)
+        diff=round(total-processed,2) if processed is not None else None; pct=round(diff/processed*100,4) if diff is not None and processed else None
+        asset=BaseAsset.query.filter(BaseAsset.terminal_number==terminal).first(); locality=asset.locality if asset else (fb.point_name if fb else "")
+        status="SEM APURAÇÃO" if diff is None else ("IGUAL" if abs(diff)<.01 else ("MAIOR" if diff>0 else "MENOR"))
+        out.append({"terminal":terminal,"locality":locality or "","initial":start.strftime("%d/%m/%Y %H:%M"),"final":end.strftime("%d/%m/%Y %H:%M"),"duration_days":round((end-start).total_seconds()/86400,2),"transaction_count":count,"transaction_sum":round(total,2),"recollected_amount":None if recollected is None else round(recollected,2),"declared_amount":None if declared is None else round(declared,2),"processed_amount":None if processed is None else round(processed,2),"processed_note_count":int(getattr(fb,"processed_note_count",0) or 0) if fb else 0,"difference":diff,"difference_pct":pct,"difference_tx_declarado":None if declared is None else round(total-declared,2),"difference_apurado_declarado":None if processed is None or declared is None else round(processed-declared,2),"status":status})
+    summary={"total":len(out),"equal":0,"greater":0,"less":0,"no_window":0,"sum_greater":0.0,"sum_less":0.0,"sum_net":0.0}
+    for x in out:
+        st=x["status"]; dv=x["difference"]
+        if st=="IGUAL":summary["equal"]+=1
+        elif st=="MAIOR":summary["greater"]+=1;summary["sum_greater"]+=float(dv or 0)
+        elif st=="MENOR":summary["less"]+=1;summary["sum_less"]+=float(dv or 0)
+        else:summary["no_window"]+=1
+        if dv is not None:summary["sum_net"]+=float(dv)
+    for k in ("sum_greater","sum_less","sum_net"):summary[k]=round(summary[k],2)
+    return jsonify({"ok":True,"rows":out,"summary":summary,"rule":"Período independente · 1, várias ou todas as ATMs · Valor das Transações somente status V + A."})
 
 @app.get("/api/financeiro/apuracao/exportar.xlsx")
 @login_required
@@ -9507,10 +9541,10 @@ def financial_cash_reconciliation_export():
     if not _financial_admin_allowed() or not _has_access("finance.apuracao"): abort(403)
     terminal=_fin_terminal(request.args.get("terminal")); a=db.session.get(FinancialCashCollection,int(request.args.get("initial_id") or 0)); b=db.session.get(FinancialCashCollection,int(request.args.get("final_id") or 0))
     if not terminal or not a or not b or a.terminal!=terminal or b.terminal!=terminal or b.end_at<=a.end_at: return "Filtros inválidos",400
-    txs=FinancialATMTransaction.query.filter(FinancialATMTransaction.terminal==terminal,FinancialATMTransaction.transaction_at>a.end_at,FinancialATMTransaction.transaction_at<=b.end_at).order_by(FinancialATMTransaction.transaction_at).all()
+    txs=FinancialATMTransaction.query.filter(FinancialATMTransaction.terminal==terminal,FinancialATMTransaction.transaction_at>a.end_at,FinancialATMTransaction.transaction_at<=b.end_at,FinancialATMTransaction.status.in_(["V","A"])).order_by(FinancialATMTransaction.transaction_at).all()
     total=sum(float(x.value or 0) for x in txs); recollected=float(b.collected_amount or 0); declared=None if b.declared_amount is None else float(b.declared_amount); processed=None if b.processed_amount is None else float(b.processed_amount); diff=(total-processed) if processed is not None else None; pct=(diff/processed) if diff is not None and processed else None
     hours=(b.end_at-a.end_at).total_seconds()/3600; days=hours/24; asset=BaseAsset.query.filter(BaseAsset.terminal_number==terminal).first(); locality=asset.locality if asset else (b.point_name or ""); note_count=int(getattr(b,"processed_note_count",0) or 0)
-    wb=Workbook(); ws=wb.active; ws.title="Apuração"; ws.append(["Terminal","Localidade","Coleta inicial","Valor apurado inicial","Coleta final","Valor apurado final","Dias","Qtd transações - todos status","Valor transações","Valor recolhido","Valor declarado","Valor apurado","Qtde cédulas processadas","Dif. transações x apurado","Dif. transações x declarado","Dif. apurado x declarado","% transações x apurado","Status"])
+    wb=Workbook(); ws=wb.active; ws.title="Apuração"; ws.append(["Terminal","Localidade","Coleta inicial","Valor apurado inicial","Coleta final","Valor apurado final","Dias","Qtd transações - status V+A","Valor transações","Valor recolhido","Valor declarado","Valor apurado","Qtde cédulas processadas","Dif. transações x apurado","Dif. transações x declarado","Dif. apurado x declarado","% transações x apurado","Status"])
     status="SEM APURAÇÃO" if diff is None else ("IGUAL" if abs(diff)<.01 else ("MAIOR" if diff>0 else "MENOR"))
     ws.append([terminal,locality,a.end_at,a.processed_amount,b.end_at,processed,days,len(txs),total,recollected,declared,processed,note_count,diff,(total-declared if declared is not None else None),(processed-declared if processed is not None and declared is not None else None),pct,status])
     wd=wb.create_sheet("Transações"); wd.append(["Terminal","Localidade","Data/hora","Status","Valor"]); [wd.append([terminal,locality,x.transaction_at,x.status,x.value]) for x in txs]
@@ -9524,11 +9558,11 @@ def financial_cash_reconciliation_export_multi():
     if not _financial_admin_allowed() or not _has_access("finance.apuracao"): abort(403)
     terminals=[_fin_terminal(x) for x in request.args.getlist("terminal") if _fin_terminal(x)]; primary=_fin_terminal(request.args.get("primary")); a=db.session.get(FinancialCashCollection,int(request.args.get("initial_id") or 0)); b=db.session.get(FinancialCashCollection,int(request.args.get("final_id") or 0))
     if not terminals or not primary or not a or not b or a.terminal!=primary or b.terminal!=primary or b.end_at<=a.end_at:return "Filtros inválidos",400
-    wb=Workbook(); ws=wb.active; ws.title="Comparativo"; ws.append(["Terminal","Localidade","Coleta inicial","Coleta final","Dias","Qtd transações - todos status","Valor transações","Valor recolhido","Valor declarado","Valor apurado","Qtde cédulas","Dif. transações x apurado","Dif. transações x declarado","Dif. apurado x declarado","% transações x apurado","Status"])
+    wb=Workbook(); ws=wb.active; ws.title="Comparativo"; ws.append(["Terminal","Localidade","Coleta inicial","Coleta final","Dias","Qtd transações - status V+A","Valor transações","Valor recolhido","Valor declarado","Valor apurado","Qtde cédulas","Dif. transações x apurado","Dif. transações x declarado","Dif. apurado x declarado","% transações x apurado","Status"])
     for terminal in terminals[:500]:
         ia=FinancialCashCollection.query.filter(FinancialCashCollection.terminal==terminal,FinancialCashCollection.end_at<=a.end_at).order_by(FinancialCashCollection.end_at.desc()).first(); fb=FinancialCashCollection.query.filter(FinancialCashCollection.terminal==terminal,FinancialCashCollection.end_at>=b.end_at).order_by(FinancialCashCollection.end_at.asc()).first()
         if not ia or not fb or fb.end_at<=ia.end_at: continue
-        cnt,total=db.session.query(func.count(FinancialATMTransaction.id),func.coalesce(func.sum(FinancialATMTransaction.value),0)).filter(FinancialATMTransaction.terminal==terminal,FinancialATMTransaction.transaction_at>ia.end_at,FinancialATMTransaction.transaction_at<=fb.end_at).first(); cnt=int(cnt or 0); total=float(total or 0)
+        cnt,total=db.session.query(func.count(FinancialATMTransaction.id),func.coalesce(func.sum(FinancialATMTransaction.value),0)).filter(FinancialATMTransaction.terminal==terminal,FinancialATMTransaction.transaction_at>ia.end_at,FinancialATMTransaction.transaction_at<=fb.end_at,FinancialATMTransaction.status.in_(["V","A"])).first(); cnt=int(cnt or 0); total=float(total or 0)
         recollected=float(fb.collected_amount or 0); declared=None if fb.declared_amount is None else float(fb.declared_amount); processed=None if fb.processed_amount is None else float(fb.processed_amount); diff=(total-processed) if processed is not None else None; days=(fb.end_at-ia.end_at).total_seconds()/86400; asset=BaseAsset.query.filter(BaseAsset.terminal_number==terminal).first(); locality=asset.locality if asset else (fb.point_name or ""); pct=(diff/processed) if diff is not None and processed else None; status="SEM APURAÇÃO" if diff is None else ("IGUAL" if abs(diff)<.01 else ("MAIOR" if diff>0 else "MENOR"))
         ws.append([terminal,locality,ia.end_at,fb.end_at,days,cnt,total,recollected,declared,processed,int(getattr(fb,"processed_note_count",0) or 0),diff,(total-declared if declared is not None else None),(processed-declared if processed is not None and declared is not None else None),pct,status])
     ws.freeze_panes="A2"; ws.auto_filter.ref=ws.dimensions; [setattr(c,'font',Font(bold=True)) for c in ws[1]]
