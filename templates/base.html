@@ -5,7 +5,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{% block title %}Sistema de Gestão Suporte a Campo{% endblock %}</title>
-<link rel="stylesheet" href="{{url_for('static',filename='app.css')}}?v=v63-rev1">
+<link rel="stylesheet" href="{{url_for('static',filename='app.css')}}?v=v63-rev2">
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#17345d">
 </head>
@@ -66,14 +66,14 @@ document.getElementById('installPwa')?.addEventListener('click',async()=>{if(!v5
 if('serviceWorker' in navigator && (location.protocol==='https:' || location.hostname==='localhost')){
   window.addEventListener('load',async()=>{
     try{
-      const reg=await navigator.serviceWorker.register('/sw.js?v=v63-rev1',{scope:'/',updateViaCache:'none'});
+      const reg=await navigator.serviceWorker.register('/sw.js?v=v63-rev2',{scope:'/',updateViaCache:'none'});
       await reg.update();
     }catch(err){console.warn('Falha ao atualizar Service Worker',err);}
   },{once:true});
 }
 async function v50LoadNotifications(){const badge=document.getElementById('notificationCount');if(!badge)return;try{const d=await fetch('/api/notificacoes').then(r=>r.json());badge.textContent=d.count||0;badge.hidden=!(d.count>0);const bell=document.getElementById('notificationBell');if(bell){bell.onclick=e=>{e.preventDefault();location.href='/notificacoes';};}}catch(_e){}}
 v50LoadNotifications();
-// V63 REV1 — Central Global de Processamentos: acompanha PowerPoint em qualquer tela.
+// V63 REV2 — Central Global de Processamentos: acompanha PowerPoint em qualquer tela.
 (function(){
  const box=document.getElementById('globalProcessBanner'); if(!box)return; let timer=null,stopped=false;
  async function poll(){if(stopped||document.visibilityState==='hidden'){schedule(15000);return;}try{const d=await fetch('/api/processamentos',{cache:'no-store'}).then(r=>r.json());const jobs=d.jobs||[],j=jobs.find(x=>['FILA','PROCESSANDO'].includes(x.status))||jobs.find(x=>x.status==='PRONTO');if(!j){box.hidden=true;schedule(12000);return;}box.hidden=false;const pct=Math.max(0,Math.min(100,+j.progress||0));document.getElementById('globalProcessTitle').textContent=j.status==='PRONTO'?'✓ PowerPoint pronto':`PowerPoint Visão Panorâmica · ${pct}%`;document.getElementById('globalProcessText').textContent=j.message||j.status;document.getElementById('globalProcessBar').style.width=pct+'%';const a=document.getElementById('globalProcessAction');if(j.status==='PRONTO'&&j.download_url){a.textContent='Baixar';a.href=j.download_url}else{a.textContent='Acompanhar';a.href='/visao-panoramica'}schedule(j.status==='PRONTO'?30000:3000);}catch(_){schedule(15000)}}
