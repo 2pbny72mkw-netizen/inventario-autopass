@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}Sobre | Inventário SP{% endblock %}
+{% block content %}
+<section class="dashHero">
+  <div>
+    <span class="eyebrow">SOBRE / VERSÕES</span>
+    <h1>Sistema de Gestão Suporte a Campo</h1>
+    <p>Informações da aplicação, versão em produção, principais módulos e histórico recente de evolução.</p>
+  </div>
+</section>
+
+<section class="kpis aboutKpis">
+  <article class="kpi primaryKpi"><span>Aplicação</span><b>{{ app_release }}</b><small>Central Operacional</small></article>
+  <article class="kpi successKpi"><span>Dashboard</span><b>{{ app_release }}</b><small>{{ manager_version }}</small></article>
+  <article class="kpi warningKpi"><span>Equipes</span><b>{{ app_release }}</b><small>{{ teams_version }}</small></article>
+  <article class="kpi"><span>Base</span><b>{{ base_version }}</b><small>Base de ativos</small></article>
+</section>
+
+<section class="card">
+  <div class="sectionHead">
+    <div>
+      <h2>Módulos disponíveis</h2>
+      <p class="muted">Visão consolidada da versão atual.</p>
+    </div>
+  </div>
+  <div class="aboutModules">
+    <article><b>Dashboard Executivo</b><span>Big Numbers, filtros, gráficos, Excel e visão por localidade.</span></article>
+    <article><b>Evidências de Campo</b><span>WhatsApp, fotos, vídeos, confronto com base e auditoria.</span></article>
+    <article><b>Central de Equipes</b><span>Escala 12x36, mapa operacional, localização autorizada e status por tempo.</span></article>
+    <article><b>Lançamento de Campo</b><span>Inventário técnico, GPS, edição, exclusão, pendências e sincronização.</span></article>
+    <article><b>Inteligência do Parque</b><span>Confiabilidade, faltantes, divergências, itens fora da base e criticidade por localidade.</span></article>
+    <article><b>Ciclo de Vida</b><span>Histórico do ativo: encontrado, instalado, movimentado, substituído, retirado e manutenção.</span></article>
+  </div>
+</section>
+
+{% if session.get('role') not in ('technician','technician_implantation') %}
+<section class="card aboutHistoryCompact">
+  <div class="sectionHead"><div><h2>Histórico recente</h2><p class="muted">Últimas versões em destaque. Abra o histórico completo para consultar versões antigas.</p></div></div>
+    <div class="historyRow"><b>V66 REV3</b><span>Correção de permissões RH/Usuários: cache de acesso isolado por usuário autenticado, preservando edição dos perfis operacionais autorizados. Mapa Equipes/GPS passa a identificar automaticamente a estação ferroviária mais próxima da posição atual.</span></div>
+    <div class="historyRow"><b>V66 REV2</b><span>GPS operacional configurável individualmente por usuário; intervalo de rastreamento configurável; previsão dinâmica de término para EMV, Garagem e Recarga com janela histórica definida pelo ADM.</span></div>
+    <div class="historyRow"><b>V66 REV1</b><span>GPS Operacional obrigatório para Técnico Field, Técnico Implantação, Gestor Field e Dispatcher; PowerPoint da Visão Panorâmica vinculado aos filtros com cancelamento; correção N+1 da Troca de Chips Recarga e atualização do histórico.</span></div>
+    <div class="historyRow"><b>V66</b><span>Plataforma Operacional Inteligente: GPS Operacional 2.0 com retenção de 7 dias, Inteligência Operacional, processamento assíncrono do PowerPoint e consolidação de performance.</span></div>
+    <div class="historyRow"><b>V63 REV2</b><span>Importador administrativo padronizado das bases operacionais de EMV, Recarga e Garagem, com preview e preservação do histórico.</span></div>
+    <div class="historyRow"><b>V55.3.1</b><span>Hotfix PostgreSQL: correção da migração do campo booleano pending_profile para DEFAULT FALSE, preservando as funcionalidades da V55.3.</span></div>
+    <div class="historyRow"><b>V55.3</b><span>Hotfix estrutural: rotas reais das dashboards Financeiro/Implantação e Lançamentos/Coleta, sidebar ampliada, rankings com valores no final das barras e versionamento unificado.</span></div>
+    <div class="historyRow"><b>V55.2</b><span>Consolidação: dashboards Financeiro e Implantação integradas ao shell gerencial, Financeiro multiproduto com importação/exportação, Central de Atenção e produtividade revisadas, navegação e versionamento corrigidos.</span></div>
+    <div class="historyRow"><b>V55.1</b><span>Contratos ATM validados, ADM Financeiro, Dashboard Financeiro multiproduto e evolução das análises TopDesk.</span></div>
+    <div class="historyRow"><b>V55.0</b><span>Reestruturação de performance e inteligência de Chamados, heatmap, produtividade e reincidência.</span></div>
+    <div class="historyRow"><b>V52.8</b><span>Importação TopDesk com progresso e otimizações de mídia/bandwidth.</span></div>
+    <div class="historyRow"><b>V52.7</b><span>Dashboard Chamados com análises operacionais e produtividade técnica.</span></div>
+    <div class="historyRow"><b>V43.0</b><span>Dashboard 2.0: ATM 360 com barras, donuts, ranking, heatmap, contratos × posse, cobertura CPTM/Metrô e drill-down progressivo.</span></div>
+    <div class="historyRow"><b>V42.4</b><span>Navegação reorganizada, dashboards por perfil, Dashboard ATM com contratos/modelos/localização e TeamViewer, correções de mídia do Relatório de Visita, mapa com última posição diária, escala de Equipes e revisão visual geral.</span></div>
+    <div class="historyRow"><b>V42.2.3.2</b><span>Hotfix PowerPoint: fotos redimensionadas e comprimidas antes da geração do PPTX para reduzir memória e evitar HTTP 502; imagens mantêm proporção.</span></div>
+    <div class="historyRow"><b>V42.2.3.1</b><span>Hotfix urgente de desempenho: Visão Panorâmica com consultas agrupadas; PowerPoint otimizado; Gestor Field com Equipes.</span></div>
+    <div class="historyRow"><b>V42.3</b><span>Visão Panorâmica com exportação PowerPoint executiva e identidade Autopass; Gestor Field com visualização de Equipes; Relatório de Visita mais compacto com faixas laterais.</span></div>
+    <div class="historyRow"><b>V42.2</b><span>Relatório de Visita corporativo aprovado; Dashboard executiva de Implantação; filtros por cliente, projeto, período e técnico; gestão de relatórios por Gestor/ADM; novo perfil Gestor Field.</span></div>
+      <div class="historyRow"><b>V42.1</b><span>Implantação refinada: relatório sequencial e cabeçalho por grupo, perfis Field/Implantação separados, técnico na panorâmica, TeamViewer no inventário e dashboards gráficos otimizados.</span></div>
+<div class="historyRow"><b>V42</b><span>Nova arquitetura de gestão por atividade e módulo Implantação de Hardware com Visita a Campo, GPS, TopDesk, evidências, aceite, assinatura, relatório e Dashboard específico.</span></div>
+  <div class="historyRow"><b>V41.3</b><span>Filtros executivos sincronizados com Recarga e EMV; gráfico operacional dentro da atividade EMV; e página Sobre atualizada.</span></div>
+  <div class="historyRow"><b>V41.2</b><span>Filtro de status e recolhimento de bloqueios na atividade EMV; regra sem foto = pendente; novo perfil Técnico Implantação.</span></div>
+  <div class="historyRow"><b>V41.1</b><span>Atividades com visual moderno; Dashboard EMV com evolução; evidências EMV visíveis/editáveis; e dados técnicos do Inventário integrados à Tabela Estações.</span></div>
+  <div class="historyRow"><b>V41</b><span>Troca de Chips EMV - Trilhos, exportações executivas, evidência no cadastro de chips e dados técnicos de rede no ATM.</span></div>
+  <div class="historyRow"><b>V40.1.2</b><span>Mapa de Equipes com validação/segmentação geográfica; Troca de Chips com editar/excluir fotos; Visão Panorâmica compacta, GPS e recálculo correto após exclusão; contraste visual aprimorado.</span></div>
+  <div class="historyRow"><b>V40.1.1</b><span>Hotfix mobile: corrige validação da câmera/galeria na Visão Panorâmica. Fotos capturadas pela câmera deixam de ser bloqueadas pelo campo de galeria vazio.</span></div>
+  <div class="historyRow"><b>V40.1</b><span>Hotfix de campo: Visão Panorâmica com salvamento de fotos robusto no Android/mobile, feedback de envio, tratamento de erro e confirmação de conclusão.</span></div>
+  <div class="historyRow"><b>V40.0</b><span>Mapa de Equipes com trilhos nativos do Leaflet acompanhando pan/zoom, estações e nomes restaurados; Troca de Chips exclusiva para Recarga e cadastro fora da base restaurado.</span></div>
+  <div class="historyRow"><b>V39.7.10</b><span>Correção crítica dos trilhos em Equipes: fallback passa a alimentar o renderer correto; Troca de Chips com resultado pós-troca, gráfico e exportação de pendências.</span></div>
+  <div class="historyRow"><b>V39.7.8</b><span>Diagnóstico dos trilhos, autocomplete com dados do cadastro, cargos da escala, contraste de gráficos e listas recolhíveis.</span></div>
+  <div class="historyRow"><b>V39.7.5</b><span>Consolidação da Troca de Chips: terminais pela base, evidências, Excel, gráfico por operação e ajustes de performance.</span></div>
+  <details class="historyDetails">
+    <summary>Ver versões anteriores</summary>
+    <div class="versionTimeline historyScroll">
+      <div><b>V34.3</b><span>Correção executiva: Big Numbers exclusivos da Visão Geral, Mapa dedicado, Modo TV seguro e importação WhatsApp otimizada em lotes.</span></div>
+      <div><b>V34.0</b><span>Consolidação Operacional: Intelligence Wall, desempenho, perfil com troca de senha e importações assistidas.</span></div>
+      <div><b>V32.0</b><span>Suporte a Campo + BI executivo redesenhado, PWA homologado, progresso local no campo, importação WhatsApp auditável e gestão avançada de usuários.</span></div>
+      <div><b>V30.0</b><span>Command Center executivo, PWA offline reforçado, auditoria GPS recolhível, gestão contratual ATM e controles administrativos do Patrimônio 360.</span></div>
+      <div><b>V24.0</b><span>Gestão de Pessoas + UX de Campo + BI/TV refinado: Cargo separado do Perfil, Empresa e situação do colaborador, escala 12x36 pelo cadastro, 5x2 simplificado, exceção GPS auditável e avanço automático do fluxo mobile.</span></div>
+      <div><b>V21.0</b><span>BI Executivo e preparação para reimportação das evidências: consolidação visual, escala dinâmica validável, limpeza de usuários inativos das visões operacionais e indicadores executivos ampliados.</span></div>
+      <div><b>V20.0</b><span>Consolidação executiva: correções estruturais da V19, identificação real dos Bloqueios, configuração de rede por prefixo, escala dinâmica 7/14/21 dias e evolução da inteligência do parque.</span></div>
+      <div><b>V18.0</b><span>BI Executivo + enriquecimento técnico: gráficos gerenciais reforçados, configuração técnica de Bloqueios e sinalização inicial de integridade geográfica da sessão.</span></div>
+      <div><b>V17.0</b><span>Visão Analítica Executiva: gráficos vinculados aos filtros, UX de campo por disponibilidade real de equipamentos, limpeza de campos por troca de tipo e consolidação operacional de Equipes.</span></div>
+      <div><b>V16.0</b><span>Conciliação e fechamento inteligente: conclusão bloqueada até reconciliar a previsão e anexar evidências; tabela operacional de equipes; editor de foto com zoom e reposicionamento; base de Bloqueios integrada.</span></div>
+      <div><b>V15.0</b><span>Inventário Assistido + App de Campo: experiência mobile guiada, posição atual única por técnico no Dashboard, acabamento das camadas do mapa e base para conciliação assistida.</span></div>
+      <div><b>V14.0</b><span>Gestão, Qualidade e Inteligência Executiva: visão consolidada do parque, prioridades, criticidade, UX global de modais e mapa executivo mais limpo.</span></div>
+      <div><b>V12.0</b><span>Inteligência do Parque + Ciclo de Vida: score de confiabilidade, conciliação operacional, criticidade por localidade, histórico de eventos do ativo e Meu Perfil.</span></div>
+      <div><b>V10.0</b><span>Campo Inteligente: check-in geográfico, filtro real de 3 km, estação integrada/multilinhas, qualidade GPS, avatar unificado e cache PWA corrigido.</span></div>
+      <div><b>V9.3</b><span>Fechamento da fundação: mapa de equipes, avatar/cache de foto, raio de 3 km, indicadores de localização e versões unificadas.</span></div>
+      <div><b>V9.2</b><span>Consolidação funcional: avatar robusto, estações integradas/multilinhas, proximidade e validação GPS preparadas para o Campo Inteligente.</span></div>
+      <div><b>V9.1</b><span>Consolidação visual da V9, avatar compacto no mapa, versões unificadas e UX operacional de campo.</span></div>
+      <div><b>V9.0</b><span>Localização inteligente, perfil RH, estações próximas e preparação para validação geográfica.</span></div>
+      <div><b>V8.0</b><span>PWA de campo, operação offline, fila local e sincronização automática com o servidor.</span></div>
+      <div><b>V7.0</b><span>Patrimônio 360 para confronto de localidades, equipamentos, inventário e evidências.</span></div>
+      <div><b>V6.0</b><span>Gestão de escala, tabela por dias, alteração de turno, correção do mapa fullscreen e cores executivas.</span></div>
+      <div><b>V5.1</b><span>Central de Equipes, escala 12x36, localização e mapa operacional.</span></div>
+      <div><b>V4.2</b><span>Auditoria segura das evidências e ações específicas por situação.</span></div>
+      <div><b>V4.1</b><span>Centro de Evidências, WhatsApp, fotos/vídeos e confronto com base/inventário.</span></div>
+      <div><b>V3.1</b><span>Dashboard rápido, filtros globais, Excel e Big Numbers oficiais.</span></div>
+    </div>
+  </details>
+</section>
+{% endif %}
+
+<section class="card aboutCredit">
+  <span>Projeto e concepção</span>
+  <b>by Adil J. Poloni</b>
+</section>
+{% endblock %}

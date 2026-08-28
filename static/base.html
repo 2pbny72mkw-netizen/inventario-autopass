@@ -1,0 +1,130 @@
+
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{% block title %}Sistema de Gestão Suporte a Campo{% endblock %}</title>
+<link rel="stylesheet" href="{{url_for('static',filename='app.css')}}?v=v66-rev3">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#17345d">
+</head>
+<body>
+{% if session.get('user_id') %}
+<header class="topbar">
+  <div class="wrap nav">
+    <div class="brand">
+      <img src="{{url_for('static',filename='autopass-logo.png')}}" alt="Autopass">
+      <div class="brandtext">
+        <b>Sistema de Gestão Suporte a Campo</b>
+        <small>{{session.get('name')}} • {{ {'manager':'Gestor','technician':'Técnico Field','technician_implantation':'Técnico Implantação','manager_field':'Gestor Field','consultation':'Consulta','hr':'RH','dispatcher':'Dispatcher','atm_financial_admin':'ADM Financeiro'}.get(session.get('role'),'Usuário') }}</small>
+      </div>
+    </div>
+    <nav class="mainNavV424">
+      {% if can_view('dashboard') %}<a href="/dashboard">Dashboard</a>{% endif %}
+      {% if can_view('field') %}
+      <div class="navDrop"><button type="button" class="navDropBtn">Field ▾</button><div class="navDropMenu">
+        {% if can_view('field.dashboard') %}<a href="/dashboard/field">Dashboard Field</a>{% endif %}
+        {% if can_view('field.inventory') and session.get('role') in ('manager','manager_field','technician','technician_implantation','consultation') %}<a href="/tecnico">Inventário</a>{% endif %}
+        {% if can_view('field.calls') and session.get('role') in ('technician','manager','manager_field','dispatcher') %}<a href="/trabalho">Chamados</a>{% endif %}
+        {% if can_view('field.preventive') and session.get('role') in ('technician','manager','manager_field') %}<a href="/preventivas">Preventiva ATM</a>{% endif %}
+        {% if can_view('field.equipment') %}<a href="/patrimonio">Equipamentos</a>{% endif %}
+        {% if can_view('field.evidence') %}<a href="/evidencias-campo">Evidências</a>{% endif %}
+        {% if can_view('field.panorama') %}<a href="/visao-panoramica">Visão Panorâmica</a>{% endif %}
+        {% if can_view('field.chip_recarga') %}<a href="/troca-chips">Troca de Chips Recarga</a>{% endif %}
+      </div></div>{% endif %}
+      {% if can_view('implantation') %}
+      <div class="navDrop"><button type="button" class="navDropBtn">Implantação de Hardware ▾</button><div class="navDropMenu">
+        {% if can_view('implantation.dashboard') %}<a href="/dashboard/implantacao">Dashboard Implantação</a>{% endif %}
+        {% if can_view('implantation.visits') or can_view('implantation.reports') %}<a href="/implantacao-hardware">Visitas / Relatórios</a>{% endif %}
+        {% if can_view('implantation.emv') %}<a href="/troca-chips-emv">Troca de Chips EMV - Trilhos</a>{% endif %}{% if can_view('implantation.garage') or session.get('role') == 'manager' %}<a href="/troca-chips-garagem">Troca de Chips Garagem</a>{% endif %}
+      </div></div>{% endif %}
+      {% if can_view('teams') or can_view('users') %}
+      <div class="navDrop"><button type="button" class="navDropBtn">RH ▾</button><div class="navDropMenu">
+        {% if can_view('teams') %}<a href="/equipes">Equipes</a>{% endif %}{% if can_view('users.view') %}<a href="/usuarios">Usuários</a>{% endif %}
+      </div></div>{% endif %}
+      {% if can_view('management') %}<div class="navDrop"><button type="button" class="navDropBtn">Gestão ▾</button><div class="navDropMenu">{% if can_view('teams.today') %}<a href="/central-operacional">Central Operacional</a>{% endif %}{% if session.get('role') in ('manager','manager_field') %}<a href="/inteligencia-operacional">Inteligência Operacional</a>{% endif %}{% if can_view('management.calls') %}<a href="/topdesk">Chamados</a>{% endif %}{% if can_view('management.360') %}<a href="/gestao-360">Central 360</a>{% endif %}{% if can_view('management.notifications') %}<a href="/notificacoes" id="notificationBell">Notificações <span id="notificationCount" hidden>0</span></a>{% endif %}{% if can_view('management.diagnostics') %}<a href="/diagnostico">Diagnóstico</a>{% endif %}{% if can_view('management.settings') %}<a href="/configuracoes">Configurações</a>{% endif %}{% if session.get('role') == 'manager' %}<a href="/configuracoes/dashboards">Configurações Dashboards</a><a href="/telemetria">Telemetria</a>{% endif %}{% for d in custom_dashboards|default([]) %}<a href="/dashboards/{{ d.slug }}">{{ d.name }}</a>{% endfor %}{% if custom_dashboards|default([])|selectattr('tv_enabled')|list|length %}<a href="/modo-tv/dashboards">Modo TV Dashboards</a>{% endif %}</div></div>{% endif %}{% if session.get('role') in ('manager','manager_field','technician','technician_implantation') %}<button type="button" id="installPwa" class="navInstall" hidden>Instalar App</button>{% endif %}{% if can_view('finance') or can_view('finance_dashboard') %}<div class="navDrop"><button type="button" class="navDropBtn">Financeiro ▾</button><div class="navDropMenu">{% if can_view('finance.dashboard') %}<a href="/financeiro/dashboard">Dashboard Financeiro</a>{% endif %}{% if can_view('finance.entries') or can_view('finance.support') or can_view('finance.suppliers') %}<a href="/financeiro/lancamentos">Lançamentos</a>{% endif %}{% if can_view('finance.collection') %}<a href="/financeiro/coleta-valores">Coleta de Valores</a>{% endif %}{% if can_view('finance.apuracao') %}<a href="/financeiro/apuracao">Apuração</a>{% endif %}</div></div>{% endif %}<a href="/meu-perfil" class="navProfile navRightStart">Meu Perfil</a>{% if can_view('about.versions') %}<a href="/sobre">Sobre</a>{% endif %}
+      <a href="/logout">Sair</a>
+    </nav>
+  </div>
+</header>
+{% endif %}
+<div id="globalImportBanner" class="globalImportBanner" hidden><div><b id="globalImportTitle">Importação TopDesk em andamento</b><span id="globalImportText">Processando...</span></div><div class="globalImportTrack"><i id="globalImportBar"></i></div><a href="/topdesk">Acompanhar</a></div>
+<main class="wrap">
+{% with msgs=get_flashed_messages() %}
+  {% for m in msgs %}<div class="alert">{{m}}</div>{% endfor %}
+{% endwith %}
+{% block content %}{% endblock %}
+</main>
+{% block scripts %}{% endblock %}
+<script>
+// V50 — PWA instalável com cache seguro somente para recursos estáticos e fallback de navegação.
+let v50InstallPrompt=null;
+window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();v50InstallPrompt=e;const b=document.getElementById('installPwa');if(b)b.hidden=false;});
+document.getElementById('installPwa')?.addEventListener('click',async()=>{if(!v50InstallPrompt)return;v50InstallPrompt.prompt();await v50InstallPrompt.userChoice;v50InstallPrompt=null;document.getElementById('installPwa').hidden=true;});
+if('serviceWorker' in navigator && (location.protocol==='https:' || location.hostname==='localhost')){
+  window.addEventListener('load',async()=>{
+    try{
+      const reg=await navigator.serviceWorker.register('/sw.js?v=v66-rev3',{scope:'/',updateViaCache:'none'});
+      await reg.update();
+    }catch(err){console.warn('Falha ao atualizar Service Worker',err);}
+  },{once:true});
+}
+async function v50LoadNotifications(){const badge=document.getElementById('notificationCount');if(!badge)return;try{const d=await fetch('/api/notificacoes').then(r=>r.json());badge.textContent=d.count||0;badge.hidden=!(d.count>0);const bell=document.getElementById('notificationBell');if(bell){bell.onclick=e=>{e.preventDefault();location.href='/notificacoes';};}}catch(_e){}}
+v50LoadNotifications();
+// V56-A.2: polling TopDesk singleton, adaptativo e suspenso quando a aba não está visível.
+(function(){
+  const KEY='__autopassTopdeskImportPoll';
+  if(window[KEY]?.timer){clearTimeout(window[KEY].timer);}
+  const state=window[KEY]={timer:null,inflight:false,stopped:false,lastActive:false};
+  const ACTIVE_MS=10000, IDLE_MS=60000, HIDDEN_MS=60000;
+  async function poll(){
+    if(state.stopped||state.inflight)return;
+    if(document.visibilityState==='hidden'){schedule(HIDDEN_MS);return;}
+    const box=document.getElementById('globalImportBanner');
+    if(!box){schedule(IDLE_MS);return;}
+    state.inflight=true;
+    let next=IDLE_MS;
+    try{
+      const r=await fetch('/api/topdesk/import/active',{cache:'no-store',headers:{'X-Autopass-Poll':'topdesk-import'}});
+      const d=await r.json();
+      state.lastActive=!!d.active;
+      if(!d.active){box.hidden=true;next=IDLE_MS;}
+      else{
+        const j=d.job||{},pct=Math.max(0,Math.min(100,+j.progress||0));
+        box.hidden=false;
+        document.getElementById('globalImportTitle').textContent='Importação TopDesk · '+pct+'%';
+        document.getElementById('globalImportText').textContent=`${(+j.processed||0).toLocaleString('pt-BR')} / ${(+j.total||0).toLocaleString('pt-BR')} · ${j.phase||'Processando'}`;
+        document.getElementById('globalImportBar').style.width=pct+'%';
+        next=ACTIVE_MS;
+      }
+    }catch(_e){next=IDLE_MS;}
+    finally{state.inflight=false;schedule(next);}
+  }
+  function schedule(ms){if(state.stopped)return;clearTimeout(state.timer);state.timer=setTimeout(poll,ms);}
+  document.addEventListener('visibilitychange',()=>{clearTimeout(state.timer);schedule(document.visibilityState==='visible'?500:HIDDEN_MS);});
+  window.addEventListener('pagehide',()=>{state.stopped=true;clearTimeout(state.timer);},{once:true});
+  schedule(500);
+})();
+</script>
+
+{% if session.get('role') in ('technician','technician_implantation','manager_field') %}
+<script src="{{ url_for('static', filename='session_gps.js') }}?v=v66-rev3" defer></script>
+{% endif %}
+<script>
+(function(){
+ function addImplantRole(){document.querySelectorAll('select[name="role"]').forEach(function(s){if(![...s.options].some(o=>o.value==='technician_implantation')){const o=document.createElement('option');o.value='technician_implantation';o.textContent='Técnico Implantação';const tech=[...s.options].find(x=>x.value==='technician');if(tech&&tech.nextSibling)s.insertBefore(o,tech.nextSibling);else s.appendChild(o);}})}
+ document.addEventListener('DOMContentLoaded',addImplantRole); setTimeout(addImplantRole,300);
+})();
+</script>
+<script>
+// V50.4: Dashboard Implantação é navegação dedicada, nunca painel de atividade.
+document.querySelectorAll('a[href="/dashboard/implantacao"]').forEach(a=>{a.addEventListener('click',e=>{e.preventDefault();window.location.assign('/dashboard/implantacao');},{capture:true});});
+</script>
+
+<script>
+// V56-A.1: dropdowns móveis por toque (inclui RH).
+document.addEventListener('click',function(e){const b=e.target.closest('.navDropBtn');if(!b)return;if(window.matchMedia('(max-width:760px)').matches){e.preventDefault();const d=b.closest('.navDrop');document.querySelectorAll('.navDrop.open').forEach(x=>{if(x!==d)x.classList.remove('open')});d.classList.toggle('open');}});
+</script>
+</body>
+</html>

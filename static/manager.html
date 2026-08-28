@@ -1,0 +1,537 @@
+{% extends "base.html" %}
+{% block title %}Central de Inteligência | Inventário SP{% endblock %}
+{% block content %}
+<link rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin="">
+
+<div class="v23DashboardShell v24Executive v30Executive v31CommandCenter v32CommandCenter v33CommandCenter v34CommandCenter" id="v23DashboardShell">
+  <aside class="v23Sidebar" id="v23Sidebar">
+    <div class="v23SidebarBrand"><b>GESTÃO DE CAMPO</b><small>Autopass · V55.4</small></div>
+    <div class="v42SideGroup">VISÃO GERAL</div><button class="v23Nav active" data-v23-view="overview">▦ <span>Visão Geral</span></button><div class="v42SideGroup">ATIVIDADES</div>
+    <button class="v23Nav" data-v23-view="execution">▥ <span>Inventário</span></button>
+    <button class="v23Nav" data-v23-view="atm-inventory">▦ <span>Dashboard ATM</span></button>
+{% if session.get("role") in ("manager","manager_field","atm_financial_admin") %}<button class="v23Nav" data-v23-view="financial-dashboard">$ <span>Dashboard Financeiro</span></button>{% endif %}
+    <button class="v23Nav" data-v23-view="journal">◷ <span>Diário de bordo</span></button>
+    <button class="v23Nav" data-v23-view="topdesk">⚡ <span>Chamados</span></button>
+    <button class="v23Nav" data-v23-view="map">⌖ <span>Mapa</span></button>
+    <button class="v23Nav" data-v23-view="panorama">▤ <span>Visões panorâmicas</span></button>
+    <button class="v23Nav" data-v23-view="chips">▣ <span>Troca de Chip Recarga</span></button>
+<div class="v42SideGroup">IMPLANTAÇÃO</div>
+    <button class="v23Nav" data-v23-view="emv">▣ <span>Troca Chips EMV · Trilhos</span></button>
+    <a class="v23Nav v62SideLink" href="/troca-chips-garagem">▣ <span>Troca Chips Garagem</span></a>
+    <a class="v23Nav v62SideLink" href="/troca-chips-garagem/dashboard">▦ <span>Dashboard Garagem</span></a>
+    <button class="v23Nav" data-v23-view="implantation-dashboard">⌁ <span>Dashboard Implantação</span></button><div class="v42SideGroup">OPERAÇÃO</div><button class="v23Nav" data-v23-view="ranking">↗ <span>Ranking</span></button>
+    <button class="v23Nav" data-v23-view="competition">◉ <span>Concorrência</span></button>
+    {% if custom_dashboards|default([]) %}<div class="v42SideGroup">DASHBOARDS PERSONALIZADAS</div>{% for d in custom_dashboards %}<a class="v23Nav v62SideLink" href="/dashboards/{{ d.slug }}">▦ <span>{{ d.name }}</span></a>{% endfor %}{% endif %}
+    <div class="v23SidebarSpacer"></div>
+    <button class="v23TvBtn" id="v23TvBtn" type="button">▣ <span>Modo TV</span></button>
+  </aside>
+  <div class="v23DashboardContent">
+
+<section class="v23Panel v552EmbeddedPanel" data-v23-panel="financial-dashboard"><iframe title="Dashboard Financeiro" src="/financeiro/dashboard/embed" loading="lazy"></iframe></section>
+<section class="v23Panel v552EmbeddedPanel" data-v23-panel="implantation-dashboard"><iframe title="Dashboard Implantação" src="/dashboard/implantacao/embed" loading="lazy"></iframe></section>
+
+<section class="dashHero v23Panel" data-v23-panel="overview">
+  <div>
+    <span class="eyebrow">CONTROLE DE INVENTÁRIO EM CAMPO</span>
+    <h1>Central de Inteligência do Inventário</h1>
+    <p>Operação, progresso, tendência e criticidade do parque em tempo real.</p>
+  </div>
+  <div class="heroActions">
+    <span id="lastUpdate" class="lastUpdate">Atualizando...</span>
+    <button class="secondary" id="exportExecutive" type="button">Exportar Excel</button>
+    <button class="secondary" onclick="loadAll()">Atualizar agora</button>
+  </div>
+</section>
+
+<section class="kpis dashboardKpis executiveKpis v23Panel" data-v23-panel="overview">
+  <article class="kpi primaryKpi clickableKpi" data-exec-filter=""><span>Parque previsto</span><b id="expected">0</b><small>4 famílias oficiais · TDI técnico</small></article>
+  <article class="kpi successKpi clickableKpi" data-exec-filter="inventoried"><span>Inventariado</span><b id="inventoried">0</b><small id="inventoryCoverageSmall">0% do parque</small></article>
+  <article class="kpi dangerKpi clickableKpi" data-exec-filter="missing"><span>Faltante</span><b id="missing">0</b><small>Previsto ainda não levantado</small></article>
+  <article class="kpi primaryKpi"><span>Conclusão do parque</span><b id="assetCoverageTop">0%</b><small>Cobertura por equipamentos</small></article>
+  <article class="kpi warningKpi"><span>Divergências</span><b id="divergences">0</b><small>Exigem análise do gestor</small></article>
+  <article class="kpi dangerKpi"><span>Inoperantes</span><b id="inoperative">0</b><small>Encontrados em campo</small></article>
+</section>
+
+<section class="equipmentBigNumbers v23Panel" data-v23-panel="execution">
+  <article class="equipmentBig atm" data-type="ATM"><span>ATM</span><b id="typeATM">0</b><small id="typeATMDetail">0 / 0 · 0%</small></article>
+  <article class="equipmentBig val" data-type="VALIDADOR"><span>Recarga</span><b id="typeVALIDADOR">0</b><small id="typeVALIDADORDetail">0 / 0 · 0%</small></article>
+  <article class="equipmentBig pos" data-type="POS"><span>POS</span><b id="typePOS">0</b><small id="typePOSDetail">0 / 0 · 0%</small></article>
+  <article class="equipmentBig tdi" data-type="TDI"><span>TDI <small style="font-weight:600">técnico</small></span><b id="typeTDI">0</b><small id="typeTDIDetail">0 / 0 · 0%</small></article>
+  <article class="equipmentBig bloq" data-type="BLOQUEIO"><span>Bloqueio</span><b id="typeBLOQUEIO">0</b><small id="typeBLOQUEIODetail">0 / 0 · 0%</small></article>
+  <article class="equipmentBig outro" data-type="OUTRO"><span>Outro</span><b id="typeOUTRO">0</b><small id="typeOUTRODetail">Encontrados fora da base</small></article>
+</section>
+
+<section class="v29CommandDeck v23Panel" data-v23-panel="execution">
+  <article class="v29ProgressHero"><span>PROGRESSO GERAL</span><b id="v29Progress">0%</b><div class="v29MegaTrack"><i id="v29ProgressBar"></i></div><small id="v29ProgressText">0 de 0 ativos oficiais conciliados</small></article>
+  <article class="v29Pulse"><span>RITMO · 7 DIAS</span><b id="v29Pace">0/dia</b><small id="v29PaceDelta">Sem histórico suficiente</small></article>
+  <article class="v29Pulse"><span>TENDÊNCIA</span><b id="v29Trend">—</b><small>7 dias atuais × 7 anteriores</small></article>
+  <article class="v29Pulse"><span>PROJEÇÃO</span><b id="v29Projection">—</b><small id="v29ProjectionSmall">calculada pelo ritmo recente</small></article>
+</section>
+<section class="v29InsightRail v23Panel" data-v23-panel="overview">
+ <div><span>FOCO EXECUTIVO</span><b id="v29Headline">Carregando leitura operacional...</b></div>
+ <div class="v29Signal" id="v29Signal">LIVE</div>
+</section>
+<section class="v491VisualGrid v23Panel" data-v23-panel="overview" aria-label="Indicadores visuais Dashboard 2.0">
+  <article class="card v491VisualCard"><div class="sectionHead"><div><span class="eyebrow">COBERTURA</span><h2>Velocímetro do inventário</h2></div><span class="tag">2.0</span></div><div class="v491Gauge" id="v491Gauge" style="--pct:0"><div><b id="v491GaugeValue">0%</b><small>parque inventariado</small></div></div></article>
+  <article class="card v491VisualCard"><div class="sectionHead"><div><span class="eyebrow">COMPOSIÇÃO</span><h2>Composição do parque por tipo</h2></div></div><div class="v491Bars3d v526FlatBars" id="v491Bars3d"></div></article>
+  <article class="card v491VisualCard"><div class="sectionHead"><div><span class="eyebrow">ATENÇÃO</span><h2>Divergências do recorte</h2></div></div><div class="v526DivergenceSummary"><b id="v526DivCount">0</b><span>divergências</span><small>Os filtros superiores recalculam este indicador.</small></div></article>
+</section>
+<section class="v23Panel v424AtmDashboard v430Atm" data-v23-panel="atm-inventory">
+  <div class="dashHero v424Hero v430Hero"><div><span class="eyebrow">INVENTÁRIO 360 · ATM · DASHBOARD 2.0</span><h1>Parque ATM</h1><p>Visão executiva e exploratória da base oficial 08/2026. Clique nos gráficos para aprofundar Operação → Linha → Localidade → ATM.</p></div><div class="heroActions"><button class="secondary" id="atmDashExport">Exportar CSV</button><button class="secondary" id="atmDashRefresh">Atualizar</button></div></div>
+  <section class="card v424FilterCard"><div class="v424Filters atmFilters"><select id="atmFCompany"><option value="">Todas operadoras</option></select><select id="atmFLine"><option value="">Todas linhas</option></select><select id="atmFLocation"><option value="">Todas localidades</option></select><select id="atmFModel"><option value="">Todos modelos</option></select><select id="atmFContract"><option value="">Todos contratos</option></select><select id="atmFOwnership"><option value="">Todo tipo de posse</option></select><select id="atmFStatus"><option value="">Todos status</option></select><button class="secondary" id="atmClear">Limpar filtros</button></div></section>
+  <section class="v424Kpis v430Kpis"><article class="kpi primaryKpi"><span>Total oficial</span><b id="atmKTotal">0</b><small>ATMs no universo filtrado</small></article><article class="kpi successKpi"><span>Alocados</span><b id="atmKAllocated">0</b><small>em operação/localidades</small></article><article class="kpi warningKpi"><span>Estoque</span><b id="atmKStock">0</b><small>equipamentos em estoque</small></article><article class="kpi"><span>Estações CPTM</span><b id="atmKCptmStations">0</b><small>localidades com ATM</small></article><article class="kpi"><span>Estações Metrô</span><b id="atmKMetroStations">0</b><small>localidades com ATM</small></article><article class="kpi"><span>TeamViewer</span><b id="atmKTeamviewer">0</b><small>IDs cadastrados</small></article></section>
+
+  <section class="v430ChartGrid">
+    <article class="card v430Chart v430Wide"><div class="sectionHead"><div><h2>ATMs por operação</h2><p class="muted">Barras verticais · clique para filtrar</p></div><span class="tag">OPERAÇÃO</span></div><div id="atmColumnOperator" class="v430Columns"></div></article>
+    <article class="card v430Chart"><div class="sectionHead"><div><h2>Mix de modelos</h2><p class="muted">Distribuição do parque</p></div></div><div class="v430DonutWrap"><div id="atmModelDonut" class="v430Donut"><div><b id="atmDonutTotal">0</b><small>ATMs</small></div></div><div id="atmModelLegend" class="v430Legend"></div></div></article>
+    <article class="card v430Chart"><div class="sectionHead"><div><h2>Alocação do parque</h2><p class="muted">Alocados × estoque</p></div></div><div id="atmAllocationRing" class="v430Ring"><div><b id="atmAllocationPct">0%</b><small>alocado</small></div></div><div class="v430MiniLegend"><span>Alocados <b id="atmAllocationA">0</b></span><span>Estoque <b id="atmAllocationS">0</b></span></div></article>
+
+    <article class="card v430Chart v430Wide"><div class="sectionHead"><div><h2>Ranking de localidades</h2><p class="muted">Top 10 · barras horizontais · clique para abrir a localidade</p></div><button class="secondary" id="atmShowLocations">Ver todas</button></div><div id="atmLocationRanking" class="statusBars"></div></article>
+    <article class="card v430Chart"><div class="sectionHead"><div><h2>Leasing</h2><p class="muted">Composição do parque</p></div></div><div id="atmOwnershipDonut" class="v430Donut v430DonutSmall"><div><b id="atmLeasingCount">0</b><small>leasing</small></div></div><div id="atmOwnershipLegend" class="v430Legend"></div></article>
+
+    <article class="card v430Chart"><div class="sectionHead"><div><h2>Linhas com maior parque</h2><p class="muted">Heatmap de concentração</p></div></div><div id="atmLineHeatmap" class="v430Heatmap"></div></article>
+    <article class="card v430Chart v430Wide"><div class="sectionHead"><div><h2>Contratos × posse</h2><p class="muted">Barras empilhadas · selecione um contrato para localizar seus ATMs</p></div></div><div id="atmContractStack" class="v430Stacks"></div></article>
+    <article class="card v430Chart"><div class="sectionHead"><div><h2>Cobertura ferroviária</h2><p class="muted">Estações com ATM por operação</p></div></div><div id="atmCoverageTiles" class="v430Coverage"></div></article>
+  </section>
+
+  <section class="card v430Drill"><div class="sectionHead"><div><h2 id="atmDrillTitle">Explorar parque</h2><p class="muted" id="atmDrillHint">Selecione um gráfico acima. O detalhe aparece aqui sem poluir a visão executiva.</p></div><span class="tag" id="atmRowsTag">0 ATMs</span></div><div id="atmDrillCards" class="v430DrillCards"></div><details id="atmAssetDetails"><summary>Ver ATMs do recorte</summary><div class="tableWrap"><table><thead><tr><th>Operadora</th><th>Linha</th><th>Localidade</th><th>ATM</th><th>Modelo</th><th>Contrato</th><th>Posse</th><th>TeamViewer</th><th>ID TeamViewer</th><th>IP</th><th>Status</th></tr></thead><tbody id="atmRows"></tbody></table></div></details><section id="atmLocation360" class="atm360Panel" hidden><div class="sectionHead"><div><h2 id="atmLocation360Title">Localidade 360°</h2><p class="muted">Resumo operacional da localidade selecionada.</p></div><button class="secondary" id="atmLocation360Close">Fechar</button></div><div id="atmLocation360Body" class="atm360Grid"></div></section><section id="atm360Panel" class="atm360Panel" hidden><div class="sectionHead"><div><h2 id="atm360Title">ATM 360°</h2><p class="muted">Ficha consolidada do equipamento selecionado.</p></div><button class="secondary" id="atm360Close">Fechar</button></div><div id="atm360Body" class="atm360Grid"></div></section></section>
+</section>
+
+{% if session.get("role") == "manager" %}
+<section class="v23Panel v460Finance" data-v23-panel="atm-financial">
+ <div class="dashHero"><div><span class="eyebrow">ADMINISTRAÇÃO · FINANCEIRO ATM · DASHBOARD 2.0</span><h1>Valores de locação do parque ATM</h1><p>Visão financeira baseada na planilha de custos 08/2026. Valores mensais por modelo, contrato e situação de faturamento.</p></div></div>
+ <section class="v460FinKpis"><article><span>Valor do parque</span><b id="finParkValue">R$ 0</b><small id="finParkQty">0 ATMs</small></article><article><span>Valor contratado</span><b id="finContractValue">R$ 0</b><small id="finContractQty">0 ATMs</small></article><article><span>Valor faturado</span><b id="finBilledValue">R$ 0</b><small id="finBilledQty">0 ATMs</small></article><article><span>Não faturados</span><b id="finNotBilled">0</b><small>diferenças informadas na base</small></article></section>
+ <section class="v460FinGrid"><article class="card"><div class="sectionHead"><div><h2>Valor mensal por modelo</h2><p class="muted">Barras proporcionais · valor total do parque</p></div></div><div id="finModelBars" class="v460Bars"></div></article><article class="card"><div class="sectionHead"><div><h2>Valor unitário de locação</h2><p class="muted">Comparativo entre modelos</p></div></div><div id="finUnitBars" class="v460Bars"></div></article><article class="card"><div class="sectionHead"><div><h2>Distribuição por contrato</h2><p class="muted">Valor mensal e quantidade vinculada</p></div></div><div id="finContractBars" class="v526ContractBars"></div></article><article class="card"><div class="sectionHead"><div><h2>Parque × contrato × faturado</h2><p class="muted">Quantidade de ATMs por modelo</p></div></div><div id="finCompare" class="v460Compare v526Compare"></div><div id="finDivergenceBars" class="v526DivergenceBars"></div></article></section>
+ <section class="card"><div class="sectionHead"><div><h2>Detalhamento financeiro por modelo</h2></div><span class="tag">ADM</span></div><div class="tableWrap"><table><thead><tr><th>Modelo</th><th>Leasing</th><th>Não leasing</th><th>Estoque</th><th>Outros</th><th>Subtotal</th><th>Valor unitário</th><th>Valor mensal</th></tr></thead><tbody id="finRows"></tbody></table></div></section>
+ <section class="card"><div class="sectionHead"><div><h2>Custos operacionais por fornecedor</h2><p class="muted">V51 · empresa → atividade → categoria → regra de apropriação. Custos compartilhados usam ATM 70%, POS 15%, Recarga 5%, Rack 9% e Outros 1%.</p></div><span class="tag">FINANCEIRO 2.0</span></div><div class="v51SupplierKpis"><article><span>Custo do período</span><b id="finSupplierTotal">R$ 0</b></article><article><span>Fornecedores / linhas</span><b id="finSupplierCount">0</b></article></div><div class="tableWrap"><table><thead><tr><th>Empresa</th><th>Descrição da atividade</th><th>Média jan-jun/26</th><th>jul/27</th><th>Categoria</th><th>Apropriação</th></tr></thead><tbody id="finSupplierRows"></tbody></table></div></section>
+</section>
+{% endif %}
+
+<section class="card executiveFilterBar v23Shared">
+  <div class="grid4">
+    <div><label>Empresa</label><select id="execCompany"><option value="">Todas</option></select></div>
+    <div><label>Linha</label><select id="execLine"><option value="">Todas</option></select></div>
+    <div><label>Tipo de equipamento</label><select id="execType"><option value="">Todos</option><option value="ATM">ATM</option><option value="VALIDADOR">Recarga</option><option value="POS">POS</option><option value="TDI">TDI</option><option value="BLOQUEIO">Bloqueio</option><option value="OUTRO">Outro</option></select></div>
+    <div><label>Situação</label><select id="execStatus"><option value="">Todas</option><option value="CONCLUIDA">Concluída</option><option value="EM ANDAMENTO">Em andamento</option><option value="PENDENTE">Pendente</option><option value="SEM REGISTRO">Sem registro</option></select></div>
+    <div><label>Atalho executivo</label><button type="button" class="secondary execReset" id="execReset">Limpar filtros</button></div>
+  </div>
+<div id="filterContext" class="filterContext">Todas empresas · Todas linhas · Todos os tipos</div></section>
+
+<section class="card v23Panel" data-v23-panel="map">
+  <div class="cardHead">
+    <div>
+      <h2>Mapa operacional e auditoria GPS</h2>
+      <p>O mapa mostra uma posição atual por técnico. A tabela preserva as últimas coletas para auditoria.</p>
+    </div>
+    <span id="gpsCoverageTag" class="tag">GPS 0%</span>
+  </div>
+
+  <details class="v30Disclosure">
+    <summary>Auditoria GPS <span>ver indicadores e referência</span></summary>
+    <div class="qualityGrid" style="margin:14px 0 16px">
+      <div class="qualityItem"><span>Registros com GPS</span><b id="gpsWith">0</b></div>
+      <div class="qualityItem"><span>Sem GPS</span><b id="gpsWithout">0</b></div>
+      <div class="qualityItem"><span>Cobertura GPS</span><b id="gpsCoverage">0%</b></div>
+      <div class="qualityItem"><span>Última coleta localizada</span><b id="gpsLast">—</b></div>
+    </div>
+
+  <div class="notice" style="margin:8px 0 12px">
+    <b>Referência da localidade:</b> selecione uma localidade e clique em
+    <b>Definir referência no mapa</b>. Depois clique no ponto correto da estação/localidade.
+    O sistema passa a comparar o GPS da coleta com essa referência.
+  </div>
+
+  <div class="grid3" style="margin-bottom:12px">
+    <div>
+      <label>Localidade para referência</label>
+      <select id="mapLocationSelect"><option value="">Selecione</option></select>
+    </div>
+    <div style="display:flex;align-items:end">
+      <button type="button" class="secondary" id="setReferenceBtn">Definir referência no mapa</button>
+    </div>
+    <div>
+      <label>Status</label>
+      <div id="referenceStatus" class="muted" style="padding-top:10px">Nenhuma localidade selecionada.</div>
+    </div>
+  </div>
+
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 12px">
+    <span class="tag">● coleta GPS</span>
+    <span class="tag">◆ referência da localidade</span>
+    <span class="tag">🟢 até 30 m</span>
+    <span class="tag">🟠 31–80 m</span>
+    <span class="tag">🔴 acima de 80 m</span>
+    <span class="tag">O círculo indica a precisão informada pelo aparelho</span>
+  </div>
+
+  </details>
+
+  <div class="mapFullscreenAction">
+    <button type="button" class="secondary" id="toggleMapFullscreenBtn">⛶ Tela cheia</button>
+  </div>
+
+  <div id="gpsMap"
+       style="height:460px;border:1px solid #dfe5ec;border-radius:14px;overflow:hidden;margin-bottom:18px">
+  </div>
+
+  <details class="v30Disclosure v30History">
+    <summary>Histórico de coletas GPS <span>clique para consultar</span></summary>
+    <div class="tableWrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Data/hora</th>
+          <th>Técnico</th>
+          <th>Localidade</th>
+          <th>Equipamento</th>
+          <th>Precisão</th>
+          <th>Coordenadas</th>
+        </tr>
+      </thead>
+      <tbody id="gpsRows">
+        <tr><td colspan="6">Carregando...</td></tr>
+      </tbody>
+    </table>
+    </div>
+  </details>
+</section>
+
+
+
+
+
+<section class="card executiveAnalytics v23Panel" data-v23-panel="quality" id="executiveAnalytics">
+  <div class="sectionHead"><div><h2>Resumo executivo do recorte</h2><p class="muted">Execução, pendência, qualidade e composição do parque em uma leitura visual.</p></div><span class="tag" id="analyticsContext">Visão geral</span></div>
+  <div class="biExecutiveStrip">
+    <article><span>Execução</span><b id="biCoverage">0%</b><small>previsto × inventariado</small></article>
+    <article><span>Pendência</span><b id="biMissing">0</b><small>ativos ainda não conciliados</small></article>
+    <article><span>Qualidade</span><b id="biQuality">100%</b><small>sem divergência / inoperância</small></article>
+    <article><span>Criticidade</span><b id="biCritical">Normal</b><small>prioridade do recorte</small></article>
+  </div>
+  <div class="analyticsGrid">
+    <article class="analyticsPanel"><span>Cobertura do recorte</span><b id="analyticsCoverage">0%</b><div class="executiveTrack"><i id="analyticsCoverageBar"></i></div><small id="analyticsCoverageText">0 de 0 inventariados</small></article>
+    <article class="analyticsPanel"><span>Qualidade</span><div class="analyticPair"><div><b id="analyticsDivergences">0</b><small>Divergências</small></div><div><b id="analyticsInoperative">0</b><small>Inoperantes</small></div></div></article>
+    <article class="analyticsPanel"><span>Composição do parque</span><div id="analyticsTypes" class="analyticsTypes"></div></article>
+  </div>
+</section>
+
+
+<section class="v35OverviewWall v23Panel" data-v23-panel="overview">
+  <article class="v35Panel v35CoveragePanel">
+    <div class="v35PanelHead"><div><span>COBERTURA DO PARQUE</span><b>Execução consolidada</b></div><small>recorte atual</small></div>
+    <div class="v35CoverageBody">
+      <div class="v34Radial" id="v34Radial"><b id="v34RadialPct">0%</b><small>conclusão</small></div>
+      <div class="v35CoverageCopy"><strong id="v34RadialText">0 de 0 ativos oficiais</strong><div class="v35Legend"><i class="ok"></i>Inventariado <i class="miss"></i>Pendente</div></div>
+    </div>
+  </article>
+
+  <article class="v35Panel v35StatusPanel">
+    <div class="v35PanelHead"><div><span>STATUS DAS LOCALIDADES</span><b>Concluídas · andamento · pendentes</b></div><small id="v35StatusContext">filtros atuais</small></div>
+    <div class="v35StatusCards">
+      <button type="button" class="v35Status completed" data-status="CONCLUIDA"><span>Concluídas</span><b id="v35Completed">0</b><small id="v35CompletedPct">0%</small></button>
+      <button type="button" class="v35Status progress" data-status="EM ANDAMENTO"><span>Em andamento</span><b id="v35Progress">0</b><small id="v35ProgressPct">0%</small></button>
+      <button type="button" class="v35Status pending" data-status="PENDENTE"><span>Pendentes</span><b id="v35Pending">0</b><small id="v35PendingPct">0%</small></button>
+    </div>
+    <div class="v35StatusTrack" aria-label="Distribuição do status"><i id="v35StatusDone"></i><i id="v35StatusProgress"></i><i id="v35StatusPending"></i></div>
+    <div class="v35StatusFoot"><span id="v35LocationsTotal">0 localidades no recorte</span><span>Clique em um status para abrir a execução</span></div>
+  </article>
+
+  <article class="v35Panel v35MixPanel">
+    <div class="v35PanelHead"><div><span>MIX DO PARQUE</span><b>Composição por tipo</b></div><small>recorte atual</small></div>
+    <div class="v35MixBody">
+      <div class="v35MixDonut" id="v35MixDonut"><div><b id="v35MixTotal">0</b><small>ativos</small></div></div>
+      <div class="v35MixLegend" id="v35MixLegend"></div>
+    </div>
+  </article>
+
+  <article class="v35Panel v35CompanyPanel">
+    <div class="v35PanelHead"><div><span>EXECUÇÃO POR EMPRESA</span><b>Evolução operacional</b></div><small>concluído · andamento · pendente</small></div>
+    <div class="v35CompanyBars" id="v35CompanyBars"></div>
+  </article>
+
+  <article class="v35Panel v35PriorityPanel">
+    <div class="v35PanelHead"><div><span>PRIORIDADES</span><b>Maior volume faltante</b></div><small>localidades</small></div>
+    <div id="v344PriorityBars" class="v344PriorityBars"></div>
+  </article>
+
+  <article class="v35Panel v35AttentionPanel">
+    <div class="v35PanelHead"><div><span>ATENÇÃO HOJE</span><b>Ações do gestor</b></div><span class="v34Live">LIVE</span></div>
+    <div id="v34Attention" class="v34Attention"></div>
+  </article>
+</section>
+
+<section class="card v21ExecutiveCharts v23Panel" data-v23-panel="execution" id="v21ExecutiveCharts">
+  <div class="sectionHead">
+    <div><h2>Painel executivo do recorte</h2><p class="muted">Leitura visual de execução, pendência, produtividade e prioridades para apresentação gerencial.</p></div>
+    <span class="tag">V36 · EXECUÇÃO</span>
+  </div>
+  <div class="v36ProductivityStrip" id="v36ProductivityStrip">
+    <article><span>Produção · 14 dias</span><b id="v36Prod14">0</b><small>lançamentos registrados</small></article>
+    <article><span>Ritmo · 7 dias</span><b id="v36Pace7">0/dia</b><small>média recente</small></article>
+    <article><span>Técnicos ativos</span><b id="v36ActiveTechs">0</b><small>com produção em 14 dias</small></article>
+    <article><span>Destaque de produção</span><b id="v36TopTech">—</b><small id="v36TopTechDetail">sem produção recente</small></article>
+  </div>
+  <div class="v21ChartGrid">
+    <article class="v21ChartPanel">
+      <div class="v21ChartTitle"><span>Previsto × realizado</span><b id="v21ExecPct">0%</b></div>
+      <div id="v21StackedExecution" class="v21StackedExecution"></div>
+      <div class="v21ChartLegend"><span><i class="done"></i>Inventariado <b id="v21Done">0</b></span><span><i class="missing"></i>Faltante <b id="v21Left">0</b></span></div>
+    </article>
+    <article class="v21ChartPanel">
+      <div class="v21ChartTitle"><span>Execução por tipo</span><small>cobertura do recorte</small></div>
+      <div id="v21TypeBars" class="v21TypeBars"></div>
+    </article>
+    <article class="v21ChartPanel v21PriorityPanel">
+      <div class="v21ChartTitle"><span>Top prioridades</span><small>maior volume faltante</small></div>
+      <div id="v21PriorityBars" class="v21PriorityBars"></div>
+    </article>
+  </div>
+</section>
+
+<section class="card v22ExecutiveCockpit v23Panel" data-v23-panel="execution" id="v22ExecutiveCockpit">
+  <div class="sectionHead">
+    <div><h2>Cockpit executivo</h2><p class="muted">Ritmo de execução, produtividade recente e qualidade das evidências para decisão gerencial.</p></div>
+    <span class="tag">V34.4 · LIVE</span>
+  </div>
+  <div class="v22CockpitGrid">
+    <article class="v22Panel"><div class="v21ChartTitle"><span>Evolução diária</span><small>inventários registrados</small></div><div id="v22Trend" class="v22Trend"></div></article>
+    <article class="v22Panel"><div class="v21ChartTitle"><span>Produtividade</span><small>top técnicos · 14 dias</small></div><div id="v22Productivity" class="v22Productivity"></div></article>
+    <article class="v22Panel"><div class="v21ChartTitle"><span>Qualidade das evidências</span><small>WhatsApp / campo</small></div><div id="v22EvidenceQuality" class="v22EvidenceQuality"></div></article>
+  </div>
+</section>
+
+<section class="card v25BiArena v23Panel" data-v23-panel="execution" id="v25BiArena">
+  <div class="sectionHead"><div><span class="eyebrow">V25 · INTELIGÊNCIA EXECUTIVA</span><h2>BI de performance e tendência</h2><p class="muted">Comparativos de ritmo, cobertura e concentração de pendências.</p></div><span class="v25LivePill">● LIVE BI</span></div>
+  <div class="v25BiGrid">
+    <article class="v25Visual v25TrendCard"><div class="v25VisualHead"><b>Tendência de execução</b><span id="v25TrendDelta">—</span></div><div id="v25TrendChart" class="v25TrendChart"></div><small>Últimos 14 dias · comparação 7d × 7d anteriores</small></article>
+    <article class="v25Visual"><div class="v25VisualHead"><b>Mix do parque</b><span>cobertura</span></div><div class="v25DonutWrap"><div id="v25MixDonut" class="v25MixDonut"><b id="v25MixPct">0%</b><small>executado</small></div><div id="v25MixLegend" class="v25MixLegend"></div></div></article>
+    <article class="v25Visual"><div class="v25VisualHead"><b>Comparativo por empresa</b><span>localidades</span></div><div id="v25CompanyCompare" class="v25CompanyCompare"></div></article>
+    <article class="v25Visual"><div class="v25VisualHead"><b>Radar de atenção</b><span>qualidade</span></div><div id="v25Attention" class="v25Attention"></div></article>
+  </div>
+</section>
+
+
+<section class="card v30Contracts v23Panel" data-v23-panel="execution" id="v30Contracts">
+ <div class="sectionHead"><div><span class="eyebrow">GESTÃO CONTRATUAL ATM</span><h2>Contratos e vencimentos</h2><p class="muted">Filtro e exportação dos contratos cadastrados na base ATM.</p></div><button class="secondary" id="v30ContractExport" type="button">Exportar contratos</button></div>
+ <div class="grid4"><div><label>Vencimento / contrato</label><select id="v30Contract"><option value="">Todos</option></select></div><div><label>Situação</label><select id="v30Horizon"><option value="">Todos</option><option value="expired">Vencidos</option><option value="none">Sem contrato</option></select></div><div class="v30ContractKpi"><span>ATMs no recorte</span><b id="v30ContractCount">0</b></div><div class="v30ContractKpi danger"><span>Com vencimento informado</span><b id="v30ContractRisk">0</b></div></div>
+ <div id="v30ContractBars" class="v30ContractBars"></div>
+</section>
+
+<section class="card v25Competition v23Panel" data-v23-panel="competition">
+ <div class="sectionHead"><div><span class="eyebrow">INTELIGÊNCIA DE MERCADO</span><h2>Concorrência encontrada em campo</h2><p class="muted">Leitura consolidada das evidências importadas. Não altera o parque oficial.</p></div><span class="tag">Fonte: Evidências</span></div>
+ <div class="v25CompetitionHero"><article><span>Total identificado</span><b id="v25CompetitionTotal">0</b><small>equipamentos concorrentes citados</small></article><div id="v25CompetitionBars" class="v25CompetitionBars"></div></div>
+</section>
+
+
+<section class="card v23Panel" data-v23-panel="topdesk" id="v39TopdeskPanel"><div class="sectionHead"><div><span class="eyebrow">SUPORTE A CAMPO</span><h2>Chamados TopDesk</h2><p class="muted">Visão operacional da carga importada e distribuída aos técnicos.</p></div><a href="/topdesk" class="secondary buttonLink">Abrir operação</a></div><div class="topdeskKpis"><article><small>Total</small><b id="v39TdTotal">0</b></article><article><small>Em aberto</small><b id="v39TdOpen">0</b></article><article><small>Resolvidos</small><b id="v39TdResolved">0</b></article><article><small>Atribuídos</small><b id="v39TdAssigned">0</b></article><article><small>Sem técnico</small><b id="v39TdUnassigned">0</b></article></div><div class="dashboardGrid"><article class="v22Panel"><h3>Chamados por equipamento</h3><div id="v39TdTypes" class="barList"></div></article><article class="v22Panel"><h3>Localidades com mais chamados</h3><div id="v39TdLocations" class="barList"></div></article></div></section>
+<section class="card v23Panel v38Journal" data-v23-panel="journal"><div class="sectionHead"><div><span class="eyebrow">PRODUTIVIDADE DE CAMPO</span><h2>Diário de bordo</h2><p class="muted">Atividades e posições GPS do colaborador no período.</p></div></div><div class="v38JournalFilters"><select id="v38JournalUser"><option value="">Selecione o colaborador</option></select><select id="v38JournalDays"><option value="7">7 dias</option><option value="14">14 dias</option><option value="30">30 dias</option></select><button class="secondary" id="v38JournalLoad">Consultar</button></div><div class="evidenceMiniKpis"><span><small>Registros GPS</small><b id="v38JGps">0</b></span><span><small>Equipamentos</small><b id="v38JEquip">0</b></span><span><small>Localidades</small><b id="v38JLoc">0</b></span></div><div id="v38JournalMap" style="height:330px;border-radius:14px;margin:14px 0"></div><div id="v38JournalTimeline" class="v38Timeline"></div></section>
+
+
+<section class="card v23Panel dashPanExecutive" id="panoramaDashPanel" data-v23-panel="panorama">
+  <div class="sectionHead"><div><span class="eyebrow">ACERVO VISUAL</span><h2>Visões panorâmicas</h2><p class="muted">Progresso das localidades e acesso às fotos organizadas por ponto.</p></div><div><a class="secondary buttonLink" href="/api/panoramas/export.xlsx">Exportar Excel</a> <a class="secondary buttonLink" href="/api/panoramas/export.pptx">Exportar PowerPoint</a> <a class="secondary buttonLink" href="/visao-panoramica">Abrir tela completa</a></div></div>
+  <div class="grid4 dashPanFilters">
+    <div><label>Empresa</label><select id="dashPanCompany"><option value="">Todas</option></select></div>
+    <div><label>Linha</label><select id="dashPanLine"><option value="">Todas</option></select></div>
+    <div><label>Status</label><select id="dashPanStatus"><option value="">Todos</option><option value="PENDENTE">Pendentes</option><option value="EM ANDAMENTO">Em andamento</option><option value="CONCLUÍDA">Concluídas</option></select></div>
+    <div><label>Localidade</label><select id="dashPanLocation"><option value="">Selecione</option></select></div>
+  </div>
+  <div class="dashPanKpis">
+    <article><small>Localidades</small><b id="dashPanTotal">0</b><span>no recorte</span></article>
+    <article class="dashPanPending"><small>Pendentes</small><b id="dashPanPending">0</b><span id="dashPanPendingPct">0%</span></article>
+    <article class="dashPanProgress"><small>Em andamento</small><b id="dashPanInProgress">0</b><span id="dashPanInProgressPct">0%</span></article>
+    <article class="dashPanDone"><small>Concluídas</small><b id="dashPanDone">0</b><span id="dashPanDonePct">0%</span></article>
+    <article class="dashPanPhotos"><small>Fotos</small><b id="dashPanPhotos">0</b><span>registradas</span></article>
+  </div>
+  <div class="dashPanVisuals">
+    <article class="v22Panel"><h3>Status das localidades</h3><div class="dashPanDonutRow"><div class="dashPanDonut" id="dashPanDonut"><div><b id="dashPanPct">0%</b><small>concluído</small></div></div><div class="dashPanLegend"><span><i class="done"></i>Concluídas <b id="dashPanLegendDone">0</b></span><span><i class="progress"></i>Em andamento <b id="dashPanLegendProgress">0</b></span><span><i class="pending"></i>Pendentes <b id="dashPanLegendPending">0</b></span></div></div></article>
+    <article class="v22Panel"><h3>Progresso</h3><div class="dashPanProgressBar"><i class="done" id="dashPanBarDone"></i><i class="progress" id="dashPanBarProgress"></i><i class="pending" id="dashPanBarPending"></i></div><p class="muted" id="dashPanProgressText">0 de 0 localidades concluídas.</p></article>
+  </div>
+  <div id="dashPanGallery" class="panGallery" style="margin-top:16px"><p class="muted">Selecione uma localidade para visualizar as fotos.</p></div>
+</section>
+
+<section class="card v23Panel" data-v23-panel="emv" id="emvDashPanel">
+  <div class="sectionHead"><div><span class="eyebrow">TRILHOS · EMV</span><h2>Evolução e progresso · Troca de Chips EMV</h2><p class="muted">Mesmo padrão executivo da Recarga, com filtros por operadora, linha, estação e status.</p></div><div><a class="secondary buttonLink" href="/api/emv-chip-swaps/export.xlsx">Exportar Excel</a> <a class="secondary buttonLink" href="/troca-chips-emv">Abrir atividade</a></div></div>
+  <div class="kpis dashboardKpis"><article class="kpi"><span>Total previsto</span><b id="emvDashTotal">0</b></article><article class="kpi successKpi"><span>Concluídos</span><b id="emvDashDone">0</b></article><article class="kpi warningKpi"><span>Em andamento</span><b id="emvDashProgressN">0</b></article><article class="kpi dangerKpi"><span>Pendentes</span><b id="emvDashPending">0</b></article><article class="kpi primaryKpi"><span>Progresso</span><b id="emvDashPct">0%</b></article></div>
+  <div class="chipDashProgress"><i id="emvDashBar" style="width:0%"></i></div><div class="notice" id="emvForecast" style="margin-top:10px">Calculando tendência de conclusão…</div>
+  <div class="chipDashVisualRow"><div class="chipDonutWrap"><div class="chipDonut" id="emvDashDonut"><div><b id="emvDonutPct">0%</b><span>concluído</span><small id="emvDonutTotal">0 total</small></div></div></div><div class="chipDashVisualInfo"><div class="chipStatusChart"><i class="done" id="emvChartDone"></i><i class="progress" id="emvChartProgress"></i><i class="pending" id="emvChartPending"></i></div><div class="chipChartLegend"><span><i class="done"></i> Concluídos <b id="emvLegendDone">0</b></span><span><i class="progress"></i> Em andamento <b id="emvLegendProgress">0</b></span><span><i class="pending"></i> Pendentes <b id="emvLegendPending">0</b></span></div></div></div>
+  <div class="grid5 chipResultFilters" style="margin-top:16px"><div><label>Operadora</label><select id="emvDashCompany"><option value="">Todas</option></select></div><div><label>Linha</label><select id="emvDashLine"><option value="">Todas</option></select></div><div><label>Estação</label><select id="emvDashStation"><option value="">Todas</option></select></div><div><label>Status</label><select id="emvDashStatus"><option value="">Todos</option><option value="CONCLUIDA">Concluído</option><option value="EM ANDAMENTO">Em andamento</option><option value="PENDENTE">Pendente</option></select></div><div><label>Resultado</label><select id="emvDashResult"><option value="">Todos</option><option value="TESTADO_OK">Testado - OK</option><option value="TESTADO_COM_DEFEITO">Com defeito</option><option value="NAO_FOI_POSSIVEL_TESTAR">Não testado</option><option value="EQUIPAMENTO_INOPERANTE">Inoperante</option><option value="OUTRO">Outro</option></select></div></div>
+  <div class="dashboardGrid" style="margin-top:16px"><article class="v22Panel"><h3>Progresso por estação</h3><div id="emvDashStations"></div></article><article class="v22Panel"><h3>Produtividade por técnico</h3><div id="emvDashTechs"></div></article></div>
+</section>
+<section class="card v23Panel" data-v23-panel="chips" id="chipDashPanel">
+  <div class="sectionHead"><div><span class="eyebrow">PRODUTIVIDADE · TROCA DE CHIPS</span><h2>Evolução e progresso</h2><p class="muted">Acompanhamento dos Validadores de Recarga por localidade e técnico.</p></div><a class="secondary buttonLink" href="/troca-chips">Abrir atividade</a></div>
+  <div class="kpis dashboardKpis">
+    <article class="kpi"><span>Total previsto</span><b id="chipDashTotal">0</b></article>
+    <article class="kpi successKpi"><span>Concluídos</span><b id="chipDashDone">0</b></article>
+    <article class="kpi warningKpi"><span>Em andamento</span><b id="chipDashProgressN">0</b></article>
+    <article class="kpi dangerKpi"><span>Pendentes</span><b id="chipDashPending">0</b></article>
+    <article class="kpi primaryKpi"><span>Progresso</span><b id="chipDashPct">0%</b></article>
+  </div>
+  <div class="chipDashProgress"><i id="chipDashBar" style="width:0%"></i></div><div class="notice" id="chipForecast" style="margin-top:10px">Calculando tendência de conclusão…</div>
+  <div class="chipDashVisualRow">
+    <div class="chipDonutWrap"><div class="chipDonut" id="chipDashDonut"><div><b id="chipDonutPct">0%</b><span>concluído</span><small id="chipDonutTotal">0 total</small></div></div></div>
+    <div class="chipDashVisualInfo">
+      <div class="chipStatusChart" id="chipStatusChart" aria-label="Distribuição do status"><i class="done" id="chipChartDone" style="width:0%"></i><i class="progress" id="chipChartProgress" style="width:0%"></i><i class="pending" id="chipChartPending" style="width:0%"></i></div>
+      <div class="chipChartLegend"><span><i class="done"></i> Concluídos <b id="chipLegendDone">0</b></span><span><i class="progress"></i> Em andamento <b id="chipLegendProgress">0</b></span><span><i class="pending"></i> Pendentes <b id="chipLegendPending">0</b></span></div>
+      <button type="button" class="secondary" id="chipDashExport">Exportar troca de chips (Excel)</button>
+    </div>
+  </div>
+  <div class="grid5 chipResultFilters" style="margin-top:16px"><div><label>Operação</label><select id="chipDashOperation"><option value="">Todos</option></select></div><div><label>Empresa</label><select id="chipDashCompany"><option value="">Todas</option></select></div><div><label>Linha</label><select id="chipDashLine"><option value="">Todas</option></select></div><div><label>Localidade</label><select id="chipDashLocation"><option value="">Todas</option></select></div><div><label>Resultado do teste</label><select id="chipDashTestResult"><option value="">Todos</option><option value="TESTADO_OK">Testado - OK</option><option value="TESTADO_COM_DEFEITO">Testado - com defeito</option><option value="NAO_FOI_POSSIVEL_TESTAR">Não foi possível testar</option><option value="EQUIPAMENTO_INOPERANTE">Equipamento inoperante</option><option value="OUTRO">Outro</option><option value="SEM_RESULTADO">Sem resultado</option></select></div></div>
+  <div class="card chipTestResultPanel" style="margin-top:16px"><div class="sectionHead"><div><h3>Resultado pós-troca</h3><p class="muted">Situação encontrada após a substituição do chip.</p></div><button type="button" class="secondary" id="chipDashExportPending">Exportar pendências (Excel)</button></div><div class="chipTestResultKpis"><span><small>Testado - OK</small><b id="chipTestOk">0</b></span><span><small>Com pendência</small><b id="chipTestPending">0</b></span></div><div id="chipTestResultChart" class="chipTestResultChart"></div><div id="chipTechnicalPendingList" class="chipTechnicalPendingList"></div></div>
+  <div class="card" style="margin-top:16px"><h3>Progresso por operação</h3><div id="chipDashOperations"></div></div><div class="dashboardGrid" style="margin-top:16px"><article class="v22Panel"><h3>Progresso por localidade</h3><div id="chipDashLocations"></div></article><article class="v22Panel"><h3>Produtividade por técnico</h3><div id="chipDashTechs"></div></article></div>
+</section>
+
+<section class="card evidenceExecutiveStrip v23Panel" data-v23-panel="evidence" id="evidenceExecutiveStrip">
+  <div class="sectionHead">
+    <div>
+      <h2>Evidências de campo</h2>
+      <p class="muted">WhatsApp, fotos e confronto com a base — fonte separada do inventário oficial.</p>
+    </div>
+    <a href="/evidencias-campo" class="secondary buttonLink">Abrir evidências</a>
+  </div>
+  <div class="evidenceMiniKpis">
+    <span><small>Visitas</small><b id="evVisits">0</b></span>
+    <span><small>Itens</small><b id="evItems">0</b></span>
+    <span><small>Conformes</small><b id="evMatched">0</b></span>
+    <span><small>Revisar</small><b id="evReview">0</b></span>
+    <span><small>Fotos/vídeos</small><b id="evMedia">0</b></span>
+    <span><small>Sem vínculo</small><b id="evUnresolved">0</b></span>
+  </div>
+</section>
+
+<section class="dashboardGrid v23Panel" data-v23-panel="quality">
+  <article class="card chartCard">
+    <div class="cardHead">
+      <div><h2>Andamento geral</h2><p>Percentual de localidades encerradas.</p></div>
+      <strong id="overallPct" class="bigPercent">0%</strong>
+    </div>
+    <div class="donutWrap">
+      <div id="donut" class="donut"><span id="donutText">0%</span></div>
+      <div class="legend">
+        <div><i class="dot doneDot"></i><span>Concluídas</span><b id="legendDone">0</b></div>
+        <div><i class="dot progressDot"></i><span>Em andamento</span><b id="legendProgress">0</b></div>
+        <div><i class="dot pendingDot"></i><span>Pendentes</span><b id="legendPending">0</b></div>
+      </div>
+    </div>
+  </article>
+
+  <article class="card chartCard">
+    <div class="cardHead"><div><h2>Qualidade do levantamento</h2><p>Pontos que exigem atenção do gestor.</p></div></div>
+    <div class="qualityGrid">
+      <div class="qualityItem"><span>Inoperantes encontrados</span><b id="inoperativeQuality">0</b></div>
+      <div class="qualityItem"><span>Divergências com a base</span><b id="divergencesQuality">0</b></div>
+      <div class="qualityItem"><span>Localidades</span><b><span id="completed">0</span>/<span id="total">0</span></b><small><span id="pending">0</span> pend. · <span id="progress">0</span> andamento</small></div>
+      <div class="qualityItem"><span>Cobertura do parque</span><b id="assetCoverage">0%</b></div>
+      <div class="qualityItem diagnosticItem"><span>Não classificados</span><b id="unclassified">0</b><small>Inventários fora das 5 famílias</small></div>
+    </div>
+  </article>
+</section>
+
+<section class="dashboardGrid v23Panel" data-v23-panel="ranking">
+  <article class="card">
+    <div class="cardHead"><div><h2>Avanço por equipamento</h2><p>Inventariado em relação ao parque previsto.</p></div></div>
+    <div id="typeProgressList" class="typeProgressList"></div>
+  </article>
+  <article class="card">
+    <div class="cardHead"><div><h2>Localidades com maior pendência</h2><p>Prioridade operacional baseada no parque ainda faltante.</p></div></div>
+    <div id="criticalLocations" class="criticalList"></div>
+  </article>
+</section>
+
+<section class="card v23Panel" data-v23-panel="ranking">
+  <div class="cardHead filterHeader">
+    <div><h2>Controle por localidade</h2><p>Use esta tabela para saber exatamente o que falta fazer e evitar visitas repetidas.</p></div>
+    <span id="visibleCount" class="tag"></span>
+  </div>
+  <div class="grid4">
+    <div><label>Status</label><select id="fs"><option value="">Todos</option><option>PENDENTE</option><option>EM ANDAMENTO</option><option>CONCLUIDA</option></select></div>
+    <div><label>Empresa</label><select id="fc"><option value="">Todas</option></select></div>
+    <div><label>Linha</label><select id="fl"><option value="">Todas</option></select></div>
+    <div><label>Buscar localidade</label><input id="fq" placeholder="Ex.: Tatuapé, Linha 1..."></div>
+  </div>
+
+  <div class="quickFilters">
+    <button class="filterChip active" data-status="">Todas</button>
+    <button class="filterChip" data-status="PENDENTE">Só pendentes</button>
+    <button class="filterChip" data-status="EM ANDAMENTO">Em andamento</button>
+    <button class="filterChip" data-status="CONCLUIDA">Concluídas</button>
+  </div>
+
+  <div class="tableWrap tall">
+    <table>
+      <thead>
+        <tr>
+          <th>Status</th><th>Empresa</th><th>Linha</th><th>Estação / Localidade</th>
+          <th>Esperado</th><th>Levantado</th><th>Progresso</th><th>Divergências</th><th>Inoperantes</th><th>Ação</th>
+        </tr>
+      </thead>
+      <tbody id="locRows"></tbody>
+    </table>
+  </div>
+</section>
+
+<section class="dashboardGrid v23Panel" data-v23-panel="ranking">
+  <article class="card">
+    <div class="cardHead"><div><h2>Execução por empresa</h2><p>Comparativo de localidades concluídas.</p></div></div>
+    <div id="companyBars" class="companyBars"></div>
+  </article>
+
+  <article class="card">
+    <div class="cardHead"><div><h2>Resumo por empresa</h2><p>Pendentes, andamento e concluídas.</p></div></div>
+    <div class="tableWrap">
+      <table><thead><tr><th>Empresa</th><th>Total</th><th>Pend.</th><th>And.</th><th>Concl.</th><th>%</th></tr></thead><tbody id="companyRows"></tbody></table>
+    </div>
+  </article>
+</section>
+
+  </div>
+</div>
+{% endblock %}
+
+<script>
+(function(){
+ const ids=[['ATM','typeATM'],['Recarga','typeVALIDADOR'],['POS','typePOS'],['Bloqueio','typeBLOQUEIO']];
+ function n(id){const e=document.getElementById(id);return e?Number((e.textContent||'0').replace(/\./g,'').replace(',','.').replace(/[^0-9.-]/g,''))||0:0}
+ function refreshV491(){
+   const cov=document.getElementById('assetCoverageTop'), g=document.getElementById('v491Gauge'), gv=document.getElementById('v491GaugeValue');
+   const pct=cov?Math.max(0,Math.min(100,parseFloat((cov.textContent||'0').replace(',','.'))||0)):0;
+   if(g)g.style.setProperty('--pct',pct); if(gv)gv.textContent=(String(pct).replace('.',','))+'%';
+   const vals=ids.map(x=>[x[0],n(x[1])]), total=vals.reduce((a,x)=>a+x[1],0)||1;
+   const colors=['#2878e8','#18a873','#ff9f1c','#18b7a6']; let acc=0, stops=[];
+   vals.forEach((x,i)=>{let a=acc/total*360;acc+=x[1];let b=acc/total*360;stops.push(`${colors[i]} ${a}deg ${b}deg`)});
+   const max=Math.max(...vals.map(x=>x[1]),1), bars=document.getElementById('v491Bars3d'); if(bars)bars.innerHTML=vals.map((x,i)=>`<div class="v491Bar3dRow"><span>${x[0]}</span><div><i style="width:${Math.max(3,x[1]/max*100)}%;--bar:${colors[i]}"></i></div><b>${x[1].toLocaleString('pt-BR')}</b></div>`).join(''); const dc=document.getElementById('v526DivCount'); if(dc)dc.textContent=(document.getElementById('divergences')?.textContent||'0');
+ }
+ document.addEventListener('DOMContentLoaded',()=>{refreshV491();setTimeout(refreshV491,800);setTimeout(refreshV491,2200); const target=document.getElementById('v23DashboardShell'); if(target)new MutationObserver(refreshV491).observe(target,{subtree:true,childList:true,characterData:true});});
+})();
+</script>
+{% block scripts %}
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+        crossorigin=""></script>
+
+<div id="v343TvOverlay" class="v343TvOverlay" aria-hidden="true">
+  <div class="v343TvTop">
+    <div><span class="v343TvEyebrow">INVENTÁRIO AUTOPASS · AO VIVO</span><h1>Central de Inteligência do Inventário</h1></div>
+    <div class="v343TvClock"><b id="v343TvTime">--:--</b><small id="v343TvUpdated">Atualização em tempo real</small></div>
+  </div>
+  <div class="v343TvKpis">
+    <article><span>Parque previsto</span><b id="tvExpected">0</b></article>
+    <article><span>Inventariado</span><b id="tvInventoried">0</b></article>
+    <article><span>Faltante</span><b id="tvMissing">0</b></article>
+    <article><span>Conclusão</span><b id="tvCoverage">0%</b></article>
+    <article><span>Ritmo 7 dias</span><b id="tvPace">0/dia</b></article>
+    <article><span>Projeção</span><b id="tvProjection">—</b></article>
+  </div>
+  <div class="v343TvGrid">
+    <article class="v343TvPanel v343TvProgress"><div class="v343TvPanelHead"><b>Cobertura do parque</b><span>EXECUÇÃO</span></div><div class="v343TvDonut" id="v343TvDonut"><strong id="v343TvDonutPct">0%</strong><small>concluído</small></div><p id="v343TvProgressText">0 de 0 ativos conciliados</p></article>
+    <article class="v343TvPanel"><div class="v343TvPanelHead"><b>Evolução · 14 dias</b><span>TENDÊNCIA</span></div><div id="v343TvTrend" class="v343TvClone v343TvTrend"></div></article>
+    <article class="v343TvPanel"><div class="v343TvPanelHead"><b>Execução por tipo</b><span>COBERTURA</span></div><div id="v343TvTypes" class="v343TvClone"></div></article>
+    <article class="v343TvPanel"><div class="v343TvPanelHead"><b>Prioridades</b><span>ATENÇÃO</span></div><div id="v343TvPriority" class="v343TvClone"></div></article>
+  </div>
+  <div class="v343TvFooter"><span id="v343TvHeadline">Monitoramento executivo do inventário.</span><span>SUPORTE A CAMPO · V42.4</span></div>
+</div>
+
+<script src="{{url_for('static',filename='manager.js')}}?v=v66-rev3"></script>
+{% endblock %}
