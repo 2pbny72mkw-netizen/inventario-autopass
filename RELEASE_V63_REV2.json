@@ -1,0 +1,8 @@
+{
+  "version": "V63 REV2",
+  "base": "V63 REV1",
+  "type": "consolidated operational-base importer",
+  "schema": "additive: operational_base_items",
+  "destructive": false,
+  "modules": ["EMV Trilhos", "Recarga", "Garagem"]
+}

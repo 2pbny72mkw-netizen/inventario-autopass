@@ -1,5 +1,5 @@
 // V50.6 — cache seguro: páginas, dashboards e APIs nunca são interceptados.
-const CACHE = 'autopass-v63-rev1-static';
+const CACHE = 'autopass-v63-rev2-static';
 const PRECACHE = ['/static/autopass-icon-192.png','/static/autopass-icon-512.png'];
 self.addEventListener('install', event => {
   event.waitUntil((async()=>{const cache=await caches.open(CACHE);await cache.addAll(PRECACHE);await self.skipWaiting();})());

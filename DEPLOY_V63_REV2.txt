@@ -1,0 +1,4 @@
+V63 REV2 — instalar sobre V63 REV1.
+O deploy cria apenas a nova tabela operacional_base_items (aditiva).
+Não apaga registros, fotos ou históricos.
+Após o deploy, use Importar base dentro de EMV/Recarga/Garagem.
