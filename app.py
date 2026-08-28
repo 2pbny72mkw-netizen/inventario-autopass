@@ -41,7 +41,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V66 REV4"
+APP_RELEASE = "V66 REV4.1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -61,7 +61,7 @@ EXPECTED_CACHE_TTL_SECONDS = 600
 _expected_cache = {"at": 0.0, "data": None}
 # V56-D: cache curtíssimo da visão consolidada de localidades para reduzir recomputações concorrentes.
 _LOCATIONS_API_CACHE = {"light": {"at": 0.0, "payload": None}, "observed": {"at": 0.0, "payload": None}}
-_LOCATIONS_API_CACHE_TTL = int(os.getenv("LOCATIONS_API_CACHE_TTL", "300"))
+_LOCATIONS_API_CACHE_TTL = int(os.getenv("LOCATIONS_API_CACHE_TTL", "900"))
 _LOCATIONS_API_CACHE_LOCK = threading.Lock()
 
 # V63 CORE 2.0 — parâmetros de desempenho não destrutivos.
@@ -160,7 +160,7 @@ def _td_job_snapshot(job_id):
 # de chamados a cada repaint/filtro idêntico. É invalidado ao fim de cada importação.
 TOPDESK_ANALYTICS_CACHE = {}
 TOPDESK_ANALYTICS_CACHE_LOCK = threading.Lock()
-TOPDESK_ANALYTICS_TTL = int(os.getenv("TOPDESK_ANALYTICS_TTL", "300"))
+TOPDESK_ANALYTICS_TTL = int(os.getenv("TOPDESK_ANALYTICS_TTL", "600"))
 
 # V56-A.1: estado operacional do backfill TopDesk.
 # Deve existir antes das rotas, migrações e do startup que o consultam.
@@ -7098,7 +7098,7 @@ def topdesk_analytics_api():
 
 
 _TOPDESK_DASH_CACHE = {}
-_TOPDESK_DASH_CACHE_TTL = 300
+_TOPDESK_DASH_CACHE_TTL = int(os.getenv("TOPDESK_DASH_CACHE_TTL", "900"))
 
 @app.get("/api/topdesk/dashboard")
 @dashboard_required
@@ -9170,7 +9170,18 @@ def _v63_build_emv_payload(force=False, include_photos=True):
         _V63_EMV_CACHE[mode]={"at":time.monotonic(),"payload":rows}
     return rows
 
-@app.get("/api/emv-chip-swaps", strict_slashes=False)
+@app.get("/api/emv-chip-swaps/")
+@login_required
+def emv_chip_list_legacy_slash():
+    # REV4.1: canonicaliza a rota. Evita que clientes/links legados executem o
+    # pipeline EMV pesado por uma segunda URL e separa o custo no telemetry.
+    qs=request.query_string.decode("utf-8", "ignore")
+    target="/api/emv-chip-swaps" + (("?"+qs) if qs else "")
+    resp=redirect(target, code=308)
+    resp.headers["X-Autopass-Canonical"]="/api/emv-chip-swaps"
+    return resp
+
+@app.get("/api/emv-chip-swaps", strict_slashes=True)
 @login_required
 def emv_chip_list():
     company=(request.args.get("company") or "").strip(); line=(request.args.get("line") or "").strip(); station=(request.args.get("station") or "").strip(); status=(request.args.get("status") or "").strip(); terminal=(request.args.get("terminal") or "").strip(); compact=request.args.get("compact") in ("1","true","yes"); include_photos=request.args.get("include_photos","1") not in ("0","false","no")

@@ -1,0 +1,16 @@
+V66 REV4.1 — Performance 2.0
+Base: V66 REV4
+
+Arquivos alterados:
+- app.py
+- templates/about.html
+
+Principais ajustes:
+- Canonicalização de /api/emv-chip-swaps/ para /api/emv-chip-swaps via redirect 308.
+- Rota principal EMV passa a usar somente a URL canônica sem barra final.
+- Cache de /api/locations ampliado para 15 minutos (configurável por LOCATIONS_API_CACHE_TTL).
+- Cache do dashboard TopDesk ampliado para 15 minutos (configurável por TOPDESK_DASH_CACHE_TTL).
+- Cache analytics TopDesk ampliado para 10 minutos.
+- APP_RELEASE e Histórico de Versões atualizados para V66 REV4.1.
+
+Deploy ENXUTO: sobrescrever os arquivos correspondentes da V66 REV4.
