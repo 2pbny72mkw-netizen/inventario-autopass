@@ -1,45 +1,15 @@
 (()=>{
-  'use strict';
-  if(window.__SUPORTE_CAMPO_GPS_V392__) return;
-  const ctl=window.__SUPORTE_CAMPO_GPS_V392__={stopped:false,timer:null,running:false,intervalMs:300000,lastSent:0};
-  const now=()=>Date.now();
-  function clearTimer(){ if(ctl.timer){clearTimeout(ctl.timer);ctl.timer=null;} }
-  function schedule(){
-    clearTimer();
-    if(ctl.stopped) return;
-    ctl.timer=setTimeout(async()=>{
-      if(document.visibilityState==='visible') await sendPosition(false);
-      schedule();
-    },ctl.intervalMs);
-  }
-  async function sendPosition(force=false){
-    if(ctl.stopped||ctl.running||!navigator.geolocation||!navigator.onLine||document.visibilityState!=='visible') return;
-    if(!force && now()-ctl.lastSent < Math.max(60000,ctl.intervalMs-5000)) return;
-    ctl.running=true;
-    navigator.geolocation.getCurrentPosition(async pos=>{
-      try{
-        const r=await fetch('/api/tecnico/position',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',keepalive:false,body:JSON.stringify({latitude:pos.coords.latitude,longitude:pos.coords.longitude,accuracy:pos.coords.accuracy})});
-        if(r.ok) ctl.lastSent=now();
-      }catch(_e){} finally{ctl.running=false;}
-    },()=>{ctl.running=false;},{enableHighAccuracy:false,maximumAge:120000,timeout:8000});
-  }
-  async function start(){
-    try{
-      const r=await fetch('/api/v38/gps-config',{cache:'no-store',headers:{'Accept':'application/json'}});
-      if(!r.ok) return;
-      const cfg=await r.json();
-      if(!cfg.enabled) return;
-      ctl.intervalMs=Math.max(60000,Number(cfg.interval_seconds||300)*1000);
-    }catch(_e){return;}
-    await sendPosition(true);
-    schedule();
-  }
-  function stop(){ctl.stopped=true;clearTimer();ctl.running=false;}
-  window.addEventListener('pagehide',stop,{once:true});
-  window.addEventListener('beforeunload',stop,{once:true});
-  document.addEventListener('visibilitychange',()=>{
-    if(document.visibilityState==='hidden') clearTimer();
-    else if(!ctl.stopped){sendPosition(false);schedule();}
-  });
-  start();
+'use strict'; if(window.__AUTOPASS_GPS_V66__)return;
+const S=window.__AUTOPASS_GPS_V66__={stop:false,timer:null,busy:false,ms:300000,required:false,validated:false};
+const Q='autopassGpsQueueV66', V='autopassGpsValidatedV66'; S.validated=sessionStorage.getItem(V)==='1';
+function modal(show,msg){let x=document.getElementById('gpsRequiredV66');if(!x){x=document.createElement('div');x.id='gpsRequiredV66';x.style.cssText='position:fixed;inset:0;z-index:30000;background:rgba(15,23,42,.88);display:flex;align-items:center;justify-content:center;padding:20px';x.innerHTML='<div style="max-width:520px;background:#fff;border-radius:16px;padding:24px;text-align:center"><h2>Localização obrigatória</h2><p id="gpsReqMsg">Ative a localização para iniciar a atividade de campo.</p><button id="gpsReqBtn" class="primary" type="button">Ativar localização</button></div>';document.body.appendChild(x);x.querySelector('#gpsReqBtn').onclick=()=>capture(true)}x.querySelector('#gpsReqMsg').textContent=msg||'Ative a localização para iniciar a atividade de campo.';x.style.display=show?'flex':'none'}
+function queued(){try{return JSON.parse(localStorage.getItem(Q)||'[]')}catch(_){return[]}}
+function queue(v){const q=queued();q.push(v);localStorage.setItem(Q,JSON.stringify(q.slice(-30)))}
+async function post(v){const r=await fetch('/api/tecnico/position',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(v),cache:'no-store'});if(!r.ok)throw new Error('gps post');return r.json()}
+async function flush(){if(!navigator.onLine)return;const q=queued();if(!q.length)return;const left=[];for(const v of q){try{await post(v)}catch(_){left.push(v);break}}localStorage.setItem(Q,JSON.stringify(left))}
+function schedule(){clearTimeout(S.timer);if(!S.stop)S.timer=setTimeout(async()=>{await capture(false);schedule()},S.ms)}
+function capture(initial){if(S.stop||S.busy||!navigator.geolocation)return;S.busy=true;navigator.geolocation.getCurrentPosition(async p=>{const v={latitude:p.coords.latitude,longitude:p.coords.longitude,accuracy:p.coords.accuracy,source:initial?'session_initial':'session_periodic',client_captured_at:new Date(p.timestamp||Date.now()).toISOString()};try{if(navigator.onLine){await flush();await post(v)}else queue(v);S.validated=true;sessionStorage.setItem(V,'1');modal(false)}catch(_){queue(v);if(initial&&S.required)modal(true,'Localização obtida. Sem conexão para validar; tente novamente quando houver sinal.')}finally{S.busy=false}},()=>{S.busy=false;if(initial&&S.required&&!S.validated)modal(true,'A localização é necessária para iniciar a atividade. Habilite o GPS e permita o acesso do navegador.')},{enableHighAccuracy:true,maximumAge:initial?0:120000,timeout:12000})}
+async function start(){try{const c=await fetch('/api/v38/gps-config',{cache:'no-store'}).then(r=>r.json());if(!c.enabled)return;S.required=!!c.required;S.ms=Math.max(60000,(+c.interval_seconds||300)*1000);if(S.required&&!S.validated)modal(true);capture(!S.validated);schedule()}catch(_){}}
+function stop(clearValidation=false){S.stop=true;clearTimeout(S.timer);if(clearValidation)sessionStorage.removeItem(V)}
+window.addEventListener('online',()=>{flush();capture(false)});document.querySelectorAll('a[href="/logout"]').forEach(a=>a.addEventListener('click',()=>stop(true),{capture:true}));window.addEventListener('pagehide',stop,{once:true});start();
 })();

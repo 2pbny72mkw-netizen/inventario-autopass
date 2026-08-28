@@ -67,79 +67,12 @@ const _panOpenLocV501=typeof openLoc==='function'?openLoc:null;
 if(_panOpenLocV501){openLoc=function(id){_panOpenLocV501(id);setTimeout(panSyncAdminStatus,0)}}
 
 
-// V62 REV6 — PowerPoint assíncrono: o worker web responde imediatamente e a geração roda em background.
-function panPptFilters(){
-  const f=new URLSearchParams();
-  if($('panCompany')?.value)f.set('company',$('panCompany').value);
-  if($('panLine')?.value)f.set('line',$('panLine').value);
-  if($('panStatus')?.value)f.set('status',$('panStatus').value);
-  if($('panSearch')?.value)f.set('search',$('panSearch').value);
-  return f;
-}
-function panSleep(ms){return new Promise(r=>setTimeout(r,ms))}
-async function panStartPptJob(){
-  const r=await fetch('/api/panoramas/export.pptx/jobs',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:panPptFilters().toString(),cache:'no-store',credentials:'same-origin'});
-  const d=await r.json().catch(()=>({}));
-  if(!r.ok&&!d.job_id)throw new Error(d.error||`Falha ao iniciar exportação (${r.status}).`);
-  if(!d.job_id)throw new Error('O servidor não retornou o identificador da exportação.');
-  return d;
-}
-async function panWaitPptJob(jobId,btn){
-  const deadline=Date.now()+20*60*1000;
-  while(Date.now()<deadline){
-    const r=await fetch(`/api/panoramas/export.pptx/jobs/${jobId}?_ts=${Date.now()}`,{cache:'no-store',credentials:'same-origin'});
-    const d=await r.json().catch(()=>({}));
-    if(!r.ok)throw new Error(d.error||`Falha ao consultar exportação (${r.status}).`);
-    const pct=Math.max(0,Math.min(100,Number(d.progress||0)));
-    btn.textContent=d.status==='PRONTO'?'PowerPoint pronto':`Preparando PowerPoint... ${pct}%`;
-    if(typeof panStatus==='function')panStatus(d.message||`Preparando PowerPoint... ${pct}%`,d.status==='PRONTO');
-    if(d.status==='PRONTO')return d;
-    if(d.status==='ERRO')throw new Error(d.message||'Falha ao gerar PowerPoint.');
-    await panSleep(2000);
-  }
-  throw new Error('A geração excedeu 20 minutos e foi interrompida na tela.');
-}
-function panDownloadJob(d){
-  const a=document.createElement('a');a.href=d.download_url;a.download=d.filename||'visao_panoramica.pptx';document.body.appendChild(a);a.click();a.remove();
-}
-function bindPanPpt(btn){
-  if(!btn||btn.dataset.rev6Bound==='1')return;
-  btn.dataset.rev6Bound='1';
-  btn.addEventListener('click',async ev=>{
-    ev.preventDefault();
-    if(btn.dataset.busy==='1')return;
-    const old=btn.textContent;
-    btn.dataset.busy='1';btn.setAttribute('aria-busy','true');btn.textContent='Iniciando PowerPoint...';
-    try{
-      const job=await panStartPptJob();
-      const ready=await panWaitPptJob(job.job_id,btn);
-      panDownloadJob(ready);
-      if(typeof panStatus==='function')panStatus(`PowerPoint pronto · ${ready.stats?.slides||0} slide(s) · ${ready.duration_s||0}s`,true);
-    }catch(err){
-      console.error('Panorama PowerPoint REV6',err);
-      const msg=err?.message||'Não foi possível gerar o PowerPoint.';
-      if(typeof panStatus==='function')panStatus(msg);else alert(msg);
-    }finally{
-      btn.dataset.busy='0';btn.removeAttribute('aria-busy');btn.textContent=old;
-    }
-  });
-}
-function panBindRev6Ppt(){bindPanPpt($('panPptBtn'));bindPanPpt($('panPptNavBtn'))}
-if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',panBindRev6Ppt);else panBindRev6Ppt();
+// V66 — PowerPoint somente na Visão Panorâmica; job continua no servidor ao navegar.
+let panV66Timer=null, panV66Job=null;
+function panV66Filters(){const f=new URLSearchParams();if($('panCompany')?.value)f.set('company',$('panCompany').value);if($('panLine')?.value)f.set('line',$('panLine').value);if($('panStatus')?.value)f.set('status',$('panStatus').value);if($('panSearch')?.value)f.set('search',$('panSearch').value);return f}
+function panV66Button(text,href='#'){const b=$('panPptNavBtn');if(!b)return;b.textContent=text;b.href=href}
+async function panV66Poll(id){clearTimeout(panV66Timer);try{const r=await fetch(`/api/panoramas/export.pptx/jobs/${id}?_=${Date.now()}`,{cache:'no-store'}),d=await r.json();if(!r.ok)throw new Error(d.error||'Falha ao consultar PowerPoint');if(d.status==='PRONTO'){panV66Button('Baixar PowerPoint',d.download_url);localStorage.setItem('panPptJobV66',id);return}if(d.status==='ERRO'){panV66Button('PowerPoint');localStorage.removeItem('panPptJobV66');return}panV66Button(`Gerando... ${Math.max(0,Math.min(100,+d.progress||0))}%`);panV66Timer=setTimeout(()=>panV66Poll(id),2500)}catch(_){panV66Timer=setTimeout(()=>panV66Poll(id),8000)}}
+async function panV66Recover(){try{const d=await fetch('/api/processamentos',{cache:'no-store'}).then(r=>r.json()),j=(d.jobs||[]).find(x=>['FILA','PROCESSANDO','PRONTO'].includes(x.status));if(!j){panV66Button('PowerPoint');return}panV66Job=j.id;if(j.status==='PRONTO'&&j.download_url){panV66Button('Baixar PowerPoint',j.download_url);return}panV66Button(`Gerando... ${Math.max(0,Math.min(100,+j.progress||0))}%`);if(j.id)panV66Poll(j.id)}catch(_){panV66Button('PowerPoint')}}
+$('panPptNavBtn')?.addEventListener('click',async e=>{const b=$('panPptNavBtn');if(b.href&&b.textContent.includes('Baixar'))return;e.preventDefault();if(panV66Job)return;try{panV66Button('Iniciando...');const r=await fetch('/api/panoramas/export.pptx/jobs',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:panV66Filters().toString(),cache:'no-store'}),d=await r.json();if(!r.ok||!d.job_id)throw new Error(d.error||'Falha ao iniciar PowerPoint');panV66Job=d.job_id;localStorage.setItem('panPptJobV66',panV66Job);panV66Poll(panV66Job)}catch(err){panV66Job=null;panV66Button('PowerPoint');if(typeof panStatus==='function')panStatus(err.message||'Falha ao gerar PowerPoint')}});
+window.addEventListener('load',()=>setTimeout(panV66Recover,250),{once:true});
 
-// V63: retoma acompanhamento do PowerPoint ao voltar para a tela.
-setTimeout(()=>{const remembered=panPptRemembered();if(remembered&&!panPptJobId){panPptJobId=remembered;panPptSet('Retomando acompanhamento...',true);panPptPoll(remembered)}},350);
-
-// V63 REV1 — recupera job ativo/pronto ao voltar para a Visão Panorâmica.
-async function panRecoverRev1Job(){
-  try{
-    const d=await fetch('/api/processamentos',{cache:'no-store'}).then(r=>r.json());
-    const j=(d.jobs||[]).find(x=>['FILA','PROCESSANDO','PRONTO'].includes(x.status));
-    if(!j)return;
-    const btn=document.getElementById('panPptNavBtn'); if(!btn)return;
-    if(j.status==='PRONTO'&&j.download_url){btn.textContent='PowerPoint pronto — Baixar';btn.href=j.download_url;btn.dataset.ready='1';return;}
-    btn.textContent=`Preparando PowerPoint... ${Math.max(0,Math.min(100,+j.progress||0))}%`;
-    if(j.id && typeof panPollRev6Job==='function') panPollRev6Job(j.id,btn);
-  }catch(_e){}
-}
-window.addEventListener('load',()=>setTimeout(panRecoverRev1Job,250),{once:true});
