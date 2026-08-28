@@ -1,0 +1,6 @@
+V63 REV1 — pacote ENXUTO
+Base: V63 CORE 2.0.
+Copiar os arquivos preservando as pastas e fazer deploy.
+Não há migration SQL destrutiva.
+A sincronização EMV 27/08 é executada uma única vez, marcada na auditoria.
+Rollback recomendado: V63 CORE 2.0; V62 REV6 permanece baseline anterior.

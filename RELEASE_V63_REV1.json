@@ -1,0 +1,12 @@
+{
+  "release": "V63 REV1",
+  "date": "2026-08-27",
+  "type": "CORE_2_0_CONSOLIDATION",
+  "baseline": "V63",
+  "emv_reference": "Trilho 270826(1).xlsx",
+  "emv_reference_terminals": 283,
+  "emv_existing": 202,
+  "emv_reopen_expected": 11,
+  "emv_new": 81,
+  "destructive_changes": false
+}
