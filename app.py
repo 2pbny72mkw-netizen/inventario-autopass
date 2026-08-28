@@ -41,12 +41,13 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V63 REV2"
+APP_RELEASE = "V66"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
 FIELD_GPS_GOOD_ACCURACY_M = float(os.getenv("FIELD_GPS_GOOD_ACCURACY_M", "30"))
 FIELD_GPS_MAX_ACCURACY_M = float(os.getenv("FIELD_GPS_MAX_ACCURACY_M", "80"))
+_GPS_LAST_RETENTION_CLEANUP = 0.0
 # Denominadores executivos oficiais informados para o parque contratado.
 OFFICIAL_PARK = {
     "ATM": 590,
@@ -1814,15 +1815,20 @@ def technician_position_update():
         return jsonify({"ok": False, "error": "Coordenadas fora do intervalo"}), 400
 
     row = TechnicianPosition(
-        user_id=session["user_id"],
-        latitude=lat,
-        longitude=lon,
-        accuracy=acc,
-        captured_at=datetime.utcnow()
+        user_id=session["user_id"], latitude=lat, longitude=lon, accuracy=acc,
+        captured_at=datetime.utcnow(), source=str(data.get("source") or "session_periodic")[:40]
     )
     db.session.add(row)
+    # V66 GPS Operacional 2.0: retenção móvel de 7 dias. A limpeza é amortizada
+    # (no máximo uma vez/hora por processo) para não penalizar cada captura.
+    global _GPS_LAST_RETENTION_CLEANUP
+    now_ts=time.time()
+    if now_ts-_GPS_LAST_RETENTION_CLEANUP > 3600:
+        cutoff=datetime.utcnow()-timedelta(days=max(1,int(os.getenv("TEAM_GPS_RETENTION_DAYS","7"))))
+        TechnicianPosition.query.filter(TechnicianPosition.captured_at < cutoff).delete(synchronize_session=False)
+        _GPS_LAST_RETENTION_CLEANUP=now_ts
     db.session.commit()
-    return jsonify({"ok": True, "captured_at": row.captured_at.isoformat() + "Z"})
+    return jsonify({"ok": True, "captured_at": row.captured_at.isoformat() + "Z", "retention_days":7})
 
 
 @app.get("/api/campo/config")
@@ -3338,6 +3344,42 @@ def _local_storage_snapshot():
             if x.is_file(): files+=1; total+=x.stat().st_size
     except Exception: pass
     return {"files":files,"total_bytes":total}
+
+
+@app.get("/inteligencia-operacional")
+@login_required
+def operational_intelligence_page():
+    if session.get("role") not in ("manager","manager_field"):
+        return redirect(url_for("dashboard_landing"))
+    return render_template("operational_intelligence.html", app_release=APP_RELEASE)
+
+@app.get("/api/inteligencia-operacional")
+@login_required
+def operational_intelligence_api():
+    if session.get("role") not in ("manager","manager_field"):
+        return jsonify({"ok":False,"error":"Sem permissão."}),403
+    now=datetime.utcnow(); active_roles=("technician","technician_implantation","manager_field")
+    techs=User.query.filter(User.active.is_(True),User.role.in_(active_roles)).all(); tech_ids=[u.id for u in techs]
+    since=now-timedelta(minutes=15)
+    recent=dict(db.session.query(TechnicianPosition.user_id,func.max(TechnicianPosition.captured_at)).filter(TechnicianPosition.user_id.in_(tech_ids),TechnicianPosition.captured_at>=since).group_by(TechnicianPosition.user_id).all()) if tech_ids else {}
+    open_status=("CONCLUIDO","CONCLUÍDO","FECHADO","RESOLVIDO")
+    open_tickets=TopDeskTicket.query.filter(~func.upper(TopDeskTicket.work_status).in_(open_status)).all()
+    assigned=sum(1 for t in open_tickets if t.assigned_technician_id); unassigned=len(open_tickets)-assigned
+    available=len(recent); load=round(len(open_tickets)/available,1) if available else None
+    # Heurística V66: prioridade explicável, sem caixa-preta.
+    ranked=[]
+    weights={"CRITICA":100,"CRÍTICA":100,"ALTA":70,"NORMAL":40,"BAIXA":20}
+    for t in open_tickets:
+        age_h=max(0,(now-(t.created_at or t.imported_at or now)).total_seconds()/3600)
+        score=weights.get(normalize(t.priority),40)+min(60,age_h/2)+(25 if not t.assigned_technician_id else 0)
+        ranked.append({"ticket":t.ticket_number,"priority":t.priority,"station":t.station_code or "","work_status":t.work_status,"age_h":round(age_h,1),"score":round(score,1),"reason":"sem técnico" if not t.assigned_technician_id else "idade + prioridade"})
+    ranked.sort(key=lambda x:x["score"],reverse=True)
+    anomalies=[]
+    for u in techs:
+        last=recent.get(u.id)
+        if not last: anomalies.append({"type":"GPS","user":u.name,"detail":"Sem posição válida nos últimos 15 min"})
+    capacity_status="CRÍTICA" if available==0 and open_tickets else ("ALTA CARGA" if load is not None and load>8 else "NORMAL")
+    return jsonify({"ok":True,"release":APP_RELEASE,"generated_at":now.isoformat()+"Z","capacity":{"field_users":len(techs),"online_gps_15m":available,"open_work":len(open_tickets),"assigned":assigned,"unassigned":unassigned,"work_per_available":load,"status":capacity_status},"sla":{"at_risk":sum(1 for x in ranked if x["age_h"]>=24),"critical":sum(1 for x in ranked if x["age_h"]>=48)},"anomalies":anomalies[:20],"priorities":ranked[:20]})
 
 
 @app.get("/telemetria")
@@ -7100,7 +7142,7 @@ def my_work_status(ticket_id):
 @app.get("/api/v38/gps-config")
 @login_required
 def v38_gps_config():
-    return jsonify({"ok": True, "enabled": True, "interval_seconds": max(60, int(os.getenv("TEAM_GPS_INTERVAL_SECONDS", "300")))})
+    return jsonify({"ok": True, "enabled": True, "required": session.get("role") in ("technician","technician_implantation","manager_field"), "interval_seconds": max(60, int(os.getenv("TEAM_GPS_INTERVAL_SECONDS", "300"))), "retention_days": max(1, int(os.getenv("TEAM_GPS_RETENTION_DAYS", "7")))})
 
 @app.get("/api/v38/diario-bordo")
 @teams_view_required
