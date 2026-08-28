@@ -1,0 +1,2553 @@
+{
+  "source": "Trilho 270826(1).xlsx",
+  "reference_date": "2026-08-27",
+  "rows": [
+    {
+      "company": "CPTM",
+      "terminal": "650113",
+      "version": "2.4.21",
+      "ip": "172.5.1.13",
+      "station": "501-FMO",
+      "line": "Linha 7 Rubi",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "651602",
+      "version": "2.4.21",
+      "ip": "172.5.16.2",
+      "station": "516-VAU",
+      "line": "Linha 7 Rubi",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "651704",
+      "version": "2.5.12",
+      "ip": "172.5.17.4",
+      "station": "517-BFU",
+      "line": "Linha 7 Rubi",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "651711",
+      "version": "2.5.12",
+      "ip": "172.5.17.11",
+      "station": "517-BFU",
+      "line": "Linha 7 Rubi",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "665102",
+      "version": "2.5.12",
+      "ip": "172.6.51.2",
+      "station": "651-RGS",
+      "line": "Linha 10 Turquesa",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "665303",
+      "version": "2.5.9",
+      "ip": "172.6.53.3",
+      "station": "653-GPT",
+      "line": "Linha 10 Turquesa",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "665404",
+      "version": "2.5.12",
+      "ip": "172.6.54.4",
+      "station": "654-MAU",
+      "line": "Linha 10 Turquesa",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "665413",
+      "version": "2.5.12",
+      "ip": "172.6.54.13",
+      "station": "654-MAU",
+      "line": "Linha 10 Turquesa",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "665415",
+      "version": "2.5.12",
+      "ip": "172.6.54.15",
+      "station": "654-MAU",
+      "line": "Linha 10 Turquesa",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "665701",
+      "version": "2.5.12",
+      "ip": "172.6.57.1",
+      "station": "657-SAN",
+      "line": "Linha 10 Turquesa",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "665702",
+      "version": "2.5.12",
+      "ip": "172.6.57.2",
+      "station": "657-SAN",
+      "line": "Linha 10 Turquesa",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "665711",
+      "version": "2.5.12",
+      "ip": "172.6.57.11",
+      "station": "657-SAN",
+      "line": "Linha 10 Turquesa",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "665712",
+      "version": "2.5.12",
+      "ip": "172.6.57.12",
+      "station": "657-SAN",
+      "line": "Linha 10 Turquesa",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "665713",
+      "version": "2.5.12",
+      "ip": "172.6.57.13",
+      "station": "657-SAN",
+      "line": "Linha 10 Turquesa",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "666535",
+      "version": "2.5.12",
+      "ip": "172.6.65.35",
+      "station": "665-LUZ",
+      "line": "Linha 10 Turquesa",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "670102",
+      "version": "2.5.12",
+      "ip": "172.7.1.2",
+      "station": "701-EST",
+      "line": "Linha 11 Coral",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "670301",
+      "version": "2.5.6",
+      "ip": "172.7.3.1",
+      "station": "703-BCB",
+      "line": "Linha 11 Coral",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "670505",
+      "version": "2.5.12",
+      "ip": "172.7.5.5",
+      "station": "705-SUZ",
+      "line": "Linha 11 Coral",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "670506",
+      "version": "2.5.12",
+      "ip": "172.7.5.6",
+      "station": "705-SUZ",
+      "line": "Linha 11 Coral",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "670507",
+      "version": "2.5.12",
+      "ip": "172.7.5.7",
+      "station": "705-SUZ",
+      "line": "Linha 11 Coral",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "670508",
+      "version": "2.5.12",
+      "ip": "172.7.5.8",
+      "station": "705-SUZ",
+      "line": "Linha 11 Coral",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "670509",
+      "version": "2.5.12",
+      "ip": "172.7.5.9",
+      "station": "705-SUZ",
+      "line": "Linha 11 Coral",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "670510",
+      "version": "2.5.12",
+      "ip": "172.7.5.10",
+      "station": "705-SUZ",
+      "line": "Linha 11 Coral",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "670601",
+      "version": "2.5.12",
+      "ip": "172.7.6.1",
+      "station": "706-CVN",
+      "line": "Linha 12 Safira",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "670602",
+      "version": "2.5.12",
+      "ip": "172.7.6.2",
+      "station": "706-CVN",
+      "line": "Linha 12 Safira",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "670701",
+      "version": "2.5.12",
+      "ip": "172.7.7.1",
+      "station": "707-POA",
+      "line": "Linha 11 Coral",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "670702",
+      "version": "2.5.12",
+      "ip": "172.7.7.2",
+      "station": "707-POA",
+      "line": "Linha 11 Coral",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "670704",
+      "version": "2.5.12",
+      "ip": "172.7.7.4",
+      "station": "707-POA",
+      "line": "Linha 11 Coral",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "670706",
+      "version": "1.51.36",
+      "ip": "172.7.7.6",
+      "station": "707-POA",
+      "line": "Linha 11 Coral",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "670707",
+      "version": "2.5.6",
+      "ip": "172.7.7.7",
+      "station": "707-POA",
+      "line": "Linha 11 Coral",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "670802",
+      "version": "2.5.12",
+      "ip": "172.7.8.2",
+      "station": "708-FVC",
+      "line": "Linha 11 Coral",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "670805",
+      "version": "2.5.12",
+      "ip": "172.7.8.5",
+      "station": "708-FVC",
+      "line": "Linha 11 Coral",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "670808",
+      "version": "2.5.12",
+      "ip": "172.7.8.8",
+      "station": "708-FVC",
+      "line": "Linha 11 Coral",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "670810",
+      "version": "2.5.12",
+      "ip": "172.7.8.10",
+      "station": "708-FVC",
+      "line": "Linha 11 Coral",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "670904",
+      "version": "2.5.12",
+      "ip": "172.7.9.4",
+      "station": "709-AGN",
+      "line": "Linha 11 Coral",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "670906",
+      "version": "2.5.12",
+      "ip": "172.7.9.6",
+      "station": "709-AGN",
+      "line": "Linha 11 Coral",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "671001",
+      "version": "2.5.12",
+      "ip": "172.7.10.1",
+      "station": "710-GUA",
+      "line": "Linha 11 Coral",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "671007",
+      "version": "2.5.12",
+      "ip": "172.7.10.7",
+      "station": "710-GUA",
+      "line": "Linha 11 Coral",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "671008",
+      "version": "2.5.6",
+      "ip": "172.7.10.8",
+      "station": "710-GUA",
+      "line": "Linha 11 Coral",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "671103",
+      "version": "2.5.12",
+      "ip": "172.7.11.3",
+      "station": "711-JBO",
+      "line": "Linha 11 Coral",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "671107",
+      "version": "2.5.12",
+      "ip": "172.7.11.7",
+      "station": "711-JBO",
+      "line": "Linha 11 Coral",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "671108",
+      "version": "2.5.12",
+      "ip": "172.7.11.8",
+      "station": "711-JBO",
+      "line": "Linha 11 Coral",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "671208",
+      "version": "2.5.12",
+      "ip": "172.7.12.8",
+      "station": "712-DOB",
+      "line": "Linha 11 Coral",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "671211",
+      "version": "2.5.12",
+      "ip": "172.7.12.11",
+      "station": "712-DOB",
+      "line": "Linha 11 Coral",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "671313",
+      "version": "2.5.9",
+      "ip": "172.7.13.13",
+      "station": "713-ITQ",
+      "line": "Linha 11 Coral",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "671317",
+      "version": "2.5.12",
+      "ip": "172.7.13.17",
+      "station": "713-ITQ",
+      "line": "Linha 11 Coral",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "675302",
+      "version": "2.5.12",
+      "ip": "172.7.53.2",
+      "station": "753-ARC",
+      "line": "Linha 12 Safira",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "675303",
+      "version": "2.5.12",
+      "ip": "172.7.53.3",
+      "station": "753-ARC",
+      "line": "Linha 12 Safira",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "675401",
+      "version": "2.5.12",
+      "ip": "172.7.54.1",
+      "station": "754-IQC",
+      "line": "Linha 12 Safira",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "675402",
+      "version": "2.5.12",
+      "ip": "172.7.54.2",
+      "station": "754-IQC",
+      "line": "Linha 12 Safira",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "675403",
+      "version": "2.5.9",
+      "ip": "172.7.54.3",
+      "station": "754-IQC",
+      "line": "Linha 12 Safira",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "675405",
+      "version": "2.5.9",
+      "ip": "172.7.54.5",
+      "station": "754-IQC",
+      "line": "Linha 12 Safira",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "675505",
+      "version": "2.5.12",
+      "ip": "172.7.55.5",
+      "station": "755-EMF",
+      "line": "Linha 12 Safira",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "675604",
+      "version": "2.5.6",
+      "ip": "172.7.56.4",
+      "station": "756-JRO",
+      "line": "Linha 12 Safira",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "675605",
+      "version": "2.5.6",
+      "ip": "172.7.56.5",
+      "station": "756-JRO",
+      "line": "Linha 12 Safira",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "675606",
+      "version": "2.5.9",
+      "ip": "172.7.56.6",
+      "station": "756-JRO",
+      "line": "Linha 12 Safira",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "675607",
+      "version": "2.5.9",
+      "ip": "172.7.56.7",
+      "station": "756-JRO",
+      "line": "Linha 12 Safira",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "675705",
+      "version": "2.5.9",
+      "ip": "172.7.57.5",
+      "station": "757-ITI",
+      "line": "Linha 12 Safira",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "675707",
+      "version": "2.5.9",
+      "ip": "172.7.57.7",
+      "station": "757-ITI",
+      "line": "Linha 12 Safira",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "675710",
+      "version": "2.5.9",
+      "ip": "172.7.57.10",
+      "station": "757-ITI",
+      "line": "Linha 12 Safira",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "675711",
+      "version": "2.5.9",
+      "ip": "172.7.57.11",
+      "station": "757-ITI",
+      "line": "Linha 12 Safira",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "675712",
+      "version": "2.5.9",
+      "ip": "172.7.57.12",
+      "station": "757-ITI",
+      "line": "Linha 12 Safira",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "675713",
+      "version": "2.5.9",
+      "ip": "172.7.57.13",
+      "station": "757-ITI",
+      "line": "Linha 12 Safira",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "675804",
+      "version": "2.5.12",
+      "ip": "172.7.58.4",
+      "station": "758-JHE",
+      "line": "Linha 12 Safira",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "675901",
+      "version": "2.5.12",
+      "ip": "172.7.59.1",
+      "station": "759-SMP",
+      "line": "Linha 12 Safira",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "675906",
+      "version": "2.5.12",
+      "ip": "172.7.59.6",
+      "station": "759-SMP",
+      "line": "Linha 12 Safira",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "675907",
+      "version": "2.5.12",
+      "ip": "172.7.59.7",
+      "station": "759-SMP",
+      "line": "Linha 12 Safira",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "676107",
+      "version": "2.5.12",
+      "ip": "172.7.61.7",
+      "station": "761-USL",
+      "line": "Linha 12 Safira",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "676305",
+      "version": "2.5.12",
+      "ip": "172.7.63.5",
+      "station": "763-TAT",
+      "line": "Linha 12 Safira",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "676306",
+      "version": "2.5.12",
+      "ip": "172.7.63.6",
+      "station": "763-TAT",
+      "line": "Linha 12 Safira",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "676308",
+      "version": "2.5.12",
+      "ip": "172.7.63.8",
+      "station": "763-TAT",
+      "line": "Linha 12 Safira",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "676401",
+      "version": "2.5.12",
+      "ip": "172.7.64.1",
+      "station": "764-BAS",
+      "line": "Linha 12 Safira",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "676407",
+      "version": "2.5.12",
+      "ip": "172.7.64.7",
+      "station": "764-BAS",
+      "line": "Linha 12 Safira",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "676427",
+      "version": "2.5.12",
+      "ip": "172.7.64.27",
+      "station": "764-BAS",
+      "line": "Linha 12 Safira",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "680114",
+      "version": "2.5.12",
+      "ip": "172.7.62.14",
+      "station": "801-EGO",
+      "line": "Linha 13 Jade",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "680115",
+      "version": "2.5.12",
+      "ip": "172.7.62.15",
+      "station": "801-EGO",
+      "line": "Linha 13 Jade",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "680116",
+      "version": "2.5.12",
+      "ip": "172.7.62.16",
+      "station": "801-EGO",
+      "line": "Linha 13 Jade",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "680117",
+      "version": "2.5.12",
+      "ip": "172.7.62.17",
+      "station": "801-EGO",
+      "line": "Linha 13 Jade",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "680209",
+      "version": "2.5.12",
+      "ip": "172.8.2.9",
+      "station": "802-GCE",
+      "line": "Linha 13 Jade",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "680301",
+      "version": "2.5.12",
+      "ip": "172.8.3.1",
+      "station": "803-AGU",
+      "line": "Linha 13 Jade",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "680309",
+      "version": "2.5.12",
+      "ip": "172.8.3.9",
+      "station": "803-AGU",
+      "line": "Linha 13 Jade",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "680310",
+      "version": "2.5.12",
+      "ip": "172.8.3.10",
+      "station": "803-AGU",
+      "line": "Linha 13 Jade",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "680311",
+      "version": "2.5.12",
+      "ip": "172.8.3.11",
+      "station": "803-AGU",
+      "line": "Linha 13 Jade",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "680313",
+      "version": "2.5.12",
+      "ip": "172.8.3.13",
+      "station": "803-AGU",
+      "line": "Linha 13 Jade",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "CPTM",
+      "terminal": "680315",
+      "version": "2.5.12",
+      "ip": "172.8.3.15",
+      "station": "803-AGU",
+      "line": "Linha 13 Jade",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "500502",
+      "version": "2.5.6",
+      "ip": "10.1.5.102",
+      "station": "005-ARV",
+      "line": "Linha 1 Azul",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "500605",
+      "version": "2.5.12",
+      "ip": "10.1.6.105",
+      "station": "006-SCZ",
+      "line": "Linha 1 Azul",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "500608",
+      "version": "2.5.6",
+      "ip": "10.1.6.108",
+      "station": "006-SCZ",
+      "line": "Linha 1 Azul",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "500704",
+      "version": "2.5.6",
+      "ip": "10.1.7.104",
+      "station": "007-VMN",
+      "line": "Linha 1 Azul",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "501102",
+      "version": "2.5.12",
+      "ip": "10.1.11.102",
+      "station": "011-JQM",
+      "line": "Linha 1 Azul",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "501323",
+      "version": "2.5.6",
+      "ip": "10.3.13.123",
+      "station": "013-PSE",
+      "line": "Linha 1 Azul",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "501329",
+      "version": "2.5.12",
+      "ip": "10.3.13.129",
+      "station": "013-PSE",
+      "line": "Linha 1 Azul",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "501338",
+      "version": "1.51.27",
+      "ip": "10.3.13.138",
+      "station": "013-PSE",
+      "line": "Linha 1 Azul",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "501339",
+      "version": "1.51.27",
+      "ip": "10.3.13.139",
+      "station": "013-PSE",
+      "line": "Linha 1 Azul",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "501406",
+      "version": "2.5.12",
+      "ip": "10.1.14.106",
+      "station": "014-BTO",
+      "line": "Linha 1 Azul",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "501415",
+      "version": "2.5.12",
+      "ip": "10.1.14.115",
+      "station": "014-BTO",
+      "line": "Linha 1 Azul",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "501505",
+      "version": "2.5.12",
+      "ip": "10.1.15.105",
+      "station": "015-LUZ",
+      "line": "Linha 1 Azul",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "501817",
+      "version": "1.51.36",
+      "ip": "10.1.18.117",
+      "station": "018-TTE",
+      "line": "Linha 1 Azul",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "502112",
+      "version": "2.5.6",
+      "ip": "10.1.21.112",
+      "station": "021-JPA",
+      "line": "Linha 1 Azul",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "502113",
+      "version": "2.5.6",
+      "ip": "10.1.21.113",
+      "station": "021-JPA",
+      "line": "Linha 1 Azul",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "502303",
+      "version": "2.5.12",
+      "ip": "10.1.23.103",
+      "station": "023-TUC",
+      "line": "Linha 1 Azul",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "505402",
+      "version": "2.5.12",
+      "ip": "10.2.4.102",
+      "station": "054-CNS",
+      "line": "Linha 2 Verde",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "505404",
+      "version": "2.5.12",
+      "ip": "10.2.4.104",
+      "station": "054-CNS",
+      "line": "Linha 2 Verde",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "505414",
+      "version": "2.5.9",
+      "ip": "10.2.4.114",
+      "station": "054-CNS",
+      "line": "Linha 2 Verde",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "505490",
+      "version": "2.5.6",
+      "ip": "192.168.1.190",
+      "station": "054-CNS",
+      "line": "Linha 2 Verde",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "505714",
+      "version": "2.5.12",
+      "ip": "10.2.7.114",
+      "station": "057-PSO",
+      "line": "Linha 2 Verde",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "506107",
+      "version": "2.5.12",
+      "ip": "10.2.11.107",
+      "station": "061-AIP",
+      "line": "Linha 2 Verde",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "506411",
+      "version": "2.5.12",
+      "ip": "10.2.14.111",
+      "station": "064-VPT",
+      "line": "Linha 2 Verde",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "510141",
+      "version": "2.5.12",
+      "ip": "10.3.1.141",
+      "station": "101-ITQ",
+      "line": "Linha 3 Vermelha",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "510143",
+      "version": "2.5.12",
+      "ip": "10.3.1.143",
+      "station": "101-ITQ",
+      "line": "Linha 3 Vermelha",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "510158",
+      "version": "2.5.15",
+      "ip": "10.3.1.158",
+      "station": "101-ITQ",
+      "line": "Linha 3 Vermelha",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "510609",
+      "version": "2.5.12",
+      "ip": "10.3.6.109",
+      "station": "106-PEN",
+      "line": "Linha 3 Vermelha",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "510707",
+      "version": "2.5.12",
+      "ip": "10.3.7.107",
+      "station": "107-CAR",
+      "line": "Linha 3 Vermelha",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "510709",
+      "version": "2.5.12",
+      "ip": "10.3.7.109",
+      "station": "107-CAR",
+      "line": "Linha 3 Vermelha",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "510820",
+      "version": "2.5.12",
+      "ip": "10.3.8.120",
+      "station": "108-TAT",
+      "line": "Linha 3 Vermelha",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "510823",
+      "version": "2.5.12",
+      "ip": "10.3.8.123",
+      "station": "108-TAT",
+      "line": "Linha 3 Vermelha",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "510906",
+      "version": "2.5.12",
+      "ip": "10.3.9.106",
+      "station": "109-BEL",
+      "line": "Linha 3 Vermelha",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "511206",
+      "version": "2.5.6",
+      "ip": "10.3.12.106",
+      "station": "112-PDS",
+      "line": "Linha 3 Vermelha",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "511430",
+      "version": "2.5.12",
+      "ip": "10.3.14.130",
+      "station": "114-GBU",
+      "line": "Linha 3 Vermelha",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "511433",
+      "version": "2.5.12",
+      "ip": "10.3.14.133",
+      "station": "114-GBU",
+      "line": "Linha 3 Vermelha",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "511706",
+      "version": "2.5.12",
+      "ip": "10.3.17.106",
+      "station": "117-DEO",
+      "line": "Linha 3 Vermelha",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "511811",
+      "version": "2.5.12",
+      "ip": "10.3.18.111",
+      "station": "118-BFU",
+      "line": "Linha 3 Vermelha",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "511812",
+      "version": "2.5.12",
+      "ip": "10.3.18.112",
+      "station": "118-BFU",
+      "line": "Linha 3 Vermelha",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "531401",
+      "version": "2.5.12",
+      "ip": "10.15.3.101",
+      "station": "314-SLU",
+      "line": "Linha 15 Prata",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "531402",
+      "version": "2.5.12",
+      "ip": "10.15.3.102",
+      "station": "314-SLU",
+      "line": "Linha 15 Prata",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "531505",
+      "version": "1.51.36",
+      "ip": "10.15.4.105",
+      "station": "315-CAD",
+      "line": "Linha 15 Prata",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "531506",
+      "version": "2.5.12",
+      "ip": "10.15.4.106",
+      "station": "315-CAD",
+      "line": "Linha 15 Prata",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "531602",
+      "version": "2.5.12",
+      "ip": "10.15.5.102",
+      "station": "316-VTL",
+      "line": "Linha 15 Prata",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "531806",
+      "version": "2.5.12",
+      "ip": "10.15.7.106",
+      "station": "318-JPL",
+      "line": "Linha 15 Prata",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "531901",
+      "version": "2.5.6",
+      "ip": "10.15.8.101",
+      "station": "319-SAP",
+      "line": "Linha 15 Prata",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "532101",
+      "version": "2.5.12",
+      "ip": "10.15.10.101",
+      "station": "321-MAT",
+      "line": "Linha 15 Prata",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "532110",
+      "version": "2.5.12",
+      "ip": "10.15.10.110",
+      "station": "321-MAT",
+      "line": "Linha 15 Prata",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "532111",
+      "version": "1.51.36",
+      "ip": "10.15.10.111",
+      "station": "321-MAT",
+      "line": "Linha 15 Prata",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "532113",
+      "version": "2.5.12",
+      "ip": "10.15.10.113",
+      "station": "321-MAT",
+      "line": "Linha 15 Prata",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "532114",
+      "version": "2.5.12",
+      "ip": "10.15.10.114",
+      "station": "321-MAT",
+      "line": "Linha 15 Prata",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "676455",
+      "version": "2.5.6",
+      "ip": "192.168.111.19",
+      "station": "ABT",
+      "line": "AUTOPASS",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "888801",
+      "version": "2.5.6",
+      "ip": "192.168.1.10",
+      "station": "060-IMG",
+      "line": "Linha 2 Verde",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "999917",
+      "version": "2.5.5",
+      "ip": "192.168.88.31",
+      "station": "011-JQM",
+      "line": "Linha 1 Azul",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRO",
+      "terminal": "999932",
+      "version": "2.5.5",
+      "ip": "10190133253",
+      "station": "ABT",
+      "line": "AUTOPASS",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRÔ - LINHA 17",
+      "terminal": "435801",
+      "version": "2.5.6",
+      "ip": "10.17.3.101",
+      "station": "358-VCD",
+      "line": "Linha 17 Ouro",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRÔ - LINHA 17",
+      "terminal": "435802",
+      "version": "2.5.6",
+      "ip": "10.17.3.102",
+      "station": "358-VCD",
+      "line": "Linha 17 Ouro",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRÔ - LINHA 17",
+      "terminal": "435803",
+      "version": "2.5.6",
+      "ip": "10.17.3.103",
+      "station": "358-VCD",
+      "line": "Linha 17 Ouro",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRÔ - LINHA 17",
+      "terminal": "435805",
+      "version": "2.5.15",
+      "ip": "10.17.3.105",
+      "station": "358-VCD",
+      "line": "Linha 17 Ouro",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRÔ - LINHA 17",
+      "terminal": "435806",
+      "version": "2.5.6",
+      "ip": "10.17.3.106",
+      "station": "358-VCD",
+      "line": "Linha 17 Ouro",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRÔ - LINHA 17",
+      "terminal": "435807",
+      "version": "2.5.6",
+      "ip": "10.17.3.107",
+      "station": "358-VCD",
+      "line": "Linha 17 Ouro",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRÔ - LINHA 17",
+      "terminal": "435808",
+      "version": "2.5.6",
+      "ip": "10.17.3.108",
+      "station": "358-VCD",
+      "line": "Linha 17 Ouro",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "METRÔ - LINHA 17",
+      "terminal": "435810",
+      "version": "2.5.6",
+      "ip": "10.17.3.110",
+      "station": "358-VCD",
+      "line": "Linha 17 Ouro",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "TIC TRENS S.A.",
+      "terminal": "650306",
+      "version": "2.5.12",
+      "ip": "172.5.3.6",
+      "station": "503-FDR",
+      "line": "Linha 7 Rubi",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "TIC TRENS S.A.",
+      "terminal": "650504",
+      "version": "2.5.12",
+      "ip": "172.5.5.4",
+      "station": "505-PRU",
+      "line": "Linha 7 Rubi",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "TIC TRENS S.A.",
+      "terminal": "650601",
+      "version": "2.5.12",
+      "ip": "172.5.6.1",
+      "station": "506-JRG",
+      "line": "Linha 7 Rubi",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "TIC TRENS S.A.",
+      "terminal": "650603",
+      "version": "2.5.12",
+      "ip": "172.5.6.3",
+      "station": "506-JRG",
+      "line": "Linha 7 Rubi",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "TIC TRENS S.A.",
+      "terminal": "651001",
+      "version": "2.5.6",
+      "ip": "172.5.10.1",
+      "station": "510-LPA",
+      "line": "Linha 7 Rubi",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "TIC TRENS S.A.",
+      "terminal": "651002",
+      "version": "2.5.6",
+      "ip": "172.5.10.2",
+      "station": "510-LPA",
+      "line": "Linha 7 Rubi",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "TIC TRENS S.A.",
+      "terminal": "651003",
+      "version": "2.5.6",
+      "ip": "172.5.10.3",
+      "station": "510-LPA",
+      "line": "Linha 7 Rubi",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA 4",
+      "terminal": "915308",
+      "version": "2.5.6",
+      "ip": "10.68.40.150",
+      "station": "153-HIG",
+      "line": "Linha 4 Amarela",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA 4",
+      "terminal": "915408",
+      "version": "2.5.6",
+      "ip": "10.68.36.143",
+      "station": "154-PTA",
+      "line": "Linha 4 Amarela",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA 4",
+      "terminal": "915604",
+      "version": "2.5.6",
+      "ip": "10.68.28.139",
+      "station": "156-FRA",
+      "line": "Linha 4 Amarela",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA 4",
+      "terminal": "915707",
+      "version": "2.5.6",
+      "ip": "10.68.24.142",
+      "station": "157-FAL",
+      "line": "Linha 4 Amarela",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA 4",
+      "terminal": "915801",
+      "version": "2.5.12",
+      "ip": "10.68.20.136",
+      "station": "158-PIN",
+      "line": "Linha 4 Amarela",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA 4",
+      "terminal": "915910",
+      "version": "2.5.6",
+      "ip": "10.68.16.145",
+      "station": "159-BUT",
+      "line": "Linha 4 Amarela",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE",
+      "terminal": "420113",
+      "version": "2.5.12",
+      "ip": "10.229.8.47",
+      "station": "201-CPR",
+      "line": "Linha 5 Lilas",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE",
+      "terminal": "420311",
+      "version": "2.5.12",
+      "ip": "10.229.16.45",
+      "station": "203-VBE",
+      "line": "Linha 5 Lilas",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE",
+      "terminal": "420502",
+      "version": "2.5.12",
+      "ip": "10.229.24.35",
+      "station": "205-STA",
+      "line": "Linha 5 Lilas",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE",
+      "terminal": "420514",
+      "version": "2.5.6",
+      "ip": "10.229.24.40",
+      "station": "205-STA",
+      "line": "Linha 5 Lilas",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE",
+      "terminal": "420515",
+      "version": "2.5.12",
+      "ip": "10.229.24.41",
+      "station": "205-STA",
+      "line": "Linha 5 Lilas",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE",
+      "terminal": "420702",
+      "version": "1.51.36",
+      "ip": "172.16.36.144",
+      "station": "207-APN",
+      "line": "Linha 5 Lilas",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE",
+      "terminal": "420707",
+      "version": "1.51.36",
+      "ip": "172.16.36.159",
+      "station": "207-APN",
+      "line": "Linha 5 Lilas",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE",
+      "terminal": "421008",
+      "version": "2.5.12",
+      "ip": "172.16.48.159",
+      "station": "210-BRK",
+      "line": "Linha 5 Lilas",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE",
+      "terminal": "421101",
+      "version": "2.5.12",
+      "ip": "172.16.52.138",
+      "station": "211-CPB",
+      "line": "Linha 5 Lilas",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE",
+      "terminal": "421102",
+      "version": "2.5.12",
+      "ip": "172.16.52.141",
+      "station": "211-CPB",
+      "line": "Linha 5 Lilas",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE",
+      "terminal": "421105",
+      "version": "2.5.12",
+      "ip": "172.16.52.150",
+      "station": "211-CPB",
+      "line": "Linha 5 Lilas",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE",
+      "terminal": "421110",
+      "version": "2.5.12",
+      "ip": "172.16.52.165",
+      "station": "211-CPB",
+      "line": "Linha 5 Lilas",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE",
+      "terminal": "421601",
+      "version": "2.5.12",
+      "ip": "172.16.72.138",
+      "station": "216-SCR",
+      "line": "Linha 5 Lilas",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE",
+      "terminal": "421602",
+      "version": "2.5.12",
+      "ip": "172.16.72.141",
+      "station": "216-SCR",
+      "line": "Linha 5 Lilas",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE",
+      "terminal": "421603",
+      "version": "2.5.12",
+      "ip": "172.16.72.144",
+      "station": "216-SCR",
+      "line": "Linha 5 Lilas",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE",
+      "terminal": "421604",
+      "version": "2.5.12",
+      "ip": "172.16.72.147",
+      "station": "216-SCR",
+      "line": "Linha 5 Lilas",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE",
+      "terminal": "421605",
+      "version": "2.5.12",
+      "ip": "172.16.72.150",
+      "station": "216-SCR",
+      "line": "Linha 5 Lilas",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE",
+      "terminal": "421606",
+      "version": "2.5.6",
+      "ip": "172.16.72.153",
+      "station": "216-SCR",
+      "line": "Linha 5 Lilas",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE",
+      "terminal": "421607",
+      "version": "2.5.12",
+      "ip": "172.16.72.156",
+      "station": "216-SCR",
+      "line": "Linha 5 Lilas",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE",
+      "terminal": "421608",
+      "version": "2.5.12",
+      "ip": "172.16.72.159",
+      "station": "216-SCR",
+      "line": "Linha 5 Lilas",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE",
+      "terminal": "421609",
+      "version": "2.5.6",
+      "ip": "172.16.72.162",
+      "station": "216-SCR",
+      "line": "Linha 5 Lilas",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE",
+      "terminal": "421610",
+      "version": "2.5.6",
+      "ip": "172.16.72.165",
+      "station": "216-SCR",
+      "line": "Linha 5 Lilas",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "355101",
+      "version": "2.5.12",
+      "ip": "172.5.51.1",
+      "station": "551-IPV",
+      "line": "Linha 8 Diamante",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "355106",
+      "version": "2.5.12",
+      "ip": "172.5.51.6",
+      "station": "551-IPV",
+      "line": "Linha 8 Diamante",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "355116",
+      "version": "2.5.12",
+      "ip": "172.5.51.16",
+      "station": "551-IPV",
+      "line": "Linha 8 Diamante",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "355117",
+      "version": "2.5.12",
+      "ip": "172.5.51.17",
+      "station": "551-IPV",
+      "line": "Linha 8 Diamante",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "355302",
+      "version": "2.5.12",
+      "ip": "172.5.53.2",
+      "station": "553-SCO",
+      "line": "Linha 8 Diamante",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "355304",
+      "version": "2.5.12",
+      "ip": "172.5.53.4",
+      "station": "553-SCO",
+      "line": "Linha 8 Diamante",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "355401",
+      "version": "2.5.12",
+      "ip": "172.5.54.1",
+      "station": "554-JDI",
+      "line": "Linha 8 Diamante",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "355402",
+      "version": "2.5.12",
+      "ip": "172.5.54.2",
+      "station": "554-JDI",
+      "line": "Linha 8 Diamante",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "355403",
+      "version": "2.5.12",
+      "ip": "172.5.54.3",
+      "station": "554-JDI",
+      "line": "Linha 8 Diamante",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "355405",
+      "version": "2.5.12",
+      "ip": "172.5.54.5",
+      "station": "554-JDI",
+      "line": "Linha 8 Diamante",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "355406",
+      "version": "2.5.12",
+      "ip": "172.5.54.6",
+      "station": "554-JDI",
+      "line": "Linha 8 Diamante",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "355602",
+      "version": "2.5.12",
+      "ip": "172.5.56.2",
+      "station": "556-JBE",
+      "line": "Linha 8 Diamante",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "355603",
+      "version": "2.5.12",
+      "ip": "172.5.56.3",
+      "station": "556-JBE",
+      "line": "Linha 8 Diamante",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "355610",
+      "version": "2.5.12",
+      "ip": "172.5.56.10",
+      "station": "556-JBE",
+      "line": "Linha 8 Diamante",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "355701",
+      "version": "2.5.12",
+      "ip": "172.5.57.1",
+      "station": "557-BRU",
+      "line": "Linha 8 Diamante",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "355702",
+      "version": "2.5.12",
+      "ip": "172.5.57.2",
+      "station": "557-BRU",
+      "line": "Linha 8 Diamante",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "355706",
+      "version": "2.5.12",
+      "ip": "172.5.57.6",
+      "station": "557-BRU",
+      "line": "Linha 8 Diamante",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "355707",
+      "version": "2.5.6",
+      "ip": "172.5.57.7",
+      "station": "557-BRU",
+      "line": "Linha 8 Diamante",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "355712",
+      "version": "2.5.12",
+      "ip": "172.5.57.12",
+      "station": "557-BRU",
+      "line": "Linha 8 Diamante",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "355713",
+      "version": "2.5.12",
+      "ip": "172.5.57.13",
+      "station": "557-BRU",
+      "line": "Linha 8 Diamante",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "355802",
+      "version": "2.5.12",
+      "ip": "172.5.58.2",
+      "station": "558-AJO",
+      "line": "Linha 8 Diamante",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "355804",
+      "version": "2.5.12",
+      "ip": "172.5.58.4",
+      "station": "558-AJO",
+      "line": "Linha 8 Diamante",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "355805",
+      "version": "2.5.12",
+      "ip": "172.5.58.5",
+      "station": "558-AJO",
+      "line": "Linha 8 Diamante",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "355808",
+      "version": "2.5.12",
+      "ip": "172.5.58.8",
+      "station": "558-AJO",
+      "line": "Linha 8 Diamante",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "355904",
+      "version": "2.5.12",
+      "ip": "172.5.59.4",
+      "station": "559-STE",
+      "line": "Linha 8 Diamante",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "356012",
+      "version": "2.5.12",
+      "ip": "172.5.60.12",
+      "station": "560-CPB",
+      "line": "Linha 8 Diamante",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "356013",
+      "version": "2.5.12",
+      "ip": "172.5.60.13",
+      "station": "560-CPB",
+      "line": "Linha 8 Diamante",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "356014",
+      "version": "2.5.12",
+      "ip": "172.5.60.11",
+      "station": "560-CPB",
+      "line": "Linha 8 Diamante",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "356016",
+      "version": "2.5.12",
+      "ip": "172.5.60.16",
+      "station": "560-CPB",
+      "line": "Linha 8 Diamante",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "356503",
+      "version": "2.5.12",
+      "ip": "172.5.65.3",
+      "station": "565-PAL",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "356603",
+      "version": "2.5.12",
+      "ip": "172.5.66.3",
+      "station": "566-ILE",
+      "line": "Linha 8 Diamante",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "356703",
+      "version": "2.5.12",
+      "ip": "172.5.67.3",
+      "station": "567-DMO",
+      "line": "Linha 8 Diamante",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "356804",
+      "version": "2.5.12",
+      "ip": "172.5.68.4",
+      "station": "567-DMO",
+      "line": "Linha 8 Diamante",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "357005",
+      "version": "2.5.12",
+      "ip": "172.5.70.5",
+      "station": "570-JPR",
+      "line": "Linha 8 Diamante",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "357006",
+      "version": "2.5.12",
+      "ip": "172.5.70.6",
+      "station": "570-JPR",
+      "line": "Linha 8 Diamante",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "357008",
+      "version": "2.5.12",
+      "ip": "172.5.70.8",
+      "station": "570-JPR",
+      "line": "Linha 8 Diamante",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "360106",
+      "version": "2.5.12",
+      "ip": "172.6.1.6",
+      "station": "601-JUR",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "360201",
+      "version": "2.5.12",
+      "ip": "172.6.2.1",
+      "station": "602-SOC",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "360203",
+      "version": "2.5.12",
+      "ip": "172.6.2.3",
+      "station": "602-SOC",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "360204",
+      "version": "2.5.6",
+      "ip": "172.6.2.4",
+      "station": "602-SOC",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "360205",
+      "version": "2.5.12",
+      "ip": "172.6.2.5",
+      "station": "602-SOC",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "360206",
+      "version": "1.51.36",
+      "ip": "172.6.2.6",
+      "station": "602-SOC",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "360302",
+      "version": "2.5.12",
+      "ip": "172.6.3.2",
+      "station": "603-SAM",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "360304",
+      "version": "2.5.12",
+      "ip": "172.6.3.4",
+      "station": "603-SAM",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "360305",
+      "version": "2.5.12",
+      "ip": "172.6.3.5",
+      "station": "603-SAM",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "360505",
+      "version": "2.5.12",
+      "ip": "172.6.5.5",
+      "station": "605-MRB",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "360601",
+      "version": "2.5.12",
+      "ip": "172.6.6.1",
+      "station": "606-BRR",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "360602",
+      "version": "2.5.12",
+      "ip": "172.6.6.2",
+      "station": "606-BRR",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "360603",
+      "version": "2.5.12",
+      "ip": "172.6.6.3",
+      "station": "606-BRR",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "360605",
+      "version": "2.5.12",
+      "ip": "172.6.6.5",
+      "station": "606-BRR",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "360606",
+      "version": "2.5.12",
+      "ip": "172.6.6.6",
+      "station": "606-BRR",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "360607",
+      "version": "2.4.21",
+      "ip": "172.6.6.7",
+      "station": "606-BRR",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "360609",
+      "version": "2.5.12",
+      "ip": "172.6.6.9",
+      "station": "606-BRR",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "360701",
+      "version": "2.5.12",
+      "ip": "172.6.7.1",
+      "station": "607-VOL",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "360702",
+      "version": "1.51.36",
+      "ip": "172.6.7.2",
+      "station": "608-CJD",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "360704",
+      "version": "2.5.12",
+      "ip": "172.6.7.4",
+      "station": "607-VOL",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "360705",
+      "version": "2.5.12",
+      "ip": "172.6.7.5",
+      "station": "607-VOL",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "360706",
+      "version": "2.5.12",
+      "ip": "172.6.7.6",
+      "station": "607-VOL",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "360707",
+      "version": "2.5.6",
+      "ip": "172.6.7.7",
+      "station": "607-VOL",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "360803",
+      "version": "2.5.12",
+      "ip": "172.6.8.3",
+      "station": "608-CJD",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "360805",
+      "version": "2.5.12",
+      "ip": "172.6.8.5",
+      "station": "608-CJD",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "361005",
+      "version": "2.5.12",
+      "ip": "172.6.10.5",
+      "station": "610-PIN",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "361007",
+      "version": "2.5.6",
+      "ip": "172.6.10.7",
+      "station": "610-PIN",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "361101",
+      "version": "2.5.12",
+      "ip": "172.6.11.1",
+      "station": "611-USP",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "361103",
+      "version": "2.5.12",
+      "ip": "172.6.11.3",
+      "station": "611-USP",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "361204",
+      "version": "2.5.12",
+      "ip": "172.6.12.4",
+      "station": "612-JAG",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "361402",
+      "version": "2.5.12",
+      "ip": "172.6.14.2",
+      "station": "614-JOD",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "361403",
+      "version": "2.5.12",
+      "ip": "172.6.14.3",
+      "station": "614-JOD",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "361405",
+      "version": "2.5.12",
+      "ip": "172.6.14.5",
+      "station": "614-JOD",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "361406",
+      "version": "2.5.12",
+      "ip": "172.6.14.6",
+      "station": "614-JOD",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "361407",
+      "version": "2.5.12",
+      "ip": "172.6.14.7",
+      "station": "614-JOD",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "361603",
+      "version": "2.5.4",
+      "ip": "172.6.16.3",
+      "station": "616-AUT",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "361610",
+      "version": "2.5.12",
+      "ip": "172.6.16.10",
+      "station": "616-AUT",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "361612",
+      "version": "2.5.12",
+      "ip": "172.6.16.12",
+      "station": "616-AUT",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "361613",
+      "version": "2.5.12",
+      "ip": "172.6.16.13",
+      "station": "616-AUT",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "361617",
+      "version": "2.5.12",
+      "ip": "172.6.16.17",
+      "station": "616-AUT",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "361618",
+      "version": "2.5.12",
+      "ip": "172.6.16.18",
+      "station": "616-AUT",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "361622",
+      "version": "2.5.12",
+      "ip": "172.6.16.22",
+      "station": "616-AUT",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "361623",
+      "version": "2.5.12",
+      "ip": "172.6.16.23",
+      "station": "618-GRA",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "361706",
+      "version": "2.5.6",
+      "ip": "172.6.17.6",
+      "station": "617-INT",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "361708",
+      "version": "2.5.12",
+      "ip": "172.6.17.8",
+      "station": "617-INT",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "361711",
+      "version": "2.5.12",
+      "ip": "172.6.17.11",
+      "station": "617-INT",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "361712",
+      "version": "2.5.12",
+      "ip": "172.6.17.12",
+      "station": "617-INT",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "361713",
+      "version": "2.5.12",
+      "ip": "172.6.17.13",
+      "station": "617-INT",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "361803",
+      "version": "2.5.12",
+      "ip": "172.6.18.3",
+      "station": "618-GRA",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "361811",
+      "version": "2.5.12",
+      "ip": "172.6.18.11",
+      "station": "618-GRA",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "361813",
+      "version": "2.5.9",
+      "ip": "172.6.18.13",
+      "station": "618-GRA",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "361814",
+      "version": "2.5.12",
+      "ip": "172.6.18.14",
+      "station": "618-GRA",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "361815",
+      "version": "2.5.6",
+      "ip": "172.6.18.15",
+      "station": "618-GRA",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "361816",
+      "version": "2.5.6",
+      "ip": "172.6.18.16",
+      "station": "618-GRA",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "361817",
+      "version": "2.4.21",
+      "ip": "172.6.18.17",
+      "station": "618-GRA",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "361903",
+      "version": "2.5.12",
+      "ip": "172.6.19.3",
+      "station": "619-MVN",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "361904",
+      "version": "2.5.12",
+      "ip": "172.6.19.4",
+      "station": "619-MVN",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "361906",
+      "version": "2.5.12",
+      "ip": "172.6.19.6",
+      "station": "619-MVN",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "361907",
+      "version": "2.5.12",
+      "ip": "172.6.19.7",
+      "station": "619-MVN",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "361908",
+      "version": "2.5.12",
+      "ip": "172.6.19.8",
+      "station": "619-MVN",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "362002",
+      "version": "2.5.12",
+      "ip": "172.6.20.2",
+      "station": "620-VGN",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "362004",
+      "version": "2.5.12",
+      "ip": "172.6.20.4",
+      "station": "620-VGN",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "362008",
+      "version": "2.5.12",
+      "ip": "172.6.20.8",
+      "station": "620-VGN",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "362010",
+      "version": "2.5.12",
+      "ip": "172.6.20.10",
+      "station": "620-VGN",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    },
+    {
+      "company": "VIA MOBILIDADE LINHAS 8 E 9",
+      "terminal": "362011",
+      "version": "2.5.12",
+      "ip": "172.6.20.11",
+      "station": "620-VGN",
+      "line": "Linha 9 Esmeralda",
+      "sam_type": "NÃO MIGRADO"
+    }
+  ]
+}
