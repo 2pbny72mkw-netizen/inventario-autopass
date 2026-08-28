@@ -126,3 +126,6 @@ function bindPanPpt(btn){
 }
 function panBindRev6Ppt(){bindPanPpt($('panPptBtn'));bindPanPpt($('panPptNavBtn'))}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',panBindRev6Ppt);else panBindRev6Ppt();
+
+// V63: retoma acompanhamento do PowerPoint ao voltar para a tela.
+setTimeout(()=>{const remembered=panPptRemembered();if(remembered&&!panPptJobId){panPptJobId=remembered;panPptSet('Retomando acompanhamento...',true);panPptPoll(remembered)}},350);
