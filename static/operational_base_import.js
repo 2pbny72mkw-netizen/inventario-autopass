@@ -1,0 +1,10 @@
+(()=>{
+  const qs=(s,r=document)=>r.querySelector(s);
+  async function post(url,file){const fd=new FormData();fd.append('file',file);const r=await fetch(url,{method:'POST',body:fd,credentials:'same-origin'});let d={};try{d=await r.json()}catch(e){}if(!r.ok||!d.ok)throw new Error(d.error||d.detail||('HTTP '+r.status));return d}
+  function summaryText(s){return `${s.rows||0} lidos · ${s.existing||0} existentes · ${s.new||0} novos · ${s.reopened||0} reabertos · ${s.already_pending||0} já pendentes · ${s.outside_scope_pending||0} pendente(s) fora do novo arquivo`}
+  document.addEventListener('click',ev=>{const b=ev.target.closest('.opBaseImportBtn');if(!b)return;const f=qs(`.opBaseImportFile[data-module="${b.dataset.module}"]`);if(f){f.value='';f.click()}});
+  document.addEventListener('change',async ev=>{const input=ev.target.closest('.opBaseImportFile');if(!input||!input.files?.[0])return;const module=input.dataset.module,file=input.files[0],status=qs(`.opBaseImportStatus[data-module="${module}"]`),button=qs(`.opBaseImportBtn[data-module="${module}"]`);if(status)status.textContent='Analisando planilha...';if(button)button.disabled=true;
+    try{const p=await post(`/api/operational-base/import/preview?module=${encodeURIComponent(module)}`,file),t=summaryText(p.summary||{});if(status)status.textContent=t;const ok=window.confirm(`${t}\n\nRegra: os pendentes que não estiverem nesta planilha NÃO serão apagados. Eles sairão do escopo operacional atual e o histórico será preservado.\n\nConfirmar importação?`);if(!ok){if(status)status.textContent='Importação cancelada. '+t;return}if(status)status.textContent='Aplicando importação...';const d=await post(`/api/operational-base/import?module=${encodeURIComponent(module)}`,file);if(status)status.textContent='Concluído. '+summaryText(d.summary||{});window.alert((d.message||'Base atualizada.')+'\n\n'+summaryText(d.summary||{}));window.location.reload();}
+    catch(e){if(status)status.textContent='Erro: '+e.message;window.alert('Não foi possível importar: '+e.message)}finally{if(button)button.disabled=false}
+  });
+})();
