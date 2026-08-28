@@ -41,7 +41,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V66 REV2"
+APP_RELEASE = "V66 REV3"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -1138,11 +1138,15 @@ def _default_access_for_role(role):
     return defaults.get(role,set())
 
 def _user_access_set(user=None):
-    # V60 REV2: evita N+1 no Jinja. can_view() é chamado muitas vezes por página;
-    # o conjunto de permissões fica em cache durante a própria requisição.
-    if user is None and has_request_context() and hasattr(g, "_autopass_access_set"):
+    # V66 REV3: o cache de permissões pertence SOMENTE ao usuário autenticado.
+    # Ao renderizar RH/Usuários também consultamos user_access(u) para cada usuário
+    # listado. A versão anterior sobrescrevia o cache global da requisição com as
+    # permissões do primeiro técnico e fazia os botões Editar/Ativar desaparecerem
+    # das linhas seguintes para RH.
+    current_lookup = user is None
+    if current_lookup and has_request_context() and hasattr(g, "_autopass_access_set"):
         return g._autopass_access_set
-    if user is None:
+    if current_lookup:
         uid=session.get("user_id")
         user=db.session.get(User,uid) if uid else None
     if not user:return set()
@@ -1150,14 +1154,14 @@ def _user_access_set(user=None):
         custom=json.loads(user.access_json or "null")
         if isinstance(custom,list):
             access=_expand_legacy_access({x for x in custom if x in ACCESS_ALL})
-            # V60 REV: RH sempre mantém as visualizações operacionais de Equipes em modo leitura,
+            # RH sempre mantém as visualizações operacionais de Equipes em modo leitura,
             # mesmo quando o access_json foi salvo antes da criação das subpermissões atuais.
             if user.role=="hr": access.update({"teams.map","teams.today","teams.schedule"})
-            if has_request_context(): g._autopass_access_set=access
+            if current_lookup and has_request_context(): g._autopass_access_set=access
             return access
     except Exception: pass
     access=_default_access_for_role(user.role)
-    if has_request_context(): g._autopass_access_set=access
+    if current_lookup and has_request_context(): g._autopass_access_set=access
     return access
 
 def _has_access(permission):
