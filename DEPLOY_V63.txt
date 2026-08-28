@@ -1,0 +1,14 @@
+V63 CORE 2.0 — DEPLOY SOBRE V62 REV6
+
+1. Manter V62 REV6 disponível para rollback.
+2. Copiar os arquivos deste pacote preservando as pastas.
+3. Não há migração destrutiva nem DROP/DELETE de dados.
+4. Após deploy confirmar no cabeçalho/telemetria: V63.
+5. Teste mínimo:
+   - Dashboard Geral abre;
+   - Dashboard EMV só carrega ao abrir a visão EMV;
+   - Troca EMV grava normalmente;
+   - Telemetria > Maiores tabelas sem AmbiguousColumn;
+   - PowerPoint inicia, navegar para Equipes, voltar e recuperar progresso;
+   - /api/processamentos retorna os jobs autenticados;
+   - conferir 0 erros 5xx / 0 SIGKILL.

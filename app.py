@@ -9,6 +9,7 @@ import boto3
 import uuid
 import mimetypes
 import hashlib
+import gzip
 from difflib import SequenceMatcher
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -40,7 +41,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V62 REV6"
+APP_RELEASE = "V63"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -61,6 +62,23 @@ _expected_cache = {"at": 0.0, "data": None}
 _LOCATIONS_API_CACHE = {"at": 0.0, "payload": None}
 _LOCATIONS_API_CACHE_TTL = int(os.getenv("LOCATIONS_API_CACHE_TTL", "120"))
 _LOCATIONS_API_CACHE_LOCK = threading.Lock()
+
+# V63 CORE 2.0 — parâmetros de desempenho não destrutivos.
+V63_JSON_GZIP_MIN_BYTES = int(os.getenv("JSON_GZIP_MIN_BYTES", "16384"))
+V63_EMV_CACHE_TTL = int(os.getenv("EMV_API_CACHE_TTL", "20"))
+V63_GARAGE_CACHE_TTL = int(os.getenv("GARAGE_API_CACHE_TTL", "30"))
+_V63_EMV_CACHE = {"at": 0.0, "payload": None}
+_V63_EMV_CACHE_LOCK = threading.Lock()
+_V63_GARAGE_CACHE = {"at": 0.0, "payload": None}
+_V63_GARAGE_CACHE_LOCK = threading.Lock()
+
+def _v63_invalidate_emv_cache():
+    with _V63_EMV_CACHE_LOCK:
+        _V63_EMV_CACHE["at"] = 0.0; _V63_EMV_CACHE["payload"] = None
+
+def _v63_invalidate_garage_cache():
+    with _V63_GARAGE_CACHE_LOCK:
+        _V63_GARAGE_CACHE["at"] = 0.0; _V63_GARAGE_CACHE["payload"] = None
 # V59: Operação 2.0 — consolidação da escala, histórico operacional e leitura em lote.
 _TEAM_PROFILE_SYNC_STATE = {"at": 0.0}
 _TEAM_PROFILE_SYNC_TTL = int(os.getenv("TEAM_PROFILE_SYNC_TTL", "60"))
@@ -228,6 +246,20 @@ def _v56b_perf_finish(response):
     except Exception:
         try: db.session.rollback()
         except Exception: pass
+    # V63: Server-Timing para diagnóstico e gzip apenas em JSON grande.
+    try:
+        total_ms=(time.perf_counter()-getattr(g,"_perf_started",time.perf_counter()))*1000.0
+        response.headers["Server-Timing"] = f"app;dur={total_ms:.1f}, sql;dur={float(getattr(g,'_perf_sql_ms',0) or 0):.1f}"
+        response.headers["X-Autopass-Release"] = APP_RELEASE
+        ae=(request.headers.get("Accept-Encoding") or "").lower(); ct=(response.headers.get("Content-Type") or "").lower()
+        if "gzip" in ae and response.status_code==200 and not response.direct_passthrough and ("application/json" in ct or "text/json" in ct):
+            raw=response.get_data()
+            if len(raw)>=V63_JSON_GZIP_MIN_BYTES and not response.headers.get("Content-Encoding"):
+                packed=gzip.compress(raw,compresslevel=5)
+                if len(packed)<len(raw)*0.92:
+                    response.set_data(packed); response.headers["Content-Encoding"]="gzip"; response.headers["Content-Length"]=str(len(packed)); response.headers["Vary"]="Accept-Encoding"; response.headers["X-Autopass-Compressed"]="gzip"
+    except Exception:
+        pass
     return response
 
 
@@ -3217,14 +3249,14 @@ def _database_storage_snapshot():
                 data["max_connections"]=int(db.session.execute(text("SHOW max_connections")).scalar() or 0)
             except Exception: pass
             rows=db.session.execute(text("""
-                SELECT relname,
-                       pg_total_relation_size(relid) AS total_bytes,
-                       pg_relation_size(relid) AS table_bytes,
-                       pg_indexes_size(relid) AS index_bytes,
-                       COALESCE(n_live_tup,0) AS estimated_rows
-                FROM pg_catalog.pg_statio_user_tables
-                LEFT JOIN pg_stat_user_tables USING (relid)
-                ORDER BY pg_total_relation_size(relid) DESC
+                SELECT io.relname AS relname,
+                       pg_total_relation_size(io.relid) AS total_bytes,
+                       pg_relation_size(io.relid) AS table_bytes,
+                       pg_indexes_size(io.relid) AS index_bytes,
+                       COALESCE(st.n_live_tup,0) AS estimated_rows
+                FROM pg_catalog.pg_statio_user_tables AS io
+                LEFT JOIN pg_catalog.pg_stat_user_tables AS st ON st.relid = io.relid
+                ORDER BY pg_total_relation_size(io.relid) DESC
                 LIMIT 15
             """)).mappings().all()
             data["tables"]=[{"name":r["relname"],"total_bytes":int(r["total_bytes"] or 0),"table_bytes":int(r["table_bytes"] or 0),"index_bytes":int(r["index_bytes"] or 0),"estimated_rows":int(r["estimated_rows"] or 0)} for r in rows]
@@ -3326,7 +3358,9 @@ def telemetry_summary_api():
         errors=sum(1 for x in rows if x.status_code>=500); avg=round(sum(vals)/len(vals),1) if vals else 0; p95=pct(vals,.95)
         health="NORMAL" if p95<1500 and errors==0 else ("ATENÇÃO" if p95<3000 and errors<3 else "CRÍTICO")
         top5=[dict(x,app_ms=max(0,round(float(x.get("avg_ms") or 0)-float(x.get("avg_sql_ms") or 0),1))) for x in route_rows[:5]]
-        storage={"database":_database_storage_snapshot(),"r2":_r2_storage_snapshot(),"local":_local_storage_snapshot(),"runtime":_process_memory_snapshot()}
+        with PANORAMA_EXPORT_LOCK:
+            _jobs=list(PANORAMA_EXPORT_JOBS.values())
+        storage={"database":_database_storage_snapshot(),"r2":_r2_storage_snapshot(),"local":_local_storage_snapshot(),"runtime":_process_memory_snapshot(),"jobs":{"active":sum(1 for j in _jobs if j.get("status") in ("FILA","PROCESSANDO")),"ready":sum(1 for j in _jobs if j.get("status")=="PRONTO"),"errors":sum(1 for j in _jobs if j.get("status")=="ERRO")}}
         return jsonify({"ok":True,"release":APP_RELEASE,"generated_at":datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y %H:%M:%S"),"window_minutes":minutes,"health":health,"avg_ms":avg,"p95_ms":p95,"max_ms":round(max(vals),1) if vals else 0,"requests":len(rows),"errors_5xx":errors,"active_users_15m":int(active_users),"routes":route_rows[:20],"top5":top5,"timeline":timeline[-24:],"table_counts":table_counts,"storage":storage})
     except Exception as exc:
         return jsonify({"ok":False,"error":str(exc)}),500
@@ -8588,7 +8622,11 @@ def _seed_garage_chip_base():
         db.session.add(GarageChipBase(**r))
     db.session.commit()
 
-def _garage_payload():
+def _garage_payload(force=False):
+    now=time.monotonic()
+    with _V63_GARAGE_CACHE_LOCK:
+        cached=_V63_GARAGE_CACHE.get('payload')
+        if cached is not None and not force and now-float(_V63_GARAGE_CACHE.get('at') or 0)<V63_GARAGE_CACHE_TTL: return cached
     _seed_garage_chip_base()
     bases=GarageChipBase.query.filter_by(active=True).order_by(GarageChipBase.company,GarageChipBase.terminal).all()
     swaps=GarageChipSwap.query.all(); sm={x.base_id:x for x in swaps}
@@ -8600,6 +8638,8 @@ def _garage_payload():
     for b in bases:
         sw=sm.get(b.id); ph=photos.get(sw.id,[]) if sw else []; st=sw.status if sw else 'PENDENTE'; u=users.get(sw.technician_id) if sw else None
         out.append({'id':b.id,'company':b.company,'terminal':b.terminal,'model':b.model or '', 'status':st,'technician':u.name if u else '', 'test_result':sw.test_result if sw else '', 'notes':sw.notes if sw else '', 'photo_count':len(ph),'photos':[{'id':p.id,'url':'/uploads/'+p.stored_name,'thumb_url':'/uploads/'+p.stored_name+'?thumb=1'} for p in ph]})
+    with _V63_GARAGE_CACHE_LOCK:
+        _V63_GARAGE_CACHE['at']=now; _V63_GARAGE_CACHE['payload']=out
     return out
 
 @app.get('/troca-chips-garagem')
@@ -8629,7 +8669,7 @@ def garage_chip_save_api(base_id):
         stored=_store_uploaded_file(f,'garage-chip-swaps',stored,f.mimetype or 'application/octet-stream')
         db.session.add(GarageChipPhoto(swap_id=sw.id,original_name=f.filename,stored_name=stored,mime_type=f.mimetype,uploaded_by=session['user_id']))
     if files or GarageChipPhoto.query.filter_by(swap_id=sw.id).count(): sw.status='CONCLUÍDA'; sw.completed_at=sw.completed_at or datetime.utcnow()
-    db.session.commit(); return jsonify({'ok':True,'status':sw.status})
+    db.session.commit(); _v63_invalidate_garage_cache(); return jsonify({'ok':True,'status':sw.status})
 
 @app.get('/api/garage-chip-swaps/dashboard')
 @login_required
@@ -8668,40 +8708,59 @@ def emv_chip_page():
     if not _has_access("implantation.emv"): abort(403)
     return render_template("emv_chip_swap.html",app_release=APP_RELEASE)
 
-@app.get("/api/emv-chip-swaps")
-@login_required
-def emv_chip_list():
+def _v63_build_emv_payload(force=False):
+    now=time.monotonic()
+    with _V63_EMV_CACHE_LOCK:
+        cached=_V63_EMV_CACHE.get("payload")
+        if cached is not None and not force and now-float(_V63_EMV_CACHE.get("at") or 0)<V63_EMV_CACHE_TTL:
+            return cached
     _ensure_emv_tables(); swap_rows=EmvChipSwap.query.all(); swaps={x.terminal:x for x in swap_rows}; rows=[]
     user_ids={uid for x in swap_rows for uid in (x.technician_id,getattr(x,"completed_by_id",None)) if uid}; users={u.id:u for u in User.query.filter(User.id.in_(user_ids)).all()} if user_ids else {}
-    network_rows=_load_station_network_rows()
     station_names={}
-    for nr in network_rows:
+    for nr in _load_station_network_rows():
         sn=str(nr.get("station") or "")
         if " - " in sn: station_names.setdefault(sn.split(" - ",1)[0].strip().upper(),sn.split(" - ",1)[1])
-    swap_ids=[x.id for x in swap_rows]
-    photo_map={}
+    swap_ids=[x.id for x in swap_rows]; photo_map={}
     if swap_ids:
         for ph in EmvChipSwapPhoto.query.filter(EmvChipSwapPhoto.swap_id.in_(swap_ids)).order_by(EmvChipSwapPhoto.created_at).all(): photo_map.setdefault(ph.swap_id,[]).append(ph)
-    for r in _v41_emv_rows():
-        sw=swaps.get(r["terminal"]); d=dict(r)
-        # Ex.: 701-EST => EST - Estudantes
-        station_code=str(r.get("station") or "").split('-')[-1].strip().upper()
-        station_name=station_names.get(station_code,"")
-        photos=[]
+    base_rows=_v41_emv_rows()
+    for r in base_rows:
+        sw=swaps.get(r["terminal"]); d=dict(r); station_code=str(r.get("station") or "").split('-')[-1].strip().upper(); station_name=station_names.get(station_code,""); photos=[]
         if sw:
-            for ph in photo_map.get(sw.id,[]):
-                photos.append({"id":ph.id,"name":ph.original_name,"url":url_for("uploaded",name=ph.stored_name),"thumb_url":url_for("uploaded",name=ph.stored_name,thumb=1),"created_at":ph.created_at.isoformat() if ph.created_at else None})
+            for ph in photo_map.get(sw.id,[]): photos.append({"id":ph.id,"name":ph.original_name,"url":url_for("uploaded",name=ph.stored_name),"thumb_url":url_for("uploaded",name=ph.stored_name,thumb=1),"created_at":ph.created_at.isoformat() if ph.created_at else None})
         tech=users.get(sw.technician_id) if sw else None; completer=users.get(getattr(sw,"completed_by_id",None)) if sw else None
         d.update({"status":sw.status if sw else "PENDENTE","test_result":sw.test_result if sw else None,"notes":sw.notes if sw else "","swap_id":sw.id if sw else None,"station_name":station_name,"photos":photos,"technician":tech.name if tech else "","completed_by":completer.name if completer else (tech.name if sw and sw.completed_at and tech else ""),"completed_by_role":completer.role if completer else (tech.role if sw and sw.completed_at and tech else ""),"completed_at":sw.completed_at.isoformat() if sw and sw.completed_at else None,"updated_at":sw.updated_at.isoformat() if sw and sw.updated_at else None})
         rows.append(d)
-    # Registros incluídos manualmente em campo e ainda ausentes da planilha base.
-    base_terms={str(x.get("terminal") or "") for x in _v41_emv_rows()}
+    base_terms={str(x.get("terminal") or "") for x in base_rows}
     for sw in swap_rows:
         if not getattr(sw,"manual_entry",False) or sw.terminal in base_terms: continue
         photos=[{"id":ph.id,"name":ph.original_name,"url":url_for("uploaded",name=ph.stored_name),"thumb_url":url_for("uploaded",name=ph.stored_name,thumb=1),"created_at":ph.created_at.isoformat() if ph.created_at else None} for ph in photo_map.get(sw.id,[])]
         tech=users.get(sw.technician_id); completer=users.get(getattr(sw,"completed_by_id",None))
         rows.append({"company":sw.company or "","line":sw.line or "","station":sw.station or "","station_name":sw.station or "","terminal":sw.terminal,"block_number":sw.block_number or "","version":"","ip":"","mask":"","gateway":"","dns1":"","dns2":"","group":"","manual_entry":True,"status":sw.status or "PENDENTE","test_result":sw.test_result,"notes":sw.notes or "","swap_id":sw.id,"photos":photos,"technician":tech.name if tech else "","completed_by":completer.name if completer else "","completed_at":sw.completed_at.isoformat() if sw.completed_at else None,"updated_at":sw.updated_at.isoformat() if sw.updated_at else None})
-    return jsonify({"ok":True,"rows":rows})
+    with _V63_EMV_CACHE_LOCK:
+        _V63_EMV_CACHE["at"]=now; _V63_EMV_CACHE["payload"]=rows
+    return rows
+
+@app.get("/api/emv-chip-swaps")
+@login_required
+def emv_chip_list():
+    rows=list(_v63_build_emv_payload())
+    company=(request.args.get("company") or "").strip(); line=(request.args.get("line") or "").strip(); station=(request.args.get("station") or "").strip(); status=(request.args.get("status") or "").strip(); terminal=(request.args.get("terminal") or "").strip(); compact=request.args.get("compact") in ("1","true","yes"); include_photos=request.args.get("include_photos","1") not in ("0","false","no")
+    if company: rows=[x for x in rows if x.get("company")==company]
+    if line: rows=[x for x in rows if x.get("line")==line]
+    if station: rows=[x for x in rows if station in (x.get("station"),x.get("station_name"))]
+    if status: rows=[x for x in rows if normalize(x.get("status"))==normalize(status)]
+    if terminal: rows=[x for x in rows if terminal.lower() in str(x.get("terminal") or "").lower()]
+    if compact or not include_photos:
+        slim=[]
+        for x in rows:
+            if compact:
+                d={k:x.get(k) for k in ("company","line","station","station_name","terminal","block_number","model","version","status","test_result","technician","completed_by","completed_at","manual_entry")}
+            else: d=dict(x)
+            d.pop("photos",None); d["photo_count"]=len(x.get("photos") or [])
+            slim.append(d)
+        rows=slim
+    resp=jsonify({"ok":True,"rows":rows,"release":APP_RELEASE}); resp.headers["X-Autopass-Cache-TTL"]=str(V63_EMV_CACHE_TTL); return resp
 
 @app.post("/api/emv-chip-swaps/manual")
 @emv_field_required
@@ -8713,6 +8772,7 @@ def emv_chip_manual_create():
     if EmvChipSwap.query.filter_by(terminal=terminal).first(): return jsonify({"ok":False,"error":"Este bloqueio manual já foi incluído."}),409
     sw=EmvChipSwap(terminal=terminal,technician_id=session["user_id"],status="PENDENTE",manual_entry=True,company=company,line=line,station=station,block_number=block,notes=(d.get("notes") or "").strip(),updated_at=datetime.utcnow())
     db.session.add(sw);db.session.flush();db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="EMV_MANUAL_CREATE",entity_type="emv_chip_swap",entity_id=str(sw.id),detail=f"{company} · {line} · {station} · bloqueio {block}"));db.session.commit()
+    _v63_invalidate_emv_cache()
     return jsonify({"ok":True,"terminal":terminal,"id":sw.id})
 
 @app.post("/api/emv-chip-swaps/<terminal>")
@@ -8764,6 +8824,7 @@ def emv_chip_save(terminal):
         sw.completed_by_id=session.get("user_id") if photos else None
         db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="EMV_CHIP_SWAP_UPDATE",entity_type="emv_chip_swap",entity_id=str(sw.id),detail=f"{terminal} · {sw.status} · teste {sw.test_result or '—'} · {photos} foto(s)"))
         db.session.commit()
+        _v63_invalidate_emv_cache()
         return jsonify({"ok":True,"status":sw.status,"photo_count":photos})
     except ValueError as exc:
         db.session.rollback()
@@ -8800,6 +8861,7 @@ def emv_chip_delete_photo(photo_id):
     if sw and remaining==0:
         sw.status="PENDENTE"; sw.completed_at=None; sw.updated_at=datetime.utcnow()
     db.session.commit()
+    _v63_invalidate_emv_cache()
     return jsonify({"ok":True,"remaining":remaining,"status":sw.status if sw else "PENDENTE"})
 
 @app.delete("/api/emv-chip-swaps/<terminal>")
@@ -8810,6 +8872,7 @@ def emv_chip_delete(terminal):
     for ph in EmvChipSwapPhoto.query.filter_by(swap_id=sw.id).all():
         _delete_stored_media(ph.stored_name); db.session.delete(ph)
     db.session.delete(sw); db.session.commit()
+    _v63_invalidate_emv_cache()
     return jsonify({"ok":True})
 
 def _cleanup_activity_photos(kind):
@@ -8829,7 +8892,7 @@ def _cleanup_activity_photos(kind):
     for ph in photos:
         _delete_stored_media(ph.stored_name); db.session.delete(ph); removed+=1
     db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='CAMPAIGN_EVIDENCE_PURGE',entity_type=kind,entity_id='',detail=f'{removed} foto(s) temporárias removidas após encerramento; registros operacionais preservados.'))
-    db.session.commit(); return jsonify({'ok':True,'removed':removed,'records_preserved':total})
+    db.session.commit(); _v63_invalidate_emv_cache(); return jsonify({'ok':True,'removed':removed,'records_preserved':total})
 
 @app.post('/api/chip-swaps/purge-evidence')
 @login_required
@@ -9930,6 +9993,19 @@ def panorama_export_pptx_job_status(job_id):
     if job.get("status")=="PRONTO": job["download_url"]=f"/api/panoramas/export.pptx/jobs/{job_id}/download"
     return jsonify(job)
 
+
+@app.get("/api/processamentos")
+@login_required
+def v63_processamentos_api():
+    _panorama_export_cleanup()
+    with PANORAMA_EXPORT_LOCK:
+        jobs=[]
+        for jid,j in PANORAMA_EXPORT_JOBS.items():
+            item={k:v for k,v in dict(j).items() if k not in ("path","created_ts","user_id")}; item["id"]=jid; item["type"]="POWERPOINT_PANORAMA"
+            if item.get("status")=="PRONTO": item["download_url"]=f"/api/panoramas/export.pptx/jobs/{jid}/download"
+            jobs.append(item)
+    jobs.sort(key=lambda x:x.get("created_at") or "",reverse=True)
+    return jsonify({"ok":True,"release":APP_RELEASE,"jobs":jobs[:20],"active":sum(1 for j in jobs if j.get("status") in ("FILA","PROCESSANDO"))})
 
 @app.get("/api/panoramas/export.pptx/jobs/<job_id>/download")
 @login_required

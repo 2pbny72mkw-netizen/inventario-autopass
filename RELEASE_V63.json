@@ -1,0 +1,15 @@
+{
+  "release": "V63",
+  "codename": "CORE 2.0",
+  "base": "V62 REV6",
+  "destructive_migrations": false,
+  "focus": [
+    "performance",
+    "api",
+    "cache",
+    "lazy-loading",
+    "background-jobs",
+    "database-observability",
+    "storage"
+  ]
+}
