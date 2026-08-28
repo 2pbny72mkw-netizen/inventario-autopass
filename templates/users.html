@@ -159,7 +159,7 @@
           <td>
             <div style="display:flex;align-items:center;gap:10px;min-width:180px">
               {% if u.photo_url %}
-                <img src="/usuarios/{{ u.id }}/foto"
+                <img src="/usuarios/{{ u.id }}/foto?thumb=1"
                      alt="Foto de {{ u.name }}"
                      style="width:38px;height:38px;border-radius:50%;object-fit:cover">
               {% else %}
