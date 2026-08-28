@@ -41,7 +41,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V66 REV3"
+APP_RELEASE = "V66 REV4"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -60,7 +60,7 @@ TECHNICAL_TDI_TOTAL = int(os.getenv("TECHNICAL_TDI_TOTAL", "80"))
 EXPECTED_CACHE_TTL_SECONDS = 600
 _expected_cache = {"at": 0.0, "data": None}
 # V56-D: cache curtíssimo da visão consolidada de localidades para reduzir recomputações concorrentes.
-_LOCATIONS_API_CACHE = {"at": 0.0, "payload": None}
+_LOCATIONS_API_CACHE = {"light": {"at": 0.0, "payload": None}, "observed": {"at": 0.0, "payload": None}}
 _LOCATIONS_API_CACHE_TTL = int(os.getenv("LOCATIONS_API_CACHE_TTL", "300"))
 _LOCATIONS_API_CACHE_LOCK = threading.Lock()
 
@@ -68,14 +68,15 @@ _LOCATIONS_API_CACHE_LOCK = threading.Lock()
 V63_JSON_GZIP_MIN_BYTES = int(os.getenv("JSON_GZIP_MIN_BYTES", "16384"))
 V63_EMV_CACHE_TTL = int(os.getenv("EMV_API_CACHE_TTL", "60"))
 V63_GARAGE_CACHE_TTL = int(os.getenv("GARAGE_API_CACHE_TTL", "60"))
-_V63_EMV_CACHE = {"at": 0.0, "payload": None}
+_V63_EMV_CACHE = {"full": {"at": 0.0, "payload": None}, "slim": {"at": 0.0, "payload": None}}
 _V63_EMV_CACHE_LOCK = threading.Lock()
 _V63_GARAGE_CACHE = {"at": 0.0, "payload": None}
 _V63_GARAGE_CACHE_LOCK = threading.Lock()
 
 def _v63_invalidate_emv_cache():
     with _V63_EMV_CACHE_LOCK:
-        _V63_EMV_CACHE["at"] = 0.0; _V63_EMV_CACHE["payload"] = None
+        for slot in ("full", "slim"):
+            _V63_EMV_CACHE[slot] = {"at": 0.0, "payload": None}
 
 def _v63_invalidate_garage_cache():
     with _V63_GARAGE_CACHE_LOCK:
@@ -3800,9 +3801,15 @@ def api_location_inventory(location_id):
         .order_by(Inventory.created_at.desc())
         .all()
     )
+    inv_ids=[inv.id for inv,_ in rows]
+    attachment_counts={}
+    if inv_ids:
+        for iid,cnt in db.session.query(Attachment.inventory_id,func.count(Attachment.id)).filter(Attachment.inventory_id.in_(inv_ids)).group_by(Attachment.inventory_id).all(): attachment_counts[iid]=int(cnt or 0)
+    loc=db.session.get(Location,location_id)
+    survey_status=loc.survey_status if loc else ""
     out = []
     for inv, technician_name in rows:
-        attachment_count = Attachment.query.filter_by(inventory_id=inv.id).count()
+        attachment_count = attachment_counts.get(inv.id,0)
         out.append({
             "id": inv.id,
             "location_id": inv.location_id,
@@ -3834,7 +3841,7 @@ def api_location_inventory(location_id):
             "gps_captured_at": inv.gps_captured_at.isoformat(timespec="seconds") if inv.gps_captured_at else None,
             "technician": technician_name,
             "attachments_count": attachment_count,
-            "location_survey_status": (db.session.get(Location, inv.location_id).survey_status if db.session.get(Location, inv.location_id) else ""),
+            "location_survey_status": survey_status,
             "can_manage": session.get("role") == "manager",
         })
     return jsonify(out)
@@ -4491,25 +4498,44 @@ def save_location_reference_position(location_id):
 @app.get("/api/gps/recent")
 @dashboard_required
 def api_recent_gps():
-    """V42.4 — mapa gerencial: exatamente a última posição de cada técnico no dia atual."""
+    """V66 REV4 — última posição diária em lote, sem consultas por técnico."""
     local_day=datetime.now(ZoneInfo("America/Sao_Paulo")).date()
-    start_local=datetime.combine(local_day,datetime.min.time(),tzinfo=ZoneInfo("America/Sao_Paulo"))
-    end_local=start_local+timedelta(days=1)
-    start_utc=start_local.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
-    end_utc=end_local.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+    start_local=datetime.combine(local_day,datetime.min.time(),tzinfo=ZoneInfo("America/Sao_Paulo")); end_local=start_local+timedelta(days=1)
+    start_utc=start_local.astimezone(ZoneInfo("UTC")).replace(tzinfo=None); end_utc=end_local.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
     users_q=User.query.filter(User.active.is_(True),User.role.in_(("technician","technician_implantation")))
     if session.get("role")=="technician": users_q=users_q.filter(User.id==session.get("user_id"))
-    users=users_q.order_by(User.name).all()
+    users=users_q.order_by(User.name).all(); user_ids=[u.id for u in users]
+    if not user_ids:
+        total_inventory=Inventory.query.count(); gps_inventory=Inventory.query.filter(Inventory.latitude.isnot(None),Inventory.longitude.isnot(None)).count()
+        return jsonify({"date":local_day.isoformat(),"summary":{"total_inventory":total_inventory,"with_gps":gps_inventory,"without_gps":max(0,total_inventory-gps_inventory),"coverage_pct":round((gps_inventory/total_inventory*100),1) if total_inventory else 0,"technicians_today":0},"items":[]})
+
+    pos_max=(db.session.query(TechnicianPosition.user_id.label("uid"),func.max(TechnicianPosition.captured_at).label("max_at"))
+             .filter(TechnicianPosition.user_id.in_(user_ids),TechnicianPosition.captured_at>=start_utc,TechnicianPosition.captured_at<end_utc)
+             .group_by(TechnicianPosition.user_id).subquery())
+    pos_rows=(db.session.query(TechnicianPosition)
+              .join(pos_max,and_(TechnicianPosition.user_id==pos_max.c.uid,TechnicianPosition.captured_at==pos_max.c.max_at)).all())
+    pos_map={p.user_id:p for p in pos_rows}
+
+    chk_max=(db.session.query(TechnicianCheckin.user_id.label("uid"),func.max(TechnicianCheckin.created_at).label("max_at"))
+             .filter(TechnicianCheckin.user_id.in_(user_ids),TechnicianCheckin.created_at>=start_utc,TechnicianCheckin.created_at<end_utc)
+             .group_by(TechnicianCheckin.user_id).subquery())
+    check_rows=(db.session.query(TechnicianCheckin)
+                .join(chk_max,and_(TechnicianCheckin.user_id==chk_max.c.uid,TechnicianCheckin.created_at==chk_max.c.max_at)).all())
+    check_map={c.user_id:c for c in check_rows}
+    loc_ids={c.location_id for c in check_rows if c.location_id}
+    loc_map={loc.id:loc for loc in Location.query.filter(Location.id.in_(loc_ids)).all()} if loc_ids else {}
+
     items=[]
     for u in users:
-        pos=(TechnicianPosition.query.filter(TechnicianPosition.user_id==u.id,TechnicianPosition.captured_at>=start_utc,TechnicianPosition.captured_at<end_utc).order_by(TechnicianPosition.captured_at.desc()).first())
+        pos=pos_map.get(u.id)
         if not pos: continue
-        checkin=TechnicianCheckin.query.filter(TechnicianCheckin.user_id==u.id,TechnicianCheckin.created_at>=start_utc,TechnicianCheckin.created_at<end_utc).order_by(TechnicianCheckin.created_at.desc()).first()
-        loc=db.session.get(Location,checkin.location_id) if checkin else None
+        checkin=check_map.get(u.id); loc=loc_map.get(checkin.location_id) if checkin else None
         items.append({"inventory_id":None,"location_id":loc.id if loc else None,"location_name":loc.location if loc else "Posição atual","company":loc.company if loc else (u.company or "Equipe de campo"),"line":loc.line if loc else "","equipment_type":"Última posição do dia","asset_identifier":"","technician":u.name,"technician_code":u.user_code or "","technician_user_id":u.id,"technician_photo_url":f"/usuarios/{u.id}/foto" if u.photo_url else None,"latitude":pos.latitude,"longitude":pos.longitude,"gps_accuracy":pos.accuracy,"gps_captured_at":pos.captured_at.isoformat(timespec="seconds")+"Z","created_at":pos.captured_at.isoformat(timespec="seconds")+"Z","_team_current":True})
     items.sort(key=lambda x:x["gps_captured_at"],reverse=True)
-    total_inventory=Inventory.query.count();gps_inventory=Inventory.query.filter(Inventory.latitude.isnot(None),Inventory.longitude.isnot(None)).count()
-    return jsonify({"date":local_day.isoformat(),"summary":{"total_inventory":total_inventory,"with_gps":gps_inventory,"without_gps":max(0,total_inventory-gps_inventory),"coverage_pct":round((gps_inventory/total_inventory*100),1) if total_inventory else 0,"technicians_today":len(items)},"items":items})
+    total_inventory=Inventory.query.count(); gps_inventory=Inventory.query.filter(Inventory.latitude.isnot(None),Inventory.longitude.isnot(None)).count()
+    resp=jsonify({"date":local_day.isoformat(),"summary":{"total_inventory":total_inventory,"with_gps":gps_inventory,"without_gps":max(0,total_inventory-gps_inventory),"coverage_pct":round((gps_inventory/total_inventory*100),1) if total_inventory else 0,"technicians_today":len(items)},"items":items})
+    resp.headers["X-Autopass-Query-Mode"]="batch-latest-per-user"
+    return resp
 
 
 @app.get("/api/dashboard")
@@ -8963,22 +8989,34 @@ def _sync_emv_trilho_rev1_once():
     except Exception as exc:
         db.session.rollback(); app.logger.exception("V63 REV1 falha sincronização EMV Trilhos: %s",exc)
 
+_EMV_SCHEMA_READY=False
+_EMV_SCHEMA_LOCK=threading.Lock()
 def _ensure_emv_tables():
-    EmvChipSwap.__table__.create(bind=db.engine,checkfirst=True); EmvChipSwapPhoto.__table__.create(bind=db.engine,checkfirst=True)
-    try:
-        cols={c["name"] for c in db.inspect(db.engine).get_columns("emv_chip_swaps")}
-        additions=[]
-        if "completed_by_id" not in cols: additions.append(("completed_by_id","INTEGER"))
-        if "manual_entry" not in cols: additions.append(("manual_entry","BOOLEAN NOT NULL DEFAULT FALSE"))
-        if "company" not in cols: additions.append(("company","VARCHAR(120)"))
-        if "line" not in cols: additions.append(("line","VARCHAR(120)"))
-        if "station" not in cols: additions.append(("station","VARCHAR(180)"))
-        if "block_number" not in cols: additions.append(("block_number","VARCHAR(80)"))
-        if additions:
-            with db.engine.begin() as conn:
-                for name,typ in additions: conn.execute(text(f"ALTER TABLE emv_chip_swaps ADD COLUMN {name} {typ}"))
-    except Exception as exc:
-        app.logger.warning("V52.1 EMV autoria migration: %s", exc)
+    """V66 REV4: valida/migra o schema EMV uma vez por processo.
+
+    A versão anterior fazia checkfirst + inspeção de colunas em cada leitura fria
+    da API. Em produção isso adicionava trabalho administrativo ao caminho quente.
+    """
+    global _EMV_SCHEMA_READY
+    if _EMV_SCHEMA_READY: return
+    with _EMV_SCHEMA_LOCK:
+        if _EMV_SCHEMA_READY: return
+        EmvChipSwap.__table__.create(bind=db.engine,checkfirst=True); EmvChipSwapPhoto.__table__.create(bind=db.engine,checkfirst=True)
+        try:
+            cols={c["name"] for c in db.inspect(db.engine).get_columns("emv_chip_swaps")}
+            additions=[]
+            if "completed_by_id" not in cols: additions.append(("completed_by_id","INTEGER"))
+            if "manual_entry" not in cols: additions.append(("manual_entry","BOOLEAN NOT NULL DEFAULT FALSE"))
+            if "company" not in cols: additions.append(("company","VARCHAR(120)"))
+            if "line" not in cols: additions.append(("line","VARCHAR(120)"))
+            if "station" not in cols: additions.append(("station","VARCHAR(180)"))
+            if "block_number" not in cols: additions.append(("block_number","VARCHAR(80)"))
+            if additions:
+                with db.engine.begin() as conn:
+                    for name,typ in additions: conn.execute(text(f"ALTER TABLE emv_chip_swaps ADD COLUMN {name} {typ}"))
+            _EMV_SCHEMA_READY=True
+        except Exception as exc:
+            app.logger.warning("V66 REV4 EMV schema migration: %s", exc)
     # V63 REV2: atualizações de base passam a ocorrer somente pelo importador administrativo.
 
 # V60 REV3 — Troca de Chips Garagem, base inicial MIGRACAO_SAM GARAGENS.xlsx.
@@ -9002,9 +9040,12 @@ def _garage_payload(force=False):
     sids=[x.id for x in swaps]; photos={}
     if sids:
         for p in GarageChipPhoto.query.filter(GarageChipPhoto.swap_id.in_(sids)).all(): photos.setdefault(p.swap_id,[]).append(p)
+    # V66 REV4 Performance 2.0: mapa operacional carregado uma única vez.
+    # Antes, _op_active_map('garagem') era executado para cada terminal (N+1).
+    op_map=_op_active_map('garagem')
     out=[]
     for b in bases:
-        sw=sm.get(b.id); ph=photos.get(sw.id,[]) if sw else []; op_item=_op_active_map('garagem').get(str(b.terminal or '')); st=sw.status if sw else ((op_item.desired_status if op_item else None) or 'PENDENTE'); u=users.get(sw.technician_id) if sw else None
+        sw=sm.get(b.id); ph=photos.get(sw.id,[]) if sw else []; op_item=op_map.get(str(b.terminal or '')); st=sw.status if sw else ((op_item.desired_status if op_item else None) or 'PENDENTE'); u=users.get(sw.technician_id) if sw else None
         out.append({'id':b.id,'company':b.company,'terminal':b.terminal,'model':b.model or '', 'status':st,'technician':u.name if u else '', 'test_result':sw.test_result if sw else '', 'notes':sw.notes if sw else '', 'photo_count':len(ph),'photos':[{'id':p.id,'url':'/uploads/'+p.stored_name,'thumb_url':'/uploads/'+p.stored_name+'?thumb=1'} for p in ph]})
     with _V63_GARAGE_CACHE_LOCK:
         _V63_GARAGE_CACHE['at']=now; _V63_GARAGE_CACHE['payload']=out
@@ -9076,46 +9117,66 @@ def emv_chip_page():
     if not _has_access("implantation.emv"): abort(403)
     return render_template("emv_chip_swap.html",app_release=APP_RELEASE)
 
-def _v63_build_emv_payload(force=False):
+def _v63_build_emv_payload(force=False, include_photos=True):
+    """V66 REV4: monta EMV em dois modos de cache.
+
+    O dashboard usa o modo slim e não consulta nem materializa evidências. A tela
+    operacional usa o modo full. Isso evita pagar o custo de fotos/URLs em toda
+    abertura de dashboard e reduz serialização/alocação de memória.
+    """
+    mode="full" if include_photos else "slim"
     now=time.monotonic()
     with _V63_EMV_CACHE_LOCK:
-        cached=_V63_EMV_CACHE.get("payload")
-        if cached is not None and not force and now-float(_V63_EMV_CACHE.get("at") or 0)<V63_EMV_CACHE_TTL:
+        slot=_V63_EMV_CACHE.get(mode) or {}
+        cached=slot.get("payload")
+        if cached is not None and not force and now-float(slot.get("at") or 0)<V63_EMV_CACHE_TTL:
             return cached
-    _ensure_emv_tables(); swap_rows=EmvChipSwap.query.all(); swaps={x.terminal:x for x in swap_rows}; rows=[]
-    user_ids={uid for x in swap_rows for uid in (x.technician_id,getattr(x,"completed_by_id",None)) if uid}; users={u.id:u for u in User.query.filter(User.id.in_(user_ids)).all()} if user_ids else {}
+    _ensure_emv_tables()
+    swap_rows=EmvChipSwap.query.all(); swaps={x.terminal:x for x in swap_rows}; rows=[]
+    user_ids={uid for x in swap_rows for uid in (x.technician_id,getattr(x,"completed_by_id",None)) if uid}
+    users={u.id:u for u in User.query.filter(User.id.in_(user_ids)).all()} if user_ids else {}
     station_names={}
     for nr in _load_station_network_rows():
         sn=str(nr.get("station") or "")
         if " - " in sn: station_names.setdefault(sn.split(" - ",1)[0].strip().upper(),sn.split(" - ",1)[1])
-    swap_ids=[x.id for x in swap_rows]; photo_map={}
-    if swap_ids:
-        for ph in EmvChipSwapPhoto.query.filter(EmvChipSwapPhoto.swap_id.in_(swap_ids)).order_by(EmvChipSwapPhoto.created_at).all(): photo_map.setdefault(ph.swap_id,[]).append(ph)
+    photo_map={}
+    if include_photos:
+        swap_ids=[x.id for x in swap_rows]
+        if swap_ids:
+            for ph in EmvChipSwapPhoto.query.filter(EmvChipSwapPhoto.swap_id.in_(swap_ids)).order_by(EmvChipSwapPhoto.created_at).all():
+                photo_map.setdefault(ph.swap_id,[]).append(ph)
     base_rows=_v41_emv_rows()
     for r in base_rows:
-        sw=swaps.get(r["terminal"]); d=dict(r); station_code=str(r.get("station") or "").split('-')[-1].strip().upper(); station_name=station_names.get(station_code,""); photos=[]
-        if sw:
-            for ph in photo_map.get(sw.id,[]): photos.append({"id":ph.id,"name":ph.original_name,"url":url_for("uploaded",name=ph.stored_name),"thumb_url":url_for("uploaded",name=ph.stored_name,thumb=1),"created_at":ph.created_at.isoformat() if ph.created_at else None})
+        sw=swaps.get(r["terminal"]); d=dict(r)
+        station_code=str(r.get("station") or "").split('-')[-1].strip().upper(); station_name=station_names.get(station_code,"")
+        photos=[]
+        if include_photos and sw:
+            photos=[{"id":ph.id,"name":ph.original_name,"url":url_for("uploaded",name=ph.stored_name),"thumb_url":url_for("uploaded",name=ph.stored_name,thumb=1),"created_at":ph.created_at.isoformat() if ph.created_at else None} for ph in photo_map.get(sw.id,[])]
         tech=users.get(sw.technician_id) if sw else None; completer=users.get(getattr(sw,"completed_by_id",None)) if sw else None
-        d.update({"status":sw.status if sw else (d.get("_base_status") or "PENDENTE"),"test_result":sw.test_result if sw else None,"notes":sw.notes if sw else "","swap_id":sw.id if sw else None,"station_name":station_name,"photos":photos,"technician":tech.name if tech else "","completed_by":completer.name if completer else (tech.name if sw and sw.completed_at and tech else ""),"completed_by_role":completer.role if completer else (tech.role if sw and sw.completed_at and tech else ""),"completed_at":sw.completed_at.isoformat() if sw and sw.completed_at else None,"updated_at":sw.updated_at.isoformat() if sw and sw.updated_at else None})
+        d.update({"status":sw.status if sw else (d.get("_base_status") or "PENDENTE"),"test_result":sw.test_result if sw else None,"notes":sw.notes if sw else "","swap_id":sw.id if sw else None,"station_name":station_name,"photos":photos if include_photos else [],"photo_count":len(photos) if include_photos else None,"technician":tech.name if tech else "","completed_by":completer.name if completer else (tech.name if sw and sw.completed_at and tech else ""),"completed_by_role":completer.role if completer else (tech.role if sw and sw.completed_at and tech else ""),"completed_at":sw.completed_at.isoformat() if sw and sw.completed_at else None,"updated_at":sw.updated_at.isoformat() if sw and sw.updated_at else None})
         rows.append(d)
     base_terms={str(x.get("terminal") or "") for x in base_rows}
-    op_active_terms=set(_op_active_map("emv").keys()) if OperationalBaseItem.query.filter_by(module="EMV").first() else set()
+    has_op_base=OperationalBaseItem.query.filter_by(module="EMV").with_entities(OperationalBaseItem.id).first() is not None
+    op_active_terms=set(_op_active_map("emv").keys()) if has_op_base else set()
     for sw in swap_rows:
         if not getattr(sw,"manual_entry",False) or sw.terminal in base_terms: continue
         if op_active_terms and sw.terminal not in op_active_terms and normalize(sw.status or "").upper()!="CONCLUIDA": continue
-        photos=[{"id":ph.id,"name":ph.original_name,"url":url_for("uploaded",name=ph.stored_name),"thumb_url":url_for("uploaded",name=ph.stored_name,thumb=1),"created_at":ph.created_at.isoformat() if ph.created_at else None} for ph in photo_map.get(sw.id,[])]
+        photos=[]
+        if include_photos:
+            photos=[{"id":ph.id,"name":ph.original_name,"url":url_for("uploaded",name=ph.stored_name),"thumb_url":url_for("uploaded",name=ph.stored_name,thumb=1),"created_at":ph.created_at.isoformat() if ph.created_at else None} for ph in photo_map.get(sw.id,[])]
         tech=users.get(sw.technician_id); completer=users.get(getattr(sw,"completed_by_id",None))
-        rows.append({"company":sw.company or "","line":sw.line or "","station":sw.station or "","station_name":sw.station or "","terminal":sw.terminal,"block_number":sw.block_number or "","version":"","ip":"","mask":"","gateway":"","dns1":"","dns2":"","group":"","manual_entry":True,"status":sw.status or "PENDENTE","test_result":sw.test_result,"notes":sw.notes or "","swap_id":sw.id,"photos":photos,"technician":tech.name if tech else "","completed_by":completer.name if completer else "","completed_at":sw.completed_at.isoformat() if sw.completed_at else None,"updated_at":sw.updated_at.isoformat() if sw.updated_at else None})
+        rows.append({"company":sw.company or "","line":sw.line or "","station":sw.station or "","station_name":sw.station or "","terminal":sw.terminal,"block_number":sw.block_number or "","version":"","ip":"","mask":"","gateway":"","dns1":"","dns2":"","group":"","manual_entry":True,"status":sw.status or "PENDENTE","test_result":sw.test_result,"notes":sw.notes or "","swap_id":sw.id,"photos":photos if include_photos else [],"photo_count":len(photos) if include_photos else None,"technician":tech.name if tech else "","completed_by":completer.name if completer else "","completed_at":sw.completed_at.isoformat() if sw.completed_at else None,"updated_at":sw.updated_at.isoformat() if sw.updated_at else None})
     with _V63_EMV_CACHE_LOCK:
-        _V63_EMV_CACHE["at"]=now; _V63_EMV_CACHE["payload"]=rows
+        _V63_EMV_CACHE[mode]={"at":time.monotonic(),"payload":rows}
     return rows
 
-@app.get("/api/emv-chip-swaps")
+@app.get("/api/emv-chip-swaps", strict_slashes=False)
 @login_required
 def emv_chip_list():
-    rows=list(_v63_build_emv_payload())
     company=(request.args.get("company") or "").strip(); line=(request.args.get("line") or "").strip(); station=(request.args.get("station") or "").strip(); status=(request.args.get("status") or "").strip(); terminal=(request.args.get("terminal") or "").strip(); compact=request.args.get("compact") in ("1","true","yes"); include_photos=request.args.get("include_photos","1") not in ("0","false","no")
+    # Dashboard/compact nunca precisa montar evidências completas.
+    build_photos=include_photos and not compact
+    rows=list(_v63_build_emv_payload(include_photos=build_photos))
     if company: rows=[x for x in rows if x.get("company")==company]
     if line: rows=[x for x in rows if x.get("line")==line]
     if station: rows=[x for x in rows if station in (x.get("station"),x.get("station_name"))]
@@ -9127,10 +9188,15 @@ def emv_chip_list():
             if compact:
                 d={k:x.get(k) for k in ("company","line","station","station_name","terminal","block_number","model","version","status","test_result","technician","completed_by","completed_at","manual_entry")}
             else: d=dict(x)
-            d.pop("photos",None); d["photo_count"]=len(x.get("photos") or [])
+            d.pop("photos",None)
+            # No modo slim a contagem de fotos não é consultada propositalmente.
+            if d.get("photo_count") is None: d.pop("photo_count",None)
             slim.append(d)
         rows=slim
-    resp=jsonify({"ok":True,"rows":rows,"release":APP_RELEASE}); resp.headers["X-Autopass-Cache-TTL"]=str(V63_EMV_CACHE_TTL); return resp
+    resp=jsonify({"ok":True,"rows":rows,"release":APP_RELEASE})
+    resp.headers["X-Autopass-Cache-TTL"]=str(V63_EMV_CACHE_TTL)
+    resp.headers["X-Autopass-Payload-Mode"]="full" if build_photos else "slim"
+    return resp
 
 @app.post("/api/emv-chip-swaps/manual")
 @emv_field_required

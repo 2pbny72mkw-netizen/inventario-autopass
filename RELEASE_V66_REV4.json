@@ -1,0 +1,1 @@
+{"version":"V66 REV4","type":"performance revision","scope":["EMV slim/full cache","EMV schema fast path","GPS batch latest positions","Garage N+1 removal","location inventory batch counts","version history"]}
