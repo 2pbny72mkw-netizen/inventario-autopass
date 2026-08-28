@@ -1,0 +1,9 @@
+DEPLOY V66 REV2
+1. Fazer backup da versão atual.
+2. Aplicar V66_REV2_ENXUTA sobre a V66 REV1.
+3. Reiniciar o serviço.
+4. Confirmar /sobre = V66 REV2.
+5. Em Usuários, validar o novo campo Exigir GPS operacional.
+6. Em Configurações, ajustar janela de previsão e intervalo GPS se necessário.
+7. Testar EMV, Garagem e Recarga: tendência deve aparecer junto ao progresso.
+8. Conferir Telemetria após uso real.

@@ -41,7 +41,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V66 REV1"
+APP_RELEASE = "V66 REV2"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -287,6 +287,7 @@ class User(db.Model):
     personnel_status = db.Column(db.String(30), nullable=False, default="ATIVO")
     personnel_status_note = db.Column(db.String(240))
     access_json = db.Column(db.Text)
+    gps_required = db.Column(db.Boolean, nullable=False, default=False)
 
 
 
@@ -1579,6 +1580,21 @@ def migrate_user_v23_columns():
     except Exception:
         db.session.rollback()
         raise
+
+
+
+def migrate_user_gps_required_column():
+    """V66 REV2: GPS obrigatório passa a ser configurável individualmente."""
+    try:
+        inspector=db.inspect(db.engine)
+        existing={c["name"] for c in inspector.get_columns("users")}
+        if "gps_required" not in existing:
+            db.session.execute(db.text("ALTER TABLE users ADD COLUMN gps_required BOOLEAN DEFAULT FALSE NOT NULL"))
+            # Preserva o comportamento da REV1 para os perfis operacionais já existentes.
+            db.session.execute(db.text("UPDATE users SET gps_required=TRUE WHERE role IN ('technician','technician_implantation','manager_field','dispatcher')"))
+            db.session.commit()
+    except Exception:
+        db.session.rollback(); raise
 
 
 def _sync_user_schedule_profile(user):
@@ -5046,6 +5062,7 @@ def create_user():
     job_title = request.form.get("job_title", "").strip() or None
     personnel_status = request.form.get("personnel_status", "ATIVO").strip().upper() or "ATIVO"
     personnel_status_note = request.form.get("personnel_status_note", "").strip() or None
+    gps_required = request.form.get("gps_required") == "1"
     work_schedule_type = request.form.get("work_schedule_type", "12x36").strip() or "12x36"
     work_shift = request.form.get("work_shift", "05:00-17:00").strip() or "05:00-17:00"
     work_anchor_status = request.form.get("work_anchor_status", "TRABALHA").strip() or "TRABALHA"
@@ -5109,6 +5126,7 @@ def create_user():
         work_anchor_date=work_anchor_date if role in ("technician", "technician_implantation", "manager_field") and work_schedule_type == "12x36" else None,
         work_anchor_status=work_anchor_status if role in ("technician", "technician_implantation", "manager_field") and work_schedule_type == "12x36" else None,
         access_json=json.dumps(_parse_access_form(role), ensure_ascii=False),
+        gps_required=(gps_required if role in ("technician","technician_implantation","manager_field","dispatcher") else False),
     )
 
     photo = request.files.get("photo")
@@ -5217,6 +5235,7 @@ def edit_user(user_id):
     job_title = request.form.get("job_title", user.job_title or "").strip() or None
     personnel_status = request.form.get("personnel_status", user.personnel_status or "ATIVO").strip().upper() or "ATIVO"
     personnel_status_note = request.form.get("personnel_status_note", user.personnel_status_note or "").strip() or None
+    gps_required = request.form.get("gps_required") == "1"
     work_schedule_type = request.form.get("work_schedule_type", user.work_schedule_type or "12x36").strip() or "12x36"
     work_shift = request.form.get("work_shift", user.work_shift or "05:00-17:00").strip() or "05:00-17:00"
     work_anchor_status = request.form.get("work_anchor_status", user.work_anchor_status or "TRABALHA").strip() or "TRABALHA"
@@ -5326,6 +5345,8 @@ def edit_user(user_id):
     user.job_title = job_title
     user.personnel_status = personnel_status
     user.personnel_status_note = personnel_status_note
+    old_gps_required = bool(getattr(user, "gps_required", False))
+    user.gps_required = gps_required if role in ("technician","technician_implantation","manager_field","dispatcher") else False
     if session.get("role") == "manager":
         user.access_json = json.dumps(_parse_access_form(role), ensure_ascii=False)
     if role in ("technician", "technician_implantation", "manager_field"):
@@ -5346,6 +5367,8 @@ def edit_user(user_id):
 
     try:
         _sync_user_schedule_profile(user)
+        if old_gps_required != bool(user.gps_required):
+            db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="USER_GPS_REQUIREMENT_CHANGE",entity_type="user",entity_id=str(user.id),detail=f"{user.name} · GPS obrigatório: {old_gps_required} -> {bool(user.gps_required)}"))
         if old_role != role:
             db.session.add(AuditEvent(
                 user_id=session.get("user_id"),
@@ -7142,7 +7165,10 @@ def my_work_status(ticket_id):
 @app.get("/api/v38/gps-config")
 @login_required
 def v38_gps_config():
-    return jsonify({"ok": True, "enabled": True, "required": session.get("role") in ("technician","technician_implantation","manager_field","dispatcher"), "interval_seconds": max(60, int(os.getenv("TEAM_GPS_INTERVAL_SECONDS", "300"))), "retention_days": max(1, int(os.getenv("TEAM_GPS_RETENTION_DAYS", "7"))), "session_token": session.get("gps_session_token") or str(session.get("user_id") or "")})
+    u=db.session.get(User, session.get("user_id"))
+    required=bool(getattr(u,"gps_required",False)) if u else False
+    interval=max(60, int(_v50_settings().get("gps_interval_seconds", os.getenv("TEAM_GPS_INTERVAL_SECONDS", "300"))))
+    return jsonify({"ok": True, "enabled": required, "required": required, "interval_seconds": interval, "retention_days": max(1, int(os.getenv("TEAM_GPS_RETENTION_DAYS", "7"))), "session_token": session.get("gps_session_token") or str(session.get("user_id") or "")})
 
 @app.get("/api/v38/diario-bordo")
 @teams_view_required
@@ -10618,6 +10644,10 @@ def _v50_settings():
         "alert_pending_days": 7,
         "gps_radius_m": FIELD_NEARBY_RADIUS_M,
         "dashboard_refresh_seconds": 60,
+        "gps_interval_seconds": 300,
+        "forecast_days_emv": 3,
+        "forecast_days_garagem": 3,
+        "forecast_days_recarga": 3,
     }
     try:
         if V50_SETTINGS_PATH.exists():
@@ -10639,7 +10669,7 @@ def v50_settings_api():
         return jsonify({"ok":True,"settings":_v50_settings(),"release":APP_RELEASE})
     payload=request.get_json(silent=True) or {}
     current=_v50_settings()
-    ranges={"alert_activity_days":(1,90),"alert_pending_days":(1,90),"gps_radius_m":(100,20000),"dashboard_refresh_seconds":(15,900)}
+    ranges={"alert_activity_days":(1,90),"alert_pending_days":(1,90),"gps_radius_m":(100,20000),"dashboard_refresh_seconds":(15,900),"gps_interval_seconds":(60,1800),"forecast_days_emv":(1,30),"forecast_days_garagem":(1,30),"forecast_days_recarga":(1,30)}
     for key,(lo,hi) in ranges.items():
         if key in payload:
             try: val=int(payload[key])
@@ -10666,6 +10696,49 @@ def v50_command_center_today():
     emv_done_today=EmvChipSwap.query.filter(func.date(EmvChipSwap.completed_at)==today).count()
     tech_today=db.session.query(TechnicianPosition.user_id).filter(func.date(TechnicianPosition.captured_at)==today).distinct().count()
     return jsonify({"ok":True,"date":today.isoformat(),"field":{"inventory":inv_today,"chip_started":chip_today,"chip_done":chip_done_today,"technicians":tech_today},"implantation":{"visits":visits_today,"visits_finalized":visits_final_today,"emv_started":emv_today,"emv_done":emv_done_today}})
+
+
+@app.get("/api/operational-forecast")
+@login_required
+def operational_forecast_api():
+    module=(request.args.get("module") or "").strip().lower()
+    cfg=_v50_settings()
+    mapping={
+        "emv": (EmvChipSwap, "forecast_days_emv"),
+        "garagem": (GarageChipSwap, "forecast_days_garagem"),
+        "recarga": (ChipSwap, "forecast_days_recarga"),
+    }
+    if module not in mapping:
+        return jsonify({"ok":False,"error":"Módulo inválido."}),400
+    model,key=mapping[module]; days=max(1,int(cfg.get(key,3) or 3))
+    now=datetime.utcnow(); cutoff=now-timedelta(days=days)
+    done_status=("CONCLUÍDA","CONCLUIDA","CONCLUÍDO","CONCLUIDO")
+    active_terminals={str(x[0]).strip() for x in db.session.query(OperationalBaseItem.terminal).filter(OperationalBaseItem.module==module,OperationalBaseItem.active.is_(True)).all() if x[0]}
+    if module=="emv":
+        completed_terminals={str(x[0]).strip() for x in db.session.query(EmvChipSwap.terminal).filter(EmvChipSwap.status.in_(done_status)).all() if x[0]}
+    elif module=="garagem":
+        completed_terminals={str(x[0]).strip() for x in db.session.query(GarageChipBase.terminal).join(GarageChipSwap,GarageChipSwap.base_id==GarageChipBase.id).filter(GarageChipSwap.status.in_(done_status)).all() if x[0]}
+    else:
+        completed_terminals={str(x[0]).strip() for x in db.session.query(BaseAsset.terminal_number).join(ChipSwap,ChipSwap.base_asset_id==BaseAsset.id).filter(ChipSwap.status.in_(done_status)).all() if x[0]}
+    total=len(active_terminals|completed_terminals)
+    done=len(completed_terminals)
+    in_progress=model.query.filter(model.status=="EM ANDAMENTO").count()
+    if total < done+in_progress: total=done+in_progress
+    pending=max(0,total-done-in_progress)
+    recent=model.query.filter(model.completed_at.isnot(None),model.completed_at>=cutoff).count()
+    daily=recent/days if days else 0
+    eta_days=(pending/daily) if daily>0 and pending>0 else (0 if pending==0 else None)
+    eta_date=(now+timedelta(days=eta_days)).date().isoformat() if eta_days is not None else None
+    half=max(1.0,days/2); split=now-timedelta(days=half)
+    recent2=model.query.filter(model.completed_at.isnot(None),model.completed_at>=split).count()
+    previous=max(0,recent-recent2)
+    r2=recent2/half; r1=previous/max(0.5,days-half)
+    if recent < 2: trend="SEM DADOS"
+    elif r2 > r1*1.12: trend="ACELERANDO"
+    elif r2 < r1*0.88: trend="DESACELERANDO"
+    else: trend="ESTÁVEL"
+    confidence="ALTA" if recent>=max(10,days*3) else ("MÉDIA" if recent>=max(3,days) else "BAIXA")
+    return jsonify({"ok":True,"release":APP_RELEASE,"module":module,"window_days":days,"total":total,"done":done,"in_progress":in_progress,"pending":pending,"completed_in_window":recent,"daily_rate":round(daily,2),"eta_days":round(eta_days,1) if eta_days is not None else None,"eta_date":eta_date,"trend":trend,"confidence":confidence})
 
 @app.get("/notificacoes")
 @login_required
@@ -10979,6 +11052,7 @@ with app.app_context():
     migrate_inventory_sync_uuid()
     migrate_user_archive_column()
     migrate_user_v23_columns()
+    migrate_user_gps_required_column()
     migrate_financial_v524_columns()
     migrate_v56a3_visit_contacts()
     migrate_base_asset_columns()
