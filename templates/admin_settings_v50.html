@@ -5,9 +5,13 @@
 <label>Dias para alerta de pendência<input id="alert_pending_days" type="number" min="1" max="90"></label>
 <label>Raio GPS de referência (m)<input id="gps_radius_m" type="number" min="100" max="20000"></label>
 <label>Atualização automática das dashboards (s)<input id="dashboard_refresh_seconds" type="number" min="15" max="900"></label>
+<label>Intervalo do GPS operacional (s)<input id="gps_interval_seconds" type="number" min="60" max="1800" step="60"></label>
+<label>Previsão EMV · janela histórica (dias)<input id="forecast_days_emv" type="number" min="1" max="30"></label>
+<label>Previsão Garagem · janela histórica (dias)<input id="forecast_days_garagem" type="number" min="1" max="30"></label>
+<label>Previsão Recarga · janela histórica (dias)<input id="forecast_days_recarga" type="number" min="1" max="30"></label>
 </div><div class="heroActions"><button id="saveSettings">Salvar configurações</button><span id="settingsState" class="muted"></span></div></section>
 {% endblock %}{% block scripts %}<script>
-const ids=['alert_activity_days','alert_pending_days','gps_radius_m','dashboard_refresh_seconds'];
+const ids=['alert_activity_days','alert_pending_days','gps_radius_m','dashboard_refresh_seconds','gps_interval_seconds','forecast_days_emv','forecast_days_garagem','forecast_days_recarga'];
 async function load(){const d=await fetch('/api/configuracoes').then(r=>r.json());if(!d.ok)return;ids.forEach(k=>document.getElementById(k).value=d.settings[k]??'');}
 document.getElementById('saveSettings').addEventListener('click',async()=>{const payload={};ids.forEach(k=>payload[k]=Number(document.getElementById(k).value));const r=await fetch('/api/configuracoes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),d=await r.json();document.getElementById('settingsState').textContent=d.ok?'Configurações salvas e auditadas.':(d.error||'Falha ao salvar.');});load();
 </script>{% endblock %}

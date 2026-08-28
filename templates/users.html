@@ -62,6 +62,10 @@
           <label>Observação da situação</label>
           <input name="personnel_status_note" placeholder="Opcional: retorno previsto, motivo administrativo...">
         </div>
+        <div class="fieldExtended gpsField">
+          <label style="display:flex;gap:8px;align-items:center;margin-top:26px"><input type="checkbox" name="gps_required" value="1" checked style="width:auto"> Exigir GPS operacional</label>
+          <small>Quando ativo, o usuário precisa validar a posição no início da sessão e envia posições periódicas.</small>
+        </div>
         <div class="fieldExtended scheduleField">
           <label>Escala</label>
           <select name="work_schedule_type"><option value="12x36">12x36</option><option value="5x2">5x2</option></select>
@@ -273,6 +277,10 @@
                     <label>Observação da situação</label>
                     <input name="personnel_status_note" value="{{ u.personnel_status_note or '' }}">
                   </div>
+                  <div class="editExtended gpsField">
+                    <label style="display:flex;gap:8px;align-items:center;margin-top:26px"><input type="checkbox" name="gps_required" value="1" style="width:auto" {% if u.gps_required %}checked{% endif %}> Exigir GPS operacional</label>
+                    <small>Desative, por exemplo, para usuário em home office. A alteração fica auditada.</small>
+                  </div>
                   <div class="editExtended scheduleField">
                     <label>Escala</label>
                     <select name="work_schedule_type"><option value="12x36" {% if (u.work_schedule_type or '12x36') == '12x36' %}selected{% endif %}>12x36</option><option value="5x2" {% if u.work_schedule_type == '5x2' %}selected{% endif %}>5x2</option></select>
@@ -355,12 +363,14 @@
 
   function updateCreateProfileFields() {
     const consultation = role.value === "consultation";
-    const technician = ["technician","technician_implantation"].includes(role.value);
+    const technician = ["technician","technician_implantation","manager_field"].includes(role.value);
+    const gpsOperational=["technician","technician_implantation","manager_field","dispatcher"].includes(role.value);
     extended.forEach(el => {
       el.style.display = consultation ? "none" : "";
       if (consultation) el.querySelectorAll("input").forEach(input => input.value = "");
     });
     document.querySelectorAll("#userForm .scheduleField").forEach(el=>el.style.display=technician?"":"none");
+    document.querySelectorAll("#userForm .gpsField").forEach(el=>el.style.display=gpsOperational?"":"none");
     updateAnchorFields(document.getElementById('userForm'));
     hint.style.display = consultation ? "block" : "none";
   }
@@ -398,9 +408,11 @@
 
     function updateEditFields() {
       const consultation = roleSelect.value === "consultation";
-      const technician = ["technician","technician_implantation"].includes(roleSelect.value);
+      const technician = ["technician","technician_implantation","manager_field"].includes(roleSelect.value);
+      const gpsOperational=["technician","technician_implantation","manager_field","dispatcher"].includes(roleSelect.value);
       editExtended.forEach(el => el.style.display = consultation ? "none" : "");
       form.querySelectorAll('.scheduleField').forEach(el=>el.style.display=technician?'':'none');
+      form.querySelectorAll('.gpsField').forEach(el=>el.style.display=gpsOperational?'':'none');
       updateAnchorFields(form);
     }
     form.querySelector('[name="work_schedule_type"]')?.addEventListener('change',()=>updateAnchorFields(form));
