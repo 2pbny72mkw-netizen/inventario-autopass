@@ -5,7 +5,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{% block title %}Sistema de Gestão Suporte a Campo{% endblock %}</title>
-<link rel="stylesheet" href="{{url_for('static',filename='app.css')}}?v=v63-rev2">
+<link rel="stylesheet" href="{{url_for('static',filename='app.css')}}?v=v66">
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#17345d">
 </head>
@@ -43,13 +43,12 @@
       <div class="navDrop"><button type="button" class="navDropBtn">RH ▾</button><div class="navDropMenu">
         {% if can_view('teams') %}<a href="/equipes">Equipes</a>{% endif %}{% if can_view('users.view') %}<a href="/usuarios">Usuários</a>{% endif %}
       </div></div>{% endif %}
-      {% if can_view('management') %}<div class="navDrop"><button type="button" class="navDropBtn">Gestão ▾</button><div class="navDropMenu">{% if can_view('teams.today') %}<a href="/central-operacional">Central Operacional</a>{% endif %}{% if can_view('management.calls') %}<a href="/topdesk">Chamados</a>{% endif %}{% if can_view('management.360') %}<a href="/gestao-360">Central 360</a>{% endif %}{% if can_view('management.notifications') %}<a href="/notificacoes" id="notificationBell">Notificações <span id="notificationCount" hidden>0</span></a>{% endif %}{% if can_view('management.diagnostics') %}<a href="/diagnostico">Diagnóstico</a>{% endif %}{% if can_view('management.settings') %}<a href="/configuracoes">Configurações</a>{% endif %}{% if session.get('role') == 'manager' %}<a href="/configuracoes/dashboards">Configurações Dashboards</a><a href="/telemetria">Telemetria</a>{% endif %}{% for d in custom_dashboards|default([]) %}<a href="/dashboards/{{ d.slug }}">{{ d.name }}</a>{% endfor %}{% if custom_dashboards|default([])|selectattr('tv_enabled')|list|length %}<a href="/modo-tv/dashboards">Modo TV Dashboards</a>{% endif %}</div></div>{% endif %}{% if session.get('role') in ('manager','manager_field','technician','technician_implantation') %}<button type="button" id="installPwa" class="navInstall" hidden>Instalar App</button>{% endif %}{% if can_view('finance') or can_view('finance_dashboard') %}<div class="navDrop"><button type="button" class="navDropBtn">Financeiro ▾</button><div class="navDropMenu">{% if can_view('finance.dashboard') %}<a href="/financeiro/dashboard">Dashboard Financeiro</a>{% endif %}{% if can_view('finance.entries') or can_view('finance.support') or can_view('finance.suppliers') %}<a href="/financeiro/lancamentos">Lançamentos</a>{% endif %}{% if can_view('finance.collection') %}<a href="/financeiro/coleta-valores">Coleta de Valores</a>{% endif %}{% if can_view('finance.apuracao') %}<a href="/financeiro/apuracao">Apuração</a>{% endif %}</div></div>{% endif %}<a href="/meu-perfil" class="navProfile navRightStart">Meu Perfil</a>{% if can_view('about.versions') %}<a href="/sobre">Sobre</a>{% endif %}
+      {% if can_view('management') %}<div class="navDrop"><button type="button" class="navDropBtn">Gestão ▾</button><div class="navDropMenu">{% if can_view('teams.today') %}<a href="/central-operacional">Central Operacional</a>{% endif %}{% if session.get('role') in ('manager','manager_field') %}<a href="/inteligencia-operacional">Inteligência Operacional</a>{% endif %}{% if can_view('management.calls') %}<a href="/topdesk">Chamados</a>{% endif %}{% if can_view('management.360') %}<a href="/gestao-360">Central 360</a>{% endif %}{% if can_view('management.notifications') %}<a href="/notificacoes" id="notificationBell">Notificações <span id="notificationCount" hidden>0</span></a>{% endif %}{% if can_view('management.diagnostics') %}<a href="/diagnostico">Diagnóstico</a>{% endif %}{% if can_view('management.settings') %}<a href="/configuracoes">Configurações</a>{% endif %}{% if session.get('role') == 'manager' %}<a href="/configuracoes/dashboards">Configurações Dashboards</a><a href="/telemetria">Telemetria</a>{% endif %}{% for d in custom_dashboards|default([]) %}<a href="/dashboards/{{ d.slug }}">{{ d.name }}</a>{% endfor %}{% if custom_dashboards|default([])|selectattr('tv_enabled')|list|length %}<a href="/modo-tv/dashboards">Modo TV Dashboards</a>{% endif %}</div></div>{% endif %}{% if session.get('role') in ('manager','manager_field','technician','technician_implantation') %}<button type="button" id="installPwa" class="navInstall" hidden>Instalar App</button>{% endif %}{% if can_view('finance') or can_view('finance_dashboard') %}<div class="navDrop"><button type="button" class="navDropBtn">Financeiro ▾</button><div class="navDropMenu">{% if can_view('finance.dashboard') %}<a href="/financeiro/dashboard">Dashboard Financeiro</a>{% endif %}{% if can_view('finance.entries') or can_view('finance.support') or can_view('finance.suppliers') %}<a href="/financeiro/lancamentos">Lançamentos</a>{% endif %}{% if can_view('finance.collection') %}<a href="/financeiro/coleta-valores">Coleta de Valores</a>{% endif %}{% if can_view('finance.apuracao') %}<a href="/financeiro/apuracao">Apuração</a>{% endif %}</div></div>{% endif %}<a href="/meu-perfil" class="navProfile navRightStart">Meu Perfil</a>{% if can_view('about.versions') %}<a href="/sobre">Sobre</a>{% endif %}
       <a href="/logout">Sair</a>
     </nav>
   </div>
 </header>
 {% endif %}
-<div id="globalProcessBanner" class="globalImportBanner" hidden style="top:auto;bottom:14px;z-index:12000"><div><b id="globalProcessTitle">Processamento</b><span id="globalProcessText">Preparando...</span></div><div class="globalImportTrack"><i id="globalProcessBar"></i></div><a id="globalProcessAction" href="#">Acompanhar</a></div>
 <div id="globalImportBanner" class="globalImportBanner" hidden><div><b id="globalImportTitle">Importação TopDesk em andamento</b><span id="globalImportText">Processando...</span></div><div class="globalImportTrack"><i id="globalImportBar"></i></div><a href="/topdesk">Acompanhar</a></div>
 <main class="wrap">
 {% with msgs=get_flashed_messages() %}
@@ -66,19 +65,13 @@ document.getElementById('installPwa')?.addEventListener('click',async()=>{if(!v5
 if('serviceWorker' in navigator && (location.protocol==='https:' || location.hostname==='localhost')){
   window.addEventListener('load',async()=>{
     try{
-      const reg=await navigator.serviceWorker.register('/sw.js?v=v63-rev2',{scope:'/',updateViaCache:'none'});
+      const reg=await navigator.serviceWorker.register('/sw.js?v=v66',{scope:'/',updateViaCache:'none'});
       await reg.update();
     }catch(err){console.warn('Falha ao atualizar Service Worker',err);}
   },{once:true});
 }
 async function v50LoadNotifications(){const badge=document.getElementById('notificationCount');if(!badge)return;try{const d=await fetch('/api/notificacoes').then(r=>r.json());badge.textContent=d.count||0;badge.hidden=!(d.count>0);const bell=document.getElementById('notificationBell');if(bell){bell.onclick=e=>{e.preventDefault();location.href='/notificacoes';};}}catch(_e){}}
 v50LoadNotifications();
-// V63 REV2 — Central Global de Processamentos: acompanha PowerPoint em qualquer tela.
-(function(){
- const box=document.getElementById('globalProcessBanner'); if(!box)return; let timer=null,stopped=false;
- async function poll(){if(stopped||document.visibilityState==='hidden'){schedule(15000);return;}try{const d=await fetch('/api/processamentos',{cache:'no-store'}).then(r=>r.json());const jobs=d.jobs||[],j=jobs.find(x=>['FILA','PROCESSANDO'].includes(x.status))||jobs.find(x=>x.status==='PRONTO');if(!j){box.hidden=true;schedule(12000);return;}box.hidden=false;const pct=Math.max(0,Math.min(100,+j.progress||0));document.getElementById('globalProcessTitle').textContent=j.status==='PRONTO'?'✓ PowerPoint pronto':`PowerPoint Visão Panorâmica · ${pct}%`;document.getElementById('globalProcessText').textContent=j.message||j.status;document.getElementById('globalProcessBar').style.width=pct+'%';const a=document.getElementById('globalProcessAction');if(j.status==='PRONTO'&&j.download_url){a.textContent='Baixar';a.href=j.download_url}else{a.textContent='Acompanhar';a.href='/visao-panoramica'}schedule(j.status==='PRONTO'?30000:3000);}catch(_){schedule(15000)}}
- function schedule(ms){clearTimeout(timer);if(!stopped)timer=setTimeout(poll,ms)} document.addEventListener('visibilitychange',()=>schedule(document.visibilityState==='visible'?250:15000));window.addEventListener('pagehide',()=>{stopped=true;clearTimeout(timer)},{once:true});schedule(400);
-})();
 // V56-A.2: polling TopDesk singleton, adaptativo e suspenso quando a aba não está visível.
 (function(){
   const KEY='__autopassTopdeskImportPoll';
@@ -115,8 +108,8 @@ v50LoadNotifications();
 })();
 </script>
 
-{% if session.get('role') in ('technician','technician_implantation') %}
-<script src="{{ url_for('static', filename='session_gps.js') }}?v=v39-5" defer></script>
+{% if session.get('role') in ('technician','technician_implantation','manager_field') %}
+<script src="{{ url_for('static', filename='session_gps.js') }}?v=v66" defer></script>
 {% endif %}
 <script>
 (function(){
