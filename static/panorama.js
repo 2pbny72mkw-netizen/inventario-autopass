@@ -129,3 +129,17 @@ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',
 
 // V63: retoma acompanhamento do PowerPoint ao voltar para a tela.
 setTimeout(()=>{const remembered=panPptRemembered();if(remembered&&!panPptJobId){panPptJobId=remembered;panPptSet('Retomando acompanhamento...',true);panPptPoll(remembered)}},350);
+
+// V63 REV1 — recupera job ativo/pronto ao voltar para a Visão Panorâmica.
+async function panRecoverRev1Job(){
+  try{
+    const d=await fetch('/api/processamentos',{cache:'no-store'}).then(r=>r.json());
+    const j=(d.jobs||[]).find(x=>['FILA','PROCESSANDO','PRONTO'].includes(x.status));
+    if(!j)return;
+    const btn=document.getElementById('panPptNavBtn'); if(!btn)return;
+    if(j.status==='PRONTO'&&j.download_url){btn.textContent='PowerPoint pronto — Baixar';btn.href=j.download_url;btn.dataset.ready='1';return;}
+    btn.textContent=`Preparando PowerPoint... ${Math.max(0,Math.min(100,+j.progress||0))}%`;
+    if(j.id && typeof panPollRev6Job==='function') panPollRev6Job(j.id,btn);
+  }catch(_e){}
+}
+window.addEventListener('load',()=>setTimeout(panRecoverRev1Job,250),{once:true});

@@ -1444,3 +1444,6 @@ function v63LoadView(view){
 }
 document.querySelectorAll('.v23Nav[data-v23-view]').forEach(btn=>btn.addEventListener('click',()=>setTimeout(()=>v63LoadView(btn.dataset.v23View),0)));
 setTimeout(()=>v63LoadView(v23ActiveView),0);
+
+// V63 REV1 — links Atividade > Dashboard focam diretamente o painel correspondente.
+window.addEventListener('load',()=>{if(location.hash){const el=document.querySelector(location.hash);if(el)setTimeout(()=>el.scrollIntoView({behavior:'smooth',block:'start'}),180)}});

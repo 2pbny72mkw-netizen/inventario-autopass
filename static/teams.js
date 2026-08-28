@@ -1,4 +1,4 @@
-window.AUTOPASS_TEAMS_VERSION="teams-v58-rev";
+window.AUTOPASS_TEAMS_VERSION="teams-v63-rev1";
 
 console.log('AUTOPASS Operação 2.0 V59 carregada');
 
@@ -69,7 +69,7 @@ function initials(name){
 function photoUrl(t){
   if(!t?.photo_url) return '';
   const sep=String(t.photo_url).includes('?')?'&':'?';
-  return `${t.photo_url}${sep}v=${encodeURIComponent(t.photo_version||t.captured_at||Date.now())}`;
+  return `${t.photo_url}${sep}thumb=1&v=${encodeURIComponent(t.photo_version||t.captured_at||Date.now())}`;
 }
 function avatarHtml(t){
   const cls=freshnessClass(t.freshness);
@@ -290,19 +290,11 @@ function syncScheduleDefaults(){
   }
 }
 function resetScheduleForm(){
-  $('scheduleProfileId').value='';
-  $('scheduleUser').value='';
-  $('scheduleName').value='';
-  $('scheduleName').disabled=false;
-  $('scheduleCategory').value='TECNICO';
-  $('scheduleType').value='12x36';
-  $('scheduleShift').value='05:00-17:00';
-  $('scheduleAnchor').value=new Date().toISOString().slice(0,10);
-  $('scheduleEntry').value='';
-  $('scheduleLines').value='';
-  $('scheduleSupervision').value='';
-  $('scheduleSave').textContent='Adicionar à escala';
-  $('scheduleCancelEdit').classList.add('hidden');
+  if(!$('scheduleProfileId')||!$('scheduleUser')||!$('scheduleName')) return;
+  $('scheduleProfileId').value=''; $('scheduleUser').value=''; $('scheduleName').value=''; $('scheduleName').disabled=false;
+  if($('scheduleCategory')) $('scheduleCategory').value='TECNICO'; if($('scheduleType')) $('scheduleType').value='12x36'; if($('scheduleShift')) $('scheduleShift').value='05:00-17:00';
+  if($('scheduleAnchor')) $('scheduleAnchor').value=new Date().toISOString().slice(0,10); if($('scheduleEntry')) $('scheduleEntry').value=''; if($('scheduleLines')) $('scheduleLines').value=''; if($('scheduleSupervision')) $('scheduleSupervision').value='';
+  if($('scheduleSave')) $('scheduleSave').textContent='Adicionar à escala'; $('scheduleCancelEdit')?.classList.add('hidden');
 }
 function editProfile(id){
   const p=profilesCache.find(x=>x.profile_id===id);
