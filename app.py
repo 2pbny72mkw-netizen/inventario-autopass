@@ -41,7 +41,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V66"
+APP_RELEASE = "V66 REV1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -1366,7 +1366,7 @@ def login():
         if user and check_password_hash(user.password_hash, password):
             session.clear()
             session.permanent = True
-            session.update(user_id=user.id, name=user.name, role=user.role)
+            session.update(user_id=user.id, name=user.name, role=user.role, gps_session_token=uuid.uuid4().hex)
             try:
                 db.session.add(SessionEvent(user_id=user.id, event_type="LOGIN"))
                 db.session.commit()
@@ -7142,7 +7142,7 @@ def my_work_status(ticket_id):
 @app.get("/api/v38/gps-config")
 @login_required
 def v38_gps_config():
-    return jsonify({"ok": True, "enabled": True, "required": session.get("role") in ("technician","technician_implantation","manager_field"), "interval_seconds": max(60, int(os.getenv("TEAM_GPS_INTERVAL_SECONDS", "300"))), "retention_days": max(1, int(os.getenv("TEAM_GPS_RETENTION_DAYS", "7")))})
+    return jsonify({"ok": True, "enabled": True, "required": session.get("role") in ("technician","technician_implantation","manager_field","dispatcher"), "interval_seconds": max(60, int(os.getenv("TEAM_GPS_INTERVAL_SECONDS", "300"))), "retention_days": max(1, int(os.getenv("TEAM_GPS_RETENTION_DAYS", "7"))), "session_token": session.get("gps_session_token") or str(session.get("user_id") or "")})
 
 @app.get("/api/v38/diario-bordo")
 @teams_view_required
@@ -8265,6 +8265,11 @@ def _chip_swap_locations_payload(force=False):
     user_ids = {uid for x in swaps_list for uid in (x.technician_id, getattr(x,"completed_by_id",None)) if uid}
     users = {u.id: u for u in User.query.filter(User.id.in_(user_ids)).all()} if user_ids else {}
 
+    # V66 REV1 PERFORMANCE: a base operacional da Recarga é carregada uma única
+    # vez. Na V66 _op_active_map() era chamado dentro do loop de cada validador,
+    # provocando ~1 SELECT por equipamento (mais de 560 queries/request).
+    op_active = _op_active_map("recarga")
+
     rows = []
     for loc in locations:
         assets = assets_by_loc.get(loc.id, [])
@@ -8274,7 +8279,7 @@ def _chip_swap_locations_payload(force=False):
         for a in assets:
             sw = swaps.get((loc.id, a.id))
             photos = photo_map.get(sw.id, []) if sw else []
-            op_item=_op_active_map("recarga").get(str(a.terminal_number or ""))
+            op_item=op_active.get(str(a.terminal_number or ""))
             status = sw.status if sw else ((op_item.desired_status if op_item else None) or "PENDENTE")
             if photos and status != "CONCLUÍDA":
                 status = "CONCLUÍDA"
@@ -10282,16 +10287,33 @@ def _generate_panorama_pptx(company,line,status,search,output_path,progress_cb=N
     return {"locations":total,"photos":photos,"processed":processed,"image_errors":image_errors,"slides":len(prs.slides),"bytes":Path(output_path).stat().st_size if Path(output_path).exists() else 0}
 
 
+class _PanoramaExportCancelled(Exception):
+    pass
+
+def _panorama_job_cancelled(job_id):
+    with PANORAMA_EXPORT_LOCK:
+        job=PANORAMA_EXPORT_JOBS.get(job_id) or {}
+        return bool(job.get("cancel_requested") or job.get("status")=="CANCELADO")
+
 def _panorama_export_worker(job_id,company,line,status,search):
     started=time.time(); path=PANORAMA_EXPORT_DIR/f"{job_id}.pptx"
     _panorama_export_job_update(job_id,status="PROCESSANDO",started_at=datetime.utcnow().isoformat()+"Z",message="Preparando dados...",progress=1)
     try:
         with app.app_context():
             def progress(done,total):
+                if _panorama_job_cancelled(job_id):
+                    raise _PanoramaExportCancelled()
                 pct=max(2,min(95,round(done*95/max(1,total))))
                 _panorama_export_job_update(job_id,progress=pct,message=f"Processando fotos: {done}/{total}")
+            if _panorama_job_cancelled(job_id): raise _PanoramaExportCancelled()
             stats=_generate_panorama_pptx(company,line,status,search,path,progress)
+        if _panorama_job_cancelled(job_id): raise _PanoramaExportCancelled()
         _panorama_export_job_update(job_id,status="PRONTO",progress=100,message="PowerPoint pronto para baixar.",path=str(path),filename=f"visao_panoramica_{datetime.now().strftime('%Y%m%d_%H%M')}.pptx",stats=stats,duration_s=round(time.time()-started,1),finished_at=datetime.utcnow().isoformat()+"Z")
+    except _PanoramaExportCancelled:
+        try:
+            if path.exists(): path.unlink()
+        except Exception: pass
+        _panorama_export_job_update(job_id,status="CANCELADO",progress=0,message="Geração cancelada pelo usuário.",finished_at=datetime.utcnow().isoformat()+"Z")
     except Exception as exc:
         app.logger.exception("Falha na exportação assíncrona do PowerPoint panorâmico")
         _panorama_export_job_update(job_id,status="ERRO",progress=0,message=str(exc)[:300],duration_s=round(time.time()-started,1),finished_at=datetime.utcnow().isoformat()+"Z")
@@ -10303,19 +10325,36 @@ def panorama_export_pptx_job_create():
     if session.get("role") not in ("manager","manager_field","technician","consultation"):
         return jsonify({"ok":False,"error":"Sem permissão."}),403
     _panorama_export_cleanup()
+    company=(request.form.get("company") or request.args.get("company") or "").strip(); line=(request.form.get("line") or request.args.get("line") or "").strip(); status=(request.form.get("status") or request.args.get("status") or "").strip(); search=(request.form.get("search") or request.args.get("search") or "").strip().lower()
+    filter_key=json.dumps({"company":company,"line":line,"status":status,"search":search},sort_keys=True,ensure_ascii=False,separators=(",",":"))
     with PANORAMA_EXPORT_LOCK:
         active=next(((jid,j) for jid,j in PANORAMA_EXPORT_JOBS.items() if j.get("status") in ("FILA","PROCESSANDO")),None)
         if active:
             jid,j=active
             if j.get("user_id") not in (None,session.get("user_id")) and session.get("role") not in ("manager","manager_field"):
                 return jsonify({"ok":False,"error":"Há outra exportação em processamento. Tente novamente em alguns instantes."}),409
-            return jsonify({"ok":True,"job_id":jid,"status":j.get("status"),"reused":True,"message":"Já existe um PowerPoint em processamento."}),202
+            if j.get("filter_key")==filter_key:
+                return jsonify({"ok":True,"job_id":jid,"status":j.get("status"),"reused":True,"filter_key":filter_key,"message":"Já existe um PowerPoint em processamento para estes filtros."}),202
+            return jsonify({"ok":False,"error":"Há um PowerPoint em geração com outros filtros. Cancele a geração atual antes de iniciar outra."}),409
         job_id=uuid.uuid4().hex
-        PANORAMA_EXPORT_JOBS[job_id]={"id":job_id,"status":"FILA","progress":0,"message":"Exportação na fila.","created_ts":time.time(),"created_at":datetime.utcnow().isoformat()+"Z","user_id":session.get("user_id")}
-    company=(request.form.get("company") or request.args.get("company") or "").strip(); line=(request.form.get("line") or request.args.get("line") or "").strip(); status=(request.form.get("status") or request.args.get("status") or "").strip(); search=(request.form.get("search") or request.args.get("search") or "").strip().lower()
+        PANORAMA_EXPORT_JOBS[job_id]={"id":job_id,"status":"FILA","progress":0,"message":"Exportação na fila.","created_ts":time.time(),"created_at":datetime.utcnow().isoformat()+"Z","user_id":session.get("user_id"),"filter_key":filter_key,"filters":{"company":company,"line":line,"status":status,"search":search}}
     threading.Thread(target=_panorama_export_worker,args=(job_id,company,line,status,search),daemon=True,name=f"panorama-pptx-{job_id[:8]}").start()
-    return jsonify({"ok":True,"job_id":job_id,"status":"FILA","message":"PowerPoint sendo preparado em segundo plano."}),202
+    return jsonify({"ok":True,"job_id":job_id,"status":"FILA","filter_key":filter_key,"message":"PowerPoint sendo preparado em segundo plano."}),202
 
+
+@app.post("/api/panoramas/export.pptx/jobs/<job_id>/cancel")
+@login_required
+def panorama_export_pptx_job_cancel(job_id):
+    with PANORAMA_EXPORT_LOCK:
+        job=PANORAMA_EXPORT_JOBS.get(job_id)
+        if not job: return jsonify({"ok":False,"error":"Exportação não encontrada ou expirada."}),404
+        if session.get("role") not in ("manager","manager_field") and job.get("user_id") not in (None,session.get("user_id")):
+            return jsonify({"ok":False,"error":"Sem permissão para este processamento."}),403
+        if job.get("status") in ("FILA","PROCESSANDO"):
+            job["cancel_requested"]=True
+            job["message"]="Cancelamento solicitado..."
+            return jsonify({"ok":True,"status":"CANCELANDO","job_id":job_id})
+        return jsonify({"ok":True,"status":job.get("status"),"job_id":job_id})
 
 @app.get("/api/panoramas/export.pptx/jobs/<job_id>")
 @login_required

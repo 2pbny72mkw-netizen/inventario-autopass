@@ -1,0 +1,14 @@
+{
+  "release": "V66 REV1",
+  "name": "Plataforma Operacional Inteligente — Revisão 1",
+  "date": "2026-08-28",
+  "baseline": "V66",
+  "highlights": [
+    "GPS obrigatório para Técnico Field, Técnico Implantação, Gestor Field e Dispatcher",
+    "GPS por sessão com primeira posição validada, captura periódica e retenção FIFO de 7 dias",
+    "PowerPoint da Visão Panorâmica com cancelamento cooperativo",
+    "PowerPoint vinculado ao conjunto de filtros atual e nova geração liberada ao mudar filtros",
+    "Correção N+1 da Troca de Chips Recarga: mapa operacional carregado uma vez por payload",
+    "Histórico recente atualizado para V66 REV1"
+  ]
+}

@@ -1,0 +1,16 @@
+V66 REV1 — DEPLOY ENXUTO
+
+1. Partir da V66 atualmente instalada.
+2. Sobrescrever os arquivos contidos no V66_REV1_ENXUTA.zip.
+3. Reiniciar/redeployar a aplicação.
+4. Confirmar em Sobre que a versão exibida é V66 REV1.
+5. Fazer hard refresh uma vez para garantir atualização do service worker/assets.
+
+TESTES PRIORITÁRIOS
+- Login Técnico Field / Técnico Implantação / Dispatcher com GPS bloqueado: deve exigir localização.
+- Autorizar GPS: deve liberar a sessão e registrar posição.
+- Logout: nova autenticação deve exigir nova posição inicial.
+- Panorama: iniciar PowerPoint, navegar, retornar e verificar progresso.
+- Durante Gerando, clicar novamente e cancelar.
+- Gerar PowerPoint, alterar filtro e confirmar que botão volta a PowerPoint.
+- Telemetria: conferir redução forte de Queries/req em /api/chip-swaps e /api/chip-swaps/dashboard.
