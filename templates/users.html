@@ -6,7 +6,7 @@
 <section class="dashHero">
   <div>
     <span class="eyebrow">ADMINISTRAÇÃO</span>
-    <h1>Usuários do Inventário</h1>
+    <h1>Usuários do Sistema</h1>
     <p>Cadastre acessos de forma simples e controle o que cada perfil pode fazer.</p>
   </div>
 </section>
@@ -370,13 +370,14 @@
 
   function updateCreateProfileFields() {
     const consultation = role.value === "consultation";
+    const hideCollaborator = consultation || role.value === "customer";
     const technician = ["technician","technician_implantation","manager_field"].includes(role.value);
     const gpsOperational=["technician","technician_implantation","manager_field","dispatcher"].includes(role.value);
     const customer=role.value==="customer";
     document.querySelectorAll('#userForm .customerCompanyField').forEach(el=>el.style.display=customer?'':'none');
     document.querySelectorAll('#userForm .companyFreeField').forEach(el=>el.style.display=customer?'none':'');
     extended.forEach(el => {
-      el.style.display = consultation ? "none" : "";
+      el.style.display = hideCollaborator ? "none" : "";
       if (consultation) el.querySelectorAll("input").forEach(input => input.value = "");
     });
     document.querySelectorAll("#userForm .scheduleField").forEach(el=>el.style.display=technician?"":"none");
@@ -418,12 +419,13 @@
 
     function updateEditFields() {
       const consultation = roleSelect.value === "consultation";
+      const hideCollaborator = consultation || roleSelect.value === "customer";
       const technician = ["technician","technician_implantation","manager_field"].includes(roleSelect.value);
       const gpsOperational=["technician","technician_implantation","manager_field","dispatcher"].includes(roleSelect.value);
       const customer=roleSelect.value==="customer";
       form.querySelectorAll('.customerCompanyField').forEach(el=>el.style.display=customer?'':'none');
       form.querySelectorAll('.companyFreeField').forEach(el=>el.style.display=customer?'none':'');
-      editExtended.forEach(el => el.style.display = consultation ? "none" : "");
+      editExtended.forEach(el => el.style.display = hideCollaborator ? "none" : "");
       form.querySelectorAll('.scheduleField').forEach(el=>el.style.display=technician?'':'none');
       form.querySelectorAll('.gpsField').forEach(el=>el.style.display=gpsOperational?'':'none');
       updateAnchorFields(form);
