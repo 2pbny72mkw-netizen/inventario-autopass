@@ -1722,3 +1722,21 @@ body.mapFullscreenOpen .topbar{z-index:20!important;}
 
 /* V62 Dashboard Builder */
 .v62BuilderGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin:12px 0}.v62TokenGrid{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 18px}.v62Token{padding:9px 12px;border:1px solid #d5e0ec;border-radius:10px;background:#f7fafc}.v62WidgetCatalog{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:9px;margin-bottom:18px}.v62WidgetPick{display:grid;grid-template-columns:1fr 90px 58px;gap:6px;align-items:center;border:1px solid #dbe5ef;border-radius:10px;padding:9px}.v62PreviewBox{min-height:150px;border:1px dashed #b9c8d8;border-radius:12px;padding:12px}.v62PreviewItem{display:inline-block;margin:5px;padding:8px 10px;background:#eaf2fa;border-radius:8px}.v62PreviewItem.full{display:block}.v62ListRow{display:grid;grid-template-columns:2fr 1fr 1fr .6fr .5fr;gap:10px;padding:10px;border-bottom:1px solid #e1e8f0}.v62SideLink{text-decoration:none!important}.v62RuntimeFilters{display:flex;gap:10px;flex-wrap:wrap;align-items:end}.v62RuntimeFilters label{min-width:160px}.v62Runtime{display:grid;grid-template-columns:repeat(12,1fr);gap:14px;margin-top:14px}.v62RuntimeCard{grid-column:span 4}.v62RuntimeCard.small{grid-column:span 3}.v62RuntimeCard.medium{grid-column:span 4}.v62RuntimeCard.large{grid-column:span 6}.v62RuntimeCard.full{grid-column:1/-1}.v62Big{font-size:30px;display:block;margin-top:5px}.v62BarRow{display:grid;grid-template-columns:minmax(130px,210px) 1fr 55px;gap:8px;align-items:center;margin:7px 0;font-size:12px}.v62BarRow>span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.v62BarRow>i{height:9px;background:#e3ebf3;border-radius:99px;overflow:hidden}.v62BarRow>i>b{display:block;height:100%;background:linear-gradient(90deg,#2468d8,#28a879)}@media(max-width:760px){.v62RuntimeCard,.v62RuntimeCard.small,.v62RuntimeCard.medium,.v62RuntimeCard.large{grid-column:1/-1}.v62WidgetPick{grid-template-columns:1fr 80px 52px}}
+
+/* V69 consolidada — Mobile 2.0 */
+.mobileNavToggle{display:none}
+@media(max-width:760px){
+ .topbar .wrap.nav{padding:10px 14px;display:flex;align-items:center;justify-content:space-between;min-height:56px}
+ .topbar .brand img{max-width:118px;height:auto}.topbar .brandtext{display:none}
+ .mobileNavToggle{display:flex!important;align-items:center;justify-content:center;border:1px solid #d7e1eb;background:#fff;color:#17345d;border-radius:12px;width:44px;height:44px;font-size:24px;font-weight:900}
+ .mainNavV424{display:none!important;position:absolute;top:66px;left:12px;right:12px;background:#fff;border:1px solid #dbe5ef;border-radius:18px;padding:10px;box-shadow:0 18px 48px #10283d33;z-index:2000;max-height:78vh;overflow:auto}
+ .mainNavV424.mobileOpen{display:block!important}
+ .mainNavV424>a,.mainNavV424>.navDrop,.mainNavV424>.navInstall{display:block!important;width:100%;box-sizing:border-box;margin:2px 0}
+ .mainNavV424>a,.mainNavV424 .navDropBtn,.mainNavV424>.navInstall{padding:13px 12px!important;text-align:left!important;border-radius:10px!important;width:100%;font-size:15px!important}
+ .mainNavV424 .navDropMenu{position:static!important;box-shadow:none!important;border:0!important;background:#f5f8fb!important;margin:2px 0 7px!important;padding:4px!important}
+ .mainNavV424 .navDropMenu a{display:block!important;padding:11px!important}
+ .kpis,.emvActivityKpis{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+ .kpi,.emvActivityKpis article{min-width:0!important}.kpi b,.emvActivityKpis b{font-size:28px!important}
+ .activityNav{justify-content:stretch!important;display:grid!important;grid-template-columns:repeat(3,1fr)!important;gap:6px!important;position:sticky;top:0;z-index:20;background:#f7fafc;padding:6px 0}
+ .activityNav a{text-align:center;padding:9px 5px!important;font-size:13px!important;white-space:nowrap}
+}
