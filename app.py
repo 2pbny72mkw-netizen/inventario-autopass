@@ -41,7 +41,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V66 REV4.1"
+APP_RELEASE = "V66 REV4.2"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -7114,10 +7114,12 @@ def topdesk_dashboard_api():
     # V56-D: dashboard sem filtros usa agregações SQL em vez de materializar ~50 mil objetos Python.
     # Analytics detalhado continua usando o pipeline completo quando há filtros.
     if not request.args:
-        status_expr=func.upper(func.coalesce(TopDeskTicket.status,''))
+        # REV4.2: usar o status operacional indexado no resumo principal.
+        # Evita UPPER/LIKE sobre toda a coluna textual do TopDesk em cada MISS.
+        ws_expr=func.upper(func.coalesce(TopDeskTicket.work_status,''))
         total,resolved,assigned=db.session.query(
             func.count(TopDeskTicket.id),
-            func.coalesce(func.sum(case((db.or_(status_expr.like('%RESOLVID%'),status_expr.like('%FECHAD%'),status_expr.like('%CANCEL%')),1),else_=0)),0),
+            func.coalesce(func.sum(case((ws_expr.in_(("CONCLUIDO","CONCLUÍDO","FECHADO","RESOLVIDO","CANCELADO")),1),else_=0)),0),
             func.coalesce(func.sum(case((TopDeskTicket.assigned_technician_id.isnot(None),1),else_=0)),0)
         ).one()
         total=int(total or 0); resolved=int(resolved or 0); assigned=int(assigned or 0)
@@ -9173,12 +9175,23 @@ def _v63_build_emv_payload(force=False, include_photos=True):
 @app.get("/api/emv-chip-swaps/")
 @login_required
 def emv_chip_list_legacy_slash():
-    # REV4.1: canonicaliza a rota. Evita que clientes/links legados executem o
-    # pipeline EMV pesado por uma segunda URL e separa o custo no telemetry.
-    qs=request.query_string.decode("utf-8", "ignore")
-    target="/api/emv-chip-swaps" + (("?"+qs) if qs else "")
-    resp=redirect(target, code=308)
+    # V66 REV4.2: compatibilidade para clientes antigos sem redirecionamento.
+    # A REV4.1 mostrou que o 308 mantinha uma segunda trilha de chamadas na
+    # telemetria. A URL legada agora devolve diretamente o payload SLIM, sem
+    # fotos/evidências e sem executar o pipeline full. Clientes atuais usam a
+    # rota canônica sem barra.
+    rows=list(_v63_build_emv_payload(include_photos=False))
+    slim=[]
+    for x in rows:
+        slim.append({k:x.get(k) for k in (
+            "company","line","station","station_name","terminal",
+            "block_number","model","version","status","test_result",
+            "technician","completed_by","completed_at","manual_entry"
+        )})
+    resp=jsonify({"ok":True,"rows":slim,"release":APP_RELEASE,"legacy":True})
     resp.headers["X-Autopass-Canonical"]="/api/emv-chip-swaps"
+    resp.headers["X-Autopass-Deprecated"]="1"
+    resp.headers["X-Autopass-Payload-Mode"]="slim-legacy"
     return resp
 
 @app.get("/api/emv-chip-swaps", strict_slashes=True)
