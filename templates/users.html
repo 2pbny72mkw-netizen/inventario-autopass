@@ -140,7 +140,7 @@
     <div class="userHeaderActions"><span class="tag">{{ users|length }} usuário(s)</span>{% if can_view('users.export') %}<a class="secondary buttonLink" id="usersExportFiltered" href="/usuarios/exportar.xlsx">Exportar Excel</a>{% endif %}{% if archived_users %}<button type="button" class="secondary" id="toggleArchivedUsers">Ver arquivados ({{ archived_users|length }})</button>{% endif %}</div>
   </div>
 
-  <div class="userListFilters"><input id="usersSearch" placeholder="Procurar técnico / usuário / login / código"><select id="usersRoleFilter"><option value="">Todos os perfis</option><option value="technician">Técnico Field</option><option value="technician_implantation">Técnico Implantação</option><option value="manager">Gestor</option><option value="manager_field">Gestor Field</option><option value="hr">RH</option><option value="dispatcher">Dispatcher</option><option value="consultation">Consulta</option><option value="atm_financial_admin">ADM Financeiro</option></select><select id="usersCompanyFilter"><option value="">Todas as empresas</option>{% for c in users|map(attribute='company')|select|unique|sort %}<option value="{{ c }}">{{ c }}</option>{% endfor %}</select><select id="usersStatusFilter"><option value="">Todos os status</option><option value="ATIVO">Ativo</option><option value="INATIVO">Inativo</option></select><button type="button" class="secondary" id="usersClearFilters">Limpar filtros</button><span class="tag" id="usersFilteredCount"></span></div>
+  <div class="userListFilters"><input id="usersSearch" placeholder="Procurar técnico / usuário / login / código"><select id="usersRoleFilter"><option value="">Todos os perfis</option><option value="technician">Técnico Field</option><option value="technician_implantation">Técnico Implantação</option><option value="manager">Gestor</option><option value="manager_field">Gestor Field</option><option value="hr">RH</option><option value="dispatcher">Dispatcher</option><option value="consultation">Consulta</option><option value="atm_financial_admin">ADM Financeiro</option><option value="customer">Cliente</option></select><select id="usersCompanyFilter"><option value="">Todas as empresas</option>{% for c in users|map(attribute='company')|select|unique|sort %}<option value="{{ c }}">{{ c }}</option>{% endfor %}</select><select id="usersStatusFilter"><option value="">Todos os status</option><option value="ATIVO">Ativo</option><option value="INATIVO">Inativo</option></select><button type="button" class="secondary" id="usersClearFilters">Limpar filtros</button><span class="tag" id="usersFilteredCount"></span></div>
 
   <div class="tableWrap">
     <table>
@@ -187,6 +187,7 @@
             {% elif u.role == "dispatcher" %}Dispatcher
             {% elif u.role == "technician_implantation" %}Técnico Implantação
             {% elif u.role == "atm_financial_admin" %}ADM Financeiro
+            {% elif u.role == "customer" %}Cliente
             {% else %}Técnico Field{% endif %}
           </td>
           <td>{{ u.job_title or "—" }}</td>
@@ -253,7 +254,8 @@
                       <option value="technician_implantation" {% if u.role == "technician_implantation" %}selected{% endif %}>Técnico Implantação</option>
                       {% if can_assign_sensitive_roles %}<option value="manager_field" {% if u.role == "manager_field" %}selected{% endif %}>Gestor Field</option><option value="atm_financial_admin" {% if u.role == "atm_financial_admin" %}selected{% endif %}>ADM Financeiro</option>{% endif %}
                       {% if not is_hr_admin %}{% if can_assign_sensitive_roles %}<option value="manager" {% if u.role == "manager" %}selected{% endif %}>Gestor</option>
-                      <option value="consultation" {% if u.role == "consultation" %}selected{% endif %}>Consulta</option><option value="dispatcher" {% if u.role == "dispatcher" %}selected{% endif %}>Dispatcher</option>{% elif u.role in ("manager","consultation","dispatcher") %}<option value="{{ u.role }}" selected disabled>{{ {"manager":"Gestor","consultation":"Consulta","dispatcher":"Dispatcher"}.get(u.role,u.role) }}</option>{% endif %}
+                      <option value="consultation" {% if u.role == "consultation" %}selected{% endif %}>Consulta</option><option value="customer" {% if u.role == "customer" %}selected{% endif %}>Cliente</option><option value="dispatcher" {% if u.role == "dispatcher" %}selected{% endif %}>Dispatcher</option>{% elif u.role in ("manager","consultation","dispatcher") %}<option value="{{ u.role }}" selected disabled>{{ {"manager":"Gestor","consultation":"Consulta","dispatcher":"Dispatcher"}.get(u.role,u.role) }}</option>{% endif %}
+                      <option value="customer" {% if u.role == "customer" %}selected{% endif %}>Cliente</option>
                       <option value="hr" {% if u.role == "hr" %}selected{% endif %}>RH</option>{% endif %}
                     </select>
                   </div>
