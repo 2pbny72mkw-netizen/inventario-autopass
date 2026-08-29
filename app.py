@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V68 REV1"
+APP_RELEASE = "V68 REV2"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -339,6 +339,9 @@ class CollaboratorDocument(db.Model):
     notes = db.Column(db.Text)
     correction_note = db.Column(db.Text)
     signature_file = db.Column(db.String(600))
+    return_receiver_signature_file = db.Column(db.String(600))
+    return_receiver_id = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
+    return_received_at = db.Column(db.DateTime)
     pdf_file = db.Column(db.String(600))
     created_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
     sent_at = db.Column(db.DateTime)
@@ -11307,6 +11310,13 @@ def _material_pdf_bytes(doc):
         try:
             sig=Image(io.BytesIO(sigraw),width=180,height=56); sig.hAlign='LEFT'; story += [Spacer(1,4),sig,Paragraph("Assinatura manuscrita eletrônica do colaborador",small)]
         except Exception: pass
+    if is_return and getattr(doc,'return_receiver_signature_file',None):
+        try:
+            rf=doc.return_receiver_signature_file; rraw=_r2_get_bytes(rf[4:]) if rf.startswith('r2__') else (UPLOAD_DIR/rf).read_bytes()
+            receiver=db.session.get(User,doc.return_receiver_id) if doc.return_receiver_id else None
+            rsig=Image(io.BytesIO(rraw),width=180,height=56); rsig.hAlign='LEFT'
+            story += [Spacer(1,8),rsig,Paragraph(f"Recebido por: <b>{receiver.name if receiver else 'Responsável'}</b>",small),Paragraph(f"Conferência em: <b>{doc.return_received_at.strftime('%d/%m/%Y %H:%M:%S') if doc.return_received_at else '—'}</b>",small)]
+        except Exception: pass
     story += [Spacer(1,5),Paragraph(f"{'Carimbo de devolução' if is_return else 'Carimbo de aceite'}: {doc.document_code or '—'} · usuário #{doc.user_id} · {doc.signed_at.strftime('%d/%m/%Y %H:%M:%S UTC') if doc.signed_at else '—'}",small),Paragraph("Este PDF é a versão assinada vinculada ao dossiê digital do colaborador. O original eletrônico e sua trilha de auditoria permanecem armazenados no sistema.",small)]
     pdf.build(story); return out.getvalue()
 
@@ -11600,27 +11610,35 @@ def materials_return_create_api():
 @app.post('/api/materials/returns/request')
 @login_required
 def materials_return_request_api():
-    """Colaborador informa o que pretende devolver. A carga só baixa após conferência por usuário autorizado."""
+    """Colaborador assina a intenção de devolução. A carga só baixa após conferência e assinatura do responsável."""
     _materials_require('materials.my_documents')
-    data=request.get_json(silent=True) or {}; uid=session['user_id']; items=data.get('items') or []
+    data=request.get_json(silent=True) or {}; uid=session['user_id']; items=data.get('items') or []; sig=(data.get('signature_data') or '')
     if not items:return jsonify({'ok':False,'error':'Selecione ao menos um item para devolução.'}),400
-    balances=dict(db.session.query(MaterialMovement.material_id,func.sum(case((MaterialMovement.movement_type.in_(['ENTREGA','SUBSTITUICAO_ENTRADA','TRANSFERENCIA_ENTRADA']),MaterialMovement.quantity),else_=-MaterialMovement.quantity))).filter(MaterialMovement.user_id==uid).group_by(MaterialMovement.material_id).all())
-    d=CollaboratorDocument(document_type='TERMO_DEVOLUCAO',user_id=uid,status='AGUARDANDO_RECEBIMENTO',delivery_date=date.today(),title='Solicitação de Devolução de Materiais / Ferramentas',notes=(data.get('notes') or '').strip(),created_by=uid)
-    db.session.add(d);db.session.flush();d.document_code=f'TDV-{d.id:06d}'
-    valid=0
-    for it in items:
-        try: mid=int(it.get('material_id'))
-        except: continue
-        m=db.session.get(MaterialCatalogItem,mid)
-        if not m or m.control_type=='CONSUMIVEL': continue
-        try: qty=_material_quantity(m,it.get('quantity') or 0)
-        except ValueError as exc: db.session.rollback(); return jsonify({'ok':False,'error':str(exc)}),400
-        current=float(balances.get(mid) or 0)
-        if qty>current+1e-9: db.session.rollback(); return jsonify({'ok':False,'error':f'{m.description}: devolução maior que a carga atual ({_material_qty_text(current)}).'}),400
-        db.session.add(CollaboratorDocumentItem(document_id=d.id,material_id=mid,description=m.description,brand=m.brand,model=m.model,quantity=qty,unit=m.unit,condition='A_CONFERIR',notes=(it.get('notes') or '').strip()));valid+=1
-    if not valid: db.session.rollback(); return jsonify({'ok':False,'error':'Nenhum item devolvível válido foi informado.'}),400
-    db.session.add(AuditEvent(user_id=uid,event_type='MATERIAL_RETURN_REQUEST',entity_type='collaborator_document',entity_id=str(d.id),detail=d.document_code));db.session.commit()
-    return jsonify({'ok':True,'code':d.document_code,'document_id':d.id,'status':'AGUARDANDO_RECEBIMENTO'})
+    if not sig.startswith('data:image/'):return jsonify({'ok':False,'error':'Assinatura do colaborador é obrigatória para solicitar a devolução.'}),400
+    try:
+        balances=dict(db.session.query(MaterialMovement.material_id,func.sum(case((MaterialMovement.movement_type.in_(['ENTREGA','SUBSTITUICAO_ENTRADA','TRANSFERENCIA_ENTRADA']),MaterialMovement.quantity),else_=-MaterialMovement.quantity))).filter(MaterialMovement.user_id==uid).group_by(MaterialMovement.material_id).all())
+        d=CollaboratorDocument(document_type='TERMO_DEVOLUCAO',user_id=uid,status='AGUARDANDO_RECEBIMENTO',delivery_date=date.today(),title='Solicitação de Devolução de Materiais / Ferramentas',notes=(data.get('notes') or '').strip(),created_by=uid,signed_at=datetime.utcnow())
+        db.session.add(d);db.session.flush();d.document_code=f'TDV-{d.id:06d}'
+        valid=0
+        for it in items:
+            try: mid=int(it.get('material_id'))
+            except: continue
+            m=db.session.get(MaterialCatalogItem,mid)
+            if not m or m.control_type=='CONSUMIVEL': continue
+            qty=_material_quantity(m,it.get('quantity') or 0); current=float(balances.get(mid) or 0)
+            if qty>current+1e-9: raise ValueError(f'{m.description}: devolução maior que a carga atual ({_material_qty_text(current)}).')
+            db.session.add(CollaboratorDocumentItem(document_id=d.id,material_id=mid,description=m.description,brand=m.brand,model=m.model,quantity=qty,unit=m.unit,condition='A_CONFERIR',notes=(it.get('notes') or '').strip()));valid+=1
+        if not valid: raise ValueError('Nenhum item devolvível válido foi informado.')
+        head,b64=sig.split(',',1); raw=base64.b64decode(b64); key=f'dossie/{uid}/{d.document_code}_assinatura_colaborador.png'
+        if _r2_available(): _r2_put_bytes(key,raw,'image/png'); d.signature_file='r2__'+key
+        else:
+            name=f'{d.document_code}_assinatura_colaborador.png'; (UPLOAD_DIR/name).write_bytes(raw); d.signature_file=name
+        db.session.add(AuditEvent(user_id=uid,event_type='MATERIAL_RETURN_REQUEST_SIGNED',entity_type='collaborator_document',entity_id=str(d.id),detail=d.document_code));db.session.commit()
+        return jsonify({'ok':True,'code':d.document_code,'document_id':d.id,'status':'AGUARDANDO_RECEBIMENTO'})
+    except ValueError as exc:
+        db.session.rollback(); return jsonify({'ok':False,'error':str(exc)}),400
+    except Exception as exc:
+        db.session.rollback(); app.logger.exception('Falha ao criar solicitação de devolução'); return jsonify({'ok':False,'error':'Não foi possível registrar a devolução. Consulte o log do sistema.','detail':str(exc)}),500
 
 @app.get('/api/materials/returns/pending')
 @login_required
@@ -11634,23 +11652,33 @@ def materials_returns_pending_api():
 def materials_return_confirm_api(did):
     _materials_require('materials.delivery.manage'); d=db.session.get(CollaboratorDocument,did)
     if not d or d.document_type!='TERMO_DEVOLUCAO' or d.status!='AGUARDANDO_RECEBIMENTO': return jsonify({'ok':False,'error':'Devolução pendente não encontrada.'}),404
-    payload=request.get_json(silent=True) or {}; condition=(payload.get('condition') or 'BOM').upper(); receiver_note=(payload.get('notes') or '').strip()
-    balances=dict(db.session.query(MaterialMovement.material_id,func.sum(case((MaterialMovement.movement_type.in_(['ENTREGA','SUBSTITUICAO_ENTRADA','TRANSFERENCIA_ENTRADA']),MaterialMovement.quantity),else_=-MaterialMovement.quantity))).filter(MaterialMovement.user_id==d.user_id).group_by(MaterialMovement.material_id).all())
-    its=CollaboratorDocumentItem.query.filter_by(document_id=d.id).all()
-    for x in its:
-        m=db.session.get(MaterialCatalogItem,x.material_id) if x.material_id else None
-        if not m: continue
-        qty=_material_quantity(m,x.quantity); current=float(balances.get(m.id) or 0)
-        if qty>current+1e-9:return jsonify({'ok':False,'error':f'{m.description}: carga atual insuficiente para confirmar a devolução.'}),409
-        x.condition=condition
-        db.session.add(MaterialMovement(user_id=d.user_id,material_id=m.id,document_id=d.id,movement_type='DEVOLUCAO',quantity=qty,condition=condition,notes=receiver_note or x.notes,created_by=session['user_id']))
-    d.status='DEVOLVIDO';d.signed_at=datetime.utcnow();d.notes=(' | '.join(x for x in [d.notes,receiver_note] if x)).strip()
-    db.session.flush();pdfraw=_material_pdf_bytes(d);pkey=f'dossie/{d.user_id}/{d.document_code}.pdf'
-    if _r2_available():_r2_put_bytes(pkey,pdfraw,'application/pdf');d.pdf_file='r2__'+pkey
-    else:
-        name=f'{d.document_code}.pdf';(UPLOAD_DIR/name).write_bytes(pdfraw);d.pdf_file=name
-    db.session.add(AuditEvent(user_id=session['user_id'],event_type='MATERIAL_RETURN_CONFIRMED',entity_type='collaborator_document',entity_id=str(d.id),detail=d.document_code));db.session.commit()
-    return jsonify({'ok':True,'code':d.document_code})
+    payload=request.get_json(silent=True) or {}; condition=(payload.get('condition') or 'BOM').upper(); receiver_note=(payload.get('notes') or '').strip(); sig=(payload.get('signature_data') or '')
+    if not sig.startswith('data:image/'): return jsonify({'ok':False,'error':'Assinatura do responsável pelo recebimento é obrigatória.'}),400
+    try:
+        balances=dict(db.session.query(MaterialMovement.material_id,func.sum(case((MaterialMovement.movement_type.in_(['ENTREGA','SUBSTITUICAO_ENTRADA','TRANSFERENCIA_ENTRADA']),MaterialMovement.quantity),else_=-MaterialMovement.quantity))).filter(MaterialMovement.user_id==d.user_id).group_by(MaterialMovement.material_id).all())
+        its=CollaboratorDocumentItem.query.filter_by(document_id=d.id).all()
+        for x in its:
+            m=db.session.get(MaterialCatalogItem,x.material_id) if x.material_id else None
+            if not m: continue
+            qty=_material_quantity(m,x.quantity); current=float(balances.get(m.id) or 0)
+            if qty>current+1e-9: raise ValueError(f'{m.description}: carga atual insuficiente para confirmar a devolução.')
+            x.condition=condition
+            db.session.add(MaterialMovement(user_id=d.user_id,material_id=m.id,document_id=d.id,movement_type='DEVOLUCAO',quantity=qty,condition=condition,notes=receiver_note or x.notes,created_by=session['user_id']))
+        head,b64=sig.split(',',1); raw=base64.b64decode(b64); key=f'dossie/{d.user_id}/{d.document_code}_assinatura_recebedor.png'
+        if _r2_available(): _r2_put_bytes(key,raw,'image/png'); d.return_receiver_signature_file='r2__'+key
+        else:
+            name=f'{d.document_code}_assinatura_recebedor.png'; (UPLOAD_DIR/name).write_bytes(raw); d.return_receiver_signature_file=name
+        d.return_receiver_id=session['user_id']; d.return_received_at=datetime.utcnow(); d.status='DEVOLVIDO'; d.notes=(' | '.join(x for x in [d.notes,receiver_note] if x)).strip()
+        db.session.flush();pdfraw=_material_pdf_bytes(d);pkey=f'dossie/{d.user_id}/{d.document_code}.pdf'
+        if _r2_available():_r2_put_bytes(pkey,pdfraw,'application/pdf');d.pdf_file='r2__'+pkey
+        else:
+            name=f'{d.document_code}.pdf';(UPLOAD_DIR/name).write_bytes(pdfraw);d.pdf_file=name
+        db.session.add(AuditEvent(user_id=session['user_id'],event_type='MATERIAL_RETURN_CONFIRMED_SIGNED',entity_type='collaborator_document',entity_id=str(d.id),detail=d.document_code));db.session.commit()
+        return jsonify({'ok':True,'code':d.document_code})
+    except ValueError as exc:
+        db.session.rollback(); return jsonify({'ok':False,'error':str(exc)}),409
+    except Exception as exc:
+        db.session.rollback(); app.logger.exception('Falha ao confirmar devolução'); return jsonify({'ok':False,'error':'Não foi possível confirmar a devolução.','detail':str(exc)}),500
 
 @app.post('/api/materials/requests/<int:rid>/status')
 @login_required
@@ -11708,6 +11736,17 @@ with app.app_context():
                     conn.execute(text("UPDATE material_catalog_items SET quantity_mode = CASE WHEN UPPER(COALESCE(category,''))='CONSUMIVEL' THEN 'DECIMAL' ELSE 'INTEIRO' END WHERE quantity_mode IS NULL"))
     except Exception:
         app.logger.exception('Falha na migração V68 REV1 quantity_mode')
+    # V68 REV2 — dupla assinatura na devolução (colaborador + responsável).
+    try:
+        insp=db.inspect(db.engine)
+        if insp.has_table('collaborator_documents'):
+            cols={c['name'] for c in insp.get_columns('collaborator_documents')}
+            with db.engine.begin() as conn:
+                if 'return_receiver_signature_file' not in cols: conn.execute(text("ALTER TABLE collaborator_documents ADD COLUMN return_receiver_signature_file VARCHAR(600)"))
+                if 'return_receiver_id' not in cols: conn.execute(text("ALTER TABLE collaborator_documents ADD COLUMN return_receiver_id INTEGER REFERENCES users(id)"))
+                if 'return_received_at' not in cols: conn.execute(text("ALTER TABLE collaborator_documents ADD COLUMN return_received_at TIMESTAMP"))
+    except Exception:
+        app.logger.exception('Falha na migração V68 REV2 devolução assinada')
     migrate_v56a_topdesk_dimensions()
     migrate_team_schedule_columns()
     migrate_inventory_sync_uuid()
