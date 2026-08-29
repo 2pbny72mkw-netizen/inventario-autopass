@@ -5,6 +5,7 @@ import unicodedata
 import re
 import zipfile
 import io
+import base64
 import boto3
 import uuid
 import mimetypes
@@ -41,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V66 REV4.2"
+APP_RELEASE = "V67"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -290,6 +291,100 @@ class User(db.Model):
     access_json = db.Column(db.Text)
     gps_required = db.Column(db.Boolean, nullable=False, default=False)
 
+
+
+# V67 — Dossiê do Colaborador / Materiais e Ferramentas
+class MaterialCatalogItem(db.Model):
+    __tablename__ = "material_catalog_items"
+    id = db.Column(db.Integer, primary_key=True)
+    code = db.Column(db.String(50), unique=True, nullable=False, index=True)
+    category = db.Column(db.String(40), nullable=False, default="FERRAMENTA", index=True)
+    description = db.Column(db.String(220), nullable=False, index=True)
+    brand = db.Column(db.String(120))
+    model = db.Column(db.String(120))
+    unit = db.Column(db.String(20), nullable=False, default="UN")
+    control_type = db.Column(db.String(30), nullable=False, default="DEVOLVIVEL")
+    active = db.Column(db.Boolean, nullable=False, default=True, index=True)
+    created_by = db.Column(db.Integer, db.ForeignKey("users.id"))
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+class MaterialKit(db.Model):
+    __tablename__ = "material_kits"
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(160), nullable=False, unique=True, index=True)
+    description = db.Column(db.Text)
+    active = db.Column(db.Boolean, nullable=False, default=True)
+    created_by = db.Column(db.Integer, db.ForeignKey("users.id"))
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+class MaterialKitItem(db.Model):
+    __tablename__ = "material_kit_items"
+    id = db.Column(db.Integer, primary_key=True)
+    kit_id = db.Column(db.Integer, db.ForeignKey("material_kits.id", ondelete="CASCADE"), nullable=False, index=True)
+    material_id = db.Column(db.Integer, db.ForeignKey("material_catalog_items.id"), nullable=False, index=True)
+    quantity = db.Column(db.Float, nullable=False, default=1)
+    __table_args__=(UniqueConstraint("kit_id","material_id",name="uq_material_kit_item"),)
+
+class CollaboratorDocument(db.Model):
+    __tablename__ = "collaborator_documents"
+    id = db.Column(db.Integer, primary_key=True)
+    document_code = db.Column(db.String(40), unique=True, index=True)
+    document_type = db.Column(db.String(60), nullable=False, default="TERMO_RECEBIMENTO_FERRAMENTAS", index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    status = db.Column(db.String(40), nullable=False, default="RASCUNHO", index=True)
+    delivery_date = db.Column(db.Date)
+    title = db.Column(db.String(220), nullable=False, default="Termo de Recebimento de Materiais / Ferramentas")
+    notes = db.Column(db.Text)
+    correction_note = db.Column(db.Text)
+    signature_file = db.Column(db.String(600))
+    pdf_file = db.Column(db.String(600))
+    created_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    sent_at = db.Column(db.DateTime)
+    signed_at = db.Column(db.DateTime)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+class CollaboratorDocumentItem(db.Model):
+    __tablename__ = "collaborator_document_items"
+    id = db.Column(db.Integer, primary_key=True)
+    document_id = db.Column(db.Integer, db.ForeignKey("collaborator_documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    material_id = db.Column(db.Integer, db.ForeignKey("material_catalog_items.id"), index=True)
+    description = db.Column(db.String(220), nullable=False)
+    brand = db.Column(db.String(120))
+    model = db.Column(db.String(120))
+    quantity = db.Column(db.Float, nullable=False, default=1)
+    unit = db.Column(db.String(20), default="UN")
+    condition = db.Column(db.String(40), default="BOM")
+    notes = db.Column(db.Text)
+
+class MaterialMovement(db.Model):
+    __tablename__ = "material_movements"
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    material_id = db.Column(db.Integer, db.ForeignKey("material_catalog_items.id"), nullable=False, index=True)
+    document_id = db.Column(db.Integer, db.ForeignKey("collaborator_documents.id"), index=True)
+    movement_type = db.Column(db.String(30), nullable=False, index=True)
+    quantity = db.Column(db.Float, nullable=False)
+    condition = db.Column(db.String(40))
+    identifier = db.Column(db.String(160))
+    notes = db.Column(db.Text)
+    created_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+class MaterialRequest(db.Model):
+    __tablename__ = "material_requests"
+    id = db.Column(db.Integer, primary_key=True)
+    request_code = db.Column(db.String(40), unique=True, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    material_id = db.Column(db.Integer, db.ForeignKey("material_catalog_items.id"), nullable=False, index=True)
+    quantity = db.Column(db.Float, nullable=False, default=1)
+    reason = db.Column(db.Text)
+    urgency = db.Column(db.String(20), nullable=False, default="NORMAL")
+    notes = db.Column(db.Text)
+    status = db.Column(db.String(30), nullable=False, default="SOLICITADO", index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class FinancialSupplier(db.Model):
@@ -1100,6 +1195,9 @@ ACCESS_GROUPS = {
     "management": ("Gestão", (
         "management.calls","management.360","management.notifications","management.diagnostics","management.settings"
     )),
+    "materials": ("Dossiê / Materiais", (
+        "materials.my_documents","materials.request","materials.catalog.view","materials.catalog.manage","materials.kits.manage","materials.delivery.create","materials.delivery.manage","materials.dossier.view"
+    )),
     "about_versions": ("Sobre / Versões", ("about.versions",)),
 }
 ACCESS_MODULES = tuple(ACCESS_GROUPS.keys())
@@ -1113,6 +1211,7 @@ ACCESS_LABELS = {
  "users.view":"Visualizar usuários","users.create":"Criar usuário","users.edit":"Editar usuário","users.activate":"Ativar / Desativar","users.delete":"Excluir / Arquivar","users.password":"Redefinir senha","users.export":"Exportar Excel",
  "finance.dashboard":"Dashboard Financeira","finance.support":"Suporte a Campo","finance.collection":"Coleta de Valores","finance.apuracao":"Apuração de Numerário","finance.assistance":"Assistência Técnica","finance.implantation":"Implantação de Hardware","finance.entries":"Lançamentos","finance.suppliers":"Empresas / Fornecedores","finance.import":"Importar planilha","finance.edit":"Editar lançamentos","finance.delete":"Excluir lançamentos",
  "management.calls":"Chamados","management.360":"Central 360","management.notifications":"Notificações","management.diagnostics":"Diagnóstico","management.settings":"Configurações",
+ "materials.my_documents":"Meus documentos / Minha carga","materials.request":"Solicitar material","materials.catalog.view":"Visualizar catálogo","materials.catalog.manage":"Cadastrar / editar / inativar materiais","materials.kits.manage":"Gerenciar kits","materials.delivery.create":"Criar e enviar entregas","materials.delivery.manage":"Gerenciar aceites / correções","materials.dossier.view":"Dossiê dos colaboradores",
  "about.versions":"Histórico / Versões",
 }
 
@@ -1128,11 +1227,11 @@ def _expand_legacy_access(values):
 def _default_access_for_role(role):
     defaults={
       "manager":set(ACCESS_SUBMODULES),
-      "manager_field":{"dashboard.general","field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage","teams.map","teams.today","teams.schedule","teams.manage","teams.export","finance.dashboard","management.calls","management.360","management.notifications","management.diagnostics","about.versions"},
-      "technician":{"field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","about.versions"},
-      "technician_implantation":{"field.inventory","field.equipment","field.evidence","field.panorama","field.chip_recarga","implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage","about.versions"},
+      "manager_field":{"materials.my_documents","materials.request","materials.catalog.view","materials.catalog.manage","materials.kits.manage","materials.delivery.create","materials.delivery.manage","materials.dossier.view","dashboard.general","field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage","teams.map","teams.today","teams.schedule","teams.manage","teams.export","finance.dashboard","management.calls","management.360","management.notifications","management.diagnostics","about.versions"},
+      "technician":{"materials.my_documents","materials.request","field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","about.versions"},
+      "technician_implantation":{"materials.my_documents","materials.request","field.inventory","field.equipment","field.evidence","field.panorama","field.chip_recarga","implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage","about.versions"},
       "consultation":{"dashboard.general","field.dashboard","field.inventory","field.equipment","field.evidence","field.panorama","field.chip_recarga","teams.map","teams.today","teams.schedule","about.versions"},
-      "hr":{"teams.map","teams.today","teams.schedule","teams.manage","teams.export","users.view","users.create","users.edit","users.activate","users.password","users.export","about.versions"},
+      "hr":{"materials.catalog.view","materials.dossier.view","teams.map","teams.today","teams.schedule","teams.manage","teams.export","users.view","users.create","users.edit","users.activate","users.password","users.export","about.versions"},
       "dispatcher":{"dashboard.general","field.calls","field.chip_recarga","teams.map","teams.today","teams.schedule","management.calls","about.versions"},
       "atm_financial_admin":{"finance.dashboard","finance.support","finance.collection","finance.apuracao","finance.assistance","finance.implantation","finance.entries","finance.suppliers","finance.import","finance.edit","finance.delete","about.versions"},
     }
@@ -1182,7 +1281,7 @@ def _parse_access_form(role):
     allowed={x for x in raw if x in ACCESS_ALL}
     # Se o formulário novo mandar filhos, salvamos os filhos; pais antigos permanecem aceitos por compatibilidade.
     if role=="atm_financial_admin": allowed={x for x in allowed if x.startswith("finance.") or x in ("finance","finance_dashboard","about_versions","about.versions")}
-    if role=="hr": allowed={x for x in allowed if x.startswith("teams.") or x.startswith("users.") or x in ("teams","users","about_versions","about.versions")}
+    if role=="hr": allowed={x for x in allowed if x.startswith("teams.") or x.startswith("users.") or x.startswith("materials.") or x in ("teams","users","materials","about_versions","about.versions")}
     if role in ("technician","technician_implantation"):
         allowed={x for x in allowed if not (x.startswith("users.") or x.startswith("finance.") or x.startswith("management.")) and x not in ("users","finance","finance_dashboard","management")}
     return sorted(allowed if request.form.get("access_config_present")=="1" else _default_access_for_role(role))
@@ -11105,6 +11204,260 @@ def dashboard_builder_source(source):
         return jsonify({'ok':True,'kpis':{'total':total,'concluded':done,'pending':total-done-prog,'in_progress':prog},'stations':rank('station'),'companies':rank('company'),'lines':rank('line'),'technicians':rank('technician')})
     return jsonify({'ok':True})
 
+
+
+
+
+def seed_v67_materials():
+    """Carga inicial configurável do Kit Técnico Field N2; depois tudo é administrado pela UI."""
+    if MaterialCatalogItem.query.count()>0: return
+    rows=[
+      ('N2-001','Mochila de ferramentas STANLEY','STANLEY',''),('N2-002','Chave de Fenda - 3/16 x 4”','Gedore',''),('N2-003','Chave de Fenda - 1/8 x 4”','Gedore',''),('N2-004','Chave Philips - 3/16 x 4”','Gedore',''),('N2-005','Chave Philips - 1/8 x 4”','Gedore',''),('N2-006','Chave canhão - 7/32 mm','Gedore',''),('N2-007','Chave canhão - 8 mm','Gedore',''),('N2-008','Jogo de chaves allen c/ estojo 1,5mm à 10mm','MTX',''),('N2-009','Alicate Crimpador - RJ11 - RJ12 - RJ45','Universal',''),('N2-010','Alicate de Bico redondo longo Hikari HK - 507','Hikari','HK-507'),('N2-011','Mini Alicate universal Hikari HK - 502','Hikari','HK-502'),('N2-012','Decapador de fio 501 universal','Universal',''),('N2-013','Caixa organizadora mini','Universal',''),('N2-014','Pincel Antiestático ESD HK - 217','Hikari','HK-217'),('N2-015','Trincha 2 ¹/2 (pincel)','Vonder',''),('N2-016','Chave multiteste digital com display LCD','Sparta',''),('N2-017','Estilete emborrachado','Universal',''),('N2-018','Testador de cabos de rede','Universal',''),('N2-019','Multímetro digital HM 1001 com bateria 9V','Hikari','HM 1001'),('N2-020','Alicate de corte rente HK - 170','Hikari','HK-170'),('N2-021','Miniteclado USB com fio','Knupp',''),('N2-022','Extractor de pic San PLCC','Pinça',''),('N2-023','Alicate de corte diagonal 6”','Hikari',''),('N2-024','Pinça','Hikari',''),('N2-025','Alicate Puntch Down universal','Universal','')]
+    uid=None
+    for code,desc,brand,model in rows:
+        db.session.add(MaterialCatalogItem(code=code,category='FERRAMENTA',description=desc,brand=brand,model=model,unit='UN',control_type='DEVOLVIVEL',active=True,created_by=uid))
+    db.session.flush(); kit=MaterialKit(name='Kit Técnico Field N2',description='Kit inicial com os 25 itens do Termo de Responsabilidade de Equipamentos.',active=True,created_by=uid);db.session.add(kit);db.session.flush()
+    for m in MaterialCatalogItem.query.filter(MaterialCatalogItem.code.like('N2-%')).all():db.session.add(MaterialKitItem(kit_id=kit.id,material_id=m.id,quantity=1))
+    db.session.commit()
+
+# ==================== V67 · DOSSIÊ & MATERIAIS ====================
+def _materials_require(permission):
+    if not _has_access(permission): abort(403)
+
+def _doc_payload(d):
+    u=db.session.get(User,d.user_id)
+    items=CollaboratorDocumentItem.query.filter_by(document_id=d.id).order_by(CollaboratorDocumentItem.id).all()
+    return {"id":d.id,"code":d.document_code or f"DOC-{d.id:06d}","type":d.document_type,"title":d.title,"user_id":d.user_id,"user_name":u.name if u else "—","status":d.status,"delivery_date":d.delivery_date.isoformat() if d.delivery_date else None,"sent_at":d.sent_at.isoformat() if d.sent_at else None,"signed_at":d.signed_at.isoformat() if d.signed_at else None,"notes":d.notes or "","correction_note":d.correction_note or "","has_pdf":bool(d.pdf_file),"items":[{"id":x.id,"material_id":x.material_id,"description":x.description,"brand":x.brand or "","model":x.model or "","quantity":x.quantity,"unit":x.unit or "UN","condition":x.condition or "BOM","notes":x.notes or ""} for x in items]}
+
+def _material_pdf_bytes(doc):
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.enums import TA_CENTER
+        from reportlab.lib import colors
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    except Exception as exc:
+        raise RuntimeError("Dependência reportlab não instalada") from exc
+    out=io.BytesIO(); styles=getSampleStyleSheet(); small=ParagraphStyle('small',parent=styles['BodyText'],fontSize=8,leading=10); center=ParagraphStyle('center',parent=styles['Heading2'],alignment=TA_CENTER)
+    pdf=SimpleDocTemplate(out,pagesize=A4,rightMargin=32,leftMargin=32,topMargin=32,bottomMargin=32)
+    u=db.session.get(User,doc.user_id); rows=CollaboratorDocumentItem.query.filter_by(document_id=doc.id).order_by(CollaboratorDocumentItem.id).all()
+    story=[Paragraph("TECSOMOBI",styles['Heading2']),Paragraph("TERMO DE RESPONSABILIDADE — MATERIAIS / FERRAMENTAS",center),Spacer(1,10),Paragraph(f"Documento: <b>{doc.document_code}</b> &nbsp;&nbsp; Colaborador: <b>{u.name if u else '—'}</b>",styles['BodyText']),Paragraph(f"Empresa: {getattr(u,'company',None) or '—'} &nbsp;&nbsp; Cargo: {getattr(u,'job_title',None) or '—'} &nbsp;&nbsp; Data da entrega: {doc.delivery_date.strftime('%d/%m/%Y') if doc.delivery_date else '—'}",small),Spacer(1,10)]
+    data=[["Item","Marca / Modelo","Qtd.","Un.","Estado"]]
+    for x in rows:data.append([Paragraph(x.description,small),Paragraph(" / ".join(y for y in (x.brand,x.model) if y) or "—",small),str(x.quantity),x.unit or "UN",x.condition or "BOM"])
+    t=Table(data,colWidths=[220,145,45,40,65],repeatRows=1);t.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#e8eef5')),('GRID',(0,0),(-1,-1),.4,colors.grey),('FONTNAME',(0,0),(-1,0),'Helvetica-Bold'),('VALIGN',(0,0),(-1,-1),'TOP'),('FONTSIZE',(0,0),(-1,-1),8),('PADDING',(0,0),(-1,-1),5)]));story += [t,Spacer(1,12),Paragraph("Declaro ter conferido e recebido os materiais/ferramentas relacionados acima, assumindo a responsabilidade por sua guarda, conservação e uso adequado, observadas as regras internas aplicáveis.",styles['BodyText']),Spacer(1,12),Paragraph(f"Aceite eletrônico realizado em: <b>{doc.signed_at.strftime('%d/%m/%Y %H:%M:%S') if doc.signed_at else '—'}</b>",small),Paragraph(f"Colaborador: <b>{u.name if u else '—'}</b>",small),Paragraph("A assinatura manuscrita eletrônica vinculada a este documento integra o registro de aceite armazenado no sistema.",small)]
+    pdf.build(story); return out.getvalue()
+
+@app.get('/documentos-materiais')
+@login_required
+def materials_home_page():
+    return render_template('materials.html',app_release=APP_RELEASE)
+
+@app.get('/api/materials/catalog')
+@login_required
+def materials_catalog_api():
+    _materials_require('materials.catalog.view')
+    rows=MaterialCatalogItem.query.order_by(MaterialCatalogItem.active.desc(),MaterialCatalogItem.description).all()
+    return jsonify({'ok':True,'rows':[{'id':x.id,'code':x.code,'category':x.category,'description':x.description,'brand':x.brand or '', 'model':x.model or '', 'unit':x.unit,'control_type':x.control_type,'active':x.active} for x in rows]})
+
+@app.post('/api/materials/catalog')
+@login_required
+def materials_catalog_save_api():
+    _materials_require('materials.catalog.manage'); d=request.get_json(silent=True) or {}; mid=d.get('id'); row=db.session.get(MaterialCatalogItem,int(mid)) if mid else MaterialCatalogItem(created_by=session['user_id'])
+    if not row: return jsonify({'ok':False,'error':'Item não encontrado.'}),404
+    code=(d.get('code') or '').strip().upper(); desc=(d.get('description') or '').strip()
+    if not code or not desc:return jsonify({'ok':False,'error':'Código e descrição são obrigatórios.'}),400
+    dup=MaterialCatalogItem.query.filter(func.upper(MaterialCatalogItem.code)==code)
+    if row.id:dup=dup.filter(MaterialCatalogItem.id!=row.id)
+    if dup.first():return jsonify({'ok':False,'error':'Código já cadastrado.'}),409
+    row.code=code;row.description=desc;row.category=(d.get('category') or 'FERRAMENTA').upper();row.brand=(d.get('brand') or '').strip();row.model=(d.get('model') or '').strip();row.unit=(d.get('unit') or 'UN').upper();row.control_type=(d.get('control_type') or 'DEVOLVIVEL').upper();row.active=bool(d.get('active',True));db.session.add(row);db.session.add(AuditEvent(user_id=session['user_id'],event_type='MATERIAL_CATALOG_SAVE',entity_type='material',entity_id=str(row.id or ''),detail=f'{code} · {desc}'));db.session.commit();return jsonify({'ok':True,'id':row.id})
+
+@app.delete('/api/materials/catalog/<int:mid>')
+@login_required
+def materials_catalog_delete_api(mid):
+    _materials_require('materials.catalog.manage'); row=db.session.get(MaterialCatalogItem,mid)
+    if not row:return jsonify({'ok':False,'error':'Item não encontrado.'}),404
+    used=CollaboratorDocumentItem.query.filter_by(material_id=mid).first() or MaterialMovement.query.filter_by(material_id=mid).first()
+    if used: row.active=False; action='INATIVADO'
+    else: db.session.delete(row); action='EXCLUIDO'
+    db.session.add(AuditEvent(user_id=session['user_id'],event_type='MATERIAL_CATALOG_'+action,entity_type='material',entity_id=str(mid),detail=row.description));db.session.commit();return jsonify({'ok':True,'action':action})
+
+@app.get('/api/materials/kits')
+@login_required
+def materials_kits_api():
+    _materials_require('materials.catalog.view'); kits=MaterialKit.query.order_by(MaterialKit.active.desc(),MaterialKit.name).all(); out=[]
+    for k in kits:
+        its=db.session.query(MaterialKitItem,MaterialCatalogItem).join(MaterialCatalogItem,MaterialCatalogItem.id==MaterialKitItem.material_id).filter(MaterialKitItem.kit_id==k.id).all();out.append({'id':k.id,'name':k.name,'description':k.description or '', 'active':k.active,'items':[{'material_id':mi.material_id,'quantity':mi.quantity,'description':m.description,'brand':m.brand or '', 'model':m.model or '', 'unit':m.unit} for mi,m in its]})
+    return jsonify({'ok':True,'rows':out})
+
+@app.post('/api/materials/kits')
+@login_required
+def materials_kits_save_api():
+    _materials_require('materials.kits.manage'); d=request.get_json(silent=True) or {}; kid=d.get('id'); k=db.session.get(MaterialKit,int(kid)) if kid else MaterialKit(created_by=session['user_id'])
+    if not k:return jsonify({'ok':False,'error':'Kit não encontrado.'}),404
+    k.name=(d.get('name') or '').strip();k.description=(d.get('description') or '').strip();k.active=bool(d.get('active',True))
+    if not k.name:return jsonify({'ok':False,'error':'Informe o nome do kit.'}),400
+    db.session.add(k);db.session.flush();MaterialKitItem.query.filter_by(kit_id=k.id).delete()
+    for x in d.get('items') or []:
+        try: mid=int(x.get('material_id'));qty=float(x.get('quantity') or 1)
+        except: continue
+        if qty>0:db.session.add(MaterialKitItem(kit_id=k.id,material_id=mid,quantity=qty))
+    db.session.commit();return jsonify({'ok':True,'id':k.id})
+
+@app.get('/api/materials/collaborators')
+@login_required
+def materials_collaborators_api():
+    _materials_require('materials.delivery.create'); rows=User.query.filter(User.active==True,User.role.in_(['technician','technician_implantation','manager_field','dispatcher'])).order_by(User.name).all();return jsonify({'ok':True,'rows':[{'id':u.id,'name':u.name,'role':u.role,'company':u.company or '', 'job_title':u.job_title or ''} for u in rows]})
+
+@app.post('/api/materials/deliveries')
+@login_required
+def materials_delivery_create_api():
+    _materials_require('materials.delivery.create'); d=request.get_json(silent=True) or {}; users=[]
+    for uid in d.get('user_ids') or []:
+        try:
+            u=db.session.get(User,int(uid));
+            if u and u.active:users.append(u)
+        except:pass
+    items=d.get('items') or []
+    if not users or not items:return jsonify({'ok':False,'error':'Selecione colaborador(es) e pelo menos um item.'}),400
+    created=[]
+    try: delivery_date=datetime.strptime(d.get('delivery_date') or '', '%Y-%m-%d').date()
+    except: delivery_date=datetime.now().date()
+    for u in users:
+        doc=CollaboratorDocument(user_id=u.id,created_by=session['user_id'],delivery_date=delivery_date,notes=(d.get('notes') or '').strip(),status='RASCUNHO');db.session.add(doc);db.session.flush();doc.document_code=f'TRM-{doc.id:06d}'
+        for x in items:
+            try:mid=int(x.get('material_id'));qty=float(x.get('quantity') or 0)
+            except:continue
+            if qty<=0:continue
+            m=db.session.get(MaterialCatalogItem,mid)
+            if not m:continue
+            db.session.add(CollaboratorDocumentItem(document_id=doc.id,material_id=m.id,description=m.description,brand=m.brand,model=m.model,quantity=qty,unit=m.unit,condition=(x.get('condition') or 'BOM'),notes=(x.get('notes') or '').strip()))
+        if d.get('send_now',True):doc.status='AGUARDANDO_ACEITE';doc.sent_at=datetime.utcnow()
+        created.append(doc.document_code)
+    db.session.add(AuditEvent(user_id=session['user_id'],event_type='MATERIAL_DELIVERY_BATCH',entity_type='collaborator_document',entity_id=','.join(created),detail=f'{len(created)} termo(s) criado(s)'));db.session.commit();return jsonify({'ok':True,'created':created,'count':len(created)})
+
+@app.get('/api/materials/pending-count')
+@login_required
+def materials_pending_count_api():
+    n=CollaboratorDocument.query.filter_by(user_id=session['user_id'],status='AGUARDANDO_ACEITE').count()
+    return jsonify({'ok':True,'count':n})
+
+@app.put('/api/materials/documents/<int:did>/items')
+@login_required
+def materials_document_items_update_api(did):
+    _materials_require('materials.delivery.manage'); d=db.session.get(CollaboratorDocument,did)
+    if not d:return jsonify({'ok':False,'error':'Documento não encontrado.'}),404
+    if d.status=='ASSINADO':return jsonify({'ok':False,'error':'Documento assinado é imutável.'}),409
+    payload=request.get_json(silent=True) or {}; items=payload.get('items') or []
+    CollaboratorDocumentItem.query.filter_by(document_id=d.id).delete()
+    for x in items:
+        try:mid=int(x.get('material_id'));qty=float(x.get('quantity') or 0)
+        except:continue
+        if qty<=0:continue
+        m=db.session.get(MaterialCatalogItem,mid)
+        if not m:continue
+        db.session.add(CollaboratorDocumentItem(document_id=d.id,material_id=m.id,description=m.description,brand=m.brand,model=m.model,quantity=qty,unit=m.unit,condition=(x.get('condition') or 'BOM'),notes=(x.get('notes') or '').strip()))
+    d.status='RASCUNHO'; d.correction_note=None; db.session.add(AuditEvent(user_id=session['user_id'],event_type='MATERIAL_DOCUMENT_CORRECTED',entity_type='collaborator_document',entity_id=str(d.id),detail=d.document_code));db.session.commit();return jsonify({'ok':True})
+
+@app.get('/api/materials/documents')
+@login_required
+def materials_documents_api():
+    own=request.args.get('own')=='1'; q=CollaboratorDocument.query
+    if own or not _has_access('materials.dossier.view'):q=q.filter_by(user_id=session['user_id'])
+    rows=q.order_by(CollaboratorDocument.created_at.desc()).limit(500).all();return jsonify({'ok':True,'rows':[_doc_payload(x) for x in rows]})
+
+@app.get('/api/materials/documents/<int:did>')
+@login_required
+def materials_document_detail_api(did):
+    d=db.session.get(CollaboratorDocument,did)
+    if not d:return jsonify({'ok':False,'error':'Documento não encontrado.'}),404
+    if d.user_id!=session['user_id'] and not _has_access('materials.dossier.view'):abort(403)
+    return jsonify({'ok':True,'document':_doc_payload(d)})
+
+@app.post('/api/materials/documents/<int:did>/send')
+@login_required
+def materials_document_send_api(did):
+    _materials_require('materials.delivery.manage');d=db.session.get(CollaboratorDocument,did)
+    if not d:return jsonify({'ok':False,'error':'Documento não encontrado.'}),404
+    if d.status=='ASSINADO':return jsonify({'ok':False,'error':'Documento assinado é imutável.'}),409
+    d.status='AGUARDANDO_ACEITE';d.sent_at=datetime.utcnow();d.correction_note=None;db.session.commit();return jsonify({'ok':True})
+
+@app.post('/api/materials/documents/<int:did>/correction')
+@login_required
+def materials_document_correction_api(did):
+    d=db.session.get(CollaboratorDocument,did)
+    if not d or d.user_id!=session['user_id']:abort(404)
+    if d.status!='AGUARDANDO_ACEITE':return jsonify({'ok':False,'error':'Documento não está aguardando aceite.'}),409
+    note=((request.get_json(silent=True) or {}).get('note') or '').strip()
+    if not note:return jsonify({'ok':False,'error':'Informe o que precisa ser corrigido.'}),400
+    d.status='CORRECAO_SOLICITADA';d.correction_note=note;db.session.add(AuditEvent(user_id=session['user_id'],event_type='MATERIAL_DOCUMENT_CORRECTION',entity_type='collaborator_document',entity_id=str(d.id),detail=note[:500]));db.session.commit();return jsonify({'ok':True})
+
+@app.post('/api/materials/documents/<int:did>/accept')
+@login_required
+def materials_document_accept_api(did):
+    d=db.session.get(CollaboratorDocument,did)
+    if not d or d.user_id!=session['user_id']:abort(404)
+    if d.status!='AGUARDANDO_ACEITE':return jsonify({'ok':False,'error':'Documento não está aguardando aceite.'}),409
+    sig=((request.get_json(silent=True) or {}).get('signature_data') or '')
+    if not sig.startswith('data:image/'):return jsonify({'ok':False,'error':'Assinatura obrigatória.'}),400
+    try:
+        head,b64=sig.split(',',1);raw=base64.b64decode(b64);key=f'dossie/{d.user_id}/{d.document_code}_assinatura.png';
+        if _r2_available():_r2_put_bytes(key,raw,'image/png');d.signature_file='r2__'+key
+        else:
+            name=f'{d.document_code}_assinatura.png';(UPLOAD_DIR/name).write_bytes(raw);d.signature_file=name
+        d.status='ASSINADO';d.signed_at=datetime.utcnow();db.session.flush()
+        pdfraw=_material_pdf_bytes(d);pkey=f'dossie/{d.user_id}/{d.document_code}.pdf'
+        if _r2_available():_r2_put_bytes(pkey,pdfraw,'application/pdf');d.pdf_file='r2__'+pkey
+        else:
+            name=f'{d.document_code}.pdf';(UPLOAD_DIR/name).write_bytes(pdfraw);d.pdf_file=name
+        for x in CollaboratorDocumentItem.query.filter_by(document_id=d.id).all():
+            if x.material_id:db.session.add(MaterialMovement(user_id=d.user_id,material_id=x.material_id,document_id=d.id,movement_type='ENTREGA',quantity=x.quantity,condition=x.condition,notes=x.notes,created_by=session['user_id']))
+        db.session.add(AuditEvent(user_id=session['user_id'],event_type='MATERIAL_DOCUMENT_SIGNED',entity_type='collaborator_document',entity_id=str(d.id),detail=d.document_code));db.session.commit();return jsonify({'ok':True,'code':d.document_code})
+    except Exception as exc:
+        db.session.rollback();app.logger.exception('Falha aceite dossiê');return jsonify({'ok':False,'error':str(exc)}),500
+
+@app.get('/api/materials/documents/<int:did>/pdf')
+@login_required
+def materials_document_pdf_api(did):
+    d=db.session.get(CollaboratorDocument,did)
+    if not d or not d.pdf_file:abort(404)
+    if d.user_id!=session['user_id'] and not _has_access('materials.dossier.view'):abort(403)
+    raw=_r2_get_bytes(d.pdf_file[4:]) if d.pdf_file.startswith('r2__') else (UPLOAD_DIR/d.pdf_file).read_bytes();return send_file(io.BytesIO(raw),mimetype='application/pdf',download_name=f'{d.document_code}.pdf',as_attachment=False)
+
+@app.get('/api/materials/my-load')
+@login_required
+def materials_my_load_api():
+    uid=session['user_id']; rows=db.session.query(MaterialMovement.material_id,func.sum(case((MaterialMovement.movement_type.in_(['ENTREGA','SUBSTITUICAO_ENTRADA','TRANSFERENCIA_ENTRADA']),MaterialMovement.quantity),else_=-MaterialMovement.quantity))).filter(MaterialMovement.user_id==uid).group_by(MaterialMovement.material_id).all(); mids=[x[0] for x in rows]; mm={m.id:m for m in MaterialCatalogItem.query.filter(MaterialCatalogItem.id.in_(mids)).all()} if mids else {};return jsonify({'ok':True,'rows':[{'material_id':mid,'description':mm[mid].description if mid in mm else 'Item','quantity':float(qty or 0),'unit':mm[mid].unit if mid in mm else 'UN'} for mid,qty in rows if float(qty or 0)>0]})
+
+@app.get('/api/materials/summary')
+@login_required
+def materials_summary_api():
+    _materials_require('materials.dossier.view'); total=CollaboratorDocument.query.count();pending=CollaboratorDocument.query.filter_by(status='AGUARDANDO_ACEITE').count();signed=CollaboratorDocument.query.filter_by(status='ASSINADO').count();corr=CollaboratorDocument.query.filter_by(status='CORRECAO_SOLICITADA').count();req=MaterialRequest.query.filter(MaterialRequest.status.in_(['SOLICITADO','EM_ANALISE','APROVADO','EM_COMPRA','DISPONIVEL'])).count();return jsonify({'ok':True,'total':total,'pending':pending,'signed':signed,'corrections':corr,'requests_open':req})
+
+@app.get('/api/materials/requests')
+@login_required
+def materials_requests_api():
+    q=MaterialRequest.query
+    if not _has_access('materials.delivery.manage'):q=q.filter_by(user_id=session['user_id'])
+    rows=q.order_by(MaterialRequest.created_at.desc()).limit(300).all(); mids={x.material_id for x in rows};mm={m.id:m for m in MaterialCatalogItem.query.filter(MaterialCatalogItem.id.in_(mids)).all()} if mids else {};uu={u.id:u for u in User.query.filter(User.id.in_({x.user_id for x in rows})).all()} if rows else {};return jsonify({'ok':True,'rows':[{'id':x.id,'code':x.request_code or f'SM-{x.id:06d}','user_name':uu[x.user_id].name if x.user_id in uu else '—','material':mm[x.material_id].description if x.material_id in mm else '—','quantity':x.quantity,'urgency':x.urgency,'reason':x.reason or '', 'notes':x.notes or '', 'status':x.status,'created_at':x.created_at.isoformat()} for x in rows]})
+
+@app.post('/api/materials/requests')
+@login_required
+def materials_request_create_api():
+    _materials_require('materials.request');d=request.get_json(silent=True) or {}
+    try:mid=int(d.get('material_id'));qty=float(d.get('quantity') or 1)
+    except:return jsonify({'ok':False,'error':'Item/quantidade inválidos.'}),400
+    if qty<=0 or not db.session.get(MaterialCatalogItem,mid):return jsonify({'ok':False,'error':'Item/quantidade inválidos.'}),400
+    r=MaterialRequest(user_id=session['user_id'],material_id=mid,quantity=qty,reason=(d.get('reason') or '').strip(),urgency=(d.get('urgency') or 'NORMAL').upper(),notes=(d.get('notes') or '').strip());db.session.add(r);db.session.flush();r.request_code=f'SM-{r.id:06d}';db.session.commit();return jsonify({'ok':True,'code':r.request_code})
+
+@app.post('/api/materials/requests/<int:rid>/status')
+@login_required
+def materials_request_status_api(rid):
+    _materials_require('materials.delivery.manage');r=db.session.get(MaterialRequest,rid)
+    if not r:return jsonify({'ok':False,'error':'Solicitação não encontrada.'}),404
+    status=((request.get_json(silent=True) or {}).get('status') or '').upper();allowed={'SOLICITADO','EM_ANALISE','APROVADO','EM_COMPRA','DISPONIVEL','ENTREGUE','RECEBIDO','REJEITADO'}
+    if status not in allowed:return jsonify({'ok':False,'error':'Status inválido.'}),400
+    r.status=status;db.session.commit();return jsonify({'ok':True})
+
 # V56-B — índices aditivos para leituras críticas.
 try:
     with db.engine.begin() as conn:
@@ -11153,6 +11506,9 @@ with app.app_context():
     migrate_inventory_validator_columns()
     migrate_v421_columns()
     seed_data()
+    try: seed_v67_materials()
+    except Exception:
+        db.session.rollback(); app.logger.exception("Falha ao semear catálogo V67")
     try: _seed_garage_chip_base()
     except Exception:
         db.session.rollback(); app.logger.exception("Falha ao semear base Troca de Chips Garagem")
