@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V67 REV1"
+APP_RELEASE = "V68"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -11252,12 +11252,13 @@ def _material_pdf_bytes(doc):
         try:
             im=Image(str(logo),width=115,height=38); im.hAlign='LEFT'; story += [im,Spacer(1,4)]
         except Exception: pass
-    story += [Paragraph("TERMO DE RESPONSABILIDADE DE EQUIPAMENTOS",title),
-              Paragraph("Declaro que recebi da Tecsomobi Fábrica de Software e Inteligência Digital Ltda., a título de empréstimo e/ou para uso profissional, os materiais, ferramentas e equipamentos abaixo especificados.",body),
-              Spacer(1,5)]
+    is_return=(doc.document_type=='TERMO_DEVOLUCAO')
+    heading="TERMO DE DEVOLUÇÃO DE MATERIAIS / FERRAMENTAS" if is_return else "TERMO DE RESPONSABILIDADE DE EQUIPAMENTOS"
+    intro="Declaro o registro da devolução à Tecsomobi dos materiais, ferramentas e equipamentos abaixo especificados, nas quantidades e condições conferidas no ato do recebimento." if is_return else "Declaro que recebi da Tecsomobi Fábrica de Software e Inteligência Digital Ltda., a título de empréstimo e/ou para uso profissional, os materiais, ferramentas e equipamentos abaixo especificados."
+    story += [Paragraph(heading,title),Paragraph(intro,body),Spacer(1,5)]
     meta=[[Paragraph(f"<b>Documento:</b> {doc.document_code or '—'}",small),Paragraph(f"<b>Colaborador:</b> {u.name if u else '—'}",small)],
           [Paragraph(f"<b>Empresa:</b> {getattr(u,'company',None) or '—'}",small),Paragraph(f"<b>Cargo:</b> {getattr(u,'job_title',None) or '—'}",small)],
-          [Paragraph(f"<b>Data da entrega:</b> {doc.delivery_date.strftime('%d/%m/%Y') if doc.delivery_date else '—'}",small),Paragraph(f"<b>Itens:</b> {len(rows)}",small)]]
+          [Paragraph(f"<b>{'Data da devolução' if is_return else 'Data da entrega'}:</b> {doc.delivery_date.strftime('%d/%m/%Y') if doc.delivery_date else '—'}",small),Paragraph(f"<b>Itens:</b> {len(rows)}",small)]]
     mt=Table(meta,colWidths=[260,260]); mt.setStyle(TableStyle([('BOX',(0,0),(-1,-1),.5,colors.HexColor('#b8c5d3')),('INNERGRID',(0,0),(-1,-1),.25,colors.HexColor('#d9e2ec')),('BACKGROUND',(0,0),(-1,-1),colors.HexColor('#f7f9fc')),('VALIGN',(0,0),(-1,-1),'TOP'),('PADDING',(0,0),(-1,-1),6)])); story += [mt,Spacer(1,9)]
     data=[["Item","Descrição","Marca / Modelo","Qtd.","Un.","Estado"]]
     for i,x in enumerate(rows,1): data.append([str(i),Paragraph(x.description,small),Paragraph(" / ".join(y for y in (x.brand,x.model) if y) or "—",small),('%g'%x.quantity),x.unit or "UN",x.condition or "BOM"])
@@ -11269,10 +11270,14 @@ def _material_pdf_bytes(doc):
       "Os materiais e equipamentos sob minha responsabilidade poderão ser conferidos ou inspecionados pela empresa durante o período de custódia.",
       "Declaro que conferi a relação acima antes do aceite. Eventuais divergências devem ser apontadas por meio da opção Solicitar correção antes da assinatura."
     ]
-    story.append(Paragraph("<b>RESPONSABILIDADES E ORIENTAÇÕES</b>",body))
-    for tx in terms: story.append(Paragraph("• "+tx,body))
-    if doc.notes: story += [Spacer(1,3),Paragraph(f"<b>Observação da entrega:</b> {doc.notes}",small)]
-    story += [Spacer(1,9),Paragraph("<b>ACEITE ELETRÔNICO</b>",body),Paragraph(f"Aceite realizado em: <b>{doc.signed_at.strftime('%d/%m/%Y %H:%M:%S') if doc.signed_at else '—'}</b>",small),Paragraph(f"Colaborador: <b>{u.name if u else '—'}</b>",small)]
+    if is_return:
+        story.append(Paragraph("<b>REGISTRO DA DEVOLUÇÃO</b>",body))
+        story.append(Paragraph("• Os itens relacionados acima foram registrados como devolvidos nas condições informadas. Itens vinculados à carga do colaborador tiveram a respectiva quantidade baixada; devoluções avulsas permanecem identificadas para auditoria.",body))
+    else:
+        story.append(Paragraph("<b>RESPONSABILIDADES E ORIENTAÇÕES</b>",body))
+        for tx in terms: story.append(Paragraph("• "+tx,body))
+    if doc.notes: story += [Spacer(1,3),Paragraph(f"<b>{'Observação da devolução' if is_return else 'Observação da entrega'}:</b> {doc.notes}",small)]
+    story += [Spacer(1,9),Paragraph('<b>CARIMBO DE RECEBIMENTO / DEVOLUÇÃO</b>' if is_return else '<b>ACEITE ELETRÔNICO</b>',body),Paragraph(f"{'Devolução registrada em' if is_return else 'Aceite realizado em'}: <b>{doc.signed_at.strftime('%d/%m/%Y %H:%M:%S') if doc.signed_at else '—'}</b>",small),Paragraph(f"Colaborador: <b>{u.name if u else '—'}</b>",small)]
     sigraw=None
     try:
         if doc.signature_file:
@@ -11282,7 +11287,7 @@ def _material_pdf_bytes(doc):
         try:
             sig=Image(io.BytesIO(sigraw),width=180,height=56); sig.hAlign='LEFT'; story += [Spacer(1,4),sig,Paragraph("Assinatura manuscrita eletrônica do colaborador",small)]
         except Exception: pass
-    story += [Spacer(1,5),Paragraph(f"Carimbo de aceite: {doc.document_code or '—'} · usuário #{doc.user_id} · {doc.signed_at.strftime('%d/%m/%Y %H:%M:%S UTC') if doc.signed_at else '—'}",small),Paragraph("Este PDF é a versão assinada vinculada ao dossiê digital do colaborador. O original eletrônico e sua trilha de auditoria permanecem armazenados no sistema.",small)]
+    story += [Spacer(1,5),Paragraph(f"{'Carimbo de devolução' if is_return else 'Carimbo de aceite'}: {doc.document_code or '—'} · usuário #{doc.user_id} · {doc.signed_at.strftime('%d/%m/%Y %H:%M:%S UTC') if doc.signed_at else '—'}",small),Paragraph("Este PDF é a versão assinada vinculada ao dossiê digital do colaborador. O original eletrônico e sua trilha de auditoria permanecem armazenados no sistema.",small)]
     pdf.build(story); return out.getvalue()
 
 @app.get('/documentos-materiais')
@@ -11480,7 +11485,7 @@ def materials_summary_api():
 def materials_requests_api():
     q=MaterialRequest.query
     if not _has_access('materials.delivery.manage'):q=q.filter_by(user_id=session['user_id'])
-    rows=q.order_by(MaterialRequest.created_at.desc()).limit(300).all(); mids={x.material_id for x in rows};mm={m.id:m for m in MaterialCatalogItem.query.filter(MaterialCatalogItem.id.in_(mids)).all()} if mids else {};uu={u.id:u for u in User.query.filter(User.id.in_({x.user_id for x in rows})).all()} if rows else {};return jsonify({'ok':True,'rows':[{'id':x.id,'code':x.request_code or f'SM-{x.id:06d}','user_name':uu[x.user_id].name if x.user_id in uu else '—','material':mm[x.material_id].description if x.material_id in mm else '—','quantity':x.quantity,'urgency':x.urgency,'reason':x.reason or '', 'notes':x.notes or '', 'status':x.status,'created_at':x.created_at.isoformat()} for x in rows]})
+    rows=q.order_by(MaterialRequest.created_at.desc()).limit(300).all(); mids={x.material_id for x in rows};mm={m.id:m for m in MaterialCatalogItem.query.filter(MaterialCatalogItem.id.in_(mids)).all()} if mids else {};uu={u.id:u for u in User.query.filter(User.id.in_({x.user_id for x in rows})).all()} if rows else {};return jsonify({'ok':True,'rows':[{'id':x.id,'code':x.request_code or f'SM-{x.id:06d}','user_id':x.user_id,'user_name':uu[x.user_id].name if x.user_id in uu else '—','job_title':uu[x.user_id].job_title if x.user_id in uu else '', 'company':uu[x.user_id].company if x.user_id in uu else '', 'material_id':x.material_id,'material':mm[x.material_id].description if x.material_id in mm else '—','category':mm[x.material_id].category if x.material_id in mm else '', 'quantity':x.quantity,'urgency':x.urgency,'reason':x.reason or '', 'notes':x.notes or '', 'status':x.status,'created_at':x.created_at.isoformat()} for x in rows]})
 
 @app.post('/api/materials/requests')
 @login_required
@@ -11490,6 +11495,79 @@ def materials_request_create_api():
     except:return jsonify({'ok':False,'error':'Item/quantidade inválidos.'}),400
     if qty<=0 or not db.session.get(MaterialCatalogItem,mid):return jsonify({'ok':False,'error':'Item/quantidade inválidos.'}),400
     r=MaterialRequest(user_id=session['user_id'],material_id=mid,quantity=qty,reason=(d.get('reason') or '').strip(),urgency=(d.get('urgency') or 'NORMAL').upper(),notes=(d.get('notes') or '').strip());db.session.add(r);db.session.flush();r.request_code=f'SM-{r.id:06d}';db.session.commit();return jsonify({'ok':True,'code':r.request_code})
+
+@app.get('/api/materials/requests/export.xlsx')
+@login_required
+def materials_requests_export_api():
+    if not (_has_access('materials.delivery.manage') or _has_access('materials.dossier.view')): abort(403)
+    q=MaterialRequest.query.order_by(MaterialRequest.created_at.desc())
+    rows=q.all(); mids={x.material_id for x in rows}; uids={x.user_id for x in rows}
+    mm={m.id:m for m in MaterialCatalogItem.query.filter(MaterialCatalogItem.id.in_(mids)).all()} if mids else {}
+    uu={u.id:u for u in User.query.filter(User.id.in_(uids)).all()} if uids else {}
+    # Os filtros são repetidos no servidor para que o Excel corresponda à visão administrativa.
+    name=(request.args.get('name') or '').strip().lower(); status=(request.args.get('status') or '').strip().upper(); urgency=(request.args.get('urgency') or '').strip().upper(); category=(request.args.get('category') or '').strip().upper(); qtext=(request.args.get('q') or '').strip().lower(); dt_from=(request.args.get('from') or '').strip(); dt_to=(request.args.get('to') or '').strip()
+    def keep(x):
+        u=uu.get(x.user_id); m=mm.get(x.material_id); created=x.created_at.date().isoformat() if x.created_at else ''
+        if name and name not in ((u.name if u else '') or '').lower(): return False
+        if status and x.status!=status: return False
+        if urgency and x.urgency!=urgency: return False
+        if category and (m.category if m else '')!=category: return False
+        if dt_from and created<dt_from: return False
+        if dt_to and created>dt_to: return False
+        hay=' '.join([x.request_code or '',u.name if u else '',u.company if u else '',u.job_title if u else '',m.description if m else '',m.category if m else '',x.reason or '',x.notes or '']).lower()
+        return not qtext or qtext in hay
+    rows=[x for x in rows if keep(x)]
+    wb=Workbook(); ws=wb.active; ws.title='Solicitações'
+    headers=['Solicitação','Data','Colaborador','Cargo','Empresa','Categoria','Material','Quantidade','Urgência','Status','Motivo','Observação']
+    ws.append(headers)
+    for c in ws[1]: c.font=Font(bold=True); c.fill=PatternFill('solid',fgColor='D9EAF7'); c.alignment=Alignment(horizontal='center')
+    for x in rows:
+        u=uu.get(x.user_id); m=mm.get(x.material_id)
+        ws.append([x.request_code or f'SM-{x.id:06d}',x.created_at.strftime('%d/%m/%Y %H:%M') if x.created_at else '',u.name if u else '',u.job_title if u else '',u.company if u else '',m.category if m else '',m.description if m else '',x.quantity,x.urgency,x.status,x.reason or '',x.notes or ''])
+    for i,w in enumerate([16,18,28,22,22,18,42,12,14,18,38,38],1): ws.column_dimensions[get_column_letter(i)].width=w
+    bio=io.BytesIO(); wb.save(bio); bio.seek(0)
+    return send_file(bio,mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',as_attachment=True,download_name='solicitacoes_materiais.xlsx')
+
+@app.get('/api/materials/load/<int:uid>')
+@login_required
+def materials_user_load_api(uid):
+    _materials_require('materials.delivery.manage')
+    rows=db.session.query(MaterialMovement.material_id,func.sum(case((MaterialMovement.movement_type.in_(['ENTREGA','SUBSTITUICAO_ENTRADA','TRANSFERENCIA_ENTRADA']),MaterialMovement.quantity),else_=-MaterialMovement.quantity))).filter(MaterialMovement.user_id==uid).group_by(MaterialMovement.material_id).all()
+    mids=[x[0] for x in rows]; mm={m.id:m for m in MaterialCatalogItem.query.filter(MaterialCatalogItem.id.in_(mids)).all()} if mids else {}
+    return jsonify({'ok':True,'rows':[{'material_id':mid,'description':mm[mid].description if mid in mm else 'Item','quantity':float(qty or 0),'unit':mm[mid].unit if mid in mm else 'UN','control_type':mm[mid].control_type if mid in mm else 'DEVOLVIVEL'} for mid,qty in rows if float(qty or 0)>0]})
+
+@app.post('/api/materials/returns')
+@login_required
+def materials_return_create_api():
+    _materials_require('materials.delivery.manage'); data=request.get_json(silent=True) or {}
+    try: uid=int(data.get('user_id'))
+    except: return jsonify({'ok':False,'error':'Selecione o colaborador.'}),400
+    u=db.session.get(User,uid)
+    if not u:return jsonify({'ok':False,'error':'Colaborador não encontrado.'}),404
+    items=data.get('items') or []
+    if not items:return jsonify({'ok':False,'error':'Informe ao menos um item devolvido.'}),400
+    # saldo atual para impedir carga negativa; item avulso é permitido e não baixa saldo inexistente.
+    balances=dict(db.session.query(MaterialMovement.material_id,func.sum(case((MaterialMovement.movement_type.in_(['ENTREGA','SUBSTITUICAO_ENTRADA','TRANSFERENCIA_ENTRADA']),MaterialMovement.quantity),else_=-MaterialMovement.quantity))).filter(MaterialMovement.user_id==uid).group_by(MaterialMovement.material_id).all())
+    d=CollaboratorDocument(document_type='TERMO_DEVOLUCAO',user_id=uid,status='DEVOLVIDO',delivery_date=date.today(),title='Termo de Devolução de Materiais / Ferramentas',notes=(data.get('notes') or '').strip(),created_by=session['user_id'],signed_at=datetime.utcnow())
+    db.session.add(d);db.session.flush();d.document_code=f'TDV-{d.id:06d}'
+    for it in items:
+        try: mid=int(it.get('material_id')); qty=float(it.get('quantity') or 0)
+        except: continue
+        m=db.session.get(MaterialCatalogItem,mid)
+        if not m or qty<=0: continue
+        current=float(balances.get(mid) or 0); avulsa=bool(it.get('avulsa')) or current<=0
+        if not avulsa and qty>current+1e-9: return jsonify({'ok':False,'error':f'{m.description}: devolução maior que a carga atual ({current:g}).'}),400
+        note=(it.get('notes') or '').strip(); note=('DEVOLUÇÃO AVULSA — item não localizado na carga atual. '+note).strip() if avulsa else note
+        db.session.add(CollaboratorDocumentItem(document_id=d.id,material_id=mid,description=m.description,brand=m.brand,model=m.model,quantity=qty,unit=m.unit,condition=(it.get('condition') or 'BOM').upper(),notes=note))
+        if not avulsa: db.session.add(MaterialMovement(user_id=uid,material_id=mid,document_id=d.id,movement_type='DEVOLUCAO',quantity=qty,condition=(it.get('condition') or 'BOM').upper(),notes=note,created_by=session['user_id']))
+        else: db.session.add(MaterialMovement(user_id=uid,material_id=mid,document_id=d.id,movement_type='DEVOLUCAO_AVULSA',quantity=0,condition=(it.get('condition') or 'BOM').upper(),notes=note,created_by=session['user_id']))
+    db.session.flush()
+    pdfraw=_material_pdf_bytes(d); pkey=f'dossie/{d.user_id}/{d.document_code}.pdf'
+    if _r2_available(): _r2_put_bytes(pkey,pdfraw,'application/pdf'); d.pdf_file='r2__'+pkey
+    else:
+        name=f'{d.document_code}.pdf'; (UPLOAD_DIR/name).write_bytes(pdfraw); d.pdf_file=name
+    db.session.add(AuditEvent(user_id=session['user_id'],event_type='MATERIAL_RETURN',entity_type='collaborator_document',entity_id=str(d.id),detail=d.document_code));db.session.commit()
+    return jsonify({'ok':True,'code':d.document_code,'document_id':d.id})
 
 @app.post('/api/materials/requests/<int:rid>/status')
 @login_required
