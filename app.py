@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V69.2"
+APP_RELEASE = "V69.2.1 HOTFIX1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -292,6 +292,29 @@ class User(db.Model):
     personnel_status_note = db.Column(db.String(240))
     access_json = db.Column(db.Text)
     gps_required = db.Column(db.Boolean, nullable=False, default=False)
+    customer_company_ids = db.Column(db.Text)  # JSON: empresas liberadas para perfil Cliente
+
+
+
+class CustomerCompany(db.Model):
+    __tablename__ = "customer_companies"
+    id = db.Column(db.Integer, primary_key=True)
+    legal_name = db.Column(db.String(180), nullable=False)
+    trade_name = db.Column(db.String(180))
+    cnpj = db.Column(db.String(30), unique=True, index=True)
+    state_registration = db.Column(db.String(60))
+    contact_name = db.Column(db.String(180))
+    contact_role = db.Column(db.String(120))
+    phone = db.Column(db.String(40))
+    mobile = db.Column(db.String(40))
+    email = db.Column(db.String(180))
+    address = db.Column(db.String(300))
+    city = db.Column(db.String(120))
+    state = db.Column(db.String(10))
+    zip_code = db.Column(db.String(20))
+    notes = db.Column(db.Text)
+    active = db.Column(db.Boolean, nullable=False, default=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
 
 
@@ -5292,6 +5315,8 @@ def users_page():
         archived_users=archived_users,
         can_assign_sensitive_roles=_current_user_is_superadmin(),
         is_hr_admin=session.get("role") == "hr",
+        customer_companies=CustomerCompany.query.filter_by(active=True).order_by(CustomerCompany.legal_name).all(),
+        customer_company_map={u.id:_customer_company_ids(u) for u in active_users},
     )
 
 
@@ -5341,6 +5366,12 @@ def create_user():
     email = _normalize_optional_email(request.form.get("email"))
     phone = _normalize_optional_phone(request.form.get("phone"))
     company = request.form.get("company", "").strip() or None
+    customer_company_ids=request.form.getlist("customer_company_ids") if role=="customer" else []
+    customer_company_ids=[x for x in customer_company_ids if str(x).isdigit() and db.session.get(CustomerCompany,int(x))]
+    if role=="customer" and len(customer_company_ids)>1 and not _current_user_is_superadmin():
+        customer_company_ids=customer_company_ids[:1]
+    if role=="customer" and customer_company_ids:
+        c0=db.session.get(CustomerCompany,int(customer_company_ids[0])); company=c0.legal_name if c0 else company
     job_title = request.form.get("job_title", "").strip() or None
     personnel_status = request.form.get("personnel_status", "ATIVO").strip().upper() or "ATIVO"
     personnel_status_note = request.form.get("personnel_status_note", "").strip() or None
@@ -5409,6 +5440,7 @@ def create_user():
         work_anchor_status=work_anchor_status if role in ("technician", "technician_implantation", "manager_field") and work_schedule_type == "12x36" else None,
         access_json=json.dumps(_parse_access_form(role), ensure_ascii=False),
         gps_required=(gps_required if role in ("technician","technician_implantation","manager_field","dispatcher") else False),
+        customer_company_ids=json.dumps([int(x) for x in customer_company_ids]) if role=="customer" else None,
     )
 
     photo = request.files.get("photo")
@@ -5514,6 +5546,12 @@ def edit_user(user_id):
     email = _normalize_optional_email(request.form.get("email"))
     phone = _normalize_optional_phone(request.form.get("phone"))
     company = request.form.get("company", "").strip() or None
+    customer_company_ids=request.form.getlist("customer_company_ids") if role=="customer" else []
+    customer_company_ids=[x for x in customer_company_ids if str(x).isdigit() and db.session.get(CustomerCompany,int(x))]
+    if role=="customer" and len(customer_company_ids)>1 and not _current_user_is_superadmin():
+        customer_company_ids=customer_company_ids[:1]
+    if role=="customer" and customer_company_ids:
+        c0=db.session.get(CustomerCompany,int(customer_company_ids[0])); company=c0.legal_name if c0 else company
     job_title = request.form.get("job_title", user.job_title or "").strip() or None
     personnel_status = request.form.get("personnel_status", user.personnel_status or "ATIVO").strip().upper() or "ATIVO"
     personnel_status_note = request.form.get("personnel_status_note", user.personnel_status_note or "").strip() or None
@@ -5624,6 +5662,7 @@ def edit_user(user_id):
     user.email = email
     user.phone = phone
     user.company = company
+    user.customer_company_ids=json.dumps([int(x) for x in customer_company_ids]) if role=="customer" else None
     user.job_title = job_title
     user.personnel_status = personnel_status
     user.personnel_status_note = personnel_status_note
@@ -11840,13 +11879,23 @@ def materials_request_status_api(rid):
 
 
 # ---------------- V69 Portal do Cliente ----------------
+def _customer_company_ids(u):
+    try: return [int(x) for x in json.loads(getattr(u,'customer_company_ids',None) or '[]') if str(x).isdigit()]
+    except Exception: return []
+
+def _customer_companies_for_user(u):
+    ids=_customer_company_ids(u)
+    if ids: return CustomerCompany.query.filter(CustomerCompany.id.in_(ids),CustomerCompany.active.is_(True)).order_by(CustomerCompany.trade_name,CustomerCompany.legal_name).all()
+    if (u.company or '').strip(): return CustomerCompany.query.filter(CustomerCompany.active.is_(True),func.lower(CustomerCompany.legal_name)==u.company.strip().lower()).all()
+    return []
+
 def _portal_internal():
     return session.get('role') != 'customer' and (_has_access('portal.receive') or _has_access('portal.manage'))
 
 def _portal_can_see(a):
     if _portal_internal(): return True
     u=db.session.get(User,session.get('user_id'))
-    return bool(u and u.role=='customer' and (u.company or '').strip().casefold()==(a.customer_company or '').strip().casefold())
+    return bool(u and u.role=='customer' and (a.customer_company or '').strip().casefold() in {(c.legal_name or '').strip().casefold() for c in _customer_companies_for_user(u)})
 
 def _portal_code(aid): return f"AG-{datetime.utcnow().year}-{aid:06d}"
 
@@ -11871,6 +11920,10 @@ def _portal_pdf(a, item=None):
     st=getSampleStyleSheet(); title=ParagraphStyle('pt',parent=st['Title'],fontSize=18,leading=22,textColor=colors.HexColor('#123b68')); body=ParagraphStyle('pb',parent=st['BodyText'],fontSize=9,leading=12)
     story=[Paragraph('AGENDAMENTO DE ENTRADA DE EQUIPAMENTO',title),Spacer(1,8)]
     story.append(Paragraph(f"<b>Agendamento:</b> {a.code} &nbsp;&nbsp; <b>Cliente:</b> {a.customer_company} &nbsp;&nbsp; <b>Responsável:</b> {a.responsible_name}",body))
+    cc=CustomerCompany.query.filter(func.lower(CustomerCompany.legal_name)==(a.customer_company or '').lower()).first()
+    if cc:
+        story.append(Paragraph(f"<b>Razão social:</b> {cc.legal_name} &nbsp;&nbsp; <b>CNPJ:</b> {cc.cnpj or '—'} &nbsp;&nbsp; <b>Contato:</b> {cc.contact_name or '—'} &nbsp;&nbsp; <b>Telefone:</b> {cc.phone or cc.mobile or '—'}",body))
+        story.append(Paragraph(f"<b>E-mail:</b> {cc.email or '—'} &nbsp;&nbsp; <b>Endereço:</b> {cc.address or '—'} {cc.city or ''}/{cc.state or ''}",body))
     story.append(Paragraph(f"<b>Data do agendamento:</b> {a.scheduled_date.strftime('%d/%m/%Y') if a.scheduled_date else '—'} &nbsp;&nbsp; <b>Aceite:</b> {a.accepted_at.strftime('%d/%m/%Y %H:%M') if a.accepted_at else '—'}",body)); story.append(Spacer(1,10))
     rows=[item] if item else CustomerAppointmentEquipment.query.filter_by(appointment_id=a.id).order_by(CustomerAppointmentEquipment.item_no).all()
     data=[["Protocolo","Série","Equipamento","Versão","EOD","Defeito","Observação"]]
@@ -11903,11 +11956,36 @@ Acesse o Portal do Cliente para visualizar e baixar os PDFs individuais.")
     except Exception as exc:
         app.logger.exception('Falha ao enviar e-mail do agendamento %s',a.code); return 'FALHA',str(exc)[:450]
 
+
+@app.route('/portal-cliente/cadastro-clientes', methods=['GET','POST'])
+@login_required
+def portal_customer_companies():
+    if session.get('role')!='manager': abort(403)
+    if request.method=='POST':
+        d=request.form; legal=(d.get('legal_name') or '').strip()
+        if not legal: flash('Razão social é obrigatória.'); return redirect(request.path)
+        c=CustomerCompany(legal_name=legal,trade_name=(d.get('trade_name') or '').strip() or None,cnpj=(d.get('cnpj') or '').strip() or None,state_registration=(d.get('state_registration') or '').strip() or None,contact_name=(d.get('contact_name') or '').strip() or None,contact_role=(d.get('contact_role') or '').strip() or None,phone=(d.get('phone') or '').strip() or None,mobile=(d.get('mobile') or '').strip() or None,email=(d.get('email') or '').strip() or None,address=(d.get('address') or '').strip() or None,city=(d.get('city') or '').strip() or None,state=(d.get('state') or '').strip().upper() or None,zip_code=(d.get('zip_code') or '').strip() or None,notes=(d.get('notes') or '').strip() or None)
+        db.session.add(c); db.session.commit(); flash('Cliente cadastrado.'); return redirect(request.path)
+    return render_template('customer_companies.html',companies=CustomerCompany.query.order_by(CustomerCompany.active.desc(),CustomerCompany.legal_name).all())
+
+@app.post('/portal-cliente/cadastro-clientes/<int:cid>/editar')
+@login_required
+def portal_customer_company_edit(cid):
+    if session.get('role')!='manager': abort(403)
+    c=db.session.get(CustomerCompany,cid)
+    if not c: abort(404)
+    d=request.form; legal=(d.get('legal_name') or '').strip()
+    if not legal: flash('Razão social é obrigatória.'); return redirect('/portal-cliente/cadastro-clientes')
+    for attr in ('trade_name','cnpj','state_registration','contact_name','contact_role','phone','mobile','email','address','city','zip_code','notes'):
+        setattr(c,attr,(d.get(attr) or '').strip() or None)
+    c.legal_name=legal; c.state=(d.get('state') or '').strip().upper() or None; c.active=d.get('active')=='1'
+    db.session.commit(); flash('Cadastro do cliente atualizado.'); return redirect('/portal-cliente/cadastro-clientes')
+
 @app.get('/portal-cliente')
 @login_required
 def portal_cliente_page():
     if not (_has_access('portal.appointments') or _portal_internal()): abort(403)
-    return render_template('customer_portal.html',app_release=APP_RELEASE,internal=_portal_internal())
+    u=db.session.get(User,session['user_id']); return render_template('customer_portal.html',app_release=APP_RELEASE,internal=_portal_internal(),customer_companies=_customer_companies_for_user(u) if u and u.role=='customer' else CustomerCompany.query.filter_by(active=True).order_by(CustomerCompany.legal_name).all())
 
 @app.get('/api/portal/appointments')
 @login_required
@@ -11915,7 +11993,7 @@ def portal_appointments_list():
     if not (_has_access('portal.appointments') or _portal_internal()): abort(403)
     q=CustomerAppointment.query
     if not _portal_internal():
-        u=db.session.get(User,session['user_id']); q=q.filter(func.lower(CustomerAppointment.customer_company)==(u.company or '').lower())
+        u=db.session.get(User,session['user_id']); allowed=[c.legal_name for c in _customer_companies_for_user(u)]; q=q.filter(CustomerAppointment.customer_company.in_(allowed or ['__SEM_EMPRESA__']))
     rows=q.order_by(CustomerAppointment.created_at.desc()).limit(500).all(); out=[]
     for a in rows:
         items=CustomerAppointmentEquipment.query.filter_by(appointment_id=a.id).all()
@@ -11928,7 +12006,7 @@ def portal_appointments_create():
     if not _has_access('portal.appointments'): abort(403)
     u=db.session.get(User,session['user_id']); data=request.get_json(silent=True) or {}; items=data.get('items') or []
     if not items: return jsonify({'ok':False,'error':'Adicione pelo menos um equipamento.'}),400
-    company=(u.company or data.get('company') or '').strip(); responsible=(data.get('responsible') or u.name or '').strip()
+    allowed=_customer_companies_for_user(u); requested=(data.get('company') or '').strip(); company=(requested if requested and requested in [c.legal_name for c in allowed] else (allowed[0].legal_name if allowed else (u.company or '').strip())); responsible=(data.get('responsible') or u.name or '').strip()
     if not company:return jsonify({'ok':False,'error':'Usuário sem cliente/empresa vinculada.'}),400
     a=CustomerAppointment(customer_company=company,responsible_name=responsible,responsible_email=(data.get('email') or u.email or '').strip(),responsible_phone=(data.get('phone') or u.phone or '').strip(),scheduled_date=None,notes=(data.get('notes') or '').strip(),status='RASCUNHO',created_by=u.id); db.session.add(a);db.session.flush();a.code=_portal_code(a.id)
     for i,x in enumerate(items,1):
@@ -11944,7 +12022,7 @@ def portal_appointments_submit(aid):
     if not a or not _portal_can_see(a) or a.created_by!=session['user_id']: abort(404)
     if a.status!='RASCUNHO': return jsonify({'ok':False,'error':'Agendamento já finalizado.'}),409
     data=request.get_json(silent=True) or {}; sig=data.get('signature_data'); name=(data.get('accepted_name') or a.responsible_name).strip()
-    # V69.2: assinatura eletrônica permanece disponível, porém não bloqueia a finalização.
+    # V69.2.1: assinatura eletrônica permanece disponível, porém não bloqueia a finalização.
     a.signature_file=_portal_store_dataurl(sig,f'assinatura-{a.code}') if sig else None
     a.accepted_name=name;a.accepted_at=datetime.utcnow();a.scheduled_date=datetime.now(ZoneInfo('America/Sao_Paulo')).date();a.status='ENVIADO'
     pdf=_portal_pdf(a); key=f"portal-cliente/{datetime.utcnow().strftime('%Y/%m')}/{a.code}.pdf"
@@ -11976,11 +12054,20 @@ def _portal_safe_filename_part(value):
     value=re.sub(r'[^A-Za-z0-9._-]+','-',str(value or '').strip()).strip('-_.')
     return value[:100] or 'SEM-SN'
 
+
+def _portal_refresh_status(a):
+    items=CustomerAppointmentEquipment.query.filter_by(appointment_id=a.id).all()
+    if not items: return
+    if all(x.received for x in items):
+        ids=[str(x.id) for x in items]
+        downloaded={r[0] for r in db.session.query(AuditEvent.entity_id).filter(AuditEvent.entity_type=='customer_appointment_equipment',AuditEvent.entity_id.in_(ids),AuditEvent.event_type.in_(['PORTAL_EQUIPMENT_PDF_DOWNLOADED','PORTAL_EQUIPMENT_PDF_DOWNLOADED_ALL'])).distinct().all()}
+        a.status='CONCLUIDO' if len(downloaded)==len(ids) else 'RECEBIDO'
+
 def _portal_equipment_pdf_filename(a,x):
     return f"{_portal_equipment_code(a,x)}_SN-{_portal_safe_filename_part(x.serial_number)}.pdf"
 
 def _portal_record_pdf_download(a,x,event_type='PORTAL_EQUIPMENT_PDF_DOWNLOADED'):
-    db.session.add(AuditEvent(user_id=session.get('user_id'),event_type=event_type,entity_type='customer_appointment_equipment',entity_id=str(x.id),detail=f'{a.code} · série {x.serial_number} · {_portal_equipment_pdf_filename(a,x)}'))
+    db.session.add(AuditEvent(user_id=session.get('user_id'),event_type=event_type,entity_type='customer_appointment_equipment',entity_id=str(x.id),detail=f'{a.code} · série {x.serial_number} · {_portal_equipment_pdf_filename(a,x)}')); db.session.flush(); _portal_refresh_status(a)
 
 @app.get('/api/portal/equipments/<int:eid>/pdf')
 @login_required
@@ -12015,6 +12102,7 @@ def portal_equipment_receive(eid):
     x.received=True;x.received_at=datetime.utcnow();x.received_by=session['user_id'];db.session.flush()
     total=CustomerAppointmentEquipment.query.filter_by(appointment_id=a.id).count(); rec=CustomerAppointmentEquipment.query.filter_by(appointment_id=a.id,received=True).count()
     a.status='RECEBIDO' if rec>=total else 'RECEBIMENTO_PARCIAL';a.received_at=datetime.utcnow() if rec>=total else None;a.received_by=session['user_id'] if rec>=total else None
+    if rec>=total: _portal_refresh_status(a)
     db.session.add(AuditEvent(user_id=session['user_id'],event_type='PORTAL_EQUIPMENT_RECEIVED',entity_type='customer_appointment',entity_id=str(a.id),detail=f'{a.code} · série {x.serial_number}'));db.session.commit();return jsonify({'ok':True,'status':a.status})
 
 # V56-B — índices aditivos para leituras críticas.
@@ -12048,6 +12136,13 @@ with app.app_context():
     except Exception:
         try: db.session.rollback()
         except Exception: pass
+
+    # V69.2.1 HOTFIX1 — cadastro de clientes e vínculos multiempresa.
+    try:
+        insp=db.inspect(db.engine)
+        if insp.has_table('users') and 'customer_company_ids' not in {c['name'] for c in insp.get_columns('users')}:
+            with db.engine.begin() as conn: conn.execute(text("ALTER TABLE users ADD COLUMN customer_company_ids TEXT"))
+    except Exception: app.logger.exception('Falha migração vínculo Cliente x Empresa')
     migrate_location_reference_columns()
     migrate_panorama_status_column()
     # V39.7.1: não deixa a criação das novas tabelas de Troca de Chips bloquear o startup.
