@@ -1,4 +1,5 @@
 {% extends "base.html" %}{% block title %}Financeiro · Central Financeira{% endblock %}{% block content %}
+<nav class="activityNav"><a class="active" href="/financeiro/lancamentos">Atividade</a><a href="/financeiro/dashboard">Dashboard</a></nav>
 <div class="container fin563"><div class="sectionHead"><div><span class="eyebrow">FINANCEIRO · {{ app_release }}</span><h1>Central Financeira</h1><p class="muted">Cadastro único por centro de custo, competência, fornecedor, serviço, realizado, forecast e rateio.</p></div><div class="heroActions"><input id="finImportFile" type="file" accept=".xlsx" hidden><button type="button" class="secondary" id="finImportBtn">Importar planilha</button></div></div><div id="finImportMsg" class="muted fin563ImportMsg"></div>
 <nav class="financialTabs fin526Tabs"><a class="buttonLink active" href="/financeiro/suporte-campo">Suporte a Campo</a><a class="buttonLink" href="/financeiro/suporte-campo/coleta-valores">Coleta de Valores</a><a class="buttonLink" href="/financeiro/assistencia-tecnica">Assistência Técnica</a><a class="buttonLink" href="/financeiro/implantacao">Implantação de Hardware</a></nav>
 

@@ -1,0 +1,18 @@
+{% extends "base.html" %}{% block content %}
+<div class="dashHero v44Hero"><div><span class="eyebrow">{{ app_release }} · CENTRAL ANALÍTICA</span><h1>Dashboards</h1><p>Todos os painéis analíticos disponíveis para o seu perfil em um único lugar. As áreas operacionais permanecem em Field, Implantação, RH, Portal, Documentos, Gestão e Financeiro.</p></div></div>
+<style>.dhGrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.dhCard{display:block;text-decoration:none;color:inherit;border-top:4px solid #1d4ed8}.dhCard h2{margin:5px 0}.dhCard b{color:#1d4ed8}.dhGroup{grid-column:1/-1;margin:8px 0 -4px;font-size:12px;font-weight:900;letter-spacing:.08em;color:#64748b}.dhCard:hover{transform:translateY(-1px)}@media(max-width:900px){.dhGrid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:600px){.dhGrid{grid-template-columns:1fr}}</style>
+<div class="dhGrid">
+<div class="dhGroup">GERAL</div>
+{% if can_view('dashboard.general') %}<a class="card dhCard" href="/gerencial"><span class="eyebrow">EXECUTIVO</span><h2>Visão Geral</h2><p class="muted">Indicadores consolidados e leitura executiva.</p><b>Abrir dashboard →</b></a>{% endif %}
+{% if can_view('field.dashboard') %}<a class="card dhCard" href="/dashboard/field"><span class="eyebrow">FIELD</span><h2>Dashboard Field</h2><p class="muted">Inventário, divergências, chamados e trocas com filtros e drill-down.</p><b>Abrir dashboard →</b></a>{% endif %}
+<div class="dhGroup">OPERAÇÕES</div>
+{% if can_view('field.chip_recarga') %}<a class="card dhCard" href="/gerencial?view=chips"><span class="eyebrow">FIELD</span><h2>Troca de Chips Recarga</h2><p class="muted">Progresso e situação da operação Recarga.</p><b>Abrir dashboard →</b></a>{% endif %}
+{% if can_view('field.panorama') %}<a class="card dhCard" href="/gerencial?view=panorama"><span class="eyebrow">FIELD</span><h2>Visão Panorâmica</h2><p class="muted">Cobertura e evolução das estações.</p><b>Abrir dashboard →</b></a>{% endif %}
+{% if can_view('implantation.emv') %}<a class="card dhCard" href="/gerencial?view=emv"><span class="eyebrow">IMPLANTAÇÃO</span><h2>Troca de Chips EMV</h2><p class="muted">Acompanhamento dos bloqueios EMV.</p><b>Abrir dashboard →</b></a>{% endif %}
+{% if can_view('implantation.garage') or session.get('role')=='manager' %}<a class="card dhCard" href="/troca-chips-garagem/dashboard"><span class="eyebrow">IMPLANTAÇÃO</span><h2>Garagem</h2><p class="muted">Progresso dos terminais de garagem.</p><b>Abrir dashboard →</b></a>{% endif %}
+{% if can_view('implantation.dashboard') %}<a class="card dhCard" href="/dashboard/implantacao"><span class="eyebrow">IMPLANTAÇÃO</span><h2>Implantação de Hardware</h2><p class="muted">Visitas, projetos, pendências e aceite.</p><b>Abrir dashboard →</b></a>{% endif %}
+<div class="dhGroup">PATRIMÔNIO & FINANCEIRO</div>
+{% if can_view('dashboard.general') %}<a class="card dhCard" href="/dashboard/atm"><span class="eyebrow">ATM</span><h2>ATM</h2><p class="muted">Parque ATM e indicadores associados.</p><b>Abrir dashboard →</b></a><a class="card dhCard" href="/dashboard/contratos-atm"><span class="eyebrow">CONTRATOS</span><h2>Contratos ATM</h2><p class="muted">Contratos, locação e acompanhamento.</p><b>Abrir dashboard →</b></a>{% endif %}
+{% if can_view('finance.dashboard') %}<a class="card dhCard" href="/financeiro/dashboard"><span class="eyebrow">FINANCEIRO</span><h2>Financeiro</h2><p class="muted">Visão financeira consolidada.</p><b>Abrir dashboard →</b></a>{% endif %}
+</div>
+{% endblock %}
