@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V69.3.2"
+APP_RELEASE = "V69.4"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -293,6 +293,7 @@ class User(db.Model):
     access_json = db.Column(db.Text)
     gps_required = db.Column(db.Boolean, nullable=False, default=False)
     customer_company_ids = db.Column(db.Text)  # JSON: empresas liberadas para perfil Cliente
+    system_profile_id = db.Column(db.Integer, db.ForeignKey("system_profiles.id"), index=True)
 
 
 
@@ -305,6 +306,16 @@ class SystemProfile(db.Model):
     active = db.Column(db.Boolean, nullable=False, default=True, index=True)
     created_by = db.Column(db.Integer, db.ForeignKey("users.id"))
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+class BuiltinDashboardSetting(db.Model):
+    __tablename__ = "builtin_dashboard_settings"
+    id = db.Column(db.Integer, primary_key=True)
+    dashboard_key = db.Column(db.String(80), nullable=False, unique=True, index=True)
+    visible = db.Column(db.Boolean, nullable=False, default=True)
+    order_index = db.Column(db.Integer, nullable=False, default=100)
+    allowed_roles_json = db.Column(db.Text, nullable=False, default="[]")
+    updated_by = db.Column(db.Integer, db.ForeignKey("users.id"))
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 class CustomerCompany(db.Model):
@@ -1282,7 +1293,7 @@ ACCESS_GROUPS = {
     )),
     "finance_dashboard": ("Dashboard Financeira", ("finance.dashboard",)),
     "management": ("Gestão", (
-        "management.calls","management.360","management.notifications","management.diagnostics","management.settings"
+        "management.calls","management.360","management.notifications","management.diagnostics","management.settings","management.dashboard_config","management.profiles"
     )),
     "materials": ("Dossiê / Materiais", (
         "materials.my_documents","materials.request","materials.catalog.view","materials.catalog.manage","materials.kits.manage","materials.delivery.create","materials.delivery.manage","materials.dossier.view"
@@ -1300,7 +1311,7 @@ ACCESS_LABELS = {
  "teams.map":"Mapa operacional","teams.today":"Operação de Hoje","teams.schedule":"Escala por dias","teams.manage":"Gestão de equipes / escala","teams.export":"Exportar dados",
  "users.view":"Visualizar usuários","users.create":"Criar usuário","users.edit":"Editar usuário","users.activate":"Ativar / Desativar","users.delete":"Excluir / Arquivar","users.password":"Redefinir senha","users.export":"Exportar Excel",
  "finance.dashboard":"Dashboard Financeira","finance.support":"Suporte a Campo","finance.collection":"Coleta de Valores","finance.apuracao":"Apuração de Numerário","finance.assistance":"Assistência Técnica","finance.implantation":"Implantação de Hardware","finance.entries":"Lançamentos","finance.suppliers":"Empresas / Fornecedores","finance.import":"Importar planilha","finance.edit":"Editar lançamentos","finance.delete":"Excluir lançamentos",
- "management.calls":"Chamados","management.360":"Central 360","management.notifications":"Notificações","management.diagnostics":"Diagnóstico","management.settings":"Configurações",
+ "management.calls":"Chamados","management.360":"Central 360","management.notifications":"Notificações","management.diagnostics":"Diagnóstico","management.settings":"Configurações","management.dashboard_config":"Configuração de Dashboards","management.profiles":"Perfis & Permissões",
  "materials.my_documents":"Meus documentos / Minha carga","materials.request":"Solicitar material","materials.catalog.view":"Visualizar catálogo","materials.catalog.manage":"Cadastrar / editar / inativar materiais","materials.kits.manage":"Gerenciar kits","materials.delivery.create":"Criar e enviar entregas","materials.delivery.manage":"Gerenciar aceites / correções","materials.dossier.view":"Dossiê dos colaboradores",
  "portal.appointments":"Criar / consultar agendamentos","portal.receive":"Receber agendamentos","portal.manage":"Administrar Portal do Cliente",
  "about.versions":"Histórico / Versões",
@@ -1342,6 +1353,16 @@ def _user_access_set(user=None):
         uid=session.get("user_id")
         user=db.session.get(User,uid) if uid else None
     if not user:return set()
+    try:
+        if getattr(user,"system_profile_id",None):
+            prof=db.session.get(SystemProfile,user.system_profile_id)
+            if prof and prof.active:
+                custom=json.loads(prof.access_json or "[]")
+                access=_expand_legacy_access({x for x in custom if x in ACCESS_ALL})
+                if current_lookup and has_request_context(): g._autopass_access_set=access
+                return access
+    except Exception:
+        pass
     try:
         custom=json.loads(user.access_json or "null")
         if isinstance(custom,list):
@@ -5345,34 +5366,51 @@ def attachments(inventory_id):
 @app.route('/perfis', methods=['GET','POST'])
 @login_required
 def system_profiles_page():
-    if session.get('role')!='manager': abort(403)
+    if session.get('role')!='manager' and not _has_access('management.profiles'): abort(403)
     if request.method=='POST':
-        d=request.form; name=(d.get('name') or '').strip(); base=(d.get('base_role') or 'technician').strip()
-        if not name: flash('Nome do perfil é obrigatório.'); return redirect('/perfis')
+        name=(request.form.get('name') or '').strip(); base=(request.form.get('base_role') or 'none').strip()
+        if not name: flash('Informe o nome do perfil.'); return redirect('/perfis')
+        if base not in ('none','technician','technician_implantation','manager_field','consultation','dispatcher','hr','atm_financial_admin'): base='none'
+        if SystemProfile.query.filter(func.lower(SystemProfile.name)==name.lower()).first(): flash('Já existe um perfil com esse nome.'); return redirect('/perfis')
         row=SystemProfile(name=name,base_role=base,created_by=session['user_id'])
         row.access_json=json.dumps([x for x in request.form.getlist('access') if x in ACCESS_SUBMODULES],ensure_ascii=False)
-        db.session.add(row)
-        try: db.session.commit(); flash('Perfil cadastrado.')
-        except Exception: db.session.rollback(); flash('Já existe um perfil com este nome.')
-        return redirect('/perfis')
-    return render_template('system_profiles.html',profiles=SystemProfile.query.order_by(SystemProfile.active.desc(),SystemProfile.name).all(),access_groups=ACCESS_GROUPS,access_labels=ACCESS_LABELS)
+        db.session.add(row); db.session.commit(); flash('Perfil criado.'); return redirect('/perfis')
+    profiles=SystemProfile.query.order_by(SystemProfile.active.desc(),SystemProfile.name).all()
+    counts=dict(db.session.query(User.system_profile_id,func.count(User.id)).filter(User.system_profile_id.isnot(None)).group_by(User.system_profile_id).all())
+    return render_template('system_profiles.html',profiles=profiles,profile_counts=counts,access_groups=ACCESS_GROUPS,access_labels=ACCESS_LABELS)
 
 @app.post('/perfis/<int:pid>/salvar')
 @login_required
 def system_profile_save(pid):
-    if session.get('role')!='manager': abort(403)
-    p=db.session.get(SystemProfile,pid)
-    if not p: abort(404)
-    p.name=(request.form.get('name') or p.name).strip(); p.base_role=(request.form.get('base_role') or p.base_role).strip(); p.active=request.form.get('active')=='1'
-    p.access_json=json.dumps([x for x in request.form.getlist('access') if x in ACCESS_SUBMODULES],ensure_ascii=False); db.session.commit(); flash('Perfil atualizado.'); return redirect('/perfis')
+    if session.get('role')!='manager' and not _has_access('management.profiles'): abort(403)
+    p=db.session.get(SystemProfile,pid) or abort(404)
+    name=(request.form.get('name') or '').strip(); base=(request.form.get('base_role') or p.base_role or 'none').strip()
+    if base not in ('none','technician','technician_implantation','manager_field','consultation','dispatcher','hr','atm_financial_admin'): base='none'
+    if name: p.name=name
+    p.base_role=base; p.active=request.form.get('active')=='1'
+    p.access_json=json.dumps([x for x in request.form.getlist('access') if x in ACCESS_SUBMODULES],ensure_ascii=False)
+    db.session.commit(); flash('Perfil atualizado.'); return redirect('/perfis')
 
 @app.post('/perfis/<int:pid>/excluir')
 @login_required
 def system_profile_delete(pid):
-    if session.get('role')!='manager': abort(403)
+    if session.get('role')!='manager' and not _has_access('management.profiles'): abort(403)
     p=db.session.get(SystemProfile,pid)
-    if p: db.session.delete(p); db.session.commit(); flash('Perfil excluído.')
+    if p:
+        linked=User.query.filter_by(system_profile_id=p.id).count()
+        if linked: flash(f'Perfil vinculado a {linked} usuário(s). Inative-o antes de remover vínculos.'); return redirect('/perfis')
+        db.session.delete(p); db.session.commit(); flash('Perfil excluído.')
     return redirect('/perfis')
+
+def _resolve_role_selection(raw):
+    raw=(raw or 'technician').strip(); profile=None
+    if raw.startswith('custom:'):
+        try: profile=db.session.get(SystemProfile,int(raw.split(':',1)[1]))
+        except Exception: profile=None
+        if not profile or not profile.active: return None,None
+        role=profile.base_role if profile.base_role and profile.base_role!='none' else 'technician'
+        return role,profile
+    return raw,None
 
 @app.route("/usuarios")
 @user_admin_required
@@ -5393,6 +5431,7 @@ def users_page():
         is_hr_admin=session.get("role") == "hr",
         customer_companies=CustomerCompany.query.filter_by(active=True).order_by(CustomerCompany.legal_name).all(),
         customer_company_map={u.id:_customer_company_ids(u) for u in active_users},
+        system_profiles=SystemProfile.query.filter_by(active=True).order_by(SystemProfile.name).all(),
     )
 
 
@@ -5438,7 +5477,10 @@ def create_user():
     name = request.form.get("name", "").strip()
     username = request.form.get("username", "").strip().lower()
     password = request.form.get("password", "")
-    role = request.form.get("role", "technician").strip()
+    role_selection = request.form.get("role", "technician").strip()
+    role, system_profile = _resolve_role_selection(role_selection)
+    if not role:
+        flash("Perfil de acesso inválido."); return redirect(url_for("users_page"))
     email = _normalize_optional_email(request.form.get("email"))
     phone = _normalize_optional_phone(request.form.get("phone"))
     company = request.form.get("company", "").strip() or None
@@ -5514,7 +5556,8 @@ def create_user():
         work_shift=work_shift if role in ("technician", "technician_implantation", "manager_field") else None,
         work_anchor_date=work_anchor_date if role in ("technician", "technician_implantation", "manager_field") and work_schedule_type == "12x36" else None,
         work_anchor_status=work_anchor_status if role in ("technician", "technician_implantation", "manager_field") and work_schedule_type == "12x36" else None,
-        access_json=json.dumps(_parse_access_form(role), ensure_ascii=False),
+        access_json=(system_profile.access_json if system_profile else json.dumps(_parse_access_form(role), ensure_ascii=False)),
+        system_profile_id=(system_profile.id if system_profile else None),
         gps_required=(gps_required if role in ("technician","technician_implantation","manager_field","dispatcher") else False),
         customer_company_ids=json.dumps([int(x) for x in customer_company_ids]) if role=="customer" else None,
     )
@@ -5617,7 +5660,10 @@ def edit_user(user_id):
 
     name = request.form.get("name", "").strip()
     username = request.form.get("username", "").strip().lower()
-    role = request.form.get("role", user.role).strip()
+    role_selection = request.form.get("role", (f"custom:{user.system_profile_id}" if getattr(user,"system_profile_id",None) else user.role)).strip()
+    role, system_profile = _resolve_role_selection(role_selection)
+    if not role:
+        flash("Perfil de acesso inválido."); return redirect(url_for("users_page"))
     user_code = request.form.get("user_code", "").strip().upper()
     email = _normalize_optional_email(request.form.get("email"))
     phone = _normalize_optional_phone(request.form.get("phone"))
@@ -5734,6 +5780,7 @@ def edit_user(user_id):
     user.name = name
     user.username = username
     user.role = role
+    user.system_profile_id = system_profile.id if system_profile else None
     user.user_code = user_code
     user.email = email
     user.phone = phone
@@ -5744,7 +5791,9 @@ def edit_user(user_id):
     user.personnel_status_note = personnel_status_note
     old_gps_required = bool(getattr(user, "gps_required", False))
     user.gps_required = gps_required if role in ("technician","technician_implantation","manager_field","dispatcher") else False
-    if session.get("role") == "manager":
+    if system_profile:
+        user.access_json = system_profile.access_json
+    elif session.get("role") == "manager":
         user.access_json = json.dumps(_parse_access_form(role), ensure_ascii=False)
     if role in ("technician", "technician_implantation", "manager_field"):
         user.work_schedule_type = work_schedule_type
@@ -5937,15 +5986,20 @@ def export_users_excel():
     if not _has_access("users.export"): abort(403)
     wb = Workbook()
     ws = wb.active
-    ws.title = "Cadastro de usuários"
-    headers = ["Código","Nome","Login","Perfil","Cargo","Empresa","E-mail","Celular","Status de acesso","Situação","Escala","Horário","Data referência","Trabalha/Folga","Arquivado em"]
-    ws.append(headers)
+    ws.title = "Usuários e acessos"
+    base_headers = ["Código","Nome","Login","Perfil","Cargo","Empresa","E-mail","Celular","Status de acesso","Situação","Escala","Horário","Data referência","Trabalha/Folga","Arquivado em"]
+    permission_keys=[]
+    for group,(group_label,children) in ACCESS_GROUPS.items():
+        for perm in children:
+            if perm not in permission_keys: permission_keys.append(perm)
+    permission_headers=[f"{ACCESS_GROUPS.get(p.split('.',1)[0],(p.split('.',1)[0],[]))[0]} > {ACCESS_LABELS.get(p,p)}" for p in permission_keys]
+    ws.append(base_headers + permission_headers)
     for c in ws[1]:
         c.font = Font(bold=True, color="FFFFFF")
         c.fill = PatternFill("solid", fgColor="17345D")
-        c.alignment = Alignment(horizontal="center")
+        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
     role_label={"manager":"Gestor","technician":"Técnico de Campo","technician_implantation":"Técnico Implantação","manager_field":"Gestor Field","consultation":"Consulta","hr":"RH","dispatcher":"Dispatcher","atm_financial_admin":"ADM Financeiro","customer":"Cliente"}
-    q=(User.query.filter(User.role == "technician") if session.get("role") == "hr" else User.query)
+    q=(User.query.filter(User.role.in_(("technician","technician_implantation"))) if session.get("role") == "hr" else User.query)
     term=(request.args.get("q") or "").strip(); role_f=(request.args.get("role") or "").strip(); company_f=(request.args.get("company") or "").strip(); status_f=(request.args.get("status") or "").strip().upper()
     if term:
         like=f"%{term}%"; q=q.filter(db.or_(User.name.ilike(like),User.username.ilike(like),User.user_code.ilike(like),User.job_title.ilike(like)))
@@ -5954,29 +6008,50 @@ def export_users_excel():
     if status_f=="ATIVO": q=q.filter(User.active.is_(True),User.archived_at.is_(None))
     elif status_f=="INATIVO": q=q.filter(User.active.is_(False),User.archived_at.is_(None))
     elif status_f=="ARQUIVADO": q=q.filter(User.archived_at.isnot(None))
+    exported=[]
     for u in q.order_by(User.name).all():
+        exported.append(u)
         status = "ARQUIVADO" if u.archived_at else ("ATIVO" if u.active else "INATIVO")
+        profile=db.session.get(SystemProfile,u.system_profile_id) if getattr(u,'system_profile_id',None) else None
+        profile_name=profile.name if profile else role_label.get(u.role,u.role)
+        effective=_user_access_set(u)
+        perm_values=[]
+        for perm in permission_keys:
+            group=perm.split('.',1)[0]
+            allowed=(u.role=='manager') or (perm in effective) or (group in effective)
+            perm_values.append("SIM" if allowed else "NÃO")
         ws.append([
-            u.user_code or "",u.name,u.username,role_label.get(u.role,u.role),u.job_title or "",u.company or "",u.email or "",u.phone or "",
+            u.user_code or "",u.name,u.username,profile_name,u.job_title or "",u.company or "",u.email or "",u.phone or "",
             status,u.personnel_status or "",u.work_schedule_type or "",u.work_shift or "",
             u.work_anchor_date.isoformat() if u.work_anchor_date else "",u.work_anchor_status or "",
             u.archived_at.strftime("%d/%m/%Y %H:%M") if u.archived_at else "",
-        ])
-    ws2=wb.create_sheet("Resumo")
-    ws2.append(["Indicador","Quantidade"])
-    ws2.append(["Usuários ativos",User.query.filter(User.archived_at.is_(None),User.active.is_(True)).count()])
-    ws2.append(["Usuários inativos",User.query.filter(User.archived_at.is_(None),User.active.is_(False)).count()])
-    ws2.append(["Usuários arquivados",User.query.filter(User.archived_at.isnot(None)).count()])
+        ] + perm_values)
+    ws.auto_filter.ref=ws.dimensions
+    ws.freeze_panes="A2"
+    ws2=wb.create_sheet("Legenda de Permissões")
+    ws2.append(["Área","Subcategoria / Permissão","Código técnico","Descrição"])
+    for c in ws2[1]:
+        c.font=Font(bold=True,color="FFFFFF"); c.fill=PatternFill("solid",fgColor="17345D")
+    for perm in permission_keys:
+        group=perm.split('.',1)[0]; group_label=ACCESS_GROUPS.get(group,(group,[]))[0]; label=ACCESS_LABELS.get(perm,perm)
+        ws2.append([group_label,label,perm,f"SIM = usuário possui acesso efetivo a {label}; NÃO = acesso não concedido."])
+    ws2.freeze_panes="A2"; ws2.auto_filter.ref=ws2.dimensions
+    ws3=wb.create_sheet("Resumo")
+    ws3.append(["Indicador","Quantidade"]); ws3.append(["Usuários exportados",len(exported)])
+    ws3.append(["Usuários ativos",sum(1 for u in exported if u.active and not u.archived_at)])
+    ws3.append(["Usuários inativos",sum(1 for u in exported if not u.active and not u.archived_at)])
+    ws3.append(["Usuários arquivados",sum(1 for u in exported if u.archived_at)])
+    for c in ws3[1]: c.font=Font(bold=True,color="FFFFFF"); c.fill=PatternFill("solid",fgColor="17345D")
     for sheet in wb.worksheets:
         for col in range(1,sheet.max_column+1):
             letter=get_column_letter(col); width=12
             for row in range(1,min(sheet.max_row,500)+1):
                 v=sheet.cell(row=row,column=col).value
-                if v is not None: width=max(width,min(36,len(str(v))+2))
+                if v is not None: width=max(width,min(38,len(str(v))+2))
             sheet.column_dimensions[letter].width=width
         sheet.freeze_panes="A2"
     out=io.BytesIO(); wb.save(out); out.seek(0)
-    return send_file(out,as_attachment=True,download_name=f"usuarios_autopass_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    return send_file(out,as_attachment=True,download_name=f"usuarios_acessos_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
 @app.post("/usuarios/<int:user_id>/senha")
@@ -9764,6 +9839,7 @@ def migrate_financial_v524_columns():
         if "cost_center_id" not in cols: commands.append("ALTER TABLE financial_monthly_costs ADD COLUMN cost_center_id VARCHAR(20)")
         user_cols={c["name"] for c in inspector.get_columns("users")} if "users" in inspector.get_table_names() else set()
         if "access_json" not in user_cols: commands.append("ALTER TABLE users ADD COLUMN access_json TEXT")
+        if "system_profile_id" not in user_cols: commands.append("ALTER TABLE users ADD COLUMN system_profile_id INTEGER")
         # V55.2: cadastro financeiro enriquecido para importação de empresas.
         sup_cols={c["name"] for c in inspector.get_columns("financial_suppliers")} if "financial_suppliers" in inspector.get_table_names() else set()
         sup_commands=[]
@@ -11404,6 +11480,67 @@ def _v62_dashboard_context():
     except Exception:
         return {"custom_dashboards":[]}
 
+BUILTIN_DASHBOARD_CATALOG = [
+    {"key":"overview","label":"Visão Geral","group":"VISÃO GERAL","icon":"▦","roles":[]},
+    {"key":"execution","label":"Inventário","group":"ATIVIDADES","icon":"▥","roles":[]},
+    {"key":"atm-inventory","label":"Dashboard ATM","group":"ATIVIDADES","icon":"▦","roles":[]},
+    {"key":"financial-dashboard","label":"Dashboard Financeiro","group":"ATIVIDADES","icon":"$","roles":["manager","manager_field","atm_financial_admin"]},
+    {"key":"journal","label":"Diário de bordo","group":"ATIVIDADES","icon":"◷","roles":[]},
+    {"key":"topdesk","label":"Chamados","group":"ATIVIDADES","icon":"⚡","roles":[]},
+    {"key":"map","label":"Mapa","group":"ATIVIDADES","icon":"⌖","roles":[]},
+    {"key":"panorama","label":"Visões panorâmicas","group":"ATIVIDADES","icon":"▤","roles":[]},
+    {"key":"chips","label":"Troca de Chip Recarga","group":"ATIVIDADES","icon":"▣","roles":[]},
+    {"key":"emv","label":"Troca Chips EMV · Trilhos","group":"IMPLANTAÇÃO","icon":"▣","roles":[]},
+    {"key":"garage","label":"Dashboard Garagem","group":"IMPLANTAÇÃO","icon":"▦","roles":[]},
+    {"key":"implantation-dashboard","label":"Dashboard Implantação","group":"IMPLANTAÇÃO","icon":"⌁","roles":[]},
+    {"key":"ranking","label":"Ranking","group":"OPERAÇÃO","icon":"↗","roles":[]},
+    {"key":"competition","label":"Concorrência","group":"OPERAÇÃO","icon":"◉","roles":[]},
+]
+
+def _builtin_dashboard_menu_items():
+    try: saved={x.dashboard_key:x for x in BuiltinDashboardSetting.query.all()}
+    except Exception: saved={}
+    out=[]
+    for idx,item in enumerate(BUILTIN_DASHBOARD_CATALOG,1):
+        row=saved.get(item['key']); visible=True if row is None else bool(row.visible); order=(idx*10 if row is None else row.order_index)
+        try: allowed=json.loads(row.allowed_roles_json or '[]') if row else list(item.get('roles') or [])
+        except Exception: allowed=list(item.get('roles') or [])
+        if not visible: continue
+        role=session.get('role')
+        if allowed and role not in allowed: continue
+        out.append({**item,'order':order,'allowed_roles':allowed})
+    return sorted(out,key=lambda x:(x['order'],x['label']))
+
+@app.context_processor
+def _builtin_dashboards_context():
+    return {'builtin_dashboard_menu_items':_builtin_dashboard_menu_items() if session.get('user_id') else []}
+
+@app.route('/gestao/configuracao-dashboards',methods=['GET','POST'])
+@login_required
+def builtin_dashboard_settings_page():
+    if session.get('role')!='manager' and not _has_access('management.dashboard_config'): abort(403)
+    if request.method=='POST':
+        for idx,item in enumerate(BUILTIN_DASHBOARD_CATALOG,1):
+            key=item['key']; row=BuiltinDashboardSetting.query.filter_by(dashboard_key=key).first()
+            if not row: row=BuiltinDashboardSetting(dashboard_key=key); db.session.add(row)
+            row.visible=request.form.get(f'visible__{key}')=='1'
+            try: row.order_index=int(request.form.get(f'order__{key}') or idx*10)
+            except Exception: row.order_index=idx*10
+            roles=[x for x in request.form.getlist(f'roles__{key}') if x in ('manager','manager_field','technician','technician_implantation','consultation','hr','dispatcher','atm_financial_admin')]
+            row.allowed_roles_json=json.dumps(roles,ensure_ascii=False); row.updated_by=session.get('user_id')
+        db.session.commit()
+        if not any(x.visible for x in BuiltinDashboardSetting.query.all()):
+            first=BuiltinDashboardSetting.query.filter_by(dashboard_key='overview').first(); first.visible=True; db.session.commit(); flash('Visão Geral foi mantida ativa para evitar uma Central vazia.')
+        else: flash('Configuração de dashboards atualizada.')
+        return redirect('/gestao/configuracao-dashboards')
+    saved={x.dashboard_key:x for x in BuiltinDashboardSetting.query.all()}; rows=[]
+    for idx,item in enumerate(BUILTIN_DASHBOARD_CATALOG,1):
+        row=saved.get(item['key'])
+        try: roles=json.loads(row.allowed_roles_json or '[]') if row else list(item.get('roles') or [])
+        except Exception: roles=[]
+        rows.append({**item,'visible':True if row is None else row.visible,'order':idx*10 if row is None else row.order_index,'allowed_roles':roles})
+    return render_template('builtin_dashboard_settings.html',rows=rows,app_release=APP_RELEASE)
+
 @app.get('/configuracoes/dashboards')
 @login_required
 def dashboard_builder_page():
@@ -11591,32 +11728,52 @@ def _material_pdf_bytes(doc):
 def materials_xray_page():
     _materials_require('materials.dossier.view'); return render_template('materials_xray.html',app_release=APP_RELEASE)
 
-@app.get('/api/materials/xray')
-@login_required
-def materials_xray_api():
-    _materials_require('materials.dossier.view')
-    # V69.3.2: Raio-X deve refletir colaboradores ativos do sistema, não somente três roles fixos.
-    # Cliente/Consulta não pertencem ao universo operacional de carga e termos.
-    users=(User.query.filter(User.active.is_(True), ~User.role.in_(['customer','consultation']))
-           .order_by(User.name).all())
-    user_ids=[u.id for u in users]
-    doc_stats={}
+def _materials_xray_rows():
+    users=(User.query.filter(User.active.is_(True), ~User.role.in_(['customer','consultation'])).order_by(User.name).all())
+    user_ids=[u.id for u in users]; doc_stats={}
     if user_ids:
-        # Seleciona apenas as colunas necessárias. Isso mantém o Raio-X disponível mesmo
-        # durante migrações aditivas de campos documentais não usados nesta tela.
         for uid,st in db.session.query(CollaboratorDocument.user_id,CollaboratorDocument.status).filter(CollaboratorDocument.user_id.in_(user_ids)).all():
-            x=doc_stats.setdefault(uid,{'total':0,'signed':0,'pending':0})
-            x['total']+=1; x['signed']+=1 if st=='ASSINADO' else 0
-            x['pending']+=1 if st in ('AGUARDANDO_ACEITE','CORRECAO_SOLICITADA','RASCUNHO') else 0
+            x=doc_stats.setdefault(uid,{'total':0,'signed':0,'pending':0}); x['total']+=1
+            if st=='ASSINADO': x['signed']+=1
+            if st in ('AGUARDANDO_ACEITE','CORRECAO_SOLICITADA','RASCUNHO'): x['pending']+=1
     out=[]
     for u in users:
         ds=doc_stats.get(u.id,{'total':0,'signed':0,'pending':0})
-        req=MaterialRequest.query.filter_by(user_id=u.id).filter(MaterialRequest.status.in_(['SOLICITADO','EM_ANALISE','APROVADO','EM_COMPRA','DISPONIVEL'])).count()
+        reqs=MaterialRequest.query.filter_by(user_id=u.id).filter(MaterialRequest.status.in_(['SOLICITADO','EM_ANALISE','APROVADO','EM_COMPRA','DISPONIVEL'])).all()
         mov=MaterialMovement.query.filter_by(user_id=u.id).all(); bal={}
         for m in mov: bal[m.material_id]=bal.get(m.material_id,0)+(m.quantity if m.movement_type in ('ENTREGA','SUBSTITUICAO_ENTRADA','TRANSFERENCIA_ENTRADA') else -m.quantity)
-        load=sum(1 for q in bal.values() if q>0); issues=ds['pending']+req; status='REGULAR' if issues==0 else 'PENDENTE'
-        out.append({'id':u.id,'name':u.name,'company':u.company or '', 'job_title':u.job_title or '', 'documents_total':ds['total'],'terms_signed':ds['signed'],'terms_pending':ds['pending'],'materials_open':load,'requests_open':req,'issues':issues,'status':status})
-    return jsonify({'ok':True,'rows':out,'summary':{'total':len(out),'regular':sum(1 for x in out if x['status']=='REGULAR'),'pending':sum(1 for x in out if x['status']!='REGULAR'),'without_term':sum(1 for x in out if x['terms_signed']==0),'materials_open':sum(1 for x in out if x['materials_open']>0)}})
+        load=sum(1 for q in bal.values() if q>0); issues=ds['pending']+len(reqs); reasons=[]
+        if ds['pending']: reasons.append(f"{ds['pending']} termo/documento(s) aguardando ação")
+        if reqs: reasons.append(f"{len(reqs)} solicitação(ões) de material aberta(s)")
+        status='REGULAR' if issues==0 else 'PENDENTE'
+        out.append({'id':u.id,'name':u.name,'company':u.company or '', 'job_title':u.job_title or '', 'documents_total':ds['total'],'terms_signed':ds['signed'],'terms_pending':ds['pending'],'materials_open':load,'requests_open':len(reqs),'issues':issues,'status':status,'reason':' · '.join(reasons) if reasons else 'Nenhuma pendência operacional'})
+    return out
+
+@app.get('/api/materials/xray')
+@login_required
+def materials_xray_api():
+    _materials_require('materials.dossier.view'); out=_materials_xray_rows()
+    return jsonify({'ok':True,'rows':out,'summary':{'total':len(out),'regular':sum(1 for x in out if x['status']=='REGULAR'),'pending':sum(1 for x in out if x['status']=='PENDENTE'),'without_term':sum(1 for x in out if x['terms_signed']==0),'materials_open':sum(1 for x in out if x['materials_open']>0)}})
+
+@app.get('/api/materials/xray/<int:user_id>/pending')
+@login_required
+def materials_xray_pending_api(user_id):
+    _materials_require('materials.dossier.view'); u=db.session.get(User,user_id) or abort(404); items=[]
+    for d in CollaboratorDocument.query.filter_by(user_id=user_id).filter(CollaboratorDocument.status.in_(['AGUARDANDO_ACEITE','CORRECAO_SOLICITADA','RASCUNHO'])).order_by(CollaboratorDocument.created_at.desc()).all():
+        items.append({'type':'Termo / Documento','code':d.document_code or '—','description':d.title or d.document_type or 'Documento','status':d.status,'date':d.created_at.strftime('%d/%m/%Y') if d.created_at else '—'})
+    for r in MaterialRequest.query.filter_by(user_id=user_id).filter(MaterialRequest.status.in_(['SOLICITADO','EM_ANALISE','APROVADO','EM_COMPRA','DISPONIVEL'])).order_by(MaterialRequest.created_at.desc()).all():
+        items.append({'type':'Solicitação de material','code':getattr(r,'request_code',None) or f'#{r.id}','description':getattr(r,'notes',None) or 'Solicitação aberta','status':r.status,'date':r.created_at.strftime('%d/%m/%Y') if r.created_at else '—'})
+    return jsonify({'ok':True,'user':{'id':u.id,'name':u.name,'company':u.company or '', 'job_title':u.job_title or ''},'items':items})
+
+@app.get('/documentos-materiais/raio-x/exportar.xlsx')
+@login_required
+def materials_xray_export():
+    _materials_require('materials.dossier.view'); rows=_materials_xray_rows(); wb=Workbook(); ws=wb.active; ws.title='Raio-X Colaboradores'
+    ws.append(['Colaborador','Empresa','Cargo','Documentos','Termos assinados','Termos pendentes','Materiais em carga','Solicitações','Situação','Motivo'])
+    for c in ws[1]: c.font=Font(bold=True)
+    for x in rows: ws.append([x['name'],x['company'],x['job_title'],x['documents_total'],x['terms_signed'],x['terms_pending'],x['materials_open'],x['requests_open'],x['status'],x['reason']])
+    for col in range(1,ws.max_column+1): ws.column_dimensions[get_column_letter(col)].width=min(45,max(12,max(len(str(ws.cell(r,col).value or '')) for r in range(1,ws.max_row+1))+2))
+    bio=io.BytesIO(); wb.save(bio); bio.seek(0); return send_file(bio,as_attachment=True,download_name='raio_x_colaboradores.xlsx',mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 @app.get('/documentos-materiais')
 @login_required
