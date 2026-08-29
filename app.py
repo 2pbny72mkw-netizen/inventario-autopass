@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V67"
+APP_RELEASE = "V67 REV1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -11233,18 +11233,56 @@ def _material_pdf_bytes(doc):
     try:
         from reportlab.lib.pagesizes import A4
         from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-        from reportlab.lib.enums import TA_CENTER
+        from reportlab.lib.enums import TA_CENTER, TA_LEFT
         from reportlab.lib import colors
-        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+        from reportlab.lib.utils import ImageReader
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, KeepTogether
     except Exception as exc:
         raise RuntimeError("Dependência reportlab não instalada") from exc
-    out=io.BytesIO(); styles=getSampleStyleSheet(); small=ParagraphStyle('small',parent=styles['BodyText'],fontSize=8,leading=10); center=ParagraphStyle('center',parent=styles['Heading2'],alignment=TA_CENTER)
-    pdf=SimpleDocTemplate(out,pagesize=A4,rightMargin=32,leftMargin=32,topMargin=32,bottomMargin=32)
+    out=io.BytesIO(); styles=getSampleStyleSheet()
+    body=ParagraphStyle('trm_body',parent=styles['BodyText'],fontSize=9,leading=12,spaceAfter=5)
+    small=ParagraphStyle('trm_small',parent=body,fontSize=8,leading=10)
+    center=ParagraphStyle('trm_center',parent=styles['Heading2'],alignment=TA_CENTER,fontSize=13,leading=16,spaceAfter=8)
+    title=ParagraphStyle('trm_title',parent=styles['Heading1'],alignment=TA_CENTER,fontSize=14,leading=17,spaceAfter=6)
+    pdf=SimpleDocTemplate(out,pagesize=A4,rightMargin=32,leftMargin=32,topMargin=28,bottomMargin=28,title=doc.document_code or 'Termo de Responsabilidade')
     u=db.session.get(User,doc.user_id); rows=CollaboratorDocumentItem.query.filter_by(document_id=doc.id).order_by(CollaboratorDocumentItem.id).all()
-    story=[Paragraph("TECSOMOBI",styles['Heading2']),Paragraph("TERMO DE RESPONSABILIDADE — MATERIAIS / FERRAMENTAS",center),Spacer(1,10),Paragraph(f"Documento: <b>{doc.document_code}</b> &nbsp;&nbsp; Colaborador: <b>{u.name if u else '—'}</b>",styles['BodyText']),Paragraph(f"Empresa: {getattr(u,'company',None) or '—'} &nbsp;&nbsp; Cargo: {getattr(u,'job_title',None) or '—'} &nbsp;&nbsp; Data da entrega: {doc.delivery_date.strftime('%d/%m/%Y') if doc.delivery_date else '—'}",small),Spacer(1,10)]
-    data=[["Item","Marca / Modelo","Qtd.","Un.","Estado"]]
-    for x in rows:data.append([Paragraph(x.description,small),Paragraph(" / ".join(y for y in (x.brand,x.model) if y) or "—",small),str(x.quantity),x.unit or "UN",x.condition or "BOM"])
-    t=Table(data,colWidths=[220,145,45,40,65],repeatRows=1);t.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#e8eef5')),('GRID',(0,0),(-1,-1),.4,colors.grey),('FONTNAME',(0,0),(-1,0),'Helvetica-Bold'),('VALIGN',(0,0),(-1,-1),'TOP'),('FONTSIZE',(0,0),(-1,-1),8),('PADDING',(0,0),(-1,-1),5)]));story += [t,Spacer(1,12),Paragraph("Declaro ter conferido e recebido os materiais/ferramentas relacionados acima, assumindo a responsabilidade por sua guarda, conservação e uso adequado, observadas as regras internas aplicáveis.",styles['BodyText']),Spacer(1,12),Paragraph(f"Aceite eletrônico realizado em: <b>{doc.signed_at.strftime('%d/%m/%Y %H:%M:%S') if doc.signed_at else '—'}</b>",small),Paragraph(f"Colaborador: <b>{u.name if u else '—'}</b>",small),Paragraph("A assinatura manuscrita eletrônica vinculada a este documento integra o registro de aceite armazenado no sistema.",small)]
+    story=[]
+    logo=Path(app.root_path)/'static'/'logo-tecsomobi.png'
+    if logo.exists():
+        try:
+            im=Image(str(logo),width=115,height=38); im.hAlign='LEFT'; story += [im,Spacer(1,4)]
+        except Exception: pass
+    story += [Paragraph("TERMO DE RESPONSABILIDADE DE EQUIPAMENTOS",title),
+              Paragraph("Declaro que recebi da Tecsomobi Fábrica de Software e Inteligência Digital Ltda., a título de empréstimo e/ou para uso profissional, os materiais, ferramentas e equipamentos abaixo especificados.",body),
+              Spacer(1,5)]
+    meta=[[Paragraph(f"<b>Documento:</b> {doc.document_code or '—'}",small),Paragraph(f"<b>Colaborador:</b> {u.name if u else '—'}",small)],
+          [Paragraph(f"<b>Empresa:</b> {getattr(u,'company',None) or '—'}",small),Paragraph(f"<b>Cargo:</b> {getattr(u,'job_title',None) or '—'}",small)],
+          [Paragraph(f"<b>Data da entrega:</b> {doc.delivery_date.strftime('%d/%m/%Y') if doc.delivery_date else '—'}",small),Paragraph(f"<b>Itens:</b> {len(rows)}",small)]]
+    mt=Table(meta,colWidths=[260,260]); mt.setStyle(TableStyle([('BOX',(0,0),(-1,-1),.5,colors.HexColor('#b8c5d3')),('INNERGRID',(0,0),(-1,-1),.25,colors.HexColor('#d9e2ec')),('BACKGROUND',(0,0),(-1,-1),colors.HexColor('#f7f9fc')),('VALIGN',(0,0),(-1,-1),'TOP'),('PADDING',(0,0),(-1,-1),6)])); story += [mt,Spacer(1,9)]
+    data=[["Item","Descrição","Marca / Modelo","Qtd.","Un.","Estado"]]
+    for i,x in enumerate(rows,1): data.append([str(i),Paragraph(x.description,small),Paragraph(" / ".join(y for y in (x.brand,x.model) if y) or "—",small),('%g'%x.quantity),x.unit or "UN",x.condition or "BOM"])
+    t=Table(data,colWidths=[28,205,135,42,38,62],repeatRows=1);t.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#e8eef5')),('GRID',(0,0),(-1,-1),.4,colors.HexColor('#9aa9b8')),('FONTNAME',(0,0),(-1,0),'Helvetica-Bold'),('VALIGN',(0,0),(-1,-1),'TOP'),('FONTSIZE',(0,0),(-1,-1),8),('PADDING',(0,0),(-1,-1),4)])); story += [t,Spacer(1,10)]
+    terms=[
+      "Responsabilizo-me por manter os materiais, ferramentas e equipamentos sob minha guarda em adequado estado de conservação e funcionamento, utilizando-os exclusivamente para as atividades profissionais e observando as orientações internas da empresa.",
+      "Em caso de dano, inutilização, perda ou extravio, comprometo-me a comunicar imediatamente a empresa/Recursos Humanos para registro, avaliação e providências cabíveis.",
+      "Ao término dos serviços, mudança de função que dispense o uso, solicitação da empresa ou rescisão do vínculo, comprometo-me a devolver os bens devolvíveis que estiverem sob minha responsabilidade, considerando o desgaste normal decorrente do uso adequado.",
+      "Os materiais e equipamentos sob minha responsabilidade poderão ser conferidos ou inspecionados pela empresa durante o período de custódia.",
+      "Declaro que conferi a relação acima antes do aceite. Eventuais divergências devem ser apontadas por meio da opção Solicitar correção antes da assinatura."
+    ]
+    story.append(Paragraph("<b>RESPONSABILIDADES E ORIENTAÇÕES</b>",body))
+    for tx in terms: story.append(Paragraph("• "+tx,body))
+    if doc.notes: story += [Spacer(1,3),Paragraph(f"<b>Observação da entrega:</b> {doc.notes}",small)]
+    story += [Spacer(1,9),Paragraph("<b>ACEITE ELETRÔNICO</b>",body),Paragraph(f"Aceite realizado em: <b>{doc.signed_at.strftime('%d/%m/%Y %H:%M:%S') if doc.signed_at else '—'}</b>",small),Paragraph(f"Colaborador: <b>{u.name if u else '—'}</b>",small)]
+    sigraw=None
+    try:
+        if doc.signature_file:
+            sigraw=_r2_get_bytes(doc.signature_file[4:]) if doc.signature_file.startswith('r2__') else (UPLOAD_DIR/doc.signature_file).read_bytes()
+    except Exception: sigraw=None
+    if sigraw:
+        try:
+            sig=Image(io.BytesIO(sigraw),width=180,height=56); sig.hAlign='LEFT'; story += [Spacer(1,4),sig,Paragraph("Assinatura manuscrita eletrônica do colaborador",small)]
+        except Exception: pass
+    story += [Spacer(1,5),Paragraph(f"Carimbo de aceite: {doc.document_code or '—'} · usuário #{doc.user_id} · {doc.signed_at.strftime('%d/%m/%Y %H:%M:%S UTC') if doc.signed_at else '—'}",small),Paragraph("Este PDF é a versão assinada vinculada ao dossiê digital do colaborador. O original eletrônico e sua trilha de auditoria permanecem armazenados no sistema.",small)]
     pdf.build(story); return out.getvalue()
 
 @app.get('/documentos-materiais')
@@ -11348,6 +11386,10 @@ def materials_document_items_update_api(did):
     if not d:return jsonify({'ok':False,'error':'Documento não encontrado.'}),404
     if d.status=='ASSINADO':return jsonify({'ok':False,'error':'Documento assinado é imutável.'}),409
     payload=request.get_json(silent=True) or {}; items=payload.get('items') or []
+    if 'notes' in payload: d.notes=(payload.get('notes') or '').strip()
+    if payload.get('delivery_date'):
+        try: d.delivery_date=datetime.strptime(payload.get('delivery_date'), '%Y-%m-%d').date()
+        except: pass
     CollaboratorDocumentItem.query.filter_by(document_id=d.id).delete()
     for x in items:
         try:mid=int(x.get('material_id'));qty=float(x.get('quantity') or 0)
