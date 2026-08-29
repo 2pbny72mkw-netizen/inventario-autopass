@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V69.2.1 HOTFIX1"
+APP_RELEASE = "V69.3"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -295,6 +295,17 @@ class User(db.Model):
     customer_company_ids = db.Column(db.Text)  # JSON: empresas liberadas para perfil Cliente
 
 
+
+class SystemProfile(db.Model):
+    __tablename__ = "system_profiles"
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(120), nullable=False, unique=True, index=True)
+    base_role = db.Column(db.String(40), nullable=False, default="technician")
+    access_json = db.Column(db.Text, nullable=False, default="[]")
+    active = db.Column(db.Boolean, nullable=False, default=True, index=True)
+    created_by = db.Column(db.Integer, db.ForeignKey("users.id"))
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 class CustomerCompany(db.Model):
     __tablename__ = "customer_companies"
@@ -5330,6 +5341,38 @@ def attachments(inventory_id):
         "url": url_for("uploaded", name=a.stored_name)
     } for a in rows])
 
+
+@app.route('/perfis', methods=['GET','POST'])
+@login_required
+def system_profiles_page():
+    if session.get('role')!='manager': abort(403)
+    if request.method=='POST':
+        d=request.form; name=(d.get('name') or '').strip(); base=(d.get('base_role') or 'technician').strip()
+        if not name: flash('Nome do perfil é obrigatório.'); return redirect('/perfis')
+        row=SystemProfile(name=name,base_role=base,created_by=session['user_id'])
+        row.access_json=json.dumps([x for x in request.form.getlist('access') if x in ACCESS_SUBMODULES],ensure_ascii=False)
+        db.session.add(row)
+        try: db.session.commit(); flash('Perfil cadastrado.')
+        except Exception: db.session.rollback(); flash('Já existe um perfil com este nome.')
+        return redirect('/perfis')
+    return render_template('system_profiles.html',profiles=SystemProfile.query.order_by(SystemProfile.active.desc(),SystemProfile.name).all(),access_groups=ACCESS_GROUPS,access_labels=ACCESS_LABELS)
+
+@app.post('/perfis/<int:pid>/salvar')
+@login_required
+def system_profile_save(pid):
+    if session.get('role')!='manager': abort(403)
+    p=db.session.get(SystemProfile,pid)
+    if not p: abort(404)
+    p.name=(request.form.get('name') or p.name).strip(); p.base_role=(request.form.get('base_role') or p.base_role).strip(); p.active=request.form.get('active')=='1'
+    p.access_json=json.dumps([x for x in request.form.getlist('access') if x in ACCESS_SUBMODULES],ensure_ascii=False); db.session.commit(); flash('Perfil atualizado.'); return redirect('/perfis')
+
+@app.post('/perfis/<int:pid>/excluir')
+@login_required
+def system_profile_delete(pid):
+    if session.get('role')!='manager': abort(403)
+    p=db.session.get(SystemProfile,pid)
+    if p: db.session.delete(p); db.session.commit(); flash('Perfil excluído.')
+    return redirect('/perfis')
 
 @app.route("/usuarios")
 @user_admin_required
@@ -11541,6 +11584,25 @@ def _material_pdf_bytes(doc):
     story += [Spacer(1,5),Paragraph(f"{'Carimbo de devolução' if is_return else 'Carimbo de aceite'}: {doc.document_code or '—'} · usuário #{doc.user_id} · {doc.signed_at.strftime('%d/%m/%Y %H:%M:%S UTC') if doc.signed_at else '—'}",small),Paragraph("Este PDF é a versão assinada vinculada ao dossiê digital do colaborador. O original eletrônico e sua trilha de auditoria permanecem armazenados no sistema.",small)]
     pdf.build(story); return out.getvalue()
 
+@app.get('/documentos-materiais/raio-x')
+@login_required
+def materials_xray_page():
+    _materials_require('materials.dossier.view'); return render_template('materials_xray.html',app_release=APP_RELEASE)
+
+@app.get('/api/materials/xray')
+@login_required
+def materials_xray_api():
+    _materials_require('materials.dossier.view')
+    users=User.query.filter(User.active==True,User.role.in_(['technician','technician_implantation','manager_field'])).order_by(User.name).all(); out=[]
+    for u in users:
+        docs=CollaboratorDocument.query.filter_by(user_id=u.id).all(); signed=sum(1 for d in docs if d.status=='ASSINADO'); pending=sum(1 for d in docs if d.status in ('AGUARDANDO_ACEITE','CORRECAO_SOLICITADA','RASCUNHO'))
+        req=MaterialRequest.query.filter_by(user_id=u.id).filter(MaterialRequest.status.in_(['SOLICITADO','EM_ANALISE','APROVADO','EM_COMPRA','DISPONIVEL'])).count()
+        mov=MaterialMovement.query.filter_by(user_id=u.id).all(); bal={}
+        for m in mov: bal[m.material_id]=bal.get(m.material_id,0)+(m.quantity if m.movement_type in ('ENTREGA','SUBSTITUICAO_ENTRADA','TRANSFERENCIA_ENTRADA') else -m.quantity)
+        load=sum(1 for q in bal.values() if q>0); issues=pending+req; status='REGULAR' if issues==0 else 'PENDENTE'
+        out.append({'id':u.id,'name':u.name,'company':u.company or '', 'job_title':u.job_title or '', 'documents_total':len(docs),'terms_signed':signed,'terms_pending':pending,'materials_open':load,'requests_open':req,'issues':issues,'status':status})
+    return jsonify({'ok':True,'rows':out,'summary':{'total':len(out),'regular':sum(1 for x in out if x['status']=='REGULAR'),'pending':sum(1 for x in out if x['status']!='REGULAR'),'without_term':sum(1 for x in out if x['terms_signed']==0),'materials_open':sum(1 for x in out if x['materials_open']>0)}})
+
 @app.get('/documentos-materiais')
 @login_required
 def materials_home_page():
@@ -12023,6 +12085,40 @@ Acesse o Portal do Cliente para visualizar e baixar os PDFs individuais.")
     except Exception as exc:
         app.logger.exception('Falha ao enviar e-mail do agendamento %s',a.code); return 'FALHA',str(exc)[:450]
 
+
+@app.get('/portal-cliente/cadastro-clientes/modelo.xlsx')
+@login_required
+def portal_customer_model_xlsx():
+    if session.get('role')!='manager': abort(403)
+    wb=Workbook(); ws=wb.active; ws.title='Importar Clientes'
+    headers=['Razão Social *','Nome Fantasia','CNPJ','Inscrição Estadual','Contato Principal','Cargo/Função','Telefone','Celular','E-mail','Endereço','Cidade','UF','CEP','Observações','Status']
+    ws.append(headers); ws.append(['Empresa Exemplo Ltda','Empresa Exemplo','00.000.000/0001-00','','Contato','Gestor','','','','','São Paulo','SP','','','ATIVO'])
+    for c in ws[1]: c.font=Font(bold=True); c.fill=PatternFill('solid',fgColor='D9EAF7')
+    for i,w in enumerate([28,24,20,20,22,18,18,18,28,32,20,8,14,34,12],1): ws.column_dimensions[get_column_letter(i)].width=w
+    ins=wb.create_sheet('Instruções'); ins.append(['IMPORTAÇÃO DE CLIENTES - V69.3']); ins.append(['Razão Social é obrigatória. CNPJ é usado para detectar duplicidades. Status: ATIVO ou INATIVO.']); ins.column_dimensions['A'].width=110
+    bio=io.BytesIO(); wb.save(bio); bio.seek(0); return send_file(bio,as_attachment=True,download_name='MODELO_IMPORTACAO_CLIENTES_PORTAL.xlsx',mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+@app.post('/portal-cliente/cadastro-clientes/importar')
+@login_required
+def portal_customer_import_xlsx():
+    if session.get('role')!='manager': abort(403)
+    f=request.files.get('file')
+    if not f or not (f.filename or '').lower().endswith('.xlsx'): flash('Selecione uma planilha .xlsx válida.'); return redirect('/portal-cliente/cadastro-clientes')
+    try: wb=load_workbook(f,read_only=True,data_only=True); ws=wb['Importar Clientes'] if 'Importar Clientes' in wb.sheetnames else wb.active
+    except Exception: flash('Não foi possível ler a planilha.'); return redirect('/portal-cliente/cadastro-clientes')
+    created=0; skipped=[]
+    for n,row in enumerate(ws.iter_rows(min_row=2,values_only=True),2):
+        vals=list(row)+[None]*15; legal=str(vals[0] or '').strip(); cnpj=str(vals[2] or '').strip()
+        if not legal: continue
+        norm=re.sub(r'\\D','',cnpj)
+        dup=None
+        if norm:
+            for c in CustomerCompany.query.filter(CustomerCompany.cnpj.isnot(None)).all():
+                if re.sub(r'\\D','',c.cnpj or '')==norm: dup=c; break
+        if dup: skipped.append(f'linha {n}: CNPJ já cadastrado'); continue
+        c=CustomerCompany(legal_name=legal,trade_name=str(vals[1] or '').strip() or None,cnpj=cnpj or None,state_registration=str(vals[3] or '').strip() or None,contact_name=str(vals[4] or '').strip() or None,contact_role=str(vals[5] or '').strip() or None,phone=str(vals[6] or '').strip() or None,mobile=str(vals[7] or '').strip() or None,email=str(vals[8] or '').strip() or None,address=str(vals[9] or '').strip() or None,city=str(vals[10] or '').strip() or None,state=str(vals[11] or '').strip().upper() or None,zip_code=str(vals[12] or '').strip() or None,notes=str(vals[13] or '').strip() or None,active=str(vals[14] or 'ATIVO').strip().upper()!='INATIVO')
+        db.session.add(c); created+=1
+    db.session.commit(); flash(f'Importação concluída: {created} cliente(s) incluído(s).'+(f' {len(skipped)} linha(s) ignorada(s) por duplicidade.' if skipped else '')); return redirect('/portal-cliente/cadastro-clientes')
 
 @app.route('/portal-cliente/cadastro-clientes', methods=['GET','POST'])
 @login_required
