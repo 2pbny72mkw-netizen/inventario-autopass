@@ -334,6 +334,9 @@ class CustomerAppointment(db.Model):
     accepted_at = db.Column(db.DateTime)
     signature_file = db.Column(db.String(600))
     pdf_file = db.Column(db.String(600))
+    invoice_number = db.Column(db.String(120))
+    invoice_file = db.Column(db.String(600))
+    invoice_original_name = db.Column(db.String(255))
     created_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -411,6 +414,9 @@ class CollaboratorDocument(db.Model):
     return_receiver_id = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
     return_received_at = db.Column(db.DateTime)
     pdf_file = db.Column(db.String(600))
+    invoice_number = db.Column(db.String(120))
+    invoice_file = db.Column(db.String(600))
+    invoice_original_name = db.Column(db.String(255))
     created_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
     sent_at = db.Column(db.DateTime)
     signed_at = db.Column(db.DateTime)
@@ -3114,7 +3120,7 @@ def my_profile_page():
             try: r2_client().delete_object(Bucket=os.environ["R2_BUCKET_NAME"],Key=old)
             except Exception: pass
         flash("Foto atualizada com sucesso."); return redirect(url_for("my_profile_page"))
-    return render_template("profile.html",user=user)
+    return render_template("profile.html",user=user,customer_companies=_customer_companies_for_user(user) if user.role=="customer" else [])
 
 @app.get("/patrimonio")
 @dashboard_required
@@ -11447,7 +11453,7 @@ def _material_pdf_bytes(doc):
         from reportlab.lib.enums import TA_CENTER, TA_LEFT
         from reportlab.lib import colors
         from reportlab.lib.utils import ImageReader
-        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, KeepTogether
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, PageBreak, Image, KeepTogether
     except Exception as exc:
         raise RuntimeError("Dependência reportlab não instalada") from exc
     out=io.BytesIO(); styles=getSampleStyleSheet()
@@ -11878,6 +11884,15 @@ def materials_request_status_api(rid):
     r.status=status;db.session.commit();return jsonify({'ok':True})
 
 
+# V69.2.1 HOTFIX2 — colunas aditivas do documento fiscal do Portal do Cliente.
+try:
+    with db.engine.begin() as conn:
+        insp=inspect(db.engine); cols={c['name'] for c in insp.get_columns('customer_appointments')}
+        for col,typ in [('invoice_number','VARCHAR(120)'),('invoice_file','VARCHAR(600)'),('invoice_original_name','VARCHAR(255)')]:
+            if col not in cols: conn.execute(text(f'ALTER TABLE customer_appointments ADD COLUMN {col} {typ}'))
+except Exception as exc:
+    app.logger.warning('HOTFIX2: não foi possível validar colunas fiscais do Portal: %s',exc)
+
 # ---------------- V69 Portal do Cliente ----------------
 def _customer_company_ids(u):
     try: return [int(x) for x in json.loads(getattr(u,'customer_company_ids',None) or '[]') if str(x).isdigit()]
@@ -11910,11 +11925,29 @@ def _portal_store_dataurl(dataurl, prefix):
     except Exception:
         name=key.replace('/','_'); (UPLOAD_DIR/name).write_bytes(blob); return name
 
+def _portal_stored_bytes(stored):
+    if not stored: return b''
+    if stored.startswith('r2__'): return _r2_get_bytes(stored[4:])
+    return (UPLOAD_DIR/stored).read_bytes()
+
+def _portal_store_upload(f,prefix,allowed_images_only=False):
+    if not f or not f.filename: return None,None
+    mime=(f.mimetype or '').lower()
+    if allowed_images_only and not mime.startswith('image/'): raise ValueError('A evidência deve ser uma imagem.')
+    if not allowed_images_only and not (mime=='application/pdf' or mime.startswith('image/')): raise ValueError('Documento deve ser PDF, JPG ou PNG.')
+    raw=f.read(); maxb=5*1024*1024 if allowed_images_only else 12*1024*1024
+    if len(raw)>maxb: raise ValueError('Arquivo excede o tamanho permitido.')
+    safe=secure_filename(f.filename) or ('foto.jpg' if allowed_images_only else 'documento')
+    key=f"portal-cliente/{datetime.utcnow().strftime('%Y/%m')}/{prefix}-{uuid.uuid4().hex}-{safe}"
+    try: _r2_put_bytes(key,raw,mime or 'application/octet-stream'); return 'r2__'+key,f.filename
+    except Exception:
+        name=key.replace('/','_'); (UPLOAD_DIR/name).write_bytes(raw); return name,f.filename
+
 def _portal_pdf(a, item=None):
     from reportlab.lib.pagesizes import A4
     from reportlab.lib import colors
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, PageBreak
     import io
     out=io.BytesIO(); doc=SimpleDocTemplate(out,pagesize=A4,rightMargin=30,leftMargin=30,topMargin=30,bottomMargin=30)
     st=getSampleStyleSheet(); title=ParagraphStyle('pt',parent=st['Title'],fontSize=18,leading=22,textColor=colors.HexColor('#123b68')); body=ParagraphStyle('pb',parent=st['BodyText'],fontSize=9,leading=12)
@@ -11924,12 +11957,19 @@ def _portal_pdf(a, item=None):
     if cc:
         story.append(Paragraph(f"<b>Razão social:</b> {cc.legal_name} &nbsp;&nbsp; <b>CNPJ:</b> {cc.cnpj or '—'} &nbsp;&nbsp; <b>Contato:</b> {cc.contact_name or '—'} &nbsp;&nbsp; <b>Telefone:</b> {cc.phone or cc.mobile or '—'}",body))
         story.append(Paragraph(f"<b>E-mail:</b> {cc.email or '—'} &nbsp;&nbsp; <b>Endereço:</b> {cc.address or '—'} {cc.city or ''}/{cc.state or ''}",body))
-    story.append(Paragraph(f"<b>Data do agendamento:</b> {a.scheduled_date.strftime('%d/%m/%Y') if a.scheduled_date else '—'} &nbsp;&nbsp; <b>Aceite:</b> {a.accepted_at.strftime('%d/%m/%Y %H:%M') if a.accepted_at else '—'}",body)); story.append(Spacer(1,10))
+    story.append(Paragraph(f"<b>Data do agendamento:</b> {a.scheduled_date.strftime('%d/%m/%Y') if a.scheduled_date else '—'} &nbsp;&nbsp; <b>Aceite:</b> {a.accepted_at.strftime('%d/%m/%Y %H:%M') if a.accepted_at else '—'}",body))
+    if getattr(a,'invoice_number',None) or getattr(a,'invoice_original_name',None): story.append(Paragraph(f"<b>Nota Fiscal / Documento:</b> {getattr(a,'invoice_number',None) or '—'} &nbsp;&nbsp; {getattr(a,'invoice_original_name',None) or ''}",body))
+    story.append(Spacer(1,10))
     rows=[item] if item else CustomerAppointmentEquipment.query.filter_by(appointment_id=a.id).order_by(CustomerAppointmentEquipment.item_no).all()
     data=[["Protocolo","Série","Equipamento","Versão","EOD","Defeito","Observação"]]
     for x in rows: data.append([_portal_equipment_code(a,x),x.serial_number,x.equipment or '—',x.version or '—',x.eod or '—',Paragraph(x.defect,body),Paragraph(x.notes or '—',body)])
     t=Table(data,colWidths=[78,68,65,42,48,105,105],repeatRows=1); t.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#eaf2fb')),('TEXTCOLOR',(0,0),(-1,0),colors.HexColor('#123b68')),('FONTNAME',(0,0),(-1,0),'Helvetica-Bold'),('GRID',(0,0),(-1,-1),.4,colors.HexColor('#b9c7d6')),('VALIGN',(0,0),(-1,-1),'TOP'),('FONTSIZE',(0,0),(-1,-1),7),('PADDING',(0,0),(-1,-1),4)])); story += [t,Spacer(1,10)]
     if a.notes: story.append(Paragraph(f"<b>Observação geral:</b> {a.notes}",body))
+    for x in rows:
+        if x.photo_file:
+            try:
+                raw=_portal_stored_bytes(x.photo_file); im=Image(io.BytesIO(raw)); im._restrictSize(500,300); story += [Spacer(1,8),Paragraph(f"<b>Evidência do equipamento:</b> {_portal_equipment_code(a,x)} · Série {x.serial_number}",body),Spacer(1,4),im]
+            except Exception: app.logger.exception('Falha ao incluir evidência no PDF do equipamento %s',x.id)
     story += [Spacer(1,8),Paragraph(f"Aceite registrado por <b>{a.accepted_name or a.responsible_name}</b>{' com assinatura eletrônica' if a.signature_file else ' sem assinatura eletrônica'}. Documento bloqueado para edição após o envio.",body)]
     doc.build(story); return out.getvalue()
 
@@ -11981,6 +12021,20 @@ def portal_customer_company_edit(cid):
     c.legal_name=legal; c.state=(d.get('state') or '').strip().upper() or None; c.active=d.get('active')=='1'
     db.session.commit(); flash('Cadastro do cliente atualizado.'); return redirect('/portal-cliente/cadastro-clientes')
 
+@app.post('/portal-cliente/cadastro-clientes/<int:cid>/excluir')
+@login_required
+def portal_customer_company_delete(cid):
+    if session.get('role')!='manager': abort(403)
+    c=db.session.get(CustomerCompany,cid)
+    if not c: abort(404)
+    linked_users=[u for u in User.query.all() if cid in _customer_company_ids(u)]
+    linked_appts=CustomerAppointment.query.filter(func.lower(CustomerAppointment.customer_company)==(c.legal_name or '').lower()).count()
+    if linked_users or linked_appts:
+        c.active=False; db.session.commit(); flash('Cliente possui vínculos e foi inativado para preservar o histórico.')
+    else:
+        db.session.delete(c); db.session.commit(); flash('Cliente excluído.')
+    return redirect('/portal-cliente/cadastro-clientes')
+
 @app.get('/portal-cliente')
 @login_required
 def portal_cliente_page():
@@ -12015,6 +12069,40 @@ def portal_appointments_create():
         db.session.add(CustomerAppointmentEquipment(appointment_id=a.id,item_no=i,serial_number=serial,equipment=(x.get('equipment') or '').strip(),version=(x.get('version') or '').strip(),eod=(x.get('eod') or '').strip(),defect=defect,notes=(x.get('notes') or '').strip()))
     db.session.commit(); return jsonify({'ok':True,'id':a.id,'code':a.code})
 
+@app.post('/api/portal/appointments/<int:aid>/attachments')
+@login_required
+def portal_appointment_attachments(aid):
+    a=db.session.get(CustomerAppointment,aid)
+    if not a or not _portal_can_see(a) or a.created_by!=session['user_id'] or a.status!='RASCUNHO': abort(404)
+    try:
+        a.invoice_number=(request.form.get('invoice_number') or '').strip() or None
+        inv=request.files.get('invoice')
+        if inv and inv.filename:
+            a.invoice_file,a.invoice_original_name=_portal_store_upload(inv,f'NF-{a.code}')
+        items=CustomerAppointmentEquipment.query.filter_by(appointment_id=a.id).order_by(CustomerAppointmentEquipment.item_no).all()
+        for x in items:
+            f=request.files.get(f'photo_{x.item_no}')
+            if f and f.filename: x.photo_file,_=_portal_store_upload(f,f'{_portal_equipment_code(a,x)}-foto',True)
+        db.session.commit(); return jsonify({'ok':True})
+    except ValueError as exc:
+        db.session.rollback(); return jsonify({'ok':False,'error':str(exc)}),400
+
+@app.get('/api/portal/equipments/<int:eid>/photo')
+@login_required
+def portal_equipment_photo(eid):
+    x=db.session.get(CustomerAppointmentEquipment,eid); a=db.session.get(CustomerAppointment,x.appointment_id) if x else None
+    if not a or not _portal_can_see(a) or not x.photo_file: abort(404)
+    return Response(_portal_stored_bytes(x.photo_file),mimetype='image/jpeg')
+
+@app.get('/api/portal/appointments/<int:aid>/invoice')
+@login_required
+def portal_appointment_invoice(aid):
+    a=db.session.get(CustomerAppointment,aid)
+    if not a or not _portal_can_see(a) or not getattr(a,'invoice_file',None): abort(404)
+    raw=_portal_stored_bytes(a.invoice_file); name=a.invoice_original_name or f'{a.code}-documento'
+    mime='application/pdf' if name.lower().endswith('.pdf') else ('image/png' if name.lower().endswith('.png') else 'image/jpeg')
+    return Response(raw,mimetype=mime,headers={'Content-Disposition':f'inline; filename="{secure_filename(name)}"'})
+
 @app.post('/api/portal/appointments/<int:aid>/submit')
 @login_required
 def portal_appointments_submit(aid):
@@ -12041,7 +12129,7 @@ def portal_appointment_detail(aid):
     latest_download={}
     for ev in download_events:
         latest_download.setdefault(ev.entity_id,ev)
-    return jsonify({'ok':True,'appointment':{'id':a.id,'code':a.code,'company':a.customer_company,'responsible':a.responsible_name,'date':a.scheduled_date.isoformat() if a.scheduled_date else '', 'notes':a.notes or '', 'status':a.status,'email_status':a.email_status or ''},'items':[{'id':x.id,'item_no':x.item_no,'protocol':_portal_equipment_code(a,x),'serial':x.serial_number,'equipment':x.equipment or '', 'version':x.version or '', 'eod':x.eod or '', 'defect':x.defect,'notes':x.notes or '', 'received':x.received,'pdf_downloaded':str(x.id) in latest_download,'pdf_downloaded_at':latest_download[str(x.id)].created_at.replace(tzinfo=ZoneInfo('UTC')).astimezone(ZoneInfo('America/Sao_Paulo')).strftime('%d/%m/%Y %H:%M') if str(x.id) in latest_download else ''} for x in items]})
+    return jsonify({'ok':True,'appointment':{'id':a.id,'code':a.code,'company':a.customer_company,'responsible':a.responsible_name,'date':a.scheduled_date.isoformat() if a.scheduled_date else '', 'notes':a.notes or '', 'status':a.status,'email_status':a.email_status or '', 'invoice_number':getattr(a,'invoice_number',None) or '', 'invoice_name':getattr(a,'invoice_original_name',None) or '', 'has_invoice':bool(getattr(a,'invoice_file',None))},'items':[{'id':x.id,'item_no':x.item_no,'protocol':_portal_equipment_code(a,x),'serial':x.serial_number,'equipment':x.equipment or '', 'version':x.version or '', 'eod':x.eod or '', 'defect':x.defect,'notes':x.notes or '', 'has_photo':bool(x.photo_file), 'photo_url':(f'/api/portal/equipments/{x.id}/photo' if x.photo_file else ''), 'received':x.received,'pdf_downloaded':str(x.id) in latest_download,'pdf_downloaded_at':latest_download[str(x.id)].created_at.replace(tzinfo=ZoneInfo('UTC')).astimezone(ZoneInfo('America/Sao_Paulo')).strftime('%d/%m/%Y %H:%M') if str(x.id) in latest_download else ''} for x in items]})
 
 @app.get('/api/portal/appointments/<int:aid>/pdf')
 @login_required
@@ -12087,6 +12175,9 @@ def portal_appointment_pdfs_zip(aid):
     if not items:return jsonify({'ok':False,'error':'Agendamento sem equipamentos.'}),404
     out=io.BytesIO()
     with zipfile.ZipFile(out,'w',compression=zipfile.ZIP_DEFLATED) as zf:
+        if getattr(a,'invoice_file',None):
+            try: zf.writestr('Documento_'+secure_filename(a.invoice_original_name or 'nota-fiscal'),_portal_stored_bytes(a.invoice_file))
+            except Exception: app.logger.exception('Falha ao incluir documento do agendamento no ZIP %s',a.code)
         for x in items:
             zf.writestr(_portal_equipment_pdf_filename(a,x),_portal_pdf(a,x))
             _portal_record_pdf_download(a,x,'PORTAL_EQUIPMENT_PDF_DOWNLOADED_ALL')
