@@ -1,0 +1,4 @@
+V68 REV2 HOTFIX 1
+Correção: rota POST /api/materials/returns/request falhava com NameError: name 'date' is not defined.
+Ajuste: importação explícita de date em app.py.
+Validação: python -m py_compile app.py concluído com sucesso.
