@@ -1,5 +1,8 @@
 {% extends "base.html" %}
-{% block title %}Sobre | Inventário SP{% endblock %}
+{% block title %}Sobre | Inventário SP
+<!-- V66 REV4.2 -->
+<div class="versionCard"><b>V66 REV4.2 · Performance 2.0</b><p>Compatibilidade EMV legada em payload slim sem redirecionamento, renovação de cache dos scripts e ajuste do resumo TopDesk para reduzir processamento desnecessário.</p></div>
+{% endblock %}
 {% block content %}
 <section class="dashHero">
   <div>
@@ -36,7 +39,7 @@
 {% if session.get('role') not in ('technician','technician_implantation') %}
 <section class="card aboutHistoryCompact">
   <div class="sectionHead"><div><h2>Histórico recente</h2><p class="muted">Últimas versões em destaque. Abra o histórico completo para consultar versões antigas.</p></div></div>
-        <div class="historyRow"><b>V66 REV4.1</b><span>Performance 2.0 cirúrgica: rota EMV canônica sem duplicidade por barra final, cache ampliado para localidades e dashboard TopDesk e redução de recomputações em navegação repetida.</span></div>
+        <div class="historyRow"><b>V66 REV4.2</b><span>Performance 2.0 cirúrgica: rota EMV canônica sem duplicidade por barra final, cache ampliado para localidades e dashboard TopDesk e redução de recomputações em navegação repetida.</span></div>
 <div class="historyRow"><b>V66 REV4</b><span>Performance 2.0: EMV com cache separado para dashboard e operação, leitura compacta sem materializar evidências, validação de schema EMV apenas uma vez por processo, GPS recente em consultas em lote, remoção do N+1 da Garagem e redução de consultas no inventário por localidade.</span></div>
     <div class="historyRow"><b>V66 REV3</b><span>Correção de permissões RH/Usuários: cache de acesso isolado por usuário autenticado, preservando edição dos perfis operacionais autorizados. Mapa Equipes/GPS passa a identificar automaticamente a estação ferroviária mais próxima da posição atual.</span></div>
     <div class="historyRow"><b>V66 REV2</b><span>GPS operacional configurável individualmente por usuário; intervalo de rastreamento configurável; previsão dinâmica de término para EMV, Garagem e Recarga com janela histórica definida pelo ADM.</span></div>
