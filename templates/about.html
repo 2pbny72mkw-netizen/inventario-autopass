@@ -39,6 +39,7 @@
 {% if session.get('role') not in ('technician','technician_implantation') %}
 <section class="card aboutHistoryCompact">
   <div class="sectionHead"><div><h2>Histórico recente</h2><p class="muted">Últimas versões em destaque. Abra o histórico completo para consultar versões antigas.</p></div></div>
+        <div class="historyRow"><b>V67</b><span>Dossiê & Materiais: catálogo configurável, kits, entregas em lote, pendência de aceite, assinatura eletrônica, PDF no R2, Meus Documentos, Minha Carga, solicitações e dossiê gerencial.</span></div>
         <div class="historyRow"><b>V66 REV4.2</b><span>Performance 2.0 cirúrgica: rota EMV canônica sem duplicidade por barra final, cache ampliado para localidades e dashboard TopDesk e redução de recomputações em navegação repetida.</span></div>
 <div class="historyRow"><b>V66 REV4</b><span>Performance 2.0: EMV com cache separado para dashboard e operação, leitura compacta sem materializar evidências, validação de schema EMV apenas uma vez por processo, GPS recente em consultas em lote, remoção do N+1 da Garagem e redução de consultas no inventário por localidade.</span></div>
     <div class="historyRow"><b>V66 REV3</b><span>Correção de permissões RH/Usuários: cache de acesso isolado por usuário autenticado, preservando edição dos perfis operacionais autorizados. Mapa Equipes/GPS passa a identificar automaticamente a estação ferroviária mais próxima da posição atual.</span></div>
