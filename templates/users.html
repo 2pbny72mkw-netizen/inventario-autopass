@@ -43,9 +43,14 @@
             <option value="hr">RH</option>{% endif %}
           </select>
         </div>
-        <div class="fieldExtended">
+        <div class="fieldExtended companyFreeField">
           <label>Empresa</label>
           <input name="company" placeholder="Ex.: Autopass, prestadora...">
+        </div>
+        <div class="fieldExtended customerCompanyField" style="display:none">
+          <label>Empresa(s) vinculada(s) ao Cliente *</label>
+          <select name="customer_company_ids" multiple size="{{ 4 if can_assign_sensitive_roles else 1 }}" style="width:100%">{% for c in customer_companies %}<option value="{{c.id}}">{{c.trade_name or c.legal_name}} · {{c.cnpj or 'sem CNPJ'}}</option>{% endfor %}</select>
+          <small>{% if can_assign_sensitive_roles %}ADM pode liberar uma ou mais empresas. Use Ctrl para selecionar várias.{% else %}Apenas ADM pode liberar acesso a mais de uma empresa.{% endif %}</small>
         </div>
         <div class="fieldExtended">
           <label>Cargo</label>
@@ -260,8 +265,8 @@
                     </select>
                   </div>
                   <div class="editExtended">
-                    <label>Empresa</label>
-                    <input name="company" value="{{ u.company or '' }}">
+                    <div class="companyFreeField"><label>Empresa</label><input name="company" value="{{ u.company or '' }}"></div>
+                    <div class="customerCompanyField" style="display:none"><label>Empresa(s) vinculada(s) ao Cliente *</label><select name="customer_company_ids" multiple size="{{ 4 if can_assign_sensitive_roles else 1 }}" style="width:100%">{% for c in customer_companies %}<option value="{{c.id}}" {% if c.id in customer_company_map.get(u.id,[]) %}selected{% endif %}>{{c.trade_name or c.legal_name}} · {{c.cnpj or 'sem CNPJ'}}</option>{% endfor %}</select><small>{% if can_assign_sensitive_roles %}ADM pode liberar uma ou mais empresas.{% else %}Apenas ADM pode liberar múltiplas empresas.{% endif %}</small></div>
                   </div>
                   <div class="editExtended">
                     <label>Cargo</label>
@@ -367,6 +372,9 @@
     const consultation = role.value === "consultation";
     const technician = ["technician","technician_implantation","manager_field"].includes(role.value);
     const gpsOperational=["technician","technician_implantation","manager_field","dispatcher"].includes(role.value);
+    const customer=role.value==="customer";
+    document.querySelectorAll('#userForm .customerCompanyField').forEach(el=>el.style.display=customer?'':'none');
+    document.querySelectorAll('#userForm .companyFreeField').forEach(el=>el.style.display=customer?'none':'');
     extended.forEach(el => {
       el.style.display = consultation ? "none" : "";
       if (consultation) el.querySelectorAll("input").forEach(input => input.value = "");
@@ -412,6 +420,9 @@
       const consultation = roleSelect.value === "consultation";
       const technician = ["technician","technician_implantation","manager_field"].includes(roleSelect.value);
       const gpsOperational=["technician","technician_implantation","manager_field","dispatcher"].includes(roleSelect.value);
+      const customer=roleSelect.value==="customer";
+      form.querySelectorAll('.customerCompanyField').forEach(el=>el.style.display=customer?'':'none');
+      form.querySelectorAll('.companyFreeField').forEach(el=>el.style.display=customer?'none':'');
       editExtended.forEach(el => el.style.display = consultation ? "none" : "");
       form.querySelectorAll('.scheduleField').forEach(el=>el.style.display=technician?'':'none');
       form.querySelectorAll('.gpsField').forEach(el=>el.style.display=gpsOperational?'':'none');
