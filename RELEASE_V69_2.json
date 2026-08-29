@@ -1,0 +1,19 @@
+{
+  "version": "V69.2",
+  "date": "2026-08-29",
+  "base": "V69 REV1",
+  "scope": [
+    "Portal do Cliente / Recebimento em padrão Dashboard 2.0",
+    "Contraste e legibilidade reforçados e layout desktop sem rolagem horizontal",
+    "Filtro de clientes no recebimento",
+    "Download de todos os PDFs em ZIP",
+    "PDF individual com S/N no nome do arquivo",
+    "Indicador OS/PDF baixado com data/hora via trilha de auditoria",
+    "Assinatura eletrônica opcional no envio do agendamento",
+    "Cliente inicia diretamente no Portal do Cliente",
+    "Oculta carga de documentos/materiais no Meu Perfil do Cliente",
+    "Correção do Excel de Telemetria/openpyxl",
+    "Service Worker e cache atualizados para V69.2",
+    "Uso do logo oficial Autopass existente nos assets"
+  ]
+}

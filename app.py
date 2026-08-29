@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V69 REV1"
+APP_RELEASE = "V69.2"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -1509,6 +1509,8 @@ def index():
         return redirect(url_for("teams_page"))
     if role == "atm_financial_admin":
         return redirect(url_for("financial_cost_management_page"))
+    if role == "customer":
+        return redirect(url_for("portal_cliente_page"))
     if role in ("manager", "manager_field", "consultation", "dispatcher", "technician", "technician_implantation"):
         return redirect(url_for("dashboard_landing"))
     return redirect(url_for("my_profile_page"))
@@ -1533,6 +1535,8 @@ def login():
                 return redirect(url_for("teams_page"))
             if user.role == "atm_financial_admin":
                 return redirect(url_for("financial_cost_management_page"))
+            if user.role == "customer":
+                return redirect(url_for("portal_cliente_page"))
             return redirect(url_for("manager" if user.role in ("manager", "manager_field", "consultation", "dispatcher") else "activities_page"))
         flash("Usuário ou senha inválidos.")
     return render_template("login.html")
@@ -3645,7 +3649,7 @@ def telemetry_export_xlsx():
         ("Usuários ativos / 15 min", data.get("active_users_15m")),
     ]
     for k,v in summary_rows: ws.append([k,v])
-    for c in ws[2:]: c[0].font = Font(bold=True)
+    for row in ws.iter_rows(min_row=2, max_row=ws.max_row): row[0].font = Font(bold=True)
 
     wst = wb.create_sheet("Evolução 5min")
     wst.append(["Horário","Média (ms)","P95 (ms)","Requisições"]); style_header(wst)
@@ -11873,7 +11877,7 @@ def _portal_pdf(a, item=None):
     for x in rows: data.append([_portal_equipment_code(a,x),x.serial_number,x.equipment or '—',x.version or '—',x.eod or '—',Paragraph(x.defect,body),Paragraph(x.notes or '—',body)])
     t=Table(data,colWidths=[78,68,65,42,48,105,105],repeatRows=1); t.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#eaf2fb')),('TEXTCOLOR',(0,0),(-1,0),colors.HexColor('#123b68')),('FONTNAME',(0,0),(-1,0),'Helvetica-Bold'),('GRID',(0,0),(-1,-1),.4,colors.HexColor('#b9c7d6')),('VALIGN',(0,0),(-1,-1),'TOP'),('FONTSIZE',(0,0),(-1,-1),7),('PADDING',(0,0),(-1,-1),4)])); story += [t,Spacer(1,10)]
     if a.notes: story.append(Paragraph(f"<b>Observação geral:</b> {a.notes}",body))
-    story += [Spacer(1,8),Paragraph(f"Aceite eletrônico realizado por <b>{a.accepted_name or a.responsible_name}</b>. Documento bloqueado para edição após o envio.",body)]
+    story += [Spacer(1,8),Paragraph(f"Aceite registrado por <b>{a.accepted_name or a.responsible_name}</b>{' com assinatura eletrônica' if a.signature_file else ' sem assinatura eletrônica'}. Documento bloqueado para edição após o envio.",body)]
     doc.build(story); return out.getvalue()
 
 def _portal_send_email(a):
@@ -11940,8 +11944,9 @@ def portal_appointments_submit(aid):
     if not a or not _portal_can_see(a) or a.created_by!=session['user_id']: abort(404)
     if a.status!='RASCUNHO': return jsonify({'ok':False,'error':'Agendamento já finalizado.'}),409
     data=request.get_json(silent=True) or {}; sig=data.get('signature_data'); name=(data.get('accepted_name') or a.responsible_name).strip()
-    if not sig:return jsonify({'ok':False,'error':'Assinatura/aceite é obrigatório para finalizar.'}),400
-    a.signature_file=_portal_store_dataurl(sig,f'assinatura-{a.code}');a.accepted_name=name;a.accepted_at=datetime.utcnow();a.scheduled_date=datetime.now(ZoneInfo('America/Sao_Paulo')).date();a.status='ENVIADO'
+    # V69.2: assinatura eletrônica permanece disponível, porém não bloqueia a finalização.
+    a.signature_file=_portal_store_dataurl(sig,f'assinatura-{a.code}') if sig else None
+    a.accepted_name=name;a.accepted_at=datetime.utcnow();a.scheduled_date=datetime.now(ZoneInfo('America/Sao_Paulo')).date();a.status='ENVIADO'
     pdf=_portal_pdf(a); key=f"portal-cliente/{datetime.utcnow().strftime('%Y/%m')}/{a.code}.pdf"
     try:_r2_put_bytes(key,pdf,'application/pdf');a.pdf_file='r2__'+key
     except Exception:
@@ -11954,7 +11959,11 @@ def portal_appointment_detail(aid):
     a=db.session.get(CustomerAppointment,aid)
     if not a or not _portal_can_see(a):abort(404)
     items=CustomerAppointmentEquipment.query.filter_by(appointment_id=a.id).order_by(CustomerAppointmentEquipment.item_no).all()
-    return jsonify({'ok':True,'appointment':{'id':a.id,'code':a.code,'company':a.customer_company,'responsible':a.responsible_name,'date':a.scheduled_date.isoformat() if a.scheduled_date else '', 'notes':a.notes or '', 'status':a.status,'email_status':a.email_status or ''},'items':[{'id':x.id,'item_no':x.item_no,'protocol':_portal_equipment_code(a,x),'serial':x.serial_number,'equipment':x.equipment or '', 'version':x.version or '', 'eod':x.eod or '', 'defect':x.defect,'notes':x.notes or '', 'received':x.received} for x in items]})
+    download_events=AuditEvent.query.filter(AuditEvent.entity_type=='customer_appointment_equipment',AuditEvent.entity_id.in_([str(x.id) for x in items]),AuditEvent.event_type.in_(['PORTAL_EQUIPMENT_PDF_DOWNLOADED','PORTAL_EQUIPMENT_PDF_DOWNLOADED_ALL'])).order_by(AuditEvent.created_at.desc()).all() if items else []
+    latest_download={}
+    for ev in download_events:
+        latest_download.setdefault(ev.entity_id,ev)
+    return jsonify({'ok':True,'appointment':{'id':a.id,'code':a.code,'company':a.customer_company,'responsible':a.responsible_name,'date':a.scheduled_date.isoformat() if a.scheduled_date else '', 'notes':a.notes or '', 'status':a.status,'email_status':a.email_status or ''},'items':[{'id':x.id,'item_no':x.item_no,'protocol':_portal_equipment_code(a,x),'serial':x.serial_number,'equipment':x.equipment or '', 'version':x.version or '', 'eod':x.eod or '', 'defect':x.defect,'notes':x.notes or '', 'received':x.received,'pdf_downloaded':str(x.id) in latest_download,'pdf_downloaded_at':latest_download[str(x.id)].created_at.replace(tzinfo=ZoneInfo('UTC')).astimezone(ZoneInfo('America/Sao_Paulo')).strftime('%d/%m/%Y %H:%M') if str(x.id) in latest_download else ''} for x in items]})
 
 @app.get('/api/portal/appointments/<int:aid>/pdf')
 @login_required
@@ -11963,12 +11972,39 @@ def portal_appointment_pdf(aid):
     if not a or not _portal_can_see(a):abort(404)
     return Response(_portal_pdf(a),mimetype='application/pdf',headers={'Content-Disposition':f'inline; filename="{a.code}.pdf"'})
 
+def _portal_safe_filename_part(value):
+    value=re.sub(r'[^A-Za-z0-9._-]+','-',str(value or '').strip()).strip('-_.')
+    return value[:100] or 'SEM-SN'
+
+def _portal_equipment_pdf_filename(a,x):
+    return f"{_portal_equipment_code(a,x)}_SN-{_portal_safe_filename_part(x.serial_number)}.pdf"
+
+def _portal_record_pdf_download(a,x,event_type='PORTAL_EQUIPMENT_PDF_DOWNLOADED'):
+    db.session.add(AuditEvent(user_id=session.get('user_id'),event_type=event_type,entity_type='customer_appointment_equipment',entity_id=str(x.id),detail=f'{a.code} · série {x.serial_number} · {_portal_equipment_pdf_filename(a,x)}'))
+
 @app.get('/api/portal/equipments/<int:eid>/pdf')
 @login_required
 def portal_equipment_pdf(eid):
     x=db.session.get(CustomerAppointmentEquipment,eid);a=db.session.get(CustomerAppointment,x.appointment_id) if x else None
     if not a or not _portal_can_see(a):abort(404)
-    fn=_portal_equipment_code(a,x)+'.pdf';return Response(_portal_pdf(a,x),mimetype='application/pdf',headers={'Content-Disposition':f'attachment; filename="{fn}"'})
+    fn=_portal_equipment_pdf_filename(a,x)
+    _portal_record_pdf_download(a,x);db.session.commit()
+    return Response(_portal_pdf(a,x),mimetype='application/pdf',headers={'Content-Disposition':f'attachment; filename="{fn}"'})
+
+@app.get('/api/portal/appointments/<int:aid>/pdfs.zip')
+@login_required
+def portal_appointment_pdfs_zip(aid):
+    a=db.session.get(CustomerAppointment,aid)
+    if not a or not _portal_can_see(a):abort(404)
+    items=CustomerAppointmentEquipment.query.filter_by(appointment_id=a.id).order_by(CustomerAppointmentEquipment.item_no).all()
+    if not items:return jsonify({'ok':False,'error':'Agendamento sem equipamentos.'}),404
+    out=io.BytesIO()
+    with zipfile.ZipFile(out,'w',compression=zipfile.ZIP_DEFLATED) as zf:
+        for x in items:
+            zf.writestr(_portal_equipment_pdf_filename(a,x),_portal_pdf(a,x))
+            _portal_record_pdf_download(a,x,'PORTAL_EQUIPMENT_PDF_DOWNLOADED_ALL')
+    db.session.commit();out.seek(0)
+    return send_file(out,as_attachment=True,download_name=f'{a.code}_PDFs.zip',mimetype='application/zip')
 
 @app.post('/api/portal/equipments/<int:eid>/receive')
 @login_required
