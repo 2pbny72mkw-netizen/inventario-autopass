@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V69.3"
+APP_RELEASE = "V69.3.2"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -1531,9 +1531,9 @@ def field_dashboard_required(fn):
 @app.get("/dashboard")
 @login_required
 def dashboard_landing():
-    # HOTFIX3: Dashboard é uma central única de painéis. Não redireciona mais
-    # automaticamente para uma área operacional. As permissões continuam mandando.
-    return render_template("dashboard_hub.html", app_release=APP_RELEASE)
+    # V69.3.2: existe uma única central de dashboards: /gerencial.
+    # Elimina a tela intermediária (dashboard_hub) e preserva o menu lateral.
+    return redirect(url_for("manager"))
 
 @app.route("/")
 def index():
@@ -1678,7 +1678,7 @@ def technician():
 def manager():
     if session.get("role")=="technician":
         return redirect(url_for("field_dashboard_page"))
-    return render_template("manager.html")
+    return render_template("manager.html", app_release=APP_RELEASE)
 
 @app.route("/gerencial/tv")
 @dashboard_required
@@ -9478,7 +9478,9 @@ def garage_chip_export_xlsx():
 
 @app.get('/troca-chips-garagem/dashboard')
 @login_required
-def garage_chip_dashboard_page(): return render_template('garage_chip_dashboard.html',app_release=APP_RELEASE)
+def garage_chip_dashboard_page():
+    # V69.3.2: Dashboard Garagem faz parte da Central /gerencial, como Recarga e EMV.
+    return redirect(url_for('manager', view='garage'))
 
 @app.get("/troca-chips-emv")
 @emv_field_required
@@ -11593,14 +11595,27 @@ def materials_xray_page():
 @login_required
 def materials_xray_api():
     _materials_require('materials.dossier.view')
-    users=User.query.filter(User.active==True,User.role.in_(['technician','technician_implantation','manager_field'])).order_by(User.name).all(); out=[]
+    # V69.3.2: Raio-X deve refletir colaboradores ativos do sistema, não somente três roles fixos.
+    # Cliente/Consulta não pertencem ao universo operacional de carga e termos.
+    users=(User.query.filter(User.active.is_(True), ~User.role.in_(['customer','consultation']))
+           .order_by(User.name).all())
+    user_ids=[u.id for u in users]
+    doc_stats={}
+    if user_ids:
+        # Seleciona apenas as colunas necessárias. Isso mantém o Raio-X disponível mesmo
+        # durante migrações aditivas de campos documentais não usados nesta tela.
+        for uid,st in db.session.query(CollaboratorDocument.user_id,CollaboratorDocument.status).filter(CollaboratorDocument.user_id.in_(user_ids)).all():
+            x=doc_stats.setdefault(uid,{'total':0,'signed':0,'pending':0})
+            x['total']+=1; x['signed']+=1 if st=='ASSINADO' else 0
+            x['pending']+=1 if st in ('AGUARDANDO_ACEITE','CORRECAO_SOLICITADA','RASCUNHO') else 0
+    out=[]
     for u in users:
-        docs=CollaboratorDocument.query.filter_by(user_id=u.id).all(); signed=sum(1 for d in docs if d.status=='ASSINADO'); pending=sum(1 for d in docs if d.status in ('AGUARDANDO_ACEITE','CORRECAO_SOLICITADA','RASCUNHO'))
+        ds=doc_stats.get(u.id,{'total':0,'signed':0,'pending':0})
         req=MaterialRequest.query.filter_by(user_id=u.id).filter(MaterialRequest.status.in_(['SOLICITADO','EM_ANALISE','APROVADO','EM_COMPRA','DISPONIVEL'])).count()
         mov=MaterialMovement.query.filter_by(user_id=u.id).all(); bal={}
         for m in mov: bal[m.material_id]=bal.get(m.material_id,0)+(m.quantity if m.movement_type in ('ENTREGA','SUBSTITUICAO_ENTRADA','TRANSFERENCIA_ENTRADA') else -m.quantity)
-        load=sum(1 for q in bal.values() if q>0); issues=pending+req; status='REGULAR' if issues==0 else 'PENDENTE'
-        out.append({'id':u.id,'name':u.name,'company':u.company or '', 'job_title':u.job_title or '', 'documents_total':len(docs),'terms_signed':signed,'terms_pending':pending,'materials_open':load,'requests_open':req,'issues':issues,'status':status})
+        load=sum(1 for q in bal.values() if q>0); issues=ds['pending']+req; status='REGULAR' if issues==0 else 'PENDENTE'
+        out.append({'id':u.id,'name':u.name,'company':u.company or '', 'job_title':u.job_title or '', 'documents_total':ds['total'],'terms_signed':ds['signed'],'terms_pending':ds['pending'],'materials_open':load,'requests_open':req,'issues':issues,'status':status})
     return jsonify({'ok':True,'rows':out,'summary':{'total':len(out),'regular':sum(1 for x in out if x['status']=='REGULAR'),'pending':sum(1 for x in out if x['status']!='REGULAR'),'without_term':sum(1 for x in out if x['terms_signed']==0),'materials_open':sum(1 for x in out if x['materials_open']>0)}})
 
 @app.get('/documentos-materiais')
@@ -11696,8 +11711,11 @@ def materials_delivery_create_api():
 @app.get('/api/materials/pending-count')
 @login_required
 def materials_pending_count_api():
-    n=CollaboratorDocument.query.filter_by(user_id=session['user_id'],status='AGUARDANDO_ACEITE').count()
-    return jsonify({'ok':True,'count':n})
+    # V69.3.2: COUNT somente nas colunas estáveis; evita SELECT do modelo inteiro.
+    n=(db.session.query(func.count(CollaboratorDocument.id))
+       .filter(CollaboratorDocument.user_id==session['user_id'],CollaboratorDocument.status=='AGUARDANDO_ACEITE')
+       .scalar() or 0)
+    return jsonify({'ok':True,'count':int(n)})
 
 @app.put('/api/materials/documents/<int:did>/items')
 @login_required
@@ -11976,7 +11994,7 @@ def materials_request_status_api(rid):
 # V69.2.1 HOTFIX2 — colunas aditivas do documento fiscal do Portal do Cliente.
 try:
     with db.engine.begin() as conn:
-        insp=inspect(db.engine); cols={c['name'] for c in insp.get_columns('customer_appointments')}
+        insp=db.inspect(db.engine); cols={c['name'] for c in insp.get_columns('customer_appointments')}
         for col,typ in [('invoice_number','VARCHAR(120)'),('invoice_file','VARCHAR(600)'),('invoice_original_name','VARCHAR(255)')]:
             if col not in cols: conn.execute(text(f'ALTER TABLE customer_appointments ADD COLUMN {col} {typ}'))
 except Exception as exc:
@@ -12362,6 +12380,28 @@ with app.app_context():
     # V39.7.1: não deixa a criação das novas tabelas de Troca de Chips bloquear o startup.
     core_tables=[t for t in db.metadata.sorted_tables if t.name not in ("chip_swaps","chip_swap_photos")]
     db.metadata.create_all(bind=db.engine, tables=core_tables, checkfirst=True)
+    # V69.3.2 — compatibilidade PostgreSQL do Dossiê/Documentos.
+    # HOTFIX2 adicionou estes campos ao ORM, mas o banco legado podia não recebê-los.
+    try:
+        insp=db.inspect(db.engine)
+        if insp.has_table('collaborator_documents'):
+            cols={c['name'] for c in insp.get_columns('collaborator_documents')}
+            missing=[
+                ('invoice_number','VARCHAR(120)'),
+                ('invoice_file','VARCHAR(600)'),
+                ('invoice_original_name','VARCHAR(255)'),
+            ]
+            with db.engine.begin() as conn:
+                for col,typ in missing:
+                    if col not in cols:
+                        conn.execute(text(f'ALTER TABLE collaborator_documents ADD COLUMN {col} {typ}'))
+            # Reinspeciona e registra eventual divergência para diagnóstico de deploy.
+            cols_after={c['name'] for c in db.inspect(db.engine).get_columns('collaborator_documents')}
+            unresolved=[col for col,_ in missing if col not in cols_after]
+            if unresolved: app.logger.error('V69.3.2: colunas do Dossiê ainda ausentes: %s', unresolved)
+            else: app.logger.info('V69.3.2: schema collaborator_documents validado.')
+    except Exception:
+        app.logger.exception('V69.3.2: falha na migração aditiva collaborator_documents')
     # V68 REV1 — modo de quantidade por item (inteiro/decimal), migração aditiva/idempotente.
     try:
         insp=db.inspect(db.engine)
