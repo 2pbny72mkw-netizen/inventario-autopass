@@ -1520,14 +1520,9 @@ def field_dashboard_required(fn):
 @app.get("/dashboard")
 @login_required
 def dashboard_landing():
-    role=session.get("role")
-    if _has_access("finance") and role=="atm_financial_admin": return redirect(url_for("financial_cost_management_page"))
-    if _has_access("implantation") and role=="technician_implantation": return redirect(url_for("hardware_implantation_dashboard_page"))
-    if _has_access("field") and role in ("technician","manager_field"): return redirect(url_for("field_dashboard_page"))
-    if _has_access("dashboard") and role in ("manager","consultation","dispatcher"): return redirect(url_for("manager"))
-    if _has_access("teams"): return redirect(url_for("teams_page"))
-    if _has_access("finance_dashboard"): return redirect(url_for("financial_dashboard_page"))
-    return redirect(url_for("my_profile_page"))
+    # HOTFIX3: Dashboard é uma central única de painéis. Não redireciona mais
+    # automaticamente para uma área operacional. As permissões continuam mandando.
+    return render_template("dashboard_hub.html", app_release=APP_RELEASE)
 
 @app.route("/")
 def index():
@@ -1701,30 +1696,62 @@ def field_dashboard_page():
 @app.get("/api/dashboard/field")
 @field_dashboard_required
 def field_dashboard_api():
-    uid=session.get("user_id")
-    role=session.get("role")
-    inv_q=Inventory.query
-    # Técnico Field enxerga seus números; gestores enxergam o consolidado da área.
-    if role=="technician": inv_q=inv_q.filter(Inventory.technician_id==uid)
-    inv=inv_q.all()
-    inv_total=len(inv)
+    uid=session.get("user_id"); role=session.get("role")
+    company=(request.args.get("company") or "").strip(); line=(request.args.get("line") or "").strip()
+    location=(request.args.get("location") or "").strip(); equipment=(request.args.get("equipment") or "").strip()
+    status=(request.args.get("status") or "").strip(); technician=(request.args.get("technician") or "").strip()
+    date_from=(request.args.get("date_from") or "").strip(); date_to=(request.args.get("date_to") or "").strip()
+    def dt(v, end=False):
+        if not v: return None
+        try:
+            d=datetime.strptime(v,"%Y-%m-%d")
+            return d.replace(hour=23,minute=59,second=59) if end else d
+        except Exception: return None
+    d1,d2=dt(date_from),dt(date_to,True)
+    # opções vêm do escopo permitido, sem depender do filtro corrente.
+    lq=Location.query
+    locations=lq.order_by(Location.company,Location.line,Location.location).all()
+    inv_base=Inventory.query
+    if role=="technician": inv_base=inv_base.filter(Inventory.technician_id==uid)
+    tech_ids={x[0] for x in inv_base.with_entities(Inventory.technician_id).distinct().all() if x[0]}
+    users=User.query.filter(User.id.in_(tech_ids)).order_by(User.name).all() if tech_ids else []
+    inv_q=inv_base.join(Location,Inventory.location_id==Location.id)
+    tq=TopDeskTicket.query.outerjoin(Location,TopDeskTicket.location_id==Location.id)
+    cq=ChipSwap.query.join(Location,ChipSwap.location_id==Location.id)
+    if role=="technician":
+        tq=tq.filter(TopDeskTicket.assigned_technician_id==uid); cq=cq.filter(ChipSwap.technician_id==uid)
+    if company:
+        inv_q=inv_q.filter(Location.company==company); tq=tq.filter(Location.company==company); cq=cq.filter(Location.company==company)
+    if line:
+        inv_q=inv_q.filter(Location.line==line); tq=tq.filter(Location.line==line); cq=cq.filter(Location.line==line)
+    if location:
+        inv_q=inv_q.filter(Location.location==location); tq=tq.filter(Location.location==location); cq=cq.filter(Location.location==location)
+    if technician and technician.isdigit():
+        tid=int(technician); inv_q=inv_q.filter(Inventory.technician_id==tid); tq=tq.filter(TopDeskTicket.assigned_technician_id==tid); cq=cq.filter(ChipSwap.technician_id==tid)
+    if equipment: inv_q=inv_q.filter(Inventory.equipment_type.ilike(f"%{equipment}%"))
+    if status: inv_q=inv_q.filter(Inventory.operational_status==status)
+    if d1:
+        inv_q=inv_q.filter(Inventory.created_at>=d1); tq=tq.filter(TopDeskTicket.created_at>=d1); cq=cq.filter(ChipSwap.started_at>=d1)
+    if d2:
+        inv_q=inv_q.filter(Inventory.created_at<=d2); tq=tq.filter(TopDeskTicket.created_at<=d2); cq=cq.filter(ChipSwap.started_at<=d2)
+    inv=inv_q.all(); tickets=tq.all(); chips=cq.all()
     by_type={}
     for x in inv:
-        t=_canonical_equipment_type(x.equipment_type)
-        by_type[t]=by_type.get(t,0)+1
-    inop=sum(1 for x in inv if normalize(x.operational_status) in ("INOPERANTE","DEFEITO","FORA DE OPERACAO"))
-    div=sum(1 for x in inv if (x.divergence or "").strip())
-    # Chamados vinculados ao técnico quando aplicável.
-    tq=TopDeskTicket.query
-    if role=="technician": tq=tq.filter(TopDeskTicket.assigned_technician_id==uid)
-    tickets=tq.all()
-    open_tickets=sum(1 for x in tickets if normalize(x.work_status) not in ("CONCLUIDO","RESOLVIDO","FECHADO"))
-    # Troca de chips: usa apenas dados acessíveis da área; técnico vê seus registros.
-    cq=ChipSwap.query
-    if role=="technician" and hasattr(ChipSwap,"technician_id"): cq=cq.filter(ChipSwap.technician_id==uid)
-    chips=cq.all()
-    chip_done=sum(1 for x in chips if normalize(getattr(x,"status","") or "") in ("CONCLUIDO","CONCLUIDA"))
-    return jsonify({"ok":True,"inventory":{"total":inv_total,"inoperative":inop,"divergences":div,"by_type":by_type},"tickets":{"total":len(tickets),"open":open_tickets},"chips":{"total":len(chips),"done":chip_done}})
+        k=_canonical_equipment_type(x.equipment_type); by_type[k]=by_type.get(k,0)+1
+    inop=[x for x in inv if normalize(x.operational_status) in ("INOPERANTE","DEFEITO","FORA DE OPERACAO")]
+    div=[x for x in inv if (x.divergence or "").strip()]
+    open_tickets=[x for x in tickets if normalize(x.work_status) not in ("CONCLUIDO","RESOLVIDO","FECHADO")]
+    done=[x for x in chips if normalize(getattr(x,"status","") or "") in ("CONCLUIDO","CONCLUIDA")]
+    locmap={x.id:x for x in locations}; usermap={u.id:u.name for u in User.query.filter(User.id.in_({*(x.technician_id for x in inv),*(x.assigned_technician_id for x in tickets if x.assigned_technician_id),*(x.technician_id for x in chips)})).all()} if (inv or tickets or chips) else {}
+    def invrow(x):
+        l=locmap.get(x.location_id); return {"id":x.id,"type":_canonical_equipment_type(x.equipment_type),"identifier":x.asset_identifier,"serial":x.serial or "—","status":x.operational_status,"divergence":x.divergence or "","company":getattr(l,"company","") or "","line":getattr(l,"line","") or "","location":getattr(l,"location","") or "","technician":usermap.get(x.technician_id,"")}
+    def tickrow(x):
+        l=locmap.get(x.location_id); return {"id":x.id,"ticket":x.ticket_number,"status":x.work_status,"company":getattr(l,"company","") or "","line":getattr(l,"line","") or "","location":getattr(l,"location","") or "","technician":usermap.get(x.assigned_technician_id,"")}
+    def chiprow(x):
+        l=locmap.get(x.location_id); return {"id":x.id,"status":x.status,"result":x.test_result or "","company":getattr(l,"company","") or "","line":getattr(l,"line","") or "","location":getattr(l,"location","") or "","technician":usermap.get(x.technician_id,"")}
+    equipment_opts=sorted({_canonical_equipment_type(x[0]) for x in inv_base.with_entities(Inventory.equipment_type).distinct().all() if x[0]})
+    status_opts=sorted({x[0] for x in inv_base.with_entities(Inventory.operational_status).distinct().all() if x[0]})
+    return jsonify({"ok":True,"inventory":{"total":len(inv),"inoperative":len(inop),"divergences":len(div),"by_type":by_type},"tickets":{"total":len(tickets),"open":len(open_tickets)},"chips":{"total":len(chips),"done":len(done)},"filters":{"companies":sorted({x.company for x in locations if x.company}),"lines":sorted({x.line for x in locations if x.line and (not company or x.company==company)}),"locations":sorted({x.location for x in locations if x.location and (not company or x.company==company) and (not line or x.line==line)}),"equipment":equipment_opts,"statuses":status_opts,"technicians":[{"id":u.id,"name":u.name} for u in users]},"details":{"inventory":[invrow(x) for x in inv[:200]],"inoperative":[invrow(x) for x in inop[:200]],"divergences":[invrow(x) for x in div[:200]],"tickets":[tickrow(x) for x in tickets[:200]],"open_tickets":[tickrow(x) for x in open_tickets[:200]],"chips":[chiprow(x) for x in chips[:200]],"chip_done":[chiprow(x) for x in done[:200]]}})
 
 
 
