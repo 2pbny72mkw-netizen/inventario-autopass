@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V68"
+APP_RELEASE = "V68 REV1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -304,6 +304,7 @@ class MaterialCatalogItem(db.Model):
     model = db.Column(db.String(120))
     unit = db.Column(db.String(20), nullable=False, default="UN")
     control_type = db.Column(db.String(30), nullable=False, default="DEVOLVIVEL")
+    quantity_mode = db.Column(db.String(20), nullable=False, default="INTEIRO")
     active = db.Column(db.Boolean, nullable=False, default=True, index=True)
     created_by = db.Column(db.Integer, db.ForeignKey("users.id"))
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
@@ -11215,7 +11216,7 @@ def seed_v67_materials():
       ('N2-001','Mochila de ferramentas STANLEY','STANLEY',''),('N2-002','Chave de Fenda - 3/16 x 4”','Gedore',''),('N2-003','Chave de Fenda - 1/8 x 4”','Gedore',''),('N2-004','Chave Philips - 3/16 x 4”','Gedore',''),('N2-005','Chave Philips - 1/8 x 4”','Gedore',''),('N2-006','Chave canhão - 7/32 mm','Gedore',''),('N2-007','Chave canhão - 8 mm','Gedore',''),('N2-008','Jogo de chaves allen c/ estojo 1,5mm à 10mm','MTX',''),('N2-009','Alicate Crimpador - RJ11 - RJ12 - RJ45','Universal',''),('N2-010','Alicate de Bico redondo longo Hikari HK - 507','Hikari','HK-507'),('N2-011','Mini Alicate universal Hikari HK - 502','Hikari','HK-502'),('N2-012','Decapador de fio 501 universal','Universal',''),('N2-013','Caixa organizadora mini','Universal',''),('N2-014','Pincel Antiestático ESD HK - 217','Hikari','HK-217'),('N2-015','Trincha 2 ¹/2 (pincel)','Vonder',''),('N2-016','Chave multiteste digital com display LCD','Sparta',''),('N2-017','Estilete emborrachado','Universal',''),('N2-018','Testador de cabos de rede','Universal',''),('N2-019','Multímetro digital HM 1001 com bateria 9V','Hikari','HM 1001'),('N2-020','Alicate de corte rente HK - 170','Hikari','HK-170'),('N2-021','Miniteclado USB com fio','Knupp',''),('N2-022','Extractor de pic San PLCC','Pinça',''),('N2-023','Alicate de corte diagonal 6”','Hikari',''),('N2-024','Pinça','Hikari',''),('N2-025','Alicate Puntch Down universal','Universal','')]
     uid=None
     for code,desc,brand,model in rows:
-        db.session.add(MaterialCatalogItem(code=code,category='FERRAMENTA',description=desc,brand=brand,model=model,unit='UN',control_type='DEVOLVIVEL',active=True,created_by=uid))
+        db.session.add(MaterialCatalogItem(code=code,category='FERRAMENTA',description=desc,brand=brand,model=model,unit='UN',control_type='DEVOLVIVEL',quantity_mode='INTEIRO',active=True,created_by=uid))
     db.session.flush(); kit=MaterialKit(name='Kit Técnico Field N2',description='Kit inicial com os 25 itens do Termo de Responsabilidade de Equipamentos.',active=True,created_by=uid);db.session.add(kit);db.session.flush()
     for m in MaterialCatalogItem.query.filter(MaterialCatalogItem.code.like('N2-%')).all():db.session.add(MaterialKitItem(kit_id=kit.id,material_id=m.id,quantity=1))
     db.session.commit()
@@ -11223,6 +11224,25 @@ def seed_v67_materials():
 # ==================== V67 · DOSSIÊ & MATERIAIS ====================
 def _materials_require(permission):
     if not _has_access(permission): abort(403)
+
+def _material_quantity(m, raw, field='Quantidade'):
+    try:
+        qty=float(raw)
+    except Exception:
+        raise ValueError(f'{field} inválida.')
+    if qty <= 0:
+        raise ValueError(f'{field} deve ser maior que zero.')
+    mode=(getattr(m,'quantity_mode',None) or ('DECIMAL' if (getattr(m,'category','') or '').upper()=='CONSUMIVEL' else 'INTEIRO')).upper()
+    if mode=='INTEIRO' and abs(qty-round(qty)) > 1e-9:
+        raise ValueError(f'{m.description}: a quantidade deve ser um número inteiro.')
+    return float(round(qty)) if mode=='INTEIRO' else qty
+
+def _material_qty_text(qty):
+    try:
+        v=float(qty or 0)
+        return str(int(round(v))) if abs(v-round(v)) < 1e-9 else ('%g' % v)
+    except Exception:
+        return str(qty or '')
 
 def _doc_payload(d):
     u=db.session.get(User,d.user_id)
@@ -11261,7 +11281,7 @@ def _material_pdf_bytes(doc):
           [Paragraph(f"<b>{'Data da devolução' if is_return else 'Data da entrega'}:</b> {doc.delivery_date.strftime('%d/%m/%Y') if doc.delivery_date else '—'}",small),Paragraph(f"<b>Itens:</b> {len(rows)}",small)]]
     mt=Table(meta,colWidths=[260,260]); mt.setStyle(TableStyle([('BOX',(0,0),(-1,-1),.5,colors.HexColor('#b8c5d3')),('INNERGRID',(0,0),(-1,-1),.25,colors.HexColor('#d9e2ec')),('BACKGROUND',(0,0),(-1,-1),colors.HexColor('#f7f9fc')),('VALIGN',(0,0),(-1,-1),'TOP'),('PADDING',(0,0),(-1,-1),6)])); story += [mt,Spacer(1,9)]
     data=[["Item","Descrição","Marca / Modelo","Qtd.","Un.","Estado"]]
-    for i,x in enumerate(rows,1): data.append([str(i),Paragraph(x.description,small),Paragraph(" / ".join(y for y in (x.brand,x.model) if y) or "—",small),('%g'%x.quantity),x.unit or "UN",x.condition or "BOM"])
+    for i,x in enumerate(rows,1): data.append([str(i),Paragraph(x.description,small),Paragraph(" / ".join(y for y in (x.brand,x.model) if y) or "—",small),_material_qty_text(x.quantity),x.unit or "UN",x.condition or "BOM"])
     t=Table(data,colWidths=[28,205,135,42,38,62],repeatRows=1);t.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#e8eef5')),('GRID',(0,0),(-1,-1),.4,colors.HexColor('#9aa9b8')),('FONTNAME',(0,0),(-1,0),'Helvetica-Bold'),('VALIGN',(0,0),(-1,-1),'TOP'),('FONTSIZE',(0,0),(-1,-1),8),('PADDING',(0,0),(-1,-1),4)])); story += [t,Spacer(1,10)]
     terms=[
       "Responsabilizo-me por manter os materiais, ferramentas e equipamentos sob minha guarda em adequado estado de conservação e funcionamento, utilizando-os exclusivamente para as atividades profissionais e observando as orientações internas da empresa.",
@@ -11300,7 +11320,7 @@ def materials_home_page():
 def materials_catalog_api():
     _materials_require('materials.catalog.view')
     rows=MaterialCatalogItem.query.order_by(MaterialCatalogItem.active.desc(),MaterialCatalogItem.description).all()
-    return jsonify({'ok':True,'rows':[{'id':x.id,'code':x.code,'category':x.category,'description':x.description,'brand':x.brand or '', 'model':x.model or '', 'unit':x.unit,'control_type':x.control_type,'active':x.active} for x in rows]})
+    return jsonify({'ok':True,'rows':[{'id':x.id,'code':x.code,'category':x.category,'description':x.description,'brand':x.brand or '', 'model':x.model or '', 'unit':x.unit,'control_type':x.control_type,'quantity_mode':x.quantity_mode or 'INTEIRO','active':x.active} for x in rows]})
 
 @app.post('/api/materials/catalog')
 @login_required
@@ -11312,7 +11332,7 @@ def materials_catalog_save_api():
     dup=MaterialCatalogItem.query.filter(func.upper(MaterialCatalogItem.code)==code)
     if row.id:dup=dup.filter(MaterialCatalogItem.id!=row.id)
     if dup.first():return jsonify({'ok':False,'error':'Código já cadastrado.'}),409
-    row.code=code;row.description=desc;row.category=(d.get('category') or 'FERRAMENTA').upper();row.brand=(d.get('brand') or '').strip();row.model=(d.get('model') or '').strip();row.unit=(d.get('unit') or 'UN').upper();row.control_type=(d.get('control_type') or 'DEVOLVIVEL').upper();row.active=bool(d.get('active',True));db.session.add(row);db.session.add(AuditEvent(user_id=session['user_id'],event_type='MATERIAL_CATALOG_SAVE',entity_type='material',entity_id=str(row.id or ''),detail=f'{code} · {desc}'));db.session.commit();return jsonify({'ok':True,'id':row.id})
+    row.code=code;row.description=desc;row.category=(d.get('category') or 'FERRAMENTA').upper();row.brand=(d.get('brand') or '').strip();row.model=(d.get('model') or '').strip();row.unit=(d.get('unit') or 'UN').upper();row.control_type=(d.get('control_type') or 'DEVOLVIVEL').upper();row.quantity_mode=(d.get('quantity_mode') or ('DECIMAL' if row.category=='CONSUMIVEL' else 'INTEIRO')).upper();row.active=bool(d.get('active',True));db.session.add(row);db.session.add(AuditEvent(user_id=session['user_id'],event_type='MATERIAL_CATALOG_SAVE',entity_type='material',entity_id=str(row.id or ''),detail=f'{code} · {desc}'));db.session.commit();return jsonify({'ok':True,'id':row.id})
 
 @app.delete('/api/materials/catalog/<int:mid>')
 @login_required
@@ -11329,7 +11349,7 @@ def materials_catalog_delete_api(mid):
 def materials_kits_api():
     _materials_require('materials.catalog.view'); kits=MaterialKit.query.order_by(MaterialKit.active.desc(),MaterialKit.name).all(); out=[]
     for k in kits:
-        its=db.session.query(MaterialKitItem,MaterialCatalogItem).join(MaterialCatalogItem,MaterialCatalogItem.id==MaterialKitItem.material_id).filter(MaterialKitItem.kit_id==k.id).all();out.append({'id':k.id,'name':k.name,'description':k.description or '', 'active':k.active,'items':[{'material_id':mi.material_id,'quantity':mi.quantity,'description':m.description,'brand':m.brand or '', 'model':m.model or '', 'unit':m.unit} for mi,m in its]})
+        its=db.session.query(MaterialKitItem,MaterialCatalogItem).join(MaterialCatalogItem,MaterialCatalogItem.id==MaterialKitItem.material_id).filter(MaterialKitItem.kit_id==k.id).all();out.append({'id':k.id,'name':k.name,'description':k.description or '', 'active':k.active,'items':[{'material_id':mi.material_id,'quantity':mi.quantity,'description':m.description,'brand':m.brand or '', 'model':m.model or '', 'unit':m.unit,'quantity_mode':m.quantity_mode or 'INTEIRO'} for mi,m in its]})
     return jsonify({'ok':True,'rows':out})
 
 @app.post('/api/materials/kits')
@@ -11341,8 +11361,9 @@ def materials_kits_save_api():
     if not k.name:return jsonify({'ok':False,'error':'Informe o nome do kit.'}),400
     db.session.add(k);db.session.flush();MaterialKitItem.query.filter_by(kit_id=k.id).delete()
     for x in d.get('items') or []:
-        try: mid=int(x.get('material_id'));qty=float(x.get('quantity') or 1)
-        except: continue
+        try:
+            mid=int(x.get('material_id')); m=db.session.get(MaterialCatalogItem,mid); qty=_material_quantity(m,x.get('quantity') or 1) if m else 0
+        except (ValueError,TypeError): continue
         if qty>0:db.session.add(MaterialKitItem(kit_id=k.id,material_id=mid,quantity=qty))
     db.session.commit();return jsonify({'ok':True,'id':k.id})
 
@@ -11368,11 +11389,12 @@ def materials_delivery_create_api():
     for u in users:
         doc=CollaboratorDocument(user_id=u.id,created_by=session['user_id'],delivery_date=delivery_date,notes=(d.get('notes') or '').strip(),status='RASCUNHO');db.session.add(doc);db.session.flush();doc.document_code=f'TRM-{doc.id:06d}'
         for x in items:
-            try:mid=int(x.get('material_id'));qty=float(x.get('quantity') or 0)
-            except:continue
-            if qty<=0:continue
+            try: mid=int(x.get('material_id'))
+            except: continue
             m=db.session.get(MaterialCatalogItem,mid)
-            if not m:continue
+            if not m: continue
+            try: qty=_material_quantity(m,x.get('quantity') or 0)
+            except ValueError as exc: return jsonify({'ok':False,'error':str(exc)}),400
             db.session.add(CollaboratorDocumentItem(document_id=doc.id,material_id=m.id,description=m.description,brand=m.brand,model=m.model,quantity=qty,unit=m.unit,condition=(x.get('condition') or 'BOM'),notes=(x.get('notes') or '').strip()))
         if d.get('send_now',True):doc.status='AGUARDANDO_ACEITE';doc.sent_at=datetime.utcnow()
         created.append(doc.document_code)
@@ -11397,11 +11419,12 @@ def materials_document_items_update_api(did):
         except: pass
     CollaboratorDocumentItem.query.filter_by(document_id=d.id).delete()
     for x in items:
-        try:mid=int(x.get('material_id'));qty=float(x.get('quantity') or 0)
-        except:continue
-        if qty<=0:continue
+        try: mid=int(x.get('material_id'))
+        except: continue
         m=db.session.get(MaterialCatalogItem,mid)
-        if not m:continue
+        if not m: continue
+        try: qty=_material_quantity(m,x.get('quantity') or 0)
+        except ValueError as exc: return jsonify({'ok':False,'error':str(exc)}),400
         db.session.add(CollaboratorDocumentItem(document_id=d.id,material_id=m.id,description=m.description,brand=m.brand,model=m.model,quantity=qty,unit=m.unit,condition=(x.get('condition') or 'BOM'),notes=(x.get('notes') or '').strip()))
     d.status='RASCUNHO'; d.correction_note=None; db.session.add(AuditEvent(user_id=session['user_id'],event_type='MATERIAL_DOCUMENT_CORRECTED',entity_type='collaborator_document',entity_id=str(d.id),detail=d.document_code));db.session.commit();return jsonify({'ok':True})
 
@@ -11473,7 +11496,7 @@ def materials_document_pdf_api(did):
 @app.get('/api/materials/my-load')
 @login_required
 def materials_my_load_api():
-    uid=session['user_id']; rows=db.session.query(MaterialMovement.material_id,func.sum(case((MaterialMovement.movement_type.in_(['ENTREGA','SUBSTITUICAO_ENTRADA','TRANSFERENCIA_ENTRADA']),MaterialMovement.quantity),else_=-MaterialMovement.quantity))).filter(MaterialMovement.user_id==uid).group_by(MaterialMovement.material_id).all(); mids=[x[0] for x in rows]; mm={m.id:m for m in MaterialCatalogItem.query.filter(MaterialCatalogItem.id.in_(mids)).all()} if mids else {};return jsonify({'ok':True,'rows':[{'material_id':mid,'description':mm[mid].description if mid in mm else 'Item','quantity':float(qty or 0),'unit':mm[mid].unit if mid in mm else 'UN'} for mid,qty in rows if float(qty or 0)>0]})
+    uid=session['user_id']; rows=db.session.query(MaterialMovement.material_id,func.sum(case((MaterialMovement.movement_type.in_(['ENTREGA','SUBSTITUICAO_ENTRADA','TRANSFERENCIA_ENTRADA']),MaterialMovement.quantity),else_=-MaterialMovement.quantity))).filter(MaterialMovement.user_id==uid).group_by(MaterialMovement.material_id).all(); mids=[x[0] for x in rows]; mm={m.id:m for m in MaterialCatalogItem.query.filter(MaterialCatalogItem.id.in_(mids)).all()} if mids else {};return jsonify({'ok':True,'rows':[{'material_id':mid,'description':mm[mid].description if mid in mm else 'Item','quantity':float(qty or 0),'unit':mm[mid].unit if mid in mm else 'UN','control_type':mm[mid].control_type if mid in mm else 'DEVOLVIVEL','quantity_mode':mm[mid].quantity_mode if mid in mm else 'INTEIRO'} for mid,qty in rows if float(qty or 0)>0]})
 
 @app.get('/api/materials/summary')
 @login_required
@@ -11491,9 +11514,12 @@ def materials_requests_api():
 @login_required
 def materials_request_create_api():
     _materials_require('materials.request');d=request.get_json(silent=True) or {}
-    try:mid=int(d.get('material_id'));qty=float(d.get('quantity') or 1)
-    except:return jsonify({'ok':False,'error':'Item/quantidade inválidos.'}),400
-    if qty<=0 or not db.session.get(MaterialCatalogItem,mid):return jsonify({'ok':False,'error':'Item/quantidade inválidos.'}),400
+    try: mid=int(d.get('material_id'))
+    except: return jsonify({'ok':False,'error':'Item/quantidade inválidos.'}),400
+    m=db.session.get(MaterialCatalogItem,mid)
+    if not m: return jsonify({'ok':False,'error':'Item/quantidade inválidos.'}),400
+    try: qty=_material_quantity(m,d.get('quantity') or 1)
+    except ValueError as exc: return jsonify({'ok':False,'error':str(exc)}),400
     r=MaterialRequest(user_id=session['user_id'],material_id=mid,quantity=qty,reason=(d.get('reason') or '').strip(),urgency=(d.get('urgency') or 'NORMAL').upper(),notes=(d.get('notes') or '').strip());db.session.add(r);db.session.flush();r.request_code=f'SM-{r.id:06d}';db.session.commit();return jsonify({'ok':True,'code':r.request_code})
 
 @app.get('/api/materials/requests/export.xlsx')
@@ -11534,7 +11560,7 @@ def materials_user_load_api(uid):
     _materials_require('materials.delivery.manage')
     rows=db.session.query(MaterialMovement.material_id,func.sum(case((MaterialMovement.movement_type.in_(['ENTREGA','SUBSTITUICAO_ENTRADA','TRANSFERENCIA_ENTRADA']),MaterialMovement.quantity),else_=-MaterialMovement.quantity))).filter(MaterialMovement.user_id==uid).group_by(MaterialMovement.material_id).all()
     mids=[x[0] for x in rows]; mm={m.id:m for m in MaterialCatalogItem.query.filter(MaterialCatalogItem.id.in_(mids)).all()} if mids else {}
-    return jsonify({'ok':True,'rows':[{'material_id':mid,'description':mm[mid].description if mid in mm else 'Item','quantity':float(qty or 0),'unit':mm[mid].unit if mid in mm else 'UN','control_type':mm[mid].control_type if mid in mm else 'DEVOLVIVEL'} for mid,qty in rows if float(qty or 0)>0]})
+    return jsonify({'ok':True,'rows':[{'material_id':mid,'description':mm[mid].description if mid in mm else 'Item','quantity':float(qty or 0),'unit':mm[mid].unit if mid in mm else 'UN','control_type':mm[mid].control_type if mid in mm else 'DEVOLVIVEL','quantity_mode':mm[mid].quantity_mode if mid in mm else 'INTEIRO'} for mid,qty in rows if float(qty or 0)>0]})
 
 @app.post('/api/materials/returns')
 @login_required
@@ -11551,10 +11577,12 @@ def materials_return_create_api():
     d=CollaboratorDocument(document_type='TERMO_DEVOLUCAO',user_id=uid,status='DEVOLVIDO',delivery_date=date.today(),title='Termo de Devolução de Materiais / Ferramentas',notes=(data.get('notes') or '').strip(),created_by=session['user_id'],signed_at=datetime.utcnow())
     db.session.add(d);db.session.flush();d.document_code=f'TDV-{d.id:06d}'
     for it in items:
-        try: mid=int(it.get('material_id')); qty=float(it.get('quantity') or 0)
+        try: mid=int(it.get('material_id'))
         except: continue
         m=db.session.get(MaterialCatalogItem,mid)
-        if not m or qty<=0: continue
+        if not m: continue
+        try: qty=_material_quantity(m,it.get('quantity') or 0)
+        except ValueError as exc: return jsonify({'ok':False,'error':str(exc)}),400
         current=float(balances.get(mid) or 0); avulsa=bool(it.get('avulsa')) or current<=0
         if not avulsa and qty>current+1e-9: return jsonify({'ok':False,'error':f'{m.description}: devolução maior que a carga atual ({current:g}).'}),400
         note=(it.get('notes') or '').strip(); note=('DEVOLUÇÃO AVULSA — item não localizado na carga atual. '+note).strip() if avulsa else note
@@ -11568,6 +11596,61 @@ def materials_return_create_api():
         name=f'{d.document_code}.pdf'; (UPLOAD_DIR/name).write_bytes(pdfraw); d.pdf_file=name
     db.session.add(AuditEvent(user_id=session['user_id'],event_type='MATERIAL_RETURN',entity_type='collaborator_document',entity_id=str(d.id),detail=d.document_code));db.session.commit()
     return jsonify({'ok':True,'code':d.document_code,'document_id':d.id})
+
+@app.post('/api/materials/returns/request')
+@login_required
+def materials_return_request_api():
+    """Colaborador informa o que pretende devolver. A carga só baixa após conferência por usuário autorizado."""
+    _materials_require('materials.my_documents')
+    data=request.get_json(silent=True) or {}; uid=session['user_id']; items=data.get('items') or []
+    if not items:return jsonify({'ok':False,'error':'Selecione ao menos um item para devolução.'}),400
+    balances=dict(db.session.query(MaterialMovement.material_id,func.sum(case((MaterialMovement.movement_type.in_(['ENTREGA','SUBSTITUICAO_ENTRADA','TRANSFERENCIA_ENTRADA']),MaterialMovement.quantity),else_=-MaterialMovement.quantity))).filter(MaterialMovement.user_id==uid).group_by(MaterialMovement.material_id).all())
+    d=CollaboratorDocument(document_type='TERMO_DEVOLUCAO',user_id=uid,status='AGUARDANDO_RECEBIMENTO',delivery_date=date.today(),title='Solicitação de Devolução de Materiais / Ferramentas',notes=(data.get('notes') or '').strip(),created_by=uid)
+    db.session.add(d);db.session.flush();d.document_code=f'TDV-{d.id:06d}'
+    valid=0
+    for it in items:
+        try: mid=int(it.get('material_id'))
+        except: continue
+        m=db.session.get(MaterialCatalogItem,mid)
+        if not m or m.control_type=='CONSUMIVEL': continue
+        try: qty=_material_quantity(m,it.get('quantity') or 0)
+        except ValueError as exc: db.session.rollback(); return jsonify({'ok':False,'error':str(exc)}),400
+        current=float(balances.get(mid) or 0)
+        if qty>current+1e-9: db.session.rollback(); return jsonify({'ok':False,'error':f'{m.description}: devolução maior que a carga atual ({_material_qty_text(current)}).'}),400
+        db.session.add(CollaboratorDocumentItem(document_id=d.id,material_id=mid,description=m.description,brand=m.brand,model=m.model,quantity=qty,unit=m.unit,condition='A_CONFERIR',notes=(it.get('notes') or '').strip()));valid+=1
+    if not valid: db.session.rollback(); return jsonify({'ok':False,'error':'Nenhum item devolvível válido foi informado.'}),400
+    db.session.add(AuditEvent(user_id=uid,event_type='MATERIAL_RETURN_REQUEST',entity_type='collaborator_document',entity_id=str(d.id),detail=d.document_code));db.session.commit()
+    return jsonify({'ok':True,'code':d.document_code,'document_id':d.id,'status':'AGUARDANDO_RECEBIMENTO'})
+
+@app.get('/api/materials/returns/pending')
+@login_required
+def materials_returns_pending_api():
+    _materials_require('materials.delivery.manage')
+    rows=CollaboratorDocument.query.filter_by(document_type='TERMO_DEVOLUCAO',status='AGUARDANDO_RECEBIMENTO').order_by(CollaboratorDocument.created_at.asc()).all()
+    return jsonify({'ok':True,'rows':[_doc_payload(x) for x in rows]})
+
+@app.post('/api/materials/returns/<int:did>/confirm')
+@login_required
+def materials_return_confirm_api(did):
+    _materials_require('materials.delivery.manage'); d=db.session.get(CollaboratorDocument,did)
+    if not d or d.document_type!='TERMO_DEVOLUCAO' or d.status!='AGUARDANDO_RECEBIMENTO': return jsonify({'ok':False,'error':'Devolução pendente não encontrada.'}),404
+    payload=request.get_json(silent=True) or {}; condition=(payload.get('condition') or 'BOM').upper(); receiver_note=(payload.get('notes') or '').strip()
+    balances=dict(db.session.query(MaterialMovement.material_id,func.sum(case((MaterialMovement.movement_type.in_(['ENTREGA','SUBSTITUICAO_ENTRADA','TRANSFERENCIA_ENTRADA']),MaterialMovement.quantity),else_=-MaterialMovement.quantity))).filter(MaterialMovement.user_id==d.user_id).group_by(MaterialMovement.material_id).all())
+    its=CollaboratorDocumentItem.query.filter_by(document_id=d.id).all()
+    for x in its:
+        m=db.session.get(MaterialCatalogItem,x.material_id) if x.material_id else None
+        if not m: continue
+        qty=_material_quantity(m,x.quantity); current=float(balances.get(m.id) or 0)
+        if qty>current+1e-9:return jsonify({'ok':False,'error':f'{m.description}: carga atual insuficiente para confirmar a devolução.'}),409
+        x.condition=condition
+        db.session.add(MaterialMovement(user_id=d.user_id,material_id=m.id,document_id=d.id,movement_type='DEVOLUCAO',quantity=qty,condition=condition,notes=receiver_note or x.notes,created_by=session['user_id']))
+    d.status='DEVOLVIDO';d.signed_at=datetime.utcnow();d.notes=(' | '.join(x for x in [d.notes,receiver_note] if x)).strip()
+    db.session.flush();pdfraw=_material_pdf_bytes(d);pkey=f'dossie/{d.user_id}/{d.document_code}.pdf'
+    if _r2_available():_r2_put_bytes(pkey,pdfraw,'application/pdf');d.pdf_file='r2__'+pkey
+    else:
+        name=f'{d.document_code}.pdf';(UPLOAD_DIR/name).write_bytes(pdfraw);d.pdf_file=name
+    db.session.add(AuditEvent(user_id=session['user_id'],event_type='MATERIAL_RETURN_CONFIRMED',entity_type='collaborator_document',entity_id=str(d.id),detail=d.document_code));db.session.commit()
+    return jsonify({'ok':True,'code':d.document_code})
 
 @app.post('/api/materials/requests/<int:rid>/status')
 @login_required
@@ -11614,6 +11697,17 @@ with app.app_context():
     # V39.7.1: não deixa a criação das novas tabelas de Troca de Chips bloquear o startup.
     core_tables=[t for t in db.metadata.sorted_tables if t.name not in ("chip_swaps","chip_swap_photos")]
     db.metadata.create_all(bind=db.engine, tables=core_tables, checkfirst=True)
+    # V68 REV1 — modo de quantidade por item (inteiro/decimal), migração aditiva/idempotente.
+    try:
+        insp=db.inspect(db.engine)
+        if insp.has_table('material_catalog_items'):
+            cols={c['name'] for c in insp.get_columns('material_catalog_items')}
+            if 'quantity_mode' not in cols:
+                with db.engine.begin() as conn:
+                    conn.execute(text("ALTER TABLE material_catalog_items ADD COLUMN quantity_mode VARCHAR(20) DEFAULT 'INTEIRO'"))
+                    conn.execute(text("UPDATE material_catalog_items SET quantity_mode = CASE WHEN UPPER(COALESCE(category,''))='CONSUMIVEL' THEN 'DECIMAL' ELSE 'INTEIRO' END WHERE quantity_mode IS NULL"))
+    except Exception:
+        app.logger.exception('Falha na migração V68 REV1 quantity_mode')
     migrate_v56a_topdesk_dimensions()
     migrate_team_schedule_columns()
     migrate_inventory_sync_uuid()
