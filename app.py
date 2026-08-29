@@ -1,4 +1,6 @@
 import os
+import smtplib
+from email.message import EmailMessage
 import json
 import secrets
 import unicodedata
@@ -42,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V68 REV2"
+APP_RELEASE = "V69 CONSOLIDADA"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -291,6 +293,49 @@ class User(db.Model):
     access_json = db.Column(db.Text)
     gps_required = db.Column(db.Boolean, nullable=False, default=False)
 
+
+
+# V69 — Portal do Cliente / Agendamentos de equipamentos
+class CustomerAppointment(db.Model):
+    __tablename__ = "customer_appointments"
+    id = db.Column(db.Integer, primary_key=True)
+    code = db.Column(db.String(40), unique=True, index=True)
+    customer_company = db.Column(db.String(180), nullable=False, index=True)
+    responsible_name = db.Column(db.String(180), nullable=False)
+    responsible_email = db.Column(db.String(180))
+    responsible_phone = db.Column(db.String(40))
+    scheduled_date = db.Column(db.Date, index=True)
+    notes = db.Column(db.Text)
+    status = db.Column(db.String(30), nullable=False, default="RASCUNHO", index=True)
+    accepted_name = db.Column(db.String(180))
+    accepted_at = db.Column(db.DateTime)
+    signature_file = db.Column(db.String(600))
+    pdf_file = db.Column(db.String(600))
+    created_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    received_by = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
+    received_at = db.Column(db.DateTime)
+    email_status = db.Column(db.String(30))
+    email_detail = db.Column(db.String(500))
+
+class CustomerAppointmentEquipment(db.Model):
+    __tablename__ = "customer_appointment_equipments"
+    id = db.Column(db.Integer, primary_key=True)
+    appointment_id = db.Column(db.Integer, db.ForeignKey("customer_appointments.id", ondelete="CASCADE"), nullable=False, index=True)
+    item_no = db.Column(db.Integer, nullable=False, default=1)
+    serial_number = db.Column(db.String(120), nullable=False, index=True)
+    equipment = db.Column(db.String(120))
+    version = db.Column(db.String(80))
+    eod = db.Column(db.String(120))
+    defect = db.Column(db.String(500), nullable=False)
+    notes = db.Column(db.Text)
+    photo_file = db.Column(db.String(600))
+    received = db.Column(db.Boolean, nullable=False, default=False, index=True)
+    received_at = db.Column(db.DateTime)
+    received_by = db.Column(db.Integer, db.ForeignKey("users.id"))
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    __table_args__=(UniqueConstraint("appointment_id","item_no",name="uq_customer_appt_item"),)
 
 
 # V67 — Dossiê do Colaborador / Materiais e Ferramentas
@@ -1202,6 +1247,7 @@ ACCESS_GROUPS = {
     "materials": ("Dossiê / Materiais", (
         "materials.my_documents","materials.request","materials.catalog.view","materials.catalog.manage","materials.kits.manage","materials.delivery.create","materials.delivery.manage","materials.dossier.view"
     )),
+    "portal": ("Portal do Cliente", ("portal.appointments","portal.receive","portal.manage")),
     "about_versions": ("Sobre / Versões", ("about.versions",)),
 }
 ACCESS_MODULES = tuple(ACCESS_GROUPS.keys())
@@ -1216,6 +1262,7 @@ ACCESS_LABELS = {
  "finance.dashboard":"Dashboard Financeira","finance.support":"Suporte a Campo","finance.collection":"Coleta de Valores","finance.apuracao":"Apuração de Numerário","finance.assistance":"Assistência Técnica","finance.implantation":"Implantação de Hardware","finance.entries":"Lançamentos","finance.suppliers":"Empresas / Fornecedores","finance.import":"Importar planilha","finance.edit":"Editar lançamentos","finance.delete":"Excluir lançamentos",
  "management.calls":"Chamados","management.360":"Central 360","management.notifications":"Notificações","management.diagnostics":"Diagnóstico","management.settings":"Configurações",
  "materials.my_documents":"Meus documentos / Minha carga","materials.request":"Solicitar material","materials.catalog.view":"Visualizar catálogo","materials.catalog.manage":"Cadastrar / editar / inativar materiais","materials.kits.manage":"Gerenciar kits","materials.delivery.create":"Criar e enviar entregas","materials.delivery.manage":"Gerenciar aceites / correções","materials.dossier.view":"Dossiê dos colaboradores",
+ "portal.appointments":"Criar / consultar agendamentos","portal.receive":"Receber agendamentos","portal.manage":"Administrar Portal do Cliente",
  "about.versions":"Histórico / Versões",
 }
 
@@ -1231,12 +1278,13 @@ def _expand_legacy_access(values):
 def _default_access_for_role(role):
     defaults={
       "manager":set(ACCESS_SUBMODULES),
-      "manager_field":{"materials.my_documents","materials.request","materials.catalog.view","materials.catalog.manage","materials.kits.manage","materials.delivery.create","materials.delivery.manage","materials.dossier.view","dashboard.general","field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage","teams.map","teams.today","teams.schedule","teams.manage","teams.export","finance.dashboard","management.calls","management.360","management.notifications","management.diagnostics","about.versions"},
+      "manager_field":{"materials.my_documents","materials.request","materials.catalog.view","materials.catalog.manage","materials.kits.manage","materials.delivery.create","materials.delivery.manage","materials.dossier.view","dashboard.general","field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage","teams.map","teams.today","teams.schedule","teams.manage","teams.export","finance.dashboard","management.calls","management.360","management.notifications","management.diagnostics","portal.receive","portal.manage","about.versions"},
       "technician":{"materials.my_documents","materials.request","field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","about.versions"},
       "technician_implantation":{"materials.my_documents","materials.request","field.inventory","field.equipment","field.evidence","field.panorama","field.chip_recarga","implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage","about.versions"},
       "consultation":{"dashboard.general","field.dashboard","field.inventory","field.equipment","field.evidence","field.panorama","field.chip_recarga","teams.map","teams.today","teams.schedule","about.versions"},
       "hr":{"materials.catalog.view","materials.dossier.view","teams.map","teams.today","teams.schedule","teams.manage","teams.export","users.view","users.create","users.edit","users.activate","users.password","users.export","about.versions"},
       "dispatcher":{"dashboard.general","field.calls","field.chip_recarga","teams.map","teams.today","teams.schedule","management.calls","about.versions"},
+      "customer":{"portal.appointments"},
       "atm_financial_admin":{"finance.dashboard","finance.support","finance.collection","finance.apuracao","finance.assistance","finance.implantation","finance.entries","finance.suppliers","finance.import","finance.edit","finance.delete","about.versions"},
     }
     return defaults.get(role,set())
@@ -1377,7 +1425,7 @@ def _role_assignment_allowed(role):
     # RH administra somente perfis operacionais. Perfis sensíveis ficam restritos ao ADM.
     if session.get("role") == "hr":
         return role in ("technician", "technician_implantation")
-    if role in ("manager", "manager_field", "consultation", "dispatcher", "atm_financial_admin"):
+    if role in ("manager", "manager_field", "consultation", "dispatcher", "atm_financial_admin", "customer"):
         return _current_user_is_superadmin()
     return role in ("technician", "technician_implantation", "hr")
 
@@ -5209,7 +5257,7 @@ def create_user():
         flash("Nome, usuário e senha são obrigatórios.")
         return redirect(url_for("users_page"))
 
-    if role not in ("manager", "manager_field", "technician", "technician_implantation", "consultation", "hr", "dispatcher", "atm_financial_admin"):
+    if role not in ("manager", "manager_field", "technician", "technician_implantation", "consultation", "hr", "dispatcher", "atm_financial_admin", "customer"):
         flash("Perfil de acesso inválido.")
         return redirect(url_for("users_page"))
     if not _role_assignment_allowed(role):
@@ -5382,7 +5430,7 @@ def edit_user(user_id):
         flash("Nome e usuário são obrigatórios.")
         return redirect(url_for("users_page"))
 
-    if role not in ("manager", "manager_field", "technician", "technician_implantation", "consultation", "hr", "dispatcher", "atm_financial_admin"):
+    if role not in ("manager", "manager_field", "technician", "technician_implantation", "consultation", "hr", "dispatcher", "atm_financial_admin", "customer"):
         flash("Perfil de acesso inválido.")
         return redirect(url_for("users_page"))
     if not _role_assignment_allowed(role):
@@ -11688,6 +11736,153 @@ def materials_request_status_api(rid):
     status=((request.get_json(silent=True) or {}).get('status') or '').upper();allowed={'SOLICITADO','EM_ANALISE','APROVADO','EM_COMPRA','DISPONIVEL','ENTREGUE','RECEBIDO','REJEITADO'}
     if status not in allowed:return jsonify({'ok':False,'error':'Status inválido.'}),400
     r.status=status;db.session.commit();return jsonify({'ok':True})
+
+
+# ---------------- V69 Portal do Cliente ----------------
+def _portal_internal():
+    return session.get('role') != 'customer' and (_has_access('portal.receive') or _has_access('portal.manage'))
+
+def _portal_can_see(a):
+    if _portal_internal(): return True
+    u=db.session.get(User,session.get('user_id'))
+    return bool(u and u.role=='customer' and (u.company or '').strip().casefold()==(a.customer_company or '').strip().casefold())
+
+def _portal_code(aid): return f"AG-{datetime.utcnow().year}-{aid:06d}"
+
+def _portal_equipment_code(a,item): return f"{a.code or _portal_code(a.id)}-{item.item_no:02d}"
+
+def _portal_store_dataurl(dataurl, prefix):
+    if not dataurl or ',' not in dataurl: return None
+    import base64
+    head,raw=dataurl.split(',',1); blob=base64.b64decode(raw); ext='png' if 'png' in head else 'jpg'
+    key=f"portal-cliente/{datetime.utcnow().strftime('%Y/%m')}/{prefix}-{uuid.uuid4().hex}.{ext}"
+    try: _r2_put_bytes(key,blob,'image/png' if ext=='png' else 'image/jpeg'); return 'r2__'+key
+    except Exception:
+        name=key.replace('/','_'); (UPLOAD_DIR/name).write_bytes(blob); return name
+
+def _portal_pdf(a, item=None):
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    import io
+    out=io.BytesIO(); doc=SimpleDocTemplate(out,pagesize=A4,rightMargin=30,leftMargin=30,topMargin=30,bottomMargin=30)
+    st=getSampleStyleSheet(); title=ParagraphStyle('pt',parent=st['Title'],fontSize=18,leading=22,textColor=colors.HexColor('#123b68')); body=ParagraphStyle('pb',parent=st['BodyText'],fontSize=9,leading=12)
+    story=[Paragraph('AGENDAMENTO DE ENTRADA DE EQUIPAMENTO',title),Spacer(1,8)]
+    story.append(Paragraph(f"<b>Agendamento:</b> {a.code} &nbsp;&nbsp; <b>Cliente:</b> {a.customer_company} &nbsp;&nbsp; <b>Responsável:</b> {a.responsible_name}",body))
+    story.append(Paragraph(f"<b>Data prevista:</b> {a.scheduled_date.strftime('%d/%m/%Y') if a.scheduled_date else '—'} &nbsp;&nbsp; <b>Aceite:</b> {a.accepted_at.strftime('%d/%m/%Y %H:%M') if a.accepted_at else '—'}",body)); story.append(Spacer(1,10))
+    rows=[item] if item else CustomerAppointmentEquipment.query.filter_by(appointment_id=a.id).order_by(CustomerAppointmentEquipment.item_no).all()
+    data=[["Protocolo","Série","Equipamento","Versão","EOD","Defeito","Observação"]]
+    for x in rows: data.append([_portal_equipment_code(a,x),x.serial_number,x.equipment or '—',x.version or '—',x.eod or '—',Paragraph(x.defect,body),Paragraph(x.notes or '—',body)])
+    t=Table(data,colWidths=[78,68,65,42,48,105,105],repeatRows=1); t.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#eaf2fb')),('TEXTCOLOR',(0,0),(-1,0),colors.HexColor('#123b68')),('FONTNAME',(0,0),(-1,0),'Helvetica-Bold'),('GRID',(0,0),(-1,-1),.4,colors.HexColor('#b9c7d6')),('VALIGN',(0,0),(-1,-1),'TOP'),('FONTSIZE',(0,0),(-1,-1),7),('PADDING',(0,0),(-1,-1),4)])); story += [t,Spacer(1,10)]
+    if a.notes: story.append(Paragraph(f"<b>Observação geral:</b> {a.notes}",body))
+    story += [Spacer(1,8),Paragraph(f"Aceite eletrônico realizado por <b>{a.accepted_name or a.responsible_name}</b>. Documento bloqueado para edição após o envio.",body)]
+    doc.build(story); return out.getvalue()
+
+def _portal_send_email(a):
+    host=os.environ.get('SMTP_HOST','').strip(); to=os.environ.get('ASSISTENCIA_EMAIL','').strip(); sender=os.environ.get('SMTP_FROM','').strip() or os.environ.get('SMTP_USER','').strip()
+    if not host or not to or not sender: return 'NAO_CONFIGURADO','Defina SMTP_HOST, SMTP_FROM/SMTP_USER e ASSISTENCIA_EMAIL.'
+    msg=EmailMessage(); msg['Subject']=f"Novo agendamento {a.code} — {a.customer_company}"; msg['From']=sender; msg['To']=to
+    count=CustomerAppointmentEquipment.query.filter_by(appointment_id=a.id).count(); msg.set_content(f"Novo agendamento de equipamentos.\
+\
+Agendamento: {a.code}\
+Cliente: {a.customer_company}\
+Responsável: {a.responsible_name}\
+Equipamentos: {count}\
+Data prevista: {a.scheduled_date.strftime('%d/%m/%Y') if a.scheduled_date else '—'}\
+\
+Acesse o Portal do Cliente para visualizar e baixar os PDFs individuais.")
+    try:
+        port=int(os.environ.get('SMTP_PORT','587')); user=os.environ.get('SMTP_USER',''); pwd=os.environ.get('SMTP_PASSWORD','');
+        with smtplib.SMTP(host,port,timeout=15) as srv:
+            if os.environ.get('SMTP_TLS','1')!='0': srv.starttls()
+            if user: srv.login(user,pwd)
+            srv.send_message(msg)
+        return 'ENVIADO',f'Enviado para {to}'
+    except Exception as exc:
+        app.logger.exception('Falha ao enviar e-mail do agendamento %s',a.code); return 'FALHA',str(exc)[:450]
+
+@app.get('/portal-cliente')
+@login_required
+def portal_cliente_page():
+    if not (_has_access('portal.appointments') or _portal_internal()): abort(403)
+    return render_template('customer_portal.html',app_release=APP_RELEASE,internal=_portal_internal())
+
+@app.get('/api/portal/appointments')
+@login_required
+def portal_appointments_list():
+    if not (_has_access('portal.appointments') or _portal_internal()): abort(403)
+    q=CustomerAppointment.query
+    if not _portal_internal():
+        u=db.session.get(User,session['user_id']); q=q.filter(func.lower(CustomerAppointment.customer_company)==(u.company or '').lower())
+    rows=q.order_by(CustomerAppointment.created_at.desc()).limit(500).all(); out=[]
+    for a in rows:
+        items=CustomerAppointmentEquipment.query.filter_by(appointment_id=a.id).all()
+        out.append({'id':a.id,'code':a.code,'company':a.customer_company,'responsible':a.responsible_name,'scheduled_date':a.scheduled_date.isoformat() if a.scheduled_date else '', 'status':a.status,'created_at':a.created_at.isoformat(),'count':len(items),'received':sum(1 for x in items if x.received),'email_status':a.email_status or ''})
+    return jsonify({'ok':True,'rows':out,'internal':_portal_internal()})
+
+@app.post('/api/portal/appointments')
+@login_required
+def portal_appointments_create():
+    if not _has_access('portal.appointments'): abort(403)
+    u=db.session.get(User,session['user_id']); data=request.get_json(silent=True) or {}; items=data.get('items') or []
+    if not items: return jsonify({'ok':False,'error':'Adicione pelo menos um equipamento.'}),400
+    company=(u.company or data.get('company') or '').strip(); responsible=(data.get('responsible') or u.name or '').strip()
+    if not company:return jsonify({'ok':False,'error':'Usuário sem cliente/empresa vinculada.'}),400
+    a=CustomerAppointment(customer_company=company,responsible_name=responsible,responsible_email=(data.get('email') or u.email or '').strip(),responsible_phone=(data.get('phone') or u.phone or '').strip(),scheduled_date=datetime.strptime(data['scheduled_date'],'%Y-%m-%d').date() if data.get('scheduled_date') else None,notes=(data.get('notes') or '').strip(),status='RASCUNHO',created_by=u.id); db.session.add(a);db.session.flush();a.code=_portal_code(a.id)
+    for i,x in enumerate(items,1):
+        serial=(x.get('serial') or '').strip(); defect=(x.get('defect') or '').strip()
+        if not serial or not defect: db.session.rollback(); return jsonify({'ok':False,'error':f'Equipamento {i}: série e defeito são obrigatórios.'}),400
+        db.session.add(CustomerAppointmentEquipment(appointment_id=a.id,item_no=i,serial_number=serial,equipment=(x.get('equipment') or '').strip(),version=(x.get('version') or '').strip(),eod=(x.get('eod') or '').strip(),defect=defect,notes=(x.get('notes') or '').strip()))
+    db.session.commit(); return jsonify({'ok':True,'id':a.id,'code':a.code})
+
+@app.post('/api/portal/appointments/<int:aid>/submit')
+@login_required
+def portal_appointments_submit(aid):
+    a=db.session.get(CustomerAppointment,aid)
+    if not a or not _portal_can_see(a) or a.created_by!=session['user_id']: abort(404)
+    if a.status!='RASCUNHO': return jsonify({'ok':False,'error':'Agendamento já finalizado.'}),409
+    data=request.get_json(silent=True) or {}; sig=data.get('signature_data'); name=(data.get('accepted_name') or a.responsible_name).strip()
+    if not sig:return jsonify({'ok':False,'error':'Assinatura/aceite é obrigatório para finalizar.'}),400
+    a.signature_file=_portal_store_dataurl(sig,f'assinatura-{a.code}');a.accepted_name=name;a.accepted_at=datetime.utcnow();a.status='ENVIADO'
+    pdf=_portal_pdf(a); key=f"portal-cliente/{datetime.utcnow().strftime('%Y/%m')}/{a.code}.pdf"
+    try:_r2_put_bytes(key,pdf,'application/pdf');a.pdf_file='r2__'+key
+    except Exception:
+        namef=a.code+'.pdf';(UPLOAD_DIR/namef).write_bytes(pdf);a.pdf_file=namef
+    db.session.commit(); st,detail=_portal_send_email(a);a.email_status=st;a.email_detail=detail;db.session.commit(); return jsonify({'ok':True,'code':a.code,'email_status':st})
+
+@app.get('/api/portal/appointments/<int:aid>')
+@login_required
+def portal_appointment_detail(aid):
+    a=db.session.get(CustomerAppointment,aid)
+    if not a or not _portal_can_see(a):abort(404)
+    items=CustomerAppointmentEquipment.query.filter_by(appointment_id=a.id).order_by(CustomerAppointmentEquipment.item_no).all()
+    return jsonify({'ok':True,'appointment':{'id':a.id,'code':a.code,'company':a.customer_company,'responsible':a.responsible_name,'date':a.scheduled_date.isoformat() if a.scheduled_date else '', 'notes':a.notes or '', 'status':a.status,'email_status':a.email_status or ''},'items':[{'id':x.id,'item_no':x.item_no,'protocol':_portal_equipment_code(a,x),'serial':x.serial_number,'equipment':x.equipment or '', 'version':x.version or '', 'eod':x.eod or '', 'defect':x.defect,'notes':x.notes or '', 'received':x.received} for x in items]})
+
+@app.get('/api/portal/appointments/<int:aid>/pdf')
+@login_required
+def portal_appointment_pdf(aid):
+    a=db.session.get(CustomerAppointment,aid)
+    if not a or not _portal_can_see(a):abort(404)
+    return Response(_portal_pdf(a),mimetype='application/pdf',headers={'Content-Disposition':f'inline; filename="{a.code}.pdf"'})
+
+@app.get('/api/portal/equipments/<int:eid>/pdf')
+@login_required
+def portal_equipment_pdf(eid):
+    x=db.session.get(CustomerAppointmentEquipment,eid);a=db.session.get(CustomerAppointment,x.appointment_id) if x else None
+    if not a or not _portal_can_see(a):abort(404)
+    fn=_portal_equipment_code(a,x)+'.pdf';return Response(_portal_pdf(a,x),mimetype='application/pdf',headers={'Content-Disposition':f'attachment; filename="{fn}"'})
+
+@app.post('/api/portal/equipments/<int:eid>/receive')
+@login_required
+def portal_equipment_receive(eid):
+    if not _portal_internal():abort(403)
+    x=db.session.get(CustomerAppointmentEquipment,eid);a=db.session.get(CustomerAppointment,x.appointment_id) if x else None
+    if not a:abort(404)
+    x.received=True;x.received_at=datetime.utcnow();x.received_by=session['user_id'];db.session.flush()
+    total=CustomerAppointmentEquipment.query.filter_by(appointment_id=a.id).count(); rec=CustomerAppointmentEquipment.query.filter_by(appointment_id=a.id,received=True).count()
+    a.status='RECEBIDO' if rec>=total else 'RECEBIMENTO_PARCIAL';a.received_at=datetime.utcnow() if rec>=total else None;a.received_by=session['user_id'] if rec>=total else None
+    db.session.add(AuditEvent(user_id=session['user_id'],event_type='PORTAL_EQUIPMENT_RECEIVED',entity_type='customer_appointment',entity_id=str(a.id),detail=f'{a.code} · série {x.serial_number}'));db.session.commit();return jsonify({'ok':True,'status':a.status})
 
 # V56-B — índices aditivos para leituras críticas.
 try:
