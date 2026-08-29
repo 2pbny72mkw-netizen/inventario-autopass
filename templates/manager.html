@@ -8,22 +8,11 @@
 
 <div class="v23DashboardShell v24Executive v30Executive v31CommandCenter v32CommandCenter v33CommandCenter v34CommandCenter" id="v23DashboardShell">
   <aside class="v23Sidebar" id="v23Sidebar">
-    <div class="v23SidebarBrand"><b>SISTEMA DE GESTÃO</b><small>Autopass · V69.3.2</small></div>
-    <div class="v42SideGroup">VISÃO GERAL</div><button class="v23Nav active" data-v23-view="overview">▦ <span>Visão Geral</span></button><div class="v42SideGroup">ATIVIDADES</div>
-    <button class="v23Nav" data-v23-view="execution">▥ <span>Inventário</span></button>
-    <button class="v23Nav" data-v23-view="atm-inventory">▦ <span>Dashboard ATM</span></button>
-{% if session.get("role") in ("manager","manager_field","atm_financial_admin") %}<button class="v23Nav" data-v23-view="financial-dashboard">$ <span>Dashboard Financeiro</span></button>{% endif %}
-    <button class="v23Nav" data-v23-view="journal">◷ <span>Diário de bordo</span></button>
-    <button class="v23Nav" data-v23-view="topdesk">⚡ <span>Chamados</span></button>
-    <button class="v23Nav" data-v23-view="map">⌖ <span>Mapa</span></button>
-    <button class="v23Nav" data-v23-view="panorama">▤ <span>Visões panorâmicas</span></button>
-    <button class="v23Nav" data-v23-view="chips">▣ <span>Troca de Chip Recarga</span></button>
-<div class="v42SideGroup">IMPLANTAÇÃO</div>
-    <button class="v23Nav" data-v23-view="emv">▣ <span>Troca Chips EMV · Trilhos</span></button>
-    <a class="v23Nav v62SideLink" href="/troca-chips-garagem">▣ <span>Troca Chips Garagem</span></a>
-    <button class="v23Nav" data-v23-view="garage">▦ <span>Dashboard Garagem</span></button>
-    <button class="v23Nav" data-v23-view="implantation-dashboard">⌁ <span>Dashboard Implantação</span></button><div class="v42SideGroup">OPERAÇÃO</div><button class="v23Nav" data-v23-view="ranking">↗ <span>Ranking</span></button>
-    <button class="v23Nav" data-v23-view="competition">◉ <span>Concorrência</span></button>
+    <div class="v23SidebarBrand"><b>SISTEMA DE GESTÃO</b><small>Autopass · V69.4</small></div>
+    <div class="v42SideGroup">DASHBOARDS</div>
+    {% for item in builtin_dashboard_menu_items %}
+      <button class="v23Nav{% if loop.first %} active{% endif %}" data-v23-view="{{ item.key }}">{{ item.icon }} <span>{{ item.label }}</span></button>
+    {% endfor %}
     {% if custom_dashboards|default([]) %}<div class="v42SideGroup">DASHBOARDS PERSONALIZADAS</div>{% for d in custom_dashboards %}<a class="v23Nav v62SideLink" href="/dashboards/{{ d.slug }}">▦ <span>{{ d.name }}</span></a>{% endfor %}{% endif %}
     <div class="v23SidebarSpacer"></div>
     <button class="v23TvBtn" id="v23TvBtn" type="button">▣ <span>Modo TV</span></button>
@@ -32,7 +21,7 @@
 
 <section class="card v23Panel garageRev1" data-v23-panel="garage" id="garageDashPanel">
   <style>.garageRev1 #dCompanies .v62BarRow{grid-template-columns:minmax(230px,1.5fr) minmax(160px,2fr) 90px;gap:16px;min-height:46px;align-items:center;margin:10px 0}.garageRev1 #dCompanies .v62BarRow span{font-size:15px;font-weight:800;line-height:1.25;white-space:normal}.garageRev1 #dCompanies .v62BarRow strong{font-size:14px;white-space:nowrap}.garageRev1 #dCompanies .v62BarRow i{height:12px}</style>
-  <div class="sectionHead"><div><span class="eyebrow">IMPLANTAÇÃO · DASHBOARD 2.0 · {{ app_release|default('V69.3.2') }}</span><h2>Troca de Chips Garagem</h2><p class="muted">Acompanhamento operacional da base de terminais de garagem dentro da Central de Inteligência.</p></div><div><a class="secondary buttonLink" href="/troca-chips-garagem">Abrir atividade</a> <a class="secondary buttonLink" href="/api/garage-chip-swaps/export.xlsx">Exportar Excel</a></div></div>
+  <div class="sectionHead"><div><span class="eyebrow">IMPLANTAÇÃO · DASHBOARD 2.0 · {{ app_release|default('V69.4') }}</span><h2>Troca de Chips Garagem</h2><p class="muted">Acompanhamento operacional da base de terminais de garagem dentro da Central de Inteligência.</p></div><div><a class="secondary buttonLink" href="/troca-chips-garagem">Abrir atividade</a> <a class="secondary buttonLink" href="/api/garage-chip-swaps/export.xlsx">Exportar Excel</a></div></div>
   <div class="grid5"><div><label>Empresa</label><select id="dfCompany"><option value="">Todas</option></select></div><div><label>Modelo</label><select id="dfModel"><option value="">Todos</option></select></div><div><label>Status</label><select id="dfStatus"><option value="">Todos</option><option>PENDENTE</option><option>EM ANDAMENTO</option><option>CONCLUÍDA</option></select></div><div><label>Técnico</label><select id="dfTech"><option value="">Todos</option></select></div><div><label>&nbsp;</label><button class="secondary" id="dfClear" type="button">Limpar filtros</button></div></div>
   <div class="kpis dashboardKpis" style="margin-top:16px"><article class="kpi"><span>Total</span><b id="dTotal">0</b></article><article class="kpi successKpi"><span>Concluídos</span><b id="dDone">0</b></article><article class="kpi warningKpi"><span>Em andamento</span><b id="dProg">0</b></article><article class="kpi dangerKpi"><span>Pendentes</span><b id="dPend">0</b></article><article class="kpi primaryKpi"><span>Progresso</span><b id="dPct">0%</b></article></div>
   <div class="chipDashProgress"><i id="dBar" style="width:0%"></i></div><div class="notice" id="garageForecast" style="margin-top:10px">Calculando tendência de conclusão…</div>
@@ -542,6 +531,6 @@
   <div class="v343TvFooter"><span id="v343TvHeadline">Monitoramento executivo do inventário.</span><span>SUPORTE A CAMPO · V42.4</span></div>
 </div>
 
-<script src="{{url_for('static',filename='manager.js')}}?v=v69-3-2"></script>
-<script src="{{url_for('static',filename='garage_dashboard_v62.js')}}?v=v69-3-2"></script>
+<script src="{{url_for('static',filename='manager.js')}}?v=v69-4"></script>
+<script src="{{url_for('static',filename='garage_dashboard_v62.js')}}?v=v69-4"></script>
 {% endblock %}

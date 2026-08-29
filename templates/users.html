@@ -41,6 +41,7 @@
             <option value="consultation">Consulta</option><option value="customer">Cliente</option>
             {% if can_assign_sensitive_roles %}<option value="dispatcher">Dispatcher</option>{% endif %}
             <option value="hr">RH</option>{% endif %}
+            {% if system_profiles %}<optgroup label="Perfis personalizados">{% for p in system_profiles %}{% if not is_hr_admin or p.base_role in ('technician','technician_implantation') %}<option value="custom:{{p.id}}" data-base-role="{{p.base_role if p.base_role!='none' else 'technician'}}">{{p.name}}</option>{% endif %}{% endfor %}</optgroup>{% endif %}
           </select>
         </div>
         <div class="fieldExtended companyFreeField">
@@ -261,7 +262,8 @@
                       {% if not is_hr_admin %}{% if can_assign_sensitive_roles %}<option value="manager" {% if u.role == "manager" %}selected{% endif %}>Gestor</option>
                       <option value="consultation" {% if u.role == "consultation" %}selected{% endif %}>Consulta</option><option value="customer" {% if u.role == "customer" %}selected{% endif %}>Cliente</option><option value="dispatcher" {% if u.role == "dispatcher" %}selected{% endif %}>Dispatcher</option>{% elif u.role in ("manager","consultation","dispatcher") %}<option value="{{ u.role }}" selected disabled>{{ {"manager":"Gestor","consultation":"Consulta","dispatcher":"Dispatcher"}.get(u.role,u.role) }}</option>{% endif %}
                       <option value="customer" {% if u.role == "customer" %}selected{% endif %}>Cliente</option>
-                      <option value="hr" {% if u.role == "hr" %}selected{% endif %}>RH</option>{% endif %}
+                      <option value="hr" {% if u.role == "hr" and not u.system_profile_id %}selected{% endif %}>RH</option>{% endif %}
+                      {% if system_profiles %}<optgroup label="Perfis personalizados">{% for p in system_profiles %}{% if not is_hr_admin or p.base_role in ('technician','technician_implantation') %}<option value="custom:{{p.id}}" data-base-role="{{p.base_role if p.base_role!='none' else 'technician'}}" {% if u.system_profile_id==p.id %}selected{% endif %}>{{p.name}}</option>{% endif %}{% endfor %}</optgroup>{% endif %}
                     </select>
                   </div>
                   <div class="editExtended">
@@ -367,13 +369,15 @@
   const role = document.getElementById("roleSelect");
   const extended = document.querySelectorAll(".fieldExtended");
   const hint = document.getElementById("consultHint");
+  const effectiveRole = select => select?.selectedOptions?.[0]?.dataset?.baseRole || select?.value || '';
 
   function updateCreateProfileFields() {
-    const consultation = role.value === "consultation";
-    const hideCollaborator = consultation || role.value === "customer";
-    const technician = ["technician","technician_implantation","manager_field"].includes(role.value);
-    const gpsOperational=["technician","technician_implantation","manager_field","dispatcher"].includes(role.value);
-    const customer=role.value==="customer";
+    const rv=effectiveRole(role);
+    const consultation = rv === "consultation";
+    const hideCollaborator = consultation || rv === "customer";
+    const technician = ["technician","technician_implantation","manager_field"].includes(rv);
+    const gpsOperational=["technician","technician_implantation","manager_field","dispatcher"].includes(rv);
+    const customer=rv==="customer";
     document.querySelectorAll('#userForm .customerCompanyField').forEach(el=>el.style.display=customer?'':'none');
     document.querySelectorAll('#userForm .companyFreeField').forEach(el=>el.style.display=customer?'none':'');
     extended.forEach(el => {
@@ -418,11 +422,12 @@
     const editExtended = form.querySelectorAll(".editExtended");
 
     function updateEditFields() {
-      const consultation = roleSelect.value === "consultation";
-      const hideCollaborator = consultation || roleSelect.value === "customer";
-      const technician = ["technician","technician_implantation","manager_field"].includes(roleSelect.value);
-      const gpsOperational=["technician","technician_implantation","manager_field","dispatcher"].includes(roleSelect.value);
-      const customer=roleSelect.value==="customer";
+      const rv=effectiveRole(roleSelect);
+      const consultation = rv === "consultation";
+      const hideCollaborator = consultation || rv === "customer";
+      const technician = ["technician","technician_implantation","manager_field"].includes(rv);
+      const gpsOperational=["technician","technician_implantation","manager_field","dispatcher"].includes(rv);
+      const customer=rv==="customer";
       form.querySelectorAll('.customerCompanyField').forEach(el=>el.style.display=customer?'':'none');
       form.querySelectorAll('.companyFreeField').forEach(el=>el.style.display=customer?'none':'');
       editExtended.forEach(el => el.style.display = hideCollaborator ? "none" : "");
@@ -459,7 +464,7 @@
     box.querySelectorAll('[data-child-group]').forEach(c=>c.addEventListener('change',()=>syncAccessBox(box)));
     box.querySelector('.accessAll')?.addEventListener('click',()=>{box.querySelectorAll('[data-child-group]').forEach(c=>c.checked=true);syncAccessBox(box)});
     box.querySelector('.accessClear')?.addEventListener('click',()=>{box.querySelectorAll('[data-child-group]').forEach(c=>c.checked=false);syncAccessBox(box)});
-    box.querySelector('.accessDefaults')?.addEventListener('click',()=>{const form=box.closest('form');const r=form?.querySelector('[name="role"]')?.value;const d=ACCESS_DEFAULTS[r]||[];box.querySelectorAll('[data-child-group]').forEach(c=>c.checked=d==='*'||d.includes(c.value));syncAccessBox(box)});
+    box.querySelector('.accessDefaults')?.addEventListener('click',()=>{const form=box.closest('form');const rs=form?.querySelector('[name="role"]');const r=effectiveRole(rs);const d=ACCESS_DEFAULTS[r]||[];box.querySelectorAll('[data-child-group]').forEach(c=>c.checked=d==='*'||d.includes(c.value));syncAccessBox(box)});
     syncAccessBox(box);
   });
 })();
