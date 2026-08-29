@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V69 CONSOLIDADA"
+APP_RELEASE = "V69 REV1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -3601,6 +3601,103 @@ def telemetry_summary_api():
     except Exception as exc:
         return jsonify({"ok":False,"error":str(exc)}),500
 
+@app.get("/api/telemetria/export.xlsx")
+@login_required
+def telemetry_export_xlsx():
+    if session.get("role") != "manager":
+        abort(403)
+    # Reaproveita exatamente o mesmo snapshot exibido na tela, respeitando a janela selecionada.
+    result = telemetry_summary_api()
+    response = result[0] if isinstance(result, tuple) else result
+    status = result[1] if isinstance(result, tuple) and len(result) > 1 else getattr(response, "status_code", 200)
+    if status >= 400:
+        return result
+    data = response.get_json(silent=True) or {}
+    if not data.get("ok"):
+        return jsonify(data), 500
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Resumo"
+    title_fill = PatternFill("solid", fgColor="17345D")
+    head_fill = PatternFill("solid", fgColor="DCEAF7")
+    title_font = Font(color="FFFFFF", bold=True, size=14)
+    head_font = Font(bold=True, color="17345D")
+
+    def style_header(sheet, row=1):
+        for cell in sheet[row]:
+            cell.fill = head_fill
+            cell.font = head_font
+            cell.alignment = Alignment(vertical="center")
+
+    ws.append(["TELEMETRIA DO SISTEMA", data.get("release", APP_RELEASE)])
+    ws["A1"].fill = title_fill; ws["A1"].font = title_font
+    ws["B1"].fill = title_fill; ws["B1"].font = title_font
+    summary_rows = [
+        ("Gerado em", data.get("generated_at")),
+        ("Janela (min)", data.get("window_minutes")),
+        ("Saúde", data.get("health")),
+        ("Tempo médio (ms)", data.get("avg_ms")),
+        ("P95 (ms)", data.get("p95_ms")),
+        ("Pico (ms)", data.get("max_ms")),
+        ("Requisições medidas", data.get("requests")),
+        ("Erros 5xx", data.get("errors_5xx")),
+        ("Usuários ativos / 15 min", data.get("active_users_15m")),
+    ]
+    for k,v in summary_rows: ws.append([k,v])
+    for c in ws[2:]: c[0].font = Font(bold=True)
+
+    wst = wb.create_sheet("Evolução 5min")
+    wst.append(["Horário","Média (ms)","P95 (ms)","Requisições"]); style_header(wst)
+    for x in data.get("timeline",[]): wst.append([x.get("time"),x.get("avg_ms"),x.get("p95_ms"),x.get("requests")])
+
+    wsb = wb.create_sheet("Volumes das bases")
+    wsb.append(["Base","Registros"]); style_header(wsb)
+    for k,v in (data.get("table_counts") or {}).items(): wsb.append([k,v])
+
+    st=data.get("storage") or {}; dbs=st.get("database") or {}; r2=st.get("r2") or {}; rt=st.get("runtime") or {}; loc=st.get("local") or {}; jobs=st.get("jobs") or {}
+    wss=wb.create_sheet("Capacidade")
+    wss.append(["Grupo","Métrica","Valor"]); style_header(wss)
+    capacity=[
+        ("PostgreSQL","Total bytes",dbs.get("total_bytes")),("PostgreSQL","Limite bytes",dbs.get("limit_bytes")),("PostgreSQL","Uso %",dbs.get("usage_pct")),("PostgreSQL","Conexões",dbs.get("connections")),("PostgreSQL","Máx conexões",dbs.get("max_connections")),
+        ("R2","Total bytes",r2.get("total_bytes")),("R2","Objetos",r2.get("objects")),("R2","Maior arquivo bytes",r2.get("largest_bytes")),
+        ("Aplicação","RAM atual bytes",rt.get("container_current_bytes") or rt.get("rss_bytes")),("Aplicação","Limite RAM bytes",rt.get("limit_bytes")),("Aplicação","Uso RAM %",rt.get("usage_pct")),("Aplicação","Workers",rt.get("workers")),("Aplicação","CPUs",rt.get("cpu_count")),
+        ("Arquivos locais","Total bytes",loc.get("total_bytes")),("Arquivos locais","Arquivos",loc.get("files")),
+        ("Processamentos","Ativos",jobs.get("active")),("Processamentos","Prontos",jobs.get("ready")),("Processamentos","Erros",jobs.get("errors")),
+    ]
+    for row in capacity: wss.append(list(row))
+
+    wsdb=wb.create_sheet("Maiores tabelas DB")
+    wsdb.append(["Tabela","Total bytes","Dados bytes","Índices bytes","Linhas estimadas"]); style_header(wsdb)
+    for t in dbs.get("tables") or []: wsdb.append([t.get("name"),t.get("total_bytes"),t.get("table_bytes"),t.get("index_bytes"),t.get("estimated_rows")])
+
+    ws5=wb.create_sheet("Top 5 gargalos")
+    ws5.append(["Rota","P95 ms","Média ms","SQL médio ms","App ms","Queries/req","Chamadas","Erros 5xx"]); style_header(ws5)
+    for x in data.get("top5") or []: ws5.append([x.get("route"),x.get("p95_ms"),x.get("avg_ms"),x.get("avg_sql_ms"),x.get("app_ms"),x.get("avg_queries"),x.get("count"),x.get("errors")])
+
+    wsr=wb.create_sheet("Raio-X rotas")
+    wsr.append(["Rota","Média ms","P95 ms","Máx ms","SQL médio ms","Queries/req","Chamadas","Erros 5xx","Diagnóstico"]); style_header(wsr)
+    for x in data.get("routes") or []:
+        p95=float(x.get("p95_ms") or 0)
+        diag="CRÍTICO" if p95>5000 else ("LENTO" if p95>3000 else ("ATENÇÃO" if p95>1500 else "OK"))
+        wsr.append([x.get("route"),x.get("avg_ms"),x.get("p95_ms"),x.get("max_ms"),x.get("avg_sql_ms"),x.get("avg_queries"),x.get("count"),x.get("errors"),diag])
+
+    # Ajuste de largura para facilitar leitura e upload/análise posterior.
+    for sh in wb.worksheets:
+        sh.freeze_panes = "A2" if sh.max_row > 1 else None
+        for col in range(1, sh.max_column+1):
+            letter=get_column_letter(col)
+            maxlen=0
+            for cell in sh[letter]:
+                try: maxlen=max(maxlen,len(str(cell.value or "")))
+                except Exception: pass
+            sh.column_dimensions[letter].width=min(max(maxlen+2,12),55)
+
+    out=io.BytesIO(); wb.save(out); out.seek(0)
+    stamp=datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%Y%m%d_%H%M%S")
+    return send_file(out, as_attachment=True, download_name=f"telemetria_{APP_RELEASE.replace(' ','_')}_{stamp}.xlsx", mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
 @app.get("/diagnostico")
 @login_required
 def diagnostics_page():
@@ -5728,7 +5825,7 @@ def export_users_excel():
         c.font = Font(bold=True, color="FFFFFF")
         c.fill = PatternFill("solid", fgColor="17345D")
         c.alignment = Alignment(horizontal="center")
-    role_label={"manager":"Gestor","technician":"Técnico de Campo","technician_implantation":"Técnico Implantação","manager_field":"Gestor Field","consultation":"Consulta","hr":"RH","dispatcher":"Dispatcher","atm_financial_admin":"ADM Financeiro"}
+    role_label={"manager":"Gestor","technician":"Técnico de Campo","technician_implantation":"Técnico Implantação","manager_field":"Gestor Field","consultation":"Consulta","hr":"RH","dispatcher":"Dispatcher","atm_financial_admin":"ADM Financeiro","customer":"Cliente"}
     q=(User.query.filter(User.role == "technician") if session.get("role") == "hr" else User.query)
     term=(request.args.get("q") or "").strip(); role_f=(request.args.get("role") or "").strip(); company_f=(request.args.get("company") or "").strip(); status_f=(request.args.get("status") or "").strip().upper()
     if term:
@@ -11770,7 +11867,7 @@ def _portal_pdf(a, item=None):
     st=getSampleStyleSheet(); title=ParagraphStyle('pt',parent=st['Title'],fontSize=18,leading=22,textColor=colors.HexColor('#123b68')); body=ParagraphStyle('pb',parent=st['BodyText'],fontSize=9,leading=12)
     story=[Paragraph('AGENDAMENTO DE ENTRADA DE EQUIPAMENTO',title),Spacer(1,8)]
     story.append(Paragraph(f"<b>Agendamento:</b> {a.code} &nbsp;&nbsp; <b>Cliente:</b> {a.customer_company} &nbsp;&nbsp; <b>Responsável:</b> {a.responsible_name}",body))
-    story.append(Paragraph(f"<b>Data prevista:</b> {a.scheduled_date.strftime('%d/%m/%Y') if a.scheduled_date else '—'} &nbsp;&nbsp; <b>Aceite:</b> {a.accepted_at.strftime('%d/%m/%Y %H:%M') if a.accepted_at else '—'}",body)); story.append(Spacer(1,10))
+    story.append(Paragraph(f"<b>Data do agendamento:</b> {a.scheduled_date.strftime('%d/%m/%Y') if a.scheduled_date else '—'} &nbsp;&nbsp; <b>Aceite:</b> {a.accepted_at.strftime('%d/%m/%Y %H:%M') if a.accepted_at else '—'}",body)); story.append(Spacer(1,10))
     rows=[item] if item else CustomerAppointmentEquipment.query.filter_by(appointment_id=a.id).order_by(CustomerAppointmentEquipment.item_no).all()
     data=[["Protocolo","Série","Equipamento","Versão","EOD","Defeito","Observação"]]
     for x in rows: data.append([_portal_equipment_code(a,x),x.serial_number,x.equipment or '—',x.version or '—',x.eod or '—',Paragraph(x.defect,body),Paragraph(x.notes or '—',body)])
@@ -11789,7 +11886,7 @@ Agendamento: {a.code}\
 Cliente: {a.customer_company}\
 Responsável: {a.responsible_name}\
 Equipamentos: {count}\
-Data prevista: {a.scheduled_date.strftime('%d/%m/%Y') if a.scheduled_date else '—'}\
+Data do agendamento: {a.scheduled_date.strftime('%d/%m/%Y') if a.scheduled_date else '—'}\
 \
 Acesse o Portal do Cliente para visualizar e baixar os PDFs individuais.")
     try:
@@ -11829,7 +11926,7 @@ def portal_appointments_create():
     if not items: return jsonify({'ok':False,'error':'Adicione pelo menos um equipamento.'}),400
     company=(u.company or data.get('company') or '').strip(); responsible=(data.get('responsible') or u.name or '').strip()
     if not company:return jsonify({'ok':False,'error':'Usuário sem cliente/empresa vinculada.'}),400
-    a=CustomerAppointment(customer_company=company,responsible_name=responsible,responsible_email=(data.get('email') or u.email or '').strip(),responsible_phone=(data.get('phone') or u.phone or '').strip(),scheduled_date=datetime.strptime(data['scheduled_date'],'%Y-%m-%d').date() if data.get('scheduled_date') else None,notes=(data.get('notes') or '').strip(),status='RASCUNHO',created_by=u.id); db.session.add(a);db.session.flush();a.code=_portal_code(a.id)
+    a=CustomerAppointment(customer_company=company,responsible_name=responsible,responsible_email=(data.get('email') or u.email or '').strip(),responsible_phone=(data.get('phone') or u.phone or '').strip(),scheduled_date=None,notes=(data.get('notes') or '').strip(),status='RASCUNHO',created_by=u.id); db.session.add(a);db.session.flush();a.code=_portal_code(a.id)
     for i,x in enumerate(items,1):
         serial=(x.get('serial') or '').strip(); defect=(x.get('defect') or '').strip()
         if not serial or not defect: db.session.rollback(); return jsonify({'ok':False,'error':f'Equipamento {i}: série e defeito são obrigatórios.'}),400
@@ -11844,7 +11941,7 @@ def portal_appointments_submit(aid):
     if a.status!='RASCUNHO': return jsonify({'ok':False,'error':'Agendamento já finalizado.'}),409
     data=request.get_json(silent=True) or {}; sig=data.get('signature_data'); name=(data.get('accepted_name') or a.responsible_name).strip()
     if not sig:return jsonify({'ok':False,'error':'Assinatura/aceite é obrigatório para finalizar.'}),400
-    a.signature_file=_portal_store_dataurl(sig,f'assinatura-{a.code}');a.accepted_name=name;a.accepted_at=datetime.utcnow();a.status='ENVIADO'
+    a.signature_file=_portal_store_dataurl(sig,f'assinatura-{a.code}');a.accepted_name=name;a.accepted_at=datetime.utcnow();a.scheduled_date=datetime.now(ZoneInfo('America/Sao_Paulo')).date();a.status='ENVIADO'
     pdf=_portal_pdf(a); key=f"portal-cliente/{datetime.utcnow().strftime('%Y/%m')}/{a.code}.pdf"
     try:_r2_put_bytes(key,pdf,'application/pdf');a.pdf_file='r2__'+key
     except Exception:
