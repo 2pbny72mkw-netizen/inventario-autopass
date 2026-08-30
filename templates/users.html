@@ -464,7 +464,16 @@
     box.querySelectorAll('.accessGroupToggle').forEach(t=>t.addEventListener('click',e=>{e.stopPropagation();box.querySelectorAll(`[data-child-group="${t.dataset.group}"]`).forEach(c=>c.checked=t.checked);syncAccessBox(box);}));
     box.querySelectorAll('[data-child-group]').forEach(c=>c.addEventListener('change',()=>syncAccessBox(box)));
     box.querySelector('.accessAll')?.addEventListener('click',()=>{box.querySelectorAll('[data-child-group]').forEach(c=>c.checked=true);syncAccessBox(box)});
-    box.querySelector('.accessClear')?.addEventListener('click',()=>{box.querySelectorAll('input[type=checkbox]').forEach(c=>{c.checked=false;c.indeterminate=false});syncAccessBox(box)});
+    box.querySelector('.accessClear')?.addEventListener('click',()=>{
+      box.querySelectorAll('input[type=checkbox]').forEach(c=>{c.checked=false;c.indeterminate=false});
+      const form=box.closest('form');
+      if(form){
+        const roleSel=form.querySelector('select[name=role]'); if(roleSel){roleSel.selectedIndex=-1; roleSel.value=''; roleSel.dispatchEvent(new Event('change',{bubbles:true}));}
+        form.querySelectorAll('select[name=customer_company_ids] option').forEach(o=>o.selected=false);
+        const company=form.querySelector('input[name=company]'); if(company) company.value='';
+      }
+      syncAccessBox(box);
+    });
     box.querySelector('.accessDefaults')?.addEventListener('click',()=>{const form=box.closest('form');const rs=form?.querySelector('[name="role"]');const r=effectiveRole(rs);const d=ACCESS_DEFAULTS[r]||[];box.querySelectorAll('[data-child-group]').forEach(c=>c.checked=d==='*'||d.includes(c.value));syncAccessBox(box)});
     box.querySelector('.accessCollapse')?.addEventListener('click',e=>{const groups=[...box.querySelectorAll('.accessGroup')],open=groups.some(g=>g.open);groups.forEach(g=>g.open=!open);e.currentTarget.textContent=open?'Expandir acessos':'Recolher acessos'});
     syncAccessBox(box);
