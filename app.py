@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V69.4"
+APP_RELEASE = "V69.5"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -11735,16 +11735,17 @@ def _materials_xray_rows():
         for uid,st in db.session.query(CollaboratorDocument.user_id,CollaboratorDocument.status).filter(CollaboratorDocument.user_id.in_(user_ids)).all():
             x=doc_stats.setdefault(uid,{'total':0,'signed':0,'pending':0}); x['total']+=1
             if st=='ASSINADO': x['signed']+=1
-            if st in ('AGUARDANDO_ACEITE','CORRECAO_SOLICITADA','RASCUNHO'): x['pending']+=1
+            # V69.5: pendência do colaborador = próxima ação depende dele.
+            # CORRECAO_SOLICITADA/RASCUNHO dependem da gestão, não do colaborador.
+            if st == 'AGUARDANDO_ACEITE': x['pending']+=1
     out=[]
     for u in users:
         ds=doc_stats.get(u.id,{'total':0,'signed':0,'pending':0})
         reqs=MaterialRequest.query.filter_by(user_id=u.id).filter(MaterialRequest.status.in_(['SOLICITADO','EM_ANALISE','APROVADO','EM_COMPRA','DISPONIVEL'])).all()
         mov=MaterialMovement.query.filter_by(user_id=u.id).all(); bal={}
         for m in mov: bal[m.material_id]=bal.get(m.material_id,0)+(m.quantity if m.movement_type in ('ENTREGA','SUBSTITUICAO_ENTRADA','TRANSFERENCIA_ENTRADA') else -m.quantity)
-        load=sum(1 for q in bal.values() if q>0); issues=ds['pending']+len(reqs); reasons=[]
+        load=sum(1 for q in bal.values() if q>0); issues=ds['pending']; reasons=[]
         if ds['pending']: reasons.append(f"{ds['pending']} termo/documento(s) aguardando ação")
-        if reqs: reasons.append(f"{len(reqs)} solicitação(ões) de material aberta(s)")
         status='REGULAR' if issues==0 else 'PENDENTE'
         out.append({'id':u.id,'name':u.name,'company':u.company or '', 'job_title':u.job_title or '', 'documents_total':ds['total'],'terms_signed':ds['signed'],'terms_pending':ds['pending'],'materials_open':load,'requests_open':len(reqs),'issues':issues,'status':status,'reason':' · '.join(reasons) if reasons else 'Nenhuma pendência operacional'})
     return out
@@ -11759,10 +11760,8 @@ def materials_xray_api():
 @login_required
 def materials_xray_pending_api(user_id):
     _materials_require('materials.dossier.view'); u=db.session.get(User,user_id) or abort(404); items=[]
-    for d in CollaboratorDocument.query.filter_by(user_id=user_id).filter(CollaboratorDocument.status.in_(['AGUARDANDO_ACEITE','CORRECAO_SOLICITADA','RASCUNHO'])).order_by(CollaboratorDocument.created_at.desc()).all():
+    for d in CollaboratorDocument.query.filter_by(user_id=user_id).filter(CollaboratorDocument.status=='AGUARDANDO_ACEITE').order_by(CollaboratorDocument.created_at.desc()).all():
         items.append({'type':'Termo / Documento','code':d.document_code or '—','description':d.title or d.document_type or 'Documento','status':d.status,'date':d.created_at.strftime('%d/%m/%Y') if d.created_at else '—'})
-    for r in MaterialRequest.query.filter_by(user_id=user_id).filter(MaterialRequest.status.in_(['SOLICITADO','EM_ANALISE','APROVADO','EM_COMPRA','DISPONIVEL'])).order_by(MaterialRequest.created_at.desc()).all():
-        items.append({'type':'Solicitação de material','code':getattr(r,'request_code',None) or f'#{r.id}','description':getattr(r,'notes',None) or 'Solicitação aberta','status':r.status,'date':r.created_at.strftime('%d/%m/%Y') if r.created_at else '—'})
     return jsonify({'ok':True,'user':{'id':u.id,'name':u.name,'company':u.company or '', 'job_title':u.job_title or ''},'items':items})
 
 @app.get('/documentos-materiais/raio-x/exportar.xlsx')
@@ -11895,6 +11894,23 @@ def materials_document_items_update_api(did):
         except ValueError as exc: return jsonify({'ok':False,'error':str(exc)}),400
         db.session.add(CollaboratorDocumentItem(document_id=d.id,material_id=m.id,description=m.description,brand=m.brand,model=m.model,quantity=qty,unit=m.unit,condition=(x.get('condition') or 'BOM'),notes=(x.get('notes') or '').strip()))
     d.status='RASCUNHO'; d.correction_note=None; db.session.add(AuditEvent(user_id=session['user_id'],event_type='MATERIAL_DOCUMENT_CORRECTED',entity_type='collaborator_document',entity_id=str(d.id),detail=d.document_code));db.session.commit();return jsonify({'ok':True})
+
+@app.delete('/api/materials/documents/<int:did>')
+@login_required
+def materials_document_delete_api(did):
+    _materials_require('materials.delivery.manage')
+    d=db.session.get(CollaboratorDocument,did)
+    if not d:return jsonify({'ok':False,'error':'Documento não encontrado.'}),404
+    payload=request.get_json(silent=True) or {}; reason=(payload.get('reason') or '').strip()
+    if len(reason)<3:return jsonify({'ok':False,'error':'Informe o motivo da exclusão.'}),400
+    code=d.document_code or str(d.id); title=d.title or d.document_type
+    # V69.5: exclusão administrativa de documento de teste/indevido também desfaz
+    # os movimentos vinculados ao próprio documento, mantendo AuditEvent permanente.
+    MaterialMovement.query.filter_by(document_id=d.id).delete(synchronize_session=False)
+    CollaboratorDocumentItem.query.filter_by(document_id=d.id).delete(synchronize_session=False)
+    db.session.add(AuditEvent(user_id=session['user_id'],event_type='MATERIAL_DOCUMENT_DELETED',entity_type='collaborator_document',entity_id=str(d.id),detail=f'{code} · {title} · Motivo: {reason[:500]}'))
+    db.session.delete(d); db.session.commit()
+    return jsonify({'ok':True,'code':code})
 
 @app.get('/api/materials/documents')
 @login_required
