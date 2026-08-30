@@ -38,7 +38,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V71"
+APP_RELEASE = "V71 HOTFIX1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -12484,19 +12484,45 @@ def _v71_import_resumo(file_storage):
         if current_day is None: continue
         parsed.append({'garage':garage,'contact':contact,'address':address,'region':region,'weekday':current_day})
     if not parsed: raise ValueError('Nenhuma garagem válida foi encontrada na aba Resumo.')
+
+    # Normaliza duplicidades na própria planilha antes de tocar no banco.
+    # Repetições da mesma garagem no mesmo dia são consolidadas; dias conflitantes são bloqueados.
+    dedup={}
+    for item in parsed:
+        key=_v71_norm(item['garage'])
+        prev=dedup.get(key)
+        if prev:
+            if prev['weekday'] != item['weekday']:
+                raise ValueError(f"A garagem '{item['garage']}' aparece em mais de um dia da semana na aba Resumo. Corrija a planilha antes de importar.")
+            # Mantém o primeiro nome e aproveita dados preenchidos na repetição.
+            for fld in ('contact','address','region'):
+                if not prev.get(fld) and item.get(fld): prev[fld]=item[fld]
+            continue
+        dedup[key]=dict(item)
+    parsed=list(dedup.values())
+
     # A planilha é uma fotografia completa da matriz: ausentes são inativados, histórico é preservado.
-    incoming={_v71_norm(x['garage']) for x in parsed}; changed=created=unchanged=0
+    incoming=set(dedup); changed=created=unchanged=0
     existing=LogisticsGarageRoute.query.all()
     byname={_v71_norm(x.garage_name):x for x in existing}
     for item in parsed:
         key=_v71_norm(item['garage']); r=byname.get(key)
-        if not r:
-            r=LogisticsGarageRoute(garage_name=item['garage'],created_by=session.get('user_id'));db.session.add(r);created+=1
+        is_new = r is None
+        if is_new:
+            r=LogisticsGarageRoute(garage_name=item['garage'],created_by=session.get('user_id'))
+            db.session.add(r)
+            # Atualiza o mapa imediatamente para impedir um segundo INSERT da mesma garagem
+            # durante a mesma importação, antes do flush/commit.
+            byname[key]=r
+            created+=1
+            before=None
         else:
             before=(r.weekday,r.contact_name or '',r.address or '',r.region or '',r.active)
         r.weekday=item['weekday'];r.contact_name=item['contact'] or None;r.address=item['address'] or None;r.region=item['region'] or None;r.active=True;r.source_import=secure_filename(file_storage.filename or 'Resumo.xlsx')
-        _v71_link_customer(r)
-        if key in byname:
+        # A consulta de vínculo não deve disparar autoflush enquanto a linha nova ainda está sendo montada.
+        with db.session.no_autoflush:
+            _v71_link_customer(r)
+        if not is_new:
             after=(r.weekday,r.contact_name or '',r.address or '',r.region or '',r.active)
             if before==after: unchanged+=1
             else: changed+=1
@@ -12816,6 +12842,9 @@ def _apply_v71_migrations():
             additions=(
                 ('request_date','DATE'),('expected_date','DATE'),('programmed_date','DATE'),
                 ('alternate_date_requested','BOOLEAN DEFAULT FALSE'),('alternate_reason','VARCHAR(300)'),
+                # Compatibilidade com bancos legados do Portal: o ORM já possui estes campos,
+                # mas instalações anteriores podem não ter recebido as colunas físicas.
+                ('invoice_number','VARCHAR(120)'),('invoice_file','VARCHAR(600)'),('invoice_original_name','VARCHAR(255)'),
             )
             with db.engine.begin() as conn:
                 for col,typ in additions:
@@ -12825,6 +12854,8 @@ def _apply_v71_migrations():
                 conn.execute(text('CREATE INDEX IF NOT EXISTS ix_customer_appt_programmed_date ON customer_appointments (programmed_date)'))
         if not SchemaMigration.query.filter_by(version='V71-001').first():
             db.session.add(SchemaMigration(version='V71-001',description='Logística Leva e Traz + programação de agendamentos'));db.session.commit()
+        if not SchemaMigration.query.filter_by(version='V71-HF1').first():
+            db.session.add(SchemaMigration(version='V71-HF1',description='Compatibilidade fiscal do Portal + importação idempotente Leva e Traz'));db.session.commit()
     except Exception:
         try:db.session.rollback()
         except Exception:pass
