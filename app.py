@@ -38,7 +38,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V71 HOTFIX1"
+APP_RELEASE = "V71.1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -5490,8 +5490,10 @@ def _resolve_role_selection(raw):
 @user_admin_required
 def users_page():
     if not _has_access("users.view"): abort(403)
-    active_q = User.query.filter(User.archived_at.is_(None))
-    archived_q = User.query.filter(User.archived_at.isnot(None))
+    # V71.1 — acessos externos do Portal são administrados no Cadastro de Clientes,
+    # não em RH / Usuários.
+    active_q = User.query.filter(User.archived_at.is_(None), User.role != "customer")
+    archived_q = User.query.filter(User.archived_at.isnot(None), User.role != "customer")
     if session.get("role") == "hr":
         active_q = active_q.filter(User.role.in_(("technician", "technician_implantation")))
         archived_q = archived_q.filter(User.role.in_(("technician", "technician_implantation")))
@@ -5529,6 +5531,7 @@ def _next_user_code(role):
         "hr": "RH",
         "dispatcher": "D",
         "atm_financial_admin": "AF",
+        "customer": "CL",
     }
     prefix = prefixes.get(role, "U")
     existing = (
@@ -12400,7 +12403,7 @@ def portal_customer_companies():
         if not legal: flash('Razão social é obrigatória.'); return redirect(request.path)
         c=CustomerCompany(legal_name=legal,trade_name=(d.get('trade_name') or '').strip() or None,cnpj=(d.get('cnpj') or '').strip() or None,state_registration=(d.get('state_registration') or '').strip() or None,contact_name=(d.get('contact_name') or '').strip() or None,contact_role=(d.get('contact_role') or '').strip() or None,phone=(d.get('phone') or '').strip() or None,mobile=(d.get('mobile') or '').strip() or None,email=(d.get('email') or '').strip() or None,address=(d.get('address') or '').strip() or None,city=(d.get('city') or '').strip() or None,state=(d.get('state') or '').strip().upper() or None,zip_code=(d.get('zip_code') or '').strip() or None,notes=(d.get('notes') or '').strip() or None)
         db.session.add(c); db.session.commit(); flash('Cliente cadastrado.'); return redirect(request.path)
-    return render_template('customer_companies.html',companies=CustomerCompany.query.order_by(CustomerCompany.active.desc(),CustomerCompany.legal_name).all())
+    return render_template('customer_companies.html',companies=CustomerCompany.query.order_by(CustomerCompany.active.desc(),CustomerCompany.legal_name).all(),customer_users=User.query.filter(User.role=='customer',User.archived_at.is_(None)).order_by(User.active.desc(),User.name).all(),customer_company_map={u.id:_customer_company_ids(u) for u in User.query.filter(User.role=='customer',User.archived_at.is_(None)).all()})
 
 @app.post('/portal-cliente/cadastro-clientes/<int:cid>/editar')
 @login_required
@@ -12428,6 +12431,54 @@ def portal_customer_company_delete(cid):
     else:
         db.session.delete(c); db.session.commit(); flash('Cliente excluído.')
     return redirect('/portal-cliente/cadastro-clientes')
+
+
+# V71.1 — Acessos externos do Portal ficam junto ao cadastro do cliente.
+@app.post('/portal-cliente/cadastro-clientes/acessos/novo')
+@login_required
+def portal_customer_access_create():
+    if session.get('role')!='manager': abort(403)
+    d=request.form
+    try: cid=int(d.get('company_id') or 0)
+    except Exception: cid=0
+    company=db.session.get(CustomerCompany,cid)
+    if not company or not company.active:
+        flash('Selecione uma empresa/garagem ativa.'); return redirect('/portal-cliente/cadastro-clientes#acessos')
+    name=(d.get('name') or '').strip(); username=(d.get('username') or d.get('email') or '').strip().lower(); password=d.get('password') or ''
+    email=_normalize_optional_email(d.get('email')); phone=_normalize_optional_phone(d.get('phone'))
+    if not name or not username or len(password)<8:
+        flash('Nome, login e senha com pelo menos 8 caracteres são obrigatórios.'); return redirect('/portal-cliente/cadastro-clientes#acessos')
+    if User.query.filter(func.lower(User.username)==username).first():
+        flash('Já existe um usuário com esse login.'); return redirect('/portal-cliente/cadastro-clientes#acessos')
+    if email and User.query.filter(func.lower(User.email)==email).first():
+        flash('Já existe um usuário com esse e-mail.'); return redirect('/portal-cliente/cadastro-clientes#acessos')
+    if phone and User.query.filter(User.phone==phone).first():
+        flash('Já existe um usuário com esse celular.'); return redirect('/portal-cliente/cadastro-clientes#acessos')
+    u=User(name=name,username=username,password_hash=generate_password_hash(password),role='customer',active=True,user_code=_next_user_code('customer'),email=email,phone=phone,company=company.legal_name,personnel_status='ATIVO',access_json=json.dumps(sorted(_default_access_for_role('customer')),ensure_ascii=False),customer_company_ids=json.dumps([company.id]))
+    db.session.add(u); db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='PORTAL_CUSTOMER_ACCESS_CREATED',entity_type='user',entity_id=username,detail=f'{name} · {company.legal_name}')); db.session.commit()
+    flash('Acesso do cliente criado com sucesso.'); return redirect('/portal-cliente/cadastro-clientes#acessos')
+
+@app.post('/portal-cliente/cadastro-clientes/acessos/<int:uid>/editar')
+@login_required
+def portal_customer_access_edit(uid):
+    if session.get('role')!='manager': abort(403)
+    u=db.session.get(User,uid)
+    if not u or u.role!='customer': abort(404)
+    d=request.form
+    try: cid=int(d.get('company_id') or 0)
+    except Exception: cid=0
+    company=db.session.get(CustomerCompany,cid)
+    if not company: flash('Empresa inválida.'); return redirect('/portal-cliente/cadastro-clientes#acessos')
+    name=(d.get('name') or '').strip(); username=(d.get('username') or '').strip().lower(); email=_normalize_optional_email(d.get('email')); phone=_normalize_optional_phone(d.get('phone')); password=d.get('password') or ''
+    if not name or not username: flash('Nome e login são obrigatórios.'); return redirect('/portal-cliente/cadastro-clientes#acessos')
+    if User.query.filter(User.id!=uid,func.lower(User.username)==username).first(): flash('Login já utilizado.'); return redirect('/portal-cliente/cadastro-clientes#acessos')
+    if email and User.query.filter(User.id!=uid,func.lower(User.email)==email).first(): flash('E-mail já utilizado.'); return redirect('/portal-cliente/cadastro-clientes#acessos')
+    if phone and User.query.filter(User.id!=uid,User.phone==phone).first(): flash('Celular já utilizado.'); return redirect('/portal-cliente/cadastro-clientes#acessos')
+    if password and len(password)<8: flash('A nova senha deve ter pelo menos 8 caracteres.'); return redirect('/portal-cliente/cadastro-clientes#acessos')
+    u.name=name;u.username=username;u.email=email;u.phone=phone;u.company=company.legal_name;u.customer_company_ids=json.dumps([company.id]);u.active=d.get('active')=='1';u.personnel_status='ATIVO' if u.active else 'INATIVO';u.access_json=json.dumps(sorted(_default_access_for_role('customer')),ensure_ascii=False)
+    if password:u.password_hash=generate_password_hash(password)
+    db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='PORTAL_CUSTOMER_ACCESS_UPDATED',entity_type='user',entity_id=str(u.id),detail=f'{u.name} · {company.legal_name} · {"ATIVO" if u.active else "INATIVO"}'));db.session.commit()
+    flash('Acesso do cliente atualizado.'); return redirect('/portal-cliente/cadastro-clientes#acessos')
 
 
 # ---------------- V71 Logística / Leva e Traz ----------------
@@ -12471,9 +12522,36 @@ def _v71_link_customer(route):
         if key in {_v71_norm(c.legal_name),_v71_norm(c.trade_name)}:
             route.customer_company_id=c.id;return
 
+def _v711_sync_customers_from_workbook(wb):
+    """Cria clientes/garagens ausentes e enriquece campos vazios usando Contato Garagem."""
+    if 'Contato Garagem' not in wb.sheetnames: return {'created':0,'enriched':0,'matched':0}
+    ws=wb['Contato Garagem']; created=enriched=matched=0
+    companies=CustomerCompany.query.all()
+    byname={_v71_norm(c.legal_name):c for c in companies}
+    for c in companies:
+        if c.trade_name: byname.setdefault(_v71_norm(c.trade_name),c)
+    for row in ws.iter_rows(min_row=2,values_only=True):
+        vals=list(row)+[None]*7
+        garage=str(vals[0] or '').strip(); responsible=str(vals[1] or '').strip(); email=str(vals[2] or '').strip(); phone=str(vals[3] or '').strip(); address=str(vals[4] or '').strip(); region=str(vals[5] or '').strip()
+        if not garage: continue
+        key=_v71_norm(garage); c=byname.get(key)
+        if c is None:
+            c=CustomerCompany(legal_name=garage,trade_name=garage,contact_name=responsible or None,email=email or None,phone=phone or None,address=address or None,city=region or None,state='SP',notes='Importado da Matriz Leva e Traz V71.1',active=True)
+            db.session.add(c);byname[key]=c;created+=1
+        else:
+            matched+=1; changed=False
+            fills={'trade_name':garage,'contact_name':responsible,'email':email,'phone':phone,'address':address,'city':region,'state':'SP'}
+            for attr,val in fills.items():
+                if val and not (getattr(c,attr,None) or '').strip(): setattr(c,attr,val);changed=True
+            if not c.active: c.active=True; changed=True
+            if changed: enriched+=1
+    db.session.flush()
+    return {'created':created,'enriched':enriched,'matched':matched}
+
 def _v71_import_resumo(file_storage):
     wb=load_workbook(file_storage,read_only=True,data_only=True)
     if 'Resumo' not in wb.sheetnames: raise ValueError('A planilha padrão precisa conter a aba Resumo.')
+    customer_sync=_v711_sync_customers_from_workbook(wb)
     ws=wb['Resumo']; current_day=None; parsed=[]
     for row in ws.iter_rows(min_row=2,values_only=True):
         garage=str(row[0] or '').strip(); contact=str(row[1] or '').strip(); address=str(row[2] or '').strip(); region=str(row[3] or '').strip()
@@ -12500,6 +12578,24 @@ def _v71_import_resumo(file_storage):
             continue
         dedup[key]=dict(item)
     parsed=list(dedup.values())
+
+    # V71.1 — toda garagem da matriz também passa a existir no Cadastro de Clientes.
+    # A aba Contato Garagem enriquece os dados; a aba Resumo garante que nenhuma rota fique sem cadastro.
+    companies=CustomerCompany.query.all(); company_names={}
+    for c in companies:
+        company_names[_v71_norm(c.legal_name)]=c
+        if c.trade_name: company_names.setdefault(_v71_norm(c.trade_name),c)
+    for item in parsed:
+        key=_v71_norm(item['garage']); c=company_names.get(key)
+        if c is None:
+            c=CustomerCompany(legal_name=item['garage'],trade_name=item['garage'],contact_name=item['contact'] or None,address=item['address'] or None,city=item['region'] or None,state='SP',notes='Importado da Matriz Leva e Traz V71.1',active=True)
+            db.session.add(c);db.session.flush();company_names[key]=c;customer_sync['created']+=1
+        else:
+            changed_customer=False
+            for attr,val in (('contact_name',item['contact']),('address',item['address']),('city',item['region'])):
+                if val and not (getattr(c,attr,None) or '').strip(): setattr(c,attr,val);changed_customer=True
+            if changed_customer: customer_sync['enriched']+=1
+    db.session.flush()
 
     # A planilha é uma fotografia completa da matriz: ausentes são inativados, histórico é preservado.
     incoming=set(dedup); changed=created=unchanged=0
@@ -12542,7 +12638,7 @@ def _v71_import_resumo(file_storage):
             impacted+=1
     db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='V71_LOGISTICS_MATRIX_IMPORTED',entity_type='logistics_matrix',entity_id='Resumo',detail=f'{created} novas · {changed} alteradas · {deactivated} inativadas · {impacted} agendamentos recalculados'))
     db.session.commit()
-    return {'created':created,'changed':changed,'unchanged':unchanged,'deactivated':deactivated,'impacted':impacted,'total':len(parsed)}
+    return {'created':created,'changed':changed,'unchanged':unchanged,'deactivated':deactivated,'impacted':impacted,'total':len(parsed),'customers_created':customer_sync['created'],'customers_enriched':customer_sync['enriched']}
 
 @app.get('/portal-cliente/logistica/modelo.xlsx')
 @login_required
@@ -12561,7 +12657,7 @@ def v71_logistics_import():
         flash('Selecione a planilha padrão .xlsx.');return redirect('/portal-cliente/gestao-agendamentos')
     try:
         result=_v71_import_resumo(f)
-        flash(f"Matriz atualizada: {result['total']} garagens · {result['created']} novas · {result['changed']} alteradas · {result['deactivated']} inativadas · {result['impacted']} agendamentos futuros ajustados.")
+        flash(f"Matriz atualizada: {result['total']} garagens · {result['created']} novas · {result['changed']} alteradas · {result['deactivated']} inativadas · {result['impacted']} agendamentos futuros ajustados · {result.get('customers_created',0)} cadastros de clientes criados · {result.get('customers_enriched',0)} enriquecidos.")
     except Exception as exc:
         db.session.rollback();app.logger.exception('V71: falha na importação Leva e Traz');flash(f'Falha na importação: {exc}')
     return redirect('/portal-cliente/gestao-agendamentos')
@@ -12610,11 +12706,11 @@ def v71_schedule_management_api():
     try:y,m=[int(x) for x in month.split('-',1)];start=date(y,m,1);end=(date(y+1,1,1) if m==12 else date(y,m+1,1))
     except Exception:start=date(today.year,today.month,1);end=(date(today.year+1,1,1) if today.month==12 else date(today.year,today.month+1,1))
     appts=CustomerAppointment.query.filter(CustomerAppointment.status!='RASCUNHO').order_by(CustomerAppointment.created_at.desc()).all()
-    ids=[a.id for a in appts];counts=dict(db.session.query(CustomerAppointmentEquipment.appointment_id,func.count(CustomerAppointmentEquipment.id)).filter(CustomerAppointmentEquipment.appointment_id.in_(ids or [-1])).group_by(CustomerAppointmentEquipment.appointment_id).all())
+    ids=[a.id for a in appts];counts=dict(db.session.query(CustomerAppointmentEquipment.appointment_id,func.count(CustomerAppointmentEquipment.id)).filter(CustomerAppointmentEquipment.appointment_id.in_(ids or [-1])).group_by(CustomerAppointmentEquipment.appointment_id).all());received_counts=dict(db.session.query(CustomerAppointmentEquipment.appointment_id,func.count(CustomerAppointmentEquipment.id)).filter(CustomerAppointmentEquipment.appointment_id.in_(ids or [-1]),CustomerAppointmentEquipment.received.is_(True)).group_by(CustomerAppointmentEquipment.appointment_id).all())
     rows=[];daily={}
     for a in appts:
         d=a.programmed_date or a.expected_date or a.scheduled_date
-        item={'id':a.id,'code':a.code,'company':a.customer_company,'request_date':(a.request_date or a.created_at.date()).isoformat(),'expected_date':a.expected_date.isoformat() if a.expected_date else '', 'programmed_date':a.programmed_date.isoformat() if a.programmed_date else '', 'date':d.isoformat() if d else '', 'status':a.status,'count':int(counts.get(a.id,0)),'alternate':bool(a.alternate_date_requested),'alternate_reason':a.alternate_reason or ''}
+        item={'id':a.id,'code':a.code,'company':a.customer_company,'request_date':(a.request_date or a.created_at.date()).isoformat(),'expected_date':a.expected_date.isoformat() if a.expected_date else '', 'programmed_date':a.programmed_date.isoformat() if a.programmed_date else '', 'date':d.isoformat() if d else '', 'status':a.status,'count':int(counts.get(a.id,0)),'received':int(received_counts.get(a.id,0)),'alternate':bool(a.alternate_date_requested),'alternate_reason':a.alternate_reason or ''}
         rows.append(item)
         if d and start<=d<end:
             k=d.isoformat();bucket=daily.setdefault(k,{'appointments':0,'equipment':0,'garages':set()});bucket['appointments']+=1;bucket['equipment']+=item['count'];bucket['garages'].add(a.customer_company)
