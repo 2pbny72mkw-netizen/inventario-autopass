@@ -39,7 +39,7 @@
             <option value="technician_implantation">Técnico Implantação</option>
             {% if can_assign_sensitive_roles %}<option value="manager_field">Gestor Field</option><option value="atm_financial_admin">ADM Financeiro</option>{% endif %}
             {% if not is_hr_admin %}<option value="manager">Gestor</option>
-            <option value="consultation">Consulta</option><option value="customer">Cliente</option>
+            <option value="consultation">Consulta</option>
             {% if can_assign_sensitive_roles %}<option value="dispatcher">Dispatcher</option>{% endif %}
             <option value="hr">RH</option>{% endif %}
             {% if system_profiles %}<optgroup label="Perfis personalizados">{% for p in system_profiles %}{% if not is_hr_admin or p.base_role in ('technician','technician_implantation') %}<option value="custom:{{p.id}}" data-base-role="{{p.base_role if p.base_role!='none' else 'technician'}}">{{p.name}}</option>{% endif %}{% endfor %}</optgroup>{% endif %}
@@ -147,7 +147,7 @@
     <div class="userHeaderActions"><span class="tag">{{ users|length }} usuário(s)</span>{% if can_view('users.export') %}<a class="secondary buttonLink" id="usersExportFiltered" href="/usuarios/exportar.xlsx">Exportar Excel</a>{% endif %}{% if archived_users %}<button type="button" class="secondary" id="toggleArchivedUsers">Ver arquivados ({{ archived_users|length }})</button>{% endif %}</div>
   </div>
 
-  <div class="userListFilters"><input id="usersSearch" placeholder="Procurar técnico / usuário / login / código"><select id="usersRoleFilter"><option value="">Todos os perfis</option><option value="technician">Técnico Field</option><option value="technician_implantation">Técnico Implantação</option><option value="manager">Gestor</option><option value="manager_field">Gestor Field</option><option value="hr">RH</option><option value="dispatcher">Dispatcher</option><option value="consultation">Consulta</option><option value="atm_financial_admin">ADM Financeiro</option><option value="customer">Cliente</option></select><select id="usersCompanyFilter"><option value="">Todas as empresas</option>{% for c in users|map(attribute='company')|select|unique|sort %}<option value="{{ c }}">{{ c }}</option>{% endfor %}</select><select id="usersStatusFilter"><option value="">Todos os status</option><option value="ATIVO">Ativo</option><option value="INATIVO">Inativo</option></select><button type="button" class="secondary" id="usersClearFilters">Limpar filtros</button><span class="tag" id="usersFilteredCount"></span></div>
+  <div class="userListFilters"><input id="usersSearch" placeholder="Procurar técnico / usuário / login / código"><select id="usersRoleFilter"><option value="">Todos os perfis</option><option value="technician">Técnico Field</option><option value="technician_implantation">Técnico Implantação</option><option value="manager">Gestor</option><option value="manager_field">Gestor Field</option><option value="hr">RH</option><option value="dispatcher">Dispatcher</option><option value="consultation">Consulta</option><option value="atm_financial_admin">ADM Financeiro</option></select><select id="usersCompanyFilter"><option value="">Todas as empresas</option>{% for c in users|map(attribute='company')|select|unique|sort %}<option value="{{ c }}">{{ c }}</option>{% endfor %}</select><select id="usersStatusFilter"><option value="">Todos os status</option><option value="ATIVO">Ativo</option><option value="INATIVO">Inativo</option></select><button type="button" class="secondary" id="usersClearFilters">Limpar filtros</button><span class="tag" id="usersFilteredCount"></span></div>
 
   <div class="tableWrap">
     <table>
@@ -261,8 +261,8 @@
                       <option value="technician_implantation" {% if u.role == "technician_implantation" %}selected{% endif %}>Técnico Implantação</option>
                       {% if can_assign_sensitive_roles %}<option value="manager_field" {% if u.role == "manager_field" %}selected{% endif %}>Gestor Field</option><option value="atm_financial_admin" {% if u.role == "atm_financial_admin" %}selected{% endif %}>ADM Financeiro</option>{% endif %}
                       {% if not is_hr_admin %}{% if can_assign_sensitive_roles %}<option value="manager" {% if u.role == "manager" %}selected{% endif %}>Gestor</option>
-                      <option value="consultation" {% if u.role == "consultation" %}selected{% endif %}>Consulta</option><option value="customer" {% if u.role == "customer" %}selected{% endif %}>Cliente</option><option value="dispatcher" {% if u.role == "dispatcher" %}selected{% endif %}>Dispatcher</option>{% elif u.role in ("manager","consultation","dispatcher") %}<option value="{{ u.role }}" selected disabled>{{ {"manager":"Gestor","consultation":"Consulta","dispatcher":"Dispatcher"}.get(u.role,u.role) }}</option>{% endif %}
-                      <option value="customer" {% if u.role == "customer" %}selected{% endif %}>Cliente</option>
+                      <option value="consultation" {% if u.role == "consultation" %}selected{% endif %}>Consulta</option><option value="dispatcher" {% if u.role == "dispatcher" %}selected{% endif %}>Dispatcher</option>{% elif u.role in ("manager","consultation","dispatcher") %}<option value="{{ u.role }}" selected disabled>{{ {"manager":"Gestor","consultation":"Consulta","dispatcher":"Dispatcher"}.get(u.role,u.role) }}</option>{% endif %}
+                      
                       <option value="hr" {% if u.role == "hr" and not u.system_profile_id %}selected{% endif %}>RH</option>{% endif %}
                       {% if system_profiles %}<optgroup label="Perfis personalizados">{% for p in system_profiles %}{% if not is_hr_admin or p.base_role in ('technician','technician_implantation') %}<option value="custom:{{p.id}}" data-base-role="{{p.base_role if p.base_role!='none' else 'technician'}}" {% if u.system_profile_id==p.id %}selected{% endif %}>{{p.name}}</option>{% endif %}{% endfor %}</optgroup>{% endif %}
                     </select>
@@ -469,7 +469,14 @@
       const form=box.closest('form');
       if(form){
         const roleSel=form.querySelector('select[name=role]'); if(roleSel){roleSel.selectedIndex=-1; roleSel.value=''; roleSel.dispatchEvent(new Event('change',{bubbles:true}));}
-        form.querySelectorAll('select[name=customer_company_ids] option').forEach(o=>o.selected=false);
+        form.querySelectorAll('select[name=customer_company_ids]').forEach(sel=>{
+          [...sel.options].forEach(o=>o.selected=false);
+          sel.selectedIndex=-1;
+          sel.value='';
+          sel.dispatchEvent(new Event('input',{bubbles:true}));
+          sel.dispatchEvent(new Event('change',{bubbles:true}));
+        });
+        form.querySelectorAll('.customerCompanyField').forEach(el=>{el.style.display='none'});
         const company=form.querySelector('input[name=company]'); if(company) company.value='';
       }
       syncAccessBox(box);
