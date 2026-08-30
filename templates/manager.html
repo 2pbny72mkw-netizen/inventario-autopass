@@ -8,7 +8,7 @@
 
 <div class="v23DashboardShell v24Executive v30Executive v31CommandCenter v32CommandCenter v33CommandCenter v34CommandCenter" id="v23DashboardShell">
   <aside class="v23Sidebar" id="v23Sidebar">
-    <div class="v23SidebarBrand"><b>SISTEMA DE GESTÃO</b><small>Autopass · V69.5</small></div>
+    <div class="v23SidebarBrand"><b>SISTEMA DE GESTÃO</b><small>Autopass · V70</small></div>
     <div class="v42SideGroup">DASHBOARDS</div>
     {% for item in builtin_dashboard_menu_items %}
       <button class="v23Nav{% if loop.first %} active{% endif %}" data-v23-view="{{ item.key }}">{{ item.icon }} <span>{{ item.label }}</span></button>
@@ -324,7 +324,7 @@
 </section>
 
 
-<section class="card v23Panel" data-v23-panel="topdesk" id="v39TopdeskPanel"><div class="sectionHead"><div><span class="eyebrow">SUPORTE A CAMPO</span><h2>Chamados TopDesk</h2><p class="muted">Visão operacional da carga importada e distribuída aos técnicos.</p></div><a href="/topdesk" class="secondary buttonLink">Abrir operação</a></div><div class="topdeskKpis"><article><small>Total</small><b id="v39TdTotal">0</b></article><article><small>Em aberto</small><b id="v39TdOpen">0</b></article><article><small>Resolvidos</small><b id="v39TdResolved">0</b></article><article><small>Atribuídos</small><b id="v39TdAssigned">0</b></article><article><small>Sem técnico</small><b id="v39TdUnassigned">0</b></article></div><div class="dashboardGrid"><article class="v22Panel"><h3>Chamados por equipamento</h3><div id="v39TdTypes" class="barList"></div></article><article class="v22Panel"><h3>Localidades com mais chamados</h3><div id="v39TdLocations" class="barList"></div></article></div></section>
+<section class="card v23Panel" data-v23-panel="topdesk" id="v39TopdeskPanel"><div class="sectionHead"><div><span class="eyebrow">SUPORTE A CAMPO · DASHBOARD 2.0</span><h2>Dashboard Chamados</h2><p class="muted">Visão operacional da carga importada e distribuída aos técnicos.</p></div><a href="/topdesk" class="secondary buttonLink">Abrir Dashboard completo</a></div><div class="topdeskKpis"><article><small>Total</small><b id="v39TdTotal">0</b></article><article><small>Em aberto</small><b id="v39TdOpen">0</b></article><article><small>Resolvidos</small><b id="v39TdResolved">0</b></article><article><small>Atribuídos</small><b id="v39TdAssigned">0</b></article><article><small>Sem técnico</small><b id="v39TdUnassigned">0</b></article></div><div class="dashboardGrid"><article class="v22Panel"><h3>Chamados por equipamento</h3><div id="v39TdTypes" class="barList"></div></article><article class="v22Panel"><h3>Localidades com mais chamados</h3><div id="v39TdLocations" class="barList"></div></article></div></section>
 <section class="card v23Panel v38Journal" data-v23-panel="journal"><div class="sectionHead"><div><span class="eyebrow">PRODUTIVIDADE DE CAMPO</span><h2>Diário de bordo</h2><p class="muted">Atividades e posições GPS do colaborador no período.</p></div></div><div class="v38JournalFilters"><select id="v38JournalUser"><option value="">Selecione o colaborador</option></select><select id="v38JournalDays"><option value="7">7 dias</option><option value="14">14 dias</option><option value="30">30 dias</option></select><button class="secondary" id="v38JournalLoad">Consultar</button></div><div class="evidenceMiniKpis"><span><small>Registros GPS</small><b id="v38JGps">0</b></span><span><small>Equipamentos</small><b id="v38JEquip">0</b></span><span><small>Localidades</small><b id="v38JLoc">0</b></span></div><div id="v38JournalMap" style="height:330px;border-radius:14px;margin:14px 0"></div><div id="v38JournalTimeline" class="v38Timeline"></div></section>
 
 
@@ -531,6 +531,6 @@
   <div class="v343TvFooter"><span id="v343TvHeadline">Monitoramento executivo do inventário.</span><span>SUPORTE A CAMPO · V42.4</span></div>
 </div>
 
-<script src="{{url_for('static',filename='manager.js')}}?v=v69-5"></script>
-<script src="{{url_for('static',filename='garage_dashboard_v62.js')}}?v=v69-5"></script>
+<script src="{{url_for('static',filename='manager.js')}}?v=v70"></script>
+<script src="{{url_for('static',filename='garage_dashboard_v62.js')}}?v=v70"></script>
 {% endblock %}

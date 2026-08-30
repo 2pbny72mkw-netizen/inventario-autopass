@@ -2,6 +2,7 @@
 {% block title %}Usuários | Inventário SP{% endblock %}
 {% block content %}<style>
 .accessBox{border:1px solid #d7e1ee;border-radius:10px;padding:12px;background:#f8fbff}.accessToolbar{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}.accessGroup{border:1px solid #dbe5f0;border-radius:9px;background:#fff;margin-top:8px}.accessGroup>summary{cursor:pointer;padding:9px 10px;font-weight:800;display:flex;gap:8px;align-items:center}.accessChildren{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:7px;padding:0 10px 10px}.accessChildren label,.accessGroup>summary label{display:flex;gap:7px;align-items:center}.accessBox input[type=checkbox]{width:auto}.accessGroupCount{font-size:11px;color:#64748b;margin-left:auto;font-weight:600}
+.userActionRow{display:flex;gap:6px;flex-wrap:nowrap;align-items:center;min-width:310px}.userActionRow form{margin:0;display:inline-flex}.userActionRow button{white-space:nowrap}.accessCollapse{margin-left:auto}@media(max-width:760px){.userActionRow{min-width:0;flex-wrap:wrap}}
 </style>
 <section class="dashHero">
   <div>
@@ -104,7 +105,7 @@
           <input name="photo" type="file" accept="image/*">
           <small>Opcional • até 3 MB.</small>
         </div>
-<div class="full accessBox" data-access-box><input type="hidden" name="access_config_present" value="1"><b>Acessos / visualização</b><div class="accessToolbar"><button type="button" class="secondary accessAll">Marcar todas permitidas</button><button type="button" class="secondary accessClear">Limpar</button><button type="button" class="secondary accessDefaults">Restaurar padrão do perfil</button></div>{% for group,(glabel,children) in access_groups.items() %}<details class="accessGroup" data-group="{{group}}" open><summary><input type="checkbox" class="accessGroupToggle" data-group="{{group}}"> <span>{{glabel}}</span><span class="accessGroupCount"></span></summary><div class="accessChildren">{% for key in children %}<label><input type="checkbox" name="access_modules" value="{{key}}" data-child-group="{{group}}"> {{access_labels.get(key,key)}}</label>{% endfor %}</div></details>{% endfor %}<small>Marque apenas as subatividades que o usuário poderá visualizar. O perfil fornece o padrão e o backend mantém as restrições sensíveis.</small></div>
+<div class="full accessBox" data-access-box><input type="hidden" name="access_config_present" value="1"><b>Acessos / visualização</b><div class="accessToolbar"><button type="button" class="secondary accessAll">Marcar todas permitidas</button><button type="button" class="secondary accessClear">Limpar</button><button type="button" class="secondary accessDefaults">Restaurar padrão do perfil</button><button type="button" class="secondary accessCollapse">Recolher acessos</button></div>{% for group,(glabel,children) in access_groups.items() %}<details class="accessGroup" data-group="{{group}}" open><summary><input type="checkbox" class="accessGroupToggle" data-group="{{group}}"> <span>{{glabel}}</span><span class="accessGroupCount"></span></summary><div class="accessChildren">{% for key in children %}<label><input type="checkbox" name="access_modules" value="{{key}}" data-child-group="{{group}}"> {{access_labels.get(key,key)}}</label>{% endfor %}</div></details>{% endfor %}<small>Marque apenas as subatividades que o usuário poderá visualizar. O perfil fornece o padrão e o backend mantém as restrições sensíveis.</small></div>
         <div class="full">
           <label>Senha inicial *</label>
           <input name="password" type="password" required minlength="8"
@@ -210,7 +211,7 @@
             {% else %}<span class="status sCONCLUIDA">ATIVO</span>{% endif %}
           </td>
           <td>
-            <div style="display:flex;gap:6px;flex-wrap:wrap;min-width:230px">
+            <div class="userActionRow">
               {% if can_view('users.edit') %}<button type="button" class="secondary editUserBtn" data-target="edit-user-{{ u.id }}">Editar</button>{% endif %}
 
               {% if u.id != session.get('user_id') %}
@@ -324,7 +325,7 @@
                     <input name="photo" type="file" accept="image/*">
                     <small>Opcional • até 3 MB.</small>
                   </div>
-                  <div class="full accessBox" data-access-box><input type="hidden" name="access_config_present" value="1"><b>Acessos / visualização</b><div class="accessToolbar"><button type="button" class="secondary accessAll">Marcar todas permitidas</button><button type="button" class="secondary accessClear">Limpar</button><button type="button" class="secondary accessDefaults">Restaurar padrão do perfil</button></div>{% set ua = user_access(u) %}{% for group,(glabel,children) in access_groups.items() %}<details class="accessGroup" data-group="{{group}}" open><summary><input type="checkbox" class="accessGroupToggle" data-group="{{group}}"> <span>{{glabel}}</span><span class="accessGroupCount"></span></summary><div class="accessChildren">{% for key in children %}<label><input type="checkbox" name="access_modules" value="{{key}}" data-child-group="{{group}}" {% if key in ua %}checked{% endif %}> {{access_labels.get(key,key)}}</label>{% endfor %}</div></details>{% endfor %}<small>O ADM pode liberar ou retirar subatividades individualmente. Restrições de segurança continuam aplicadas no backend.</small></div>
+                  <div class="full accessBox" data-access-box><input type="hidden" name="access_config_present" value="1"><b>Acessos / visualização</b><div class="accessToolbar"><button type="button" class="secondary accessAll">Marcar todas permitidas</button><button type="button" class="secondary accessClear">Limpar</button><button type="button" class="secondary accessDefaults">Restaurar padrão do perfil</button><button type="button" class="secondary accessCollapse">Recolher acessos</button></div>{% set ua = user_access(u) %}{% for group,(glabel,children) in access_groups.items() %}<details class="accessGroup" data-group="{{group}}" open><summary><input type="checkbox" class="accessGroupToggle" data-group="{{group}}"> <span>{{glabel}}</span><span class="accessGroupCount"></span></summary><div class="accessChildren">{% for key in children %}<label><input type="checkbox" name="access_modules" value="{{key}}" data-child-group="{{group}}" {% if key in ua %}checked{% endif %}> {{access_labels.get(key,key)}}</label>{% endfor %}</div></details>{% endfor %}<small>O ADM pode liberar ou retirar subatividades individualmente. Restrições de segurança continuam aplicadas no backend.</small></div>
                   {% if u.photo_url %}
                   <div>
                     <label style="display:flex;gap:8px;align-items:center;margin-top:28px">
@@ -463,8 +464,9 @@
     box.querySelectorAll('.accessGroupToggle').forEach(t=>t.addEventListener('click',e=>{e.stopPropagation();box.querySelectorAll(`[data-child-group="${t.dataset.group}"]`).forEach(c=>c.checked=t.checked);syncAccessBox(box);}));
     box.querySelectorAll('[data-child-group]').forEach(c=>c.addEventListener('change',()=>syncAccessBox(box)));
     box.querySelector('.accessAll')?.addEventListener('click',()=>{box.querySelectorAll('[data-child-group]').forEach(c=>c.checked=true);syncAccessBox(box)});
-    box.querySelector('.accessClear')?.addEventListener('click',()=>{box.querySelectorAll('[data-child-group]').forEach(c=>c.checked=false);syncAccessBox(box)});
+    box.querySelector('.accessClear')?.addEventListener('click',()=>{box.querySelectorAll('input[type=checkbox]').forEach(c=>{c.checked=false;c.indeterminate=false});syncAccessBox(box)});
     box.querySelector('.accessDefaults')?.addEventListener('click',()=>{const form=box.closest('form');const rs=form?.querySelector('[name="role"]');const r=effectiveRole(rs);const d=ACCESS_DEFAULTS[r]||[];box.querySelectorAll('[data-child-group]').forEach(c=>c.checked=d==='*'||d.includes(c.value));syncAccessBox(box)});
+    box.querySelector('.accessCollapse')?.addEventListener('click',e=>{const groups=[...box.querySelectorAll('.accessGroup')],open=groups.some(g=>g.open);groups.forEach(g=>g.open=!open);e.currentTarget.textContent=open?'Expandir acessos':'Recolher acessos'});
     syncAccessBox(box);
   });
 })();
