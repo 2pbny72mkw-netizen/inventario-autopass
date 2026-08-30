@@ -1,4 +1,4 @@
-window.AUTOPASS_MANAGER_VERSION='dashboard-v55-0';
+window.AUTOPASS_MANAGER_VERSION='dashboard-v70';
 console.log('AUTOPASS Dashboard Executivo V25 carregado');
 let locations=[];
 let dashboardData=null;
@@ -332,7 +332,7 @@ function ensureGpsMap(){
     $('referenceStatus').textContent='Referência salva.';
     if(referenceTempMarker){referenceTempMarker.remove();referenceTempMarker=null;}
     await loadAll();
-loadFieldEvidenceSummary();
+// V70: evidências carregadas sob demanda pela visão correspondente.
   });
 
   setTimeout(()=>gpsMap.invalidateSize(),100);
@@ -582,7 +582,7 @@ async function loadAll(){
     updateExecutiveView();
 
     if($('lastUpdate')) $('lastUpdate').textContent='Atualizado em '+new Date().toLocaleString('pt-BR')+` · ${((performance.now()-started)/1000).toFixed(1)}s`;
-    setTimeout(loadGpsDeferred,120);
+    if(v23ActiveView==='map') setTimeout(loadGpsDeferred,120);
   }catch(err){
     console.error('Falha ao carregar dashboard',err);
     if($('lastUpdate')) $('lastUpdate').textContent='Falha ao atualizar — clique em Atualizar agora';
@@ -1167,7 +1167,7 @@ async function loadV30Contracts(){
 document.getElementById('v30ContractExport')?.addEventListener('click',()=>{
  const p=new URLSearchParams({company:document.getElementById('execCompany')?.value||'',line:document.getElementById('execLine')?.value||'',contract:document.getElementById('v30Contract')?.value||'',horizon:document.getElementById('v30Horizon')?.value||''}); location.href='/api/v30/atm-contracts/export?'+p.toString();
 });
-setTimeout(loadV30Contracts,800);
+// V70: contratos ATM carregados sob demanda.
 
 
 // V35 — visão geral operacional filtrável
@@ -1267,7 +1267,7 @@ document.querySelectorAll('.v35Status[data-status]').forEach(btn=>btn.addEventLi
 }));
 
 async function v39LoadTopdesk(){try{const r=await fetch('/api/topdesk/dashboard',{cache:'no-store'});if(!r.ok)return;const d=await r.json();if(!d.ok)return;const map={v39TdTotal:d.total,v39TdOpen:d.open,v39TdResolved:d.resolved,v39TdAssigned:d.assigned,v39TdUnassigned:d.unassigned};Object.entries(map).forEach(([id,v])=>{const e=document.getElementById(id);if(e)e.textContent=fmt(v)});const types=document.getElementById('v39TdTypes');if(types){const arr=Object.entries(d.by_type||{}).sort((a,b)=>b[1]-a[1]);const m=Math.max(1,...arr.map(x=>x[1]));types.innerHTML=arr.map(([k,v])=>`<div class="v25CompanyRow"><span>${esc(k)}</span><div class="v25CompanyTrack"><i style="width:${Math.round(v/m*100)}%"></i></div><b>${fmt(v)}</b></div>`).join('')||'<span class="muted">Sem chamados importados.</span>'}const loc=document.getElementById('v39TdLocations');if(loc){const arr=d.top_locations||[];const m=Math.max(1,...arr.map(x=>x.count));loc.innerHTML=arr.map(x=>`<div class="v25CompanyRow"><span>${esc(x.name)}</span><div class="v25CompanyTrack"><i style="width:${Math.round(x.count/m*100)}%"></i></div><b>${fmt(x.count)}</b></div>`).join('')||'<span class="muted">Sem localidades vinculadas.</span>'}}catch(e){console.warn('TopDesk dashboard',e)}}
-document.addEventListener('DOMContentLoaded',v39LoadTopdesk);
+// V70: TopDesk carregado somente ao abrir a dashboard.
 
 // V40.1.3 — Visões panorâmicas com status, progresso e filtros no Dashboard.
 let dashPanData=[];
@@ -1439,7 +1439,10 @@ function v63LoadView(view){
     if(view==='panorama' && typeof dashPanLoad==='function')dashPanLoad();
     else if(view==='chips' && typeof loadChipDashboard==='function')loadChipDashboard();
     else if(view==='emv' && typeof loadEmvDashboard==='function')loadEmvDashboard();
-    else if(view==='atm-inventory' && typeof loadAtmDashboard==='function')loadAtmDashboard(true);
+    else if(view==='atm-inventory' && typeof loadAtmDashboard==='function'){loadAtmDashboard(true); if(typeof loadV30Contracts==='function')loadV30Contracts();}
+    else if(view==='topdesk' && typeof v39LoadTopdesk==='function')v39LoadTopdesk();
+    else if(view==='map' && typeof loadGpsDeferred==='function')loadGpsDeferred();
+    else if(view==='evidence' && typeof loadFieldEvidenceSummary==='function')loadFieldEvidenceSummary();
   }catch(e){V63_LAZY_LOADED.delete(view);console.warn('[V63] lazy dashboard',view,e)}
 }
 document.querySelectorAll('.v23Nav[data-v23-view]').forEach(btn=>btn.addEventListener('click',()=>setTimeout(()=>v63LoadView(btn.dataset.v23View),0)));
