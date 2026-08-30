@@ -38,7 +38,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V70.1"
+APP_RELEASE = "V71"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -344,6 +344,12 @@ class CustomerAppointment(db.Model):
     responsible_email = db.Column(db.String(180))
     responsible_phone = db.Column(db.String(40))
     scheduled_date = db.Column(db.Date, index=True)
+    # V71 — solicitação e programação logística ficam separadas.
+    request_date = db.Column(db.Date, index=True)
+    expected_date = db.Column(db.Date, index=True)
+    programmed_date = db.Column(db.Date, index=True)
+    alternate_date_requested = db.Column(db.Boolean, nullable=False, default=False, index=True)
+    alternate_reason = db.Column(db.String(300))
     notes = db.Column(db.Text)
     status = db.Column(db.String(30), nullable=False, default="RASCUNHO", index=True)
     accepted_name = db.Column(db.String(180))
@@ -378,6 +384,33 @@ class CustomerAppointmentEquipment(db.Model):
     received_by = db.Column(db.Integer, db.ForeignKey("users.id"))
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     __table_args__=(UniqueConstraint("appointment_id","item_no",name="uq_customer_appt_item"),)
+
+
+# V71 — Matriz Logística Leva e Traz / calendário operacional
+class LogisticsGarageRoute(db.Model):
+    __tablename__ = "logistics_garage_routes"
+    id = db.Column(db.Integer, primary_key=True)
+    garage_name = db.Column(db.String(180), nullable=False, unique=True, index=True)
+    customer_company_id = db.Column(db.Integer, db.ForeignKey("customer_companies.id"), index=True)
+    weekday = db.Column(db.Integer, nullable=False, index=True)  # 0=segunda ... 4=sexta
+    contact_name = db.Column(db.String(180))
+    address = db.Column(db.String(350))
+    region = db.Column(db.String(160))
+    active = db.Column(db.Boolean, nullable=False, default=True, index=True)
+    source_import = db.Column(db.String(180))
+    created_by = db.Column(db.Integer, db.ForeignKey("users.id"))
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+class LogisticsBlockedDate(db.Model):
+    __tablename__ = "logistics_blocked_dates"
+    id = db.Column(db.Integer, primary_key=True)
+    blocked_date = db.Column(db.Date, nullable=False, unique=True, index=True)
+    description = db.Column(db.String(220))
+    active = db.Column(db.Boolean, nullable=False, default=True, index=True)
+    created_by = db.Column(db.Integer, db.ForeignKey("users.id"))
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
 
 
 # V67 — Dossiê do Colaborador / Materiais e Ferramentas
@@ -12396,6 +12429,191 @@ def portal_customer_company_delete(cid):
         db.session.delete(c); db.session.commit(); flash('Cliente excluído.')
     return redirect('/portal-cliente/cadastro-clientes')
 
+
+# ---------------- V71 Logística / Leva e Traz ----------------
+_V71_WEEKDAYS={"segunda":0,"terça":1,"terca":1,"quarta":2,"quinta":3,"sexta":4}
+_V71_WEEKDAY_LABELS={0:"Segunda-feira",1:"Terça-feira",2:"Quarta-feira",3:"Quinta-feira",4:"Sexta-feira"}
+
+def _v71_norm(value):
+    txt=unicodedata.normalize('NFKD',str(value or '')).encode('ascii','ignore').decode('ascii').strip().casefold()
+    return re.sub(r'\s+',' ',txt)
+
+def _v71_route_for_company(company):
+    key=_v71_norm(company)
+    if not key: return None
+    rows=LogisticsGarageRoute.query.filter_by(active=True).all()
+    exact=next((r for r in rows if _v71_norm(r.garage_name)==key),None)
+    if exact: return exact
+    c=CustomerCompany.query.filter(CustomerCompany.active.is_(True)).all()
+    match=next((x for x in c if _v71_norm(x.legal_name)==key or _v71_norm(x.trade_name)==key),None)
+    if match:
+        byid=next((r for r in rows if r.customer_company_id==match.id),None)
+        if byid:return byid
+        names={_v71_norm(match.legal_name),_v71_norm(match.trade_name)}-{''}
+        return next((r for r in rows if _v71_norm(r.garage_name) in names),None)
+    return None
+
+def _v71_next_operational_date(company, start=None):
+    route=_v71_route_for_company(company)
+    if not route:return None,route
+    cur=start or datetime.now(ZoneInfo('America/Sao_Paulo')).date()
+    blocked={x.blocked_date for x in LogisticsBlockedDate.query.filter_by(active=True).all()}
+    # Inclui hoje se hoje já é o dia regular: não há horário/cutoff na operação.
+    for offset in range(0,45):
+        d=cur+timedelta(days=offset)
+        if d.weekday()==route.weekday and d not in blocked:return d,route
+    return None,route
+
+def _v71_link_customer(route):
+    if route.customer_company_id:return
+    key=_v71_norm(route.garage_name)
+    for c in CustomerCompany.query.filter_by(active=True).all():
+        if key in {_v71_norm(c.legal_name),_v71_norm(c.trade_name)}:
+            route.customer_company_id=c.id;return
+
+def _v71_import_resumo(file_storage):
+    wb=load_workbook(file_storage,read_only=True,data_only=True)
+    if 'Resumo' not in wb.sheetnames: raise ValueError('A planilha padrão precisa conter a aba Resumo.')
+    ws=wb['Resumo']; current_day=None; parsed=[]
+    for row in ws.iter_rows(min_row=2,values_only=True):
+        garage=str(row[0] or '').strip(); contact=str(row[1] or '').strip(); address=str(row[2] or '').strip(); region=str(row[3] or '').strip()
+        if not garage: continue
+        day_key=_v71_norm(garage)
+        if day_key in _V71_WEEKDAYS:
+            current_day=_V71_WEEKDAYS[day_key];continue
+        if current_day is None: continue
+        parsed.append({'garage':garage,'contact':contact,'address':address,'region':region,'weekday':current_day})
+    if not parsed: raise ValueError('Nenhuma garagem válida foi encontrada na aba Resumo.')
+    # A planilha é uma fotografia completa da matriz: ausentes são inativados, histórico é preservado.
+    incoming={_v71_norm(x['garage']) for x in parsed}; changed=created=unchanged=0
+    existing=LogisticsGarageRoute.query.all()
+    byname={_v71_norm(x.garage_name):x for x in existing}
+    for item in parsed:
+        key=_v71_norm(item['garage']); r=byname.get(key)
+        if not r:
+            r=LogisticsGarageRoute(garage_name=item['garage'],created_by=session.get('user_id'));db.session.add(r);created+=1
+        else:
+            before=(r.weekday,r.contact_name or '',r.address or '',r.region or '',r.active)
+        r.weekday=item['weekday'];r.contact_name=item['contact'] or None;r.address=item['address'] or None;r.region=item['region'] or None;r.active=True;r.source_import=secure_filename(file_storage.filename or 'Resumo.xlsx')
+        _v71_link_customer(r)
+        if key in byname:
+            after=(r.weekday,r.contact_name or '',r.address or '',r.region or '',r.active)
+            if before==after: unchanged+=1
+            else: changed+=1
+    deactivated=0
+    for r in existing:
+        if _v71_norm(r.garage_name) not in incoming and r.active:
+            r.active=False;deactivated+=1
+    db.session.flush()
+    # Recalcula somente solicitações futuras ainda em programação; recebidas/concluídas nunca mudam.
+    impacted=0
+    for a in CustomerAppointment.query.filter(CustomerAppointment.status.in_(['NA_PROGRAMACAO','ENVIADO','RASCUNHO'])).all():
+        if a.status=='RASCUNHO':continue
+        nxt,_=_v71_next_operational_date(a.customer_company,a.request_date or date.today())
+        if nxt and a.expected_date!=nxt:
+            a.expected_date=nxt
+            if not a.programmed_date:a.scheduled_date=nxt
+            impacted+=1
+    db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='V71_LOGISTICS_MATRIX_IMPORTED',entity_type='logistics_matrix',entity_id='Resumo',detail=f'{created} novas · {changed} alteradas · {deactivated} inativadas · {impacted} agendamentos recalculados'))
+    db.session.commit()
+    return {'created':created,'changed':changed,'unchanged':unchanged,'deactivated':deactivated,'impacted':impacted,'total':len(parsed)}
+
+@app.get('/portal-cliente/logistica/modelo.xlsx')
+@login_required
+def v71_logistics_model():
+    if not _portal_internal():abort(403)
+    path=DATA_DIR/'MODELO_LEVA_E_TRAZ_PADRAO.xlsx'
+    if not path.exists():abort(404)
+    return send_file(path,as_attachment=True,download_name='MODELO_LEVA_E_TRAZ_PADRAO.xlsx')
+
+@app.post('/portal-cliente/logistica/importar')
+@login_required
+def v71_logistics_import():
+    if not _portal_internal():abort(403)
+    f=request.files.get('file')
+    if not f or not (f.filename or '').lower().endswith('.xlsx'):
+        flash('Selecione a planilha padrão .xlsx.');return redirect('/portal-cliente/gestao-agendamentos')
+    try:
+        result=_v71_import_resumo(f)
+        flash(f"Matriz atualizada: {result['total']} garagens · {result['created']} novas · {result['changed']} alteradas · {result['deactivated']} inativadas · {result['impacted']} agendamentos futuros ajustados.")
+    except Exception as exc:
+        db.session.rollback();app.logger.exception('V71: falha na importação Leva e Traz');flash(f'Falha na importação: {exc}')
+    return redirect('/portal-cliente/gestao-agendamentos')
+
+@app.get('/api/portal/logistics/next-date')
+@login_required
+def v71_logistics_next_date():
+    if not (_has_access('portal.appointments') or _portal_internal()):abort(403)
+    company=(request.args.get('company') or '').strip();u=db.session.get(User,session['user_id'])
+    if not _portal_internal():
+        allowed={(c.legal_name or '').strip() for c in _customer_companies_for_user(u)}
+        if company not in allowed: company=next(iter(allowed),'')
+    nxt,route=_v71_next_operational_date(company)
+    today=datetime.now(ZoneInfo('America/Sao_Paulo')).date()
+    return jsonify({'ok':True,'request_date':today.isoformat(),'expected_date':nxt.isoformat() if nxt else '', 'weekday':_V71_WEEKDAY_LABELS.get(route.weekday,'') if route else '', 'garage':route.garage_name if route else '', 'has_route':bool(route)})
+
+@app.post('/api/portal/logistics/blocked-dates')
+@login_required
+def v71_blocked_date_create():
+    if not _portal_internal():abort(403)
+    data=request.get_json(silent=True) or {}; raw=data.get('date');desc=(data.get('description') or '').strip()
+    try:d=date.fromisoformat(raw)
+    except Exception:return jsonify({'ok':False,'error':'Data inválida.'}),400
+    row=LogisticsBlockedDate.query.filter_by(blocked_date=d).first() or LogisticsBlockedDate(blocked_date=d,created_by=session['user_id'])
+    row.description=desc;row.active=True;db.session.add(row);db.session.commit();return jsonify({'ok':True})
+
+@app.delete('/api/portal/logistics/blocked-dates/<int:bid>')
+@login_required
+def v71_blocked_date_delete(bid):
+    if not _portal_internal():abort(403)
+    row=db.session.get(LogisticsBlockedDate,bid)
+    if not row:abort(404)
+    row.active=False;db.session.commit();return jsonify({'ok':True})
+
+@app.get('/portal-cliente/gestao-agendamentos')
+@login_required
+def v71_schedule_management_page():
+    if not _portal_internal():abort(403)
+    return render_template('logistics_schedule.html',app_release=APP_RELEASE)
+
+@app.get('/api/portal/logistics/management')
+@login_required
+def v71_schedule_management_api():
+    if not _portal_internal():abort(403)
+    today=datetime.now(ZoneInfo('America/Sao_Paulo')).date();month=(request.args.get('month') or today.strftime('%Y-%m'))
+    try:y,m=[int(x) for x in month.split('-',1)];start=date(y,m,1);end=(date(y+1,1,1) if m==12 else date(y,m+1,1))
+    except Exception:start=date(today.year,today.month,1);end=(date(today.year+1,1,1) if today.month==12 else date(today.year,today.month+1,1))
+    appts=CustomerAppointment.query.filter(CustomerAppointment.status!='RASCUNHO').order_by(CustomerAppointment.created_at.desc()).all()
+    ids=[a.id for a in appts];counts=dict(db.session.query(CustomerAppointmentEquipment.appointment_id,func.count(CustomerAppointmentEquipment.id)).filter(CustomerAppointmentEquipment.appointment_id.in_(ids or [-1])).group_by(CustomerAppointmentEquipment.appointment_id).all())
+    rows=[];daily={}
+    for a in appts:
+        d=a.programmed_date or a.expected_date or a.scheduled_date
+        item={'id':a.id,'code':a.code,'company':a.customer_company,'request_date':(a.request_date or a.created_at.date()).isoformat(),'expected_date':a.expected_date.isoformat() if a.expected_date else '', 'programmed_date':a.programmed_date.isoformat() if a.programmed_date else '', 'date':d.isoformat() if d else '', 'status':a.status,'count':int(counts.get(a.id,0)),'alternate':bool(a.alternate_date_requested),'alternate_reason':a.alternate_reason or ''}
+        rows.append(item)
+        if d and start<=d<end:
+            k=d.isoformat();bucket=daily.setdefault(k,{'appointments':0,'equipment':0,'garages':set()});bucket['appointments']+=1;bucket['equipment']+=item['count'];bucket['garages'].add(a.customer_company)
+    daily={k:{'appointments':v['appointments'],'equipment':v['equipment'],'garages':len(v['garages'])} for k,v in daily.items()}
+    requested_today=[x for x in rows if x['request_date']==today.isoformat()]
+    programmed_today=[x for x in rows if x['date']==today.isoformat()]
+    routes=[{'id':r.id,'garage':r.garage_name,'weekday':r.weekday,'weekday_label':_V71_WEEKDAY_LABELS.get(r.weekday,''),'contact':r.contact_name or '', 'address':r.address or '', 'region':r.region or '', 'active':r.active} for r in LogisticsGarageRoute.query.order_by(LogisticsGarageRoute.weekday,LogisticsGarageRoute.garage_name).all()]
+    blocked=[{'id':x.id,'date':x.blocked_date.isoformat(),'description':x.description or ''} for x in LogisticsBlockedDate.query.filter_by(active=True).order_by(LogisticsBlockedDate.blocked_date).all()]
+    return jsonify({'ok':True,'today':today.isoformat(),'rows':rows,'daily':daily,'requested_today':requested_today,'programmed_today':programmed_today,'routes':routes,'blocked':blocked})
+
+@app.patch('/api/portal/appointments/<int:aid>/programacao')
+@login_required
+def v71_program_appointment(aid):
+    if not _portal_internal():abort(403)
+    a=db.session.get(CustomerAppointment,aid)
+    if not a:abort(404)
+    data=request.get_json(silent=True) or {};raw=data.get('programmed_date')
+    try:d=date.fromisoformat(raw) if raw else None
+    except Exception:return jsonify({'ok':False,'error':'Data inválida.'}),400
+    if d and LogisticsBlockedDate.query.filter_by(blocked_date=d,active=True).first():return jsonify({'ok':False,'error':'A data está bloqueada no calendário operacional.'}),409
+    a.programmed_date=d;a.scheduled_date=d or a.expected_date
+    if a.status not in ('RECEBIDO','RECEBIMENTO_PARCIAL','CONCLUIDO'):a.status='NA_PROGRAMACAO'
+    db.session.add(AuditEvent(user_id=session['user_id'],event_type='V71_APPOINTMENT_PROGRAMMED',entity_type='customer_appointment',entity_id=str(a.id),detail=f'{a.code} · {d.isoformat() if d else "data padrão"}'))
+    db.session.commit();return jsonify({'ok':True,'date':(a.programmed_date or a.expected_date).isoformat() if (a.programmed_date or a.expected_date) else ''})
+
 @app.get('/portal-cliente')
 @login_required
 def portal_cliente_page():
@@ -12412,7 +12630,7 @@ def portal_appointments_list():
     rows=q.order_by(CustomerAppointment.created_at.desc()).limit(500).all(); out=[]
     for a in rows:
         items=CustomerAppointmentEquipment.query.filter_by(appointment_id=a.id).all()
-        out.append({'id':a.id,'code':a.code,'company':a.customer_company,'responsible':a.responsible_name,'scheduled_date':a.scheduled_date.isoformat() if a.scheduled_date else '', 'status':a.status,'created_at':a.created_at.isoformat(),'count':len(items),'received':sum(1 for x in items if x.received),'email_status':a.email_status or ''})
+        out.append({'id':a.id,'code':a.code,'company':a.customer_company,'responsible':a.responsible_name,'scheduled_date':(a.programmed_date or a.expected_date or a.scheduled_date).isoformat() if (a.programmed_date or a.expected_date or a.scheduled_date) else '', 'request_date':(a.request_date or a.created_at.date()).isoformat(),'expected_date':a.expected_date.isoformat() if a.expected_date else '', 'programmed_date':a.programmed_date.isoformat() if a.programmed_date else '', 'alternate':bool(a.alternate_date_requested),'alternate_reason':a.alternate_reason or '', 'status':a.status,'created_at':a.created_at.isoformat(),'count':len(items),'received':sum(1 for x in items if x.received),'email_status':a.email_status or ''})
     return jsonify({'ok':True,'rows':out,'internal':_portal_internal()})
 
 @app.post('/api/portal/appointments')
@@ -12423,7 +12641,9 @@ def portal_appointments_create():
     if not items: return jsonify({'ok':False,'error':'Adicione pelo menos um equipamento.'}),400
     allowed=_customer_companies_for_user(u); requested=(data.get('company') or '').strip(); company=(requested if requested and requested in [c.legal_name for c in allowed] else (allowed[0].legal_name if allowed else (u.company or '').strip())); responsible=(data.get('responsible') or u.name or '').strip()
     if not company:return jsonify({'ok':False,'error':'Usuário sem cliente/empresa vinculada.'}),400
-    a=CustomerAppointment(customer_company=company,responsible_name=responsible,responsible_email=(data.get('email') or u.email or '').strip(),responsible_phone=(data.get('phone') or u.phone or '').strip(),scheduled_date=None,notes=(data.get('notes') or '').strip(),status='RASCUNHO',created_by=u.id); db.session.add(a);db.session.flush();a.code=_portal_code(a.id)
+    today=datetime.now(ZoneInfo('America/Sao_Paulo')).date();expected,_route=_v71_next_operational_date(company,today)
+    alt=bool(data.get('alternate_date_requested'));alt_reason=(data.get('alternate_reason') or '').strip()
+    a=CustomerAppointment(customer_company=company,responsible_name=responsible,responsible_email=(data.get('email') or u.email or '').strip(),responsible_phone=(data.get('phone') or u.phone or '').strip(),scheduled_date=expected,request_date=today,expected_date=expected,programmed_date=None,alternate_date_requested=alt,alternate_reason=alt_reason or None,notes=(data.get('notes') or '').strip(),status='RASCUNHO',created_by=u.id); db.session.add(a);db.session.flush();a.code=_portal_code(a.id)
     for i,x in enumerate(items,1):
         serial=(x.get('serial') or '').strip(); defect=(x.get('defect') or '').strip()
         if not serial or not defect: db.session.rollback(); return jsonify({'ok':False,'error':f'Equipamento {i}: série e defeito são obrigatórios.'}),400
@@ -12473,12 +12693,12 @@ def portal_appointments_submit(aid):
     data=request.get_json(silent=True) or {}; sig=data.get('signature_data'); name=(data.get('accepted_name') or a.responsible_name).strip()
     # V69.2.1: assinatura eletrônica permanece disponível, porém não bloqueia a finalização.
     a.signature_file=_portal_store_dataurl(sig,f'assinatura-{a.code}') if sig else None
-    a.accepted_name=name;a.accepted_at=datetime.utcnow();a.scheduled_date=datetime.now(ZoneInfo('America/Sao_Paulo')).date();a.status='ENVIADO'
+    a.accepted_name=name;a.accepted_at=datetime.utcnow();a.request_date=a.request_date or datetime.now(ZoneInfo('America/Sao_Paulo')).date();a.expected_date=a.expected_date or _v71_next_operational_date(a.customer_company,a.request_date)[0];a.scheduled_date=a.programmed_date or a.expected_date;a.status='NA_PROGRAMACAO'
     pdf=_portal_pdf(a); key=f"portal-cliente/{datetime.utcnow().strftime('%Y/%m')}/{a.code}.pdf"
     try:_r2_put_bytes(key,pdf,'application/pdf');a.pdf_file='r2__'+key
     except Exception:
         namef=a.code+'.pdf';(UPLOAD_DIR/namef).write_bytes(pdf);a.pdf_file=namef
-    db.session.commit(); st,detail=_portal_send_email(a);a.email_status=st;a.email_detail=detail;db.session.commit(); return jsonify({'ok':True,'code':a.code,'email_status':st})
+    db.session.commit(); st,detail=_portal_send_email(a);a.email_status=st;a.email_detail=detail;db.session.commit(); return jsonify({'ok':True,'code':a.code,'email_status':st,'request_date':a.request_date.isoformat() if a.request_date else '', 'expected_date':a.expected_date.isoformat() if a.expected_date else '', 'status':a.status})
 
 @app.get('/api/portal/appointments/<int:aid>')
 @login_required
@@ -12490,7 +12710,7 @@ def portal_appointment_detail(aid):
     latest_download={}
     for ev in download_events:
         latest_download.setdefault(ev.entity_id,ev)
-    return jsonify({'ok':True,'appointment':{'id':a.id,'code':a.code,'company':a.customer_company,'responsible':a.responsible_name,'date':a.scheduled_date.isoformat() if a.scheduled_date else '', 'notes':a.notes or '', 'status':a.status,'email_status':a.email_status or '', 'invoice_number':getattr(a,'invoice_number',None) or '', 'invoice_name':getattr(a,'invoice_original_name',None) or '', 'has_invoice':bool(getattr(a,'invoice_file',None))},'items':[{'id':x.id,'item_no':x.item_no,'protocol':_portal_equipment_code(a,x),'serial':x.serial_number,'equipment':x.equipment or '', 'version':x.version or '', 'eod':x.eod or '', 'defect':x.defect,'notes':x.notes or '', 'has_photo':bool(x.photo_file), 'photo_url':(f'/api/portal/equipments/{x.id}/photo' if x.photo_file else ''), 'received':x.received,'pdf_downloaded':str(x.id) in latest_download,'pdf_downloaded_at':latest_download[str(x.id)].created_at.replace(tzinfo=ZoneInfo('UTC')).astimezone(ZoneInfo('America/Sao_Paulo')).strftime('%d/%m/%Y %H:%M') if str(x.id) in latest_download else ''} for x in items]})
+    return jsonify({'ok':True,'appointment':{'id':a.id,'code':a.code,'company':a.customer_company,'responsible':a.responsible_name,'date':(a.programmed_date or a.expected_date or a.scheduled_date).isoformat() if (a.programmed_date or a.expected_date or a.scheduled_date) else '', 'request_date':(a.request_date or a.created_at.date()).isoformat(),'expected_date':a.expected_date.isoformat() if a.expected_date else '', 'programmed_date':a.programmed_date.isoformat() if a.programmed_date else '', 'alternate':bool(a.alternate_date_requested),'alternate_reason':a.alternate_reason or '', 'notes':a.notes or '', 'status':a.status,'email_status':a.email_status or '', 'invoice_number':getattr(a,'invoice_number',None) or '', 'invoice_name':getattr(a,'invoice_original_name',None) or '', 'has_invoice':bool(getattr(a,'invoice_file',None))},'items':[{'id':x.id,'item_no':x.item_no,'protocol':_portal_equipment_code(a,x),'serial':x.serial_number,'equipment':x.equipment or '', 'version':x.version or '', 'eod':x.eod or '', 'defect':x.defect,'notes':x.notes or '', 'has_photo':bool(x.photo_file), 'photo_url':(f'/api/portal/equipments/{x.id}/photo' if x.photo_file else ''), 'received':x.received,'pdf_downloaded':str(x.id) in latest_download,'pdf_downloaded_at':latest_download[str(x.id)].created_at.replace(tzinfo=ZoneInfo('UTC')).astimezone(ZoneInfo('America/Sao_Paulo')).strftime('%d/%m/%Y %H:%M') if str(x.id) in latest_download else ''} for x in items]})
 
 @app.get('/api/portal/appointments/<int:aid>/pdf')
 @login_required
@@ -12585,6 +12805,31 @@ def _apply_v70_migrations():
         except Exception: pass
         app.logger.exception("V70: falha no controle de migrações")
 
+
+# V71 — schema aditivo da logística e programação de agendamentos.
+def _apply_v71_migrations():
+    try:
+        db.metadata.create_all(bind=db.engine,tables=[LogisticsGarageRoute.__table__,LogisticsBlockedDate.__table__],checkfirst=True)
+        insp=db.inspect(db.engine)
+        if insp.has_table('customer_appointments'):
+            cols={c['name'] for c in insp.get_columns('customer_appointments')}
+            additions=(
+                ('request_date','DATE'),('expected_date','DATE'),('programmed_date','DATE'),
+                ('alternate_date_requested','BOOLEAN DEFAULT FALSE'),('alternate_reason','VARCHAR(300)'),
+            )
+            with db.engine.begin() as conn:
+                for col,typ in additions:
+                    if col not in cols:conn.execute(text(f'ALTER TABLE customer_appointments ADD COLUMN {col} {typ}'))
+                conn.execute(text('CREATE INDEX IF NOT EXISTS ix_customer_appt_request_date ON customer_appointments (request_date)'))
+                conn.execute(text('CREATE INDEX IF NOT EXISTS ix_customer_appt_expected_date ON customer_appointments (expected_date)'))
+                conn.execute(text('CREATE INDEX IF NOT EXISTS ix_customer_appt_programmed_date ON customer_appointments (programmed_date)'))
+        if not SchemaMigration.query.filter_by(version='V71-001').first():
+            db.session.add(SchemaMigration(version='V71-001',description='Logística Leva e Traz + programação de agendamentos'));db.session.commit()
+    except Exception:
+        try:db.session.rollback()
+        except Exception:pass
+        app.logger.exception('V71: falha na migração logística')
+
 # V56-B — índices aditivos para leituras críticas.
 try:
     with db.engine.begin() as conn:
@@ -12629,6 +12874,7 @@ with app.app_context():
     core_tables=[t for t in db.metadata.sorted_tables if t.name not in ("chip_swaps","chip_swap_photos")]
     db.metadata.create_all(bind=db.engine, tables=core_tables, checkfirst=True)
     _apply_v70_migrations()
+    _apply_v71_migrations()
     # V70.1 — registra uma única vez o Dashboard Chamados como dashboard nativa visível.
     try:
         seed_done=SchemaMigration.query.filter_by(version='V70.1-002').first()
