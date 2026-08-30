@@ -8,7 +8,6 @@ import re
 import zipfile
 import io
 import base64
-import boto3
 import uuid
 import mimetypes
 import hashlib
@@ -34,17 +33,12 @@ from botocore.exceptions import ClientError, BotoCoreError
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
-from pptx import Presentation
-from pptx.util import Inches, Pt
-from pptx.enum.text import PP_ALIGN
-from pptx.enum.shapes import MSO_SHAPE
-from PIL import Image, ImageOps
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V70"
+APP_RELEASE = "V70.1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -1227,6 +1221,7 @@ def seed_data():
 
 
 def r2_client():
+    import boto3
     endpoint = os.environ.get("R2_ENDPOINT_URL", "").strip()
     access_key = os.environ.get("R2_ACCESS_KEY_ID", "").strip()
     secret_key = os.environ.get("R2_SECRET_ACCESS_KEY", "").strip()
@@ -3510,11 +3505,14 @@ def _bytes_human(value):
 
 
 def _process_memory_snapshot():
-    out={"rss_bytes":None,"limit_bytes":None,"usage_pct":None,"workers":int(os.getenv("WEB_CONCURRENCY","1") or 1),"cpu_count":os.cpu_count() or 1,"load_pct":None}
+    out={"rss_bytes":None,"peak_rss_bytes":None,"vm_size_bytes":None,"limit_bytes":None,"usage_pct":None,"workers":int(os.getenv("WEB_CONCURRENCY","1") or 1),"cpu_count":os.cpu_count() or 1,"load_pct":None,"pid":os.getpid(),"threads":None}
     try:
         status=Path('/proc/self/status').read_text(errors='ignore')
-        m=re.search(r'^VmRSS:\s+(\d+)\s+kB',status,re.M)
-        if m: out["rss_bytes"]=int(m.group(1))*1024
+        for key,target in (("VmRSS","rss_bytes"),("VmHWM","peak_rss_bytes"),("VmSize","vm_size_bytes")):
+            m=re.search(rf'^{key}:\s+(\d+)\s+kB',status,re.M)
+            if m: out[target]=int(m.group(1))*1024
+        m=re.search(r'^Threads:\s+(\d+)',status,re.M)
+        if m: out["threads"]=int(m.group(1))
     except Exception: pass
     for fp in ('/sys/fs/cgroup/memory.max','/sys/fs/cgroup/memory/memory.limit_in_bytes'):
         try:
@@ -5328,6 +5326,7 @@ def export_dashboard_excel():
 
 
 def _media_thumbnail(raw, max_px=520, quality=68):
+    from PIL import Image, ImageOps
     """V52.8: miniatura leve para galerias; original continua disponível sob demanda."""
     try:
         with Image.open(io.BytesIO(raw)) as im:
@@ -10799,6 +10798,7 @@ def _panorama_media_bytes(stored_name):
 
 
 def _pptx_compact_image(raw, max_width=1280, max_height=900, quality=68):
+    from PIL import Image, ImageOps
     """Reduz memória/tamanho do PPTX antes de inserir a imagem."""
     if not raw:
         return None
@@ -10846,6 +10846,11 @@ def _panorama_export_cleanup():
 
 
 def _generate_panorama_pptx(company,line,status,search,output_path,progress_cb=None):
+    from pptx import Presentation
+    from pptx.util import Inches, Pt
+    from pptx.enum.text import PP_ALIGN
+    from pptx.enum.shapes import MSO_SHAPE
+    from PIL import Image
     rows=[x for x in _panorama_payload() if (not company or x.get("company")==company) and (not line or x.get("line")==line) and (not status or x.get("status")==status) and (not search or search in (x.get("location") or "").lower())]
     prs=Presentation(); prs.slide_width=Inches(13.333); prs.slide_height=Inches(7.5)
     navy=(18,52,93); teal=(51,190,190); dark=(25,38,58); light=(241,246,250)
@@ -12562,6 +12567,7 @@ def _apply_v70_migrations():
         "CREATE INDEX IF NOT EXISTS ix_material_req_user_status ON material_requests (user_id, status)",
         "CREATE INDEX IF NOT EXISTS ix_collab_doc_user_status ON collaborator_documents (user_id, status)",
       )),
+      ("V70.1-001", "Dashboard Chamados e diagnóstico de memória", ()),
     ]
     try:
         db.metadata.create_all(bind=db.engine, tables=[SchemaMigration.__table__], checkfirst=True)
@@ -12623,6 +12629,23 @@ with app.app_context():
     core_tables=[t for t in db.metadata.sorted_tables if t.name not in ("chip_swaps","chip_swap_photos")]
     db.metadata.create_all(bind=db.engine, tables=core_tables, checkfirst=True)
     _apply_v70_migrations()
+    # V70.1 — registra uma única vez o Dashboard Chamados como dashboard nativa visível.
+    try:
+        seed_done=SchemaMigration.query.filter_by(version='V70.1-002').first()
+        if not seed_done:
+            topdesk_cfg=BuiltinDashboardSetting.query.filter_by(dashboard_key='topdesk').first()
+            if not topdesk_cfg:
+                topdesk_cfg=BuiltinDashboardSetting(dashboard_key='topdesk',visible=True,order_index=55,allowed_roles_json='[]')
+                db.session.add(topdesk_cfg)
+            else:
+                topdesk_cfg.visible=True
+                if not topdesk_cfg.order_index: topdesk_cfg.order_index=55
+            db.session.add(SchemaMigration(version='V70.1-002',description='Dashboard Chamados habilitado na Central'))
+            db.session.commit()
+    except Exception:
+        try: db.session.rollback()
+        except Exception: pass
+        app.logger.exception('V70.1: falha ao registrar Dashboard Chamados')
     # V69.3.2 — compatibilidade PostgreSQL do Dossiê/Documentos.
     # HOTFIX2 adicionou estes campos ao ORM, mas o banco legado podia não recebê-los.
     try:
