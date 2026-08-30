@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V69.5"
+APP_RELEASE = "V70"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -583,6 +583,13 @@ class PerformanceMetric(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
     __table_args__ = (Index("ix_perf_created_route", "created_at", "route"),)
+
+class SchemaMigration(db.Model):
+    __tablename__ = "schema_migrations"
+    id = db.Column(db.Integer, primary_key=True)
+    version = db.Column(db.String(80), nullable=False, unique=True, index=True)
+    description = db.Column(db.String(240))
+    applied_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
 
 class OperationalAction(db.Model):
     __tablename__ = "operational_actions"
@@ -1293,7 +1300,7 @@ ACCESS_GROUPS = {
     )),
     "finance_dashboard": ("Dashboard Financeira", ("finance.dashboard",)),
     "management": ("Gestão", (
-        "management.calls","management.360","management.notifications","management.diagnostics","management.settings","management.dashboard_config","management.profiles"
+        "management.calls","management.360","management.notifications","management.diagnostics","management.health","management.settings","management.dashboard_config","management.profiles"
     )),
     "materials": ("Dossiê / Materiais", (
         "materials.my_documents","materials.request","materials.catalog.view","materials.catalog.manage","materials.kits.manage","materials.delivery.create","materials.delivery.manage","materials.dossier.view"
@@ -1311,7 +1318,7 @@ ACCESS_LABELS = {
  "teams.map":"Mapa operacional","teams.today":"Operação de Hoje","teams.schedule":"Escala por dias","teams.manage":"Gestão de equipes / escala","teams.export":"Exportar dados",
  "users.view":"Visualizar usuários","users.create":"Criar usuário","users.edit":"Editar usuário","users.activate":"Ativar / Desativar","users.delete":"Excluir / Arquivar","users.password":"Redefinir senha","users.export":"Exportar Excel",
  "finance.dashboard":"Dashboard Financeira","finance.support":"Suporte a Campo","finance.collection":"Coleta de Valores","finance.apuracao":"Apuração de Numerário","finance.assistance":"Assistência Técnica","finance.implantation":"Implantação de Hardware","finance.entries":"Lançamentos","finance.suppliers":"Empresas / Fornecedores","finance.import":"Importar planilha","finance.edit":"Editar lançamentos","finance.delete":"Excluir lançamentos",
- "management.calls":"Chamados","management.360":"Central 360","management.notifications":"Notificações","management.diagnostics":"Diagnóstico","management.settings":"Configurações","management.dashboard_config":"Configuração de Dashboards","management.profiles":"Perfis & Permissões",
+ "management.calls":"Chamados","management.360":"Central 360","management.notifications":"Notificações","management.diagnostics":"Diagnóstico","management.health":"Saúde da Plataforma","management.settings":"Configurações","management.dashboard_config":"Configuração de Dashboards","management.profiles":"Perfis & Permissões",
  "materials.my_documents":"Meus documentos / Minha carga","materials.request":"Solicitar material","materials.catalog.view":"Visualizar catálogo","materials.catalog.manage":"Cadastrar / editar / inativar materiais","materials.kits.manage":"Gerenciar kits","materials.delivery.create":"Criar e enviar entregas","materials.delivery.manage":"Gerenciar aceites / correções","materials.dossier.view":"Dossiê dos colaboradores",
  "portal.appointments":"Criar / consultar agendamentos","portal.receive":"Receber agendamentos","portal.manage":"Administrar Portal do Cliente",
  "about.versions":"Histórico / Versões",
@@ -3646,16 +3653,51 @@ def operational_intelligence_api():
     return jsonify({"ok":True,"release":APP_RELEASE,"generated_at":now.isoformat()+"Z","capacity":{"field_users":len(techs),"online_gps_15m":available,"open_work":len(open_tickets),"assigned":assigned,"unassigned":unassigned,"work_per_available":load,"status":capacity_status},"sla":{"at_risk":sum(1 for x in ranked if x["age_h"]>=24),"critical":sum(1 for x in ranked if x["age_h"]>=48)},"anomalies":anomalies[:20],"priorities":ranked[:20]})
 
 
+def _v70_migration_snapshot():
+    try:
+        rows=SchemaMigration.query.order_by(SchemaMigration.applied_at.desc()).limit(20).all()
+        return {"ok":True,"count":SchemaMigration.query.count(),"latest":[{"version":x.version,"description":x.description or "","applied_at":x.applied_at.isoformat() if x.applied_at else None} for x in rows]}
+    except Exception as exc:
+        return {"ok":False,"count":0,"latest":[],"error":str(exc)}
+
+def _v70_index_snapshot():
+    targets={
+      "performance_metrics":{"ix_perf_created_route","ix_perf_route_created_status"},
+      "topdesk_tickets":{"ix_topdesk_status_created","ix_topdesk_line_station_status"},
+      "material_requests":{"ix_material_req_user_status"},
+      "collaborator_documents":{"ix_collab_doc_user_status"},
+      "technician_positions":{"ix_techpos_user_captured"},
+    }
+    out=[]
+    try:
+        insp=db.inspect(db.engine)
+        for table,expected in targets.items():
+            if not insp.has_table(table):
+                out.append({"table":table,"expected":len(expected),"present":0,"status":"SEM TABELA"}); continue
+            names={x.get("name") for x in insp.get_indexes(table)}
+            present=len(expected & names)
+            out.append({"table":table,"expected":len(expected),"present":present,"missing":sorted(expected-names),"status":"OK" if present==len(expected) else "ATENÇÃO"})
+    except Exception as exc:
+        return {"ok":False,"rows":out,"error":str(exc)}
+    return {"ok":True,"rows":out}
+
 @app.get("/telemetria")
 @login_required
 def telemetry_page():
-    if session.get("role") != "manager": abort(403)
+    # V70: rota legada preservada. A navegação oficial é Saúde da Plataforma.
+    if session.get("role") != "manager" and not _has_access("management.health"): abort(403)
+    return redirect(url_for("platform_health_page"))
+
+@app.get("/saude-plataforma")
+@login_required
+def platform_health_page():
+    if session.get("role") != "manager" and not _has_access("management.health"): abort(403)
     return render_template("telemetry.html", app_release=APP_RELEASE)
 
 @app.get("/api/telemetria/resumo")
 @login_required
 def telemetry_summary_api():
-    if session.get("role") != "manager": return jsonify({"ok":False,"error":"Acesso exclusivo ADM."}),403
+    if session.get("role") != "manager" and not _has_access("management.health"): return jsonify({"ok":False,"error":"Sem permissão para Saúde da Plataforma."}),403
     try:
         minutes=max(5,min(int(request.args.get("minutes") or 60),1440)); since=datetime.utcnow()-timedelta(minutes=minutes)
         q=PerformanceMetric.query.filter(PerformanceMetric.created_at>=since)
@@ -3689,7 +3731,7 @@ def telemetry_summary_api():
         with PANORAMA_EXPORT_LOCK:
             _jobs=list(PANORAMA_EXPORT_JOBS.values())
         storage={"database":_database_storage_snapshot(),"r2":_r2_storage_snapshot(),"local":_local_storage_snapshot(),"runtime":_process_memory_snapshot(),"jobs":{"active":sum(1 for j in _jobs if j.get("status") in ("FILA","PROCESSANDO")),"ready":sum(1 for j in _jobs if j.get("status")=="PRONTO"),"errors":sum(1 for j in _jobs if j.get("status")=="ERRO")}}
-        return jsonify({"ok":True,"release":APP_RELEASE,"generated_at":datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y %H:%M:%S"),"window_minutes":minutes,"health":health,"avg_ms":avg,"p95_ms":p95,"max_ms":round(max(vals),1) if vals else 0,"requests":len(rows),"errors_5xx":errors,"active_users_15m":int(active_users),"routes":route_rows[:20],"top5":top5,"timeline":timeline[-24:],"table_counts":table_counts,"storage":storage})
+        return jsonify({"ok":True,"release":APP_RELEASE,"generated_at":datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y %H:%M:%S"),"window_minutes":minutes,"health":health,"avg_ms":avg,"p95_ms":p95,"max_ms":round(max(vals),1) if vals else 0,"requests":len(rows),"errors_5xx":errors,"active_users_15m":int(active_users),"routes":route_rows[:20],"top5":top5,"timeline":timeline[-24:],"table_counts":table_counts,"storage":storage,"migrations":_v70_migration_snapshot(),"indexes":_v70_index_snapshot()})
     except Exception as exc:
         return jsonify({"ok":False,"error":str(exc)}),500
 
@@ -11486,7 +11528,7 @@ BUILTIN_DASHBOARD_CATALOG = [
     {"key":"atm-inventory","label":"Dashboard ATM","group":"ATIVIDADES","icon":"▦","roles":[]},
     {"key":"financial-dashboard","label":"Dashboard Financeiro","group":"ATIVIDADES","icon":"$","roles":["manager","manager_field","atm_financial_admin"]},
     {"key":"journal","label":"Diário de bordo","group":"ATIVIDADES","icon":"◷","roles":[]},
-    {"key":"topdesk","label":"Chamados","group":"ATIVIDADES","icon":"⚡","roles":[]},
+    {"key":"topdesk","label":"Dashboard Chamados","group":"SUPORTE A CAMPO","icon":"⚡","roles":[]},
     {"key":"map","label":"Mapa","group":"ATIVIDADES","icon":"⌖","roles":[]},
     {"key":"panorama","label":"Visões panorâmicas","group":"ATIVIDADES","icon":"▤","roles":[]},
     {"key":"chips","label":"Troca de Chip Recarga","group":"ATIVIDADES","icon":"▣","roles":[]},
@@ -12510,6 +12552,33 @@ def portal_equipment_receive(eid):
     if rec>=total: _portal_refresh_status(a)
     db.session.add(AuditEvent(user_id=session['user_id'],event_type='PORTAL_EQUIPMENT_RECEIVED',entity_type='customer_appointment',entity_id=str(a.id),detail=f'{a.code} · série {x.serial_number}'));db.session.commit();return jsonify({'ok':True,'status':a.status})
 
+# V70 — Performance & Banco: migrações versionadas, aditivas e idempotentes.
+def _apply_v70_migrations():
+    migrations=[
+      ("V70-001", "Índices de performance e operação", (
+        "CREATE INDEX IF NOT EXISTS ix_perf_route_created_status ON performance_metrics (route, created_at, status_code)",
+        "CREATE INDEX IF NOT EXISTS ix_topdesk_status_created ON topdesk_tickets (status, created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_topdesk_line_station_status ON topdesk_tickets (line_code, station_code, status)",
+        "CREATE INDEX IF NOT EXISTS ix_material_req_user_status ON material_requests (user_id, status)",
+        "CREATE INDEX IF NOT EXISTS ix_collab_doc_user_status ON collaborator_documents (user_id, status)",
+      )),
+    ]
+    try:
+        db.metadata.create_all(bind=db.engine, tables=[SchemaMigration.__table__], checkfirst=True)
+        for version,description,commands in migrations:
+            if SchemaMigration.query.filter_by(version=version).first():
+                continue
+            with db.engine.begin() as conn:
+                for sql in commands:
+                    try: conn.execute(text(sql))
+                    except Exception as exc: app.logger.warning("%s índice não aplicado: %s",version,exc)
+            db.session.add(SchemaMigration(version=version,description=description)); db.session.commit()
+            app.logger.info("Migração %s aplicada: %s",version,description)
+    except Exception:
+        try: db.session.rollback()
+        except Exception: pass
+        app.logger.exception("V70: falha no controle de migrações")
+
 # V56-B — índices aditivos para leituras críticas.
 try:
     with db.engine.begin() as conn:
@@ -12553,6 +12622,7 @@ with app.app_context():
     # V39.7.1: não deixa a criação das novas tabelas de Troca de Chips bloquear o startup.
     core_tables=[t for t in db.metadata.sorted_tables if t.name not in ("chip_swaps","chip_swap_photos")]
     db.metadata.create_all(bind=db.engine, tables=core_tables, checkfirst=True)
+    _apply_v70_migrations()
     # V69.3.2 — compatibilidade PostgreSQL do Dossiê/Documentos.
     # HOTFIX2 adicionou estes campos ao ORM, mas o banco legado podia não recebê-los.
     try:
