@@ -321,8 +321,8 @@ class CustomerCompany(db.Model):
     state_registration = db.Column(db.String(60))
     contact_name = db.Column(db.String(180))
     contact_role = db.Column(db.String(120))
-    phone = db.Column(db.String(40))
-    mobile = db.Column(db.String(40))
+    phone = db.Column(db.String(120))
+    mobile = db.Column(db.String(120))
     email = db.Column(db.String(180))
     address = db.Column(db.String(300))
     city = db.Column(db.String(120))
@@ -12950,8 +12950,45 @@ def _apply_v71_migrations():
                 conn.execute(text('CREATE INDEX IF NOT EXISTS ix_customer_appt_programmed_date ON customer_appointments (programmed_date)'))
         if not SchemaMigration.query.filter_by(version='V71-001').first():
             db.session.add(SchemaMigration(version='V71-001',description='Logística Leva e Traz + programação de agendamentos'));db.session.commit()
+        if insp.has_table('customer_companies'):
+            # V71.1 HF2 — contatos da planilha podem conter ramal e mais de um telefone.
+            with db.engine.begin() as conn:
+                conn.execute(text('ALTER TABLE customer_companies ALTER COLUMN phone TYPE VARCHAR(120)'))
+                conn.execute(text('ALTER TABLE customer_companies ALTER COLUMN mobile TYPE VARCHAR(120)'))
         if not SchemaMigration.query.filter_by(version='V71-HF1').first():
             db.session.add(SchemaMigration(version='V71-HF1',description='Compatibilidade fiscal do Portal + importação idempotente Leva e Traz'));db.session.commit()
+        if not SchemaMigration.query.filter_by(version='V71.1-HF2').first():
+            db.session.add(SchemaMigration(version='V71.1-HF2',description='Dashboard 2.0 Portal + ampliação de telefone de clientes'));db.session.commit()
+        # V71.1 HF4 — feriados oficiais de 2026 para a operação em São Paulo.
+        # A carga é executada uma única vez; depois o ADM continua podendo remover
+        # ou acrescentar bloqueios manualmente pelo calendário operacional.
+        if not SchemaMigration.query.filter_by(version='V71.1-HF4').first():
+            holidays_2026=(
+                ('2026-01-01','Confraternização Universal'),
+                ('2026-01-25','Aniversário da Cidade de São Paulo'),
+                ('2026-04-03','Paixão de Cristo'),
+                ('2026-04-21','Tiradentes'),
+                ('2026-05-01','Dia do Trabalho'),
+                ('2026-06-04','Corpus Christi'),
+                ('2026-07-09','Revolução Constitucionalista / Data Magna de SP'),
+                ('2026-09-07','Independência do Brasil'),
+                ('2026-10-12','Nossa Senhora Aparecida'),
+                ('2026-11-02','Finados'),
+                ('2026-11-15','Proclamação da República'),
+                ('2026-11-20','Dia da Consciência Negra'),
+                ('2026-12-25','Natal'),
+            )
+            for raw_date,description in holidays_2026:
+                holiday=date.fromisoformat(raw_date)
+                row=LogisticsBlockedDate.query.filter_by(blocked_date=holiday).first()
+                if row is None:
+                    row=LogisticsBlockedDate(blocked_date=holiday,description=description,active=True,created_by=None)
+                else:
+                    row.description=description
+                    row.active=True
+                db.session.add(row)
+            db.session.add(SchemaMigration(version='V71.1-HF4',description='Bloqueio padrão dos feriados oficiais de São Paulo em 2026'))
+            db.session.commit()
     except Exception:
         try:db.session.rollback()
         except Exception:pass
