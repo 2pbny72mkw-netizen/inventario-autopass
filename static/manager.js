@@ -1,4 +1,4 @@
-window.AUTOPASS_MANAGER_VERSION='dashboard-v70';
+window.AUTOPASS_MANAGER_VERSION='dashboard-v70-1';
 console.log('AUTOPASS Dashboard Executivo V25 carregado');
 let locations=[];
 let dashboardData=null;
@@ -332,7 +332,7 @@ function ensureGpsMap(){
     $('referenceStatus').textContent='Referência salva.';
     if(referenceTempMarker){referenceTempMarker.remove();referenceTempMarker=null;}
     await loadAll();
-// V70: evidências carregadas sob demanda pela visão correspondente.
+// V70.1: evidências carregadas sob demanda pela visão correspondente.
   });
 
   setTimeout(()=>gpsMap.invalidateSize(),100);
@@ -1167,7 +1167,7 @@ async function loadV30Contracts(){
 document.getElementById('v30ContractExport')?.addEventListener('click',()=>{
  const p=new URLSearchParams({company:document.getElementById('execCompany')?.value||'',line:document.getElementById('execLine')?.value||'',contract:document.getElementById('v30Contract')?.value||'',horizon:document.getElementById('v30Horizon')?.value||''}); location.href='/api/v30/atm-contracts/export?'+p.toString();
 });
-// V70: contratos ATM carregados sob demanda.
+// V70.1: contratos ATM carregados sob demanda.
 
 
 // V35 — visão geral operacional filtrável
@@ -1267,7 +1267,7 @@ document.querySelectorAll('.v35Status[data-status]').forEach(btn=>btn.addEventLi
 }));
 
 async function v39LoadTopdesk(){try{const r=await fetch('/api/topdesk/dashboard',{cache:'no-store'});if(!r.ok)return;const d=await r.json();if(!d.ok)return;const map={v39TdTotal:d.total,v39TdOpen:d.open,v39TdResolved:d.resolved,v39TdAssigned:d.assigned,v39TdUnassigned:d.unassigned};Object.entries(map).forEach(([id,v])=>{const e=document.getElementById(id);if(e)e.textContent=fmt(v)});const types=document.getElementById('v39TdTypes');if(types){const arr=Object.entries(d.by_type||{}).sort((a,b)=>b[1]-a[1]);const m=Math.max(1,...arr.map(x=>x[1]));types.innerHTML=arr.map(([k,v])=>`<div class="v25CompanyRow"><span>${esc(k)}</span><div class="v25CompanyTrack"><i style="width:${Math.round(v/m*100)}%"></i></div><b>${fmt(v)}</b></div>`).join('')||'<span class="muted">Sem chamados importados.</span>'}const loc=document.getElementById('v39TdLocations');if(loc){const arr=d.top_locations||[];const m=Math.max(1,...arr.map(x=>x.count));loc.innerHTML=arr.map(x=>`<div class="v25CompanyRow"><span>${esc(x.name)}</span><div class="v25CompanyTrack"><i style="width:${Math.round(x.count/m*100)}%"></i></div><b>${fmt(x.count)}</b></div>`).join('')||'<span class="muted">Sem localidades vinculadas.</span>'}}catch(e){console.warn('TopDesk dashboard',e)}}
-// V70: TopDesk carregado somente ao abrir a dashboard.
+// V70.1: TopDesk carregado somente ao abrir a dashboard.
 
 // V40.1.3 — Visões panorâmicas com status, progresso e filtros no Dashboard.
 let dashPanData=[];
