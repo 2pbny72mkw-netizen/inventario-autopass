@@ -934,6 +934,8 @@ function updateExecutiveView(){
   renderLocations();
   renderV22Cockpit();
   renderV36Productivity();
+  // V71.2: sincroniza os três cards superiores com os mesmos KPIs/filtros já calculados.
+  if(typeof window.refreshV712Overview==='function') window.refreshV712Overview();
 }
 
 function renderCriticalLocations(){
