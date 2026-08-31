@@ -38,7 +38,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V71.2 HOTFIX1"
+APP_RELEASE = "V71.3"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -13193,6 +13193,66 @@ with app.app_context():
     sync_base_assets_1408(force=False)
     sync_atm_complement_v424()
     cleanup_v352_test_reference()
+
+
+
+# -----------------------------------------------------------------------------
+# V71.3 - Pendências Operacionais consolidadas
+# Base prevista - atividade concluída = pendência real.
+# -----------------------------------------------------------------------------
+def _v713_pending_rows(module="todos"):
+    module=(module or "todos").strip().lower()
+    out=[]
+    if module in ("todos","recarga"):
+        for loc in _chip_swap_locations_payload():
+            for v in (loc.get("validators") or []):
+                st=(v.get("status") or "PENDENTE").upper().replace("CONCLUIDA","CONCLUÍDA")
+                if st != "CONCLUÍDA":
+                    out.append({"module":"RECARGA","company":loc.get("company") or "","line":loc.get("line") or "","location":loc.get("location") or "","asset":v.get("label") or str(v.get("base_asset_id") or ""),"status":st,"reason":"Não realizado" if st=="PENDENTE" else "Atividade iniciada/incompleta","technician":v.get("technician") or ""})
+    if module in ("todos","emv","mv"):
+        swaps={str(x.terminal):x for x in EmvChipSwap.query.all()}
+        users={u.id:u.name for u in User.query.filter(User.id.in_({x.technician_id for x in swaps.values() if x.technician_id})).all()} if swaps else {}
+        for b in _v41_emv_rows():
+            terminal=str(b.get("terminal") or ""); sw=swaps.get(terminal)
+            st=((sw.status if sw else b.get("_base_status")) or "PENDENTE").upper().replace("CONCLUIDA","CONCLUÍDA")
+            if st != "CONCLUÍDA":
+                out.append({"module":"MV / EMV TRILHOS","company":b.get("company") or "","line":b.get("line") or "","location":b.get("station") or "","asset":terminal,"status":st,"reason":"Não realizado" if st=="PENDENTE" else "Atividade iniciada/incompleta","technician":users.get(sw.technician_id,"") if sw else ""})
+    if module in ("todos","panorama","panoramica"):
+        for x in _panorama_payload():
+            st=(x.get("status") or "PENDENTE").upper().replace("CONCLUIDA","CONCLUÍDA")
+            if st != "CONCLUÍDA":
+                out.append({"module":"PANORÂMICA","company":x.get("company") or "","line":x.get("line") or "","location":x.get("location") or "","asset":"Visão panorâmica","status":st,"reason":"Sem registro panorâmico" if st=="PENDENTE" else "Evidências/pontos incompletos","technician":", ".join(x.get("technicians") or [])})
+    if module in ("todos","garagem"):
+        for x in _garage_payload():
+            st=(x.get("status") or "PENDENTE").upper().replace("CONCLUIDA","CONCLUÍDA")
+            if st != "CONCLUÍDA":
+                out.append({"module":"GARAGEM","company":x.get("company") or "","line":"","location":x.get("company") or "","asset":x.get("terminal") or "","status":st,"reason":"Não realizado" if st=="PENDENTE" else "Atividade iniciada/incompleta","technician":x.get("technician") or ""})
+    return out
+
+@app.get('/pendencias-operacionais')
+@login_required
+def v713_pending_page():
+    return render_template('pending_operations.html',app_release=APP_RELEASE)
+
+@app.get('/api/pendencias-operacionais')
+@login_required
+def v713_pending_api():
+    rows=_v713_pending_rows(request.args.get('module') or 'todos')
+    return jsonify({'ok':True,'rows':rows,'summary':{'total':len(rows),'pending':sum(1 for x in rows if x['status']=='PENDENTE'),'in_progress':sum(1 for x in rows if x['status']=='EM ANDAMENTO'),'locations':len({(x['module'],x['company'],x['line'],x['location']) for x in rows})}})
+
+@app.get('/api/pendencias-operacionais/export.xlsx')
+@login_required
+def v713_pending_export():
+    rows=_v713_pending_rows(request.args.get('module') or 'todos')
+    wb=Workbook(); ws=wb.active; ws.title='Pendências'
+    ws.append(['Módulo','Empresa','Linha','Localidade','Equipamento / Ativo','Situação','Motivo','Técnico'])
+    for x in rows: ws.append([x['module'],x['company'],x['line'],x['location'],x['asset'],x['status'],x['reason'],x['technician']])
+    for cell in ws[1]: cell.font=Font(bold=True)
+    ws.freeze_panes='A2'; ws.auto_filter.ref=ws.dimensions
+    widths=[22,28,24,30,26,18,32,26]
+    for i,w in enumerate(widths,1): ws.column_dimensions[get_column_letter(i)].width=w
+    bio=BytesIO(); wb.save(bio); bio.seek(0)
+    return send_file(bio,as_attachment=True,download_name=f"pendencias_operacionais_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "5000")), debug=False)
