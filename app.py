@@ -38,7 +38,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V71.1 HOTFIX5"
+APP_RELEASE = "V71.2"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -366,6 +366,10 @@ class CustomerAppointment(db.Model):
     received_at = db.Column(db.DateTime)
     email_status = db.Column(db.String(30))
     email_detail = db.Column(db.String(500))
+    # V71.2 — cancelamento administrativo com rastreabilidade.
+    cancelled_at = db.Column(db.DateTime)
+    cancelled_by = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
+    cancellation_reason = db.Column(db.String(500))
 
 class CustomerAppointmentEquipment(db.Model):
     __tablename__ = "customer_appointment_equipments"
@@ -12745,16 +12749,16 @@ def v71_schedule_management_api():
     rows=[];daily={}
     for a in appts:
         d=a.programmed_date or a.expected_date or a.scheduled_date
-        item={'id':a.id,'code':a.code,'company':a.customer_company,'request_date':(a.request_date or a.created_at.date()).isoformat(),'expected_date':a.expected_date.isoformat() if a.expected_date else '', 'programmed_date':a.programmed_date.isoformat() if a.programmed_date else '', 'date':d.isoformat() if d else '', 'status':a.status,'count':int(counts.get(a.id,0)),'received':int(received_counts.get(a.id,0)),'alternate':bool(a.alternate_date_requested),'alternate_reason':a.alternate_reason or ''}
+        item={'id':a.id,'code':a.code,'company':a.customer_company,'request_date':(a.request_date or a.created_at.date()).isoformat(),'expected_date':a.expected_date.isoformat() if a.expected_date else '', 'programmed_date':a.programmed_date.isoformat() if a.programmed_date else '', 'date':d.isoformat() if d else '', 'status':a.status,'count':int(counts.get(a.id,0)),'received':int(received_counts.get(a.id,0)),'alternate':bool(a.alternate_date_requested),'alternate_reason':a.alternate_reason or '', 'cancellation_reason':a.cancellation_reason or ''}
         rows.append(item)
-        if d and start<=d<end:
+        if d and start<=d<end and str(a.status or '').upper()!='CANCELADO':
             k=d.isoformat();bucket=daily.setdefault(k,{'appointments':0,'equipment':0,'garages':set()});bucket['appointments']+=1;bucket['equipment']+=item['count'];bucket['garages'].add(a.customer_company)
     daily={k:{'appointments':v['appointments'],'equipment':v['equipment'],'garages':len(v['garages'])} for k,v in daily.items()}
-    requested_today=[x for x in rows if x['request_date']==today.isoformat()]
-    programmed_today=[x for x in rows if x['date']==today.isoformat()]
+    requested_today=[x for x in rows if x['request_date']==today.isoformat() and str(x.get('status') or '').upper()!='CANCELADO']
+    programmed_today=[x for x in rows if x['date']==today.isoformat() and str(x.get('status') or '').upper()!='CANCELADO']
     routes=[{'id':r.id,'garage':r.garage_name,'weekday':r.weekday,'weekday_label':_V71_WEEKDAY_LABELS.get(r.weekday,''),'contact':r.contact_name or '', 'address':r.address or '', 'region':r.region or '', 'active':r.active} for r in LogisticsGarageRoute.query.order_by(LogisticsGarageRoute.weekday,LogisticsGarageRoute.garage_name).all()]
     blocked=[{'id':x.id,'date':x.blocked_date.isoformat(),'description':x.description or ''} for x in LogisticsBlockedDate.query.filter_by(active=True).order_by(LogisticsBlockedDate.blocked_date).all()]
-    return jsonify({'ok':True,'today':today.isoformat(),'rows':rows,'daily':daily,'requested_today':requested_today,'programmed_today':programmed_today,'routes':routes,'blocked':blocked})
+    return jsonify({'ok':True,'today':today.isoformat(),'rows':rows,'daily':daily,'requested_today':requested_today,'programmed_today':programmed_today,'routes':routes,'blocked':blocked,'can_manage_appointments':session.get('role')=='manager'})
 
 @app.patch('/api/portal/appointments/<int:aid>/programacao')
 @login_required
@@ -12770,6 +12774,35 @@ def v71_program_appointment(aid):
     if a.status not in ('RECEBIDO','RECEBIMENTO_PARCIAL','CONCLUIDO'):a.status='NA_PROGRAMACAO'
     db.session.add(AuditEvent(user_id=session['user_id'],event_type='V71_APPOINTMENT_PROGRAMMED',entity_type='customer_appointment',entity_id=str(a.id),detail=f'{a.code} · {d.isoformat() if d else "data padrão"}'))
     db.session.commit();return jsonify({'ok':True,'date':(a.programmed_date or a.expected_date).isoformat() if (a.programmed_date or a.expected_date) else ''})
+
+@app.post('/api/portal/appointments/<int:aid>/cancel')
+@login_required
+def v712_cancel_appointment(aid):
+    if not _portal_internal() or session.get('role')!='manager': abort(403)
+    a=db.session.get(CustomerAppointment,aid)
+    if not a: abort(404)
+    if str(a.status or '').upper()=='CANCELADO': return jsonify({'ok':True,'status':'CANCELADO'})
+    data=request.get_json(silent=True) or {}; reason=(data.get('reason') or '').strip()
+    if not reason: return jsonify({'ok':False,'error':'Informe o motivo do cancelamento.'}),400
+    a.status='CANCELADO'; a.cancelled_at=datetime.utcnow(); a.cancelled_by=session.get('user_id'); a.cancellation_reason=reason
+    db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='V71_2_APPOINTMENT_CANCELLED',entity_type='customer_appointment',entity_id=str(a.id),detail=f'{a.code} · {reason[:350]}'))
+    db.session.commit(); return jsonify({'ok':True,'status':'CANCELADO'})
+
+@app.delete('/api/portal/appointments/<int:aid>')
+@login_required
+def v712_delete_appointment(aid):
+    if not _portal_internal() or session.get('role')!='manager': abort(403)
+    a=db.session.get(CustomerAppointment,aid)
+    if not a: abort(404)
+    received=CustomerAppointmentEquipment.query.filter_by(appointment_id=a.id,received=True).count()
+    if received: return jsonify({'ok':False,'error':'Agendamento com equipamento recebido não pode ser excluído. Use cancelamento/encerramento administrativo.'}),409
+    code=a.code or str(a.id); company=a.customer_company or ''
+    # Exclui os itens explicitamente para manter compatibilidade com bancos legados sem CASCADE físico.
+    CustomerAppointmentEquipment.query.filter_by(appointment_id=a.id).delete(synchronize_session=False)
+    db.session.delete(a)
+    db.session.flush()
+    db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='V71_2_APPOINTMENT_DELETED',entity_type='customer_appointment',entity_id=str(aid),detail=f'{code} · {company}'))
+    db.session.commit(); return jsonify({'ok':True})
 
 @app.get('/portal-cliente')
 @login_required
@@ -12976,6 +13009,7 @@ def _apply_v71_migrations():
                 # Compatibilidade com bancos legados do Portal: o ORM já possui estes campos,
                 # mas instalações anteriores podem não ter recebido as colunas físicas.
                 ('invoice_number','VARCHAR(120)'),('invoice_file','VARCHAR(600)'),('invoice_original_name','VARCHAR(255)'),
+                ('cancelled_at','TIMESTAMP'),('cancelled_by','INTEGER'),('cancellation_reason','VARCHAR(500)'),
             )
             with db.engine.begin() as conn:
                 for col,typ in additions:
@@ -13023,6 +13057,9 @@ def _apply_v71_migrations():
                     row.active=True
                 db.session.add(row)
             db.session.add(SchemaMigration(version='V71.1-HF4',description='Bloqueio padrão dos feriados oficiais de São Paulo em 2026'))
+            db.session.commit()
+        if not SchemaMigration.query.filter_by(version='V71.2-001').first():
+            db.session.add(SchemaMigration(version='V71.2-001',description='Dashboard Inventário unificado + cancelamento administrativo de agendamentos'))
             db.session.commit()
     except Exception:
         try:db.session.rollback()
