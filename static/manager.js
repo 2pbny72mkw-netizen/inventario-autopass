@@ -1,4 +1,4 @@
-window.AUTOPASS_MANAGER_VERSION='dashboard-v70-1';
+window.AUTOPASS_MANAGER_VERSION='dashboard-v71-2-hf1';
 console.log('AUTOPASS Dashboard Executivo V25 carregado');
 let locations=[];
 let dashboardData=null;
@@ -1234,6 +1234,20 @@ function renderV35Overview(){
   setText('v35MixTotal',fmt(mixTotal));
   const mixLegend=document.getElementById('v35MixLegend');
   if(mixLegend)mixLegend.innerHTML=mix.length?mix.map(x=>`<div><i style="background:${colors[x.type]}"></i><span>${esc(typeLabel(x.type))}</span><b>${fmt(x.value)}</b><small>${mixTotal?Math.round(x.value/mixTotal*100):0}%</small></div>`).join(''):'<div class="muted">Sem ativos no recorte.</div>';
+
+  // V71.2 HOTFIX1 — cards superiores sincronizados com o mesmo recorte da Execução consolidada / Mix do parque.
+  const upperGauge=document.getElementById('v491Gauge');
+  const upperGaugeValue=document.getElementById('v491GaugeValue');
+  if(upperGauge) upperGauge.style.setProperty('--pct',pct.toFixed(1));
+  if(upperGaugeValue) upperGaugeValue.textContent=pct.toFixed(1).replace('.',',')+'%';
+  const upperBars=document.getElementById('v491Bars3d');
+  if(upperBars){
+    const maxMix=Math.max(1,...mix.map(x=>Number(x.value||0)));
+    upperBars.innerHTML=mix.length?mix.map(x=>`<div class="v491Bar3dRow"><span>${esc(typeLabel(x.type))}</span><div><i style="width:${x.value?Math.max(3,Number(x.value||0)/maxMix*100):0}%;--bar:${colors[x.type]||'#2878d8'}"></i></div><b>${fmt(x.value)}</b></div>`).join(''):'<div class="muted">Sem ativos no recorte.</div>';
+  }
+  const upperDiv=document.getElementById('v526DivCount');
+  if(upperDiv) upperDiv.textContent=fmt(metrics.divergences||0);
+
 
   // Evolução por empresa — distribuição de status, não apenas um percentual isolado.
   const groups={};
