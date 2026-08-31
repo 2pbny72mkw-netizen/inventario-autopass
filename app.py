@@ -38,7 +38,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V71.1"
+APP_RELEASE = "V71.1 HOTFIX5"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -12360,6 +12360,29 @@ Acesse o Portal do Cliente para visualizar e baixar os PDFs individuais.")
         app.logger.exception('Falha ao enviar e-mail do agendamento %s',a.code); return 'FALHA',str(exc)[:450]
 
 
+@app.get('/portal-cliente/cadastro-clientes/exportar.xlsx')
+@login_required
+def portal_customer_export_xlsx():
+    if session.get('role')!='manager': abort(403)
+    rows=CustomerCompany.query.order_by(CustomerCompany.active.desc(),CustomerCompany.legal_name).all()
+    wb=Workbook(); ws=wb.active; ws.title='Clientes e Garagens'
+    headers=['Razão Social','Nome Fantasia / Garagem','CNPJ','Inscrição Estadual','Contato','Cargo / Função','Telefone','Celular','E-mail','Endereço de Retirada','Cidade / Região','UF','CEP','Status','Cadastro','Pendências','Observações']
+    ws.append(headers)
+    for c in rows:
+        missing=[]
+        if not c.contact_name: missing.append('Contato')
+        if not c.email: missing.append('E-mail')
+        if not (c.phone or c.mobile): missing.append('Telefone/Celular')
+        if not c.address: missing.append('Endereço')
+        if not c.city: missing.append('Cidade/Região')
+        ws.append([c.legal_name,c.trade_name or '',c.cnpj or '',c.state_registration or '',c.contact_name or '',c.contact_role or '',c.phone or '',c.mobile or '',c.email or '',c.address or '',c.city or '',c.state or '',c.zip_code or '','ATIVO' if c.active else 'INATIVO','PENDENTE' if missing else 'COMPLETO',', '.join(missing),c.notes or ''])
+    for cell in ws[1]: cell.font=Font(bold=True,color='FFFFFF'); cell.fill=PatternFill('solid',fgColor='0B5FC7'); cell.alignment=Alignment(horizontal='center')
+    widths=[28,28,20,18,22,18,22,18,32,42,22,8,14,12,13,35,40]
+    for i,w in enumerate(widths,1): ws.column_dimensions[get_column_letter(i)].width=w
+    ws.freeze_panes='A2'; ws.auto_filter.ref=ws.dimensions
+    bio=io.BytesIO(); wb.save(bio); bio.seek(0)
+    return send_file(bio,as_attachment=True,download_name=f'CLIENTES_GARAGENS_{datetime.now().strftime("%Y%m%d_%H%M")}.xlsx',mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
 @app.get('/portal-cliente/cadastro-clientes/modelo.xlsx')
 @login_required
 def portal_customer_model_xlsx():
@@ -12403,7 +12426,7 @@ def portal_customer_companies():
         if not legal: flash('Razão social é obrigatória.'); return redirect(request.path)
         c=CustomerCompany(legal_name=legal,trade_name=(d.get('trade_name') or '').strip() or None,cnpj=(d.get('cnpj') or '').strip() or None,state_registration=(d.get('state_registration') or '').strip() or None,contact_name=(d.get('contact_name') or '').strip() or None,contact_role=(d.get('contact_role') or '').strip() or None,phone=(d.get('phone') or '').strip() or None,mobile=(d.get('mobile') or '').strip() or None,email=(d.get('email') or '').strip() or None,address=(d.get('address') or '').strip() or None,city=(d.get('city') or '').strip() or None,state=(d.get('state') or '').strip().upper() or None,zip_code=(d.get('zip_code') or '').strip() or None,notes=(d.get('notes') or '').strip() or None)
         db.session.add(c); db.session.commit(); flash('Cliente cadastrado.'); return redirect(request.path)
-    return render_template('customer_companies.html',companies=CustomerCompany.query.order_by(CustomerCompany.active.desc(),CustomerCompany.legal_name).all(),customer_users=User.query.filter(User.role=='customer',User.archived_at.is_(None)).order_by(User.active.desc(),User.name).all(),customer_company_map={u.id:_customer_company_ids(u) for u in User.query.filter(User.role=='customer',User.archived_at.is_(None)).all()})
+    companies=CustomerCompany.query.order_by(CustomerCompany.active.desc(),CustomerCompany.legal_name).all(); customer_users=User.query.filter(User.role=='customer',User.archived_at.is_(None)).order_by(User.active.desc(),User.name).all(); pending_count=sum(1 for c in companies if (not c.contact_name) or (not c.email) or (not (c.phone or c.mobile)) or (not c.address) or (not c.city)); return render_template('customer_companies.html',companies=companies,customer_users=customer_users,pending_count=pending_count,customer_company_map={u.id:_customer_company_ids(u) for u in customer_users})
 
 @app.post('/portal-cliente/cadastro-clientes/<int:cid>/editar')
 @login_required
@@ -12697,6 +12720,18 @@ def v71_blocked_date_delete(bid):
 def v71_schedule_management_page():
     if not _portal_internal():abort(403)
     return render_template('logistics_schedule.html',app_release=APP_RELEASE)
+
+@app.post('/api/portal/logistics/share-whatsapp')
+@login_required
+def portal_logistics_share_whatsapp():
+    if not _portal_internal(): abort(403)
+    data=request.get_json(silent=True) or {}; day=(data.get('date') or '').strip(); count=int(data.get('appointments') or 0)
+    try:
+        db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='PORTAL_LOGISTICS_WHATSAPP_SHARE',entity_type='logistics_day',entity_id=day or 'sem-data',detail=('ATIVIDADE_AGENDADA' if count else 'NOVA_ATIVIDADE')+f' | {count} agendamento(s)'))
+        db.session.commit()
+    except Exception:
+        db.session.rollback(); app.logger.exception('Falha ao auditar compartilhamento WhatsApp da logística')
+    return jsonify({'ok':True,'activity_type':'ATIVIDADE_AGENDADA' if count else 'NOVA_ATIVIDADE'})
 
 @app.get('/api/portal/logistics/management')
 @login_required
