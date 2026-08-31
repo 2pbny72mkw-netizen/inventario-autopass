@@ -38,7 +38,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V71.3 HOTFIX1"
+APP_RELEASE = "V71.3 HOTFIX3"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -8784,6 +8784,18 @@ def _invalidate_chip_swap_cache():
     _chip_swap_payload_cache["at"] = 0.0
     _chip_swap_payload_cache["data"] = None
 
+def _activity_swap_status(value, fallback="PENDENTE"):
+    """V71.3 HF3: status canônico compartilhado por Recarga, Garagem e EMV.
+
+    Evita que filtros/KPIs usem grafias diferentes (CONCLUIDO, CONCLUÍDO,
+    CONCLUIDA, etc.) para o mesmo estado operacional.
+    """
+    raw=normalize(str(value or fallback)).upper().strip()
+    raw=raw.replace("CONCLUIDO","CONCLUÍDA").replace("CONCLUIDA","CONCLUÍDA")
+    if raw in {"CONCLUÍDA","CONCLUIDA","CONCLUÍDO","CONCLUIDO"}: return "CONCLUÍDA"
+    if raw in {"EM ANDAMENTO","ANDAMENTO","EM_ANDAMENTO"}: return "EM ANDAMENTO"
+    return "PENDENTE"
+
 def _chip_swap_locations_payload(force=False):
     """Monta o progresso da troca de chips sem fazer produto cartesiano localidade x ativo.
 
@@ -8861,8 +8873,10 @@ def _chip_swap_locations_payload(force=False):
             sw = swaps.get((loc.id, a.id))
             photos = photo_map.get(sw.id, []) if sw else []
             op_item=op_active.get(str(a.terminal_number or ""))
-            status = sw.status if sw else ((op_item.desired_status if op_item else None) or "PENDENTE")
-            if photos and status != "CONCLUÍDA":
+            status = _activity_swap_status(sw.status if sw else ((op_item.desired_status if op_item else None) or "PENDENTE"))
+            # Evidência em registro ainda não reaberto mantém a execução como concluída.
+            # Reabertura formal (EM ANDAMENTO) prevalece para permitir correção pelo técnico.
+            if photos and status == "PENDENTE":
                 status = "CONCLUÍDA"
             tech = users.get(sw.technician_id) if sw else None
             completed_by = users.get(getattr(sw,"completed_by_id",None)) if sw else None
@@ -8965,14 +8979,14 @@ def chip_swap_admin_status_api(location_id, base_asset_id):
     loc=db.session.get(Location,location_id); asset=db.session.get(BaseAsset,base_asset_id)
     if not loc or not asset or _canonical_equipment_type(asset.equipment_type)!="VALIDADOR" or not _chip_swap_asset_matches_location(asset,loc):
         return jsonify({"ok":False,"error":"Validador não encontrado nesta localidade."}),404
-    data=request.get_json(silent=True) or {}; new=(data.get("status") or "").strip().upper().replace("CONCLUIDA","CONCLUÍDA")
+    data=request.get_json(silent=True) or {}; new=_activity_swap_status(data.get("status"))
     reason=(data.get("reason") or "").strip()
     if new not in {"PENDENTE","EM ANDAMENTO","CONCLUÍDA"}:
         return jsonify({"ok":False,"error":"Status administrativo inválido."}),400
     if not reason:
         return jsonify({"ok":False,"error":"Informe o motivo da alteração administrativa."}),400
     sw=ChipSwap.query.filter_by(location_id=location_id,base_asset_id=base_asset_id).first()
-    old_status=sw.status if sw else "PENDENTE"
+    old_status=_activity_swap_status(sw.status if sw else "PENDENTE")
     if not sw:
         sw=ChipSwap(location_id=location_id,base_asset_id=base_asset_id,technician_id=session["user_id"],status=new,started_at=datetime.utcnow())
         db.session.add(sw)
@@ -9570,7 +9584,7 @@ def _garage_payload(force=False):
     op_map=_op_active_map('garagem')
     out=[]
     for b in bases:
-        sw=sm.get(b.id); ph=photos.get(sw.id,[]) if sw else []; op_item=op_map.get(str(b.terminal or '')); st=sw.status if sw else ((op_item.desired_status if op_item else None) or 'PENDENTE'); u=users.get(sw.technician_id) if sw else None
+        sw=sm.get(b.id); ph=photos.get(sw.id,[]) if sw else []; op_item=op_map.get(str(b.terminal or '')); st=_activity_swap_status(sw.status if sw else ((op_item.desired_status if op_item else None) or 'PENDENTE')); u=users.get(sw.technician_id) if sw else None
         out.append({'id':b.id,'company':b.company,'terminal':b.terminal,'model':b.model or '', 'status':st,'technician':u.name if u else '', 'test_result':sw.test_result if sw else '', 'notes':sw.notes if sw else '', 'photo_count':len(ph),'photos':[{'id':p.id,'url':'/uploads/'+p.stored_name,'thumb_url':'/uploads/'+p.stored_name+'?thumb=1'} for p in ph]})
     with _V63_GARAGE_CACHE_LOCK:
         _V63_GARAGE_CACHE['at']=now; _V63_GARAGE_CACHE['payload']=out
@@ -9680,7 +9694,7 @@ def _v63_build_emv_payload(force=False, include_photos=True):
         if include_photos and sw:
             photos=[{"id":ph.id,"name":ph.original_name,"url":url_for("uploaded",name=ph.stored_name),"thumb_url":url_for("uploaded",name=ph.stored_name,thumb=1),"created_at":ph.created_at.isoformat() if ph.created_at else None} for ph in photo_map.get(sw.id,[])]
         tech=users.get(sw.technician_id) if sw else None; completer=users.get(getattr(sw,"completed_by_id",None)) if sw else None
-        d.update({"status":sw.status if sw else (d.get("_base_status") or "PENDENTE"),"test_result":sw.test_result if sw else None,"notes":sw.notes if sw else "","swap_id":sw.id if sw else None,"station_name":station_name,"photos":photos if include_photos else [],"photo_count":len(photos) if include_photos else None,"technician":tech.name if tech else "","completed_by":completer.name if completer else (tech.name if sw and sw.completed_at and tech else ""),"completed_by_role":completer.role if completer else (tech.role if sw and sw.completed_at and tech else ""),"completed_at":sw.completed_at.isoformat() if sw and sw.completed_at else None,"updated_at":sw.updated_at.isoformat() if sw and sw.updated_at else None})
+        d.update({"status":_activity_swap_status(sw.status if sw else (d.get("_base_status") or "PENDENTE")),"test_result":sw.test_result if sw else None,"notes":sw.notes if sw else "","swap_id":sw.id if sw else None,"station_name":station_name,"photos":photos if include_photos else [],"photo_count":len(photos) if include_photos else None,"technician":tech.name if tech else "","completed_by":completer.name if completer else (tech.name if sw and sw.completed_at and tech else ""),"completed_by_role":completer.role if completer else (tech.role if sw and sw.completed_at and tech else ""),"completed_at":sw.completed_at.isoformat() if sw and sw.completed_at else None,"updated_at":sw.updated_at.isoformat() if sw and sw.updated_at else None})
         rows.append(d)
     base_terms={str(x.get("terminal") or "") for x in base_rows}
     has_op_base=OperationalBaseItem.query.filter_by(module="EMV").with_entities(OperationalBaseItem.id).first() is not None
@@ -9692,7 +9706,7 @@ def _v63_build_emv_payload(force=False, include_photos=True):
         if include_photos:
             photos=[{"id":ph.id,"name":ph.original_name,"url":url_for("uploaded",name=ph.stored_name),"thumb_url":url_for("uploaded",name=ph.stored_name,thumb=1),"created_at":ph.created_at.isoformat() if ph.created_at else None} for ph in photo_map.get(sw.id,[])]
         tech=users.get(sw.technician_id); completer=users.get(getattr(sw,"completed_by_id",None))
-        rows.append({"company":sw.company or "","line":sw.line or "","station":sw.station or "","station_name":sw.station or "","terminal":sw.terminal,"block_number":sw.block_number or "","version":"","ip":"","mask":"","gateway":"","dns1":"","dns2":"","group":"","manual_entry":True,"status":sw.status or "PENDENTE","test_result":sw.test_result,"notes":sw.notes or "","swap_id":sw.id,"photos":photos if include_photos else [],"photo_count":len(photos) if include_photos else None,"technician":tech.name if tech else "","completed_by":completer.name if completer else "","completed_at":sw.completed_at.isoformat() if sw.completed_at else None,"updated_at":sw.updated_at.isoformat() if sw.updated_at else None})
+        rows.append({"company":sw.company or "","line":sw.line or "","station":sw.station or "","station_name":sw.station or "","terminal":sw.terminal,"block_number":sw.block_number or "","version":"","ip":"","mask":"","gateway":"","dns1":"","dns2":"","group":"","manual_entry":True,"status":_activity_swap_status(sw.status),"test_result":sw.test_result,"notes":sw.notes or "","swap_id":sw.id,"photos":photos if include_photos else [],"photo_count":len(photos) if include_photos else None,"technician":tech.name if tech else "","completed_by":completer.name if completer else "","completed_at":sw.completed_at.isoformat() if sw.completed_at else None,"updated_at":sw.updated_at.isoformat() if sw.updated_at else None})
     with _V63_EMV_CACHE_LOCK:
         _V63_EMV_CACHE[mode]={"at":time.monotonic(),"payload":rows}
     return rows
@@ -9824,7 +9838,7 @@ def emv_chip_save(terminal):
 def emv_chip_admin_status(terminal):
     role=session.get("role")
     if role not in ("manager","manager_field"): return jsonify({"ok":False,"error":"Alteração administrativa restrita ao Gestor/ADM."}),403
-    _ensure_emv_tables(); sw=EmvChipSwap.query.filter_by(terminal=terminal).first(); d=request.get_json(silent=True) or {}; new=(d.get("status") or "").strip().upper().replace("CONCLUIDA","CONCLUÍDA"); reason=(d.get("reason") or "").strip()
+    _ensure_emv_tables(); sw=EmvChipSwap.query.filter_by(terminal=terminal).first(); d=request.get_json(silent=True) or {}; new=_activity_swap_status(d.get("status")); reason=(d.get("reason") or "").strip()
     if not sw: return jsonify({"ok":False,"error":"Registro não encontrado."}),404
     if new not in {"PENDENTE","EM ANDAMENTO","CONCLUÍDA"}: return jsonify({"ok":False,"error":"Status inválido."}),400
     # ADM (role=manager) pode retificar o status sem justificativa; Gestor Field
@@ -9833,7 +9847,7 @@ def emv_chip_admin_status(terminal):
     old=sw.status; sw.status=new; sw.updated_at=datetime.utcnow()
     if new=="CONCLUÍDA": sw.completed_at=sw.completed_at or datetime.utcnow(); sw.completed_by_id=sw.completed_by_id or session.get("user_id")
     else: sw.completed_at=None
-    db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="EMV_CHIP_SWAP_ADMIN_STATUS",entity_type="emv_chip_swap",entity_id=str(sw.id),detail=f"{terminal} · {old} -> {new} · motivo: {reason or 'retificação ADM'}"));db.session.commit();return jsonify({"ok":True,"status":new})
+    db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="EMV_CHIP_SWAP_ADMIN_STATUS",entity_type="emv_chip_swap",entity_id=str(sw.id),detail=f"{terminal} · {old} -> {new} · motivo: {reason or 'retificação ADM'}"));db.session.commit();_v63_invalidate_emv_cache();return jsonify({"ok":True,"status":new})
 
 @app.delete("/api/emv-chip-swaps/photos/<int:photo_id>")
 @emv_field_required
@@ -9844,7 +9858,7 @@ def emv_chip_delete_photo(photo_id):
     _delete_stored_media(ph.stored_name); db.session.delete(ph); db.session.flush()
     remaining=EmvChipSwapPhoto.query.filter_by(swap_id=sw.id).count() if sw else 0
     if sw and remaining==0:
-        sw.status="PENDENTE"; sw.completed_at=None; sw.updated_at=datetime.utcnow()
+        sw.status="EM ANDAMENTO"; sw.completed_at=None; sw.updated_at=datetime.utcnow()
     db.session.commit()
     _v63_invalidate_emv_cache()
     return jsonify({"ok":True,"remaining":remaining,"status":sw.status if sw else "PENDENTE"})
