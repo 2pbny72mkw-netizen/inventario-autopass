@@ -496,12 +496,14 @@
    const cov=document.getElementById('assetCoverageTop'), g=document.getElementById('v491Gauge'), gv=document.getElementById('v491GaugeValue');
    const pct=cov?Math.max(0,Math.min(100,parseFloat((cov.textContent||'0').replace(',','.'))||0)):0;
    if(g)g.style.setProperty('--pct',pct); if(gv)gv.textContent=(String(pct).replace('.',','))+'%';
-   const vals=ids.map(x=>[x[0],n(x[1])]), total=vals.reduce((a,x)=>a+x[1],0)||1;
-   const colors=['#2878e8','#18a873','#ff9f1c','#18b7a6']; let acc=0, stops=[];
-   vals.forEach((x,i)=>{let a=acc/total*360;acc+=x[1];let b=acc/total*360;stops.push(`${colors[i]} ${a}deg ${b}deg`)});
-   const max=Math.max(...vals.map(x=>x[1]),1), bars=document.getElementById('v491Bars3d'); if(bars)bars.innerHTML=vals.map((x,i)=>`<div class="v491Bar3dRow"><span>${x[0]}</span><div><i style="width:${Math.max(3,x[1]/max*100)}%;--bar:${colors[i]}"></i></div><b>${x[1].toLocaleString('pt-BR')}</b></div>`).join(''); const dc=document.getElementById('v526DivCount'); if(dc)dc.textContent=(document.getElementById('divergences')?.textContent||'0');
+   const vals=ids.map(x=>[x[0],n(x[1])]);
+   const colors=['#2878e8','#18a873','#ff9f1c','#18b7a6'];
+   const max=Math.max(...vals.map(x=>x[1]),1), bars=document.getElementById('v491Bars3d');
+   if(bars)bars.innerHTML=vals.map((x,i)=>`<div class="v491Bar3dRow"><span>${x[0]}</span><div><i style="width:${x[1]?Math.max(3,x[1]/max*100):0}%;--bar:${colors[i]}"></i></div><b>${x[1].toLocaleString('pt-BR')}</b></div>`).join('');
+   const dc=document.getElementById('v526DivCount'); if(dc)dc.textContent=(document.getElementById('divergences')?.textContent||'0');
  }
- document.addEventListener('DOMContentLoaded',()=>{refreshV491();setTimeout(refreshV491,800);setTimeout(refreshV491,2200); const target=document.getElementById('v23DashboardShell'); if(target)new MutationObserver(refreshV491).observe(target,{subtree:true,childList:true,characterData:true});});
+ window.refreshV712Overview=refreshV491;
+ document.addEventListener('DOMContentLoaded',()=>{refreshV491();setTimeout(refreshV491,800);setTimeout(refreshV491,2200);});
 })();
 </script>
 {% block scripts %}
