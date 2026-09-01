@@ -38,7 +38,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V71.4 HOTFIX1"
+APP_RELEASE = "V71.4 HOTFIX2"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -1455,6 +1455,22 @@ def manager_required(fn):
     return inner
 
 
+
+def _v714_safe_non_dashboard_landing():
+    """Destino seguro para usuários sem acesso ao Dashboard.
+    Nunca devolve /dashboard ou /gerencial, evitando ciclos de redirect.
+    """
+    role = session.get("role")
+    if role == "hr":
+        return "/equipes"
+    if role == "atm_financial_admin":
+        return "/financeiro"
+    if role == "customer":
+        return "/portal-cliente"
+    if role in ("technician", "technician_implantation", "manager", "manager_field"):
+        return "/atividades"
+    return "/meu-perfil"
+
 def dashboard_required(fn):
     """Painel gerencial completo: Gestor, Gestor Field, Consulta e Dispatcher."""
     @wraps(fn)
@@ -1462,7 +1478,7 @@ def dashboard_required(fn):
         if not session.get("user_id"):
             return redirect(url_for("login"))
         if not _has_access("dashboard"):
-            return redirect(url_for("dashboard_landing"))
+            return redirect(_v714_safe_non_dashboard_landing())
         return fn(*args, **kwargs)
     return inner
 
@@ -1591,8 +1607,11 @@ def field_dashboard_required(fn):
 @app.get("/dashboard")
 @login_required
 def dashboard_landing():
-    # V71.4 HOTFIX1: alias legado sem canonicalização global.
-    return redirect(url_for("manager"))
+    # V71.4 HOTFIX2: compatibilidade sem ciclos.
+    if _has_access("dashboard"):
+        return redirect("/gerencial")
+    return redirect(_v714_safe_non_dashboard_landing())
+
 
 @app.route("/")
 def index():
@@ -1608,7 +1627,9 @@ def index():
     if role == "technician":
         return redirect(url_for("field_dashboard_page"))
     if role in ("manager", "manager_field", "consultation", "dispatcher", "technician_implantation"):
-        return redirect(url_for("manager"))
+        if _has_access("dashboard"):
+            return redirect("/gerencial")
+        return redirect(_v714_safe_non_dashboard_landing())
     return redirect(url_for("my_profile_page"))
 
 
@@ -9715,9 +9736,24 @@ def _v63_build_emv_payload(force=False, include_photos=True):
 @app.get("/api/emv-chip-swaps/")
 @login_required
 def emv_chip_list_legacy_slash():
-    qs = request.query_string.decode("utf-8", "ignore")
-    target = "/api/emv-chip-swaps" + (("?" + qs) if qs else "")
-    return redirect(target)
+    # V66 REV4.2: compatibilidade para clientes antigos sem redirecionamento.
+    # A REV4.1 mostrou que o 308 mantinha uma segunda trilha de chamadas na
+    # telemetria. A URL legada agora devolve diretamente o payload SLIM, sem
+    # fotos/evidências e sem executar o pipeline full. Clientes atuais usam a
+    # rota canônica sem barra.
+    rows=list(_v63_build_emv_payload(include_photos=False))
+    slim=[]
+    for x in rows:
+        slim.append({k:x.get(k) for k in (
+            "company","line","station","station_name","terminal",
+            "block_number","model","version","status","test_result",
+            "technician","completed_by","completed_at","manual_entry"
+        )})
+    resp=jsonify({"ok":True,"rows":slim,"release":APP_RELEASE,"legacy":True})
+    resp.headers["X-Autopass-Canonical"]="/api/emv-chip-swaps"
+    resp.headers["X-Autopass-Deprecated"]="1"
+    resp.headers["X-Autopass-Payload-Mode"]="slim-legacy"
+    return resp
 
 @app.get("/api/emv-chip-swaps", strict_slashes=True)
 @login_required
