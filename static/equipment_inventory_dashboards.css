@@ -11,3 +11,5 @@
 @media(max-width:1100px){.invFilters{grid-template-columns:repeat(3,1fr)}.invKpis{grid-template-columns:repeat(3,1fr)}}@media(max-width:760px){.invGrid,.invGridTop{grid-template-columns:1fr}.invFilters{grid-template-columns:1fr 1fr}.invKpis{grid-template-columns:1fr 1fr}.invDashHero{flex-direction:column}}
 
 .invFamilyDash.is-active{display:block!important}
+
+.invKpisV716{grid-template-columns:repeat(6,1fr)}@media(max-width:1200px){.invKpisV716{grid-template-columns:repeat(3,1fr)}}

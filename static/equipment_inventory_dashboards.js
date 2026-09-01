@@ -14,7 +14,7 @@ async function load(panel){
    const res=await fetch(url,{cache:"no-store",headers:{Accept:"application/json"}});const d=await res.json();if(!res.ok||!d.ok)throw new Error(d.error||"Falha ao carregar");
    cache.set(panel,d);
    const set=(k,v)=>{const e=panel.querySelector(`[data-kpi="${k}"]`);if(e)e.textContent=v};
-   set("total",d.total);set("totalDonut",d.total);set("locations",d.unique_locations);set("models",Object.keys(d.models||{}).length);set("inbase",d.in_base);set("divergences",d.divergences);set("rowsTag",`${d.total} registros`);
+   set("total",d.expected??d.total);set("totalDonut",d.expected??d.total);set("locations",d.unique_locations);set("models",Object.keys(d.models||{}).length);set("inbase",d.inventoried??0);set("missing",d.missing??0);set("coverage",(d.coverage??0)+"%");set("divergences",d.divergences);set("rowsTag",`${d.expected??d.total} previstos · ${d.inventoried??0} inventariados`);
    const opts=d.options||{};
    [["company","companies"],["line","lines"],["locality","localities"],["model","models"],["status","statuses"],["subtype","subtypes"]].forEach(([f,o])=>{const el=panel.querySelector(`[data-filter="${f}"]`);if(el)fillSelect(el,opts[o]||[],el.value)});
    bars(panel.querySelector('[data-chart="companies"]'),d.companies,12,k=>{const e=panel.querySelector('[data-filter="company"]');if(e){e.value=k;load(panel)}});
@@ -24,7 +24,7 @@ async function load(panel){
    const tech=panel.querySelector('[data-chart="versions"],[data-chart="installations"]'); if(tech) bars(tech,tech.dataset.chart==="installations"?d.installations:d.versions,10);
    const sub=panel.querySelector('[data-chart="subtypes"]'); if(sub) bars(sub,d.subtypes,6,k=>{const e=panel.querySelector('[data-filter="subtype"]');if(e){e.value=k;load(panel)}});
    legend(panel.querySelector('[data-chart="models"]'),d.models,8);
-   const tbody=panel.querySelector('[data-table="assets"]');tbody.innerHTML=(d.assets||[]).slice(0,500).map(r=>`<tr><td>${esc(r.company)}</td><td>${esc(r.line)}</td><td>${esc(r.locality)}</td><td>${esc(r.type)}</td><td>${esc(r.asset)}</td><td>${esc(r.serial)}</td><td>${esc(r.model)}</td><td>${esc(r.supplier)}</td><td>${esc(r.version)}</td><td>${esc(r.status)}</td></tr>`).join("")||'<tr><td colspan="10">Sem registros no recorte.</td></tr>';
+   const tbody=panel.querySelector('[data-table="assets"]');tbody.innerHTML=(d.assets||[]).slice(0,500).map(r=>`<tr><td>${esc(r.company)}</td><td>${esc(r.line)}</td><td>${esc(r.locality)}</td><td>${esc(r.type)}</td><td>${esc(r.asset)}</td><td>${esc(r.serial)}</td><td>${esc(r.model)}</td><td>${esc(r.supplier)}</td><td>${esc(r.version)}</td><td>${esc(r.status)}</td><td>${r.inventoried?"SIM":"NÃO"}</td></tr>`).join("")||'<tr><td colspan="11">Sem registros no recorte.</td></tr>';
  }catch(err){panel.querySelectorAll(".invBars").forEach(e=>e.innerHTML=`<p class="muted">Falha ao carregar: ${esc(err.message)}</p>`)}
  finally{panel.classList.remove("loading")}
 }
