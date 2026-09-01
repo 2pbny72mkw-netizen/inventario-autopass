@@ -38,7 +38,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V71.3 HOTFIX5"
+APP_RELEASE = "V71.4"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -1758,6 +1758,22 @@ def atm_dashboard_page():
     return redirect(f"/gerencial?view=atm-inventory{suffix}")
 
 
+@app.get("/dashboard/pos")
+@dashboard_required
+def pos_dashboard_page():
+    return redirect("/gerencial?view=pos-inventory")
+
+@app.get("/dashboard/validador-tdi")
+@dashboard_required
+def validator_tdi_dashboard_page():
+    return redirect("/gerencial?view=validator-tdi-inventory")
+
+@app.get("/dashboard/bloqueio")
+@dashboard_required
+def block_dashboard_page():
+    return redirect("/gerencial?view=block-inventory")
+
+
 @app.get("/dashboard/field")
 @field_dashboard_required
 def field_dashboard_page():
@@ -2944,6 +2960,137 @@ def _v551_apply_contract_reference(rows):
             a["contract_end"]=""
         out.append(a)
     return out
+
+
+def _v714_norm_equipment_type(value):
+    s=(str(value or "")).strip().upper()
+    s=s.replace("Á","A").replace("Ã","A").replace("Â","A").replace("É","E").replace("Í","I").replace("Ó","O").replace("Ô","O").replace("Õ","O").replace("Ú","U").replace("Ç","C")
+    if "BLOQUE" in s or "BLOCK" in s: return "BLOQUEIO"
+    if s=="POS" or s.startswith("POS "): return "POS"
+    if "TDI" in s: return "TDI"
+    if "VALID" in s or "RECARGA" in s: return "VALIDADOR"
+    if "ATM" in s: return "ATM"
+    return s or "OUTRO"
+
+@app.get("/api/dashboard/inventory-equipment/<family>")
+@dashboard_required
+def inventory_equipment_dashboard_api(family):
+    """V71.4 — dashboards de parque alimentados exclusivamente pelo Inventário."""
+    family=(family or "").strip().lower()
+    allowed={"pos","validator-tdi","block"}
+    if family not in allowed:
+        return jsonify({"ok":False,"error":"Família de dashboard inválida."}),404
+
+    company=(request.args.get("company") or "").strip()
+    line=(request.args.get("line") or "").strip()
+    locality=(request.args.get("locality") or "").strip()
+    model=(request.args.get("model") or "").strip()
+    status=(request.args.get("status") or "").strip()
+    subtype=(request.args.get("subtype") or "").strip().upper()
+
+    q=(db.session.query(Inventory,Location,BaseAsset)
+       .join(Location,Inventory.location_id==Location.id)
+       .outerjoin(BaseAsset,Inventory.base_asset_id==BaseAsset.id))
+    raw=q.all()
+
+    def belongs(inv):
+        t=_v714_norm_equipment_type(inv.equipment_type)
+        if family=="pos": return t=="POS"
+        if family=="block": return t=="BLOQUEIO"
+        return t in ("VALIDADOR","TDI")
+
+    all_rows=[]
+    for inv,loc,base in raw:
+        if not belongs(inv): continue
+        normalized_type=_v714_norm_equipment_type(inv.equipment_type)
+        row={
+            "id":inv.id,
+            "type":normalized_type,
+            "company":(loc.company or "").strip(),
+            "line":(loc.line or "").strip(),
+            "locality":(loc.location or "").strip(),
+            "asset":(inv.asset_identifier or "").strip(),
+            "serial":(inv.serial or "").strip(),
+            "model":(inv.model or (base.model if base else "") or "Não informado").strip(),
+            "supplier":(inv.supplier or (base.supplier if base else "") or "Não informado").strip(),
+            "application":(inv.application or (base.application if base else "") or "Não informado").strip(),
+            "version":(inv.software_version or (base.software_version if base else "") or "Não informado").strip(),
+            "status":(inv.operational_status or "Não informado").strip(),
+            "connectivity":(inv.connectivity or "Não informado").strip(),
+            "installation_type":((base.installation_type if base else "") or "Não informado").strip(),
+            "installation_date":((base.installation_date if base else "") or "").strip(),
+            "divergence":(inv.divergence or "").strip(),
+            "in_base":(inv.in_base or "").strip(),
+            "created_at":inv.created_at.isoformat() if inv.created_at else None,
+        }
+        all_rows.append(row)
+
+    def match(r, skip=None):
+        checks={
+            "company":company, "line":line, "locality":locality,
+            "model":model, "status":status, "subtype":subtype
+        }
+        for k,v in checks.items():
+            if k==skip or not v: continue
+            field="type" if k=="subtype" else k
+            if str(r.get(field) or "").strip()!=v: return False
+        return True
+
+    rows=[r for r in all_rows if match(r)]
+
+    def agg(items,key):
+        out={}
+        for r in items:
+            v=(str(r.get(key) or "Não informado")).strip() or "Não informado"
+            out[v]=out.get(v,0)+1
+        return dict(sorted(out.items(),key=lambda kv:(-kv[1],kv[0].casefold())))
+
+    def facet(key):
+        vals=[]
+        for r in all_rows:
+            if match(r,skip=key):
+                field="type" if key=="subtype" else key
+                v=str(r.get(field) or "").strip()
+                if v: vals.append(v)
+        return sorted(set(vals),key=lambda x:x.casefold())
+
+    statuses=agg(rows,"status")
+    operational=sum(v for k,v in statuses.items() if any(x in k.upper() for x in ("OPER","ATIV","OK","FUNCION")))
+    divergence_count=sum(1 for r in rows if str(r.get("divergence") or "").strip())
+    base_count=sum(1 for r in rows if str(r.get("in_base") or "").strip().upper() in ("SIM","S","YES","1","TRUE","NA BASE"))
+    locations=agg(rows,"locality")
+    companies=agg(rows,"company")
+    lines=agg(rows,"line")
+    models=agg(rows,"model")
+    suppliers=agg(rows,"supplier")
+    applications=agg(rows,"application")
+    versions=agg(rows,"version")
+    installations=agg(rows,"installation_type")
+    subtypes=agg(rows,"type")
+
+    # Evolução do próprio inventário: registros criados por dia, últimos 14 dias com dados.
+    daily={}
+    for r in rows:
+        d=(r.get("created_at") or "")[:10]
+        if d: daily[d]=daily.get(d,0)+1
+    daily=dict(sorted(daily.items())[-14:])
+
+    return jsonify({
+        "ok":True, "release":APP_RELEASE, "source":"Inventário do Sistema",
+        "family":family, "total":len(rows), "operational":operational,
+        "divergences":divergence_count, "in_base":base_count,
+        "unique_locations":len([k for k in locations if k!="Não informado"]),
+        "companies":companies, "lines":lines, "locations":locations,
+        "models":models, "suppliers":suppliers, "applications":applications,
+        "versions":versions, "installations":installations, "subtypes":subtypes,
+        "statuses":statuses, "daily":daily, "assets":rows,
+        "options":{
+            "companies":facet("company"), "lines":facet("line"),
+            "localities":facet("locality"), "models":facet("model"),
+            "statuses":facet("status"),
+            "subtypes":facet("subtype") if family=="validator-tdi" else []
+        }
+    })
 
 @app.get("/api/dashboard/inventory-atm")
 @dashboard_required
@@ -11603,6 +11750,9 @@ BUILTIN_DASHBOARD_CATALOG = [
     {"key":"overview","label":"Visão Geral","group":"VISÃO GERAL","icon":"▦","roles":[]},
     {"key":"execution","label":"Inventário","group":"ATIVIDADES","icon":"▥","roles":[]},
     {"key":"atm-inventory","label":"Dashboard ATM","group":"ATIVIDADES","icon":"▦","roles":[]},
+    {"key":"pos-inventory","label":"Dashboard POS","group":"ATIVIDADES","icon":"▦","roles":[]},
+    {"key":"validator-tdi-inventory","label":"Dashboard Validador + TDI","group":"ATIVIDADES","icon":"▦","roles":[]},
+    {"key":"block-inventory","label":"Dashboard Bloqueio","group":"ATIVIDADES","icon":"▦","roles":[]},
     {"key":"financial-dashboard","label":"Dashboard Financeiro","group":"ATIVIDADES","icon":"$","roles":["manager","manager_field","atm_financial_admin"]},
     {"key":"journal","label":"Diário de bordo","group":"ATIVIDADES","icon":"◷","roles":[]},
     {"key":"topdesk","label":"Dashboard Chamados","group":"SUPORTE A CAMPO","icon":"⚡","roles":[]},
