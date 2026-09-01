@@ -38,7 +38,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V71.4"
+APP_RELEASE = "V71.4 HOTFIX1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -220,22 +220,6 @@ with app.app_context():
         event.listen(_perf_engine, "before_cursor_execute", _perf_sql_before)
     if not event.contains(_perf_engine, "after_cursor_execute", _perf_sql_after):
         event.listen(_perf_engine, "after_cursor_execute", _perf_sql_after)
-
-# V71.4 — URL canônica global.
-# Remove barras duplicadas e barra final desnecessária sem perder método/body (HTTP 308).
-@app.before_request
-def _v714_canonical_url():
-    path = request.path or "/"
-    if path == "/":
-        return None
-    normalized = re.sub(r"/{2,}", "/", path)
-    if normalized.endswith("/") and normalized != "/":
-        normalized = normalized.rstrip("/")
-    if normalized != path:
-        qs = request.query_string.decode("utf-8", "ignore")
-        target = normalized + (("?" + qs) if qs else "")
-        return redirect(target, code=308)
-    return None
 
 # V56-B — telemetria leve. Não registra arquivos estáticos nem a própria API de telemetria.
 @app.before_request
@@ -1607,8 +1591,8 @@ def field_dashboard_required(fn):
 @app.get("/dashboard")
 @login_required
 def dashboard_landing():
-    # V71.4: alias legado. Toda navegação nova usa /gerencial.
-    return redirect(url_for("manager"), code=308)
+    # V71.4 HOTFIX1: alias legado sem canonicalização global.
+    return redirect(url_for("manager"))
 
 @app.route("/")
 def index():
@@ -3359,7 +3343,7 @@ def hardware_implantation_dashboard_canonical():
         abort(403)
     # V55.2: gestores visualizam a dashboard dentro do shell gerencial; não como atividade.
     if session.get("role") in ("manager","manager_field"):
-        return redirect("/gerencial?view=implantation-dashboard", code=308)
+        return redirect("/gerencial?view=implantation-dashboard")
     return render_template("hardware_implantation_dashboard.html", app_release=APP_RELEASE)
 
 @app.get("/dashboard/implantacao/embed")
@@ -9667,7 +9651,7 @@ def garage_chip_export_xlsx():
 @login_required
 def garage_chip_dashboard_page():
     # V69.3.2: Dashboard Garagem faz parte da Central /gerencial, como Recarga e EMV.
-    return redirect(url_for('manager', view='garage'), code=308)
+    return redirect(url_for('manager', view='garage'))
 
 @app.get("/troca-chips-emv")
 @emv_field_required
@@ -9733,7 +9717,7 @@ def _v63_build_emv_payload(force=False, include_photos=True):
 def emv_chip_list_legacy_slash():
     qs = request.query_string.decode("utf-8", "ignore")
     target = "/api/emv-chip-swaps" + (("?" + qs) if qs else "")
-    return redirect(target, code=308)
+    return redirect(target)
 
 @app.get("/api/emv-chip-swaps", strict_slashes=True)
 @login_required
