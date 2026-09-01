@@ -1471,3 +1471,44 @@ window.addEventListener('load',()=>{if(location.hash){const el=document.querySel
 async function v66Forecast(module,id){const el=document.getElementById(id);if(!el)return;try{const d=await fetch('/api/operational-forecast?module='+encodeURIComponent(module),{cache:'no-store'}).then(r=>r.json());if(!d.ok)throw new Error(d.error||'forecast');const eta=d.eta_days==null?'sem previsão':(d.eta_days===0?'concluída':`~${String(d.eta_days).replace('.',',')} dia(s)`);const date=d.eta_date?new Date(d.eta_date+'T12:00:00').toLocaleDateString('pt-BR'):'—';el.innerHTML=`<b>Tendência últimos ${d.window_days} dia(s):</b> ${d.completed_in_window} conclusão(ões) · ${String(d.daily_rate).replace('.',',')}/dia · <b>${eta}</b>${d.eta_date?' · previsão '+date:''} · ${d.trend.toLowerCase()} · confiança ${d.confidence.toLowerCase()}.`}catch(e){el.textContent='Tendência indisponível neste momento.'}}
 
 if(document.getElementById('emvForecast'))v66Forecast('emv','emvForecast');if(document.getElementById('chipForecast'))v66Forecast('recarga','chipForecast');
+
+
+// V71.5 — ativação universal de painéis adicionados após o switcher legado.
+(function(){
+  const managedViews = new Set(["pos-inventory","validator-tdi-inventory","block-inventory"]);
+  function activateNewInventoryPanel(view){
+    if(!managedViews.has(view)) return false;
+    const target = document.querySelector(`[data-v23-panel="${view}"]`);
+    if(!target) return false;
+
+    document.querySelectorAll("[data-v23-panel]").forEach(p=>{
+      if (p.classList.contains("invFamilyDash")) {
+        p.classList.toggle("is-active", p===target);
+      } else {
+        p.style.display = (p===target ? "" : "none");
+      }
+    });
+
+    if(window.activateInventoryEquipmentDashboard){
+      window.activateInventoryEquipmentDashboard(view);
+    }
+    return true;
+  }
+
+  document.addEventListener("click", ev=>{
+    const item=ev.target.closest("[data-v23-view]");
+    if(!item) return;
+    const view=item.getAttribute("data-v23-view");
+    if(managedViews.has(view)){
+      setTimeout(()=>activateNewInventoryPanel(view),0);
+    }
+  });
+
+  const boot=()=>{
+    const view=new URLSearchParams(location.search).get("view");
+    if(view) activateNewInventoryPanel(view);
+  };
+  if(document.readyState==="loading") document.addEventListener("DOMContentLoaded",boot); else boot();
+
+  window.v715ActivateNewInventoryPanel=activateNewInventoryPanel;
+})();

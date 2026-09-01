@@ -34,7 +34,20 @@ function init(panel){
  panel.querySelector(".invClear")?.addEventListener("click",()=>{panel.querySelectorAll("[data-filter]").forEach(e=>e.value="");load(panel)});
  panel.querySelector(".invExport")?.addEventListener("click",()=>{const d=cache.get(panel);if(d)csvDownload(d.assets||[],panel.dataset.family)});
 }
-function activate(view){document.querySelectorAll(`.invFamilyDash[data-v23-panel="${view}"]`).forEach(p=>{init(p);load(p)})}
+function activate(view){
+ document.querySelectorAll(".invFamilyDash").forEach(p=>p.classList.remove("is-active"));
+ document.querySelectorAll(`.invFamilyDash[data-v23-panel="${view}"]`).forEach(p=>{
+   p.classList.add("is-active");
+   init(p);
+   load(p);
+ });
+}
+window.activateInventoryEquipmentDashboard=activate;
 document.addEventListener("click",e=>{const b=e.target.closest("[data-v23-view]");if(b)activate(b.dataset.v23View)});
-window.addEventListener("DOMContentLoaded",()=>{document.querySelectorAll(".invFamilyDash").forEach(init);const v=new URLSearchParams(location.search).get("view");if(v)activate(v)});
+const boot=()=>{
+ document.querySelectorAll(".invFamilyDash").forEach(init);
+ const v=new URLSearchParams(location.search).get("view");
+ if(v) activate(v);
+};
+if(document.readyState==="loading") window.addEventListener("DOMContentLoaded",boot); else boot();
 })();
