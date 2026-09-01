@@ -21,7 +21,7 @@
       </div>
     </div>
     <nav class="mainNavV424">
-      {% if can_view('dashboard') %}<a href="/dashboard">Dashboard</a>{% endif %}
+      {% if can_view('dashboard') %}<a href="/gerencial">Dashboard</a>{% endif %}
       {% if can_view('field') %}
       <div class="navDrop"><button type="button" class="navDropBtn">Field ▾</button><div class="navDropMenu">
         {% if can_view('field.dashboard') %}<a href="/dashboard/field">Dashboard Field</a>{% endif %}
