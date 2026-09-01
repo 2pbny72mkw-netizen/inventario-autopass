@@ -38,7 +38,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V71.4 HOTFIX2"
+APP_RELEASE = "V71.3 HOTFIX4"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -1455,22 +1455,6 @@ def manager_required(fn):
     return inner
 
 
-
-def _v714_safe_non_dashboard_landing():
-    """Destino seguro para usuários sem acesso ao Dashboard.
-    Nunca devolve /dashboard ou /gerencial, evitando ciclos de redirect.
-    """
-    role = session.get("role")
-    if role == "hr":
-        return "/equipes"
-    if role == "atm_financial_admin":
-        return "/financeiro"
-    if role == "customer":
-        return "/portal-cliente"
-    if role in ("technician", "technician_implantation", "manager", "manager_field"):
-        return "/atividades"
-    return "/meu-perfil"
-
 def dashboard_required(fn):
     """Painel gerencial completo: Gestor, Gestor Field, Consulta e Dispatcher."""
     @wraps(fn)
@@ -1478,7 +1462,7 @@ def dashboard_required(fn):
         if not session.get("user_id"):
             return redirect(url_for("login"))
         if not _has_access("dashboard"):
-            return redirect(_v714_safe_non_dashboard_landing())
+            return redirect(url_for("dashboard_landing"))
         return fn(*args, **kwargs)
     return inner
 
@@ -1607,11 +1591,9 @@ def field_dashboard_required(fn):
 @app.get("/dashboard")
 @login_required
 def dashboard_landing():
-    # V71.4 HOTFIX2: compatibilidade sem ciclos.
-    if _has_access("dashboard"):
-        return redirect("/gerencial")
-    return redirect(_v714_safe_non_dashboard_landing())
-
+    # V69.3.2: existe uma única central de dashboards: /gerencial.
+    # Elimina a tela intermediária (dashboard_hub) e preserva o menu lateral.
+    return redirect(url_for("manager"))
 
 @app.route("/")
 def index():
@@ -1624,12 +1606,8 @@ def index():
         return redirect(url_for("financial_cost_management_page"))
     if role == "customer":
         return redirect(url_for("portal_cliente_page"))
-    if role == "technician":
-        return redirect(url_for("field_dashboard_page"))
-    if role in ("manager", "manager_field", "consultation", "dispatcher", "technician_implantation"):
-        if _has_access("dashboard"):
-            return redirect("/gerencial")
-        return redirect(_v714_safe_non_dashboard_landing())
+    if role in ("manager", "manager_field", "consultation", "dispatcher", "technician", "technician_implantation"):
+        return redirect(url_for("dashboard_landing"))
     return redirect(url_for("my_profile_page"))
 
 
