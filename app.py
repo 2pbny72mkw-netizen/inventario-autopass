@@ -38,7 +38,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V71.3 HOTFIX4"
+APP_RELEASE = "V71.3 HOTFIX5"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -2105,8 +2105,25 @@ def _team_latest_position(user_id, only_today=True):
 
 
 @app.post("/api/tecnico/position")
-@field_required
+@login_required
 def technician_position_update():
+    # V71.3 HOTFIX5:
+    # GPS é compartilhado por operação Field e Implantação.
+    # Técnico Implantação não deve precisar da permissão genérica "field".
+    allowed_roles = {
+        "technician",
+        "technician_implantation",
+        "manager",
+        "manager_field",
+        "dispatcher",
+        "consultation",
+    }
+    if session.get("role") not in allowed_roles:
+        return jsonify({
+            "ok": False,
+            "error": "forbidden",
+            "message": "Sem permissão para registrar localização."
+        }), 403
     data = request.get_json(silent=True) or {}
     try:
         lat = float(data.get("latitude"))
