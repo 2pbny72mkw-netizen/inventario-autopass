@@ -1740,3 +1740,6 @@ body.mapFullscreenOpen .topbar{z-index:20!important;}
  .activityNav{justify-content:stretch!important;display:grid!important;grid-template-columns:repeat(3,1fr)!important;gap:6px!important;position:sticky;top:0;z-index:20;background:#f7fafc;padding:6px 0}
  .activityNav a{text-align:center;padding:9px 5px!important;font-size:13px!important;white-space:nowrap}
 }
+
+/* V71.7 evidence chooser */
+.fieldEvidenceActions{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 8px}.fieldEvidenceBtn{display:inline-flex!important;align-items:center;justify-content:center;gap:6px;cursor:pointer;padding:9px 12px!important;border-radius:10px!important;min-width:140px}.fieldEvidenceBtn input{display:none!important}@media(max-width:640px){.fieldEvidenceActions{display:grid;grid-template-columns:1fr 1fr}.fieldEvidenceBtn{min-width:0;width:100%;box-sizing:border-box}}
