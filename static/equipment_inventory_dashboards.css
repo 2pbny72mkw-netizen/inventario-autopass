@@ -13,3 +13,23 @@
 .invFamilyDash.is-active{display:block!important}
 
 .invKpisV716{grid-template-columns:repeat(6,1fr)}@media(max-width:1200px){.invKpisV716{grid-template-columns:repeat(3,1fr)}}
+
+/* V71.6 HOTFIX2 — contraste padrão Dashboard ATM */
+.invFamilyDash .invKpis article{background:#fff!important}
+.invFamilyDash .invKpis article span{color:#18324d!important;font-weight:800!important}
+.invFamilyDash .invKpis article b{color:#0b2d4f!important;font-weight:900!important}
+.invFamilyDash .invKpis article small{color:#425b73!important;font-weight:500!important}
+.invFamilyDash .invDashHero h1,
+.invFamilyDash .sectionHead h2{color:#071f3d!important}
+.invFamilyDash .invDashHero p,
+.invFamilyDash .sectionHead .muted{color:#526b84!important}
+
+/* Bloqueios por estação */
+.invStationTableWrap{max-height:310px;overflow:auto;border:1px solid #e0e8f0;border-radius:10px}
+.invStationTable{width:100%;border-collapse:collapse;font-size:12px}
+.invStationTable thead th{position:sticky;top:0;background:#f3f7fb;color:#16324f;text-align:left;padding:9px 10px;border-bottom:1px solid #dce6ef;z-index:1}
+.invStationTable tbody td{padding:8px 10px;border-bottom:1px solid #edf2f7;color:#17324d}
+.invStationTable tbody tr{cursor:pointer}
+.invStationTable tbody tr:hover{background:#eef6ff}
+.invStationTable tbody td:nth-child(3),
+.invStationTable tbody td:nth-child(4){text-align:right}
