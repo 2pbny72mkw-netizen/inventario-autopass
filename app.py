@@ -38,7 +38,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V71.6 HOTFIX1"
+APP_RELEASE = "V71.6 HOTFIX2"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -3043,6 +3043,32 @@ def inventory_equipment_dashboard_api(family):
         return sorted(set(vals),key=lambda x:x.casefold())
 
     expected=len(rows); inventoried=sum(1 for r in rows if r["inventoried"]); missing=max(expected-inventoried,0)
+
+    station_comparison=[]
+    station_count=len({(r["company"],r["locality"]) for r in rows if r["locality"]})
+    avg_per_station=round(expected/station_count,1) if station_count else 0
+    if family=="block":
+        company_totals={}
+        station_totals={}
+        for r in rows:
+            company=r["company"] or "Não informado"
+            station=r["locality"] or "Não informado"
+            company_totals[company]=company_totals.get(company,0)+1
+            key=(company,station)
+            station_totals[key]=station_totals.get(key,0)+1
+        station_comparison=[
+            {
+                "station":station,
+                "company":company,
+                "qty":qty,
+                "company_share":round(qty*100/company_totals.get(company,1),1)
+            }
+            for (company,station),qty in sorted(
+                station_totals.items(),
+                key=lambda kv:(-kv[1],kv[0][0].casefold(),kv[0][1].casefold())
+            )
+        ]
+
     return jsonify({
         "ok":True,"release":APP_RELEASE,
         "source":"Base prevista (BaseAsset) + Inventário realizado (Inventory)",
@@ -3050,6 +3076,9 @@ def inventory_equipment_dashboard_api(family):
         "coverage":round(inventoried*100/expected,1) if expected else 0,
         "divergences":sum(1 for r in rows if r["divergence"]),
         "unique_locations":len({r["locality"] for r in rows if r["locality"]}),
+        "station_count":station_count,
+        "avg_per_station":avg_per_station,
+        "station_comparison":station_comparison,
         "companies":agg(rows,"company"),"lines":agg(rows,"line"),"locations":agg(rows,"locality"),
         "models":agg(rows,"model"),"suppliers":agg(rows,"supplier"),"applications":agg(rows,"application"),
         "versions":agg(rows,"version"),"installations":agg(rows,"installation_type"),
