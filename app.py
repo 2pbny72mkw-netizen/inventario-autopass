@@ -38,7 +38,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V71.6 HOTFIX3"
+APP_RELEASE = "V71.7"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -429,6 +429,8 @@ class MaterialCatalogItem(db.Model):
     unit = db.Column(db.String(20), nullable=False, default="UN")
     control_type = db.Column(db.String(30), nullable=False, default="DEVOLVIVEL")
     quantity_mode = db.Column(db.String(20), nullable=False, default="INTEIRO")
+    photo_file = db.Column(db.String(700))
+    purchase_url = db.Column(db.String(1200))
     active = db.Column(db.Boolean, nullable=False, default=True, index=True)
     created_by = db.Column(db.Integer, db.ForeignKey("users.id"))
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
@@ -12059,7 +12061,7 @@ def materials_home_page():
 def materials_catalog_api():
     _materials_require('materials.catalog.view')
     rows=MaterialCatalogItem.query.order_by(MaterialCatalogItem.active.desc(),MaterialCatalogItem.description).all()
-    return jsonify({'ok':True,'rows':[{'id':x.id,'code':x.code,'category':x.category,'description':x.description,'brand':x.brand or '', 'model':x.model or '', 'unit':x.unit,'control_type':x.control_type,'quantity_mode':x.quantity_mode or 'INTEIRO','active':x.active} for x in rows]})
+    return jsonify({'ok':True,'rows':[{'id':x.id,'code':x.code,'category':x.category,'description':x.description,'brand':x.brand or '', 'model':x.model or '', 'unit':x.unit,'control_type':x.control_type,'quantity_mode':x.quantity_mode or 'INTEIRO','photo_file':x.photo_file or '', 'photo_url':('/uploads/'+x.photo_file+'?thumb=1' if x.photo_file else ''),'purchase_url':x.purchase_url or '','active':x.active} for x in rows]})
 
 @app.post('/api/materials/catalog')
 @login_required
@@ -12071,7 +12073,57 @@ def materials_catalog_save_api():
     dup=MaterialCatalogItem.query.filter(func.upper(MaterialCatalogItem.code)==code)
     if row.id:dup=dup.filter(MaterialCatalogItem.id!=row.id)
     if dup.first():return jsonify({'ok':False,'error':'Código já cadastrado.'}),409
-    row.code=code;row.description=desc;row.category=(d.get('category') or 'FERRAMENTA').upper();row.brand=(d.get('brand') or '').strip();row.model=(d.get('model') or '').strip();row.unit=(d.get('unit') or 'UN').upper();row.control_type=(d.get('control_type') or 'DEVOLVIVEL').upper();row.quantity_mode=(d.get('quantity_mode') or ('DECIMAL' if row.category=='CONSUMIVEL' else 'INTEIRO')).upper();row.active=bool(d.get('active',True));db.session.add(row);db.session.add(AuditEvent(user_id=session['user_id'],event_type='MATERIAL_CATALOG_SAVE',entity_type='material',entity_id=str(row.id or ''),detail=f'{code} · {desc}'));db.session.commit();return jsonify({'ok':True,'id':row.id})
+    row.code=code;row.description=desc;row.category=(d.get('category') or 'FERRAMENTA').upper();row.brand=(d.get('brand') or '').strip();row.model=(d.get('model') or '').strip();row.unit=(d.get('unit') or 'UN').upper();row.control_type=(d.get('control_type') or 'DEVOLVIVEL').upper();row.quantity_mode=(d.get('quantity_mode') or ('DECIMAL' if row.category=='CONSUMIVEL' else 'INTEIRO')).upper()
+    purchase_url=(d.get('purchase_url') or '').strip()
+    if purchase_url and not purchase_url.lower().startswith(('http://','https://')): return jsonify({'ok':False,'error':'O link para compra deve começar com http:// ou https://.'}),400
+    row.purchase_url=purchase_url;row.active=bool(d.get('active',True));db.session.add(row);db.session.add(AuditEvent(user_id=session['user_id'],event_type='MATERIAL_CATALOG_SAVE',entity_type='material',entity_id=str(row.id or ''),detail=f'{code} · {desc}'));db.session.commit();return jsonify({'ok':True,'id':row.id})
+
+
+@app.post('/api/materials/catalog/<int:mid>/photo')
+@login_required
+def materials_catalog_photo_upload_api(mid):
+    _materials_require('materials.catalog.manage')
+    row=db.session.get(MaterialCatalogItem,mid)
+    if not row:return jsonify({'ok':False,'error':'Item não encontrado.'}),404
+    f=request.files.get('photo')
+    if not f or not f.filename:return jsonify({'ok':False,'error':'Selecione uma foto.'}),400
+    mime=(f.mimetype or '').lower()
+    if mime not in {'image/jpeg','image/png','image/webp'}:return jsonify({'ok':False,'error':'A foto deve ser JPG, PNG ou WEBP.'}),400
+    old=row.photo_file
+    try:
+        ext=Path(secure_filename(f.filename)).suffix.lower()
+        if ext not in {'.jpg','.jpeg','.png','.webp'}:ext='.jpg'
+        stored=f"material-{mid}-{uuid.uuid4().hex[:12]}{ext}"
+        row.photo_file=_store_uploaded_file(f,'materials/catalog',stored,mime,max_mb=5)
+        db.session.add(row);db.session.commit()
+        if old and old!=row.photo_file:
+            try:
+                if old.startswith('r2__'):r2_client().delete_object(Bucket=os.environ["R2_BUCKET_NAME"],Key=old[4:])
+                else:
+                    p=UPLOAD_DIR/old
+                    if p.exists():p.unlink()
+            except Exception:app.logger.warning('Não foi possível remover foto anterior do material %s',mid)
+        return jsonify({'ok':True,'photo_url':'/uploads/'+row.photo_file+'?thumb=1'})
+    except ValueError as exc:
+        db.session.rollback();return jsonify({'ok':False,'error':str(exc)}),400
+    except Exception:
+        db.session.rollback();app.logger.exception('Falha ao salvar foto do material %s',mid);return jsonify({'ok':False,'error':'Não foi possível salvar a foto.'}),500
+
+@app.delete('/api/materials/catalog/<int:mid>/photo')
+@login_required
+def materials_catalog_photo_delete_api(mid):
+    _materials_require('materials.catalog.manage')
+    row=db.session.get(MaterialCatalogItem,mid)
+    if not row:return jsonify({'ok':False,'error':'Item não encontrado.'}),404
+    old=row.photo_file;row.photo_file=None;db.session.add(row);db.session.commit()
+    if old:
+        try:
+            if old.startswith('r2__'):r2_client().delete_object(Bucket=os.environ["R2_BUCKET_NAME"],Key=old[4:])
+            else:
+                p=UPLOAD_DIR/old
+                if p.exists():p.unlink()
+        except Exception:app.logger.warning('Não foi possível remover foto do material %s',mid)
+    return jsonify({'ok':True})
 
 @app.delete('/api/materials/catalog/<int:mid>')
 @login_required
@@ -13349,6 +13401,17 @@ with app.app_context():
                     conn.execute(text("UPDATE material_catalog_items SET quantity_mode = CASE WHEN UPPER(COALESCE(category,''))='CONSUMIVEL' THEN 'DECIMAL' ELSE 'INTEIRO' END WHERE quantity_mode IS NULL"))
     except Exception:
         app.logger.exception('Falha na migração V68 REV1 quantity_mode')
+    # V71.7 — foto de referência e link de compra no catálogo.
+    try:
+        insp=db.inspect(db.engine)
+        if insp.has_table('material_catalog_items'):
+            cols={c['name'] for c in insp.get_columns('material_catalog_items')}
+            with db.engine.begin() as conn:
+                if 'photo_file' not in cols: conn.execute(text("ALTER TABLE material_catalog_items ADD COLUMN photo_file VARCHAR(700)"))
+                if 'purchase_url' not in cols: conn.execute(text("ALTER TABLE material_catalog_items ADD COLUMN purchase_url VARCHAR(1200)"))
+    except Exception:
+        app.logger.exception('Falha na migração aditiva V71.7 material_catalog_items')
+
     # V68 REV2 — dupla assinatura na devolução (colaborador + responsável).
     try:
         insp=db.inspect(db.engine)
