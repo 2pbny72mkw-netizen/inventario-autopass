@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Central de Inteligência | Sistema de Gestão{% endblock %}
 {% block content %}
-<link rel="stylesheet" href="{{url_for('static',filename='equipment_inventory_dashboards.css')}}?v=v71-6">
+<link rel="stylesheet" href="{{url_for('static',filename='equipment_inventory_dashboards.css')}}?v=v71-6-hf2">
 <link rel="stylesheet"
       href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
       integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
@@ -51,19 +51,43 @@
     <div><label>&nbsp;</label><button class="secondary invClear" type="button">Limpar filtros</button></div>
   </section>
   <section class="invKpis invKpisV716">
+    {% if family == 'block' %}
+    <article><span>Parque previsto</span><b data-kpi="total">0</b><small>bloqueios da base oficial</small></article>
+    <article><span>Estações com bloqueio</span><b data-kpi="stations">0</b><small>estações no recorte</small></article>
+    <article><span>Média bloqueios/estação</span><b data-kpi="avgStation">0</b><small>parque ÷ estações</small></article>
+    <article><span>Inventariado</span><b data-kpi="inbase">0</b><small>levantados em campo</small></article>
+    <article class="warn"><span>Faltante</span><b data-kpi="missing">0</b><small>ainda não inventariados</small></article>
+    <article><span>Cobertura</span><b data-kpi="coverage">0%</b><small>inventariado ÷ previsto</small></article>
+    {% else %}
     <article><span>Parque previsto</span><b data-kpi="total">0</b><small>ativos da base oficial</small></article>
     <article><span>Inventariado</span><b data-kpi="inbase">0</b><small>levantados em campo</small></article>
     <article class="warn"><span>Faltante</span><b data-kpi="missing">0</b><small>ainda não inventariados</small></article>
     <article><span>Cobertura</span><b data-kpi="coverage">0%</b><small>inventariado ÷ previsto</small></article>
     <article><span>Localidades</span><b data-kpi="locations">0</b><small>no recorte</small></article>
     <article class="warn"><span>Divergências</span><b data-kpi="divergences">0</b><small>exigem análise</small></article>
+    {% endif %}
   </section>
   <section class="invGrid invGridTop">
     <article class="card"><div class="sectionHead"><div><h2>Equipamentos por operação</h2><p class="muted">Distribuição por empresa · clique para filtrar</p></div></div><div class="invBars" data-chart="companies"></div></article>
     <article class="card"><div class="sectionHead"><div><h2>Mix de modelos</h2><p class="muted">Composição do parque inventariado</p></div></div><div class="invDonutWrap"><div class="invDonut" data-chart="donut"><b data-kpi="totalDonut">0</b><small>{{ badge }}</small></div><div class="invLegend" data-chart="models"></div></div></article>
   </section>
   <section class="invGrid">
-    <article class="card"><div class="sectionHead"><div><h2>Ranking de localidades</h2><p class="muted">Localidades com maior parque no recorte</p></div></div><div class="invBars" data-chart="locations"></div></article>
+    <article class="card">
+      <div class="sectionHead"><div>
+        <h2>{% if family == 'block' %}Bloqueios por estação{% else %}Ranking de localidades{% endif %}</h2>
+        <p class="muted">{% if family == 'block' %}Comparativo por estação e operadora{% else %}Localidades com maior parque no recorte{% endif %}</p>
+      </div></div>
+      {% if family == 'block' %}
+      <div class="invStationTableWrap">
+        <table class="invStationTable">
+          <thead><tr><th>Estação</th><th>Operadora</th><th>Qtd. Bloqueios</th><th>% do parque da operadora</th></tr></thead>
+          <tbody data-table="stations"></tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="invBars" data-chart="locations"></div>
+      {% endif %}
+    </article>
     <article class="card"><div class="sectionHead"><div><h2>Status operacional</h2><p class="muted">Situação registrada no Inventário</p></div></div><div class="invBars" data-chart="statuses"></div></article>
   </section>
   <section class="invGrid">
@@ -566,7 +590,7 @@
   <div class="v343TvFooter"><span id="v343TvHeadline">Monitoramento executivo do inventário.</span><span>SUPORTE A CAMPO · V42.4</span></div>
 </div>
 
-<script src="{{url_for('static',filename='manager.js')}}?v=v71-6"></script>
-<script src="{{url_for('static',filename='equipment_inventory_dashboards.js')}}?v=v71-6"></script>
+<script src="{{url_for('static',filename='manager.js')}}?v=v71-6-hf2"></script>
+<script src="{{url_for('static',filename='equipment_inventory_dashboards.js')}}?v=v71-6-hf2"></script>
 <script src="{{url_for('static',filename='garage_dashboard_v62.js')}}?v=v71-2-hf1"></script>
 {% endblock %}
