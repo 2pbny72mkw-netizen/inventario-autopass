@@ -25,7 +25,7 @@ from functools import wraps
 
 from flask import Flask, has_request_context, render_template, request, redirect, url_for, session, jsonify, flash, send_from_directory, Response, send_file, make_response, g, abort
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import UniqueConstraint, Index, func, case, text, and_, event
+from sqlalchemy import UniqueConstraint, Index, func, case, text, and_, event, or_
 from sqlalchemy.exc import IntegrityError
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -38,7 +38,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V71.6"
+APP_RELEASE = "V71.6 HOTFIX1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
