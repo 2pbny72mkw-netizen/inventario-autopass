@@ -1,5 +1,7 @@
+const CACHE_VERSION_V716HF3 = "v71-6-hf3";
+const CACHE_PREFIX_V716HF3 = "autopass-";
 // V50.6 — cache seguro: páginas, dashboards e APIs nunca são interceptados.
-const CACHE = 'autopass-v71-4-hf2-static';
+const CACHE = 'autopass-v71-2-hf1-static';
 const PRECACHE = ['/static/autopass-icon-192.png','/static/autopass-icon-512.png'];
 self.addEventListener('install', event => {
   event.waitUntil((async()=>{const cache=await caches.open(CACHE);await cache.addAll(PRECACHE);await self.skipWaiting();})());
@@ -26,5 +28,19 @@ self.addEventListener('fetch', event => {
       if(cached) return cached;
       throw error;
     }
+  })());
+});
+
+
+// V71.6 HF3 cache cleanup: remove obsolete Autopass caches deterministically.
+self.addEventListener("activate", event => {
+  event.waitUntil((async () => {
+    const keys = await caches.keys();
+    await Promise.all(
+      keys
+        .filter(k => k.includes("autopass") && !k.includes(CACHE_VERSION_V716HF3))
+        .map(k => caches.delete(k))
+    );
+    await self.clients.claim();
   })());
 });
