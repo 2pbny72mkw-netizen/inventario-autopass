@@ -1,6 +1,6 @@
 
 (()=>{ "use strict";
-const cache=new Map();
+const cache=new Map();const inflight=new WeakMap();const lastQuery=new WeakMap();
 const esc=s=>String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
 function params(panel){const q=new URLSearchParams();panel.querySelectorAll("[data-filter]").forEach(el=>{if(el.value)q.set(el.dataset.filter,el.value)});return q}
 function fillSelect(el,values,keep){const cur=keep??el.value;el.innerHTML='<option value="">Todos</option>'+values.map(v=>`<option>${esc(v)}</option>`).join("");if(values.includes(cur))el.value=cur}
@@ -9,6 +9,10 @@ function legend(el,obj,limit=8){const e=Object.entries(obj||{}).slice(0,limit);e
 function csvDownload(rows,family){const cols=["company","line","locality","type","asset","serial","model","supplier","version","status"];const lines=[cols.join(";"),...rows.map(r=>cols.map(c=>`"${String(r[c]??"").replace(/"/g,'""')}"`).join(";"))];const blob=new Blob(["\ufeff"+lines.join("\n")],{type:"text/csv;charset=utf-8"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`dashboard_${family}_inventario.csv`;a.click();URL.revokeObjectURL(a.href)}
 async function load(panel){
  const family=panel.dataset.family,q=params(panel),url=`/api/dashboard/inventory-equipment/${family}?${q}`;
+ const queryKey=url;
+ if(inflight.get(panel)===queryKey) return;
+ inflight.set(panel,queryKey);
+ lastQuery.set(panel,queryKey);
  panel.classList.add("loading");
  try{
    const res=await fetch(url,{cache:"no-store",headers:{Accept:"application/json"}});const d=await res.json();if(!res.ok||!d.ok)throw new Error(d.error||"Falha ao carregar");
@@ -31,7 +35,10 @@ async function load(panel){
    legend(panel.querySelector('[data-chart="models"]'),d.models,8);
    const tbody=panel.querySelector('[data-table="assets"]');tbody.innerHTML=(d.assets||[]).slice(0,500).map(r=>`<tr><td>${esc(r.company)}</td><td>${esc(r.line)}</td><td>${esc(r.locality)}</td><td>${esc(r.type)}</td><td>${esc(r.asset)}</td><td>${esc(r.serial)}</td><td>${esc(r.model)}</td><td>${esc(r.supplier)}</td><td>${esc(r.version)}</td><td>${esc(r.status)}</td><td>${r.inventoried?"SIM":"NÃO"}</td></tr>`).join("")||'<tr><td colspan="11">Sem registros no recorte.</td></tr>';
  }catch(err){panel.querySelectorAll(".invBars").forEach(e=>e.innerHTML=`<p class="muted">Falha ao carregar: ${esc(err.message)}</p>`)}
- finally{panel.classList.remove("loading")}
+ finally{
+   if(lastQuery.get(panel)===queryKey) inflight.delete(panel);
+   panel.classList.remove("loading");
+ }
 }
 function init(panel){
  if(panel.dataset.ready)return;panel.dataset.ready="1";
@@ -39,16 +46,17 @@ function init(panel){
  panel.querySelector(".invClear")?.addEventListener("click",()=>{panel.querySelectorAll("[data-filter]").forEach(e=>e.value="");load(panel)});
  panel.querySelector(".invExport")?.addEventListener("click",()=>{const d=cache.get(panel);if(d)csvDownload(d.assets||[],panel.dataset.family)});
 }
-function activate(view){
+function activate(view,opts={}){
  document.querySelectorAll(".invFamilyDash").forEach(p=>p.classList.remove("is-active"));
  document.querySelectorAll(`.invFamilyDash[data-v23-panel="${view}"]`).forEach(p=>{
    p.classList.add("is-active");
+   p.style.display="";
    init(p);
    load(p);
  });
 }
 window.activateInventoryEquipmentDashboard=activate;
-document.addEventListener("click",e=>{const b=e.target.closest("[data-v23-view]");if(b)activate(b.dataset.v23View)});
+// A ativação por clique fica centralizada no manager.js no HF3 para evitar chamadas duplicadas.
 const boot=()=>{
  document.querySelectorAll(".invFamilyDash").forEach(init);
  const v=new URLSearchParams(location.search).get("view");

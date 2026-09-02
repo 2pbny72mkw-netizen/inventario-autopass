@@ -1473,42 +1473,73 @@ async function v66Forecast(module,id){const el=document.getElementById(id);if(!e
 if(document.getElementById('emvForecast'))v66Forecast('emv','emvForecast');if(document.getElementById('chipForecast'))v66Forecast('recarga','chipForecast');
 
 
-// V71.5 — ativação universal de painéis adicionados após o switcher legado.
+// V71.6 HOTFIX3 — sincronização determinística de dashboards.
 (function(){
-  const managedViews = new Set(["pos-inventory","validator-tdi-inventory","block-inventory"]);
-  function activateNewInventoryPanel(view){
-    if(!managedViews.has(view)) return false;
-    const target = document.querySelector(`[data-v23-panel="${view}"]`);
-    if(!target) return false;
+  const inventoryViews = new Set(["pos-inventory","validator-tdi-inventory","block-inventory"]);
+  let lastActivatedView = null;
+  let activationToken = 0;
 
-    document.querySelectorAll("[data-v23-panel]").forEach(p=>{
-      if (p.classList.contains("invFamilyDash")) {
-        p.classList.toggle("is-active", p===target);
+  function visiblePanelFor(view){
+    return document.querySelector(`[data-v23-panel="${CSS.escape(view)}"]`);
+  }
+
+  function forceShow(view){
+    const token = ++activationToken;
+    lastActivatedView = view;
+
+    document.querySelectorAll("[data-v23-panel]").forEach(panel => {
+      const isTarget = panel.getAttribute("data-v23-panel") === view;
+      if(panel.classList.contains("invFamilyDash")){
+        panel.classList.toggle("is-active", isTarget);
       } else {
-        p.style.display = (p===target ? "" : "none");
+        panel.style.display = isTarget ? "" : "none";
       }
     });
 
-    if(window.activateInventoryEquipmentDashboard){
-      window.activateInventoryEquipmentDashboard(view);
+    const target = visiblePanelFor(view);
+    if(target){
+      target.style.display = "";
+      if(target.classList.contains("invFamilyDash")) target.classList.add("is-active");
     }
-    return true;
+
+    if(inventoryViews.has(view) && window.activateInventoryEquipmentDashboard){
+      window.activateInventoryEquipmentDashboard(view, {source:"manager-hf3"});
+    }
+
+    // fallback against race conditions from legacy handlers
+    setTimeout(() => {
+      if(token !== activationToken || lastActivatedView !== view) return;
+      const p = visiblePanelFor(view);
+      if(!p) return;
+      const hidden = getComputedStyle(p).display === "none" || p.offsetParent === null;
+      if(hidden){
+        p.style.display = "";
+        if(p.classList.contains("invFamilyDash")) p.classList.add("is-active");
+        if(inventoryViews.has(view) && window.activateInventoryEquipmentDashboard){
+          window.activateInventoryEquipmentDashboard(view, {source:"manager-hf3-fallback"});
+        }
+      }
+    }, 120);
+
+    return !!target;
   }
 
-  document.addEventListener("click", ev=>{
-    const item=ev.target.closest("[data-v23-view]");
+  document.addEventListener("click", ev => {
+    const item = ev.target.closest("[data-v23-view]");
     if(!item) return;
-    const view=item.getAttribute("data-v23-view");
-    if(managedViews.has(view)){
-      setTimeout(()=>activateNewInventoryPanel(view),0);
-    }
-  });
+    const view = item.getAttribute("data-v23-view");
+    if(!view) return;
+    setTimeout(() => forceShow(view), 0);
+  }, true);
 
-  const boot=()=>{
-    const view=new URLSearchParams(location.search).get("view");
-    if(view) activateNewInventoryPanel(view);
+  const boot = () => {
+    const q = new URLSearchParams(location.search);
+    const view = q.get("view") || document.querySelector("[data-v23-view].active,[data-v23-view].is-active")?.getAttribute("data-v23-view");
+    if(view) forceShow(view);
   };
-  if(document.readyState==="loading") document.addEventListener("DOMContentLoaded",boot); else boot();
 
-  window.v715ActivateNewInventoryPanel=activateNewInventoryPanel;
+  if(document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
+  else boot();
+
+  window.v716hf3ForceDashboard = forceShow;
 })();
