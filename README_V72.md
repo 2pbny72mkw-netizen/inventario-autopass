@@ -63,3 +63,18 @@ A própria V72 inclui a correção de visualização pelo celular; não há vers
 ## V72 consolidada — Engenharia + Garagem
 - Engenharia: Cadastro de Itens, importação da Codificação.xlsx, BOM, revisões, custos Nacional/Importado e exportação.
 - Garagem: normalização do nome da empresa (corrige divergências como Vila Galvão), retirada de produtividade por técnico, progresso por empresa em largura total com todas as empresas e remoção da tendência/previsão.
+
+### Correção adicional
+- Versão exibida corrigida para V72.
+- Menu Engenharia passa a aparecer para ADM/Gestor mesmo antes de ajuste manual da matriz.
+- APIs de Engenharia recebem fallback seguro para ADM/Gestor.
+- Atividade Garagem passa a normalizar o nome da empresa também no frontend.
+- Texto de progresso da atividade preparado para leitura mais clara.
+
+## V72 — correção de estabilidade e performance
+- Eliminado o ciclo de redirecionamento `/gerencial` ↔ `/dashboard`.
+- `/dashboard` agora usa destino seguro conforme acesso/perfil.
+- Compatibilidade controlada para `/api/chip-swaps/`; clientes atuais usam `/api/chip-swaps`.
+- Tratamento específico do caminho acidental `/api/chip-swaps//`, sem canonicalização global.
+- Cache/Service Worker atualizado para `v72`.
+- Mantido o índice crítico `ix_techpos_user_captured` no startup aditivo.

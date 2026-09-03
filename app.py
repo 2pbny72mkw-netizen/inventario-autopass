@@ -1558,13 +1558,21 @@ def manager_required(fn):
 
 
 def dashboard_required(fn):
-    """Painel gerencial completo: Gestor, Gestor Field, Consulta e Dispatcher."""
+    """Painel gerencial completo sem redirecionamento circular."""
     @wraps(fn)
     def inner(*args, **kwargs):
         if not session.get("user_id"):
             return redirect(url_for("login"))
         if not _has_access("dashboard"):
-            return redirect(url_for("dashboard_landing"))
+            # Nunca voltar para /dashboard, pois /dashboard aponta para /gerencial.
+            role=(session.get("role") or "").strip().lower()
+            if request.path.startswith("/api/"):
+                return jsonify({"ok":False,"error":"Sem permissão para Dashboard."}),403
+            if role in ("technician","technician_implantation","manager_field"):
+                return redirect(url_for("activities_page"))
+            if role=="hr":
+                return redirect(url_for("teams_page"))
+            return redirect(url_for("about"))
         return fn(*args, **kwargs)
     return inner
 
@@ -1690,12 +1698,23 @@ def field_dashboard_required(fn):
     return inner
 
 
+@app.before_request
+def _v72_fix_chip_swap_double_slash():
+    if request.path == "/api/chip-swaps//":
+        return redirect("/api/chip-swaps/", code=307)
+
 @app.get("/dashboard")
 @login_required
 def dashboard_landing():
-    # V69.3.2: existe uma única central de dashboards: /gerencial.
-    # Elimina a tela intermediária (dashboard_hub) e preserva o menu lateral.
-    return redirect(url_for("manager"))
+    # V72: central única em /gerencial, sem possibilidade de loop.
+    if _has_access("dashboard"):
+        return redirect(url_for("manager"))
+    role=(session.get("role") or "").strip().lower()
+    if role in ("technician","technician_implantation","manager_field"):
+        return redirect(url_for("activities_page"))
+    if role=="hr":
+        return redirect(url_for("teams_page"))
+    return redirect(url_for("about"))
 
 
 # ============================================================================
@@ -9668,6 +9687,16 @@ def _chip_swap_locations_payload(force=False):
 def chip_swap_list_api():
     return jsonify({"ok": True, "locations": _chip_swap_locations_payload()})
 
+@app.get("/api/chip-swaps/", strict_slashes=True)
+@login_required
+def chip_swap_list_legacy_slash():
+    """Compatibilidade V72 para clientes antigos sem 308 e sem segunda trilha de rota."""
+    payload=_chip_swap_locations_payload()
+    resp=jsonify({"ok":True,"locations":payload,"release":APP_RELEASE,"legacy":True})
+    resp.headers["X-Autopass-Canonical"]="/api/chip-swaps"
+    resp.headers["X-Autopass-Deprecated"]="1"
+    return resp
+
 @app.post("/api/chip-swaps/<int:location_id>/<int:base_asset_id>")
 @field_required
 def chip_swap_save_api(location_id, base_asset_id):
@@ -14098,13 +14127,16 @@ def _eng_bom_json(b):
 @app.get("/engenharia")
 @login_required
 def engineering_page():
-    if not (_has_access("engineering.items.view") or _has_access("engineering.bom.view")):abort(403)
+    user=db.session.get(User,session.get("user_id"))
+    role=(getattr(user,"role","") or "").lower() if user else ""
+    allowed = role in ("admin","adm","administrator","manager","gestor") or _has_access("engineering.items.view") or _has_access("engineering.bom.view")
+    if not allowed: abort(403)
     return render_template("engineering.html",app_release=APP_RELEASE)
 
 @app.get("/api/engineering/items")
 @login_required
 def engineering_items_api():
-    if not _has_access("engineering.items.view"):return jsonify({"ok":False,"error":"Sem permissão."}),403
+    if not ((_has_access("engineering.items.view")) or ((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower() in ("admin","adm","administrator","manager","gestor"))):return jsonify({"ok":False,"error":"Sem permissão."}),403
     q=_eng_norm(request.args.get("q"));z=EngineeringItem.query
     if q:
         like=f"%{q}%";z=z.filter(or_(EngineeringItem.internal_part_number.ilike(like),EngineeringItem.manufacturer_part_number.ilike(like),
@@ -14115,7 +14147,7 @@ def engineering_items_api():
 @app.post("/api/engineering/items")
 @login_required
 def engineering_item_save_api():
-    if not _has_access("engineering.items.manage"):return jsonify({"ok":False,"error":"Sem permissão."}),403
+    if not ((_has_access("engineering.items.manage")) or ((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower() in ("admin","adm","administrator","manager","gestor"))):return jsonify({"ok":False,"error":"Sem permissão."}),403
     d=request.get_json(silent=True) or {};iid=int(d.get("id") or 0);code=_eng_norm(d.get("internal_part_number"));desc=_eng_norm(d.get("description_pt"))
     if not code or not desc:return jsonify({"ok":False,"error":"Código interno e descrição são obrigatórios."}),400
     dup=EngineeringItem.query.filter(func.lower(EngineeringItem.internal_part_number)==code.lower())
@@ -14132,7 +14164,7 @@ def engineering_item_save_api():
 @app.post("/api/engineering/items/import")
 @login_required
 def engineering_items_import_api():
-    if not _has_access("engineering.import"):return jsonify({"ok":False,"error":"Sem permissão."}),403
+    if not ((_has_access("engineering.import")) or ((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower() in ("admin","adm","administrator","manager","gestor"))):return jsonify({"ok":False,"error":"Sem permissão."}),403
     f=request.files.get("file")
     if not f:return jsonify({"ok":False,"error":"Selecione a planilha."}),400
     try:
@@ -14168,13 +14200,13 @@ def engineering_items_import_api():
 @app.get("/api/engineering/boms")
 @login_required
 def engineering_boms_api():
-    if not _has_access("engineering.bom.view"):return jsonify({"ok":False,"error":"Sem permissão."}),403
+    if not ((_has_access("engineering.bom.view")) or ((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower() in ("admin","adm","administrator","manager","gestor"))):return jsonify({"ok":False,"error":"Sem permissão."}),403
     return jsonify({"ok":True,"boms":[_eng_bom_json(x) for x in EngineeringBom.query.order_by(EngineeringBom.product_code,EngineeringBom.revision.desc()).all()]})
 
 @app.post("/api/engineering/boms")
 @login_required
 def engineering_bom_save_api():
-    if not _has_access("engineering.bom.manage"):return jsonify({"ok":False,"error":"Sem permissão."}),403
+    if not ((_has_access("engineering.bom.manage")) or ((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower() in ("admin","adm","administrator","manager","gestor"))):return jsonify({"ok":False,"error":"Sem permissão."}),403
     d=request.get_json(silent=True) or {};code=_eng_norm(d.get("product_code"));name=_eng_norm(d.get("product_name"));rev=_eng_norm(d.get("revision")) or "REV01"
     if not code or not name:return jsonify({"ok":False,"error":"Código e descrição do produto são obrigatórios."}),400
     if EngineeringBom.query.filter(func.lower(EngineeringBom.product_code)==code.lower(),func.lower(EngineeringBom.revision)==rev.lower()).first():return jsonify({"ok":False,"error":"Revisão já existente."}),409
@@ -14186,7 +14218,7 @@ def engineering_bom_save_api():
 @app.post("/api/engineering/boms/<int:bid>/items")
 @login_required
 def engineering_bom_item_save_api(bid):
-    if not _has_access("engineering.bom.manage"):return jsonify({"ok":False,"error":"Sem permissão."}),403
+    if not ((_has_access("engineering.bom.manage")) or ((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower() in ("admin","adm","administrator","manager","gestor"))):return jsonify({"ok":False,"error":"Sem permissão."}),403
     b=db.session.get(EngineeringBom,bid);d=request.get_json(silent=True) or {};it=db.session.get(EngineeringItem,int(d.get("item_id") or 0))
     if not b or not it:return jsonify({"ok":False,"error":"BOM ou item não encontrado."}),404
     x=EngineeringBomItem.query.filter_by(bom_id=bid,item_id=it.id).first() or EngineeringBomItem(bom_id=bid,item_id=it.id)
@@ -14203,7 +14235,7 @@ def engineering_bom_item_save_api(bid):
 @app.delete("/api/engineering/boms/<int:bid>/items/<int:rid>")
 @login_required
 def engineering_bom_item_delete_api(bid,rid):
-    if not _has_access("engineering.bom.manage"):return jsonify({"ok":False,"error":"Sem permissão."}),403
+    if not ((_has_access("engineering.bom.manage")) or ((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower() in ("admin","adm","administrator","manager","gestor"))):return jsonify({"ok":False,"error":"Sem permissão."}),403
     x=EngineeringBomItem.query.filter_by(id=rid,bom_id=bid).first()
     if not x:return jsonify({"ok":False,"error":"Componente não encontrado."}),404
     db.session.delete(x);db.session.commit();return jsonify({"ok":True})
@@ -14211,7 +14243,7 @@ def engineering_bom_item_delete_api(bid,rid):
 @app.post("/api/engineering/boms/<int:bid>/clone")
 @login_required
 def engineering_bom_clone_api(bid):
-    if not _has_access("engineering.bom.manage"):return jsonify({"ok":False,"error":"Sem permissão."}),403
+    if not ((_has_access("engineering.bom.manage")) or ((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower() in ("admin","adm","administrator","manager","gestor"))):return jsonify({"ok":False,"error":"Sem permissão."}),403
     s=db.session.get(EngineeringBom,bid);d=request.get_json(silent=True) or {};rev=_eng_norm(d.get("revision"))
     if not s or not rev:return jsonify({"ok":False,"error":"BOM/revisão inválida."}),400
     if EngineeringBom.query.filter(func.lower(EngineeringBom.product_code)==s.product_code.lower(),func.lower(EngineeringBom.revision)==rev.lower()).first():return jsonify({"ok":False,"error":"Revisão já existente."}),409
@@ -14224,7 +14256,7 @@ def engineering_bom_clone_api(bid):
 @app.get("/api/engineering/boms/<int:bid>/export.xlsx")
 @login_required
 def engineering_bom_export_api(bid):
-    if not _has_access("engineering.bom.view"):abort(403)
+    if not ((_has_access("engineering.bom.view")) or ((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower() in ("admin","adm","administrator","manager","gestor"))):abort(403)
     b=db.session.get(EngineeringBom,bid)
     if not b:abort(404)
     d=_eng_bom_json(b);wb=Workbook();ws=wb.active;ws.title="BOM"
