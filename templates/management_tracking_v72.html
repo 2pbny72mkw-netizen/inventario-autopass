@@ -1,0 +1,51 @@
+{% extends "base.html" %}{% block title %}Rastreabilidade & Jornada | {{ app_release }}{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+.v72Grid{display:grid;grid-template-columns:1.25fr .75fr;gap:14px}.v72Map{height:520px;border-radius:14px;overflow:hidden}.v72Timeline{max-height:520px;overflow:auto}.v72Event{padding:10px 12px;border-bottom:1px solid #e6edf4;cursor:pointer}.v72Event:hover{background:#f5f9fd}.v72Event b{color:#0b2d4f}.v72Auth table{width:100%}.v72Auth td,.v72Auth th{padding:8px}.v72Auth .pending{font-weight:800;color:#a66400}@media(max-width:900px){.v72Grid{grid-template-columns:1fr}.v72Map{height:400px}}
+</style>
+{% endblock %}
+{% block content %}
+<div class="pageHead"><span class="eyebrow">{{ app_release }} · GESTÃO</span><h1>Rastreabilidade & Jornada</h1><p>Histórico GPS por passagem em estações e autorizações extraordinárias de acesso.</p></div>
+
+{% if can_view('management.gps_history') %}
+<section class="card">
+ <div class="sectionHead"><div><h2>Histórico GPS por estações</h2><p class="muted">Somente usuários habilitados individualmente aparecem na consulta.</p></div><span id="gpsRetention" class="tag">retenção</span></div>
+ <div class="grid3">
+  <label>Técnico<select id="gpsUser"><option value="">Selecione</option></select></label>
+  <label>Data<input id="gpsDate" type="date"></label>
+  <div style="display:flex;align-items:end"><button id="gpsLoad">Consultar histórico</button></div>
+ </div>
+ <div class="v72Grid" style="margin-top:12px">
+   <div id="v72Map" class="v72Map"></div>
+   <div><h3>Linha do tempo</h3><div id="gpsTimeline" class="v72Timeline"><p class="muted">Selecione um técnico e uma data.</p></div></div>
+ </div>
+</section>
+{% endif %}
+
+{% if can_view('management.work_authorizations') %}
+<section class="card v72Auth" style="margin-top:14px">
+ <div class="sectionHead"><div><h2>Autorizações de jornada</h2><p class="muted">Aprovação por tempo determinado, com auditoria.</p></div><button class="secondary" id="authReload">Atualizar</button></div>
+ <div class="tableWrap"><table><thead><tr><th>Técnico</th><th>Solicitado</th><th>Motivo</th><th>Status</th><th>Data</th><th>Ação</th></tr></thead><tbody id="authRows"></tbody></table></div>
+</section>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+let map,lineLayer,markers=[];
+{% if can_view('management.gps_history') %}
+map=L.map('v72Map').setView([-23.55,-46.63],11);L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
+async function initGps(){const d=await fetch('/api/gestao/historico-gps',{cache:'no-store'}).then(r=>r.json());if(!d.ok)return;gpsUser.innerHTML='<option value="">Selecione</option>'+d.users.map(u=>`<option value="${u.id}">${esc(u.name)} · ${esc(u.company)}</option>`).join('');gpsDate.value=new Date().toISOString().slice(0,10)}
+function clearMap(){markers.forEach(m=>m.remove());markers=[];if(lineLayer){lineLayer.remove();lineLayer=null}}
+async function loadGps(){if(!gpsUser.value)return;const d=await fetch(`/api/gestao/historico-gps?user_id=${gpsUser.value}&date=${gpsDate.value}`,{cache:'no-store'}).then(r=>r.json());if(!d.ok)return alert(d.error||'Falha');gpsRetention.textContent=`retenção ${d.retention_days} dias`;clearMap();const pts=[];gpsTimeline.innerHTML=d.events.map((e,i)=>`<div class="v72Event" data-i="${i}"><b>${esc(e.time)} · ${esc(e.station)}</b><br><small>${esc(e.company)} · ${esc(e.line)} · ${e.distance_m??'-'} m do ponto de referência</small></div>`).join('')||'<p class="muted">Nenhuma passagem registrada neste dia.</p>';d.events.forEach((e,i)=>{pts.push([e.latitude,e.longitude]);const m=L.marker([e.latitude,e.longitude]).addTo(map).bindPopup(`<b>${esc(e.time)} · ${esc(e.station)}</b><br>${esc(e.line)} · ${esc(e.company)}`);markers.push(m)});if(pts.length){lineLayer=L.polyline(pts,{weight:4}).addTo(map);map.fitBounds(L.latLngBounds(pts).pad(.15))}document.querySelectorAll('.v72Event').forEach(el=>el.onclick=()=>markers[+el.dataset.i]?.openPopup())}
+gpsLoad.onclick=loadGps;initGps();
+{% endif %}
+
+{% if can_view('management.work_authorizations') %}
+async function loadAuth(){const d=await fetch('/api/gestao/autorizacoes-jornada',{cache:'no-store'}).then(r=>r.json());authRows.innerHTML=d.rows.map(x=>`<tr><td><b>${esc(x.user)}</b></td><td>${x.requested_minutes} min</td><td>${esc(x.reason)}</td><td class="${x.status==='PENDENTE'?'pending':''}">${esc(x.status)}</td><td>${x.requested_at?new Date(x.requested_at).toLocaleString('pt-BR'):'-'}</td><td>${x.status==='PENDENTE'?`<button onclick="decide(${x.id},'APROVAR',${x.requested_minutes})">Aprovar</button> <button class="secondary" onclick="decide(${x.id},'RECUSAR',${x.requested_minutes})">Recusar</button>`:(x.approved_until?`até ${new Date(x.approved_until).toLocaleString('pt-BR')}`:'-')}</td></tr>`).join('')||'<tr><td colspan="6">Sem solicitações.</td></tr>'}
+async function decide(id,action,suggested){let minutes=suggested,note='';if(action==='APROVAR'){const raw=prompt('Minutos de acesso autorizados:',String(suggested));if(raw===null)return;minutes=+raw||suggested}else{note=prompt('Motivo da recusa (opcional):','')||''}const r=await fetch(`/api/gestao/autorizacoes-jornada/${id}/decisao`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,minutes,note})}),d=await r.json();if(!d.ok)return alert(d.error||'Falha');loadAuth()}authReload.onclick=loadAuth;loadAuth();
+{% endif %}
+</script>
+{% endblock %}

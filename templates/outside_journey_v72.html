@@ -1,0 +1,22 @@
+{% extends "base.html" %}{% block title %}Autorização de jornada | {{ app_release }}{% endblock %}
+{% block content %}
+<div class="pageHead"><span class="eyebrow">{{ app_release }} · CONTROLE DE JORNADA</span><h1>Acesso fora da jornada</h1><p>Olá, {{ user.name }}. O sistema identificou que você está fora da sua janela autorizada de trabalho.</p></div>
+<section class="card" style="max-width:760px;margin:auto">
+  <div class="sectionHead"><div><h2>Solicitar autorização extraordinária</h2><p class="muted">Acesso e GPS serão liberados somente pelo período aprovado.</p></div><span class="tag">{{ state.reason }}</span></div>
+  <div class="grid3">
+    <label>Tempo solicitado<select id="reqMinutes">
+      <option value="60">1 hora</option><option value="120">2 horas</option><option value="180">3 horas</option>
+      <option value="240">4 horas</option><option value="360">6 horas</option>
+    </select></label>
+    <label class="wide">Motivo<input id="reqReason" maxlength="600" placeholder="Ex.: atendimento em andamento"></label>
+  </div>
+  <div class="heroActions"><button id="reqSend">Solicitar autorização</button><a class="secondary" href="/login">Voltar ao login</a></div>
+  <p id="reqState" class="muted">{% if latest %}Última solicitação: {{ latest.status }}{% else %}Nenhuma solicitação pendente.{% endif %}</p>
+</section>
+{% endblock %}
+{% block scripts %}<script>
+const state=document.getElementById('reqState');
+document.getElementById('reqSend').onclick=async()=>{const r=await fetch('/api/acesso-fora-jornada/solicitar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({minutes:+document.getElementById('reqMinutes').value,reason:document.getElementById('reqReason').value})}),d=await r.json();state.textContent=d.ok?'Solicitação enviada. Aguardando aprovação do Gestor/ADM.':(d.error||'Falha ao solicitar.');};
+async function poll(){try{const d=await fetch('/api/acesso-fora-jornada/status',{cache:'no-store'}).then(r=>r.json());if(d.authorized&&d.redirect){location.href=d.redirect;return}if(d.status)state.textContent=d.status==='RECUSADA'?('Solicitação recusada. '+(d.review_note||'')):`Solicitação: ${d.status}. Aguardando decisão.`}catch(_){}}
+setInterval(poll,8000);poll();
+</script>{% endblock %}

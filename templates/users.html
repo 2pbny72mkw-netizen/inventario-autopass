@@ -71,6 +71,8 @@
         </div>
         <div class="fieldExtended gpsField">
           <label style="display:flex;gap:8px;align-items:center;margin-top:26px"><input type="checkbox" name="gps_required" value="1" checked style="width:auto"> Exigir GPS operacional</label>
+          <label style="display:flex;gap:8px;align-items:center;margin-top:26px"><input type="checkbox" name="gps_history_enabled" value="1" style="width:auto"> Histórico GPS por estações</label>
+          <label style="display:flex;gap:8px;align-items:center;margin-top:26px"><input type="checkbox" name="journey_control_enabled" value="1" style="width:auto"> Controle de jornada / bloquear fora da escala</label>
           <small>Quando ativo, o usuário precisa validar a posição no início da sessão e envia posições periódicas.</small>
         </div>
         <div class="fieldExtended scheduleField">
@@ -289,6 +291,8 @@
                   </div>
                   <div class="editExtended gpsField">
                     <label style="display:flex;gap:8px;align-items:center;margin-top:26px"><input type="checkbox" name="gps_required" value="1" style="width:auto" {% if u.gps_required %}checked{% endif %}> Exigir GPS operacional</label>
+                    <label style="display:flex;gap:8px;align-items:center;margin-top:26px"><input type="checkbox" name="gps_history_enabled" value="1" style="width:auto" {% if u.gps_history_enabled %}checked{% endif %}> Histórico GPS por estações</label>
+                    <label style="display:flex;gap:8px;align-items:center;margin-top:26px"><input type="checkbox" name="journey_control_enabled" value="1" style="width:auto" {% if u.journey_control_enabled %}checked{% endif %}> Controle de jornada / bloquear fora da escala</label>
                     <small>Desative, por exemplo, para usuário em home office. A alteração fica auditada.</small>
                   </div>
                   <div class="editExtended scheduleField">

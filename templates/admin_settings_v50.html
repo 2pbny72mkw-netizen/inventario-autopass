@@ -9,9 +9,18 @@
 <label>Previsão EMV · janela histórica (dias)<input id="forecast_days_emv" type="number" min="1" max="30"></label>
 <label>Previsão Garagem · janela histórica (dias)<input id="forecast_days_garagem" type="number" min="1" max="30"></label>
 <label>Previsão Recarga · janela histórica (dias)<input id="forecast_days_recarga" type="number" min="1" max="30"></label>
+<label>Histórico GPS · retenção (dias)<input id="gps_history_retention_days" type="number" min="1" max="90"></label>
+<label>Histórico GPS · raio da estação (m)<input id="gps_history_radius_m" type="number" min="50" max="2000"></label>
+<label>Histórico GPS · ping em movimento (s)<input id="gps_history_ping_seconds" type="number" min="10" max="300"></label>
+<label>Histórico GPS · movimento mínimo (m)<input id="gps_history_min_movement_m" type="number" min="20" max="1000"></label>
+<label>Controle de jornada<select id="journey_enforcement_enabled"><option value="0">Desativado (rollout/testes)</option><option value="1">Ativado</option></select></label>
+<label>Aviso antes do fim da jornada (min)<input id="journey_warning_minutes" type="number" min="5" max="120"></label>
+<label>Extensão máxima autorizável (h)<input id="journey_max_extension_hours" type="number" min="1" max="12"></label>
+<label>Padrão Técnico Field<select id="journey_default_field"><option value="1">Controlado</option><option value="0">Flexível</option></select></label>
+<label>Padrão Técnico Implantação<select id="journey_default_implantation"><option value="0">Flexível</option><option value="1">Controlado</option></select></label>
 </div><div class="heroActions"><button id="saveSettings">Salvar configurações</button><span id="settingsState" class="muted"></span></div></section>
 {% endblock %}{% block scripts %}<script>
-const ids=['alert_activity_days','alert_pending_days','gps_radius_m','dashboard_refresh_seconds','gps_interval_seconds','forecast_days_emv','forecast_days_garagem','forecast_days_recarga'];
+const ids=['alert_activity_days','alert_pending_days','gps_radius_m','dashboard_refresh_seconds','gps_interval_seconds','forecast_days_emv','forecast_days_garagem','forecast_days_recarga','gps_history_retention_days','gps_history_radius_m','gps_history_ping_seconds','gps_history_min_movement_m','journey_enforcement_enabled','journey_warning_minutes','journey_max_extension_hours','journey_default_field','journey_default_implantation'];
 async function load(){const d=await fetch('/api/configuracoes').then(r=>r.json());if(!d.ok)return;ids.forEach(k=>document.getElementById(k).value=d.settings[k]??'');}
 document.getElementById('saveSettings').addEventListener('click',async()=>{const payload={};ids.forEach(k=>payload[k]=Number(document.getElementById(k).value));const r=await fetch('/api/configuracoes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),d=await r.json();document.getElementById('settingsState').textContent=d.ok?'Configurações salvas e auditadas.':(d.error||'Falha ao salvar.');});load();
 </script>{% endblock %}
