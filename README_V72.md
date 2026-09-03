@@ -78,3 +78,13 @@ A própria V72 inclui a correção de visualização pelo celular; não há vers
 - Tratamento específico do caminho acidental `/api/chip-swaps//`, sem canonicalização global.
 - Cache/Service Worker atualizado para `v72`.
 - Mantido o índice crítico `ix_techpos_user_captured` no startup aditivo.
+
+## V72 — correção Atividade Garagem
+- Filtro de empresa passou a usar chave normalizada, igual ao dashboard.
+- `EMPRESA DE ÔNIBUS VILA GALVÃO` passa a exibir seus 18 terminais pendentes quando essa é a base atual.
+- Status também é normalizado antes dos cálculos.
+- Total/Concluídos/Em andamento/Pendentes são calculados sobre a mesma lista filtrada.
+- Razões mudaram de `0 / 328` para `0 de 328` e ficam em uma única linha.
+- Resumo inferior passa a mostrar `Concluídos · Pendentes · Progresso`.
+- Evidência permanece opcional para `Testado - OK`.
+- Cache-bust específico `v72-garage-2`.

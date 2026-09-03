@@ -38,7 +38,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V72"
+APP_RELEASE = "V72.1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -10380,7 +10380,7 @@ def garage_chip_page():
 @app.get('/api/garage-chip-swaps')
 @login_required
 def garage_chip_list_api():
-    rows=_garage_payload(); total=len(rows); done=sum(x['status']=='CONCLUÍDA' for x in rows); prog=sum(x['status']=='EM ANDAMENTO' for x in rows)
+    rows=_garage_payload(); company=(request.args.get('company') or '').strip(); ck=_garage_company_key(company); rows=[x for x in rows if not ck or _garage_company_key(x.get('company'))==ck]; total=len(rows); done=sum(x['status']=='CONCLUÍDA' for x in rows); prog=sum(x['status']=='EM ANDAMENTO' for x in rows)
     return jsonify({'ok':True,'rows':rows,'summary':{'total':total,'concluded':done,'in_progress':prog,'pending':total-done-prog,'percent':round(done*100/total,1) if total else 0}})
 
 @app.post('/api/garage-chip-swaps/<int:base_id>')
@@ -14252,6 +14252,93 @@ def engineering_bom_clone_api(bid):
     for x in EngineeringBomItem.query.filter_by(bom_id=s.id):
         db.session.add(EngineeringBomItem(bom_id=n.id,item_id=x.item_id,quantity=x.quantity,origin=x.origin,supplier=x.supplier,supplier_part_number=x.supplier_part_number,lead_time_days=x.lead_time_days,unit_cost=x.unit_cost,currency=x.currency,notes=x.notes))
     db.session.commit();return jsonify({"ok":True,"bom":_eng_bom_json(n)})
+
+
+def _eng_bom_import_permission():
+    role=((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower())
+    return _has_access("engineering.import") or _has_access("engineering.bom.manage") or role in ("admin","adm","administrator","manager","gestor")
+
+def _eng_bom_num(v,default=0.0):
+    if v is None or str(v).strip()=="":return default
+    s=str(v).strip().replace("R$","").replace("$","").replace(" ","")
+    if "," in s and "." in s:
+        s=s.replace(".","").replace(",",".") if s.rfind(",")>s.rfind(".") else s.replace(",","")
+    else:s=s.replace(",",".")
+    try:return float(s)
+    except:return default
+
+@app.get("/api/engineering/boms/import-model.xlsx")
+@login_required
+def engineering_bom_import_model_api():
+    if not _eng_bom_import_permission():abort(403)
+    wb=Workbook();ws=wb.active;ws.title="BOM";ws.append(["Código Interno","Quantidade","Origem","Fornecedor","PN Fornecedor","Lead Time (dias)","Moeda","Custo Unitário"])
+    ws.append(["00.00.00001",1,"NACIONAL","Fornecedor Exemplo","PN-001",15,"BRL",10.50]);ws.append(["00.00.00002",2,"IMPORTADO","Supplier Example","PN-002",45,"USD",5.25])
+    for c in ws[1]:c.font=Font(bold=True,color="FFFFFF");c.fill=PatternFill("solid",fgColor="17365D")
+    for i,w in enumerate([22,14,16,28,24,18,12,18],1):ws.column_dimensions[get_column_letter(i)].width=w
+    ws.freeze_panes="A2";ws.auto_filter.ref="A1:H3";bio=io.BytesIO();wb.save(bio);bio.seek(0)
+    return send_file(bio,as_attachment=True,download_name="MODELO_IMPORTACAO_BOM_V72_1.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+@app.post("/api/engineering/boms/import-preview")
+@login_required
+def engineering_bom_import_preview_api():
+    if not _eng_bom_import_permission():return jsonify({"ok":False,"error":"Sem permissão."}),403
+    f=request.files.get("file")
+    if not f:return jsonify({"ok":False,"error":"Selecione a planilha BOM."}),400
+    try:
+        wb=load_workbook(f.stream,read_only=True,data_only=True);rows=[];dups=[];errs=[];sheet=None;seen=set()
+        aliases={"code":["codigo interno","internal part number","codigo item"],"qty":["quantidade","qtd","qty","quantity"]}
+        for ws in wb.worksheets:
+            hr=None;heads=[]
+            for rn,row in enumerate(ws.iter_rows(min_row=1,max_row=min(ws.max_row,35),values_only=True),1):
+                hh=[_eng_header(v) for v in row]
+                if any(any(a in h for a in aliases["code"]) for h in hh) and any(any(a in h for a in aliases["qty"]) for h in hh):hr=rn;heads=hh;sheet=ws.title;break
+            if not hr:continue
+            def col(names):
+                for i,h in enumerate(heads):
+                    if any(n in h for n in names):return i
+                return None
+            cc=col(aliases["code"]);cq=col(aliases["qty"]);co=col(["origem","origin"]);cs=col(["fornecedor","supplier"]);cp=col(["pn fornecedor","supplier part number"]);cl=col(["lead time","leadtime","prazo"]);cm=col(["moeda","currency"]);cu=col(["custo unitario","unit cost","preco unitario"])
+            raw=[];codes=[]
+            for rn,row in enumerate(ws.iter_rows(min_row=hr+1,values_only=True),hr+1):
+                code=_eng_norm(row[cc] if cc is not None and cc<len(row) else "")
+                if not code:continue
+                if code.lower() in seen:dups.append({"row":rn,"code":code});continue
+                seen.add(code.lower());codes.append(code);raw.append((rn,row,code))
+            found={x.internal_part_number.lower():x for x in EngineeringItem.query.filter(func.lower(EngineeringItem.internal_part_number).in_([x.lower() for x in codes])).all()} if codes else {}
+            for rn,row,code in raw:
+                it=found.get(code.lower());qty=_eng_bom_num(row[cq] if cq is not None and cq<len(row) else 1,1)
+                if qty<=0:errs.append({"row":rn,"code":code,"reason":"Quantidade inválida"});continue
+                val=lambda c,default="": row[c] if c is not None and c<len(row) else default
+                rows.append({"row":rn,"code":code,"recognized":bool(it),"item_id":it.id if it else None,"description":(it.description_pt or "") if it else "",
+                  "quantity":qty,"origin":(_eng_norm(val(co,it.default_origin if it else "NACIONAL")) or "NACIONAL").upper(),"supplier":_eng_norm(val(cs)),
+                  "supplier_part_number":_eng_norm(val(cp)),"lead_time_days":int(_eng_bom_num(val(cl),0)) if str(val(cl)).strip() else None,
+                  "currency":(_eng_norm(val(cm,"BRL")) or "BRL").upper(),"unit_cost":_eng_bom_num(val(cu),0)})
+            break
+        if sheet is None:raise ValueError("Cabeçalho não reconhecido. Use o modelo BOM V72.1.")
+        missing=[x for x in rows if not x["recognized"]]
+        return jsonify({"ok":True,"sheet":sheet,"rows":rows,"recognized":sum(x["recognized"] for x in rows),"missing":missing,"duplicates":dups,"errors":errs,"total":len(rows)+len(dups)+len(errs)})
+    except Exception as e:return jsonify({"ok":False,"error":str(e)}),400
+
+@app.post("/api/engineering/boms/<int:bid>/import-commit")
+@login_required
+def engineering_bom_import_commit_api(bid):
+    if not _eng_bom_import_permission():return jsonify({"ok":False,"error":"Sem permissão."}),403
+    b=db.session.get(EngineeringBom,bid)
+    if not b:return jsonify({"ok":False,"error":"BOM não encontrada."}),404
+    valid=[r for r in ((request.get_json(silent=True) or {}).get("rows") or []) if r.get("recognized") and r.get("item_id")]
+    if not valid:return jsonify({"ok":False,"error":"Nenhum item reconhecido."}),400
+    try:
+        n=0
+        for r in valid:
+            it=db.session.get(EngineeringItem,int(r["item_id"]))
+            if not it:continue
+            x=EngineeringBomItem.query.filter_by(bom_id=bid,item_id=it.id).first() or EngineeringBomItem(bom_id=bid,item_id=it.id)
+            x.quantity=max(_eng_bom_num(r.get("quantity"),1),.000001);x.origin=(_eng_norm(r.get("origin")) or "NACIONAL").upper();x.supplier=_eng_norm(r.get("supplier"));x.supplier_part_number=_eng_norm(r.get("supplier_part_number"));x.currency=(_eng_norm(r.get("currency")) or "BRL").upper();x.unit_cost=max(_eng_bom_num(r.get("unit_cost"),0),0)
+            try:x.lead_time_days=int(r.get("lead_time_days")) if r.get("lead_time_days") not in (None,"") else None
+            except:x.lead_time_days=None
+            db.session.add(x);n+=1
+        db.session.commit();return jsonify({"ok":True,"imported":n,"bom":_eng_bom_json(b)})
+    except Exception as e:db.session.rollback();return jsonify({"ok":False,"error":str(e)}),400
 
 @app.get("/api/engineering/boms/<int:bid>/export.xlsx")
 @login_required
