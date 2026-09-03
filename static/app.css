@@ -1741,5 +1741,61 @@ body.mapFullscreenOpen .topbar{z-index:20!important;}
  .activityNav a{text-align:center;padding:9px 5px!important;font-size:13px!important;white-space:nowrap}
 }
 
-/* V71.7 evidence chooser */
-.fieldEvidenceActions{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 8px}.fieldEvidenceBtn{display:inline-flex!important;align-items:center;justify-content:center;gap:6px;cursor:pointer;padding:9px 12px!important;border-radius:10px!important;min-width:140px}.fieldEvidenceBtn input{display:none!important}@media(max-width:640px){.fieldEvidenceActions{display:grid;grid-template-columns:1fr 1fr}.fieldEvidenceBtn{min-width:0;width:100%;box-sizing:border-box}}
+
+/* V72 — responsividade do ambiente gerencial no celular */
+.v72MobileDashSwitch{display:none}
+@media (max-width:768px){
+  html,body{overflow-x:hidden}
+  .v72MobileDashSwitch{display:block;position:sticky;top:8px;z-index:60;margin:10px 12px}
+  .v72MobileDashSwitch>button{
+    width:100%;min-height:52px;display:grid;grid-template-columns:auto 1fr auto;
+    gap:10px;align-items:center;padding:10px 14px;border-radius:14px;border:1px solid #245477;
+    background:#0b3555;color:#fff
+  }
+  .v72MobileDashSwitch>button span{font-size:.76rem;opacity:.72;text-transform:uppercase;letter-spacing:.07em}
+  .v72MobileDashSwitch>button strong{text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #v72MobileDashMenu{
+    position:absolute;left:0;right:0;top:58px;max-height:62vh;overflow:auto;padding:8px;
+    border-radius:14px;background:#fff;border:1px solid #d8e3ed;box-shadow:0 16px 34px #0003
+  }
+  #v72MobileDashMenu button{
+    width:100%;padding:12px 10px;border:0;border-radius:10px;background:transparent;text-align:left;color:#17324b;font:inherit
+  }
+  #v72MobileDashMenu button.active{background:#eaf4fb;font-weight:800}
+
+  /* navegação lateral/desktop some apenas no mobile */
+  .dashSidebar,.dashboard-sidebar,.dashboard-nav,.gerencial-sidebar,.manager-sidebar{display:none!important}
+
+  /* conteúdo usa largura inteira */
+  .dashLayout,.dashboard-shell,.gerencial-layout,.manager-dashboard,.dashContent,.dashboard-content{
+    display:block!important;width:100%!important;max-width:100%!important;min-width:0!important;
+    margin:0!important;padding-left:0!important;padding-right:0!important
+  }
+
+  /* KPIs: duas colunas no telefone */
+  .kpiGrid,.kpi-grid,.dashboard-kpis,.metric-grid,.inventory-kpis,.cards-kpi{
+    display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:10px!important
+  }
+  .kpiCard,.kpi-card,.metric-card,.stat-card,.dashboard-kpi{
+    min-width:0!important;width:auto!important;padding:11px!important
+  }
+  .kpiCard *,.kpi-card *,.metric-card *,.stat-card *,.dashboard-kpi *{overflow-wrap:anywhere}
+
+  /* cards/gráficos não ultrapassam a tela */
+  .dashCard,.dashboard-card,.chart-card,.dashboard-panel,.panel{
+    width:auto!important;max-width:calc(100vw - 24px)!important;min-width:0!important;
+    margin-left:12px!important;margin-right:12px!important
+  }
+  canvas,svg{max-width:100%!important}
+
+  /* filtros empilhados */
+  .filters,.filter-grid,.dashboard-filters,.grid3,.grid4{grid-template-columns:1fr!important}
+
+  /* tabela rola dentro do próprio bloco */
+  .tableWrap,.table-wrap,.table-responsive,.dashboard-table-wrap{
+    width:100%!important;max-width:100%!important;overflow-x:auto!important;-webkit-overflow-scrolling:touch
+  }
+
+  .pageHead h1,.dashboard-title{font-size:1.4rem!important;line-height:1.15!important}
+}
+.engPage{max-width:1500px;margin:auto;padding:18px}.engTabs,.engToolbar{display:flex;gap:8px;flex-wrap:wrap;margin:16px 0}.engTabs button,.engToolbar button,.engUpload,.engTable button{padding:9px 12px;border:1px solid #ccd9e4;border-radius:9px;background:#eef4f8;font-weight:800}.engTabs button.active,.engPage .primary{background:#103b61;color:#fff}.engTab{display:none}.engTab.active{display:block}.engToolbar input{min-width:340px}.engToolbar input,.engToolbar select,.engAddRow input,.engAddRow select,.engForm input,.engForm select,.engForm textarea{padding:10px;border:1px solid #ccd9e4;border-radius:9px;background:#fff}.engKpis{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:14px 0}.engBomKpis{grid-template-columns:repeat(4,1fr)}.engKpis article,.engInfo,.engBomTitle{background:#fff;border:1px solid #dce6ee;border-radius:12px;padding:15px}.engKpis span{display:block;color:#60768a;font-size:12px;font-weight:800;text-transform:uppercase}.engKpis b{font-size:23px}.engTable{width:100%;border-collapse:collapse;background:#fff}.engTable th,.engTable td{padding:10px;border-bottom:1px solid #e4ebf1;text-align:left}.engTable th{background:#123d63;color:#fff}.engBomTitle{display:flex;justify-content:space-between;align-items:center}.engBomTitle h2{margin:3px 0}.engBadge{padding:7px 10px;border-radius:999px;background:#e7f2fa;color:#0b5f93;font-weight:900}.engAddRow{display:grid;grid-template-columns:2fr .6fr .8fr 1.1fr 1fr .7fr .7fr 1fr auto;gap:8px;margin:14px 0}.engModal{position:fixed;inset:0;background:#0007;z-index:1000;display:grid;place-items:center}.engModal[hidden]{display:none}.engModalCard{position:relative;background:#fff;border-radius:16px;padding:22px;width:min(760px,94vw);max-height:90vh;overflow:auto}.engClose{position:absolute;right:12px;top:8px;border:0;background:none;font-size:28px}.engForm{display:grid;grid-template-columns:1fr 1fr;gap:12px}.engForm label{display:grid;gap:5px;font-weight:800}.engForm .wide{grid-column:1/-1}@media(max-width:768px){.engToolbar input{min-width:0;width:100%}.engKpis,.engBomKpis{grid-template-columns:repeat(2,1fr)}.engAddRow{grid-template-columns:1fr 1fr}.engForm{grid-template-columns:1fr}.engForm .wide{grid-column:auto}}

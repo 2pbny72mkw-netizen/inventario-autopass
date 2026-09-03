@@ -1543,3 +1543,33 @@ if(document.getElementById('emvForecast'))v66Forecast('emv','emvForecast');if(do
 
   window.v716hf3ForceDashboard = forceShow;
 })();
+
+
+/* V72 — seletor móvel de dashboards */
+(function(){
+  function txt(el){return (el.getAttribute('data-label')||el.textContent||'').replace(/\s+/g,' ').trim()}
+  function active(el){return el.classList.contains('active')||el.getAttribute('aria-current')==='page'||el.getAttribute('aria-selected')==='true'||!!el.closest('.active')}
+  function init(){
+    const box=document.getElementById('v72MobileDashSwitch'),btn=document.getElementById('v72MobileDashButton'),
+          menu=document.getElementById('v72MobileDashMenu'),current=document.getElementById('v72MobileDashCurrent');
+    if(!box||!btn||!menu||!current)return;
+    const sels=['.dashSidebar a[href]','.dashSidebar button','.dashboard-sidebar a[href]','.dashboard-sidebar button','[data-dashboard-view]','[data-view]'];
+    const seen=new Set(),items=[];
+    sels.forEach(sel=>document.querySelectorAll(sel).forEach(el=>{
+      const label=txt(el); if(!label||label.length>80)return;
+      const key=(el.getAttribute('href')||'')+'|'+(el.dataset.dashboardView||el.dataset.view||'')+'|'+label;
+      if(seen.has(key))return; seen.add(key); items.push(el);
+    }));
+    if(!items.length){box.style.display='none';return}
+    let cur=items.find(active)||items[0]; current.textContent=txt(cur);
+    items.forEach(src=>{
+      const b=document.createElement('button');b.type='button';b.textContent=txt(src);if(src===cur||active(src))b.classList.add('active');
+      b.onclick=()=>{menu.hidden=true;btn.setAttribute('aria-expanded','false');current.textContent=txt(src);
+        const href=src.getAttribute('href');if(href&&href!=='#')location.href=href;else src.click()};
+      menu.appendChild(b);
+    });
+    btn.onclick=()=>{const open=menu.hidden;menu.hidden=!open;btn.setAttribute('aria-expanded',open?'true':'false')};
+    document.addEventListener('click',e=>{if(!box.contains(e.target)){menu.hidden=true;btn.setAttribute('aria-expanded','false')}});
+  }
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();
+})();
