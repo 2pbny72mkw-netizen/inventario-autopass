@@ -1,7 +1,16 @@
 {% extends "base.html" %}{% block title %}Troca de Chips Garagem{% endblock %}{% block content %}
-<style>.activityNav{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin:0 0 14px}.activityNav a{padding:9px 14px;border:1px solid #cbd5e1;border-radius:10px;text-decoration:none;font-weight:800;background:#fff;color:#17345d}.activityNav a.active{background:#17345d;color:#fff;border-color:#17345d}</style><nav class="activityNav"><a class="active" href="/troca-chips-garagem">Atividade</a><a href="/gerencial?view=garage">Dashboard</a><a href="/api/garage-chip-swaps/export.xlsx">Exportar</a></nav>{% if session.get("role") in ("manager","manager_field") %}<section class="card opImportCard" style="margin-bottom:14px"><div class="sectionHead"><div><span class="eyebrow">BASE OPERACIONAL · V63 REV2</span><h2 style="margin:3px 0 4px">Atualizar base por planilha</h2><p class="muted" style="margin:0">Modelo padrão: empresa · terminal · estação · linha · status. Pendentes ausentes do novo arquivo saem do escopo operacional, mas não são apagados.</p></div><div style="display:flex;gap:8px;flex-wrap:wrap"><a class="secondary buttonLink" href="/api/operational-base/template.xlsx?module=garagem">Baixar modelo</a><button type="button" class="secondary opBaseImportBtn" data-module="garagem">Importar base</button><input type="file" class="opBaseImportFile" data-module="garagem" accept=".xlsx" hidden></div></div><div class="opBaseImportStatus muted" data-module="garagem"></div></section>{% endif %}
+<style>
+.garageV72 .emvActivityBars>div{display:grid!important;grid-template-columns:115px minmax(0,1fr) 86px!important;gap:10px!important;align-items:center}
+.garageV72 .emvActivityBars>div>b{white-space:nowrap!important;text-align:right!important;min-width:86px!important}
+.garageV72 .emvActivityBars>div>span{white-space:nowrap}
+.garageV72 #gSummary{font-weight:700;margin-top:10px}
+@media(max-width:700px){
+ .garageV72 .emvActivityBars>div{grid-template-columns:105px minmax(0,1fr) 72px!important;gap:7px!important}
+ .garageV72 .emvActivityBars>div>b{min-width:72px!important;font-size:12px}
+}
+.activityNav{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin:0 0 14px}.activityNav a{padding:9px 14px;border:1px solid #cbd5e1;border-radius:10px;text-decoration:none;font-weight:800;background:#fff;color:#17345d}.activityNav a.active{background:#17345d;color:#fff;border-color:#17345d}</style><nav class="activityNav"><a class="active" href="/troca-chips-garagem">Atividade</a><a href="/gerencial?view=garage">Dashboard</a><a href="/api/garage-chip-swaps/export.xlsx">Exportar</a></nav>{% if session.get("role") in ("manager","manager_field") %}<section class="card opImportCard" style="margin-bottom:14px"><div class="sectionHead"><div><span class="eyebrow">BASE OPERACIONAL · V63 REV2</span><h2 style="margin:3px 0 4px">Atualizar base por planilha</h2><p class="muted" style="margin:0">Modelo padrão: empresa · terminal · estação · linha · status. Pendentes ausentes do novo arquivo saem do escopo operacional, mas não são apagados.</p></div><div style="display:flex;gap:8px;flex-wrap:wrap"><a class="secondary buttonLink" href="/api/operational-base/template.xlsx?module=garagem">Baixar modelo</a><button type="button" class="secondary opBaseImportBtn" data-module="garagem">Importar base</button><input type="file" class="opBaseImportFile" data-module="garagem" accept=".xlsx" hidden></div></div><div class="opBaseImportStatus muted" data-module="garagem"></div></section>{% endif %}
 <div class="pageHead"><span class="eyebrow">IMPLANTAÇÃO · ATIVIDADE · {{ app_release }}</span><h1>Troca de Chips — Garagem</h1><p>Mesmo padrão operacional da Troca de Chips EMV. Base inicial: 457 terminais. O IP permanece armazenado, mas não participa do fluxo operacional.</p></div>
-<section class="card">
+<section class="card garageV72">
   <div class="sectionHead"><div></div><a class="buttonLink" href="/gerencial?view=garage">Dashboard</a></div>
   <div class="grid4 chipFilters"><div><label>Empresa</label><select id="gCompany"><option value="">Todas</option></select></div><div><label>Terminal</label><input id="gTerminal" placeholder="Buscar terminal"></div><div><label>Modelo</label><select id="gModel"><option value="">Todos</option></select></div><div><label>Status</label><select id="gStatus"><option value="">Todos</option><option>PENDENTE</option><option>EM ANDAMENTO</option><option>CONCLUÍDA</option></select></div></div>
   <div style="margin-top:10px"><button class="secondary" id="gClear">Limpar filtros</button></div>
@@ -21,7 +30,7 @@
     </div>
   </div>
   <div class="chipDashProgress" style="margin-top:14px"><i id="gBar" style="width:0%"></i></div>
-  <p id="gSummary" class="muted">0 / 0 concluídos · 0%</p>
+  <p id="gSummary" class="muted">Concluídos: 0 de 0 · Pendentes: 0 · Progresso: 0.0%</p>
 </section>
 <section class="card"><div class="sectionHead"><div><h2>Terminais da base</h2><p class="muted">Registre o resultado e, quando necessário, observação/evidência. Para Testado - OK, anexo não é obrigatório.</p></div></div><div id="gRows" class="chipValidatorGrid"><p class="muted">Carregando...</p></div></section>
-{% endblock %}{% block scripts %}<script src="/static/operational_base_import.js?v=v63-rev2"></script><script>window.CHIP_ROLE={{ session.get("role")|tojson }};</script><script src="/static/garage_chip_swap.js?v=v63-rev2"></script>{% endblock %}
+{% endblock %}{% block scripts %}<script src="/static/operational_base_import.js?v=v63-rev2"></script><script>window.CHIP_ROLE={{ session.get("role")|tojson }};</script><script src="/static/garage_chip_swap.js?v=v72-1-garage"></script>{% endblock %}
