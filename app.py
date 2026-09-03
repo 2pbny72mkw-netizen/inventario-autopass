@@ -38,7 +38,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V71.7"
+APP_RELEASE = "V72"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -286,6 +286,8 @@ class User(db.Model):
     personnel_status_note = db.Column(db.String(240))
     access_json = db.Column(db.Text)
     gps_required = db.Column(db.Boolean, nullable=False, default=False)
+    gps_history_enabled = db.Column(db.Boolean, nullable=False, default=False)
+    journey_control_enabled = db.Column(db.Boolean, nullable=False, default=False)
     customer_company_ids = db.Column(db.Text)  # JSON: empresas liberadas para perfil Cliente
     system_profile_id = db.Column(db.Integer, db.ForeignKey("system_profiles.id"), index=True)
 
@@ -416,6 +418,59 @@ class LogisticsBlockedDate(db.Model):
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
 
+
+
+# V72 — Engenharia / Cadastro mestre de itens / Estruturas BOM
+class EngineeringItem(db.Model):
+    __tablename__="engineering_items"
+    id=db.Column(db.Integer,primary_key=True)
+    internal_part_number=db.Column(db.String(80),nullable=False,unique=True,index=True)
+    manufacturer_part_number=db.Column(db.String(160),index=True)
+    description_pt=db.Column(db.String(500),nullable=False,index=True)
+    description_en=db.Column(db.String(500))
+    manufacturer=db.Column(db.String(180),index=True)
+    category=db.Column(db.String(120),index=True)
+    unit=db.Column(db.String(30),nullable=False,default="UN")
+    default_origin=db.Column(db.String(30),default="NACIONAL")
+    datasheet_url=db.Column(db.String(1200))
+    author=db.Column(db.String(160))
+    source_sheet=db.Column(db.String(160))
+    active=db.Column(db.Boolean,nullable=False,default=True,index=True)
+    created_by=db.Column(db.Integer,db.ForeignKey("users.id"))
+    created_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow)
+    updated_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow,onupdate=datetime.utcnow)
+
+class EngineeringBom(db.Model):
+    __tablename__="engineering_boms"
+    id=db.Column(db.Integer,primary_key=True)
+    product_code=db.Column(db.String(100),nullable=False,index=True)
+    product_name=db.Column(db.String(240),nullable=False)
+    revision=db.Column(db.String(60),nullable=False,default="REV01")
+    status=db.Column(db.String(30),nullable=False,default="RASCUNHO",index=True)
+    quantity_reference=db.Column(db.Float,nullable=False,default=1)
+    currency_rate=db.Column(db.Float)
+    notes=db.Column(db.Text)
+    created_by=db.Column(db.Integer,db.ForeignKey("users.id"))
+    created_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow)
+    updated_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow,onupdate=datetime.utcnow)
+    __table_args__=(UniqueConstraint("product_code","revision",name="uq_engineering_bom_product_revision"),)
+
+class EngineeringBomItem(db.Model):
+    __tablename__="engineering_bom_items"
+    id=db.Column(db.Integer,primary_key=True)
+    bom_id=db.Column(db.Integer,db.ForeignKey("engineering_boms.id",ondelete="CASCADE"),nullable=False,index=True)
+    item_id=db.Column(db.Integer,db.ForeignKey("engineering_items.id"),nullable=False,index=True)
+    quantity=db.Column(db.Float,nullable=False,default=1)
+    origin=db.Column(db.String(30),nullable=False,default="NACIONAL",index=True)
+    supplier=db.Column(db.String(180))
+    supplier_part_number=db.Column(db.String(180))
+    lead_time_days=db.Column(db.Integer)
+    unit_cost=db.Column(db.Float,nullable=False,default=0)
+    currency=db.Column(db.String(10),nullable=False,default="BRL")
+    notes=db.Column(db.Text)
+    created_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow)
+    updated_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow,onupdate=datetime.utcnow)
+    __table_args__=(UniqueConstraint("bom_id","item_id",name="uq_engineering_bom_item"),)
 
 # V67 — Dossiê do Colaborador / Materiais e Ferramentas
 class MaterialCatalogItem(db.Model):
@@ -684,6 +739,47 @@ class TechnicianPosition(db.Model):
     accuracy = db.Column(db.Float)
     captured_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
     source = db.Column(db.String(40), nullable=False, default="browser")
+
+
+class TechnicianStationHistory(db.Model):
+    __tablename__ = "technician_station_history"
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    location_id = db.Column(db.Integer, db.ForeignKey("locations.id"), nullable=False, index=True)
+    company = db.Column(db.String(180))
+    line = db.Column(db.String(180))
+    station = db.Column(db.String(220))
+    latitude = db.Column(db.Float, nullable=False)
+    longitude = db.Column(db.Float, nullable=False)
+    accuracy = db.Column(db.Float)
+    distance_m = db.Column(db.Float)
+    event_type = db.Column(db.String(30), nullable=False, default="STATION_ENTER", index=True)
+    session_token = db.Column(db.String(80), index=True)
+    captured_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+
+class WorkAccessRequest(db.Model):
+    __tablename__ = "work_access_requests"
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    reason = db.Column(db.String(600), nullable=False)
+    requested_minutes = db.Column(db.Integer, nullable=False)
+    status = db.Column(db.String(30), nullable=False, default="PENDENTE", index=True)
+    requested_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    reviewed_by = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
+    reviewed_at = db.Column(db.DateTime)
+    approved_from = db.Column(db.DateTime)
+    approved_until = db.Column(db.DateTime, index=True)
+    review_note = db.Column(db.String(600))
+
+
+class V72SystemConfig(db.Model):
+    __tablename__ = "v72_system_config"
+    id = db.Column(db.Integer, primary_key=True, default=1)
+    settings_json = db.Column(db.Text, nullable=False, default="{}")
+    updated_by = db.Column(db.Integer, db.ForeignKey("users.id"))
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
 
 class TechnicianCheckin(db.Model):
     __tablename__ = "technician_checkins"
@@ -1334,10 +1430,13 @@ ACCESS_GROUPS = {
     )),
     "finance_dashboard": ("Dashboard Financeira", ("finance.dashboard",)),
     "management": ("Gestão", (
-        "management.calls","management.360","management.notifications","management.diagnostics","management.health","management.settings","management.dashboard_config","management.profiles"
+        "management.calls","management.360","management.notifications","management.diagnostics","management.health","management.settings","management.dashboard_config","management.profiles","management.gps_history","management.work_authorizations"
     )),
     "materials": ("Dossiê / Materiais", (
         "materials.my_documents","materials.request","materials.catalog.view","materials.catalog.manage","materials.kits.manage","materials.delivery.create","materials.delivery.manage","materials.dossier.view"
+    )),
+    "engineering": ("Engenharia", (
+        "engineering.items.view","engineering.items.manage","engineering.bom.view","engineering.bom.manage","engineering.import"
     )),
     "portal": ("Portal do Cliente", ("portal.appointments","portal.receive","portal.manage")),
     "about_versions": ("Sobre / Versões", ("about.versions",)),
@@ -1352,8 +1451,9 @@ ACCESS_LABELS = {
  "teams.map":"Mapa operacional","teams.today":"Operação de Hoje","teams.schedule":"Escala por dias","teams.manage":"Gestão de equipes / escala","teams.export":"Exportar dados",
  "users.view":"Visualizar usuários","users.create":"Criar usuário","users.edit":"Editar usuário","users.activate":"Ativar / Desativar","users.delete":"Excluir / Arquivar","users.password":"Redefinir senha","users.export":"Exportar Excel",
  "finance.dashboard":"Dashboard Financeira","finance.support":"Suporte a Campo","finance.collection":"Coleta de Valores","finance.apuracao":"Apuração de Numerário","finance.assistance":"Assistência Técnica","finance.implantation":"Implantação de Hardware","finance.entries":"Lançamentos","finance.suppliers":"Empresas / Fornecedores","finance.import":"Importar planilha","finance.edit":"Editar lançamentos","finance.delete":"Excluir lançamentos",
- "management.calls":"Chamados","management.360":"Central 360","management.notifications":"Notificações","management.diagnostics":"Diagnóstico","management.health":"Saúde da Plataforma","management.settings":"Configurações","management.dashboard_config":"Configuração de Dashboards","management.profiles":"Perfis & Permissões",
+ "management.calls":"Chamados","management.360":"Central 360","management.notifications":"Notificações","management.diagnostics":"Diagnóstico","management.health":"Saúde da Plataforma","management.settings":"Configurações","management.dashboard_config":"Configuração de Dashboards","management.profiles":"Perfis & Permissões","management.gps_history":"Histórico GPS por estações","management.work_authorizations":"Autorizações de jornada",
  "materials.my_documents":"Meus documentos / Minha carga","materials.request":"Solicitar material","materials.catalog.view":"Visualizar catálogo","materials.catalog.manage":"Cadastrar / editar / inativar materiais","materials.kits.manage":"Gerenciar kits","materials.delivery.create":"Criar e enviar entregas","materials.delivery.manage":"Gerenciar aceites / correções","materials.dossier.view":"Dossiê dos colaboradores",
+ "engineering.items.view":"Visualizar cadastro de itens","engineering.items.manage":"Cadastrar / editar itens","engineering.bom.view":"Visualizar estruturas BOM","engineering.bom.manage":"Criar / revisar BOM","engineering.import":"Importar planilhas de Engenharia",
  "portal.appointments":"Criar / consultar agendamentos","portal.receive":"Receber agendamentos","portal.manage":"Administrar Portal do Cliente",
  "about.versions":"Histórico / Versões",
 }
@@ -1370,7 +1470,7 @@ def _expand_legacy_access(values):
 def _default_access_for_role(role):
     defaults={
       "manager":set(ACCESS_SUBMODULES),
-      "manager_field":{"materials.my_documents","materials.request","materials.catalog.view","materials.catalog.manage","materials.kits.manage","materials.delivery.create","materials.delivery.manage","materials.dossier.view","dashboard.general","field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage","teams.map","teams.today","teams.schedule","teams.manage","teams.export","finance.dashboard","management.calls","management.360","management.notifications","management.diagnostics","portal.receive","portal.manage","about.versions"},
+      "manager_field":{"engineering.items.view","engineering.bom.view","materials.my_documents","materials.request","materials.catalog.view","materials.catalog.manage","materials.kits.manage","materials.delivery.create","materials.delivery.manage","materials.dossier.view","dashboard.general","field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage","teams.map","teams.today","teams.schedule","teams.manage","teams.export","finance.dashboard","management.calls","management.360","management.notifications","management.diagnostics","management.gps_history","management.work_authorizations","portal.receive","portal.manage","about.versions"},
       "technician":{"materials.my_documents","materials.request","field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","about.versions"},
       "technician_implantation":{"materials.my_documents","materials.request","field.inventory","field.equipment","field.evidence","field.panorama","field.chip_recarga","implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage","about.versions"},
       "consultation":{"dashboard.general","field.dashboard","field.inventory","field.equipment","field.evidence","field.panorama","field.chip_recarga","teams.map","teams.today","teams.schedule","about.versions"},
@@ -1597,6 +1697,192 @@ def dashboard_landing():
     # Elimina a tela intermediária (dashboard_hub) e preserva o menu lateral.
     return redirect(url_for("manager"))
 
+
+# ============================================================================
+# V72 — Jornada controlada + Histórico GPS por geofence de estação
+# ============================================================================
+
+V72_TZ = ZoneInfo("America/Sao_Paulo")
+_V72_STATION_CACHE = {"at": 0.0, "rows": []}
+_V72_LAST_HISTORY_CLEANUP = 0.0
+
+def _v72_defaults():
+    return {
+        "gps_history_retention_days": 7,
+        "gps_history_radius_m": 250,
+        "gps_history_ping_seconds": 20,
+        "gps_history_min_movement_m": 60,
+        "journey_enforcement_enabled": 0,   # rollout seguro: ADM ativa quando desejar
+        "journey_warning_minutes": 30,
+        "journey_max_extension_hours": 6,
+        "journey_default_field": 1,
+        "journey_default_implantation": 0,
+    }
+
+def _v72_settings():
+    out = _v72_defaults()
+    try:
+        row = db.session.get(V72SystemConfig, 1)
+        if row:
+            raw = json.loads(row.settings_json or "{}")
+            if isinstance(raw, dict):
+                for k in out:
+                    if k in raw:
+                        out[k] = raw[k]
+    except Exception:
+        try: db.session.rollback()
+        except Exception: pass
+    return out
+
+def _v72_save_settings(values):
+    current = _v72_settings()
+    current.update({k:v for k,v in (values or {}).items() if k in current})
+    row = db.session.get(V72SystemConfig, 1)
+    if not row:
+        row = V72SystemConfig(id=1)
+    row.settings_json = json.dumps(current, ensure_ascii=False)
+    row.updated_by = session.get("user_id")
+    row.updated_at = datetime.utcnow()
+    db.session.add(row)
+    return current
+
+def _v72_parse_shift(value):
+    m = re.match(r"^\s*(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})\s*$", value or "")
+    if not m:
+        return (5,0,17,0)
+    h1,m1,h2,m2 = map(int,m.groups())
+    return (max(0,min(23,h1)),max(0,min(59,m1)),max(0,min(23,h2)),max(0,min(59,m2)))
+
+def _v72_profile_for_user(user):
+    if not user:
+        return None
+    p = TeamScheduleProfile.query.filter_by(user_id=user.id).first()
+    if p:
+        return p
+    # fallback sem escrita no login
+    class TempProfile:
+        pass
+    p = TempProfile()
+    p.active = bool(user.active)
+    p.schedule_type = user.work_schedule_type or "12x36"
+    p.shift = user.work_shift or "05:00-17:00"
+    anchor = user.work_anchor_date or datetime.now(V72_TZ).date()
+    p.anchor_date = anchor if normalize(user.work_anchor_status or "TRABALHA") != "FOLGA" else anchor - timedelta(days=1)
+    return p
+
+def _v72_shift_window_for_date(user, day):
+    p = _v72_profile_for_user(user)
+    if not p or not _team_profile_is_scheduled(p, day):
+        return None
+    h1,m1,h2,m2 = _v72_parse_shift(p.shift or user.work_shift or "05:00-17:00")
+    start = datetime.combine(day, datetime.min.time(), tzinfo=V72_TZ).replace(hour=h1, minute=m1)
+    end = datetime.combine(day, datetime.min.time(), tzinfo=V72_TZ).replace(hour=h2, minute=m2)
+    if end <= start:
+        end += timedelta(days=1)
+    return start, end
+
+def _v72_active_authorization(user_id, now_utc=None):
+    now_utc = now_utc or datetime.utcnow()
+    return WorkAccessRequest.query.filter(
+        WorkAccessRequest.user_id == user_id,
+        WorkAccessRequest.status == "APROVADA",
+        WorkAccessRequest.approved_from <= now_utc,
+        WorkAccessRequest.approved_until > now_utc,
+    ).order_by(WorkAccessRequest.approved_until.desc()).first()
+
+def _v72_journey_status(user, now_local=None):
+    now_local = now_local or datetime.now(V72_TZ)
+    settings = _v72_settings()
+    result = {
+        "controlled": False, "allowed": True, "reason": "SEM_CONTROLE",
+        "valid_until": None, "scheduled": False, "authorization_id": None,
+    }
+    if not user or not user.active:
+        return {**result, "allowed": False, "reason": "USUARIO_INATIVO"}
+    if not int(settings.get("journey_enforcement_enabled",0) or 0):
+        return result
+    if not bool(getattr(user, "journey_control_enabled", False)):
+        return result
+
+    result["controlled"] = True
+    personnel = normalize(user.personnel_status or "ATIVO")
+    if personnel in {"FERIAS","AFASTADO","LICENCA"}:
+        result["allowed"] = False
+        result["reason"] = personnel
+        return result
+
+    # Jornada normal de hoje; também considera turno que começou ontem e cruza meia-noite.
+    candidates = []
+    for d in (now_local.date(), now_local.date()-timedelta(days=1)):
+        win = _v72_shift_window_for_date(user, d)
+        if win:
+            candidates.append(win)
+            if win[0] <= now_local < win[1]:
+                result["allowed"] = True
+                result["reason"] = "EM_ESCALA"
+                result["scheduled"] = True
+                result["valid_until"] = win[1]
+                return result
+
+    auth = _v72_active_authorization(user.id, datetime.utcnow())
+    if auth:
+        result["allowed"] = True
+        result["reason"] = "AUTORIZACAO_EXTRAORDINARIA"
+        result["authorization_id"] = auth.id
+        result["valid_until"] = auth.approved_until.replace(tzinfo=ZoneInfo("UTC")).astimezone(V72_TZ)
+        return result
+
+    result["allowed"] = False
+    result["scheduled"] = any(w[0].date() == now_local.date() for w in candidates)
+    result["reason"] = "FORA_DO_HORARIO" if result["scheduled"] else "FOLGA"
+    return result
+
+def _v72_start_session(user, event_type="LOGIN"):
+    session.clear()
+    session.permanent = True
+    session.update(user_id=user.id, name=user.name, role=user.role, gps_session_token=uuid.uuid4().hex)
+    try:
+        db.session.add(SessionEvent(user_id=user.id, event_type=event_type))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+def _v72_redirect_for_user(user):
+    if user.role == "hr":
+        return url_for("teams_page")
+    if user.role == "atm_financial_admin":
+        return url_for("financial_cost_management_page")
+    if user.role == "customer":
+        return url_for("portal_cliente_page")
+    return url_for("manager" if user.role in ("manager","manager_field","consultation","dispatcher") else "activities_page")
+
+def _v72_station_refs():
+    now = time.time()
+    if now - float(_V72_STATION_CACHE.get("at") or 0) > 300:
+        rows = Location.query.filter(
+            Location.reference_latitude.isnot(None),
+            Location.reference_longitude.isnot(None)
+        ).all()
+        _V72_STATION_CACHE["rows"] = [
+            (x.id, x.company or "", x.line or "", x.location or "", float(x.reference_latitude), float(x.reference_longitude))
+            for x in rows
+        ]
+        _V72_STATION_CACHE["at"] = now
+    return _V72_STATION_CACHE["rows"]
+
+def _v72_cleanup_history():
+    global _V72_LAST_HISTORY_CLEANUP
+    now_ts = time.time()
+    if now_ts - _V72_LAST_HISTORY_CLEANUP < 3600:
+        return
+    days = max(1, min(90, int(_v72_settings().get("gps_history_retention_days",7) or 7)))
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    TechnicianStationHistory.query.filter(TechnicianStationHistory.captured_at < cutoff).delete(synchronize_session=False)
+    # Autorizações antigas: mantém 90 dias para auditoria, sem crescer indefinidamente.
+    WorkAccessRequest.query.filter(WorkAccessRequest.requested_at < datetime.utcnow()-timedelta(days=90)).delete(synchronize_session=False)
+    _V72_LAST_HISTORY_CLEANUP = now_ts
+
+
 @app.route("/")
 def index():
     if not session.get("user_id"):
@@ -1620,21 +1906,16 @@ def login():
         password = request.form.get("password", "")
         user = User.query.filter(func.lower(User.username) == username, User.active.is_(True)).first()
         if user and check_password_hash(user.password_hash, password):
-            session.clear()
-            session.permanent = True
-            session.update(user_id=user.id, name=user.name, role=user.role, gps_session_token=uuid.uuid4().hex)
-            try:
-                db.session.add(SessionEvent(user_id=user.id, event_type="LOGIN"))
-                db.session.commit()
-            except Exception:
-                db.session.rollback()
-            if user.role == "hr":
-                return redirect(url_for("teams_page"))
-            if user.role == "atm_financial_admin":
-                return redirect(url_for("financial_cost_management_page"))
-            if user.role == "customer":
-                return redirect(url_for("portal_cliente_page"))
-            return redirect(url_for("manager" if user.role in ("manager", "manager_field", "consultation", "dispatcher") else "activities_page"))
+            js = _v72_journey_status(user)
+            if not js.get("allowed"):
+                session.clear()
+                session.permanent = True
+                session["pending_user_id"] = user.id
+                session["pending_user_name"] = user.name
+                session["pending_reason"] = js.get("reason") or "FORA_DA_JORNADA"
+                return redirect(url_for("v72_outside_journey_page"))
+            _v72_start_session(user, "LOGIN")
+            return redirect(_v72_redirect_for_user(user))
         flash("Usuário ou senha inválidos.")
     return render_template("login.html")
 
@@ -1648,8 +1929,293 @@ def logout():
             db.session.commit()
         except Exception:
             db.session.rollback()
+
     session.clear()
     return redirect(url_for("login"))
+
+
+@app.before_request
+def v72_enforce_journey_window():
+    # Evita interferência em autenticação, estáticos e fluxo de autorização.
+    if not session.get("user_id"):
+        return None
+    if request.endpoint in {
+        "logout","v72_session_status_api","v72_outside_journey_page",
+        "v72_outside_journey_status_api","v72_outside_journey_request_api"
+    }:
+        return None
+    if request.path.startswith("/static/") or request.path.startswith("/uploads/"):
+        return None
+    user = db.session.get(User, session.get("user_id"))
+    if not user:
+        session.clear()
+        return redirect(url_for("login"))
+    state = _v72_journey_status(user)
+    if state.get("controlled") and not state.get("allowed"):
+        uid, name, reason = user.id, user.name, state.get("reason")
+        try:
+            db.session.add(SessionEvent(user_id=uid,event_type="AUTO_LOGOUT_JOURNEY"))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+        session.clear()
+        session.permanent = True
+        session["pending_user_id"] = uid
+        session["pending_user_name"] = name
+        session["pending_reason"] = reason
+        if request.path.startswith("/api/"):
+            return jsonify({"ok":False,"error":"JORNADA_ENCERRADA","redirect":url_for("v72_outside_journey_page")}), 401
+        return redirect(url_for("v72_outside_journey_page"))
+    return None
+
+
+@app.get("/acesso-fora-jornada")
+def v72_outside_journey_page():
+    uid = session.get("pending_user_id")
+    if not uid:
+        return redirect(url_for("login"))
+    user = db.session.get(User, uid)
+    if not user or not user.active:
+        session.clear()
+        return redirect(url_for("login"))
+    state = _v72_journey_status(user)
+    # Caso a jornada tenha iniciado enquanto o usuário aguardava.
+    if state.get("allowed"):
+        _v72_start_session(user, "LOGIN_JOURNEY_WINDOW")
+        return redirect(_v72_redirect_for_user(user))
+    max_hours = int(_v72_settings().get("journey_max_extension_hours",6) or 6)
+    latest = WorkAccessRequest.query.filter_by(user_id=user.id).order_by(WorkAccessRequest.requested_at.desc()).first()
+    return render_template(
+        "outside_journey_v72.html", app_release=APP_RELEASE, user=user, state=state,
+        latest=latest, max_hours=max_hours
+    )
+
+
+@app.post("/api/acesso-fora-jornada/solicitar")
+def v72_outside_journey_request_api():
+    uid = session.get("pending_user_id")
+    user = db.session.get(User, uid) if uid else None
+    if not user or not user.active:
+        return jsonify({"ok":False,"error":"Sessão de solicitação expirada. Faça login novamente."}),401
+    personnel = normalize(user.personnel_status or "ATIVO")
+    if personnel in {"FERIAS","AFASTADO","LICENCA"}:
+        return jsonify({"ok":False,"error":"Este status funcional não permite autorização extraordinária por esta tela."}),403
+    data = request.get_json(silent=True) or {}
+    try:
+        minutes = int(data.get("minutes") or 0)
+    except Exception:
+        minutes = 0
+    max_minutes = max(60, int(_v72_settings().get("journey_max_extension_hours",6) or 6)*60)
+    if minutes < 30 or minutes > max_minutes:
+        return jsonify({"ok":False,"error":f"Solicite entre 30 e {max_minutes} minutos."}),400
+    reason = (data.get("reason") or "").strip()
+    if len(reason) < 5:
+        return jsonify({"ok":False,"error":"Informe o motivo da solicitação."}),400
+
+    open_req = WorkAccessRequest.query.filter(
+        WorkAccessRequest.user_id==user.id,
+        WorkAccessRequest.status=="PENDENTE"
+    ).order_by(WorkAccessRequest.requested_at.desc()).first()
+    if open_req:
+        open_req.reason = reason
+        open_req.requested_minutes = minutes
+        open_req.requested_at = datetime.utcnow()
+        row = open_req
+    else:
+        row = WorkAccessRequest(user_id=user.id,reason=reason,requested_minutes=minutes,status="PENDENTE")
+        db.session.add(row)
+    db.session.add(AuditEvent(user_id=user.id,event_type="WORK_ACCESS_REQUEST",entity_type="work_access",entity_id=str(row.id or ""),detail=f"{minutes} min · {reason}"))
+    db.session.commit()
+    return jsonify({"ok":True,"id":row.id,"status":row.status})
+
+
+@app.get("/api/acesso-fora-jornada/status")
+def v72_outside_journey_status_api():
+    uid = session.get("pending_user_id")
+    user = db.session.get(User, uid) if uid else None
+    if not user:
+        return jsonify({"ok":False,"error":"Sessão expirada."}),401
+    state = _v72_journey_status(user)
+    if state.get("allowed"):
+        _v72_start_session(user, "LOGIN_AUTHORIZED")
+        return jsonify({"ok":True,"authorized":True,"redirect":_v72_redirect_for_user(user)})
+    latest = WorkAccessRequest.query.filter_by(user_id=user.id).order_by(WorkAccessRequest.requested_at.desc()).first()
+    return jsonify({
+        "ok":True,"authorized":False,
+        "status":latest.status if latest else None,
+        "review_note":latest.review_note if latest else "",
+        "requested_at":latest.requested_at.isoformat()+"Z" if latest and latest.requested_at else None
+    })
+
+
+@app.get("/api/v72/session-status")
+@login_required
+def v72_session_status_api():
+    user = db.session.get(User, session.get("user_id"))
+    state = _v72_journey_status(user)
+    valid_until = state.get("valid_until")
+    return jsonify({
+        "ok":True,
+        "controlled":bool(state.get("controlled")),
+        "allowed":bool(state.get("allowed")),
+        "reason":state.get("reason"),
+        "valid_until":valid_until.isoformat() if valid_until else None,
+        "warning_minutes":int(_v72_settings().get("journey_warning_minutes",30) or 30)
+    })
+
+
+@app.post("/api/tecnico/geofence-ping")
+@login_required
+def v72_geofence_ping_api():
+    user = db.session.get(User, session.get("user_id"))
+    if not user or not bool(getattr(user,"gps_history_enabled",False)):
+        return jsonify({"ok":True,"history_enabled":False})
+    data = request.get_json(silent=True) or {}
+    try:
+        lat=float(data.get("latitude")); lon=float(data.get("longitude"))
+        acc=float(data.get("accuracy")) if data.get("accuracy") is not None else None
+    except Exception:
+        return jsonify({"ok":False,"error":"Coordenadas inválidas."}),400
+    radius=max(50,min(2000,int(_v72_settings().get("gps_history_radius_m",250) or 250)))
+    nearest=None
+    for loc_id,company,line,station,slat,slon in _v72_station_refs():
+        dist=_haversine_m(lat,lon,slat,slon)
+        if nearest is None or dist < nearest[-1]:
+            nearest=(loc_id,company,line,station,slat,slon,dist)
+
+    # Saiu de qualquer geofence: libera novo registro quando retornar.
+    if not nearest or nearest[-1] > radius:
+        session.pop("v72_station_inside",None)
+        return jsonify({"ok":True,"history_enabled":True,"inside":False})
+
+    loc_id,company,line,station,slat,slon,dist=nearest
+    last_inside=session.get("v72_station_inside")
+    if str(last_inside or "") == str(loc_id):
+        return jsonify({"ok":True,"history_enabled":True,"inside":True,"station_id":loc_id,"recorded":False})
+
+    row=TechnicianStationHistory(
+        user_id=user.id,location_id=loc_id,company=company,line=line,station=station,
+        latitude=lat,longitude=lon,accuracy=acc,distance_m=round(dist,1),
+        event_type="STATION_ENTER",session_token=session.get("gps_session_token"),
+        captured_at=datetime.utcnow()
+    )
+    db.session.add(row)
+    session["v72_station_inside"]=loc_id
+    try:
+        _v72_cleanup_history()
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        raise
+    return jsonify({"ok":True,"history_enabled":True,"inside":True,"station_id":loc_id,"station":station,"line":line,"recorded":True})
+
+
+@app.get("/gestao/rastreabilidade-jornada")
+@login_required
+def v72_management_tracking_page():
+    if not (_has_access("management.gps_history") or _has_access("management.work_authorizations")):
+        abort(403)
+    return render_template("management_tracking_v72.html", app_release=APP_RELEASE)
+
+
+@app.get("/api/gestao/historico-gps")
+@login_required
+def v72_gps_history_api():
+    if not _has_access("management.gps_history"):
+        return jsonify({"ok":False,"error":"Sem permissão para histórico GPS."}),403
+    user_id=request.args.get("user_id",type=int)
+    date_raw=(request.args.get("date") or "").strip()
+    users=User.query.filter(User.active.is_(True),User.gps_history_enabled.is_(True)).order_by(User.name).all()
+    if not user_id:
+        return jsonify({"ok":True,"users":[{"id":u.id,"name":u.name,"role":u.role,"company":u.company or ""} for u in users],"events":[]})
+    u=db.session.get(User,user_id)
+    if not u:
+        return jsonify({"ok":False,"error":"Usuário não encontrado."}),404
+    try:
+        day=datetime.strptime(date_raw,"%Y-%m-%d").date() if date_raw else datetime.now(V72_TZ).date()
+    except ValueError:
+        return jsonify({"ok":False,"error":"Data inválida."}),400
+    start_local=datetime.combine(day,datetime.min.time(),tzinfo=V72_TZ)
+    end_local=start_local+timedelta(days=1)
+    start_utc=start_local.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+    end_utc=end_local.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+    rows=TechnicianStationHistory.query.filter(
+        TechnicianStationHistory.user_id==user_id,
+        TechnicianStationHistory.captured_at>=start_utc,
+        TechnicianStationHistory.captured_at<end_utc
+    ).order_by(TechnicianStationHistory.captured_at).all()
+    events=[]
+    for x in rows:
+        local_dt=x.captured_at.replace(tzinfo=ZoneInfo("UTC")).astimezone(V72_TZ)
+        events.append({
+            "id":x.id,"station_id":x.location_id,"company":x.company or "","line":x.line or "",
+            "station":x.station or "","latitude":x.latitude,"longitude":x.longitude,
+            "accuracy":x.accuracy,"distance_m":x.distance_m,
+            "captured_at":local_dt.isoformat(),"time":local_dt.strftime("%H:%M:%S")
+        })
+    return jsonify({"ok":True,"user":{"id":u.id,"name":u.name},"date":day.isoformat(),"events":events,"count":len(events),"retention_days":int(_v72_settings().get("gps_history_retention_days",7) or 7)})
+
+
+@app.get("/api/gestao/autorizacoes-jornada")
+@login_required
+def v72_work_authorizations_api():
+    if not _has_access("management.work_authorizations"):
+        return jsonify({"ok":False,"error":"Sem permissão para autorizações."}),403
+    status=(request.args.get("status") or "").strip().upper()
+    q=WorkAccessRequest.query.order_by(WorkAccessRequest.requested_at.desc())
+    if status:
+        q=q.filter(WorkAccessRequest.status==status)
+    rows=q.limit(200).all()
+    user_ids={x.user_id for x in rows}|{x.reviewed_by for x in rows if x.reviewed_by}
+    umap={u.id:u for u in User.query.filter(User.id.in_(user_ids)).all()} if user_ids else {}
+    return jsonify({"ok":True,"rows":[{
+        "id":x.id,"user_id":x.user_id,"user":umap.get(x.user_id).name if umap.get(x.user_id) else str(x.user_id),
+        "reason":x.reason,"requested_minutes":x.requested_minutes,"status":x.status,
+        "requested_at":x.requested_at.isoformat()+"Z" if x.requested_at else None,
+        "reviewed_by":umap.get(x.reviewed_by).name if x.reviewed_by and umap.get(x.reviewed_by) else "",
+        "reviewed_at":x.reviewed_at.isoformat()+"Z" if x.reviewed_at else None,
+        "approved_until":x.approved_until.isoformat()+"Z" if x.approved_until else None,
+        "review_note":x.review_note or ""
+    } for x in rows]})
+
+
+@app.get("/api/gestao/autorizacoes-jornada/count")
+@login_required
+def v72_work_authorizations_count_api():
+    if not _has_access("management.work_authorizations"):
+        return jsonify({"ok":True,"count":0})
+    return jsonify({"ok":True,"count":WorkAccessRequest.query.filter_by(status="PENDENTE").count()})
+
+
+@app.post("/api/gestao/autorizacoes-jornada/<int:req_id>/decisao")
+@login_required
+def v72_work_authorization_decision_api(req_id):
+    if not _has_access("management.work_authorizations"):
+        return jsonify({"ok":False,"error":"Sem permissão para autorizar."}),403
+    row=db.session.get(WorkAccessRequest,req_id)
+    if not row:
+        return jsonify({"ok":False,"error":"Solicitação não encontrada."}),404
+    data=request.get_json(silent=True) or {}
+    action=normalize(data.get("action"))
+    note=(data.get("note") or "").strip()
+    if action not in {"APROVAR","RECUSAR"}:
+        return jsonify({"ok":False,"error":"Decisão inválida."}),400
+    row.reviewed_by=session.get("user_id");row.reviewed_at=datetime.utcnow();row.review_note=note
+    if action=="RECUSAR":
+        row.status="RECUSADA";row.approved_from=None;row.approved_until=None
+    else:
+        try: minutes=int(data.get("minutes") or row.requested_minutes)
+        except Exception: minutes=row.requested_minutes
+        max_minutes=max(60,int(_v72_settings().get("journey_max_extension_hours",6) or 6)*60)
+        minutes=max(30,min(max_minutes,minutes))
+        row.status="APROVADA";row.approved_from=datetime.utcnow();row.approved_until=datetime.utcnow()+timedelta(minutes=minutes)
+    db.session.add(AuditEvent(
+        user_id=session.get("user_id"),event_type="WORK_ACCESS_DECISION",
+        entity_type="work_access",entity_id=str(row.id),
+        detail=f"{row.status} · técnico {row.user_id} · até {row.approved_until.isoformat() if row.approved_until else '-'} · {note}"
+    ))
+    db.session.commit()
+    return jsonify({"ok":True,"status":row.status,"approved_until":row.approved_until.isoformat()+"Z" if row.approved_until else None})
 
 
 def _preventive_asset_identifier(a):
@@ -5737,6 +6303,8 @@ def create_user():
     personnel_status = request.form.get("personnel_status", "ATIVO").strip().upper() or "ATIVO"
     personnel_status_note = request.form.get("personnel_status_note", "").strip() or None
     gps_required = request.form.get("gps_required") == "1"
+    gps_history_enabled = request.form.get("gps_history_enabled") == "1"
+    journey_control_enabled = request.form.get("journey_control_enabled") == "1"
     work_schedule_type = request.form.get("work_schedule_type", "12x36").strip() or "12x36"
     work_shift = request.form.get("work_shift", "05:00-17:00").strip() or "05:00-17:00"
     work_anchor_status = request.form.get("work_anchor_status", "TRABALHA").strip() or "TRABALHA"
@@ -5802,6 +6370,8 @@ def create_user():
         access_json=(system_profile.access_json if system_profile else json.dumps(_parse_access_form(role), ensure_ascii=False)),
         system_profile_id=(system_profile.id if system_profile else None),
         gps_required=(gps_required if role in ("technician","technician_implantation","manager_field","dispatcher") else False),
+        gps_history_enabled=(gps_history_enabled if role in ("technician","technician_implantation","manager_field","dispatcher") else False),
+        journey_control_enabled=(journey_control_enabled if role in ("technician","technician_implantation") else False),
         customer_company_ids=json.dumps([int(x) for x in customer_company_ids]) if role=="customer" else None,
     )
 
@@ -5921,6 +6491,8 @@ def edit_user(user_id):
     personnel_status = request.form.get("personnel_status", user.personnel_status or "ATIVO").strip().upper() or "ATIVO"
     personnel_status_note = request.form.get("personnel_status_note", user.personnel_status_note or "").strip() or None
     gps_required = request.form.get("gps_required") == "1"
+    gps_history_enabled = request.form.get("gps_history_enabled") == "1"
+    journey_control_enabled = request.form.get("journey_control_enabled") == "1"
     work_schedule_type = request.form.get("work_schedule_type", user.work_schedule_type or "12x36").strip() or "12x36"
     work_shift = request.form.get("work_shift", user.work_shift or "05:00-17:00").strip() or "05:00-17:00"
     work_anchor_status = request.form.get("work_anchor_status", user.work_anchor_status or "TRABALHA").strip() or "TRABALHA"
@@ -6034,6 +6606,8 @@ def edit_user(user_id):
     user.personnel_status_note = personnel_status_note
     old_gps_required = bool(getattr(user, "gps_required", False))
     user.gps_required = gps_required if role in ("technician","technician_implantation","manager_field","dispatcher") else False
+    user.gps_history_enabled = gps_history_enabled if role in ("technician","technician_implantation","manager_field","dispatcher") else False
+    user.journey_control_enabled = journey_control_enabled if role in ("technician","technician_implantation") else False
     if system_profile:
         user.access_json = system_profile.access_json
     elif session.get("role") == "manager":
@@ -7885,7 +8459,16 @@ def v38_gps_config():
     u=db.session.get(User, session.get("user_id"))
     required=bool(getattr(u,"gps_required",False)) if u else False
     interval=max(60, int(_v50_settings().get("gps_interval_seconds", os.getenv("TEAM_GPS_INTERVAL_SECONDS", "300"))))
-    return jsonify({"ok": True, "enabled": required, "required": required, "interval_seconds": interval, "retention_days": max(1, int(os.getenv("TEAM_GPS_RETENTION_DAYS", "7"))), "session_token": session.get("gps_session_token") or str(session.get("user_id") or "")})
+    v72=_v72_settings()
+    return jsonify({
+        "ok": True, "enabled": required, "required": required, "interval_seconds": interval,
+        "retention_days": max(1,int(v72.get("gps_history_retention_days",7) or 7)),
+        "session_token": session.get("gps_session_token") or str(session.get("user_id") or ""),
+        "history_enabled": bool(getattr(u,"gps_history_enabled",False)) if u else False,
+        "history_ping_seconds": max(10,int(v72.get("gps_history_ping_seconds",20) or 20)),
+        "history_min_movement_m": max(20,int(v72.get("gps_history_min_movement_m",60) or 60)),
+        "history_radius_m": max(50,int(v72.get("gps_history_radius_m",250) or 250)),
+    })
 
 @app.get("/api/v38/diario-bordo")
 @teams_view_required
@@ -9724,6 +10307,10 @@ def _ensure_emv_tables():
             app.logger.warning("V66 REV4 EMV schema migration: %s", exc)
     # V63 REV2: atualizações de base passam a ocorrer somente pelo importador administrativo.
 
+def _garage_company_key(value):
+    s=unicodedata.normalize("NFKD",str(value or "")).encode("ascii","ignore").decode().upper()
+    return re.sub(r"[^A-Z0-9]+"," ",s).strip()
+
 # V60 REV3 — Troca de Chips Garagem, base inicial MIGRACAO_SAM GARAGENS.xlsx.
 GARAGE_CHIP_SEED = [{'company': 'ABC SISTEMA DE TRANSPORTE SPE S.A', 'terminal': '9906', 'ip': '10.109.22.167', 'model': 'B80', 'sam_type': 'NÃO MIGRADO'}, {'company': 'ABC SISTEMA DE TRANSPORTE SPE S.A', 'terminal': '9907', 'ip': '10.109.18.234', 'model': 'B80', 'sam_type': 'NÃO MIGRADO'}, {'company': 'ALTO TIETE TRANSPORTES FILIAL', 'terminal': '41680', 'ip': '10.180.136.59', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'ALTO TIETE TRANSPORTES FILIAL', 'terminal': '47153', 'ip': '10109120173', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'ALTO TIETE TRANSPORTES FILIAL', 'terminal': '47353', 'ip': '10.109.8.187', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'ALTO TIETE TRANSPORTES FILIAL', 'terminal': '47465', 'ip': '10.109.8.222', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'ALTO TIETE TRANSPORTES FILIAL', 'terminal': '47487', 'ip': '10.109.82.32', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'ALTO TIETE TRANSPORTES LTDA', 'terminal': '47022', 'ip': '10.109.97.201', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'ALTO TIETE TRANSPORTES LTDA', 'terminal': '47091', 'ip': '10190133202', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'ALTO TIETE TRANSPORTES LTDA', 'terminal': '47099', 'ip': '10.109.21.210', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'ALTO TIETE TRANSPORTES LTDA', 'terminal': '47207', 'ip': '10.109.96.241', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'ALTO TIETE TRANSPORTES LTDA', 'terminal': '47225', 'ip': '10.109.99.247', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'ALTO TIETE TRANSPORTES LTDA', 'terminal': '47267', 'ip': '10190132161', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'ALTO TIETE TRANSPORTES LTDA', 'terminal': '47595', 'ip': '10180136140', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'ALTO TIETE TRANSPORTES LTDA', 'terminal': '47654', 'ip': '10.109.8.204', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'ALTO TIETE TRANSPORTES LTDA', 'terminal': '47664', 'ip': '10.109.43.100', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'ARUJA TRANS COLT - MUNICIPAL', 'terminal': '2301', 'ip': '10.109.74.108', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'ARUJA TRANS COLT - MUNICIPAL', 'terminal': '2304', 'ip': '10.109.21.122', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'ARUJA TRANS COLT - MUNICIPAL', 'terminal': '2309', 'ip': '10.109.97.167', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'ARUJA TRANS COLT - MUNICIPAL', 'terminal': '2313', 'ip': '10.109.4.182', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'ARUJA TRANS COLT - MUNICIPAL', 'terminal': '2317', 'ip': '10.109.32.83', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'ARUJA TRANSPORTES COLETIVOS LTDA', 'terminal': '39564', 'ip': '10.190.11.181', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'ARUJA TRANSPORTES COLETIVOS LTDA', 'terminal': '39581', 'ip': '10.180.137.89', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'ARUJA TRANSPORTES COLETIVOS LTDA', 'terminal': '39583', 'ip': '10.109.61.142', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'ARUJA TRANSPORTES COLETIVOS LTDA', 'terminal': '39588', 'ip': '10190132119', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'ARUJA TRANSPORTES COLETIVOS LTDA', 'terminal': '39591', 'ip': '10.109.30.56', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'AUTO ÔNIBUS MORATENSE LTDA', 'terminal': '26058', 'ip': '10.109.22.221', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'AUTO ÔNIBUS MORATENSE LTDA', 'terminal': '26061', 'ip': '10.109.99.26', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'AUTO ÔNIBUS MORATENSE LTDA', 'terminal': '26064', 'ip': '10.109.81.184', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'AUTO VIAÇÃO URUBUPUNGÁ LTDA', 'terminal': '20003', 'ip': '172.100.78.35', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'AUTO VIAÇÃO URUBUPUNGÁ LTDA', 'terminal': '20037', 'ip': '10.109.96.239', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'AUTO VIAÇÃO URUBUPUNGÁ LTDA', 'terminal': '20117', 'ip': '10.109.99.209', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'AUTO VIAÇÃO URUBUPUNGÁ LTDA', 'terminal': '20127', 'ip': '10.109.98.191', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'AUTO VIAÇÃO URUBUPUNGÁ LTDA', 'terminal': '20153', 'ip': '10.109.36.134', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'AUTO VIAÇÃO URUBUPUNGÁ LTDA', 'terminal': '20467', 'ip': '10.109.42.160', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'AUTO VIAÇÃO URUBUPUNGÁ LTDA', 'terminal': '20488', 'ip': '10.109.39.203', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'AUTO VIAÇÃO URUBUPUNGÁ LTDA', 'terminal': '20490', 'ip': '10.109.18.252', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'AUTO VIAÇÃO URUBUPUNGÁ LTDA', 'terminal': '20509', 'ip': '10180137250', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'AUTO VIAÇÃO URUBUPUNGÁ LTDA', 'terminal': '20539', 'ip': '10.109.19.66', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'AUTO VIAÇÃO URUBUPUNGÁ LTDA', 'terminal': '20596', 'ip': '10.109.98.120', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'AUTO VIAÇÃO URUBUPUNGÁ LTDA', 'terminal': '20640', 'ip': '10.109.15.113', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'AUTO VIAÇÃO URUBUPUNGÁ LTDA', 'terminal': '20648', 'ip': '10.109.96.191', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'AUTO VIAÇÃO URUBUPUNGÁ LTDA', 'terminal': '20654', 'ip': '10.109.38.109', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'AUTO VIAÇÃO URUBUPUNGÁ LTDA', 'terminal': '20668', 'ip': '10.109.97.27', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'AUTO VIAÇÃO URUBUPUNGÁ LTDA', 'terminal': '20685', 'ip': '10.109.98.78', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'AUTO VIAÇÃO URUBUPUNGÁ LTDA', 'terminal': '20689', 'ip': '10180137140', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'AUTO VIAÇÃO URUBUPUNGÁ LTDA', 'terminal': '20720', 'ip': '10109120163', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'AUTO VIAÇÃO URUBUPUNGÁ LTDA', 'terminal': '20764', 'ip': '10.109.82.236', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'AUTO VIAÇÃO URUBUPUNGÁ LTDA', 'terminal': '20768', 'ip': '172.100.81.32', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'AUTO VIAÇÃO URUBUPUNGÁ LTDA', 'terminal': '20769', 'ip': '10.109.97.145', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'AUTO VIAÇÃO URUBUPUNGÁ LTDA', 'terminal': '20775', 'ip': '10.109.9.31', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'AUTO VIAÇÃO URUBUPUNGÁ LTDA', 'terminal': '20785', 'ip': '10.109.6.10', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'AUTO VIAÇÃO URUBUPUNGÁ LTDA', 'terminal': '20787', 'ip': '10.109.35.6', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'AUTO VIAÇÃO URUBUPUNGÁ LTDA', 'terminal': '20967', 'ip': '10180137244', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'BB TRANSPORTE E TURISMO LTDA', 'terminal': '27443', 'ip': '10.109.98.93', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'BB TRANSPORTE E TURISMO LTDA', 'terminal': '27447', 'ip': '10.109.96.72', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'BB TRANSPORTE E TURISMO LTDA', 'terminal': '27483', 'ip': '10.109.96.57', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'BB TRANSPORTE E TURISMO LTDA', 'terminal': '27487', 'ip': '10.109.60.179', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'BB TRANSPORTE E TURISMO LTDA', 'terminal': '27513', 'ip': '10.109.30.174', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'BB TRANSPORTE E TURISMO LTDA', 'terminal': '27519', 'ip': '10.109.99.132', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'BB TRANSPORTE E TURISMO LTDA', 'terminal': '27521', 'ip': '10.109.21.175', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'BB TRANSPORTE E TURISMO LTDA', 'terminal': '27533', 'ip': '10.109.12.142', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'BB TRANSPORTE E TURISMO LTDA', 'terminal': '27575', 'ip': '10.109.96.232', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'BB TRANSPORTE E TURISMO LTDA', 'terminal': '27589', 'ip': '10.109.8.168', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'BB TRANSPORTE E TURISMO LTDA', 'terminal': '27601', 'ip': '10.109.20.172', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'BB TRANSPORTE E TURISMO LTDA', 'terminal': '27645', 'ip': '10.109.96.195', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'BB TRANSPORTE E TURISMO LTDA', 'terminal': '27671', 'ip': '10.109.32.128', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'BB TRANSPORTE E TURISMO LTDA', 'terminal': '88879', 'ip': '0.0.0.0', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'DANUBIO AZUL - SUB', 'terminal': '19063', 'ip': '10.109.98.54', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'DANUBIO AZUL - SUB', 'terminal': '99033', 'ip': '10.109.17.65', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'DEL REY TRANSPORTES LTDA', 'terminal': '25193', 'ip': '0.0.0.0', 'model': 'B80', 'sam_type': 'NÃO MIGRADO'}, {'company': 'DEL REY TRANSPORTES LTDA', 'terminal': '25194', 'ip': '0.0.0.0', 'model': 'B80', 'sam_type': 'NÃO MIGRADO'}, {'company': 'DEL REY TRANSPORTES LTDA', 'terminal': '25211', 'ip': '10.109.29.205', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'DEL REY TRANSPORTES LTDA', 'terminal': '25213', 'ip': '10.190.132.10', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'EMPRESA DE ÔNIBUS VILA GALVÃO ', 'terminal': '30097', 'ip': '10.109.41.74', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'EMPRESA DE ÔNIBUS VILA GALVÃO ', 'terminal': '30587', 'ip': '172.70.119.123', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'EMPRESA DE ÔNIBUS VILA GALVÃO ', 'terminal': '30596', 'ip': '10.109.38.160', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'EMPRESA DE ÔNIBUS VILA GALVÃO ', 'terminal': '30609', 'ip': '172.70.119.145', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'EMPRESA DE ÔNIBUS VILA GALVÃO ', 'terminal': '30625', 'ip': '10.109.99.140', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'EMPRESA DE ÔNIBUS VILA GALVÃO ', 'terminal': '30631', 'ip': '10.109.36.196', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'EMPRESA DE ÔNIBUS VILA GALVÃO ', 'terminal': '30668', 'ip': '10.109.38.94', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'EMPRESA DE ÔNIBUS VILA GALVÃO ', 'terminal': '30670', 'ip': '10.109.12.225', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'EMPRESA DE ÔNIBUS VILA GALVÃO ', 'terminal': '30694', 'ip': '10109125101', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'EMPRESA DE ÔNIBUS VILA GALVÃO ', 'terminal': '30715', 'ip': '10.109.60.176', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'EMPRESA DE ÔNIBUS VILA GALVÃO ', 'terminal': '30716', 'ip': '10.109.14.181', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'EMPRESA DE ÔNIBUS VILA GALVÃO ', 'terminal': '30813', 'ip': '10.109.6.166', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'EMPRESA DE ÔNIBUS VILA GALVÃO ', 'terminal': '30823', 'ip': '10.109.97.76', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'EMPRESA DE ÔNIBUS VILA GALVÃO ', 'terminal': '30870', 'ip': '10.109.13.20', 'model': 'B80', 'sam_type': 'NÃO MIGRADO'}, {'company': 'EMPRESA DE ÔNIBUS VILA GALVÃO ', 'terminal': '30878', 'ip': '10.109.20.22', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'EMPRESA DE ÔNIBUS VILA GALVÃO ', 'terminal': '30883', 'ip': '10.109.20.60', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'EMPRESA DE ÔNIBUS VILA GALVÃO ', 'terminal': '30890', 'ip': '10.109.12.96', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'EMPRESA DE ÔNIBUS VILA GALVÃO ', 'terminal': '30903', 'ip': '10.109.98.213', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'EMPRESA DE TRANSPORTES MAIRIPORÃ', 'terminal': '39003', 'ip': '10.109.8.86', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'EMPRESA DE TRANSPORTES MAIRIPORÃ', 'terminal': '39180', 'ip': '10.109.14.27', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'EMPRESA DE TRANSPORTES MAIRIPORÃ', 'terminal': '39192', 'ip': '10.109.62.105', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'EMPRESA DE TRANSPORTES MAIRIPORÃ', 'terminal': '39202', 'ip': '10.109.10.232', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'EMPRESA DE TRANSPORTES MAIRIPORÃ', 'terminal': '39208', 'ip': '10.109.19.112', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'EMPRESA DE TRANSPORTES MAIRIPORÃ', 'terminal': '39218', 'ip': '10.109.38.5', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'EMPRESA TRANSPORTES E TURISMO', 'terminal': '24416', 'ip': '10.109.23.115', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'EMPRESA TRANSPORTES E TURISMO', 'terminal': '24500', 'ip': '10.109.81.134', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'EMPRESA TRANSPORTES E TURISMO', 'terminal': '24518', 'ip': '10.109.81.24', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'EMPRESA TRANSPORTES E TURISMO', 'terminal': '24548', 'ip': '10.109.39.184', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'EMPRESA TRANSPORTES E TURISMO', 'terminal': '24752', 'ip': '10.109.15.35', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'EMPRESA TRANSPORTES E TURISMO', 'terminal': '24758', 'ip': '10.109.14.56', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'EMPRESA TRANSPORTES E TURISMO', 'terminal': '24834', 'ip': '10.109.75.80', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'EMPRESA TRANSPORTES E TURISMO', 'terminal': '24842', 'ip': '10109126204', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'GUARULHOS TRANSPORTES S/A', 'terminal': '33002', 'ip': '10.109.43.149', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'GUARULHOS TRANSPORTES S/A', 'terminal': '33624', 'ip': '10.109.16.7', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'GUARULHOS TRANSPORTES S/A', 'terminal': '33632', 'ip': '10.109.15.133', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'GUARULHOS TRANSPORTES S/A', 'terminal': '33638', 'ip': '10.109.97.160', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'GUARULHOS TRANSPORTES S/A', 'terminal': '33645', 'ip': '10.109.75.225', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'GUARULHOS TRANSPORTES S/A', 'terminal': '33651', 'ip': '10.109.22.16', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'GUARULHOS TRANSPORTES S/A', 'terminal': '33663', 'ip': '10.109.30.248', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'GUARULHOS TRANSPORTES S/A', 'terminal': '33670', 'ip': '10.109.97.140', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'GUARULHOS TRANSPORTES S/A', 'terminal': '33723', 'ip': '10.109.34.118', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'GUARULHOS TRANSPORTES S/A', 'terminal': '33724', 'ip': '10.109.37.158', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'GUARULHOS TRANSPORTES S/A', 'terminal': '33747', 'ip': '10.109.98.14', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'GUARULHOS TRANSPORTES S/A', 'terminal': '33749', 'ip': '10.190.133.37', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'GUARULHOS TRANSPORTES S/A', 'terminal': '33772', 'ip': '10.109.99.124', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'GUARULHOS TRANSPORTES S/A', 'terminal': '33777', 'ip': '10.109.97.87', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'GUARULHOS TRANSPORTES S/A', 'terminal': '33780', 'ip': '10.109.43.54', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'GUARULHOS TRANSPORTES S/A', 'terminal': '33785', 'ip': '10.109.96.39', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'GUARULHOS TRANSPORTES S/A', 'terminal': '33786', 'ip': '10.109.16.194', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'GUARULHOS TRANSPORTES S/A', 'terminal': '33789', 'ip': '10.109.32.36', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'GUARULHOS TRANSPORTES S/A', 'terminal': '33795', 'ip': '10.109.36.81', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'GUARULHOS TRANSPORTES S/A', 'terminal': '33800', 'ip': '10.109.40.204', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'GUARULHOS TRANSPORTES S/A', 'terminal': '33830', 'ip': '10.109.21.198', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'GUARULHOS TRANSPORTES S/A', 'terminal': '34091', 'ip': '10.180.2.127', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST REMANESCE', 'terminal': '80027', 'ip': '10.109.30.106', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST REMANESCE', 'terminal': '80211', 'ip': '10.109.33.179', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST REMANESCE', 'terminal': '80217', 'ip': '10.109.125.60', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST REMANESCE', 'terminal': '80251', 'ip': '10.109.99.232', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST REMANESCE', 'terminal': '80427', 'ip': '10180136105', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST REMANESCE', 'terminal': '80433', 'ip': '10.109.33.198', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST REMANESCE', 'terminal': '80633', 'ip': '10.109.17.105', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST REMANESCE', 'terminal': '80639', 'ip': '10.109.121.60', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST REMANESCE', 'terminal': '80859', 'ip': '10.109.40.94', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST REMANESCE', 'terminal': '80861', 'ip': '10.109.19.150', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST REMANESCE', 'terminal': '80907', 'ip': '10190132210', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST REMANESCE', 'terminal': '80921', 'ip': '10180137183', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST REMANESCE', 'terminal': '80923', 'ip': '10.109.4.134', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST REMANESCE', 'terminal': '80943', 'ip': '10.109.5.62', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST REMANESCE', 'terminal': '81047', 'ip': '10.109.22.192', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST REMANESCE', 'terminal': '81157', 'ip': '10.180.136.61', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST REMANESCE', 'terminal': '81159', 'ip': '10.109.72.164', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST REMANESCE', 'terminal': '81307', 'ip': '10.109.4.80', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST REMANESCE', 'terminal': '81361', 'ip': '10.109.83.139', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST REMANESCE', 'terminal': '81371', 'ip': '10.109.33.191', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST REMANESCE', 'terminal': '81383', 'ip': '10.180.136.50', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST REMANESCE', 'terminal': '81393', 'ip': '10.109.6.66', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST REMANESCE', 'terminal': '81611', 'ip': '10.109.38.8', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST REMANESCE', 'terminal': '81647', 'ip': '10.109.30.41', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST REMANESCE', 'terminal': '81727', 'ip': '10.109.14.59', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST REMANESCE', 'terminal': '81743', 'ip': '10.109.7.21', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST REMANESCE', 'terminal': '81753', 'ip': '10.109.99.152', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST REMANESCE', 'terminal': '81867', 'ip': '10.109.29.238', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST REMANESCE', 'terminal': '81917', 'ip': '10.109.40.62', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST REMANESCE', 'terminal': '81943', 'ip': '10.109.7.185', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST REMANESCE', 'terminal': '81967', 'ip': '10180136193', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST REMANESCE', 'terminal': '82411', 'ip': '10.180.136.88', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST REMANESCE', 'terminal': '82503', 'ip': '10.109.42.150', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '3', 'ip': '10190132229', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '5430', 'ip': '10.109.82.128', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '5439', 'ip': '10.109.14.76', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '6', 'ip': '10.109.40.71', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '7', 'ip': '10.109.38.151', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '7400', 'ip': '10.109.12.29', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '7401', 'ip': '10.109.98.114', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '7715', 'ip': '10.109.22.5', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '8', 'ip': '10.109.18.135', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '8106', 'ip': '10.109.11.199', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '8116', 'ip': '10.109.34.167', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '8150', 'ip': '10.180.136.79', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '8164', 'ip': '10190133116', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '8170', 'ip': '10.109.13.97', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '8251', 'ip': '10190133230', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '8254', 'ip': '10109113222', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '8255', 'ip': '10.109.96.100', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '8256', 'ip': '10.109.19.37', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '8265', 'ip': '10.109.30.83', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '8316', 'ip': '10.109.82.160', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '8326', 'ip': '10.109.83.128', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '8328', 'ip': '10.109.96.238', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '8335', 'ip': '10.109.98.151', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '8354', 'ip': '10.109.83.17', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '8369', 'ip': '10.109.11.29', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '8370', 'ip': '10.109.15.88', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '8380', 'ip': '10.109.10.121', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '9122', 'ip': '10.109.21.222', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '9212', 'ip': '10.109.41.77', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '9213', 'ip': '10.109.98.133', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '9232', 'ip': '10.109.19.111', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '9234', 'ip': '10180137118', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '9432', 'ip': '10.109.13.62', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '9613', 'ip': '10.109.18.70', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '9673', 'ip': '10190132104', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '9905', 'ip': '10.109.83.253', 'model': 'B80', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '9910', 'ip': '10.109.22.210', 'model': 'B80', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '9911', 'ip': '10.109.22.27', 'model': 'B80', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '9912', 'ip': '10.109.36.110', 'model': 'B80', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '9915', 'ip': '10.109.20.181', 'model': 'B80', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '9916', 'ip': '10.109.81.141', 'model': 'B80', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '9917', 'ip': '10.109.62.204', 'model': 'B80', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '9920', 'ip': '10109112126', 'model': 'B80', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '9921', 'ip': '10.109.82.233', 'model': 'B80', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '9922', 'ip': '10.109.31.241', 'model': 'B80', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '9925', 'ip': '10.109.99.59', 'model': 'B80', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '9926', 'ip': '10.109.96.2', 'model': 'B80', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '9927', 'ip': '10.109.18.27', 'model': 'B80', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '9932', 'ip': '10.109.72.30', 'model': 'B80', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '9935', 'ip': '10.109.99.199', 'model': 'B80', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '9936', 'ip': '10109127110', 'model': 'B80', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '9937', 'ip': '10.109.74.198', 'model': 'B80', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '9940', 'ip': '10.109.80.217', 'model': 'B80', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '9942', 'ip': '10.109.122.44', 'model': 'B80', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '9943', 'ip': '10.109.80.204', 'model': 'B80', 'sam_type': 'NÃO MIGRADO'}, {'company': 'NEXT MOBILIDADE SIST.EXISTENTE', 'terminal': '9945', 'ip': '10.109.29.16', 'model': 'B80', 'sam_type': 'NÃO MIGRADO'}, {'company': 'PÁSSARO MARRON SANTA ISABEL', 'terminal': '37653', 'ip': '10.109.81.139', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'PÁSSARO MARRON SANTA ISABEL', 'terminal': '37654', 'ip': '10.109.29.222', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'PÁSSARO MARRON SANTA ISABEL', 'terminal': '37656', 'ip': '10.109.10.163', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'PÁSSARO MARRON SANTA ISABEL', 'terminal': '37657', 'ip': '10.109.34.247', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'PÁSSARO MARRON SANTA ISABEL', 'terminal': '37809', 'ip': '10.109.11.218', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'PÁSSARO MARRON SANTA ISABEL', 'terminal': '37813', 'ip': '10.109.97.249', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'PÁSSARO MARRON UNILESTE', 'terminal': '45016', 'ip': '10.109.96.116', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'PÁSSARO MARRON UNILESTE', 'terminal': '45019', 'ip': '10.109.83.48', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'PÁSSARO MARRON UNILESTE', 'terminal': '45511', 'ip': '10.190.133.78', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'RADIAL SUZANO INTERMUNICIPAL ', 'terminal': '41023', 'ip': '10.109.18.109', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'RADIAL SUZANO INTERMUNICIPAL ', 'terminal': '41361', 'ip': '10.109.37.2', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'RADIAL SUZANO INTERMUNICIPAL ', 'terminal': '41663', 'ip': '10.109.60.56', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'RADIAL SUZANO INTERMUNICIPAL ', 'terminal': '41728', 'ip': '10.109.4.191', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'RADIAL SUZANO INTERMUNICIPAL ', 'terminal': '41742', 'ip': '10190133106', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'RALIP TRANSPORTES RODOVIÁRIOS ', 'terminal': '23065', 'ip': '10.109.40.172', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'RALIP TRANSPORTES RODOVIÁRIOS ', 'terminal': '23073', 'ip': '10.109.99.186', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'RTO-EMTU CECON', 'terminal': '0', 'ip': '0.0.0.0', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'RTO-EMTU CECON', 'terminal': '2048', 'ip': '10180137124', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'RTO-EMTU CECON', 'terminal': '210', 'ip': '0.0.0.0', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'RTO-EMTU CECON', 'terminal': '211', 'ip': '0.0.0.0', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'RTO-EMTU CECON', 'terminal': '212', 'ip': '0.0.0.0', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'RTO-EMTU CECON', 'terminal': '213', 'ip': '0.0.0.0', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'RTO-EMTU CECON', 'terminal': '216', 'ip': '0.0.0.0', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'RTO-EMTU CECON', 'terminal': '220', 'ip': '0.0.0.0', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'RTO-EMTU CECON', 'terminal': '221', 'ip': '0.0.0.0', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'RTO-EMTU CECON', 'terminal': '222', 'ip': '0.0.0.0', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'RTO-EMTU CECON', 'terminal': '223', 'ip': '0.0.0.0', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'RTO-EMTU CECON', 'terminal': '224', 'ip': '0.0.0.0', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'RTO-EMTU CECON', 'terminal': '225', 'ip': '0.0.0.0', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'RTO-EMTU CECON', 'terminal': '226', 'ip': '0.0.0.0', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'RTO-EMTU CECON', 'terminal': '228', 'ip': '0.0.0.0', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'RTO-EMTU CECON', 'terminal': '229', 'ip': '0.0.0.0', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'RTO-EMTU CECON', 'terminal': '232', 'ip': '0.0.0.0', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'RTO-EMTU CECON', 'terminal': '233', 'ip': '0.0.0.0', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'RTO-EMTU CECON', 'terminal': '235', 'ip': '0.0.0.0', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'RTO-EMTU CECON', 'terminal': '999', 'ip': '10190132197', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'SERVENG TRANSPORTES LTDA', 'terminal': '37301', 'ip': '10180137203', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'SERVENG TRANSPORTES LTDA', 'terminal': '37302', 'ip': '10190133200', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'SERVENG TRANSPORTES LTDA', 'terminal': '37404', 'ip': '10180136153', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'TIPBUS TRANSPORTE INTERMUNICIPAL', 'terminal': '36160', 'ip': '10.109.20.237', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'TIPBUS TRANSPORTE INTERMUNICIPAL', 'terminal': '36166', 'ip': '10.109.17.177', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'TIPBUS TRANSPORTE INTERMUNICIPAL', 'terminal': '36173', 'ip': '10.109.36.99', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'TIPBUS TRANSPORTE INTERMUNICIPAL', 'terminal': '36174', 'ip': '10.180.137.60', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'TIPBUS TRANSPORTE INTERMUNICIPAL', 'terminal': '36206', 'ip': '10.109.22.101', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'TIPBUS TRANSPORTE INTERMUNICIPAL', 'terminal': '36207', 'ip': '10.109.39.234', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'TIPBUS TRANSPORTE INTERMUNICIPAL', 'terminal': '88857', 'ip': '10.109.18.63', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'TIPBUS TRANSPORTE INTERMUNICIPAL', 'terminal': '88865', 'ip': '10.109.30.250', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'TIPBUS TRANSPORTE INTERMUNICIPAL', 'terminal': '888895', 'ip': '10.109.23.57', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO CIDADE DE CAIEIRAS LTDA', 'terminal': '22137', 'ip': '172.168.86.121', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO CIDADE DE CAIEIRAS LTDA', 'terminal': '22148', 'ip': '10.109.99.184', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO CIDADE DE CAIEIRAS LTDA', 'terminal': '22153', 'ip': '10.109.97.189', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO CIDADE DE CAIEIRAS LTDA', 'terminal': '22154', 'ip': '10.109.39.191', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO CIDADE DE CAIEIRAS LTDA', 'terminal': '22998', 'ip': '10.109.36.79', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO FERVIMA LTDA MUNICIPAL', 'terminal': '600', 'ip': '10.109.40.146', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO FERVIMA LTDA MUNICIPAL', 'terminal': '612', 'ip': '10.109.39.181', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO FERVIMA LTDA MUNICIPAL', 'terminal': '677', 'ip': '10.109.98.35', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO FERVIMA LTDA MUNICIPAL', 'terminal': '706', 'ip': '10.109.97.4', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO FERVIMA LTDA MUNICIPAL', 'terminal': '710', 'ip': '10.109.96.164', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO FERVIMA LTDA MUNICIPAL', 'terminal': '724', 'ip': '10.109.30.201', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO FERVIMA LTDA MUNICIPAL', 'terminal': '729', 'ip': '10.109.98.67', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO JACAREÍ LTDA', 'terminal': '44009', 'ip': '10.109.23.12', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO JACAREÍ LTDA', 'terminal': '44787', 'ip': '10.109.4.84', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO MIRACATIBA LTDA', 'terminal': '1032', 'ip': '10.109.98.8', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO MIRACATIBA LTDA', 'terminal': '1033', 'ip': '10.109.98.7', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO MIRACATIBA LTDA', 'terminal': '1050', 'ip': '10.109.98.137', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO MIRACATIBA LTDA', 'terminal': '1056', 'ip': '10.109.5.210', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO MIRACATIBA LTDA', 'terminal': '1058', 'ip': '10.109.72.29', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO MIRACATIBA LTDA', 'terminal': '1065', 'ip': '10.109.18.117', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO MIRACATIBA LTDA', 'terminal': '1073', 'ip': '10.109.20.179', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO MIRACATIBA LTDA', 'terminal': '1087', 'ip': '10.109.38.122', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO MIRACATIBA LTDA', 'terminal': '1088', 'ip': '10.109.16.243', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO MIRACATIBA LTDA', 'terminal': '1093', 'ip': '10.109.43.140', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO MIRACATIBA LTDA', 'terminal': '1096', 'ip': '10.109.12.255', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO MIRACATIBA LTDA', 'terminal': '1125', 'ip': '10.109.15.105', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO MIRACATIBA LTDA', 'terminal': '1127', 'ip': '10.109.42.81', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO MIRACATIBA LTDA', 'terminal': '1150', 'ip': '10.109.97.198', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO MIRACATIBA LTDA', 'terminal': '1188', 'ip': '10109121205', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO MIRACATIBA LTDA', 'terminal': '1189', 'ip': '10.109.20.143', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO MIRACATIBA LTDA', 'terminal': '1195', 'ip': '10.109.28.137', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO MIRACATIBA LTDA', 'terminal': '1199', 'ip': '10.109.97.238', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO MIRACATIBA LTDA', 'terminal': '1201', 'ip': '10.109.9.21', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO MIRACATIBA LTDA', 'terminal': '1214', 'ip': '10.109.6.245', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO MIRACATIBA LTDA', 'terminal': '1241', 'ip': '10.109.10.154', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO MIRACATIBA LTDA', 'terminal': '1259', 'ip': '10.109.21.247', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO MIRACATIBA LTDA', 'terminal': '1265', 'ip': '10.109.32.193', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO MIRACATIBA LTDA', 'terminal': '1269', 'ip': '10.109.14.232', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO MIRACATIBA LTDA', 'terminal': '1273', 'ip': '10.109.13.155', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO MIRACATIBA LTDA', 'terminal': '1281', 'ip': '10.109.38.164', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO MIRACATIBA LTDA', 'terminal': '15107', 'ip': '10190132129', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO MIRACATIBA LTDA', 'terminal': '15108', 'ip': '10180136166', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO MIRACATIBA LTDA', 'terminal': '15109', 'ip': '10.180.136.92', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO MIRACATIBA LTDA', 'terminal': '15110', 'ip': '10.180.136.48', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO MIRACATIBA LTDA', 'terminal': '15111', 'ip': '10190132174', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO MIRACATIBA LTDA', 'terminal': '15112', 'ip': '10.190.133.90', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO MIRACATIBA LTDA', 'terminal': '15701', 'ip': '10190133252', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO MIRACATIBA LTDA', 'terminal': '15702', 'ip': '10190132183', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO MIRACATIBA LTDA', 'terminal': '15703', 'ip': '10.180.136.28', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO MIRACATIBA LTDA', 'terminal': '15904', 'ip': '10.109.42.70', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO MIRACATIBA LTDA', 'terminal': '15942', 'ip': '10.109.37.123', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO MIRACATIBA LTDA', 'terminal': '15987', 'ip': '10180136116', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO MIRACATIBA LTDA', 'terminal': '421', 'ip': '10190133141', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO OSASCO LTDA - FILIAL', 'terminal': '21000', 'ip': '10190132140', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO OSASCO LTDA - FILIAL', 'terminal': '21415', 'ip': '10.190.132.16', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO OSASCO LTDA - FILIAL', 'terminal': '21420', 'ip': '10.109.99.87', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO OSASCO LTDA - FILIAL', 'terminal': '21421', 'ip': '10.180.137.37', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO OSASCO LTDA - FILIAL', 'terminal': '21428', 'ip': '10.190.132.51', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO OSASCO LTDA - FILIAL', 'terminal': '21504', 'ip': '10180137191', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO OSASCO LTDA - FILIAL', 'terminal': '21561', 'ip': '10.109.36.193', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO OSASCO LTDA - FILIAL', 'terminal': '21574', 'ip': '10190133192', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO OSASCO LTDA - FILIAL', 'terminal': '21585', 'ip': '10180137219', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO OSASCO LTDA - FILIAL', 'terminal': '21586', 'ip': '10190133151', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO OSASCO LTDA - FILIAL', 'terminal': '21587', 'ip': '10190132214', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO OSASCO LTDA - FILIAL', 'terminal': '21592', 'ip': '10.180.137.98', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO OSASCO LTDA - FILIAL', 'terminal': '21594', 'ip': '10.190.132.99', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO OSASCO LTDA - FILIAL', 'terminal': '21602', 'ip': '10.190.133.58', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO OSASCO LTDA - FILIAL', 'terminal': '21628', 'ip': '10180136248', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO OSASCO LTDA - FILIAL', 'terminal': '21689', 'ip': '10109126131', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO OSASCO LTDA - FILIAL', 'terminal': '21701', 'ip': '10.109.38.73', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO OSASCO LTDA - FILIAL', 'terminal': '21703', 'ip': '10180136133', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO OSASCO LTDA - FILIAL', 'terminal': '21705', 'ip': '10.109.39.246', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO OSASCO LTDA - FILIAL', 'terminal': '21710', 'ip': '10.109.96.143', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO OSASCO LTDA - FILIAL', 'terminal': '21718', 'ip': '172.102.84.214', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO OSASCO LTDA - FILIAL', 'terminal': '21976', 'ip': '10109123157', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO OSASCO LTDA - FILIAL', 'terminal': '21980', 'ip': '10180137192', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO OSASCO LTDA - FILIAL', 'terminal': '21982', 'ip': '10.109.72.83', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO OSASCO LTDA - FILIAL', 'terminal': '21987', 'ip': '10180137113', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO OSASCO LTDA - FILIAL', 'terminal': '4', 'ip': '10.109.124.55', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO OSASCO MATRIZ LTDA', 'terminal': '2', 'ip': '10.109.38.116', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO OSASCO MATRIZ LTDA', 'terminal': '21278', 'ip': '10.109.83.97', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO OSASCO MATRIZ LTDA', 'terminal': '21335', 'ip': '10.109.21.93', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO OSASCO MATRIZ LTDA', 'terminal': '21348', 'ip': '10.109.99.176', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO OSASCO MATRIZ LTDA', 'terminal': '21351', 'ip': '10.109.12.82', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO OSASCO MATRIZ LTDA', 'terminal': '21352', 'ip': '10.109.81.234', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO OSASCO MATRIZ LTDA', 'terminal': '21373', 'ip': '10.109.36.60', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO OSASCO MATRIZ LTDA', 'terminal': '21382', 'ip': '10.109.98.89', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO OSASCO MATRIZ LTDA', 'terminal': '21392', 'ip': '10190133132', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO OSASCO MATRIZ LTDA', 'terminal': '21403', 'ip': '10.180.136.65', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO OSASCO MATRIZ LTDA', 'terminal': '21406', 'ip': '10190132148', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO OSASCO MATRIZ LTDA', 'terminal': '21409', 'ip': '10.109.31.114', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO OSASCO MATRIZ LTDA', 'terminal': '21554', 'ip': '10180137147', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO OSASCO MATRIZ LTDA', 'terminal': '5', 'ip': '10.109.23.210', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA', 'terminal': '11010', 'ip': '10.190.133.46', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA', 'terminal': '11401', 'ip': '10.109.32.48', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA', 'terminal': '11402', 'ip': '10.109.99.28', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA', 'terminal': '11404', 'ip': '10.109.98.22', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA', 'terminal': '11407', 'ip': '10.109.22.228', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA', 'terminal': '11408', 'ip': '10.109.33.48', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA', 'terminal': '11411', 'ip': '10.109.98.154', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA', 'terminal': '11413', 'ip': '10.109.23.76', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA', 'terminal': '11417', 'ip': '10.109.83.125', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA', 'terminal': '11424', 'ip': '10.109.20.241', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA', 'terminal': '11428', 'ip': '10.109.20.63', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA', 'terminal': '11430', 'ip': '10.109.35.75', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA', 'terminal': '11432', 'ip': '10.109.99.204', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA', 'terminal': '11434', 'ip': '10.109.35.189', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA', 'terminal': '11441', 'ip': '10.109.83.133', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA', 'terminal': '11448', 'ip': '10.109.32.143', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA', 'terminal': '11454', 'ip': '10.109.10.103', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA', 'terminal': '11457', 'ip': '10.109.80.99', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA', 'terminal': '11460', 'ip': '10.109.43.11', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA', 'terminal': '11461', 'ip': '10.109.21.209', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA', 'terminal': '11467', 'ip': '10.109.81.19', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA', 'terminal': '11472', 'ip': '10.109.32.155', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA', 'terminal': '11481', 'ip': '10.109.9.7', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA', 'terminal': '11484', 'ip': '10.109.5.103', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA', 'terminal': '11489', 'ip': '10109123122', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA', 'terminal': '11508', 'ip': '10.109.10.141', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA', 'terminal': '11515', 'ip': '10.109.96.49', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA', 'terminal': '11521', 'ip': '10.109.32.54', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA', 'terminal': '11526', 'ip': '10.109.19.54', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA', 'terminal': '11529', 'ip': '10.109.98.51', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA', 'terminal': '11564', 'ip': '10.109.96.228', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA', 'terminal': '11566', 'ip': '10109121135', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA', 'terminal': '11567', 'ip': '10.109.97.135', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA', 'terminal': '11588', 'ip': '10.109.43.23', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA', 'terminal': '11599', 'ip': '10.109.82.24', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA', 'terminal': '11610', 'ip': '10109124134', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA', 'terminal': '11741', 'ip': '10.109.8.19', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA', 'terminal': '11751', 'ip': '10.109.30.194', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA', 'terminal': '11755', 'ip': '10.109.28.140', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA', 'terminal': '11799', 'ip': '10.109.32.31', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA MUNICIPAL', 'terminal': '1800', 'ip': '10.109.11.240', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA MUNICIPAL', 'terminal': '1801', 'ip': '10.180.136.36', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA MUNICIPAL', 'terminal': '1871', 'ip': '10.109.10.28', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA MUNICIPAL', 'terminal': '1884', 'ip': '10.190.133.49', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO PIRAJUÇARA LTDA MUNICIPAL', 'terminal': '1908', 'ip': '10.109.11.100', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO RAPOSO TAVARES LTDA', 'terminal': '12116', 'ip': '10.109.31.196', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO RAPOSO TAVARES LTDA', 'terminal': '12154', 'ip': '10.109.37.91', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO RAPOSO TAVARES LTDA', 'terminal': '122307', 'ip': '10.109.9.237', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO RAPOSO TAVARES LTDA', 'terminal': '122312', 'ip': '10.190.133.72', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO RAPOSO TAVARES LTDA', 'terminal': '122315', 'ip': '10190133251', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO RAPOSO TAVARES LTDA', 'terminal': '12243', 'ip': '10.109.96.245', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO RAPOSO TAVARES LTDA', 'terminal': '122512', 'ip': '10.109.28.142', 'model': 'B80', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO RAPOSO TAVARES LTDA', 'terminal': '122529', 'ip': '10.109.43.72', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO RAPOSO TAVARES LTDA', 'terminal': '122531', 'ip': '10190132184', 'model': 'B80', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO RAPOSO TAVARES LTDA', 'terminal': '122532', 'ip': '10.109.6.26', 'model': 'B80', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO RAPOSO TAVARES LTDA', 'terminal': '122540', 'ip': '10.180.134.79', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO RAPOSO TAVARES LTDA', 'terminal': '122558', 'ip': '10.109.38.21', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO RAPOSO TAVARES LTDA', 'terminal': '122559', 'ip': '10.109.37.252', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO RAPOSO TAVARES LTDA', 'terminal': '122564', 'ip': '10.180.136.91', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO RAPOSO TAVARES LTDA', 'terminal': '122567', 'ip': '10.180.137.93', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO RAPOSO TAVARES LTDA', 'terminal': '12316', 'ip': '10.109.31.41', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO RAPOSO TAVARES LTDA', 'terminal': '12729', 'ip': '10.109.9.75', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO RAPOSO TAVARES LTDA', 'terminal': '9997', 'ip': '10.109.97.80', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIACAO RAPOSO TAVARES MUNICIPAL', 'terminal': '1314', 'ip': '10.109.97.159', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIACAO RAPOSO TAVARES MUNICIPAL', 'terminal': '2114', 'ip': '10.109.9.54', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIACAO RAPOSO TAVARES MUNICIPAL', 'terminal': '2352', 'ip': '10.109.28.16', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIACAO RAPOSO TAVARES MUNICIPAL', 'terminal': '2406', 'ip': '10.109.10.243', 'model': 'B80', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIACAO RAPOSO TAVARES MUNICIPAL', 'terminal': '2414', 'ip': '10.109.42.82', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIACAO RAPOSO TAVARES MUNICIPAL', 'terminal': '9996', 'ip': '10.109.21.173', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO TALISMÃ - MUNICIPAL', 'terminal': '1200', 'ip': '10.109.18.72', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO TALISMÃ - MUNICIPAL', 'terminal': '1400', 'ip': '10.109.6.56', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO TALISMÃ - MUNICIPAL', 'terminal': '140505', 'ip': '172.70.36.217', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO TALISMÃ - MUNICIPAL', 'terminal': '151041', 'ip': '10.109.43.248', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO TALISMÃ - MUNICIPAL', 'terminal': '191249', 'ip': '10.109.10.239', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO TALISMÃ - MUNICIPAL', 'terminal': '220895', 'ip': '10.109.81.158', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO TALISMÃ - MUNICIPAL', 'terminal': '311224', 'ip': '10.109.5.190', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO TALISMÃ - MUNICIPAL', 'terminal': '50712', 'ip': '10.109.18.78', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO TALISMÃ - MUNICIPAL', 'terminal': '61025', 'ip': '10.109.98.0', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO TALISMÃ - MUNICIPAL', 'terminal': '71087', 'ip': '10.109.14.200', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO TALISMÃ - MUNICIPAL', 'terminal': '801', 'ip': '10.109.33.72', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO TALISMÃ - MUNICIPAL', 'terminal': '821', 'ip': '10.109.96.185', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO TALISMÃ - MUNICIPAL', 'terminal': '88804', 'ip': '10.109.8.253', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO TALISMÃ - MUNICIPAL', 'terminal': '901', 'ip': '10.190.5.127', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO TRANSDUTRA LTDA', 'terminal': '32003', 'ip': '10.109.82.239', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO TRANSDUTRA LTDA', 'terminal': '32004', 'ip': '10.109.11.172', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO TRANSDUTRA LTDA', 'terminal': '32005', 'ip': '10.109.82.56', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO TRANSDUTRA LTDA', 'terminal': '32009', 'ip': '10.109.96.25', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO TRANSDUTRA LTDA', 'terminal': '32027', 'ip': '10.109.22.181', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO TRANSDUTRA LTDA', 'terminal': '32029', 'ip': '10.109.34.241', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO TRANSDUTRA LTDA', 'terminal': '32037', 'ip': '10109114128', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO TRANSDUTRA LTDA', 'terminal': '32042', 'ip': '10.109.99.2', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO TRANSDUTRA LTDA', 'terminal': '32052', 'ip': '10.109.61.120', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO TRANSDUTRA LTDA', 'terminal': '32641', 'ip': '10.109.16.36', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO TRANSDUTRA LTDA', 'terminal': '32642', 'ip': '10.109.98.240', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO TRANSDUTRA LTDA', 'terminal': '32652', 'ip': '10.109.35.85', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO TRANSDUTRA LTDA', 'terminal': '32659', 'ip': '10.109.82.171', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO TRANSDUTRA LTDA', 'terminal': '32662', 'ip': '10.180.8.162', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO TRANSDUTRA LTDA', 'terminal': '32667', 'ip': '10.109.80.221', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}, {'company': 'VIAÇÃO TRANSDUTRA LTDA', 'terminal': '32670', 'ip': '10.109.5.183', 'model': 'V3695', 'sam_type': 'NÃO MIGRADO'}]
 
@@ -9810,7 +10397,8 @@ def garage_chip_dashboard_api():
 @login_required
 def garage_chip_export_xlsx():
     rows=_garage_payload(); company=(request.args.get('company') or '').strip(); model=(request.args.get('model') or '').strip(); status=(request.args.get('status') or '').strip(); technician=(request.args.get('technician') or '').strip()
-    rows=[x for x in rows if (not company or x.get('company')==company) and (not model or x.get('model')==model) and (not status or x.get('status')==status) and (not technician or x.get('technician')==technician)]
+    company_key=_garage_company_key(company)
+    rows=[x for x in rows if (not company_key or _garage_company_key(x.get('company'))==company_key) and (not model or x.get('model')==model) and (not status or x.get('status')==status) and (not technician or x.get('technician')==technician)]
     wb=Workbook(); ws=wb.active; ws.title='Troca Chips Garagem'; ws.append(['Empresa','Terminal','Modelo','Status','Resultado','Técnico','Observações','Evidências'])
     for x in rows: ws.append([x.get('company'),x.get('terminal'),x.get('model'),x.get('status'),x.get('test_result'),x.get('technician'),x.get('notes'),len(x.get('photos') or [])])
     for cell in ws[1]: cell.font=Font(bold=True,color='FFFFFF'); cell.fill=PatternFill('solid',fgColor='17365D')
@@ -11461,7 +12049,21 @@ def _v50_settings():
         "forecast_days_emv": 3,
         "forecast_days_garagem": 3,
         "forecast_days_recarga": 3,
+        "gps_history_retention_days": 7,
+        "gps_history_radius_m": 250,
+        "gps_history_ping_seconds": 20,
+        "gps_history_min_movement_m": 60,
+        "journey_enforcement_enabled": 0,
+        "journey_warning_minutes": 30,
+        "journey_max_extension_hours": 6,
+        "journey_default_field": 1,
+        "journey_default_implantation": 0,
     }
+    # V72 parameters are persisted in PostgreSQL, not only in the local filesystem.
+    try:
+        defaults.update(_v72_settings())
+    except Exception:
+        pass
     try:
         if V50_SETTINGS_PATH.exists():
             saved = json.loads(V50_SETTINGS_PATH.read_text(encoding="utf-8"))
@@ -11482,7 +12084,11 @@ def v50_settings_api():
         return jsonify({"ok":True,"settings":_v50_settings(),"release":APP_RELEASE})
     payload=request.get_json(silent=True) or {}
     current=_v50_settings()
-    ranges={"alert_activity_days":(1,90),"alert_pending_days":(1,90),"gps_radius_m":(100,20000),"dashboard_refresh_seconds":(15,900),"gps_interval_seconds":(60,1800),"forecast_days_emv":(1,30),"forecast_days_garagem":(1,30),"forecast_days_recarga":(1,30)}
+    ranges={"alert_activity_days":(1,90),"alert_pending_days":(1,90),"gps_radius_m":(100,20000),"dashboard_refresh_seconds":(15,900),"gps_interval_seconds":(60,1800),"forecast_days_emv":(1,30),"forecast_days_garagem":(1,30),"forecast_days_recarga":(1,30),
+            "gps_history_retention_days":(1,90),"gps_history_radius_m":(50,2000),
+            "gps_history_ping_seconds":(10,300),"gps_history_min_movement_m":(20,1000),
+            "journey_enforcement_enabled":(0,1),"journey_warning_minutes":(5,120),
+            "journey_max_extension_hours":(1,12),"journey_default_field":(0,1),"journey_default_implantation":(0,1)}
     for key,(lo,hi) in ranges.items():
         if key in payload:
             try: val=int(payload[key])
@@ -11490,6 +12096,7 @@ def v50_settings_api():
             if not lo <= val <= hi: return jsonify({"ok":False,"error":f"{key} deve ficar entre {lo} e {hi}."}),400
             current[key]=val
     V50_SETTINGS_PATH.write_text(json.dumps(current,ensure_ascii=False,indent=2),encoding="utf-8")
+    _v72_save_settings(current)
     db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="CONFIG_UPDATE",entity_type="settings",entity_id="v50",detail=json.dumps(current,ensure_ascii=False)))
     db.session.commit()
     return jsonify({"ok":True,"settings":current})
@@ -13412,6 +14019,19 @@ with app.app_context():
     except Exception:
         app.logger.exception('Falha na migração aditiva V71.7 material_catalog_items')
 
+    # V72 — parâmetros individuais de histórico GPS e controle de jornada.
+    try:
+        insp=db.inspect(db.engine)
+        if insp.has_table('users'):
+            cols={c['name'] for c in insp.get_columns('users')}
+            with db.engine.begin() as conn:
+                if 'gps_history_enabled' not in cols:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN gps_history_enabled BOOLEAN DEFAULT FALSE NOT NULL"))
+                if 'journey_control_enabled' not in cols:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN journey_control_enabled BOOLEAN DEFAULT FALSE NOT NULL"))
+    except Exception:
+        app.logger.exception('Falha na migração aditiva V72 users')
+
     # V68 REV2 — dupla assinatura na devolução (colaborador + responsável).
     try:
         insp=db.inspect(db.engine)
@@ -13445,6 +14065,177 @@ with app.app_context():
     sync_atm_complement_v424()
     cleanup_v352_test_reference()
 
+
+
+
+# V72 — Engenharia
+def _eng_norm(v): return re.sub(r"\s+"," ",str(v or "").strip())
+def _eng_header(v):
+    s=unicodedata.normalize("NFKD",str(v or "")).encode("ascii","ignore").decode().lower()
+    return re.sub(r"[^a-z0-9]+"," ",s).strip()
+def _eng_item_json(x):
+    return {"id":x.id,"internal_part_number":x.internal_part_number,"manufacturer_part_number":x.manufacturer_part_number or "",
+    "description_pt":x.description_pt or "","description_en":x.description_en or "","manufacturer":x.manufacturer or "",
+    "category":x.category or "","unit":x.unit or "UN","default_origin":x.default_origin or "NACIONAL",
+    "datasheet_url":x.datasheet_url or "","author":x.author or "","source_sheet":x.source_sheet or "","active":bool(x.active)}
+def _eng_bom_json(b):
+    pairs=(db.session.query(EngineeringBomItem,EngineeringItem).join(EngineeringItem,EngineeringItem.id==EngineeringBomItem.item_id)
+           .filter(EngineeringBomItem.bom_id==b.id).all())
+    nat=imp=0.;items=[]
+    for x,it in pairs:
+        total=float(x.quantity or 0)*float(x.unit_cost or 0)
+        if (x.origin or "").upper()=="IMPORTADO":imp+=total
+        else:nat+=total
+        items.append({"id":x.id,"item_id":it.id,"internal_part_number":it.internal_part_number,"manufacturer_part_number":it.manufacturer_part_number or "",
+        "description":it.description_pt or it.description_en or "","quantity":float(x.quantity or 0),"origin":x.origin or "NACIONAL",
+        "supplier":x.supplier or "","supplier_part_number":x.supplier_part_number or "","lead_time_days":x.lead_time_days,
+        "currency":x.currency or "BRL","unit_cost":float(x.unit_cost or 0),"total_cost":round(total,2)})
+    total=nat+imp;q=float(b.quantity_reference or 1) or 1
+    return {"id":b.id,"product_code":b.product_code,"product_name":b.product_name,"revision":b.revision,"status":b.status,
+    "quantity_reference":q,"currency_rate":b.currency_rate,"notes":b.notes or "","national_cost":round(nat,2),
+    "imported_cost":round(imp,2),"total_cost":round(total,2),"unit_cost":round(total/q,2),"items":items}
+
+@app.get("/engenharia")
+@login_required
+def engineering_page():
+    if not (_has_access("engineering.items.view") or _has_access("engineering.bom.view")):abort(403)
+    return render_template("engineering.html",app_release=APP_RELEASE)
+
+@app.get("/api/engineering/items")
+@login_required
+def engineering_items_api():
+    if not _has_access("engineering.items.view"):return jsonify({"ok":False,"error":"Sem permissão."}),403
+    q=_eng_norm(request.args.get("q"));z=EngineeringItem.query
+    if q:
+        like=f"%{q}%";z=z.filter(or_(EngineeringItem.internal_part_number.ilike(like),EngineeringItem.manufacturer_part_number.ilike(like),
+        EngineeringItem.description_pt.ilike(like),EngineeringItem.description_en.ilike(like),EngineeringItem.manufacturer.ilike(like)))
+    a=z.order_by(EngineeringItem.internal_part_number).limit(3000).all()
+    return jsonify({"ok":True,"items":[_eng_item_json(x) for x in a],"count":len(a)})
+
+@app.post("/api/engineering/items")
+@login_required
+def engineering_item_save_api():
+    if not _has_access("engineering.items.manage"):return jsonify({"ok":False,"error":"Sem permissão."}),403
+    d=request.get_json(silent=True) or {};iid=int(d.get("id") or 0);code=_eng_norm(d.get("internal_part_number"));desc=_eng_norm(d.get("description_pt"))
+    if not code or not desc:return jsonify({"ok":False,"error":"Código interno e descrição são obrigatórios."}),400
+    dup=EngineeringItem.query.filter(func.lower(EngineeringItem.internal_part_number)==code.lower())
+    if iid:dup=dup.filter(EngineeringItem.id!=iid)
+    if dup.first():return jsonify({"ok":False,"error":"Código interno já cadastrado."}),409
+    x=db.session.get(EngineeringItem,iid) if iid else EngineeringItem(created_by=session.get("user_id"))
+    if not x:return jsonify({"ok":False,"error":"Item não encontrado."}),404
+    x.internal_part_number=code;x.manufacturer_part_number=_eng_norm(d.get("manufacturer_part_number"));x.description_pt=desc
+    x.description_en=_eng_norm(d.get("description_en"));x.manufacturer=_eng_norm(d.get("manufacturer"));x.category=_eng_norm(d.get("category"))
+    x.unit=_eng_norm(d.get("unit")) or "UN";x.default_origin=(_eng_norm(d.get("default_origin")) or "NACIONAL").upper()
+    x.datasheet_url=_eng_norm(d.get("datasheet_url"));x.author=_eng_norm(d.get("author"));x.active=True
+    db.session.add(x);db.session.commit();return jsonify({"ok":True,"item":_eng_item_json(x)})
+
+@app.post("/api/engineering/items/import")
+@login_required
+def engineering_items_import_api():
+    if not _has_access("engineering.import"):return jsonify({"ok":False,"error":"Sem permissão."}),403
+    f=request.files.get("file")
+    if not f:return jsonify({"ok":False,"error":"Selecione a planilha."}),400
+    try:
+        wb=load_workbook(f.stream,read_only=True,data_only=True);created=updated=skipped=0
+        for ws in wb.worksheets:
+            hr=None;heads=[]
+            for rn,row in enumerate(ws.iter_rows(min_row=1,max_row=min(ws.max_row,30),values_only=True),1):
+                hh=[_eng_header(v) for v in row]
+                if any(("internal part number" in h or "codigo interno" in h) for h in hh):hr=rn;heads=hh;break
+            if not hr:continue
+            def col(*names):
+                for i,h in enumerate(heads):
+                    if any(n in h for n in names):return i
+                return None
+            ci=col("internal part number","codigo interno");cm=col("manufacturer part number","manufacture part number","mpn","codigo fabricante")
+            cpt=col("technical description portuguese","descricao tecnica portugues","description portuguese")
+            cen=col("technical description english","description english");cf=col("manufacturer","fabricante");cd=col("datasheet","data sheet");ca=col("author","autor")
+            for row in ws.iter_rows(min_row=hr+1,values_only=True):
+                code=_eng_norm(row[ci] if ci is not None and ci<len(row) else "")
+                if not code:continue
+                pt=_eng_norm(row[cpt] if cpt is not None and cpt<len(row) else "");en=_eng_norm(row[cen] if cen is not None and cen<len(row) else "")
+                if not(pt or en):skipped+=1;continue
+                x=EngineeringItem.query.filter(func.lower(EngineeringItem.internal_part_number)==code.lower()).first();new=x is None
+                if new:x=EngineeringItem(internal_part_number=code,created_by=session.get("user_id"))
+                x.manufacturer_part_number=_eng_norm(row[cm] if cm is not None and cm<len(row) else "");x.description_pt=pt or en;x.description_en=en
+                x.manufacturer=_eng_norm(row[cf] if cf is not None and cf<len(row) else "");x.category=ws.title
+                x.datasheet_url=_eng_norm(row[cd] if cd is not None and cd<len(row) else "");x.author=_eng_norm(row[ca] if ca is not None and ca<len(row) else "")
+                x.source_sheet=ws.title;x.unit=x.unit or "UN";x.active=True;db.session.add(x);created+=int(new);updated+=int(not new)
+        db.session.commit();return jsonify({"ok":True,"created":created,"updated":updated,"skipped":skipped})
+    except Exception as e:
+        db.session.rollback();app.logger.exception("V72 Engenharia import");return jsonify({"ok":False,"error":str(e)}),400
+
+@app.get("/api/engineering/boms")
+@login_required
+def engineering_boms_api():
+    if not _has_access("engineering.bom.view"):return jsonify({"ok":False,"error":"Sem permissão."}),403
+    return jsonify({"ok":True,"boms":[_eng_bom_json(x) for x in EngineeringBom.query.order_by(EngineeringBom.product_code,EngineeringBom.revision.desc()).all()]})
+
+@app.post("/api/engineering/boms")
+@login_required
+def engineering_bom_save_api():
+    if not _has_access("engineering.bom.manage"):return jsonify({"ok":False,"error":"Sem permissão."}),403
+    d=request.get_json(silent=True) or {};code=_eng_norm(d.get("product_code"));name=_eng_norm(d.get("product_name"));rev=_eng_norm(d.get("revision")) or "REV01"
+    if not code or not name:return jsonify({"ok":False,"error":"Código e descrição do produto são obrigatórios."}),400
+    if EngineeringBom.query.filter(func.lower(EngineeringBom.product_code)==code.lower(),func.lower(EngineeringBom.revision)==rev.lower()).first():return jsonify({"ok":False,"error":"Revisão já existente."}),409
+    try:q=float(d.get("quantity_reference") or 1)
+    except:q=1
+    b=EngineeringBom(product_code=code,product_name=name,revision=rev,status=(_eng_norm(d.get("status")) or "RASCUNHO").upper(),quantity_reference=q,notes=_eng_norm(d.get("notes")),created_by=session.get("user_id"))
+    db.session.add(b);db.session.commit();return jsonify({"ok":True,"bom":_eng_bom_json(b)})
+
+@app.post("/api/engineering/boms/<int:bid>/items")
+@login_required
+def engineering_bom_item_save_api(bid):
+    if not _has_access("engineering.bom.manage"):return jsonify({"ok":False,"error":"Sem permissão."}),403
+    b=db.session.get(EngineeringBom,bid);d=request.get_json(silent=True) or {};it=db.session.get(EngineeringItem,int(d.get("item_id") or 0))
+    if not b or not it:return jsonify({"ok":False,"error":"BOM ou item não encontrado."}),404
+    x=EngineeringBomItem.query.filter_by(bom_id=bid,item_id=it.id).first() or EngineeringBomItem(bom_id=bid,item_id=it.id)
+    try:x.quantity=float(d.get("quantity") or 1)
+    except:x.quantity=1
+    try:x.unit_cost=float(str(d.get("unit_cost") or 0).replace(",","."))
+    except:x.unit_cost=0
+    try:x.lead_time_days=int(float(d.get("lead_time_days"))) if d.get("lead_time_days") else None
+    except:x.lead_time_days=None
+    x.origin=(_eng_norm(d.get("origin")) or it.default_origin or "NACIONAL").upper();x.supplier=_eng_norm(d.get("supplier"))
+    x.supplier_part_number=_eng_norm(d.get("supplier_part_number"));x.currency=(_eng_norm(d.get("currency")) or "BRL").upper()
+    db.session.add(x);db.session.commit();return jsonify({"ok":True,"bom":_eng_bom_json(b)})
+
+@app.delete("/api/engineering/boms/<int:bid>/items/<int:rid>")
+@login_required
+def engineering_bom_item_delete_api(bid,rid):
+    if not _has_access("engineering.bom.manage"):return jsonify({"ok":False,"error":"Sem permissão."}),403
+    x=EngineeringBomItem.query.filter_by(id=rid,bom_id=bid).first()
+    if not x:return jsonify({"ok":False,"error":"Componente não encontrado."}),404
+    db.session.delete(x);db.session.commit();return jsonify({"ok":True})
+
+@app.post("/api/engineering/boms/<int:bid>/clone")
+@login_required
+def engineering_bom_clone_api(bid):
+    if not _has_access("engineering.bom.manage"):return jsonify({"ok":False,"error":"Sem permissão."}),403
+    s=db.session.get(EngineeringBom,bid);d=request.get_json(silent=True) or {};rev=_eng_norm(d.get("revision"))
+    if not s or not rev:return jsonify({"ok":False,"error":"BOM/revisão inválida."}),400
+    if EngineeringBom.query.filter(func.lower(EngineeringBom.product_code)==s.product_code.lower(),func.lower(EngineeringBom.revision)==rev.lower()).first():return jsonify({"ok":False,"error":"Revisão já existente."}),409
+    n=EngineeringBom(product_code=s.product_code,product_name=s.product_name,revision=rev,status="RASCUNHO",quantity_reference=s.quantity_reference,currency_rate=s.currency_rate,notes=s.notes,created_by=session.get("user_id"))
+    db.session.add(n);db.session.flush()
+    for x in EngineeringBomItem.query.filter_by(bom_id=s.id):
+        db.session.add(EngineeringBomItem(bom_id=n.id,item_id=x.item_id,quantity=x.quantity,origin=x.origin,supplier=x.supplier,supplier_part_number=x.supplier_part_number,lead_time_days=x.lead_time_days,unit_cost=x.unit_cost,currency=x.currency,notes=x.notes))
+    db.session.commit();return jsonify({"ok":True,"bom":_eng_bom_json(n)})
+
+@app.get("/api/engineering/boms/<int:bid>/export.xlsx")
+@login_required
+def engineering_bom_export_api(bid):
+    if not _has_access("engineering.bom.view"):abort(403)
+    b=db.session.get(EngineeringBom,bid)
+    if not b:abort(404)
+    d=_eng_bom_json(b);wb=Workbook();ws=wb.active;ws.title="BOM"
+    ws.append(["Produto",d["product_code"],d["product_name"],"Revisão",d["revision"],"Status",d["status"]])
+    ws.append(["Qtd. referência",d["quantity_reference"],"Nacional",d["national_cost"],"Importado",d["imported_cost"],"Total",d["total_cost"],"Unitário",d["unit_cost"]]);ws.append([])
+    ws.append(["Código Interno","MPN","Descrição","Qtd.","Origem","Fornecedor","PN Fornecedor","Lead Time","Moeda","Custo Unitário","Custo Total"])
+    for x in d["items"]:ws.append([x["internal_part_number"],x["manufacturer_part_number"],x["description"],x["quantity"],x["origin"],x["supplier"],x["supplier_part_number"],x["lead_time_days"],x["currency"],x["unit_cost"],x["total_cost"]])
+    for c in ws[4]:c.font=Font(bold=True,color="FFFFFF");c.fill=PatternFill("solid",fgColor="17365D")
+    ws.freeze_panes="A5";ws.auto_filter.ref=f"A4:K{ws.max_row}"
+    for i in range(1,12):ws.column_dimensions[get_column_letter(i)].width=40 if i==3 else 20
+    bio=io.BytesIO();wb.save(bio);bio.seek(0);return send_file(bio,as_attachment=True,download_name=f"BOM_{b.product_code}_{b.revision}.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
 # -----------------------------------------------------------------------------
