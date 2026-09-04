@@ -178,6 +178,8 @@ async function loadTeams(dateOverride){
     teamMap.setView([-23.5505,-46.6333],10);
   }
   if(teamMap) rebuildMapIfNeeded();
+  // V73.1: a atualização da operação do dia não deve perder o filtro já selecionado.
+  v38ApplyTeamFilter();
 }
 
 async function loadCalendar(){
@@ -473,7 +475,7 @@ async function v396LoadCollaborators(){
   try{
     const r=await fetch('/api/equipes/colaboradores',{cache:'no-store'}); const d=await r.json();
     v3978Collaborators=d.ok?(d.users||[]):[];
-    const dl=$('v396Collaborators');
+    const dl=$('v73Collaborators')||$('v396Collaborators');
     if(dl) dl.innerHTML=v3978Collaborators.map(u=>`<option value="${esc(u.name)}">${esc([u.job_title,u.company,u.shift].filter(Boolean).join(' · '))}</option>`).join('');
     const cargo=$('v38TeamCategory');
     if(cargo){

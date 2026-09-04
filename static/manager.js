@@ -1470,7 +1470,7 @@ window.addEventListener('load',()=>{if(location.hash){const el=document.querySel
 // V66 REV2 — previsão dinâmica de término por janela configurável.
 async function v66Forecast(module,id){const el=document.getElementById(id);if(!el)return;try{const d=await fetch('/api/operational-forecast?module='+encodeURIComponent(module),{cache:'no-store'}).then(r=>r.json());if(!d.ok)throw new Error(d.error||'forecast');const eta=d.eta_days==null?'sem previsão':(d.eta_days===0?'concluída':`~${String(d.eta_days).replace('.',',')} dia(s)`);const date=d.eta_date?new Date(d.eta_date+'T12:00:00').toLocaleDateString('pt-BR'):'—';el.innerHTML=`<b>Tendência últimos ${d.window_days} dia(s):</b> ${d.completed_in_window} conclusão(ões) · ${String(d.daily_rate).replace('.',',')}/dia · <b>${eta}</b>${d.eta_date?' · previsão '+date:''} · ${d.trend.toLowerCase()} · confiança ${d.confidence.toLowerCase()}.`}catch(e){el.textContent='Tendência indisponível neste momento.'}}
 
-if(document.getElementById('emvForecast'))v66Forecast('emv','emvForecast');if(document.getElementById('chipForecast'))v66Forecast('recarga','chipForecast');
+if(document.getElementById('emvForecast'))v66Forecast('emv','emvForecast');
 
 
 // V71.6 HOTFIX3 — sincronização determinística de dashboards.
