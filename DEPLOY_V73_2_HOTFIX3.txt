@@ -1,0 +1,8 @@
+V73.2 HOTFIX3 ENXUTA
+Aplicar os arquivos preservando a estrutura de pastas.
+Após deploy, reiniciar o serviço e fazer Ctrl+F5 uma vez.
+Validações prioritárias:
+1. Rastreabilidade: mapa 460px, trilhos/estações/legenda visíveis e sem sobreposição.
+2. Troca Chip: Recarga/TDI e Status filtram de verdade; validar parque 629 Recarga + 42 TDI conforme base oficial.
+3. Equipes > Técnico mais próximo: localizar Linha 17 e localidades externas cadastradas.
+4. Configurações Operacionais: textos descritivos maiores.

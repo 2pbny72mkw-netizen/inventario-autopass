@@ -38,7 +38,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V73.2 HOTFIX2"
+APP_RELEASE = "V73.2 HOTFIX3"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -3634,7 +3634,10 @@ def _v732_recarga_tdi_assets():
         if typ not in ("VALIDADOR","TDI"):
             continue
         st=normalize(a.base_status)
-        if "INATIVO" in st or "FORA DO ESCOPO" in st:
+        # HOTFIX3: parque previsto representa o cadastro físico completo.
+        # Status INATIVO não pode retirar equipamento do denominador da operação;
+        # somente exclusão explícita de escopo o remove.
+        if "FORA DO ESCOPO" in st:
             continue
         ident=normalize(a.terminal_number or a.serial or a.asset_key or a.top_id or a.qrcode_id or str(a.id))
         # terminal/série são identidade física; empresa/linha/localidade não devem
@@ -12586,6 +12589,35 @@ def v73_apt_export():
 @login_required
 def v73_my_apt():
     rows=AptRecord.query.filter_by(user_id=session.get("user_id"),active=True).order_by(AptRecord.valid_until).all();return jsonify({"ok":True,"rows":[{"id":x.id,"line":x.line,"apt_number":x.apt_number,"valid_until":x.valid_until.isoformat() if x.valid_until else None,"process_status":x.process_status,"validity_status":_apt_status(x)[0],"has_pdf":bool(x.pdf_key)} for x in rows]})
+
+@app.get("/api/equipes/destinos-proximidade")
+@login_required
+def v732h3_nearest_destinations():
+    if session.get("role") not in ("manager","manager_field","hr","dispatcher"): abort(403)
+    rows=[]; seen=set()
+    for loc in Location.query.filter(Location.reference_latitude.isnot(None),Location.reference_longitude.isnot(None)).order_by(Location.company,Location.line,Location.location).all():
+        key=("L",loc.id); seen.add(key)
+        rows.append({"id":loc.id,"company":loc.company or "","line":loc.line or "","location":loc.location or "","category":"TRILHOS" if normalize(loc.line)!="EXTERNA" else "EXTERNA","latitude":loc.reference_latitude,"longitude":loc.reference_longitude})
+    # Garante localidades externas mesmo se foram cadastradas antes da sincronização com Location.
+    for ext in ExternalLocation.query.filter_by(active=True).order_by(ExternalLocation.company,ExternalLocation.name).all():
+        loc=Location.query.filter(func.lower(Location.location)==func.lower(ext.name),func.lower(Location.company)==func.lower(ext.company or "EXTERNA")).first()
+        if not loc:
+            loc=Location(company=ext.company or "EXTERNA",line="EXTERNA",location=ext.name,reference_latitude=ext.latitude,reference_longitude=ext.longitude,reference_source=f"EXTERNAL_V73:{ext.id}")
+            db.session.add(loc); db.session.flush()
+        elif loc.reference_latitude is None:
+            loc.reference_latitude=ext.latitude; loc.reference_longitude=ext.longitude
+        if ("L",loc.id) not in seen:
+            rows.append({"id":loc.id,"company":loc.company or "","line":loc.line or "EXTERNA","location":loc.location or "","category":ext.category or "EXTERNA","latitude":loc.reference_latitude,"longitude":loc.reference_longitude})
+            seen.add(("L",loc.id))
+    db.session.commit()
+    return jsonify({"ok":True,"rows":rows})
+
+@app.get("/api/gestao/rastreabilidade-jornada/rede")
+@login_required
+def v732h3_tracking_network():
+    if not (_has_access("management.gps_history") or session.get("role") in ("manager","manager_field")): abort(403)
+    rows=Location.query.filter(Location.reference_latitude.isnot(None),Location.reference_longitude.isnot(None)).order_by(Location.line,Location.location).all()
+    return jsonify({"ok":True,"rows":[{"id":x.id,"company":x.company or "","line":x.line or "","location":x.location or "","reference_latitude":x.reference_latitude,"reference_longitude":x.reference_longitude} for x in rows]})
 
 @app.get("/api/equipes/tecnicos-proximos")
 @login_required
