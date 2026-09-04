@@ -77,7 +77,7 @@ document.getElementById('installPwa')?.addEventListener('click',async()=>{if(!v5
 if('serviceWorker' in navigator && (location.protocol==='https:' || location.hostname==='localhost')){
   window.addEventListener('load',async()=>{
     try{
-      const reg=await navigator.serviceWorker.register('/sw.js?v=v73-3-1',{scope:'/',updateViaCache:'none'});
+      const reg=await navigator.serviceWorker.register('/sw.js?v=v73-4',{scope:'/',updateViaCache:'none'});
       await reg.update();
     }catch(err){console.warn('Falha ao atualizar Service Worker',err);}
   },{once:true});
@@ -123,7 +123,7 @@ v50LoadNotifications();
 </script>
 
 {% if session.get('role') in ('technician','technician_implantation','manager_field') %}
-<script src="{{ url_for('static', filename='session_gps.js') }}?v=v73-3-1" defer></script>
+<script src="{{ url_for('static', filename='session_gps.js') }}?v=v73-4" defer></script>
 <script src="{{ url_for('static', filename='journey_guard_v72.js') }}?v=v73-1" defer></script>
 {% endif %}
 <script>

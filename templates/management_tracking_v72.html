@@ -2,7 +2,7 @@
 {% block head %}
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
-.v72Grid{display:block;width:100%;min-height:660px}.v72Map{display:block!important;width:100%!important;height:600px!important;min-height:600px!important;max-height:600px!important;border:1px solid #dfe5ec;box-sizing:border-box;border-radius:14px;overflow:hidden!important;isolation:isolate!important;position:relative!important;z-index:0!important;margin-bottom:18px}#v72Map .leaflet-map-pane{z-index:1!important}#v72Map .leaflet-tile-pane{z-index:100!important}#v72Map .leaflet-overlay-pane{z-index:400!important}#v72Map .leaflet-shadow-pane{z-index:500!important}#v72Map .leaflet-marker-pane{z-index:600!important}#v72Map .leaflet-tooltip-pane{z-index:650!important}#v72Map .leaflet-popup-pane{z-index:700!important}#v72Map .leaflet-control-container{position:relative!important;z-index:1000!important;pointer-events:none!important}#v72Map .leaflet-control{position:relative!important;z-index:1100!important;pointer-events:auto!important}#v72Map .autopass-rail-legend{width:auto!important;max-width:200px!important;height:auto!important;max-height:270px!important;overflow-y:auto!important;overflow-x:hidden!important;box-sizing:border-box!important}.v72RailLegend{background:#fff;padding:9px 11px;border-radius:9px;box-shadow:0 1px 5px #0003;font-size:12px;line-height:1.25}.v72RailLegend b{display:inline-block;width:22px;color:#fff;text-align:center;border-radius:4px;margin-right:5px}.v72RailLegend div{margin:3px 0}.v72Timeline{max-height:280px;overflow:auto}.v72Event{padding:10px 12px;border-bottom:1px solid #e6edf4;cursor:pointer}.v72Event:hover{background:#f5f9fd}.v72Event b{color:#0b2d4f}.v72Auth table{width:100%}.v72Auth td,.v72Auth th{padding:8px}.v72Auth .pending{font-weight:800;color:#a66400}@media(max-width:900px){.v72Grid{min-height:520px}.v72Map{height:500px!important;min-height:500px!important;max-height:500px!important}}
+.v72Grid{display:block;width:100%}.v72MapShell{display:block;width:100%;height:600px;position:relative;overflow:hidden;contain:layout paint;clip-path:inset(0 round 14px);border:1px solid #dfe5ec;box-sizing:border-box;border-radius:14px;margin-bottom:18px;background:#eef3f7}.v72Map{position:absolute!important;inset:0!important;display:block!important;width:100%!important;height:100%!important;min-height:0!important;max-height:none!important;overflow:hidden!important;isolation:isolate!important;z-index:0!important}.v72Map .leaflet-container{overflow:hidden!important}#v72Map .leaflet-map-pane{z-index:1!important}#v72Map .leaflet-tile-pane{z-index:100!important}#v72Map .leaflet-overlay-pane{z-index:400!important}#v72Map .leaflet-shadow-pane{z-index:500!important}#v72Map .leaflet-marker-pane{z-index:600!important}#v72Map .leaflet-tooltip-pane{z-index:650!important}#v72Map .leaflet-popup-pane{z-index:700!important}#v72Map .leaflet-control-container{position:absolute!important;inset:0!important;z-index:1000!important;pointer-events:none!important}#v72Map .leaflet-control{position:relative!important;z-index:1100!important;pointer-events:auto!important}#v72Map .autopass-rail-legend{width:auto!important;max-width:200px!important;height:auto!important;max-height:270px!important;overflow-y:auto!important;overflow-x:hidden!important;box-sizing:border-box!important}.v72RailLegend{background:#fff;padding:9px 11px;border-radius:9px;box-shadow:0 1px 5px #0003;font-size:12px;line-height:1.25}.v72RailLegend b{display:inline-block;width:22px;color:#fff;text-align:center;border-radius:4px;margin-right:5px}.v72RailLegend div{margin:3px 0}.v72Timeline{max-height:280px;overflow:auto}.v72Event{padding:10px 12px;border-bottom:1px solid #e6edf4;cursor:pointer}.v72Event:hover{background:#f5f9fd}.v72Event b{color:#0b2d4f}.v72Auth table{width:100%}.v72Auth td,.v72Auth th{padding:8px}.v72Auth .pending{font-weight:800;color:#a66400}@media(max-width:900px){.v72MapShell{height:500px}}
 </style>
 {% endblock %}
 {% block content %}
@@ -17,7 +17,7 @@
   <div style="display:flex;align-items:end"><button id="gpsLoad">Consultar histórico</button></div>
  </div>
  <div class="v72Grid" style="margin-top:12px">
-   <div id="v72Map" class="v72Map"></div>
+   <div class="v72MapShell"><div id="v72Map" class="v72Map"></div></div>
    <div><h3>Linha do tempo</h3><div id="gpsTimeline" class="v72Timeline"><p class="muted">Selecione um técnico e uma data.</p></div></div>
  </div>
 </section>
@@ -34,14 +34,14 @@
 {% endblock %}
 {% block scripts %}
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="{{ url_for('static', filename='shared_rail_map.js') }}?v=v73-3-1"></script>
+<script src="{{ url_for('static', filename='shared_rail_map.js') }}?v=v73-4"></script>
 <script>
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 let map,lineLayer,markers=[],gpsLayer,railShared,layerControl;
 {% if can_view('management.gps_history') %}
 L.Icon.Default.mergeOptions({iconRetinaUrl:'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',iconUrl:'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',shadowUrl:'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png'});
-map=L.map('v72Map',{scrollWheelZoom:true,preferCanvas:false,zoomControl:true}).setView([-23.5505,-46.6333],10);
-L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png?v=7331',{maxZoom:19,tileSize:256,zoomOffset:0,updateWhenIdle:false,keepBuffer:4,attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
+map=L.map('v72Map',{scrollWheelZoom:true,preferCanvas:false,zoomControl:true}).setView([-23.5505,-46.6333],11);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png?v=734',{maxZoom:19,tileSize:256,zoomOffset:0,updateWhenIdle:false,keepBuffer:4,attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
 gpsLayer=L.layerGroup().addTo(map);
 const v72MapContainer=document.getElementById('v72Map');
 function v72EnsureInteraction(){if(!map)return;map.dragging?.enable();map.scrollWheelZoom?.enable();map.touchZoom?.enable();map.doubleClickZoom?.enable();map.boxZoom?.enable()}
@@ -58,14 +58,14 @@ async function loadRailBase(){
     if(railShared?.lines)overlays['Linhas']=railShared.lines;
     if(railShared?.stations)overlays['Estações']=railShared.stations;
     layerControl=L.control.layers(null,overlays,{collapsed:false,position:'bottomright'}).addTo(map);
-    map.setView([-23.5505,-46.6333],10);
+    map.setView([-23.5505,-46.6333],11);
     v72EnsureInteraction();v72FixMapSize();
   }catch(e){console.warn('Malha ferroviária',e)}
 }
 loadRailBase();window.AutopassRailMap?.addFullscreen(map,'v72Map');v72EnsureInteraction();
 async function initGps(){const d=await fetch('/api/gestao/historico-gps',{cache:'no-store'}).then(r=>r.json());if(!d.ok)return;gpsUser.innerHTML='<option value="">Selecione</option>'+d.users.map(u=>`<option value="${u.id}">${esc(u.name)} · ${esc(u.company)}</option>`).join('');gpsDate.value=new Date().toISOString().slice(0,10)}
 function clearMap(){markers.forEach(m=>m.remove());markers=[];if(gpsLayer)gpsLayer.clearLayers();lineLayer=null}
-async function loadGps(){if(!gpsUser.value)return;const d=await fetch(`/api/gestao/historico-gps?user_id=${gpsUser.value}&date=${gpsDate.value}`,{cache:'no-store'}).then(r=>r.json());if(!d.ok)return alert(d.error||'Falha');gpsRetention.textContent=`retenção ${d.retention_days} dias · ${d.station_count||0} estação(ões) · ${d.position_count||0} posição(ões)`;clearMap();const pts=[];gpsTimeline.innerHTML=d.events.map((e,i)=>`<div class="v72Event" data-i="${i}"><b>${esc(e.time)} · ${esc(e.station)}</b><br><small>${esc(e.company)} · ${esc(e.line)} · ${e.distance_m??'-'} m do ponto de referência</small></div>`).join('')||'<p class="muted">Nenhuma passagem registrada neste dia.</p>';d.events.forEach((e,i)=>{pts.push([e.latitude,e.longitude]);const m=L.marker([e.latitude,e.longitude]).addTo(gpsLayer).bindPopup(`<b>${esc(e.time)} · ${esc(e.station)}</b><br>${esc(e.line)} · ${esc(e.company)}`);markers.push(m)});if(pts.length){lineLayer=L.polyline(pts,{weight:4}).addTo(gpsLayer);v72FixMapSize();setTimeout(()=>map.fitBounds(L.latLngBounds(pts).pad(.15)),140)}else{map.setView([-23.5505,-46.6333],10);v72FixMapSize()}document.querySelectorAll('.v72Event').forEach(el=>el.onclick=()=>markers[+el.dataset.i]?.openPopup())}
+async function loadGps(){if(!gpsUser.value)return;const d=await fetch(`/api/gestao/historico-gps?user_id=${gpsUser.value}&date=${gpsDate.value}`,{cache:'no-store'}).then(r=>r.json());if(!d.ok)return alert(d.error||'Falha');gpsRetention.textContent=`retenção ${d.retention_days} dias · ${d.station_count||0} estação(ões) · ${d.position_count||0} posição(ões)`;clearMap();const pts=[];gpsTimeline.innerHTML=d.events.map((e,i)=>`<div class="v72Event" data-i="${i}"><b>${esc(e.time)} · ${esc(e.station)}</b><br><small>${esc(e.company)} · ${esc(e.line)} · ${e.distance_m??'-'} m do ponto de referência</small></div>`).join('')||'<p class="muted">Nenhuma passagem registrada neste dia.</p>';d.events.forEach((e,i)=>{pts.push([e.latitude,e.longitude]);const m=L.marker([e.latitude,e.longitude]).addTo(gpsLayer).bindPopup(`<b>${esc(e.time)} · ${esc(e.station)}</b><br>${esc(e.line)} · ${esc(e.company)}`);markers.push(m)});if(pts.length){lineLayer=L.polyline(pts,{weight:4}).addTo(gpsLayer);v72FixMapSize();setTimeout(()=>map.fitBounds(L.latLngBounds(pts).pad(.15)),140)}else{map.setView([-23.5505,-46.6333],11);v72FixMapSize()}document.querySelectorAll('.v72Event').forEach(el=>el.onclick=()=>markers[+el.dataset.i]?.openPopup())}
 gpsLoad.onclick=loadGps;initGps();
 {% endif %}
 
