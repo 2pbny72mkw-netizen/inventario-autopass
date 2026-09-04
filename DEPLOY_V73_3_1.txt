@@ -1,0 +1,5 @@
+V73.3.1 ENXUTA
+Base: V73.3 implantada.
+Sobrescreva os arquivos mantendo a estrutura de pastas.
+Reinicie o serviço no Render e faça Ctrl+F5 no navegador.
+Não há migração destrutiva de banco.

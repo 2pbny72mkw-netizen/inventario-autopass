@@ -38,7 +38,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V73.3"
+APP_RELEASE = "V73.3.1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -1970,6 +1970,41 @@ def _v72_cleanup_history():
     _V72_LAST_HISTORY_CLEANUP = now_ts
 
 
+def _v7331_record_station_passage(user, lat, lon, accuracy=None, captured_at=None, previous_position=None):
+    """Persiste entrada em geofence no mesmo fluxo que recebe a posição GPS."""
+    if not user or not bool(getattr(user, "gps_history_enabled", False)):
+        return {"history_enabled": False, "recorded": False}
+    captured_at=captured_at or datetime.utcnow()
+    radius=max(50,min(2000,int(_v72_settings().get("gps_history_radius_m",250) or 250)))
+    nearest=None
+    for loc_id,company,line,station,slat,slon in _v72_station_refs():
+        dist=_haversine_m(lat,lon,slat,slon)
+        if nearest is None or dist < nearest[-1]:
+            nearest=(loc_id,company,line,station,slat,slon,dist)
+    if not nearest or nearest[-1] > radius:
+        return {"history_enabled": True, "inside": False, "recorded": False}
+    loc_id,company,line,station,slat,slon,dist=nearest
+    last=TechnicianStationHistory.query.filter_by(user_id=user.id).order_by(TechnicianStationHistory.captured_at.desc()).first()
+    if last and last.location_id==loc_id:
+        if last.captured_at:
+            delta=(captured_at-last.captured_at).total_seconds()
+            if 0 <= delta < 60:
+                return {"history_enabled":True,"inside":True,"station_id":loc_id,"station":station,"line":line,"recorded":False,"reason":"RECENT_DUPLICATE"}
+        if previous_position is not None:
+            try:
+                prev_dist=_haversine_m(float(previous_position.latitude),float(previous_position.longitude),slat,slon)
+            except Exception:
+                prev_dist=None
+            if prev_dist is not None and prev_dist <= radius:
+                return {"history_enabled":True,"inside":True,"station_id":loc_id,"station":station,"line":line,"recorded":False,"reason":"STILL_INSIDE"}
+    # Se ainda não há passagem persistida para esta estação (inclusive após upgrade),
+    # registra a primeira captura válida mesmo que a posição geral anterior já estivesse dentro.
+    row=TechnicianStationHistory(user_id=user.id,location_id=loc_id,company=company,line=line,station=station,latitude=lat,longitude=lon,accuracy=accuracy,distance_m=round(dist,1),event_type="STATION_ENTER",session_token=session.get("gps_session_token"),captured_at=captured_at)
+    db.session.add(row)
+    _v72_cleanup_history()
+    return {"history_enabled":True,"inside":True,"station_id":loc_id,"station":station,"line":line,"distance_m":round(dist,1),"recorded":True,"row":row}
+
+
 @app.route("/")
 def index():
     if not session.get("user_id"):
@@ -2155,47 +2190,21 @@ def v72_session_status_api():
 @app.post("/api/tecnico/geofence-ping")
 @login_required
 def v72_geofence_ping_api():
-    user = db.session.get(User, session.get("user_id"))
+    user=db.session.get(User,session.get("user_id"))
     if not user or not bool(getattr(user,"gps_history_enabled",False)):
         return jsonify({"ok":True,"history_enabled":False})
-    data = request.get_json(silent=True) or {}
+    data=request.get_json(silent=True) or {}
     try:
-        lat=float(data.get("latitude")); lon=float(data.get("longitude"))
-        acc=float(data.get("accuracy")) if data.get("accuracy") is not None else None
+        lat=float(data.get("latitude")); lon=float(data.get("longitude")); acc=float(data.get("accuracy")) if data.get("accuracy") is not None else None
     except Exception:
         return jsonify({"ok":False,"error":"Coordenadas inválidas."}),400
-    radius=max(50,min(2000,int(_v72_settings().get("gps_history_radius_m",250) or 250)))
-    nearest=None
-    for loc_id,company,line,station,slat,slon in _v72_station_refs():
-        dist=_haversine_m(lat,lon,slat,slon)
-        if nearest is None or dist < nearest[-1]:
-            nearest=(loc_id,company,line,station,slat,slon,dist)
-
-    # Saiu de qualquer geofence: libera novo registro quando retornar.
-    if not nearest or nearest[-1] > radius:
-        session.pop("v72_station_inside",None)
-        return jsonify({"ok":True,"history_enabled":True,"inside":False})
-
-    loc_id,company,line,station,slat,slon,dist=nearest
-    last_inside=session.get("v72_station_inside")
-    if str(last_inside or "") == str(loc_id):
-        return jsonify({"ok":True,"history_enabled":True,"inside":True,"station_id":loc_id,"recorded":False})
-
-    row=TechnicianStationHistory(
-        user_id=user.id,location_id=loc_id,company=company,line=line,station=station,
-        latitude=lat,longitude=lon,accuracy=acc,distance_m=round(dist,1),
-        event_type="STATION_ENTER",session_token=session.get("gps_session_token"),
-        captured_at=datetime.utcnow()
-    )
-    db.session.add(row)
-    session["v72_station_inside"]=loc_id
+    result=_v7331_record_station_passage(user,lat,lon,acc,datetime.utcnow(),previous_position=None)
     try:
-        _v72_cleanup_history()
         db.session.commit()
     except Exception:
-        db.session.rollback()
-        raise
-    return jsonify({"ok":True,"history_enabled":True,"inside":True,"station_id":loc_id,"station":station,"line":line,"recorded":True})
+        db.session.rollback(); raise
+    result.pop("row",None)
+    return jsonify({"ok":True,**result})
 
 
 @app.get("/gestao/rastreabilidade-jornada")
@@ -2222,19 +2231,26 @@ def v72_gps_history_api():
     positions=TechnicianPosition.query.filter(TechnicianPosition.user_id==user_id,TechnicianPosition.captured_at>=start_utc,TechnicianPosition.captured_at<end_utc).order_by(TechnicianPosition.captured_at).all()
     station_rows=TechnicianStationHistory.query.filter(TechnicianStationHistory.user_id==user_id,TechnicianStationHistory.captured_at>=start_utc,TechnicianStationHistory.captured_at<end_utc).order_by(TechnicianStationHistory.captured_at).all()
     refs=_v72_station_refs();radius=float(_v72_settings().get("gps_history_radius_m",250) or 250);events=[]
+    last_kept_position=None
     for x in positions:
         local_dt=x.captured_at.replace(tzinfo=ZoneInfo("UTC")).astimezone(V72_TZ);nearest=None
         for lid,co,li,st,slat,slon in refs:
             d=_haversine_m(x.latitude,x.longitude,slat,slon)
             if nearest is None or d<nearest[-1]:nearest=(lid,co,li,st,d)
         lid,co,li,st,d=nearest if nearest else (None,"","","",None)
+        if last_kept_position is not None:
+            dt=abs((x.captured_at-last_kept_position.captured_at).total_seconds())
+            move=_haversine_m(x.latitude,x.longitude,last_kept_position.latitude,last_kept_position.longitude)
+            if dt <= 3 and move <= 8:
+                continue
         events.append({"id":x.id,"station_id":lid,"company":co,"line":li,"station":st or "Sem referência","latitude":x.latitude,"longitude":x.longitude,"accuracy":x.accuracy,"distance_m":round(d,1) if d is not None else None,"inside":bool(d is not None and d<=radius),"relation":"NA ESTAÇÃO/LOCALIDADE" if d is not None and d<=radius else "FORA DA ÁREA","captured_at":local_dt.isoformat(),"time":local_dt.strftime("%H:%M:%S"),"source":x.source or "browser"})
+        last_kept_position=x
     station_events=[]
     for x in station_rows:
         local_dt=x.captured_at.replace(tzinfo=ZoneInfo("UTC")).astimezone(V72_TZ)
         station_events.append({"id":x.id,"station_id":x.location_id,"company":x.company or "","line":x.line or "","station":x.station or "Sem referência","latitude":x.latitude,"longitude":x.longitude,"accuracy":x.accuracy,"distance_m":x.distance_m,"inside":True,"relation":"NA ESTAÇÃO/LOCALIDADE","captured_at":local_dt.isoformat(),"time":local_dt.strftime("%H:%M:%S"),"source":"station_geofence"})
     timeline = station_events if station_events else events
-    return jsonify({"ok":True,"user":{"id":u.id,"name":u.name,"username":u.username},"date":day.isoformat(),"events":timeline,"count":len(timeline),"position_count":len(positions),"station_count":len(station_events),"source":"station_history" if station_events else "technician_positions","retention_days":int(_v72_settings().get("gps_history_retention_days",7) or 7),"reference_radius_m":radius})
+    return jsonify({"ok":True,"user":{"id":u.id,"name":u.name,"username":u.username},"date":day.isoformat(),"events":timeline,"count":len(timeline),"position_count":len(events),"raw_position_count":len(positions),"station_count":len(station_events),"source":"station_history" if station_events else "technician_positions","retention_days":int(_v72_settings().get("gps_history_retention_days",7) or 7),"reference_radius_m":radius})
 
 
 @app.get("/api/gestao/historico-gps/diagnostico/<int:user_id>")
@@ -2785,48 +2801,34 @@ def _team_latest_position(user_id, only_today=True):
 @app.post("/api/tecnico/position")
 @login_required
 def technician_position_update():
-    # V71.3 HOTFIX5:
-    # GPS é compartilhado por operação Field e Implantação.
-    # Técnico Implantação não deve precisar da permissão genérica "field".
-    allowed_roles = {
-        "technician",
-        "technician_implantation",
-        "manager",
-        "manager_field",
-        "dispatcher",
-        "consultation",
-    }
+    allowed_roles={"technician","technician_implantation","manager","manager_field","dispatcher","consultation"}
     if session.get("role") not in allowed_roles:
-        return jsonify({
-            "ok": False,
-            "error": "forbidden",
-            "message": "Sem permissão para registrar localização."
-        }), 403
-    data = request.get_json(silent=True) or {}
+        return jsonify({"ok":False,"error":"forbidden","message":"Sem permissão para registrar localização."}),403
+    data=request.get_json(silent=True) or {}
     try:
-        lat = float(data.get("latitude"))
-        lon = float(data.get("longitude"))
-        acc = float(data.get("accuracy")) if data.get("accuracy") is not None else None
-    except (TypeError, ValueError):
-        return jsonify({"ok": False, "error": "Coordenadas inválidas"}), 400
+        lat=float(data.get("latitude")); lon=float(data.get("longitude")); acc=float(data.get("accuracy")) if data.get("accuracy") is not None else None
+    except (TypeError,ValueError):
+        return jsonify({"ok":False,"error":"Coordenadas inválidas"}),400
     if not (-90 <= lat <= 90 and -180 <= lon <= 180):
-        return jsonify({"ok": False, "error": "Coordenadas fora do intervalo"}), 400
-
-    row = TechnicianPosition(
-        user_id=session["user_id"], latitude=lat, longitude=lon, accuracy=acc,
-        captured_at=datetime.utcnow(), source=str(data.get("source") or "session_periodic")[:40]
-    )
+        return jsonify({"ok":False,"error":"Coordenadas fora do intervalo"}),400
+    uid=session["user_id"]; user=db.session.get(User,uid)
+    previous=TechnicianPosition.query.filter_by(user_id=uid).order_by(TechnicianPosition.captured_at.desc()).first()
+    captured_at=datetime.utcnow()
+    row=TechnicianPosition(user_id=uid,latitude=lat,longitude=lon,accuracy=acc,captured_at=captured_at,source=str(data.get("source") or "session_periodic")[:40])
     db.session.add(row)
-    # V66 GPS Operacional 2.0: retenção móvel de 7 dias. A limpeza é amortizada
-    # (no máximo uma vez/hora por processo) para não penalizar cada captura.
+    station_result=_v7331_record_station_passage(user,lat,lon,acc,captured_at,previous_position=previous)
     global _GPS_LAST_RETENTION_CLEANUP
     now_ts=time.time()
     if now_ts-_GPS_LAST_RETENTION_CLEANUP > 3600:
         cutoff=datetime.utcnow()-timedelta(days=max(1,int(os.getenv("TEAM_GPS_RETENTION_DAYS","7"))))
         TechnicianPosition.query.filter(TechnicianPosition.captured_at < cutoff).delete(synchronize_session=False)
         _GPS_LAST_RETENTION_CLEANUP=now_ts
-    db.session.commit()
-    return jsonify({"ok": True, "captured_at": row.captured_at.isoformat() + "Z", "retention_days":7})
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback(); raise
+    station_result.pop("row",None)
+    return jsonify({"ok":True,"captured_at":row.captured_at.isoformat()+"Z","retention_days":7,"station_history":station_result})
 
 
 @app.get("/api/campo/config")
@@ -3635,12 +3637,10 @@ def _v716_inventory_identifier(i):
     return str(i.asset_identifier or i.serial or "").strip()
 
 def _v732_recarga_tdi_assets():
-    """Base operacional canônica de Recarga/TDI — V73.3.
+    """Base operacional canônica de Recarga/TDI — V73.3.1.
 
-    Não presume que número de terminal seja globalmente único. Séries/chaves
-    patrimoniais continuam globais; terminal é deduplicado no seu contexto
-    operacional (empresa + linha + localidade). Isso evita retirar equipamentos
-    físicos distintos do denominador quando terminais se repetem em linhas/locais.
+    Terminal é a identidade primária dentro de empresa + linha + localidade.
+    Sem terminal, usa série/chave patrimonial/TOP/QR e, por último, o ID técnico.
     """
     raw = BaseAsset.query.filter(
         or_(
@@ -3656,13 +3656,14 @@ def _v732_recarga_tdi_assets():
         st=normalize(a.base_status)
         if "FORA DO ESCOPO" in st:
             continue
-
+        terminal=normalize(a.terminal_number)
         serial=normalize(a.serial)
         asset_key=normalize(a.asset_key)
         top_id=normalize(a.top_id)
         qrcode=normalize(a.qrcode_id)
-        terminal=normalize(a.terminal_number)
-        if serial:
+        if terminal:
+            key=(typ,"TERMINAL",normalize(a.company),_normalize_line_key(a.line),normalize(a.locality),terminal)
+        elif serial:
             key=(typ,"SERIAL",serial)
         elif asset_key:
             key=(typ,"ASSET",asset_key)
@@ -3670,8 +3671,6 @@ def _v732_recarga_tdi_assets():
             key=(typ,"TOP",top_id)
         elif qrcode:
             key=(typ,"QR",qrcode)
-        elif terminal:
-            key=(typ,"TERMINAL",normalize(a.company),_normalize_line_key(a.line),normalize(a.locality),terminal)
         else:
             key=(typ,"ID",str(a.id))
         if key in seen:
