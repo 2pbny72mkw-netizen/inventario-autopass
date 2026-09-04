@@ -1,26 +1,30 @@
 {% extends "base.html" %}{% block title %}Configurações ADM | {{ app_release }}{% endblock %}{% block content %}
-<div class="pageHead"><span class="eyebrow">{{ app_release }} · ADMINISTRAÇÃO</span><h1>Configurações operacionais</h1><p>Parâmetros que podem ser ajustados sem nova versão.</p></div>
-<section class="card v50Settings"><div class="v50SettingsGrid">
-<label>Dias para alerta de atividade antiga<input id="alert_activity_days" type="number" min="1" max="90"></label>
-<label>Dias para alerta de pendência<input id="alert_pending_days" type="number" min="1" max="90"></label>
-<label>Raio GPS de referência (m)<input id="gps_radius_m" type="number" min="100" max="20000"></label>
-<label>Atualização automática das dashboards (s)<input id="dashboard_refresh_seconds" type="number" min="15" max="900"></label>
-<label>Intervalo do GPS operacional (s)<input id="gps_interval_seconds" type="number" min="60" max="1800" step="60"></label>
-<label>Previsão EMV · janela histórica (dias)<input id="forecast_days_emv" type="number" min="1" max="30"></label>
-<label>Previsão Garagem · janela histórica (dias)<input id="forecast_days_garagem" type="number" min="1" max="30"></label>
-<label>Previsão Recarga · janela histórica (dias)<input id="forecast_days_recarga" type="number" min="1" max="30"></label>
-<label>Histórico GPS · retenção (dias)<input id="gps_history_retention_days" type="number" min="1" max="90"></label>
-<label>Histórico GPS · raio da estação (m)<input id="gps_history_radius_m" type="number" min="50" max="2000"></label>
-<label>Histórico GPS · ping em movimento (s)<input id="gps_history_ping_seconds" type="number" min="10" max="300"></label>
-<label>Histórico GPS · movimento mínimo (m)<input id="gps_history_min_movement_m" type="number" min="20" max="1000"></label>
-<label>Controle de jornada<select id="journey_enforcement_enabled"><option value="0">Desativado (rollout/testes)</option><option value="1">Ativado</option></select></label>
-<label>Aviso antes do fim da jornada (min)<input id="journey_warning_minutes" type="number" min="5" max="120"></label>
-<label>Extensão máxima autorizável (h)<input id="journey_max_extension_hours" type="number" min="1" max="12"></label>
-<label>Padrão Técnico Field<select id="journey_default_field"><option value="1">Controlado</option><option value="0">Flexível</option></select></label>
-<label>Padrão Técnico Implantação<select id="journey_default_implantation"><option value="0">Flexível</option><option value="1">Controlado</option></select></label>
-</div><div class="heroActions"><button id="saveSettings">Salvar configurações</button><span id="settingsState" class="muted"></span></div></section>
+<div class="pageHead"><span class="eyebrow">{{ app_release }} · ADMINISTRAÇÃO</span><h1>Configurações operacionais</h1><p>Parâmetros operacionais ajustáveis sem nova versão. Cada item abaixo informa o efeito da configuração.</p></div>
+{% set fields = [
+('alert_activity_days','Dias para alerta de atividade antiga','Dias sem atualização para uma atividade ser sinalizada como antiga.','number','1','90'),
+('alert_pending_days','Dias para alerta de pendência','Dias para destacar uma pendência operacional sem tratamento.','number','1','90'),
+('gps_radius_m','Raio GPS de referência (m)','Distância máxima usada para associar a posição do técnico à estação/localidade de referência. Não significa, sozinho, que o técnico esteja dentro da área.','number','100','20000'),
+('dashboard_refresh_seconds','Atualização automática das dashboards (s)','Intervalo de atualização automática dos dados das dashboards abertas.','number','15','900'),
+('gps_interval_seconds','Intervalo do GPS operacional (s)','Intervalo máximo entre posições periódicas. Na V73, movimento relevante também pode gerar atualização antes desse intervalo.','number','60','1800'),
+('forecast_days_emv','Previsão EMV · janela histórica (dias)','Janela histórica usada por cálculos legados de tendência EMV. Manter apenas enquanto houver visão que utilize previsão.','number','1','30'),
+('forecast_days_garagem','Previsão Garagem · janela histórica (dias)','Janela histórica usada por cálculos legados de tendência Garagem.','number','1','30'),
+('forecast_days_recarga','Previsão Recarga · janela histórica (dias)','Janela histórica usada por cálculos legados de tendência Recarga.','number','1','30'),
+('gps_history_retention_days','Histórico GPS · retenção (dias)','Quantidade de dias em que eventos do histórico GPS permanecem armazenados antes da limpeza automática.','number','1','90'),
+('gps_history_radius_m','Histórico GPS · raio da estação (m)','Raio efetivo da geofence. Fora desta distância, o sistema deve indicar Fora da área e não registrar entrada na estação.','number','50','2000'),
+('gps_history_ping_seconds','Histórico GPS · ping em movimento (s)','Tempo mínimo entre avaliações do GPS durante deslocamento do técnico.','number','10','300'),
+('gps_history_min_movement_m','Histórico GPS · movimento mínimo (m)','Deslocamento mínimo para considerar uma nova movimentação relevante e evitar pontos repetidos.','number','20','1000'),
+('journey_warning_minutes','Aviso antes do fim da jornada (min)','Antecedência para alertar o técnico de que sua janela autorizada de trabalho está terminando.','number','5','120'),
+('journey_max_extension_hours','Extensão máxima autorizável (h)','Maior duração que pode ser solicitada/aprovada para acesso extraordinário.','number','1','12')
+] %}
+<section class="card v73Settings"><div class="v50SettingsGrid">
+{% for id,label,help,type,min,max in fields %}<label class="v73Setting"><span>{{ label }}</span><small>{{ help }}</small><input id="{{id}}" type="{{type}}" min="{{min}}" max="{{max}}" {% if id=='gps_interval_seconds' %}step="60"{% endif %}></label>{% endfor %}
+<label class="v73Setting"><span>Controle de jornada</span><small>Ativa a validação de escala, folga e janela autorizada para os perfis configurados como controlados.</small><select id="journey_enforcement_enabled"><option value="0">Desativado (rollout/testes)</option><option value="1">Ativado</option></select></label>
+<label class="v73Setting"><span>Padrão Técnico Field</span><small>Define se novos Técnicos Field seguem controle de jornada por padrão.</small><select id="journey_default_field"><option value="1">Controlado</option><option value="0">Flexível</option></select></label>
+<label class="v73Setting"><span>Padrão Técnico Implantação</span><small>Define se Técnicos de Implantação são flexíveis ou controlados por jornada.</small><select id="journey_default_implantation"><option value="0">Flexível</option><option value="1">Controlado</option></select></label>
+</div><div class="heroActions"><button id="saveSettings">Salvar configurações</button><span id="settingsState" class="v73State"></span></div></section>
+<style>.v73Setting{display:flex!important;flex-direction:column;gap:5px}.v73Setting>span{font-weight:700}.v73Setting small{min-height:34px;color:#64748b;font-weight:500;line-height:1.35}.v73State.ok{color:#15803d;font-weight:800}.v73State.err{color:#b91c1c;font-weight:800}@media(max-width:760px){.v73Setting small{min-height:0}}</style>
 {% endblock %}{% block scripts %}<script>
 const ids=['alert_activity_days','alert_pending_days','gps_radius_m','dashboard_refresh_seconds','gps_interval_seconds','forecast_days_emv','forecast_days_garagem','forecast_days_recarga','gps_history_retention_days','gps_history_radius_m','gps_history_ping_seconds','gps_history_min_movement_m','journey_enforcement_enabled','journey_warning_minutes','journey_max_extension_hours','journey_default_field','journey_default_implantation'];
 async function load(){const d=await fetch('/api/configuracoes').then(r=>r.json());if(!d.ok)return;ids.forEach(k=>document.getElementById(k).value=d.settings[k]??'');}
-document.getElementById('saveSettings').addEventListener('click',async()=>{const payload={};ids.forEach(k=>payload[k]=Number(document.getElementById(k).value));const r=await fetch('/api/configuracoes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),d=await r.json();document.getElementById('settingsState').textContent=d.ok?'Configurações salvas e auditadas.':(d.error||'Falha ao salvar.');});load();
+document.getElementById('saveSettings').addEventListener('click',async()=>{const el=document.getElementById('settingsState');const payload={};ids.forEach(k=>payload[k]=Number(document.getElementById(k).value));try{const r=await fetch('/api/configuracoes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),d=await r.json();el.textContent=d.ok?'Configurações salvas com sucesso.':(d.error||'Falha ao salvar.');el.className='v73State '+(d.ok?'ok':'err')}catch(e){el.textContent='Não foi possível salvar as configurações.';el.className='v73State err'}});load();
 </script>{% endblock %}

@@ -29,6 +29,8 @@
  <div class="tableWrap"><table><thead><tr><th>Técnico</th><th>Solicitado</th><th>Motivo</th><th>Status</th><th>Data</th><th>Ação</th></tr></thead><tbody id="authRows"></tbody></table></div>
 </section>
 {% endif %}
+
+{% if session.get('role') in ('manager','manager_field') %}<section class="card v72Auth" style="margin-top:14px"><div class="sectionHead"><div><h2>Folgas e trocas de folga</h2><p class="muted">Trocas só chegam para aprovação depois do aceite do outro colaborador.</p></div><button class="secondary" id="scheduleReload">Atualizar</button></div><div class="tableWrap"><table><thead><tr><th>Solicitante</th><th>Tipo</th><th>Data</th><th>Troca com</th><th>Colega</th><th>Gestão</th><th>Ação</th></tr></thead><tbody id="scheduleRows"></tbody></table></div></section>{% endif %}
 {% endblock %}
 {% block scripts %}
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -46,6 +48,10 @@ gpsLoad.onclick=loadGps;initGps();
 {% if can_view('management.work_authorizations') %}
 async function loadAuth(){const d=await fetch('/api/gestao/autorizacoes-jornada',{cache:'no-store'}).then(r=>r.json());authRows.innerHTML=d.rows.map(x=>`<tr><td><b>${esc(x.user)}</b></td><td>${x.requested_minutes} min</td><td>${esc(x.reason)}</td><td class="${x.status==='PENDENTE'?'pending':''}">${esc(x.status)}</td><td>${x.requested_at?new Date(x.requested_at).toLocaleString('pt-BR'):'-'}</td><td>${x.status==='PENDENTE'?`<button onclick="decide(${x.id},'APROVAR',${x.requested_minutes})">Aprovar</button> <button class="secondary" onclick="decide(${x.id},'RECUSAR',${x.requested_minutes})">Recusar</button>`:(x.approved_until?`até ${new Date(x.approved_until).toLocaleString('pt-BR')}`:'-')}</td></tr>`).join('')||'<tr><td colspan="6">Sem solicitações.</td></tr>'}
 async function decide(id,action,suggested){let minutes=suggested,note='';if(action==='APROVAR'){const raw=prompt('Minutos de acesso autorizados:',String(suggested));if(raw===null)return;minutes=+raw||suggested}else{note=prompt('Motivo da recusa (opcional):','')||''}const r=await fetch(`/api/gestao/autorizacoes-jornada/${id}/decisao`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,minutes,note})}),d=await r.json();if(!d.ok)return alert(d.error||'Falha');loadAuth()}authReload.onclick=loadAuth;loadAuth();
+{% endif %}
+
+{% if session.get('role') in ('manager','manager_field') %}
+async function loadSchedule(){const d=await fetch('/api/gestao/solicitacoes-jornada').then(r=>r.json());scheduleRows.innerHTML=d.rows.map(x=>`<tr><td><b>${esc(x.requester)}</b></td><td>${esc(x.type)}</td><td>${x.work_date}</td><td>${esc(x.swap_user||'-')} ${x.swap_date||''}</td><td>${esc(x.peer_status)}</td><td>${esc(x.manager_status)}</td><td>${x.manager_status==='PENDENTE'?`<button onclick="reviewSchedule(${x.id},true)">Aprovar</button> <button class="secondary" onclick="reviewSchedule(${x.id},false)">Rejeitar</button>`:'-'}</td></tr>`).join('')||'<tr><td colspan="7">Sem solicitações.</td></tr>'}async function reviewSchedule(id,approve){await fetch(`/api/gestao/solicitacoes-jornada/${id}/review`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({approve})});loadSchedule()}scheduleReload.onclick=loadSchedule;loadSchedule();
 {% endif %}
 </script>
 {% endblock %}
