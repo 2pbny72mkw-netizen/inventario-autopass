@@ -38,7 +38,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V73.3.1"
+APP_RELEASE = "V73.4"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -3637,10 +3637,16 @@ def _v716_inventory_identifier(i):
     return str(i.asset_identifier or i.serial or "").strip()
 
 def _v732_recarga_tdi_assets():
-    """Base operacional canônica de Recarga/TDI — V73.3.1.
+    """Base operacional canônica de Recarga/TDI — V73.4.
 
-    Terminal é a identidade primária dentro de empresa + linha + localidade.
-    Sem terminal, usa série/chave patrimonial/TOP/QR e, por último, o ID técnico.
+    Regras por família:
+    - VALIDADOR: terminal é contextual (empresa + linha + localidade) e, quando há
+      série, ela participa da identidade para não fundir equipamentos físicos
+      distintos que reutilizam o mesmo número de terminal.
+    - TDI: terminal é identidade global quando informado, pois a base contém
+      reimportações do mesmo equipamento em contextos operacionais diferentes.
+    - Sem terminal, usa série/chave patrimonial/TOP/QR e, por último, o ID técnico.
+    Nenhum total é fixado em código; o resultado continua derivado da BaseAsset.
     """
     raw = BaseAsset.query.filter(
         or_(
@@ -3661,8 +3667,11 @@ def _v732_recarga_tdi_assets():
         asset_key=normalize(a.asset_key)
         top_id=normalize(a.top_id)
         qrcode=normalize(a.qrcode_id)
-        if terminal:
-            key=(typ,"TERMINAL",normalize(a.company),_normalize_line_key(a.line),normalize(a.locality),terminal)
+        if typ=="TDI" and terminal:
+            key=(typ,"TERMINAL",terminal)
+        elif typ=="VALIDADOR" and terminal:
+            ctx=(normalize(a.company),_normalize_line_key(a.line),normalize(a.locality))
+            key=(typ,"TERMINAL",*ctx,terminal,serial) if serial else (typ,"TERMINAL",*ctx,terminal)
         elif serial:
             key=(typ,"SERIAL",serial)
         elif asset_key:

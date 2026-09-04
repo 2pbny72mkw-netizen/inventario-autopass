@@ -1,0 +1,9 @@
+V73.4 — DEPLOY ENXUTO
+
+1. Fazer backup da versão atual.
+2. Substituir os arquivos presentes neste pacote preservando a mesma estrutura de pastas.
+3. Reiniciar a aplicação.
+4. Confirmar em Sobre: V73.4.
+5. Validar Rastreabilidade: mapa com 600 px, sem sobreposição, abertura na Grande São Paulo e histórico por técnico.
+6. Validar Catálogo: 25 itens com miniaturas existentes, edição de foto e link de compra.
+7. Validar Recarga/TDI em /api/chip-swaps/base-diagnostico e na Dashboard. Os totais continuam derivados da base; não há números fixos em código.
