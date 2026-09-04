@@ -38,7 +38,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V73.6"
+APP_RELEASE = "V73.6.2"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -1146,6 +1146,7 @@ class PosFirmwareCptm(db.Model):
     legacy_update_date = db.Column(db.String(80))
     legacy_notes = db.Column(db.Text)
     status = db.Column(db.String(40), nullable=False, default="PENDENTE", index=True)
+    active = db.Column(db.Boolean, nullable=False, default=True, index=True)
     firmware_from = db.Column(db.String(120))
     firmware_to = db.Column(db.String(120), index=True)
     notes = db.Column(db.Text)
@@ -9678,29 +9679,83 @@ def activities_summary_api():
     return jsonify({"ok":True,"activities":activities})
 
 
-# V73.6 · Campanha Atualização de Firmware POS – CPTM (185 equipamentos)
+# V73.6.2 · Campanha Atualização de Firmware POS – CPTM · base importável
 _pos_fw_ready=False
+
 def _ensure_pos_firmware_cptm():
     global _pos_fw_ready
     if _pos_fw_ready: return
     PosFirmwareCptm.__table__.create(bind=db.engine,checkfirst=True)
     PosFirmwareCptmPhoto.__table__.create(bind=db.engine,checkfirst=True)
+    # Migração aditiva: preserva a campanha/histórico existente e permite substituir a base ativa.
+    cols={c["name"] for c in db.inspect(db.engine).get_columns("pos_firmware_cptm")}
+    if "active" not in cols:
+        with db.engine.begin() as conn:
+            conn.execute(db.text("ALTER TABLE pos_firmware_cptm ADD COLUMN active BOOLEAN DEFAULT TRUE NOT NULL"))
     if PosFirmwareCptm.query.count()==0:
-        seed_path=Path(app.root_path)/"data"/"pos_cptm_v736.json"
+        seed_path=Path(app.root_path)/"data"/"pos_cptm_v7362.json"
         if seed_path.exists():
             rows=json.loads(seed_path.read_text(encoding="utf-8"))
             for x in rows:
                 db.session.add(PosFirmwareCptm(
-                    terminal_number=str(x.get("B") or ""),terminal=str(x.get("C") or "").strip(),
-                    line=str(x.get("D") or "").strip(),station=str(x.get("E") or "").strip(),
-                    serial=str(x.get("H") or "").strip(),patrimony=str(x.get("I") or "").strip(),
-                    manufacturer=str(x.get("J") or "").strip(),model=str(x.get("K") or "").strip(),
-                    legacy_status=str(x.get("M") or "").strip(),legacy_update_date=str(x.get("N") or "").strip(),
-                    ip=str(x.get("O") or "").strip(),legacy_notes=str(x.get("P") or "").strip(),status="PENDENTE"))
+                    terminal_number=str(x.get("terminal_number") or ""),terminal=str(x.get("terminal") or "").strip(),
+                    line=str(x.get("line") or "").strip(),station=str(x.get("station") or "").strip(),
+                    serial=str(x.get("serial") or "").strip(),patrimony=str(x.get("patrimony") or "").strip(),
+                    manufacturer=str(x.get("manufacturer") or "").strip(),model=str(x.get("model") or "").strip(),
+                    legacy_status=str(x.get("legacy_status") or "").strip(),legacy_update_date=str(x.get("legacy_update_date") or "").strip(),
+                    ip=str(x.get("ip") or "").strip(),legacy_notes=str(x.get("legacy_notes") or "").strip(),status="PENDENTE",active=True))
             db.session.commit()
     _pos_fw_ready=True
 
 def _pos_fw_allowed(): return _has_access("field.firmware_pos_cptm")
+
+def _pos_fw_import_cell(row, aliases):
+    for key in aliases:
+        if key in row and row[key] not in (None, ""):
+            v=row[key]
+            if isinstance(v,float) and v.is_integer(): v=int(v)
+            return str(v).strip()
+    return ""
+
+def _pos_fw_import_rows(file_storage):
+    raw=file_storage.read()
+    if not raw: raise ValueError("Arquivo vazio.")
+    wb=load_workbook(io.BytesIO(raw),read_only=True,data_only=True)
+    ws=wb["BASE POS"] if "BASE POS" in wb.sheetnames else wb.active
+    vals=list(ws.values)
+    if not vals: raise ValueError("Planilha sem registros.")
+    def hk(v):
+        txt=unicodedata.normalize("NFD",str(v or "")).encode("ascii","ignore").decode().upper().strip()
+        return " ".join(txt.split())
+    heads=[hk(x) for x in vals[0]]
+    required={"TERMINAL","LINHA","ESTACAO"}
+    if not required.issubset(set(heads)):
+        raise ValueError("Cabeçalho inválido. São obrigatórios TERMINAL, LINHA e ESTAÇÃO.")
+    parsed=[]; seen=set(); duplicates=0
+    for values in vals[1:]:
+        row={heads[i]:values[i] if i<len(values) else None for i in range(len(heads))}
+        terminal=_pos_fw_import_cell(row,["TERMINAL"])
+        if not terminal: continue
+        key=normalize(terminal)
+        if key in seen:
+            duplicates+=1; continue
+        seen.add(key)
+        parsed.append({
+            "terminal_number":_pos_fw_import_cell(row,["N° TERMINAL2","Nº TERMINAL2","N TERMINAL2","N° TERMINAL22","Nº TERMINAL22","N TERMINAL22"]),
+            "terminal":terminal,
+            "line":_pos_fw_import_cell(row,["LINHA"]),
+            "station":_pos_fw_import_cell(row,["ESTACAO"]),
+            "serial":_pos_fw_import_cell(row,["Nº SERIE","N° SERIE","N SERIE","SERIE"]),
+            "patrimony":_pos_fw_import_cell(row,["PATRIMONIO"]),
+            "manufacturer":_pos_fw_import_cell(row,["FABRICANTE"]),
+            "model":_pos_fw_import_cell(row,["MODELO"]),
+            "legacy_status":_pos_fw_import_cell(row,["STATUS"]),
+            "legacy_update_date":_pos_fw_import_cell(row,["DATA DA ATUALIZACAO"]),
+            "ip":_pos_fw_import_cell(row,["IP"]),
+            "legacy_notes":_pos_fw_import_cell(row,["OBSERVACAO"]),
+        })
+    if not parsed: raise ValueError("Nenhum POS válido encontrado na planilha.")
+    return parsed,duplicates
 
 @app.get("/firmware-pos-cptm")
 @login_required
@@ -9714,27 +9769,61 @@ def pos_firmware_cptm_page():
 def pos_firmware_cptm_list():
     if not _pos_fw_allowed(): abort(403)
     _ensure_pos_firmware_cptm()
-    rows=PosFirmwareCptm.query.order_by(PosFirmwareCptm.line,PosFirmwareCptm.station,PosFirmwareCptm.terminal).all()
+    rows=PosFirmwareCptm.query.filter(PosFirmwareCptm.active.is_(True)).order_by(PosFirmwareCptm.line,PosFirmwareCptm.station,PosFirmwareCptm.terminal).all()
     users={u.id:u.name for u in User.query.filter(User.id.in_([r.technician_id for r in rows if r.technician_id])).all()}
     photos=PosFirmwareCptmPhoto.query.filter(PosFirmwareCptmPhoto.firmware_id.in_([r.id for r in rows])).all() if rows else []
     pm={}
     for p in photos: pm.setdefault(p.firmware_id,[]).append({"id":p.id,"name":p.original_name,"url":url_for("uploaded",name=p.stored_name)})
     return jsonify({"ok":True,"release":APP_RELEASE,"total":len(rows),"rows":[{
       "id":r.id,"terminal_number":r.terminal_number,"terminal":r.terminal,"line":r.line,"station":r.station,"serial":r.serial,"patrimony":r.patrimony,
-      "manufacturer":r.manufacturer,"model":r.model,"ip":r.ip,"status":r.status or "PENDENTE","firmware_from":r.firmware_from,"firmware_to":r.firmware_to,
+      "manufacturer":r.manufacturer,"model":r.model,"ip":r.ip,"status":r.status or "PENDENTE",
       "notes":r.notes,"technician_id":r.technician_id,"technician":users.get(r.technician_id),
       "started_at":r.started_at.isoformat() if r.started_at else None,"completed_at":r.completed_at.isoformat() if r.completed_at else None,"photos":pm.get(r.id,[])
     } for r in rows]})
+
+@app.post("/api/firmware-pos-cptm/import")
+@login_required
+def pos_firmware_cptm_import():
+    if not _pos_fw_allowed() or session.get("role") not in ("manager","manager_field"): abort(403)
+    _ensure_pos_firmware_cptm()
+    f=request.files.get("file")
+    if not f or not f.filename: return jsonify({"ok":False,"error":"Selecione uma planilha .xlsx."}),400
+    mode=(request.form.get("mode") or "replace").lower().strip()
+    if mode not in ("replace","merge"): return jsonify({"ok":False,"error":"Modo de importação inválido."}),400
+    try:
+        incoming,duplicates=_pos_fw_import_rows(f)
+    except Exception as e:
+        return jsonify({"ok":False,"error":str(e)}),400
+    existing={normalize(x.terminal):x for x in PosFirmwareCptm.query.all() if x.terminal}
+    if mode=="replace":
+        PosFirmwareCptm.query.update({PosFirmwareCptm.active:False},synchronize_session=False)
+    created=updated=0
+    for x in incoming:
+        key=normalize(x["terminal"]); r=existing.get(key)
+        if r is None:
+            r=PosFirmwareCptm(terminal=x["terminal"],status="PENDENTE",active=True)
+            db.session.add(r); existing[key]=r; created+=1
+        else:
+            updated+=1
+        r.active=True
+        r.terminal_number=x["terminal_number"]; r.line=x["line"]; r.station=x["station"]; r.serial=x["serial"]; r.patrimony=x["patrimony"]
+        r.manufacturer=x["manufacturer"]; r.model=x["model"]; r.legacy_status=x["legacy_status"]; r.legacy_update_date=x["legacy_update_date"]
+        r.ip=x["ip"]; r.legacy_notes=x["legacy_notes"]; r.updated_at=datetime.utcnow()
+    db.session.commit()
+    active=PosFirmwareCptm.query.filter(PosFirmwareCptm.active.is_(True)).count()
+    inactive=PosFirmwareCptm.query.filter(PosFirmwareCptm.active.is_(False)).count()
+    return jsonify({"ok":True,"mode":mode,"imported":len(incoming),"created":created,"updated":updated,"duplicates_ignored":duplicates,"active_total":active,"inactive_history":inactive})
 
 @app.post("/api/firmware-pos-cptm/<int:rid>")
 @login_required
 def pos_firmware_cptm_save(rid):
     if not _pos_fw_allowed() or session.get("role")=="consultation": abort(403)
     _ensure_pos_firmware_cptm(); r=db.session.get(PosFirmwareCptm,rid) or abort(404)
+    if not r.active: return jsonify({"ok":False,"error":"Este POS não pertence à base ativa da campanha."}),409
     status=(request.form.get("status") or r.status or "PENDENTE").upper().strip()
     if status not in ("PENDENTE","EM ANDAMENTO","CONCLUÍDO"): return jsonify({"ok":False,"error":"Status inválido"}),400
     now=datetime.utcnow(); old=r.status
-    r.status=status; r.firmware_from=(request.form.get("firmware_from") or "").strip() or None; r.firmware_to=(request.form.get("firmware_to") or "").strip() or None; r.notes=(request.form.get("notes") or "").strip() or None
+    r.status=status; r.notes=(request.form.get("notes") or "").strip() or None
     if status=="EM ANDAMENTO" and not r.started_at: r.started_at=now
     if status=="CONCLUÍDO":
         if not r.started_at:r.started_at=now

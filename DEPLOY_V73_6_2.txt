@@ -1,0 +1,8 @@
+V73.6.2 — PACOTE ENXUTO
+
+1. Aplicar sobre a V73.6.1.
+2. Reiniciar a aplicação.
+3. A migração adiciona automaticamente a coluna active em pos_firmware_cptm, preservando os dados existentes.
+4. Em Field > Atualização Firmware POS – CPTM, usar Importar base > Substituir base ativa e selecionar a nova planilha.
+5. Confirmar total ativo de 281 equipamentos.
+6. Validar atualização de status e evidências por seleção de arquivos e câmera do celular.
