@@ -38,7 +38,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V72.1"
+APP_RELEASE = "V73"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -53,7 +53,7 @@ OFFICIAL_PARK = {
     "BLOQUEIO": 1610,
 }
 OFFICIAL_PARK_TOTAL = sum(OFFICIAL_PARK.values())  # 3.801
-TECHNICAL_TDI_TOTAL = int(os.getenv("TECHNICAL_TDI_TOTAL", "80"))
+TECHNICAL_TDI_TOTAL = int(os.getenv("TECHNICAL_TDI_TOTAL", "42"))
 EXPECTED_CACHE_TTL_SECONDS = 600
 _expected_cache = {"at": 0.0, "data": None}
 # V56-D: cache curtíssimo da visão consolidada de localidades para reduzir recomputações concorrentes.
@@ -705,6 +705,66 @@ class AuditEvent(db.Model):
     detail = db.Column(db.Text)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
 
+
+# V73 — módulos consolidados RH/Gestão
+class ExternalLocation(db.Model):
+    __tablename__ = "external_locations"
+    id=db.Column(db.Integer,primary_key=True)
+    name=db.Column(db.String(220),nullable=False,index=True)
+    company=db.Column(db.String(180),index=True)
+    category=db.Column(db.String(80),default="EXTERNA",index=True)
+    address=db.Column(db.String(400))
+    latitude=db.Column(db.Float,nullable=False)
+    longitude=db.Column(db.Float,nullable=False)
+    radius_m=db.Column(db.Integer,nullable=False,default=500)
+    active=db.Column(db.Boolean,nullable=False,default=True,index=True)
+    created_by=db.Column(db.Integer,db.ForeignKey("users.id"))
+    created_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow)
+
+class ManagementLink(db.Model):
+    __tablename__="management_links"
+    id=db.Column(db.Integer,primary_key=True)
+    title=db.Column(db.String(220),nullable=False,index=True)
+    category=db.Column(db.String(100),index=True)
+    url=db.Column(db.String(1200),nullable=False)
+    notes=db.Column(db.Text)
+    active=db.Column(db.Boolean,nullable=False,default=True,index=True)
+    created_by=db.Column(db.Integer,db.ForeignKey("users.id"))
+    created_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow)
+    updated_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow,onupdate=datetime.utcnow)
+
+class AptRecord(db.Model):
+    __tablename__="apt_records"
+    id=db.Column(db.Integer,primary_key=True)
+    user_id=db.Column(db.Integer,db.ForeignKey("users.id"),index=True)
+    collaborator_name=db.Column(db.String(220),nullable=False,index=True)
+    company=db.Column(db.String(180),index=True)
+    line=db.Column(db.String(120),index=True)
+    apt_number=db.Column(db.String(180),nullable=False,index=True)
+    apt_kind=db.Column(db.String(40))
+    valid_until=db.Column(db.Date,index=True)
+    process_status=db.Column(db.String(40),nullable=False,default="AGUARDANDO",index=True)
+    pdf_key=db.Column(db.String(700))
+    notes=db.Column(db.Text)
+    active=db.Column(db.Boolean,nullable=False,default=True,index=True)
+    created_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow)
+    updated_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow,onupdate=datetime.utcnow)
+    __table_args__=(db.UniqueConstraint("collaborator_name","line","apt_number",name="uq_apt_collab_line_number"),)
+
+class ScheduleChangeRequest(db.Model):
+    __tablename__="schedule_change_requests"
+    id=db.Column(db.Integer,primary_key=True)
+    requester_id=db.Column(db.Integer,db.ForeignKey("users.id"),nullable=False,index=True)
+    request_type=db.Column(db.String(30),nullable=False,index=True)
+    work_date=db.Column(db.Date,nullable=False,index=True)
+    swap_user_id=db.Column(db.Integer,db.ForeignKey("users.id"),index=True)
+    swap_date=db.Column(db.Date,index=True)
+    reason=db.Column(db.String(700),nullable=False)
+    peer_status=db.Column(db.String(30),default="NAO_APLICA",index=True)
+    manager_status=db.Column(db.String(30),default="PENDENTE",index=True)
+    reviewed_by=db.Column(db.Integer,db.ForeignKey("users.id"))
+    created_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow,index=True)
+    updated_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow,onupdate=datetime.utcnow)
 
 class TeamScheduleProfile(db.Model):
     __tablename__ = "team_schedule_profiles"
@@ -1420,7 +1480,7 @@ ACCESS_GROUPS = {
         "implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage"
     )),
     "teams": ("RH / Equipes", (
-        "teams.map","teams.today","teams.schedule","teams.manage","teams.export"
+        "teams.map","teams.today","teams.schedule","teams.manage","teams.export","teams.apt"
     )),
     "users": ("RH / Usuários", (
         "users.view","users.create","users.edit","users.activate","users.delete","users.password","users.export"
@@ -1430,7 +1490,7 @@ ACCESS_GROUPS = {
     )),
     "finance_dashboard": ("Dashboard Financeira", ("finance.dashboard",)),
     "management": ("Gestão", (
-        "management.calls","management.360","management.notifications","management.diagnostics","management.health","management.settings","management.dashboard_config","management.profiles","management.gps_history","management.work_authorizations"
+        "management.calls","management.360","management.notifications","management.diagnostics","management.health","management.settings","management.dashboard_config","management.profiles","management.gps_history","management.work_authorizations","management.links","management.external_locations"
     )),
     "materials": ("Dossiê / Materiais", (
         "materials.my_documents","materials.request","materials.catalog.view","materials.catalog.manage","materials.kits.manage","materials.delivery.create","materials.delivery.manage","materials.dossier.view"
@@ -1448,10 +1508,10 @@ ACCESS_LABELS = {
  "dashboard.general":"Dashboard Geral",
  "field.dashboard":"Dashboard Field","field.inventory":"Inventário / Lançamento","field.calls":"Chamados","field.preventive":"Solicitação Preventiva ATM","field.equipment":"Equipamentos","field.evidence":"Evidências","field.panorama":"Visão Panorâmica","field.chip_recarga":"Troca de Chips – Recarga",
  "implantation.dashboard":"Dashboard Implantação","implantation.visits":"Visita a Campo / Relatório de Visita","implantation.reports":"Relatórios / Visitas recentes","implantation.emv":"Troca de Chips EMV – Trilhos","implantation.garage":"Troca de Chips Garagem",
- "teams.map":"Mapa operacional","teams.today":"Operação de Hoje","teams.schedule":"Escala por dias","teams.manage":"Gestão de equipes / escala","teams.export":"Exportar dados",
+ "teams.map":"Mapa operacional","teams.today":"Operação de Hoje","teams.schedule":"Escala por dias","teams.manage":"Gestão de equipes / escala","teams.export":"Exportar dados","teams.apt":"APT / Validades",
  "users.view":"Visualizar usuários","users.create":"Criar usuário","users.edit":"Editar usuário","users.activate":"Ativar / Desativar","users.delete":"Excluir / Arquivar","users.password":"Redefinir senha","users.export":"Exportar Excel",
  "finance.dashboard":"Dashboard Financeira","finance.support":"Suporte a Campo","finance.collection":"Coleta de Valores","finance.apuracao":"Apuração de Numerário","finance.assistance":"Assistência Técnica","finance.implantation":"Implantação de Hardware","finance.entries":"Lançamentos","finance.suppliers":"Empresas / Fornecedores","finance.import":"Importar planilha","finance.edit":"Editar lançamentos","finance.delete":"Excluir lançamentos",
- "management.calls":"Chamados","management.360":"Central 360","management.notifications":"Notificações","management.diagnostics":"Diagnóstico","management.health":"Saúde da Plataforma","management.settings":"Configurações","management.dashboard_config":"Configuração de Dashboards","management.profiles":"Perfis & Permissões","management.gps_history":"Histórico GPS por estações","management.work_authorizations":"Autorizações de jornada",
+ "management.calls":"Chamados","management.360":"Central 360","management.notifications":"Notificações","management.diagnostics":"Diagnóstico","management.health":"Saúde da Plataforma","management.settings":"Configurações","management.dashboard_config":"Configuração de Dashboards","management.profiles":"Perfis & Permissões","management.gps_history":"Histórico GPS por estações","management.work_authorizations":"Autorizações de jornada","management.links":"Resumo dos Links","management.external_locations":"Localidades externas",
  "materials.my_documents":"Meus documentos / Minha carga","materials.request":"Solicitar material","materials.catalog.view":"Visualizar catálogo","materials.catalog.manage":"Cadastrar / editar / inativar materiais","materials.kits.manage":"Gerenciar kits","materials.delivery.create":"Criar e enviar entregas","materials.delivery.manage":"Gerenciar aceites / correções","materials.dossier.view":"Dossiê dos colaboradores",
  "engineering.items.view":"Visualizar cadastro de itens","engineering.items.manage":"Cadastrar / editar itens","engineering.bom.view":"Visualizar estruturas BOM","engineering.bom.manage":"Criar / revisar BOM","engineering.import":"Importar planilhas de Engenharia",
  "portal.appointments":"Criar / consultar agendamentos","portal.receive":"Receber agendamentos","portal.manage":"Administrar Portal do Cliente",
@@ -1470,11 +1530,11 @@ def _expand_legacy_access(values):
 def _default_access_for_role(role):
     defaults={
       "manager":set(ACCESS_SUBMODULES),
-      "manager_field":{"engineering.items.view","engineering.bom.view","materials.my_documents","materials.request","materials.catalog.view","materials.catalog.manage","materials.kits.manage","materials.delivery.create","materials.delivery.manage","materials.dossier.view","dashboard.general","field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage","teams.map","teams.today","teams.schedule","teams.manage","teams.export","finance.dashboard","management.calls","management.360","management.notifications","management.diagnostics","management.gps_history","management.work_authorizations","portal.receive","portal.manage","about.versions"},
+      "manager_field":{"engineering.items.view","engineering.bom.view","materials.my_documents","materials.request","materials.catalog.view","materials.catalog.manage","materials.kits.manage","materials.delivery.create","materials.delivery.manage","materials.dossier.view","dashboard.general","field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage","teams.map","teams.today","teams.schedule","teams.manage","teams.export","teams.apt","finance.dashboard","management.calls","management.360","management.notifications","management.diagnostics","management.gps_history","management.work_authorizations","portal.receive","portal.manage","about.versions"},
       "technician":{"materials.my_documents","materials.request","field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","about.versions"},
       "technician_implantation":{"materials.my_documents","materials.request","field.inventory","field.equipment","field.evidence","field.panorama","field.chip_recarga","implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage","about.versions"},
       "consultation":{"dashboard.general","field.dashboard","field.inventory","field.equipment","field.evidence","field.panorama","field.chip_recarga","teams.map","teams.today","teams.schedule","about.versions"},
-      "hr":{"materials.catalog.view","materials.dossier.view","teams.map","teams.today","teams.schedule","teams.manage","teams.export","users.view","users.create","users.edit","users.activate","users.password","users.export","about.versions"},
+      "hr":{"materials.catalog.view","materials.dossier.view","teams.map","teams.today","teams.schedule","teams.manage","teams.export","teams.apt","users.view","users.create","users.edit","users.activate","users.password","users.export","about.versions"},
       "dispatcher":{"dashboard.general","field.calls","field.chip_recarga","teams.map","teams.today","teams.schedule","management.calls","about.versions"},
       "customer":{"portal.appointments"},
       "atm_financial_admin":{"finance.dashboard","finance.support","finance.collection","finance.apuracao","finance.assistance","finance.implantation","finance.entries","finance.suppliers","finance.import","finance.edit","finance.delete","about.versions"},
@@ -1825,9 +1885,17 @@ def _v72_journey_status(user, now_local=None):
 
     result["controlled"] = True
     personnel = normalize(user.personnel_status or "ATIVO")
-    if personnel in {"FERIAS","AFASTADO","LICENCA"}:
+    if personnel in {"AFASTADO","LICENCA"}:
         result["allowed"] = False
         result["reason"] = personnel
+        return result
+    if personnel == "FERIAS":
+        auth = _v72_active_authorization(user.id, datetime.utcnow())
+        if auth:
+            result["allowed"] = True; result["reason"] = "AUTORIZACAO_EXTRAORDINARIA"; result["authorization_id"] = auth.id
+            result["valid_until"] = auth.approved_until.replace(tzinfo=ZoneInfo("UTC")).astimezone(V72_TZ)
+            return result
+        result["allowed"] = False; result["reason"] = "FERIAS"
         return result
 
     # Jornada normal de hoje; também considera turno que começou ontem e cruza meia-noite.
@@ -2017,8 +2085,9 @@ def v72_outside_journey_request_api():
     if not user or not user.active:
         return jsonify({"ok":False,"error":"Sessão de solicitação expirada. Faça login novamente."}),401
     personnel = normalize(user.personnel_status or "ATIVO")
-    if personnel in {"FERIAS","AFASTADO","LICENCA"}:
-        return jsonify({"ok":False,"error":"Este status funcional não permite autorização extraordinária por esta tela."}),403
+    if personnel in {"AFASTADO","LICENCA"}:
+        label = "afastado" if personnel == "AFASTADO" else "em licença"
+        return jsonify({"ok":False,"error":f"Acesso indisponível. O colaborador está {label}."}),403
     data = request.get_json(silent=True) or {}
     try:
         minutes = int(data.get("minutes") or 0)
@@ -2142,37 +2211,24 @@ def v72_management_tracking_page():
 def v72_gps_history_api():
     if not _has_access("management.gps_history"):
         return jsonify({"ok":False,"error":"Sem permissão para histórico GPS."}),403
-    user_id=request.args.get("user_id",type=int)
-    date_raw=(request.args.get("date") or "").strip()
+    user_id=request.args.get("user_id",type=int);date_raw=(request.args.get("date") or "").strip()
     users=User.query.filter(User.active.is_(True),User.gps_history_enabled.is_(True)).order_by(User.name).all()
-    if not user_id:
-        return jsonify({"ok":True,"users":[{"id":u.id,"name":u.name,"role":u.role,"company":u.company or ""} for u in users],"events":[]})
+    if not user_id:return jsonify({"ok":True,"users":[{"id":u.id,"name":u.name,"role":u.role,"company":u.company or ""} for u in users],"events":[]})
     u=db.session.get(User,user_id)
-    if not u:
-        return jsonify({"ok":False,"error":"Usuário não encontrado."}),404
-    try:
-        day=datetime.strptime(date_raw,"%Y-%m-%d").date() if date_raw else datetime.now(V72_TZ).date()
-    except ValueError:
-        return jsonify({"ok":False,"error":"Data inválida."}),400
-    start_local=datetime.combine(day,datetime.min.time(),tzinfo=V72_TZ)
-    end_local=start_local+timedelta(days=1)
-    start_utc=start_local.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
-    end_utc=end_local.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
-    rows=TechnicianStationHistory.query.filter(
-        TechnicianStationHistory.user_id==user_id,
-        TechnicianStationHistory.captured_at>=start_utc,
-        TechnicianStationHistory.captured_at<end_utc
-    ).order_by(TechnicianStationHistory.captured_at).all()
-    events=[]
-    for x in rows:
-        local_dt=x.captured_at.replace(tzinfo=ZoneInfo("UTC")).astimezone(V72_TZ)
-        events.append({
-            "id":x.id,"station_id":x.location_id,"company":x.company or "","line":x.line or "",
-            "station":x.station or "","latitude":x.latitude,"longitude":x.longitude,
-            "accuracy":x.accuracy,"distance_m":x.distance_m,
-            "captured_at":local_dt.isoformat(),"time":local_dt.strftime("%H:%M:%S")
-        })
-    return jsonify({"ok":True,"user":{"id":u.id,"name":u.name},"date":day.isoformat(),"events":events,"count":len(events),"retention_days":int(_v72_settings().get("gps_history_retention_days",7) or 7)})
+    if not u:return jsonify({"ok":False,"error":"Usuário não encontrado."}),404
+    try:day=datetime.strptime(date_raw,"%Y-%m-%d").date() if date_raw else datetime.now(V72_TZ).date()
+    except ValueError:return jsonify({"ok":False,"error":"Data inválida."}),400
+    start_local=datetime.combine(day,datetime.min.time(),tzinfo=V72_TZ);end_local=start_local+timedelta(days=1);start_utc=start_local.astimezone(ZoneInfo("UTC")).replace(tzinfo=None);end_utc=end_local.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+    positions=TechnicianPosition.query.filter(TechnicianPosition.user_id==user_id,TechnicianPosition.captured_at>=start_utc,TechnicianPosition.captured_at<end_utc).order_by(TechnicianPosition.captured_at).all()
+    refs=_v72_station_refs();radius=float(_v50_settings().get("gps_radius_m",500) or 500);events=[]
+    for x in positions:
+        local_dt=x.captured_at.replace(tzinfo=ZoneInfo("UTC")).astimezone(V72_TZ);nearest=None
+        for lid,co,li,st,slat,slon in refs:
+            d=_haversine_m(x.latitude,x.longitude,slat,slon)
+            if nearest is None or d<nearest[-1]:nearest=(lid,co,li,st,d)
+        lid,co,li,st,d=nearest if nearest else (None,"","","",None)
+        events.append({"id":x.id,"station_id":lid,"company":co,"line":li,"station":st or "Sem referência","latitude":x.latitude,"longitude":x.longitude,"accuracy":x.accuracy,"distance_m":round(d,1) if d is not None else None,"inside":bool(d is not None and d<=radius),"relation":"NA ESTAÇÃO/LOCALIDADE" if d is not None and d<=radius else "FORA DA ÁREA","captured_at":local_dt.isoformat(),"time":local_dt.strftime("%H:%M:%S"),"source":x.source or "browser"})
+    return jsonify({"ok":True,"user":{"id":u.id,"name":u.name},"date":day.isoformat(),"events":events,"count":len(events),"retention_days":int(_v72_settings().get("gps_history_retention_days",7) or 7),"reference_radius_m":radius})
 
 
 @app.get("/api/gestao/autorizacoes-jornada")
@@ -2854,7 +2910,7 @@ def teams_status_api():
             except Exception: continue
             if best is None or dist<best[0]: best=(dist,loc)
         if not best:return None
-        dist,loc=best; return {"id":loc.id,"name":loc.location,"company":loc.company or "","line":loc.line or "","distance_m":round(dist),"relation":"NA ESTAÇÃO" if dist<=500 else "MAIS PRÓXIMA"}
+        dist,loc=best; return {"id":loc.id,"name":loc.location,"company":loc.company or "","line":loc.line or "","distance_m":round(dist),"relation":"NA ESTAÇÃO" if dist<=float(_v50_settings().get("gps_radius_m",500) or 500) else "FORA DA ÁREA"}
     rows=[]; summary={"in_operation":0,"late":0,"not_logged":0,"stale_gt10":0,"no_gps":0,"outside_locality":0,"not_started":0}
     for member in scheduled:
         uid=member.get("user_id"); user=users.get(uid); pos=pos_map.get(uid); minutes=max(0,int((now_utc-pos.captured_at).total_seconds()//60)) if pos else None
@@ -2867,7 +2923,7 @@ def teams_status_api():
         elif minutes is not None and minutes>10: operation_status="SEM POSIÇÃO >10 MIN"; summary["stale_gt10"]+=1
         elif late_minutes>0: operation_status=f"ATRASADO {late_minutes} MIN"; summary["late"]+=1
         else: operation_status="EM OPERAÇÃO"; summary["in_operation"]+=1
-        if station and station["relation"]=="MAIS PRÓXIMA": summary["outside_locality"]+=1
+        if station and station["relation"]=="FORA DA ÁREA": summary["outside_locality"]+=1
         freshness="SEM SINAL" if minutes is None else ("ATUAL" if minutes<=5 else ("ATENÇÃO" if minutes<=15 else "ATRASADO"))
         rows.append({**member,"gps_points_today":gps_counts.get(uid,0),"session_events_today":login_counts.get(uid,0),"photo_url":(f"/usuarios/{user.id}/foto" if user and user.photo_url else None),"photo_version":(str(user.photo_url) if user and user.photo_url else None),"latitude":pos.latitude if pos else None,"longitude":pos.longitude if pos else None,"accuracy":pos.accuracy if pos else None,"captured_at":(pos.captured_at.isoformat()+"Z") if pos else None,"minutes_since":minutes,"freshness":freshness,"first_login":login_local.strftime("%H:%M") if login_local else None,"late_minutes":late_minutes,"operation_status":operation_status,"nearest_station":station,"current_location":station["name"] if station else None})
     counts={}
@@ -8479,11 +8535,15 @@ def v38_gps_config():
     required=bool(getattr(u,"gps_required",False)) if u else False
     interval=max(60, int(_v50_settings().get("gps_interval_seconds", os.getenv("TEAM_GPS_INTERVAL_SECONDS", "300"))))
     v72=_v72_settings()
+    history_enabled = bool(getattr(u,"gps_history_enabled",False)) if u else False
+    # V73: histórico GPS deve funcionar mesmo quando o GPS obrigatório não estiver marcado.
+    # Antes, enabled=required fazia o JS encerrar e nenhum ponto histórico era transmitido.
+    gps_enabled = bool(required or history_enabled)
     return jsonify({
-        "ok": True, "enabled": required, "required": required, "interval_seconds": interval,
+        "ok": True, "enabled": gps_enabled, "required": required, "interval_seconds": interval,
         "retention_days": max(1,int(v72.get("gps_history_retention_days",7) or 7)),
         "session_token": session.get("gps_session_token") or str(session.get("user_id") or ""),
-        "history_enabled": bool(getattr(u,"gps_history_enabled",False)) if u else False,
+        "history_enabled": history_enabled,
         "history_ping_seconds": max(10,int(v72.get("gps_history_ping_seconds",20) or 20)),
         "history_min_movement_m": max(20,int(v72.get("gps_history_min_movement_m",60) or 60)),
         "history_radius_m": max(50,int(v72.get("gps_history_radius_m",250) or 250)),
@@ -9513,7 +9573,7 @@ def _chip_swap_asset_matches_location(asset, loc):
     """
     if not asset or not loc:
         return False
-    if _canonical_equipment_type(asset.equipment_type) != "VALIDADOR":
+    if _canonical_equipment_type(asset.equipment_type) not in ("VALIDADOR","TDI"):
         return False
     if _normalize_line_key(asset.line) != _normalize_line_key(loc.line):
         return False
@@ -9938,6 +9998,9 @@ def chip_swap_export_xlsx():
     location = (request.args.get("location") or "").strip()
     test_result = (request.args.get("test_result") or "").strip()
     pending_only = (request.args.get("pending_only") or "").strip().lower() in ("1", "true", "yes")
+    status_filter=(request.args.get("status") or "").strip().upper()
+    technician=(request.args.get("technician") or "").strip().lower()
+    date_filter=(request.args.get("date") or "").strip()
     rows=[x for x in rows if (not operation or _chip_operation_name(x["company"])==operation) and (not company or x["company"]==company) and (not line or x["line"]==line) and (not location or x["location"]==location)]
     total=sum(x["total"] for x in rows); done=sum(x["concluded"] for x in rows); prog=sum(x["in_progress"] for x in rows); pend=sum(x["pending"] for x in rows)
     wb=Workbook(); ws=wb.active; ws.title="Resumo"
@@ -9950,8 +10013,11 @@ def chip_swap_export_xlsx():
             vr = v.get("test_result") or ""
             if test_result and vr != test_result:
                 continue
-            if pending_only and (not v.get("swap_id") or vr == "TESTADO_OK"):
-                continue
+            vst=(v.get("status") or "PENDENTE").upper()
+            if pending_only and vst == "CONCLUÍDA": continue
+            if status_filter and vst != status_filter: continue
+            if technician and technician not in (v.get("technician") or v.get("completed_by") or "").lower(): continue
+            if date_filter and not str(v.get("completed_at") or "").startswith(date_filter): continue
             det.append([_chip_operation_name(x["company"]),x["company"],x["line"],x["location"],v.get("label") or v.get("base_asset_id"),v.get("model","") ,v.get("serial","") ,v.get("status","PENDENTE"),vr,v.get("test_notes") or v.get("notes") or "",v.get("technician","") ,v.get("completed_at") or "",v.get("photo_count",0)])
     for sh in wb.worksheets:
         for cell in sh[1]: cell.font=Font(bold=True)
@@ -12189,6 +12255,221 @@ def operational_forecast_api():
     confidence="ALTA" if recent>=max(10,days*3) else ("MÉDIA" if recent>=max(3,days) else "BAIXA")
     return jsonify({"ok":True,"release":APP_RELEASE,"module":module,"window_days":days,"total":total,"done":done,"in_progress":in_progress,"pending":pending,"completed_in_window":recent,"daily_rate":round(daily,2),"eta_days":round(eta_days,1) if eta_days is not None else None,"eta_date":eta_date,"trend":trend,"confidence":confidence})
 
+
+# -----------------------------------------------------------------------------
+# V73 — Gestão/RH 2.0: localidades externas, links, APT, jornada e técnico próximo
+# -----------------------------------------------------------------------------
+def _v73_admin():
+    return session.get("role") in ("manager","manager_field","hr")
+
+@app.route("/gestao/localidades-externas",methods=["GET","POST"])
+@login_required
+def v73_external_locations_page():
+    if session.get("role") not in ("manager","manager_field"): abort(403)
+    if request.method=="POST":
+        d=request.form
+        try:
+            row=ExternalLocation(name=(d.get("name") or "").strip(),company=(d.get("company") or "").strip(),category=(d.get("category") or "EXTERNA").strip(),address=(d.get("address") or "").strip(),latitude=float(d.get("latitude")),longitude=float(d.get("longitude")),radius_m=max(50,int(d.get("radius_m") or 500)),created_by=session.get("user_id"))
+            if not row.name: raise ValueError("Informe o nome da localidade.")
+            db.session.add(row);db.session.flush()
+            loc=Location.query.filter_by(company=row.company or "EXTERNA",line="EXTERNA",location=row.name).first()
+            if not loc:
+                loc=Location(company=row.company or "EXTERNA",line="EXTERNA",location=row.name,reference_latitude=row.latitude,reference_longitude=row.longitude,reference_source=f"EXTERNAL_V73:{row.id}")
+                db.session.add(loc)
+            else:
+                loc.reference_latitude=row.latitude;loc.reference_longitude=row.longitude;loc.reference_source=f"EXTERNAL_V73:{row.id}"
+            db.session.commit();_V72_STATION_CACHE["at"]=0;flash("Localidade externa salva com sucesso.","success")
+        except Exception as e: db.session.rollback();flash(f"Não foi possível salvar: {e}","error")
+        return redirect("/gestao/localidades-externas")
+    rows=ExternalLocation.query.order_by(ExternalLocation.active.desc(),ExternalLocation.company,ExternalLocation.name).all()
+    return render_template("external_locations_v73.html",rows=rows,app_release=APP_RELEASE)
+
+@app.post("/api/gestao/localidades-externas/<int:rid>/toggle")
+@login_required
+def v73_external_toggle(rid):
+    if session.get("role") not in ("manager","manager_field"): abort(403)
+    x=db.session.get(ExternalLocation,rid) or abort(404);x.active=not x.active;db.session.commit();return jsonify({"ok":True,"active":x.active})
+
+@app.route("/gestao/resumo-links",methods=["GET","POST"])
+@login_required
+def v73_links_page():
+    if session.get("role") not in ("manager","manager_field"): abort(403)
+    if request.method=="POST":
+        title=(request.form.get("title") or "").strip();url=(request.form.get("url") or "").strip()
+        if not title or not url: flash("Título e URL são obrigatórios.","error")
+        else:
+            db.session.add(ManagementLink(title=title,category=(request.form.get("category") or "Outros").strip(),url=url,notes=(request.form.get("notes") or "").strip(),created_by=session.get("user_id")));db.session.commit();flash("Link salvo com sucesso.","success")
+        return redirect("/gestao/resumo-links")
+    q=(request.args.get("q") or "").strip();query=ManagementLink.query.filter(ManagementLink.active.is_(True))
+    if q: query=query.filter(or_(ManagementLink.title.ilike(f"%{q}%"),ManagementLink.category.ilike(f"%{q}%"),ManagementLink.notes.ilike(f"%{q}%")))
+    return render_template("management_links_v73.html",rows=query.order_by(ManagementLink.category,ManagementLink.title).all(),app_release=APP_RELEASE)
+
+@app.post("/api/gestao/resumo-links/<int:rid>/delete")
+@login_required
+def v73_link_delete(rid):
+    if session.get("role") not in ("manager","manager_field"): abort(403)
+    x=db.session.get(ManagementLink,rid) or abort(404);x.active=False;db.session.commit();return jsonify({"ok":True})
+
+def _apt_status(x):
+    if not x.valid_until:return "SEM VALIDADE",None
+    days=(x.valid_until-datetime.now(V72_TZ).date()).days
+    if days<0:return "VENCIDA",days
+    if days<=15:return "ATÉ 15 DIAS",days
+    if days<=30:return "ATÉ 30 DIAS",days
+    if days<=40:return "ATÉ 40 DIAS",days
+    return "REGULAR",days
+
+@app.get("/rh/apt")
+@login_required
+def v73_apt_page():
+    if session.get("role") not in ("manager","manager_field","hr"):abort(403)
+    rows=AptRecord.query.filter(AptRecord.active.is_(True)).order_by(AptRecord.valid_until,AptRecord.collaborator_name).all(); data=[]
+    for x in rows:
+        vs,days=_apt_status(x);data.append({"row":x,"validity_status":vs,"days":days})
+    summary={k:sum(1 for x in data if x["validity_status"]==k) for k in ("VENCIDA","ATÉ 15 DIAS","ATÉ 30 DIAS","ATÉ 40 DIAS","REGULAR","SEM VALIDADE")}
+    return render_template("apt_v73.html",items=data,summary=summary,total=len(data),app_release=APP_RELEASE)
+
+@app.post("/api/rh/apt/import")
+@login_required
+def v73_apt_import():
+    if session.get("role") not in ("manager","manager_field","hr"):abort(403)
+    f=request.files.get("file")
+    if not f:return jsonify({"ok":False,"error":"Selecione a planilha."}),400
+    try:
+        import csv as _csv
+        raw=f.read(); rows=[]
+        if (f.filename or "").lower().endswith(".csv"):
+            txt=raw.decode("utf-8-sig",errors="replace");dialect=_csv.Sniffer().sniff(txt[:4000],delimiters=";,\\t");rows=list(_csv.DictReader(io.StringIO(txt),dialect=dialect))
+        else:
+            wb=load_workbook(io.BytesIO(raw),data_only=True);ws=wb.active;vals=list(ws.values);heads=[str(x or "").strip() for x in vals[0]];rows=[dict(zip(heads,r)) for r in vals[1:]]
+        def pick(r,*names):
+            norm={normalize(str(k or "")):v for k,v in r.items()}
+            for n in names:
+                if normalize(n) in norm:return norm[normalize(n)]
+            return None
+        users=User.query.all();um={normalize(u.name):u for u in users};created=updated=0
+        for r in rows:
+            name=str(pick(r,"COLABORADOR","NOME","FUNCIONARIO","FUNCIONÁRIO") or "").strip();line=str(pick(r,"LINHA","LOCAL","LOCALIDADE") or "").strip();apt=str(pick(r,"APT","APT'S","APTS","Nº APT","NUMERO APT","NÚMERO APT") or "").strip()
+            if not name or not apt:continue
+            # uma célula pode conter múltiplas APTs; separa por hífen apenas quando inicia nova APT
+            nums=re.findall(r'APT[-–][A-Z0-9-]+(?:\\s+[CS]/A)?',apt.upper()) or [apt]
+            valid=pick(r,"VALIDADE APT","VALIDADE","VENCIMENTO APT","VENCIMENTO APT'S")
+            vd=None
+            if isinstance(valid,(datetime,date)):vd=valid.date() if isinstance(valid,datetime) else valid
+            elif valid:
+                for fmt in ("%d/%m/%Y","%Y-%m-%d","%d/%m/%y"):
+                    try:vd=datetime.strptime(str(valid).strip(),fmt).date();break
+                    except:pass
+            for num in nums:
+                x=AptRecord.query.filter_by(collaborator_name=name,line=line,apt_number=num.strip()).first()
+                if not x:x=AptRecord(collaborator_name=name,line=line,apt_number=num.strip());created+=1
+                else:updated+=1
+                u=um.get(normalize(name));x.user_id=u.id if u else None;x.company=str(pick(r,"EMPRESA") or (u.company if u else "") or "").strip();x.valid_until=vd;x.process_status=str(pick(r,"STATUS","ANDAMENTO") or x.process_status or "AGUARDANDO").upper();db.session.add(x)
+        db.session.commit();return jsonify({"ok":True,"created":created,"updated":updated})
+    except Exception as e:db.session.rollback();return jsonify({"ok":False,"error":str(e)}),400
+
+@app.post("/api/rh/apt/<int:rid>/pdf")
+@login_required
+def v73_apt_pdf(rid):
+    if session.get("role") not in ("manager","manager_field","hr"):abort(403)
+    x=db.session.get(AptRecord,rid) or abort(404);f=request.files.get("pdf")
+    if not f or not (f.filename or "").lower().endswith(".pdf"):return jsonify({"ok":False,"error":"Envie um PDF."}),400
+    key=f"apt/{x.id}/{uuid.uuid4().hex}-{secure_filename(f.filename)}";_r2_put_bytes(key,f.read(),"application/pdf");x.pdf_key=key;db.session.commit();return jsonify({"ok":True})
+
+@app.get("/api/rh/apt/<int:rid>/pdf")
+@login_required
+def v73_apt_pdf_get(rid):
+    x=db.session.get(AptRecord,rid) or abort(404)
+    if session.get("role") not in ("manager","manager_field","hr") and x.user_id!=session.get("user_id"):abort(403)
+    if not x.pdf_key:abort(404)
+    return send_file(io.BytesIO(_r2_get_bytes(x.pdf_key)),mimetype="application/pdf",download_name=f"{x.apt_number}.pdf")
+
+@app.get("/api/rh/apt/export.xlsx")
+@login_required
+def v73_apt_export():
+    if session.get("role") not in ("manager","manager_field","hr"):abort(403)
+    wb=Workbook();ws=wb.active;ws.title="APT";ws.append(["Colaborador","Empresa","Linha","Nº APT","Validade","Situação validade","Status processo","PDF"])
+    for x in AptRecord.query.filter(AptRecord.active.is_(True)).order_by(AptRecord.collaborator_name).all():vs,_=_apt_status(x);ws.append([x.collaborator_name,x.company,x.line,x.apt_number,x.valid_until,vs,x.process_status,"SIM" if x.pdf_key else "NÃO"])
+    ws.freeze_panes="A2";ws.auto_filter.ref=ws.dimensions;bio=io.BytesIO();wb.save(bio);bio.seek(0);return send_file(bio,as_attachment=True,download_name="controle_APT.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+@app.get("/api/me/apt")
+@login_required
+def v73_my_apt():
+    rows=AptRecord.query.filter_by(user_id=session.get("user_id"),active=True).order_by(AptRecord.valid_until).all();return jsonify({"ok":True,"rows":[{"id":x.id,"line":x.line,"apt_number":x.apt_number,"valid_until":x.valid_until.isoformat() if x.valid_until else None,"process_status":x.process_status,"validity_status":_apt_status(x)[0],"has_pdf":bool(x.pdf_key)} for x in rows]})
+
+@app.get("/api/equipes/tecnicos-proximos")
+@login_required
+def v73_nearest_technicians():
+    if session.get("role") not in ("manager","manager_field","hr","dispatcher"):abort(403)
+    loc_id=request.args.get("location_id",type=int);loc=db.session.get(Location,loc_id) if loc_id else None
+    if not loc or loc.reference_latitude is None:return jsonify({"ok":False,"error":"Estação sem coordenada de referência."}),400
+    cutoff=datetime.utcnow()-timedelta(minutes=30);techs=User.query.filter(User.active.is_(True),User.role.in_(("technician","technician_implantation"))).all();out=[]
+    for u in techs:
+        if normalize(u.personnel_status or "ATIVO") in ("AFASTADO","LICENCA","LICENÇA","FERIAS","FÉRIAS"):continue
+        pos=TechnicianPosition.query.filter_by(user_id=u.id).filter(TechnicianPosition.captured_at>=cutoff).order_by(TechnicianPosition.captured_at.desc()).first()
+        if not pos:continue
+        d=_haversine_m(pos.latitude,pos.longitude,loc.reference_latitude,loc.reference_longitude);near=None
+        for st in Location.query.filter(Location.reference_latitude.isnot(None),Location.reference_longitude.isnot(None)).all():
+            dd=_haversine_m(pos.latitude,pos.longitude,st.reference_latitude,st.reference_longitude)
+            if near is None or dd<near[0]:near=(dd,st)
+        station_distance=None
+        if near and _normalize_line_key(near[1].line)==_normalize_line_key(loc.line):
+            line_st=Location.query.filter(func.lower(Location.line)==func.lower(loc.line)).order_by(Location.id).all();ids=[z.id for z in line_st]
+            if near[1].id in ids and loc.id in ids:station_distance=abs(ids.index(near[1].id)-ids.index(loc.id))
+        out.append({"user_id":u.id,"name":u.name,"current_station":near[1].location if near else "","line":near[1].line if near else "","distance_m":round(d),"stations_away":station_distance,"captured_at":pos.captured_at.isoformat()+"Z"})
+    out.sort(key=lambda x:x["distance_m"]);return jsonify({"ok":True,"target":{"id":loc.id,"name":loc.location,"line":loc.line,"company":loc.company},"technicians":out[:4]})
+
+@app.route("/meu-perfil/solicitacoes-jornada",methods=["GET","POST"])
+@login_required
+def v73_schedule_requests():
+    if request.method=="POST":
+        typ=(request.form.get("request_type") or "FOLGA").upper();wd=date.fromisoformat(request.form.get("work_date"));reason=(request.form.get("reason") or "").strip();swap_uid=request.form.get("swap_user_id",type=int);sd=request.form.get("swap_date");sd=date.fromisoformat(sd) if sd else None
+        if not reason:flash("Informe a justificativa.","error")
+        else:
+            row=ScheduleChangeRequest(requester_id=session["user_id"],request_type=typ,work_date=wd,swap_user_id=swap_uid if typ=="TROCA" else None,swap_date=sd if typ=="TROCA" else None,reason=reason,peer_status="PENDENTE" if typ=="TROCA" else "NAO_APLICA",manager_status="AGUARDANDO_COLEGA" if typ=="TROCA" else "PENDENTE");db.session.add(row);db.session.commit();flash("Solicitação enviada com sucesso.","success")
+        return redirect("/meu-perfil/solicitacoes-jornada")
+    mine=ScheduleChangeRequest.query.filter_by(requester_id=session["user_id"]).order_by(ScheduleChangeRequest.created_at.desc()).all();incoming=ScheduleChangeRequest.query.filter_by(swap_user_id=session["user_id"],peer_status="PENDENTE").all();users=User.query.filter(User.active.is_(True),User.id!=session["user_id"]).order_by(User.name).all();return render_template("schedule_requests_v73.html",mine=mine,incoming=incoming,users=users)
+
+@app.post("/api/me/solicitacoes-jornada/<int:rid>/peer")
+@login_required
+def v73_schedule_peer(rid):
+    x=db.session.get(ScheduleChangeRequest,rid) or abort(404)
+    if x.swap_user_id!=session.get("user_id"):abort(403)
+    accept=bool((request.get_json(silent=True) or {}).get("accept"));x.peer_status="ACEITO" if accept else "REJEITADO";x.manager_status="PENDENTE" if accept else "REJEITADO";db.session.commit();return jsonify({"ok":True})
+
+@app.get("/api/gestao/solicitacoes-jornada")
+@login_required
+def v73_schedule_manage_list():
+    if session.get("role") not in ("manager","manager_field"):abort(403)
+    rows=ScheduleChangeRequest.query.order_by(ScheduleChangeRequest.created_at.desc()).limit(300).all();ids={z for x in rows for z in (x.requester_id,x.swap_user_id) if z};names={u.id:u.name for u in User.query.filter(User.id.in_(ids)).all()} if ids else {}
+    return jsonify({"ok":True,"rows":[{"id":x.id,"requester":names.get(x.requester_id,""),"type":x.request_type,"work_date":x.work_date.isoformat(),"swap_user":names.get(x.swap_user_id,""),"swap_date":x.swap_date.isoformat() if x.swap_date else None,"reason":x.reason,"peer_status":x.peer_status,"manager_status":x.manager_status} for x in rows]})
+
+@app.post("/api/gestao/solicitacoes-jornada/<int:rid>/review")
+@login_required
+def v73_schedule_review(rid):
+    if session.get("role") not in ("manager","manager_field"):abort(403)
+    x=db.session.get(ScheduleChangeRequest,rid) or abort(404);approve=bool((request.get_json(silent=True) or {}).get("approve"));x.manager_status="APROVADA" if approve else "REJEITADA";x.reviewed_by=session.get("user_id");db.session.commit();return jsonify({"ok":True})
+
+@app.get("/arrow")
+@login_required
+def v73_arrow():
+    return render_template("arrow_v73.html",app_release=APP_RELEASE)
+
+
+@app.get("/api/v73/atividade-execucoes")
+@login_required
+def v73_activity_executions():
+    day=(request.args.get("date") or "").strip();tech=(request.args.get("technician") or "").strip().lower();module=(request.args.get("module") or "recarga").strip().lower();rows=[]
+    if module=="recarga":
+        for loc in _chip_swap_locations_payload():
+            for v in loc.get("validators",[]):
+                who=(v.get("completed_by") or v.get("technician") or "")
+                when=v.get("completed_at") or ""
+                if day and not when.startswith(day):continue
+                if tech and tech not in who.lower():continue
+                if when:rows.append({"module":"RECARGA","date":when,"technician":who,"company":loc.get("company"),"line":loc.get("line"),"location":loc.get("location"),"asset":v.get("label"),"status":v.get("status")})
+    return jsonify({"ok":True,"rows":rows,"count":len(rows)})
+
 @app.get("/notificacoes")
 @login_required
 def notifications_page():
@@ -12213,14 +12494,20 @@ def v50_notifications_api():
     visits=HardwareFieldVisit.query.all()
     rv_pending=sum(1 for v in visits if 'PEND' in (v.conclusion_status or '').upper())
     emv_pending=EmvChipSwap.query.filter(~func.upper(func.coalesce(EmvChipSwap.status,"" )).startswith("CONCLU")).count()
+    work_pending=WorkAccessRequest.query.filter_by(status="PENDENTE").count()
+    schedule_pending=ScheduleChangeRequest.query.filter(ScheduleChangeRequest.manager_status=="PENDENTE").count()
+    apt_due=sum(1 for x in AptRecord.query.filter(AptRecord.active.is_(True),AptRecord.valid_until.isnot(None)).all() if (x.valid_until-datetime.now(V72_TZ).date()).days<=40)
     items=[
+      {"domain":"JORNADA","severity":"ATENÇÃO","title":"Autorizações de jornada aguardando decisão","count":work_pending,"url":"/gestao/rastreabilidade-jornada"},
+      {"domain":"RH","severity":"ATENÇÃO","title":"Folgas/trocas aguardando aprovação","count":schedule_pending,"url":"/gestao/rastreabilidade-jornada"},
+      {"domain":"RH","severity":"ATENÇÃO","title":"APTs vencidas ou a vencer em até 40 dias","count":apt_due,"url":"/rh/apt"},
       {"domain":"FIELD","severity":"ATENÇÃO","title":"ATMs sem TeamViewer","count":atm_without_tv,"url":"/dashboard/atm?teamviewer_missing=1"},
       {"domain":"FIELD","severity":"ATENÇÃO","title":"Divergências de inventário","count":inv_div,"url":"/dashboard/field"},
       {"domain":"IMPLANTAÇÃO","severity":"ATENÇÃO","title":"Visitas com pendências","count":rv_pending,"url":"/implantacao-hardware/dashboard"},
       {"domain":"IMPLANTAÇÃO","severity":"INFO","title":"EMV Trilhos pendentes","count":emv_pending,"url":"/implantacao-hardware/dashboard"},
     ]
     items=[x for x in items if x["count"]>0]
-    return jsonify({"ok":True,"count":sum(x["count"] for x in items),"items":items})
+    return jsonify({"ok":True,"count":len(items),"items":items,"affected_total":sum(x["count"] for x in items)})
 
 @app.get("/dashboard/contratos-atm")
 @manager_required
@@ -13985,6 +14272,57 @@ with app.app_context():
     # V39.7.1: não deixa a criação das novas tabelas de Troca de Chips bloquear o startup.
     core_tables=[t for t in db.metadata.sorted_tables if t.name not in ("chip_swaps","chip_swap_photos")]
     db.metadata.create_all(bind=db.engine, tables=core_tables, checkfirst=True)
+    # V73: carga inicial do controle APT enviado para a versão. É idempotente e mantém o importador para futuras atualizações.
+    try:
+        seed_path=BASE_DIR/'data'/'apt_v73_initial.csv'
+        if seed_path.exists() and AptRecord.query.count()==0:
+            import csv as _csv
+            with seed_path.open('r',encoding='latin1',errors='replace',newline='') as fh: allrows=list(_csv.reader(fh,delimiter=';'))
+            hi=next((i for i,r in enumerate(allrows[:30]) if any('APT' in str(x).upper() for x in r) and any(str(x).strip().upper()=='NOME' for x in r)),None)
+            if hi is not None:
+                h=[normalize(str(x or '')) for x in allrows[hi]];idx={v:i for i,v in enumerate(h) if v};users={normalize(u.name):u for u in User.query.all()}
+                def ci(*names):
+                    for n in names:
+                        if normalize(n) in idx:return idx[normalize(n)]
+                    return None
+                ni,li,ei,ai,vi,si=ci('NOME'),ci('LINHA'),ci('EMPRESA'),ci("APT'S",'APTS'),ci("VENCIMENTO APT'S",'VENCIMENTO APTS'),ci('STATUS APTS')
+                for r in allrows[hi+1:]:
+                    def val(i):return str(r[i] if i is not None and i<len(r) else '').strip()
+                    name,line,company,apt=val(ni),val(li),val(ei),val(ai)
+                    if not name or not apt:continue
+                    nums=re.findall(r'APT\s*[-–]\s*[A-Z]+-\d+(?:\s+[CS]/A)?',apt.upper()) or [apt]
+                    rawv=val(vi);vd=None
+                    for fmt in ('%d/%m/%Y','%d/%m/%y'):
+                        try:vd=datetime.strptime(rawv,fmt).date();break
+                        except:pass
+                    proc='EM ANDAMENTO' if 'PROCESSO' in normalize(rawv) else ('CONCLUÍDO' if 'OK' in normalize(val(si)) else 'AGUARDANDO')
+                    u=users.get(normalize(name))
+                    for num in nums:
+                        num=re.sub(r'APT\s*[-–]\s*','APT-',num.strip());x=AptRecord(collaborator_name=name,company=company,line=line,apt_number=num,user_id=u.id if u else None,valid_until=vd,process_status=proc);db.session.add(x)
+                db.session.commit()
+    except Exception:
+        db.session.rollback();app.logger.exception('V73: falha na carga inicial APT')
+    # V73: garante que toda localidade prevista de Recarga/TDI exista na dimensão operacional,
+    # inclusive empresas, estabelecimentos, estoques, terminais e demais localidades externas.
+    try:
+        assets=BaseAsset.query.filter(or_(func.upper(func.coalesce(BaseAsset.equipment_type,'' )).like('%VALID%'),func.upper(func.coalesce(BaseAsset.equipment_type,''))=='TDI')).all()
+        grouped={}
+        for a in assets:
+            if 'INATIVO' in normalize(a.base_status) or 'FORA DO ESCOPO' in normalize(a.base_status):continue
+            name=(a.locality or a.station_code or '').strip();line=(a.line or 'EXTERNA').strip();company=(a.company or 'EXTERNA').strip()
+            if not name:continue
+            grouped.setdefault((company,line,name),0);grouped[(company,line,name)]+=1
+        existing={(normalize(x.company),normalize(x.line),normalize(x.location)):x for x in Location.query.all()}
+        changed=False
+        for (company,line,name),qty in grouped.items():
+            key=(normalize(company),normalize(line),normalize(name));loc=existing.get(key)
+            if not loc:
+                loc=Location(company=company,line=line,location=name,expected_validator=qty,reference_source='BASE_RECARGA_V73');db.session.add(loc);existing[key]=loc;changed=True
+            elif int(loc.expected_validator or 0)!=qty:
+                loc.expected_validator=qty;changed=True
+        if changed:db.session.commit();_chip_swap_payload_cache['at']=0
+    except Exception:
+        db.session.rollback();app.logger.exception('V73: falha ao sincronizar localidades Recarga/TDI')
     _apply_v70_migrations()
     _apply_v71_migrations()
     # V70.1 — registra uma única vez o Dashboard Chamados como dashboard nativa visível.
