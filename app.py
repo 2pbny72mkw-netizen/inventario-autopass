@@ -38,7 +38,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V73.1"
+APP_RELEASE = "V73.2"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -3644,6 +3644,16 @@ def inventory_equipment_dashboard_api(family):
             "status":st or "Não informado",
             "installation_type":str(a.installation_type or "Não informado").strip() or "Não informado",
         })
+
+    # V73.2 — a dashboard usa uma única identidade operacional por ativo.
+    # Reimportações não podem inflar o parque previsto com duplicatas físicas.
+    deduped=[]; seen=set()
+    for r in base_rows:
+        ident=normalize(r.get("asset") or r.get("serial") or str(r.get("base_asset_id")))
+        key=(r.get("type"),normalize(r.get("company")),_normalize_line_key(r.get("line")),normalize(r.get("locality")),ident)
+        if key in seen: continue
+        seen.add(key); deduped.append(r)
+    base_rows=deduped
 
     inv_rows=Inventory.query.filter(Inventory.equipment_type.isnot(None)).all()
     inv_by_base={i.base_asset_id:i for i in inv_rows if i.base_asset_id}
@@ -12473,6 +12483,10 @@ def v73_nearest_technicians():
     cutoff=datetime.utcnow()-timedelta(minutes=30);techs=User.query.filter(User.active.is_(True),User.role.in_(("technician","technician_implantation"))).all();out=[]
     for u in techs:
         if normalize(u.personnel_status or "ATIVO") in ("AFASTADO","LICENCA","LICENÇA","FERIAS","FÉRIAS"):continue
+        # V73.2: "mais próximo" só considera sessão realmente ativa + GPS recente.
+        last_session=SessionEvent.query.filter_by(user_id=u.id).order_by(SessionEvent.created_at.desc()).first()
+        if not last_session or last_session.created_at < datetime.utcnow()-timedelta(hours=16): continue
+        if not str(last_session.event_type or "").upper().startswith("LOGIN"): continue
         pos=TechnicianPosition.query.filter_by(user_id=u.id).filter(TechnicianPosition.captured_at>=cutoff).order_by(TechnicianPosition.captured_at.desc()).first()
         if not pos:continue
         d=_haversine_m(pos.latitude,pos.longitude,loc.reference_latitude,loc.reference_longitude);near=None

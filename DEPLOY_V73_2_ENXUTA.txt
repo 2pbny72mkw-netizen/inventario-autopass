@@ -1,0 +1,18 @@
+V73.2 ENXUTA — instruções de atualização
+
+Base esperada: versão enviada imediatamente antes da V73.2.
+
+1. Faça backup dos arquivos atuais e do banco de dados.
+2. Copie os arquivos deste pacote sobre a instalação existente, preservando a estrutura de pastas.
+3. Não apague arquivos que não estejam neste pacote.
+4. Reinicie a aplicação/serviço após a substituição.
+5. Valide principalmente:
+   - Dashboard Validador + TDI e composição do parque;
+   - Troca de Chip Recarga e filtros de status;
+   - RH > Equipes > Técnico mais próximo;
+   - RH > APT (filtros compactos);
+   - solicitação/aprovação de acesso fora da jornada;
+   - Gestão > Rastreabilidade/Jornada (mapa em container fixo);
+   - Sobre > Histórico V73.2.
+
+Este pacote contém somente os arquivos alterados da V73.2.
