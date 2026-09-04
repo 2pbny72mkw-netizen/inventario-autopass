@@ -1,0 +1,10 @@
+V73.3 ENXUTA
+Base: V73.2 HOTFIX4
+
+1. Substituir somente os arquivos deste pacote.
+2. Reiniciar/redeploy da aplicação.
+3. Após subir, usar Ctrl+F5.
+4. Validar /sobre = V73.3.
+5. Validar mapa Dashboard, Rastreabilidade e Equipes.
+6. Habilitar Histórico GPS para Emerson/Jorge e consultar diagnóstico por ID.
+7. Validar Recarga + TDI e, se necessário, consultar /api/chip-swaps/base-diagnostico.

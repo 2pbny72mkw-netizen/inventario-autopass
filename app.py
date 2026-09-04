@@ -38,7 +38,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V73.2 HOTFIX4"
+APP_RELEASE = "V73.3"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -2213,14 +2213,15 @@ def v72_gps_history_api():
         return jsonify({"ok":False,"error":"Sem permissão para histórico GPS."}),403
     user_id=request.args.get("user_id",type=int);date_raw=(request.args.get("date") or "").strip()
     users=User.query.filter(User.active.is_(True),User.gps_history_enabled.is_(True)).order_by(User.name).all()
-    if not user_id:return jsonify({"ok":True,"users":[{"id":u.id,"name":u.name,"role":u.role,"company":u.company or ""} for u in users],"events":[]})
+    if not user_id:return jsonify({"ok":True,"users":[{"id":u.id,"name":u.name,"username":u.username,"role":u.role,"company":u.company or "","gps_history_enabled":bool(u.gps_history_enabled)} for u in users],"events":[]})
     u=db.session.get(User,user_id)
     if not u:return jsonify({"ok":False,"error":"Usuário não encontrado."}),404
     try:day=datetime.strptime(date_raw,"%Y-%m-%d").date() if date_raw else datetime.now(V72_TZ).date()
     except ValueError:return jsonify({"ok":False,"error":"Data inválida."}),400
     start_local=datetime.combine(day,datetime.min.time(),tzinfo=V72_TZ);end_local=start_local+timedelta(days=1);start_utc=start_local.astimezone(ZoneInfo("UTC")).replace(tzinfo=None);end_utc=end_local.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
     positions=TechnicianPosition.query.filter(TechnicianPosition.user_id==user_id,TechnicianPosition.captured_at>=start_utc,TechnicianPosition.captured_at<end_utc).order_by(TechnicianPosition.captured_at).all()
-    refs=_v72_station_refs();radius=float(_v50_settings().get("gps_radius_m",500) or 500);events=[]
+    station_rows=TechnicianStationHistory.query.filter(TechnicianStationHistory.user_id==user_id,TechnicianStationHistory.captured_at>=start_utc,TechnicianStationHistory.captured_at<end_utc).order_by(TechnicianStationHistory.captured_at).all()
+    refs=_v72_station_refs();radius=float(_v72_settings().get("gps_history_radius_m",250) or 250);events=[]
     for x in positions:
         local_dt=x.captured_at.replace(tzinfo=ZoneInfo("UTC")).astimezone(V72_TZ);nearest=None
         for lid,co,li,st,slat,slon in refs:
@@ -2228,7 +2229,25 @@ def v72_gps_history_api():
             if nearest is None or d<nearest[-1]:nearest=(lid,co,li,st,d)
         lid,co,li,st,d=nearest if nearest else (None,"","","",None)
         events.append({"id":x.id,"station_id":lid,"company":co,"line":li,"station":st or "Sem referência","latitude":x.latitude,"longitude":x.longitude,"accuracy":x.accuracy,"distance_m":round(d,1) if d is not None else None,"inside":bool(d is not None and d<=radius),"relation":"NA ESTAÇÃO/LOCALIDADE" if d is not None and d<=radius else "FORA DA ÁREA","captured_at":local_dt.isoformat(),"time":local_dt.strftime("%H:%M:%S"),"source":x.source or "browser"})
-    return jsonify({"ok":True,"user":{"id":u.id,"name":u.name},"date":day.isoformat(),"events":events,"count":len(events),"retention_days":int(_v72_settings().get("gps_history_retention_days",7) or 7),"reference_radius_m":radius})
+    station_events=[]
+    for x in station_rows:
+        local_dt=x.captured_at.replace(tzinfo=ZoneInfo("UTC")).astimezone(V72_TZ)
+        station_events.append({"id":x.id,"station_id":x.location_id,"company":x.company or "","line":x.line or "","station":x.station or "Sem referência","latitude":x.latitude,"longitude":x.longitude,"accuracy":x.accuracy,"distance_m":x.distance_m,"inside":True,"relation":"NA ESTAÇÃO/LOCALIDADE","captured_at":local_dt.isoformat(),"time":local_dt.strftime("%H:%M:%S"),"source":"station_geofence"})
+    timeline = station_events if station_events else events
+    return jsonify({"ok":True,"user":{"id":u.id,"name":u.name,"username":u.username},"date":day.isoformat(),"events":timeline,"count":len(timeline),"position_count":len(positions),"station_count":len(station_events),"source":"station_history" if station_events else "technician_positions","retention_days":int(_v72_settings().get("gps_history_retention_days",7) or 7),"reference_radius_m":radius})
+
+
+@app.get("/api/gestao/historico-gps/diagnostico/<int:user_id>")
+@login_required
+def v733_gps_history_diagnostic(user_id):
+    if not _has_access("management.gps_history"):
+        return jsonify({"ok":False,"error":"Sem permissão para histórico GPS."}),403
+    u=db.session.get(User,user_id)
+    if not u:return jsonify({"ok":False,"error":"Usuário não encontrado."}),404
+    last_pos=TechnicianPosition.query.filter_by(user_id=user_id).order_by(TechnicianPosition.captured_at.desc()).first()
+    last_station=TechnicianStationHistory.query.filter_by(user_id=user_id).order_by(TechnicianStationHistory.captured_at.desc()).first()
+    last_session=SessionEvent.query.filter_by(user_id=user_id).order_by(SessionEvent.created_at.desc()).first()
+    return jsonify({"ok":True,"user":{"id":u.id,"name":u.name,"username":u.username,"role":u.role,"active":bool(u.active),"gps_required":bool(getattr(u,"gps_required",False)),"gps_history_enabled":bool(getattr(u,"gps_history_enabled",False)),"journey_control_enabled":bool(getattr(u,"journey_control_enabled",False))},"last_position":{"id":last_pos.id,"captured_at":last_pos.captured_at.isoformat()+"Z","latitude":last_pos.latitude,"longitude":last_pos.longitude,"accuracy":last_pos.accuracy,"source":last_pos.source} if last_pos else None,"last_station":{"id":last_station.id,"captured_at":last_station.captured_at.isoformat()+"Z","station":last_station.station,"line":last_station.line,"distance_m":last_station.distance_m} if last_station else None,"last_session":{"event_type":last_session.event_type,"created_at":last_session.created_at.isoformat()+"Z"} if last_session else None})
 
 
 @app.get("/api/gestao/autorizacoes-jornada")
@@ -3616,11 +3635,12 @@ def _v716_inventory_identifier(i):
     return str(i.asset_identifier or i.serial or "").strip()
 
 def _v732_recarga_tdi_assets():
-    """Base operacional única de Recarga/TDI.
+    """Base operacional canônica de Recarga/TDI — V73.3.
 
-    A identidade prioriza terminal, depois série e asset_key. Não depende de
-    localidade para contar o parque; o vínculo geográfico é uma dimensão
-    posterior. Assim um ativo sem casamento de estação continua no total.
+    Não presume que número de terminal seja globalmente único. Séries/chaves
+    patrimoniais continuam globais; terminal é deduplicado no seu contexto
+    operacional (empresa + linha + localidade). Isso evita retirar equipamentos
+    físicos distintos do denominador quando terminais se repetem em linhas/locais.
     """
     raw = BaseAsset.query.filter(
         or_(
@@ -3634,15 +3654,26 @@ def _v732_recarga_tdi_assets():
         if typ not in ("VALIDADOR","TDI"):
             continue
         st=normalize(a.base_status)
-        # HOTFIX3: parque previsto representa o cadastro físico completo.
-        # Status INATIVO não pode retirar equipamento do denominador da operação;
-        # somente exclusão explícita de escopo o remove.
         if "FORA DO ESCOPO" in st:
             continue
-        ident=normalize(a.terminal_number or a.serial or a.asset_key or a.top_id or a.qrcode_id or str(a.id))
-        # terminal/série são identidade física; empresa/linha/localidade não devem
-        # criar uma segunda cópia do mesmo equipamento após reimportação.
-        key=(typ, ident)
+
+        serial=normalize(a.serial)
+        asset_key=normalize(a.asset_key)
+        top_id=normalize(a.top_id)
+        qrcode=normalize(a.qrcode_id)
+        terminal=normalize(a.terminal_number)
+        if serial:
+            key=(typ,"SERIAL",serial)
+        elif asset_key:
+            key=(typ,"ASSET",asset_key)
+        elif top_id:
+            key=(typ,"TOP",top_id)
+        elif qrcode:
+            key=(typ,"QR",qrcode)
+        elif terminal:
+            key=(typ,"TERMINAL",normalize(a.company),_normalize_line_key(a.line),normalize(a.locality),terminal)
+        else:
+            key=(typ,"ID",str(a.id))
         if key in seen:
             continue
         seen.add(key); out.append(a)
@@ -6491,7 +6522,7 @@ def create_user():
         system_profile_id=(system_profile.id if system_profile else None),
         gps_required=(gps_required if role in ("technician","technician_implantation","manager_field","dispatcher") else False),
         gps_history_enabled=(gps_history_enabled if role in ("technician","technician_implantation","manager_field","dispatcher") else False),
-        journey_control_enabled=(journey_control_enabled if role in ("technician","technician_implantation") else False),
+        journey_control_enabled=(journey_control_enabled if role == "technician" else False),
         customer_company_ids=json.dumps([int(x) for x in customer_company_ids]) if role=="customer" else None,
     )
 
@@ -6640,11 +6671,9 @@ def edit_user(user_id):
     if not user_code:
         user_code = user.user_code or _next_user_code(role)
 
-    normalized_name = re.sub(r"\s+", " ", name).strip().lower()
-    duplicate_name = User.query.filter(User.id != user.id, func.lower(func.trim(User.name)) == normalized_name).first()
-    if duplicate_name:
-        flash("Já existe outro usuário cadastrado com este nome.")
-        return redirect(url_for("users_page"))
+    # V73.3 — nome civil não é chave única. Pessoas homônimas podem existir e,
+    # principalmente, a edição não pode ser bloqueada pelo próprio registro.
+    # Unicidade permanece em login, código, e-mail e celular.
     duplicate_username = User.query.filter(
         User.id != user.id,
         func.lower(User.username) == username
@@ -6727,7 +6756,9 @@ def edit_user(user_id):
     old_gps_required = bool(getattr(user, "gps_required", False))
     user.gps_required = gps_required if role in ("technician","technician_implantation","manager_field","dispatcher") else False
     user.gps_history_enabled = gps_history_enabled if role in ("technician","technician_implantation","manager_field","dispatcher") else False
-    user.journey_control_enabled = journey_control_enabled if role in ("technician","technician_implantation") else False
+    # V73.3 — Técnico Implantação possui jornada operacional flexível e não deve
+    # ser bloqueado pela escala. GPS operacional/histórico continuam disponíveis.
+    user.journey_control_enabled = journey_control_enabled if role == "technician" else False
     if system_profile:
         user.access_json = system_profile.access_json
     elif session.get("role") == "manager":
@@ -10073,6 +10104,18 @@ def _chip_operation_name(company):
     if "VIA MOBILIDADE" in t: return "Via Mobilidade"
     if "VIAQUATRO" in t or "VIA QUATRO" in t: return "ViaQuatro"
     return company or "Outros"
+
+@app.get("/api/chip-swaps/base-diagnostico")
+@login_required
+def v733_chip_base_diagnostic():
+    if session.get("role") not in ("manager","manager_field"):
+        return jsonify({"ok":False,"error":"Sem permissão."}),403
+    raw=BaseAsset.query.filter(or_(func.upper(func.coalesce(BaseAsset.equipment_type,'')).like('%VALID%'),func.upper(func.coalesce(BaseAsset.equipment_type,''))=='TDI')).all()
+    scoped=[a for a in raw if _canonical_equipment_type(a.equipment_type) in ("VALIDADOR","TDI") and "FORA DO ESCOPO" not in normalize(a.base_status)]
+    canonical=_v732_recarga_tdi_assets()
+    def counts(rows):
+        return {"VALIDADOR":sum(1 for a in rows if _canonical_equipment_type(a.equipment_type)=="VALIDADOR"),"TDI":sum(1 for a in rows if _canonical_equipment_type(a.equipment_type)=="TDI"),"TOTAL":len(rows)}
+    return jsonify({"ok":True,"release":APP_RELEASE,"raw":counts(raw),"in_scope":counts(scoped),"canonical":counts(canonical),"deduplicated":len(scoped)-len(canonical)})
 
 @app.get("/api/chip-swaps/dashboard")
 @login_required
