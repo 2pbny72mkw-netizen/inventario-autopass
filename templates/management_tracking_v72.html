@@ -38,10 +38,17 @@
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 let map,lineLayer,markers=[];
 {% if can_view('management.gps_history') %}
-map=L.map('v72Map').setView([-23.55,-46.63],11);L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
+map=L.map('v72Map',{scrollWheelZoom:true,preferCanvas:false,zoomControl:true}).setView([-23.55,-46.63],11);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,tileSize:256,zoomOffset:0,updateWhenIdle:false,keepBuffer:4,attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
+const v72MapContainer=document.getElementById('v72Map');
+function v72FixMapSize(){if(!map)return;requestAnimationFrame(()=>{map.invalidateSize({pan:false});setTimeout(()=>map&&map.invalidateSize({pan:false}),120);setTimeout(()=>map&&map.invalidateSize({pan:false}),350)})}
+if('ResizeObserver' in window&&v72MapContainer){const v72MapObserver=new ResizeObserver(()=>v72FixMapSize());v72MapObserver.observe(v72MapContainer)}
+window.addEventListener('resize',v72FixMapSize);
+window.addEventListener('orientationchange',v72FixMapSize);
+setTimeout(v72FixMapSize,0);
 async function initGps(){const d=await fetch('/api/gestao/historico-gps',{cache:'no-store'}).then(r=>r.json());if(!d.ok)return;gpsUser.innerHTML='<option value="">Selecione</option>'+d.users.map(u=>`<option value="${u.id}">${esc(u.name)} · ${esc(u.company)}</option>`).join('');gpsDate.value=new Date().toISOString().slice(0,10)}
 function clearMap(){markers.forEach(m=>m.remove());markers=[];if(lineLayer){lineLayer.remove();lineLayer=null}}
-async function loadGps(){if(!gpsUser.value)return;const d=await fetch(`/api/gestao/historico-gps?user_id=${gpsUser.value}&date=${gpsDate.value}`,{cache:'no-store'}).then(r=>r.json());if(!d.ok)return alert(d.error||'Falha');gpsRetention.textContent=`retenção ${d.retention_days} dias`;clearMap();const pts=[];gpsTimeline.innerHTML=d.events.map((e,i)=>`<div class="v72Event" data-i="${i}"><b>${esc(e.time)} · ${esc(e.station)}</b><br><small>${esc(e.company)} · ${esc(e.line)} · ${e.distance_m??'-'} m do ponto de referência</small></div>`).join('')||'<p class="muted">Nenhuma passagem registrada neste dia.</p>';d.events.forEach((e,i)=>{pts.push([e.latitude,e.longitude]);const m=L.marker([e.latitude,e.longitude]).addTo(map).bindPopup(`<b>${esc(e.time)} · ${esc(e.station)}</b><br>${esc(e.line)} · ${esc(e.company)}`);markers.push(m)});if(pts.length){lineLayer=L.polyline(pts,{weight:4}).addTo(map);map.fitBounds(L.latLngBounds(pts).pad(.15))}document.querySelectorAll('.v72Event').forEach(el=>el.onclick=()=>markers[+el.dataset.i]?.openPopup())}
+async function loadGps(){if(!gpsUser.value)return;const d=await fetch(`/api/gestao/historico-gps?user_id=${gpsUser.value}&date=${gpsDate.value}`,{cache:'no-store'}).then(r=>r.json());if(!d.ok)return alert(d.error||'Falha');gpsRetention.textContent=`retenção ${d.retention_days} dias`;clearMap();const pts=[];gpsTimeline.innerHTML=d.events.map((e,i)=>`<div class="v72Event" data-i="${i}"><b>${esc(e.time)} · ${esc(e.station)}</b><br><small>${esc(e.company)} · ${esc(e.line)} · ${e.distance_m??'-'} m do ponto de referência</small></div>`).join('')||'<p class="muted">Nenhuma passagem registrada neste dia.</p>';d.events.forEach((e,i)=>{pts.push([e.latitude,e.longitude]);const m=L.marker([e.latitude,e.longitude]).addTo(map).bindPopup(`<b>${esc(e.time)} · ${esc(e.station)}</b><br>${esc(e.line)} · ${esc(e.company)}`);markers.push(m)});if(pts.length){lineLayer=L.polyline(pts,{weight:4}).addTo(map);v72FixMapSize();setTimeout(()=>map.fitBounds(L.latLngBounds(pts).pad(.15)),140)}else{v72FixMapSize()}document.querySelectorAll('.v72Event').forEach(el=>el.onclick=()=>markers[+el.dataset.i]?.openPopup())}
 gpsLoad.onclick=loadGps;initGps();
 {% endif %}
 
