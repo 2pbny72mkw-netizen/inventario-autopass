@@ -39,6 +39,7 @@
 {% if session.get('role') not in ('technician','technician_implantation') %}
 <section class="card aboutHistoryCompact">
   <div class="sectionHead"><div><h2>Histórico recente</h2><p class="muted">Últimas versões em destaque. Abra o histórico completo para consultar versões antigas.</p></div></div>
+        <div class="historyRow"><b>V73.2</b><span>Estabilização de dados e Jornada: deduplicação do parque Validador/TDI, filtro de status na Troca de Chip, técnico mais próximo somente com sessão ativa e GPS recente, retorno visual da autorização extraordinária, alerta destacado para Gestão, APT compacta e mapa de Rastreabilidade em área fixa.</span></div>
         <div class="historyRow"><b>V68 REV2</b><span>Correção do fluxo de devolução: tratamento de erro no backend, assinatura obrigatória do colaborador antes do envio, segunda assinatura obrigatória do responsável no recebimento, baixa da carga somente após conferência e TDV definitivo com dupla assinatura.</span></div>
         <div class="historyRow"><b>V68 REV1</b><span>Correções de usabilidade do Materiais 2.0: contraste do cabeçalho, devolução acessível pela Minha Carga com confirmação administrativa, fila de devoluções pendentes e regra de quantidade inteira/decimal por item com validação também no backend.</span></div>
         <div class="historyRow"><b>V68</b><span>Materiais 2.0: UX visual com cores por status, filtros avançados no Dossiê e Solicitações, exportação Excel, visão Compras/Entrega/Termo e devolução de carga ou avulsa com baixa automática sem saldo negativo.</span></div>

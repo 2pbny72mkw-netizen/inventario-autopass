@@ -1,5 +1,11 @@
 {% extends 'base.html' %}
 {% block content %}
+<style>
+.aptFilters{display:grid!important;grid-template-columns:minmax(210px,1.5fr) repeat(5,minmax(125px,1fr)) auto auto;gap:8px;align-items:end}
+.aptFilters input,.aptFilters select,.aptFilters .btn{min-height:38px;font-size:13px;margin:0}
+@media(max-width:1100px){.aptFilters{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:700px){.aptFilters{grid-template-columns:1fr}}
+</style>
 <div class="pageHead"><div><small>{{app_release}} · RH 2.0</small><h1>APT · Controle e Validades</h1><p>Gestão de APTs por colaborador, linha, validade, andamento, PDF e situação cadastral.</p></div><div class="heroActions"><label class="btn">Importar CSV/Excel<input id="aptFile" type="file" accept=".csv,.xlsx,.xlsm" hidden></label><button class="btn" id="aptExport">Exportar Excel</button></div></div>
 <div class="v73kpis aptKpis">
  <button data-validity=""><b>{{total}}</b><span>Total exibido</span></button>

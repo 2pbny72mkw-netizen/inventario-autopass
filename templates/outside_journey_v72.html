@@ -11,12 +11,12 @@
     <label class="wide">Motivo<input id="reqReason" maxlength="600" placeholder="Ex.: atendimento em andamento"></label>
   </div>
   <div class="heroActions"><button id="reqSend">Solicitar autorização</button><a class="secondary" href="/login">Voltar ao login</a></div>
-  <p id="reqState" class="muted">{% if latest %}Última solicitação: {{ latest.status }}{% else %}Nenhuma solicitação pendente.{% endif %}</p>
+  <div id="reqState" class="notice" style="margin-top:14px;font-weight:700">{% if latest %}Última solicitação: {{ latest.status }}{% else %}Nenhuma solicitação pendente.{% endif %}</div>
 </section>
 {% endblock %}
 {% block scripts %}<script>
 const state=document.getElementById('reqState');
-document.getElementById('reqSend').onclick=async()=>{const r=await fetch('/api/acesso-fora-jornada/solicitar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({minutes:+document.getElementById('reqMinutes').value,reason:document.getElementById('reqReason').value})}),d=await r.json();state.textContent=d.ok?'Solicitação enviada. Aguardando aprovação do Gestor/ADM.':(d.error||'Falha ao solicitar.');};
-async function poll(){try{const d=await fetch('/api/acesso-fora-jornada/status',{cache:'no-store'}).then(r=>r.json());if(d.authorized&&d.redirect){location.href=d.redirect;return}if(d.status)state.textContent=d.status==='RECUSADA'?('Solicitação recusada. '+(d.review_note||'')):`Solicitação: ${d.status}. Aguardando decisão.`}catch(_){}}
+document.getElementById('reqSend').onclick=async()=>{const r=await fetch('/api/acesso-fora-jornada/solicitar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({minutes:+document.getElementById('reqMinutes').value,reason:document.getElementById('reqReason').value})}),d=await r.json();if(d.ok){state.textContent='✓ Solicitação enviada — aguardando aprovação do Gestor/ADM.';document.getElementById('reqSend').disabled=true;document.getElementById('reqSend').textContent='Aguardando aprovação';}else{state.textContent='⚠ '+(d.error||'Não foi possível enviar. Tente novamente.');}};
+async function poll(){try{const d=await fetch('/api/acesso-fora-jornada/status',{cache:'no-store'}).then(r=>r.json());if(d.authorized&&d.redirect){location.href=d.redirect;return}if(d.status){const btn=document.getElementById('reqSend');if(d.status==='PENDENTE'){state.textContent='⏳ Solicitação enviada — aguardando aprovação.';btn.disabled=true;btn.textContent='Aguardando aprovação'}else if(d.status==='RECUSADA'){state.textContent='Solicitação recusada. '+(d.review_note||'');btn.disabled=false;btn.textContent='Nova solicitação'}else state.textContent='Solicitação: '+d.status}}catch(_){}}
 setInterval(poll,8000);poll();
 </script>{% endblock %}
