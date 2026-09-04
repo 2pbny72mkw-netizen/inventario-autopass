@@ -1,0 +1,11 @@
+V73.5 — pacote enxuto
+
+Substituir/adicionar os arquivos preservando as pastas:
+- app.py
+- templates/apt_v73.html
+- templates/base.html
+- templates/about.html
+
+O app.py executa migração aditiva/idempotente em apt_records no startup.
+Não apagar banco, uploads ou variáveis de ambiente.
+Reiniciar a aplicação após o deploy.

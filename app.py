@@ -38,7 +38,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V73.4"
+APP_RELEASE = "V73.5"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -743,6 +743,12 @@ class AptRecord(db.Model):
     apt_number=db.Column(db.String(180),nullable=False,index=True)
     apt_kind=db.Column(db.String(40))
     valid_until=db.Column(db.Date,index=True)
+    nr10_valid_until=db.Column(db.Date,index=True)
+    nr35_valid_until=db.Column(db.Date,index=True)
+    aso_scheduled_at=db.Column(db.Date,index=True)
+    aso_valid_until=db.Column(db.Date,index=True)
+    integration_scheduled_at=db.Column(db.Date,index=True)
+    integration_valid_until=db.Column(db.Date,index=True)
     process_status=db.Column(db.String(40),nullable=False,default="AGUARDANDO",index=True)
     pdf_key=db.Column(db.String(700))
     notes=db.Column(db.Text)
@@ -12526,11 +12532,24 @@ def _apt_status(x):
     if days<=40:return "ATÉ 40 DIAS",days
     return "REGULAR",days
 
+def _apt_date_status(value):
+    if not value:return "SEM DATA",None
+    days=(value-datetime.now(V72_TZ).date()).days
+    if days<0:return "VENCIDO",days
+    if days<=30:return "ATÉ 30 DIAS",days
+    return "REGULAR",days
+
+def _apt_date(value):
+    raw=str(value or '').strip()
+    if not raw:return None
+    return date.fromisoformat(raw)
+
 @app.get("/rh/apt")
 @login_required
 def v73_apt_page():
     if session.get("role") not in ("manager","manager_field","hr"):abort(403)
     q=(request.args.get("q") or "").strip();validity=(request.args.get("validity") or "").strip().upper();process=(request.args.get("process") or "").strip().upper();active=(request.args.get("active") or "active").strip().lower();company=(request.args.get("company") or "").strip();line=(request.args.get("line") or "").strip()
+    nr10=(request.args.get('nr10') or '').strip().upper();nr35=(request.args.get('nr35') or '').strip().upper();aso=(request.args.get('aso') or '').strip().upper();integration=(request.args.get('integration') or '').strip().upper()
     query=AptRecord.query
     if active=="active":query=query.filter(AptRecord.active.is_(True))
     elif active=="inactive":query=query.filter(AptRecord.active.is_(False))
@@ -12540,12 +12559,29 @@ def v73_apt_page():
     if line:query=query.filter(AptRecord.line==line)
     raw=query.order_by(AptRecord.valid_until,AptRecord.collaborator_name).all();data=[]
     for x in raw:
-        vs,days=_apt_status(x)
+        vs,days=_apt_status(x);n10,n10d=_apt_date_status(x.nr10_valid_until);n35,n35d=_apt_date_status(x.nr35_valid_until);asost,asod=_apt_date_status(x.aso_valid_until);inst,insd=_apt_date_status(x.integration_valid_until)
         if validity and vs!=validity:continue
-        data.append({"row":x,"validity_status":vs,"days":days})
+        if nr10 and n10!=nr10:continue
+        if nr35 and n35!=nr35:continue
+        if aso and asost!=aso:continue
+        if integration and inst!=integration:continue
+        data.append({"row":x,"validity_status":vs,"days":days,"nr10_status":n10,"nr35_status":n35,"aso_status":asost,"integration_status":inst})
     summary={k:sum(1 for x in data if x["validity_status"]==k) for k in ("VENCIDA","ATÉ 15 DIAS","ATÉ 30 DIAS","ATÉ 40 DIAS","REGULAR","SEM VALIDADE")}
     companies=sorted({x.company for x in AptRecord.query.filter(AptRecord.company.isnot(None)).all() if x.company});lines=sorted({x.line for x in AptRecord.query.filter(AptRecord.line.isnot(None)).all() if x.line})
-    return render_template("apt_v73.html",items=data,summary=summary,total=len(data),companies=companies,lines=lines,filters={"q":q,"validity":validity,"process":process,"active":active,"company":company,"line":line},app_release=APP_RELEASE)
+    users=User.query.filter(User.active.is_(True)).order_by(User.name).all()
+    apt_users=[{"id":u.id,"name":u.name,"company":u.company or "","job_title":u.job_title or "","username":u.username} for u in users if u.role not in ('customer',)]
+    return render_template("apt_v73.html",items=data,summary=summary,total=len(data),companies=companies,lines=lines,apt_users=apt_users,filters={"q":q,"validity":validity,"process":process,"active":active,"company":company,"line":line,"nr10":nr10,"nr35":nr35,"aso":aso,"integration":integration},app_release=APP_RELEASE)
+
+@app.post('/api/rh/apt/create')
+@login_required
+def v735_apt_create():
+    if session.get('role') not in ('manager','manager_field','hr'):abort(403)
+    d=request.get_json(silent=True) or {};uid=d.get('user_id');u=db.session.get(User,int(uid)) if uid else None
+    name=(d.get('collaborator_name') or (u.name if u else '') or '').strip();apt=(d.get('apt_number') or '').strip()
+    if not name or not apt:return jsonify({'ok':False,'error':'Informe colaborador e número da APT.'}),400
+    x=AptRecord(user_id=u.id if u else None,collaborator_name=name,company=(d.get('company') or (u.company if u else '') or '').strip(),line=(d.get('line') or '').strip(),apt_number=apt,process_status=(d.get('process_status') or 'AGUARDANDO').strip().upper(),active=True)
+    for fld in ('valid_until','nr10_valid_until','nr35_valid_until','aso_scheduled_at','aso_valid_until','integration_scheduled_at','integration_valid_until'):setattr(x,fld,_apt_date(d.get(fld)))
+    x.notes=(d.get('notes') or '').strip();db.session.add(x);db.session.commit();return jsonify({'ok':True,'id':x.id})
 
 @app.post("/api/rh/apt/import")
 @login_required
@@ -12565,22 +12601,23 @@ def v73_apt_import():
             for n in names:
                 if normalize(n) in norm:return norm[normalize(n)]
             return None
+        def parsed(v):
+            if isinstance(v,(datetime,date)):return v.date() if isinstance(v,datetime) else v
+            if v:
+                for fmt in ("%d/%m/%Y","%Y-%m-%d","%d/%m/%y"):
+                    try:return datetime.strptime(str(v).strip(),fmt).date()
+                    except:pass
+            return None
         users=User.query.all();um={normalize(u.name):u for u in users};created=updated=0
         for r in rows:
             name=str(pick(r,"COLABORADOR","NOME","FUNCIONARIO","FUNCIONÁRIO") or "").strip();line=str(pick(r,"LINHA","LOCAL","LOCALIDADE") or "").strip();apt=str(pick(r,"APT","APT'S","APTS","Nº APT","NUMERO APT","NÚMERO APT") or "").strip()
             if not name or not apt:continue
             nums=re.findall(r'APT[-–][A-Z0-9-]+(?:\s+[CS]/A)?',apt.upper()) or [apt]
-            valid=pick(r,"VALIDADE APT","VALIDADE","VENCIMENTO APT","VENCIMENTO APT'S");vd=None
-            if isinstance(valid,(datetime,date)):vd=valid.date() if isinstance(valid,datetime) else valid
-            elif valid:
-                for fmt in ("%d/%m/%Y","%Y-%m-%d","%d/%m/%y"):
-                    try:vd=datetime.strptime(str(valid).strip(),fmt).date();break
-                    except:pass
             for num in nums:
                 x=AptRecord.query.filter_by(collaborator_name=name,line=line,apt_number=num.strip()).first()
                 if not x:x=AptRecord(collaborator_name=name,line=line,apt_number=num.strip());created+=1
                 else:updated+=1
-                u=um.get(normalize(name));x.user_id=u.id if u else None;x.company=str(pick(r,"EMPRESA") or (u.company if u else "") or "").strip();x.valid_until=vd;x.process_status=str(pick(r,"STATUS","ANDAMENTO") or x.process_status or "AGUARDANDO").upper();x.active=True;db.session.add(x)
+                u=um.get(normalize(name));x.user_id=u.id if u else None;x.company=str(pick(r,"EMPRESA") or (u.company if u else "") or "").strip();x.valid_until=parsed(pick(r,"VALIDADE APT","VALIDADE","VENCIMENTO APT","VENCIMENTO APT'S"));x.nr10_valid_until=parsed(pick(r,'VENCIMENTO NR10','VALIDADE NR10','NR10 VENCIMENTO'));x.nr35_valid_until=parsed(pick(r,'VENCIMENTO NR35','VALIDADE NR35','NR35 VENCIMENTO'));x.aso_scheduled_at=parsed(pick(r,'AGENDAMENTO ASO','DATA AGENDAMENTO ASO'));x.aso_valid_until=parsed(pick(r,'VENCIMENTO ASO','VALIDADE ASO'));x.integration_scheduled_at=parsed(pick(r,'AGENDAMENTO INTEGRACAO','AGENDAMENTO INTEGRAÇÃO','DATA AGENDAMENTO INTEGRACAO'));x.integration_valid_until=parsed(pick(r,'VENCIMENTO INTEGRACAO','VENCIMENTO INTEGRAÇÃO','VALIDADE INTEGRACAO'));x.process_status=str(pick(r,"STATUS","ANDAMENTO") or x.process_status or "AGUARDANDO").upper();x.active=True;db.session.add(x)
         db.session.commit();return jsonify({"ok":True,"created":created,"updated":updated})
     except Exception as e:db.session.rollback();return jsonify({"ok":False,"error":str(e)}),400
 
@@ -12589,9 +12626,10 @@ def v73_apt_import():
 def v731_apt_update(rid):
     if session.get("role") not in ("manager","manager_field","hr"):abort(403)
     x=db.session.get(AptRecord,rid) or abort(404);d=request.get_json(silent=True) or {}
-    x.collaborator_name=(d.get("collaborator_name") or x.collaborator_name).strip();x.company=(d.get("company") or "").strip();x.line=(d.get("line") or "").strip();x.apt_number=(d.get("apt_number") or x.apt_number).strip();x.process_status=(d.get("process_status") or x.process_status or "AGUARDANDO").strip().upper();x.notes=(d.get("notes") or "").strip()
-    vu=(d.get("valid_until") or "").strip();x.valid_until=date.fromisoformat(vu) if vu else None
-    uid=d.get("user_id");x.user_id=int(uid) if uid else x.user_id
+    uid=d.get('user_id');u=db.session.get(User,int(uid)) if uid else None
+    x.collaborator_name=(d.get("collaborator_name") or (u.name if u else x.collaborator_name)).strip();x.company=(d.get("company") or (u.company if u else '') or "").strip();x.line=(d.get("line") or "").strip();x.apt_number=(d.get("apt_number") or x.apt_number).strip();x.process_status=(d.get("process_status") or x.process_status or "AGUARDANDO").strip().upper();x.notes=(d.get("notes") or "").strip()
+    for fld in ('valid_until','nr10_valid_until','nr35_valid_until','aso_scheduled_at','aso_valid_until','integration_scheduled_at','integration_valid_until'):setattr(x,fld,_apt_date(d.get(fld)))
+    if u:x.user_id=u.id
     db.session.commit();return jsonify({"ok":True})
 
 @app.post("/api/rh/apt/<int:rid>/toggle")
@@ -12608,6 +12646,17 @@ def v73_apt_pdf(rid):
     if not f or not (f.filename or "").lower().endswith(".pdf"):return jsonify({"ok":False,"error":"Envie um PDF."}),400
     key=f"apt/{x.id}/{uuid.uuid4().hex}-{secure_filename(f.filename)}";_r2_put_bytes(key,f.read(),"application/pdf");x.pdf_key=key;db.session.commit();return jsonify({"ok":True})
 
+@app.delete('/api/rh/apt/<int:rid>/pdf')
+@login_required
+def v735_apt_pdf_delete(rid):
+    if session.get('role') not in ('manager','manager_field','hr'):abort(403)
+    x=db.session.get(AptRecord,rid) or abort(404)
+    if not x.pdf_key:return jsonify({'ok':True})
+    old=x.pdf_key
+    try:r2_client().delete_object(Bucket=os.environ['R2_BUCKET_NAME'],Key=old)
+    except Exception:app.logger.exception('V73.5: falha ao excluir PDF APT do R2; vínculo será removido')
+    x.pdf_key=None;db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='APT_PDF_DELETE',entity_type='apt_record',entity_id=str(x.id),detail=f'{x.apt_number} | arquivo={old}'));db.session.commit();return jsonify({'ok':True})
+
 @app.get("/api/rh/apt/<int:rid>/pdf")
 @login_required
 def v73_apt_pdf_get(rid):
@@ -12620,10 +12669,10 @@ def v73_apt_pdf_get(rid):
 @login_required
 def v73_apt_export():
     if session.get("role") not in ("manager","manager_field","hr"):abort(403)
-    q=(request.args.get("q") or "").strip().lower();validity=(request.args.get("validity") or "").strip().upper();process=(request.args.get("process") or "").strip().upper();active=(request.args.get("active") or "active").strip().lower();company=(request.args.get("company") or "").strip();line=(request.args.get("line") or "").strip()
+    q=(request.args.get("q") or "").strip().lower();validity=(request.args.get("validity") or "").strip().upper();process=(request.args.get("process") or "").strip().upper();active=(request.args.get("active") or "active").strip().lower();company=(request.args.get("company") or "").strip();line=(request.args.get("line") or "").strip();nr10=(request.args.get('nr10') or '').strip().upper();nr35=(request.args.get('nr35') or '').strip().upper();aso=(request.args.get('aso') or '').strip().upper();integration=(request.args.get('integration') or '').strip().upper()
     rows=AptRecord.query.order_by(AptRecord.collaborator_name).all();filtered=[]
     for x in rows:
-        vs,_=_apt_status(x)
+        vs,_=_apt_status(x);n10,_=_apt_date_status(x.nr10_valid_until);n35,_=_apt_date_status(x.nr35_valid_until);asost,_=_apt_date_status(x.aso_valid_until);inst,_=_apt_date_status(x.integration_valid_until)
         if active=="active" and not x.active:continue
         if active=="inactive" and x.active:continue
         if q and q not in " ".join([x.collaborator_name or "",x.company or "",x.line or "",x.apt_number or ""]).lower():continue
@@ -12631,9 +12680,13 @@ def v73_apt_export():
         if process and (x.process_status or "").upper()!=process:continue
         if company and x.company!=company:continue
         if line and x.line!=line:continue
-        filtered.append((x,vs))
-    wb=Workbook();ws=wb.active;ws.title="APT";ws.append(["Colaborador","Empresa","Linha","Nº APT","Validade","Situação validade","Status processo","Situação cadastro","PDF"])
-    for x,vs in filtered:ws.append([x.collaborator_name,x.company,x.line,x.apt_number,x.valid_until,vs,x.process_status,"ATIVO" if x.active else "INATIVO","SIM" if x.pdf_key else "NÃO"])
+        if nr10 and n10!=nr10:continue
+        if nr35 and n35!=nr35:continue
+        if aso and asost!=aso:continue
+        if integration and inst!=integration:continue
+        filtered.append((x,vs,n10,n35,asost,inst))
+    wb=Workbook();ws=wb.active;ws.title="APT";ws.append(["Colaborador","Empresa","Linha","Nº APT","Validade APT","Situação APT","NR10 vencimento","NR10 status","NR35 vencimento","NR35 status","ASO agendamento","ASO vencimento","ASO status","Integração agendamento","Integração vencimento","Integração status","Status processo","Situação cadastro","PDF"])
+    for x,vs,n10,n35,asost,inst in filtered:ws.append([x.collaborator_name,x.company,x.line,x.apt_number,x.valid_until,vs,x.nr10_valid_until,n10,x.nr35_valid_until,n35,x.aso_scheduled_at,x.aso_valid_until,asost,x.integration_scheduled_at,x.integration_valid_until,inst,x.process_status,"ATIVO" if x.active else "INATIVO","SIM" if x.pdf_key else "NÃO"])
     ws.freeze_panes="A2";ws.auto_filter.ref=ws.dimensions;bio=io.BytesIO();wb.save(bio);bio.seek(0);return send_file(bio,as_attachment=True,download_name="controle_APT.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 @app.get("/api/me/apt")
@@ -14662,6 +14715,18 @@ with app.app_context():
                 if 'purchase_url' not in cols: conn.execute(text("ALTER TABLE material_catalog_items ADD COLUMN purchase_url VARCHAR(1200)"))
     except Exception:
         app.logger.exception('Falha na migração aditiva V71.7 material_catalog_items')
+
+    # V73.5 — RH/APT: vencimentos ocupacionais, agendamentos e vínculo com usuários.
+    try:
+        insp=db.inspect(db.engine)
+        if insp.has_table('apt_records'):
+            cols={c['name'] for c in insp.get_columns('apt_records')}
+            additions=[('nr10_valid_until','DATE'),('nr35_valid_until','DATE'),('aso_scheduled_at','DATE'),('aso_valid_until','DATE'),('integration_scheduled_at','DATE'),('integration_valid_until','DATE')]
+            with db.engine.begin() as conn:
+                for col,typ in additions:
+                    if col not in cols: conn.execute(text(f'ALTER TABLE apt_records ADD COLUMN {col} {typ}'))
+    except Exception:
+        app.logger.exception('Falha na migração aditiva V73.5 apt_records')
 
     # V72 — parâmetros individuais de histórico GPS e controle de jornada.
     try:
