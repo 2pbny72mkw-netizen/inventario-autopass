@@ -38,7 +38,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V73.5"
+APP_RELEASE = "V73.6"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -1130,6 +1130,41 @@ class ChipSwapPhoto(db.Model):
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
 
 
+class PosFirmwareCptm(db.Model):
+    __tablename__ = "pos_firmware_cptm"
+    id = db.Column(db.Integer, primary_key=True)
+    terminal_number = db.Column(db.String(80), index=True)
+    terminal = db.Column(db.String(160), nullable=False, unique=True, index=True)
+    line = db.Column(db.String(120), index=True)
+    station = db.Column(db.String(180), index=True)
+    serial = db.Column(db.String(160), index=True)
+    patrimony = db.Column(db.String(120), index=True)
+    manufacturer = db.Column(db.String(120))
+    model = db.Column(db.String(120), index=True)
+    ip = db.Column(db.String(80))
+    legacy_status = db.Column(db.String(80))
+    legacy_update_date = db.Column(db.String(80))
+    legacy_notes = db.Column(db.Text)
+    status = db.Column(db.String(40), nullable=False, default="PENDENTE", index=True)
+    firmware_from = db.Column(db.String(120))
+    firmware_to = db.Column(db.String(120), index=True)
+    notes = db.Column(db.Text)
+    technician_id = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
+    started_at = db.Column(db.DateTime, index=True)
+    completed_at = db.Column(db.DateTime, index=True)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+
+class PosFirmwareCptmPhoto(db.Model):
+    __tablename__ = "pos_firmware_cptm_photos"
+    id = db.Column(db.Integer, primary_key=True)
+    firmware_id = db.Column(db.Integer, db.ForeignKey("pos_firmware_cptm.id", ondelete="CASCADE"), nullable=False, index=True)
+    original_name = db.Column(db.String(300), nullable=False)
+    stored_name = db.Column(db.String(700), nullable=False)
+    mime_type = db.Column(db.String(180))
+    uploaded_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+
 class GarageChipBase(db.Model):
     __tablename__ = "garage_chip_base"
     id = db.Column(db.Integer, primary_key=True)
@@ -1480,7 +1515,7 @@ def login_required(fn):
 ACCESS_GROUPS = {
     "dashboard": ("Dashboard Geral", ("dashboard.general",)),
     "field": ("Field", (
-        "field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga"
+        "field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.firmware_pos_cptm"
     )),
     "implantation": ("Implantação de Hardware", (
         "implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage"
@@ -1512,7 +1547,7 @@ ACCESS_SUBMODULES = tuple(k for _g,(_label,children) in ACCESS_GROUPS.items() fo
 ACCESS_ALL = set(ACCESS_MODULES) | set(ACCESS_SUBMODULES)
 ACCESS_LABELS = {
  "dashboard.general":"Dashboard Geral",
- "field.dashboard":"Dashboard Field","field.inventory":"Inventário / Lançamento","field.calls":"Chamados","field.preventive":"Solicitação Preventiva ATM","field.equipment":"Equipamentos","field.evidence":"Evidências","field.panorama":"Visão Panorâmica","field.chip_recarga":"Troca de Chips – Recarga",
+ "field.dashboard":"Dashboard Field","field.inventory":"Inventário / Lançamento","field.calls":"Chamados","field.preventive":"Solicitação Preventiva ATM","field.equipment":"Equipamentos","field.evidence":"Evidências","field.panorama":"Visão Panorâmica","field.chip_recarga":"Troca de Chips – Recarga","field.firmware_pos_cptm":"Atualização de Firmware POS – CPTM",
  "implantation.dashboard":"Dashboard Implantação","implantation.visits":"Visita a Campo / Relatório de Visita","implantation.reports":"Relatórios / Visitas recentes","implantation.emv":"Troca de Chips EMV – Trilhos","implantation.garage":"Troca de Chips Garagem",
  "teams.map":"Mapa operacional","teams.today":"Operação de Hoje","teams.schedule":"Escala por dias","teams.manage":"Gestão de equipes / escala","teams.export":"Exportar dados","teams.apt":"APT / Validades",
  "users.view":"Visualizar usuários","users.create":"Criar usuário","users.edit":"Editar usuário","users.activate":"Ativar / Desativar","users.delete":"Excluir / Arquivar","users.password":"Redefinir senha","users.export":"Exportar Excel",
@@ -1536,12 +1571,12 @@ def _expand_legacy_access(values):
 def _default_access_for_role(role):
     defaults={
       "manager":set(ACCESS_SUBMODULES),
-      "manager_field":{"engineering.items.view","engineering.bom.view","materials.my_documents","materials.request","materials.catalog.view","materials.catalog.manage","materials.kits.manage","materials.delivery.create","materials.delivery.manage","materials.dossier.view","dashboard.general","field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage","teams.map","teams.today","teams.schedule","teams.manage","teams.export","teams.apt","finance.dashboard","management.calls","management.360","management.notifications","management.diagnostics","management.gps_history","management.work_authorizations","portal.receive","portal.manage","about.versions"},
-      "technician":{"materials.my_documents","materials.request","field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","about.versions"},
-      "technician_implantation":{"materials.my_documents","materials.request","field.inventory","field.equipment","field.evidence","field.panorama","field.chip_recarga","implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage","about.versions"},
-      "consultation":{"dashboard.general","field.dashboard","field.inventory","field.equipment","field.evidence","field.panorama","field.chip_recarga","teams.map","teams.today","teams.schedule","about.versions"},
+      "manager_field":{"engineering.items.view","engineering.bom.view","materials.my_documents","materials.request","materials.catalog.view","materials.catalog.manage","materials.kits.manage","materials.delivery.create","materials.delivery.manage","materials.dossier.view","dashboard.general","field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.firmware_pos_cptm","implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage","teams.map","teams.today","teams.schedule","teams.manage","teams.export","teams.apt","finance.dashboard","management.calls","management.360","management.notifications","management.diagnostics","management.gps_history","management.work_authorizations","portal.receive","portal.manage","about.versions"},
+      "technician":{"materials.my_documents","materials.request","field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.firmware_pos_cptm","about.versions"},
+      "technician_implantation":{"materials.my_documents","materials.request","field.inventory","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.firmware_pos_cptm","implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage","about.versions"},
+      "consultation":{"dashboard.general","field.dashboard","field.inventory","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.firmware_pos_cptm","teams.map","teams.today","teams.schedule","about.versions"},
       "hr":{"materials.catalog.view","materials.dossier.view","teams.map","teams.today","teams.schedule","teams.manage","teams.export","teams.apt","users.view","users.create","users.edit","users.activate","users.password","users.export","about.versions"},
-      "dispatcher":{"dashboard.general","field.calls","field.chip_recarga","teams.map","teams.today","teams.schedule","management.calls","about.versions"},
+      "dispatcher":{"dashboard.general","field.calls","field.chip_recarga","field.firmware_pos_cptm","teams.map","teams.today","teams.schedule","management.calls","about.versions"},
       "customer":{"portal.appointments"},
       "atm_financial_admin":{"finance.dashboard","finance.support","finance.collection","finance.apuracao","finance.assistance","finance.implantation","finance.entries","finance.suppliers","finance.import","finance.edit","finance.delete","about.versions"},
     }
@@ -9642,6 +9677,95 @@ def activities_summary_api():
             activities.append({"key":"implantation","title":"Implantação de Hardware","href":"/implantacao-hardware","done":done,"label":"visitas finalizadas"})
     return jsonify({"ok":True,"activities":activities})
 
+
+# V73.6 · Campanha Atualização de Firmware POS – CPTM (185 equipamentos)
+_pos_fw_ready=False
+def _ensure_pos_firmware_cptm():
+    global _pos_fw_ready
+    if _pos_fw_ready: return
+    PosFirmwareCptm.__table__.create(bind=db.engine,checkfirst=True)
+    PosFirmwareCptmPhoto.__table__.create(bind=db.engine,checkfirst=True)
+    if PosFirmwareCptm.query.count()==0:
+        seed_path=Path(app.root_path)/"data"/"pos_cptm_v736.json"
+        if seed_path.exists():
+            rows=json.loads(seed_path.read_text(encoding="utf-8"))
+            for x in rows:
+                db.session.add(PosFirmwareCptm(
+                    terminal_number=str(x.get("B") or ""),terminal=str(x.get("C") or "").strip(),
+                    line=str(x.get("D") or "").strip(),station=str(x.get("E") or "").strip(),
+                    serial=str(x.get("H") or "").strip(),patrimony=str(x.get("I") or "").strip(),
+                    manufacturer=str(x.get("J") or "").strip(),model=str(x.get("K") or "").strip(),
+                    legacy_status=str(x.get("M") or "").strip(),legacy_update_date=str(x.get("N") or "").strip(),
+                    ip=str(x.get("O") or "").strip(),legacy_notes=str(x.get("P") or "").strip(),status="PENDENTE"))
+            db.session.commit()
+    _pos_fw_ready=True
+
+def _pos_fw_allowed(): return _has_access("field.firmware_pos_cptm")
+
+@app.get("/firmware-pos-cptm")
+@login_required
+def pos_firmware_cptm_page():
+    if not _pos_fw_allowed(): abort(403)
+    _ensure_pos_firmware_cptm()
+    return render_template("firmware_pos_cptm_v736.html",app_release=APP_RELEASE)
+
+@app.get("/api/firmware-pos-cptm")
+@login_required
+def pos_firmware_cptm_list():
+    if not _pos_fw_allowed(): abort(403)
+    _ensure_pos_firmware_cptm()
+    rows=PosFirmwareCptm.query.order_by(PosFirmwareCptm.line,PosFirmwareCptm.station,PosFirmwareCptm.terminal).all()
+    users={u.id:u.name for u in User.query.filter(User.id.in_([r.technician_id for r in rows if r.technician_id])).all()}
+    photos=PosFirmwareCptmPhoto.query.filter(PosFirmwareCptmPhoto.firmware_id.in_([r.id for r in rows])).all() if rows else []
+    pm={}
+    for p in photos: pm.setdefault(p.firmware_id,[]).append({"id":p.id,"name":p.original_name,"url":url_for("uploaded",name=p.stored_name)})
+    return jsonify({"ok":True,"release":APP_RELEASE,"total":len(rows),"rows":[{
+      "id":r.id,"terminal_number":r.terminal_number,"terminal":r.terminal,"line":r.line,"station":r.station,"serial":r.serial,"patrimony":r.patrimony,
+      "manufacturer":r.manufacturer,"model":r.model,"ip":r.ip,"status":r.status or "PENDENTE","firmware_from":r.firmware_from,"firmware_to":r.firmware_to,
+      "notes":r.notes,"technician_id":r.technician_id,"technician":users.get(r.technician_id),
+      "started_at":r.started_at.isoformat() if r.started_at else None,"completed_at":r.completed_at.isoformat() if r.completed_at else None,"photos":pm.get(r.id,[])
+    } for r in rows]})
+
+@app.post("/api/firmware-pos-cptm/<int:rid>")
+@login_required
+def pos_firmware_cptm_save(rid):
+    if not _pos_fw_allowed() or session.get("role")=="consultation": abort(403)
+    _ensure_pos_firmware_cptm(); r=db.session.get(PosFirmwareCptm,rid) or abort(404)
+    status=(request.form.get("status") or r.status or "PENDENTE").upper().strip()
+    if status not in ("PENDENTE","EM ANDAMENTO","CONCLUÍDO"): return jsonify({"ok":False,"error":"Status inválido"}),400
+    now=datetime.utcnow(); old=r.status
+    r.status=status; r.firmware_from=(request.form.get("firmware_from") or "").strip() or None; r.firmware_to=(request.form.get("firmware_to") or "").strip() or None; r.notes=(request.form.get("notes") or "").strip() or None
+    if status=="EM ANDAMENTO" and not r.started_at: r.started_at=now
+    if status=="CONCLUÍDO":
+        if not r.started_at:r.started_at=now
+        r.completed_at=now; r.technician_id=session.get("user_id")
+    elif old=="CONCLUÍDO" and status!="CONCLUÍDO": r.completed_at=None
+    if status!="PENDENTE" and not r.technician_id:r.technician_id=session.get("user_id")
+    r.updated_at=now
+    for photo in request.files.getlist("photos"):
+        if not photo or not photo.filename: continue
+        if not (photo.mimetype or "").startswith("image/"): continue
+        raw=photo.read()
+        if len(raw)>6*1024*1024: continue
+        safe=secure_filename(photo.filename) or "evidencia.jpg"; key=f"firmware-pos-cptm/{datetime.utcnow().strftime('%Y/%m')}/{rid}-{uuid.uuid4().hex}-{safe}"
+        if _r2_available(): _r2_put_bytes(key,raw,photo.mimetype or "image/jpeg"); stored="r2__"+key
+        else:
+            stored=f"fwpos-{rid}-{uuid.uuid4().hex}-{safe}"; (UPLOAD_DIR/stored).write_bytes(raw)
+        db.session.add(PosFirmwareCptmPhoto(firmware_id=rid,original_name=photo.filename,stored_name=stored,mime_type=photo.mimetype,uploaded_by=session["user_id"]))
+    db.session.commit(); return jsonify({"ok":True,"status":r.status})
+
+@app.delete("/api/firmware-pos-cptm/photos/<int:pid>")
+@login_required
+def pos_firmware_cptm_photo_delete(pid):
+    if not _pos_fw_allowed() or session.get("role")=="consultation": abort(403)
+    p=db.session.get(PosFirmwareCptmPhoto,pid) or abort(404)
+    try:
+        if p.stored_name.startswith("r2__") and _r2_available(): r2_client().delete_object(Bucket=os.environ["R2_BUCKET_NAME"],Key=p.stored_name[4:])
+        elif not p.stored_name.startswith("r2__"):
+            q=UPLOAD_DIR/p.stored_name
+            if q.exists(): q.unlink()
+    except Exception: app.logger.exception("Falha ao excluir evidência firmware POS")
+    db.session.delete(p);db.session.commit();return jsonify({"ok":True})
 
 @app.get("/troca-chips")
 @login_required

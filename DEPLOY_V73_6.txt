@@ -1,0 +1,6 @@
+V73.6 ENXUTA
+1. Aplicar os arquivos mantendo a estrutura de diretórios.
+2. Reiniciar a aplicação.
+3. No primeiro acesso a /firmware-pos-cptm as tabelas são criadas e a base oficial de 185 POS é carregada uma única vez.
+4. Validar KPIs: Total 185 / Pendente 185 no início de uma base nova.
+5. Validar filtros, atualização Pendente > Em andamento > Concluído e foto opcional.
