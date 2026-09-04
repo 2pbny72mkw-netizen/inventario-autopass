@@ -1,0 +1,14 @@
+V73.2 HOTFIX4 — PACOTE ENXUTO
+
+1. Aplicar o conteúdo deste ZIP sobre a versão V73.2 HOTFIX3 atualmente publicada.
+2. Substituir os arquivos mantendo a mesma estrutura de pastas.
+3. Fazer o deploy/restart normal no Render.
+4. Após publicar, abrir Gestão > Rastreabilidade & Jornada e atualizar a página com Ctrl+F5.
+
+Validações esperadas:
+- mapa abre centrado em São Paulo;
+- apenas uma legenda de linhas;
+- trilhos e estações visíveis;
+- Linha 4-Amarela e Linha 17-Ouro visíveis via fallback;
+- seletor de camadas contém Linhas, Estações e Histórico GPS;
+- consulta de histórico GPS continua funcionando.
