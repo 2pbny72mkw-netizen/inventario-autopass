@@ -38,7 +38,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V73.2"
+APP_RELEASE = "V73.2 HOTFIX1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -9699,6 +9699,35 @@ def _chip_swap_locations_payload(force=False):
 
     swaps_list = ChipSwap.query.all()
     swaps = {(x.location_id, x.base_asset_id): x for x in swaps_list}
+
+    # V73.2 HOTFIX1 — preserva a execução histórica quando uma importação recria
+    # o BaseAsset com outro ID. O vínculo principal continua sendo location_id +
+    # base_asset_id; quando ele não existir, procuramos a execução anterior pela
+    # identidade operacional (terminal/série/asset_key) dentro da mesma localidade.
+    # Isso evita que uma carga de cadastro faça centenas de concluídos voltarem a
+    # aparecer como pendentes apenas porque o ID técnico do ativo mudou.
+    swap_asset_ids = {x.base_asset_id for x in swaps_list if x.base_asset_id}
+    historical_assets = {a.id: a for a in BaseAsset.query.filter(BaseAsset.id.in_(swap_asset_ids)).all()} if swap_asset_ids else {}
+    historical_swap_index = {}
+    for hist_sw in swaps_list:
+        hist_asset = historical_assets.get(hist_sw.base_asset_id)
+        if not hist_asset:
+            continue
+        hist_type = _canonical_equipment_type(hist_asset.equipment_type)
+        if hist_type not in ("VALIDADOR", "TDI"):
+            continue
+        identities = [hist_asset.terminal_number, hist_asset.serial, hist_asset.asset_key]
+        for raw_identity in identities:
+            identity = normalize(raw_identity)
+            if not identity:
+                continue
+            key = (hist_sw.location_id, hist_type, identity)
+            previous = historical_swap_index.get(key)
+            prev_dt = (previous.updated_at or previous.completed_at or previous.started_at) if previous else None
+            this_dt = hist_sw.updated_at or hist_sw.completed_at or hist_sw.started_at
+            if previous is None or (this_dt and (prev_dt is None or this_dt > prev_dt)):
+                historical_swap_index[key] = hist_sw
+    used_historical_swap_ids = set()
     swap_ids = [x.id for x in swaps_list]
     photo_map = {}
     if swap_ids:
@@ -9724,6 +9753,19 @@ def _chip_swap_locations_payload(force=False):
         items = []
         for a in assets:
             sw = swaps.get((loc.id, a.id))
+            historical_relinked = False
+            if not sw:
+                asset_type = _canonical_equipment_type(a.equipment_type)
+                for raw_identity in (a.terminal_number, a.serial, a.asset_key):
+                    identity = normalize(raw_identity)
+                    if not identity:
+                        continue
+                    candidate = historical_swap_index.get((loc.id, asset_type, identity))
+                    if candidate and candidate.id not in used_historical_swap_ids:
+                        sw = candidate
+                        used_historical_swap_ids.add(candidate.id)
+                        historical_relinked = True
+                        break
             photos = photo_map.get(sw.id, []) if sw else []
             op_item=op_active.get(str(a.terminal_number or ""))
             status = _activity_swap_status(sw.status if sw else ((op_item.desired_status if op_item else None) or "PENDENTE"))
@@ -9741,6 +9783,7 @@ def _chip_swap_locations_payload(force=False):
                 "model": a.model or "",
                 "status": status,
                 "swap_id": sw.id if sw else None,
+                "historical_relinked": historical_relinked,
                 "technician": tech.name if tech else "",
                 "completed_by": completed_by.name if completed_by else (tech.name if sw and sw.completed_at and tech else ""),
                 "completed_by_role": completed_by.role if completed_by else (tech.role if sw and sw.completed_at and tech else ""),
@@ -9841,8 +9884,8 @@ def chip_swap_admin_status_api(location_id, base_asset_id):
     if session.get("role") not in ("manager", "manager_field"):
         return jsonify({"ok":False,"error":"Alteração administrativa restrita ao ADM/Gestor."}),403
     loc=db.session.get(Location,location_id); asset=db.session.get(BaseAsset,base_asset_id)
-    if not loc or not asset or _canonical_equipment_type(asset.equipment_type)!="VALIDADOR" or not _chip_swap_asset_matches_location(asset,loc):
-        return jsonify({"ok":False,"error":"Validador não encontrado nesta localidade."}),404
+    if not loc or not asset or _canonical_equipment_type(asset.equipment_type) not in ("VALIDADOR","TDI") or not _chip_swap_asset_matches_location(asset,loc):
+        return jsonify({"ok":False,"error":"Validador de Recarga/TDI não encontrado nesta localidade."}),404
     data=request.get_json(silent=True) or {}; new=_activity_swap_status(data.get("status"))
     reason=(data.get("reason") or "").strip()
     if new not in {"PENDENTE","EM ANDAMENTO","CONCLUÍDA"}:
@@ -10025,28 +10068,32 @@ def chip_swap_export_xlsx():
     line = (request.args.get("line") or "").strip()
     location = (request.args.get("location") or "").strip()
     test_result = (request.args.get("test_result") or "").strip()
+    equipment = (request.args.get("equipment") or "").strip().upper()
     pending_only = (request.args.get("pending_only") or "").strip().lower() in ("1", "true", "yes")
     status_filter=(request.args.get("status") or "").strip().upper()
     technician=(request.args.get("technician") or "").strip().lower()
     date_filter=(request.args.get("date") or "").strip()
     rows=[x for x in rows if (not operation or _chip_operation_name(x["company"])==operation) and (not company or x["company"]==company) and (not line or x["line"]==line) and (not location or x["location"]==location)]
-    total=sum(x["total"] for x in rows); done=sum(x["concluded"] for x in rows); prog=sum(x["in_progress"] for x in rows); pend=sum(x["pending"] for x in rows)
+    filtered_items=[]
+    for x in rows:
+        for v in x.get("validators",[]):
+            if equipment and (v.get("equipment_type") or "").upper()!=equipment: continue
+            vst=_activity_swap_status(v.get("status") or "PENDENTE")
+            if status_filter and vst != _activity_swap_status(status_filter): continue
+            if pending_only and vst == "CONCLUÍDA": continue
+            if test_result and (v.get("test_result") or "") != test_result: continue
+            if technician and technician not in (v.get("technician") or v.get("completed_by") or "").lower(): continue
+            if date_filter and not str(v.get("completed_at") or "").startswith(date_filter): continue
+            filtered_items.append((x,v,vst))
+    total=len(filtered_items); done=sum(1 for _,_,st in filtered_items if st=="CONCLUÍDA"); prog=sum(1 for _,_,st in filtered_items if st=="EM ANDAMENTO"); pend=sum(1 for _,_,st in filtered_items if st=="PENDENTE")
     wb=Workbook(); ws=wb.active; ws.title="Resumo"
     ws.append(["Troca de Chips - Validadores de Recarga"]); ws["A1"].font=Font(bold=True,size=14)
     ws.append(["Operação",operation or "Todos"]); ws.append(["Empresa",company or "Todas"]); ws.append(["Linha",line or "Todas"]); ws.append(["Localidade",location or "Todas"]); ws.append([])
     ws.append(["Total previsto","Concluídos","Em andamento","Pendentes","Progresso %"]); ws.append([total,done,prog,pend,round(done/total*100,1) if total else 0])
     det=wb.create_sheet("Detalhamento"); det.append(["Operação","Empresa","Linha","Localidade","Terminal / ativo","Modelo","Série","Status","Resultado pós-troca","Observação do teste","Técnico","Data/hora conclusão","Fotos"])
-    for x in rows:
-        for v in x.get("validators",[]):
-            vr = v.get("test_result") or ""
-            if test_result and vr != test_result:
-                continue
-            vst=(v.get("status") or "PENDENTE").upper()
-            if pending_only and vst == "CONCLUÍDA": continue
-            if status_filter and vst != status_filter: continue
-            if technician and technician not in (v.get("technician") or v.get("completed_by") or "").lower(): continue
-            if date_filter and not str(v.get("completed_at") or "").startswith(date_filter): continue
-            det.append([_chip_operation_name(x["company"]),x["company"],x["line"],x["location"],v.get("label") or v.get("base_asset_id"),v.get("model","") ,v.get("serial","") ,v.get("status","PENDENTE"),vr,v.get("test_notes") or v.get("notes") or "",v.get("technician","") ,v.get("completed_at") or "",v.get("photo_count",0)])
+    for x,v,vst in filtered_items:
+        vr = v.get("test_result") or ""
+        det.append([_chip_operation_name(x["company"]),x["company"],x["line"],x["location"],v.get("label") or v.get("base_asset_id"),v.get("model","") ,v.get("serial","") ,vst,vr,v.get("test_notes") or v.get("notes") or "",v.get("technician","") ,v.get("completed_at") or "",v.get("photo_count",0)])
     for sh in wb.worksheets:
         for cell in sh[1]: cell.font=Font(bold=True)
         for col in range(1,sh.max_column+1): sh.column_dimensions[get_column_letter(col)].width=min(42,max(12,max((len(str(sh.cell(r,col).value or "")) for r in range(1,sh.max_row+1)),default=12)+2))

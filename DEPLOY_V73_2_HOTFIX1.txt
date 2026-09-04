@@ -1,0 +1,13 @@
+V73.2 HOTFIX1 — PACOTE ENXUTO
+
+Aplicar sobre a V73.2.
+Copie os arquivos preservando as pastas e reinicie o serviço.
+
+Após o deploy, faça Ctrl+F5 uma vez.
+Valide:
+- Gestão > Rastreabilidade & Jornada: mover, zoomar e abrir/fechar F12 sem deformar o mapa.
+- Gestão > Configurações: textos descritivos maiores.
+- Dashboard > Troca de Chip Recarga: filtros Recarga + TDI / Recarga / TDI e Status.
+- Conferir se os concluídos históricos voltaram a ser reconciliados com a base atual.
+
+ATENÇÃO: o hotfix não altera nem apaga registros históricos; apenas reconcilia a leitura quando o ID do ativo foi recriado por importação.
