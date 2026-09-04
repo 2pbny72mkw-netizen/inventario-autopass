@@ -415,6 +415,14 @@ function renderStations(){
   });
 }
 
+function renderSharedRailNetwork(){
+  if(!gpsMap||!window.AutopassRailMap)return false;
+  try{
+    const sh=window.AutopassRailMap.render(gpsMap,locations||[],{linesLayer:railLineLayer,stationsLayer:referenceLayer,labelsLayer:stationLabelLayer,legend:false});
+    return !!sh;
+  }catch(e){console.warn('V73.3 motor único do mapa',e);return false}
+}
+
 function renderGpsMap(items){
   const map=ensureGpsMap();
   if(!map) return;
@@ -424,8 +432,10 @@ function renderGpsMap(items){
   railLineLayer.clearLayers();
   referenceLayer.clearLayers();
 
-  renderRailLines();
-  renderStations();
+  if(!renderSharedRailNetwork()){
+    renderRailLines();
+    renderStations();
+  }
 
   const valid=(items||[]).filter(x=>
     Number.isFinite(Number(x.latitude)) && Number.isFinite(Number(x.longitude))
