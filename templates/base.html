@@ -5,7 +5,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{% block title %}Sistema de Gestão{% endblock %}</title>
-<link rel="stylesheet" href="{{url_for('static',filename='app.css')}}?v=v73">
+<link rel="stylesheet" href="{{url_for('static',filename='app.css')}}?v=v73-1">
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#17345d">
 </head>
@@ -122,8 +122,8 @@ v50LoadNotifications();
 </script>
 
 {% if session.get('role') in ('technician','technician_implantation','manager_field') %}
-<script src="{{ url_for('static', filename='session_gps.js') }}?v=v72" defer></script>
-<script src="{{ url_for('static', filename='journey_guard_v72.js') }}?v=v72" defer></script>
+<script src="{{ url_for('static', filename='session_gps.js') }}?v=v73-1" defer></script>
+<script src="{{ url_for('static', filename='journey_guard_v72.js') }}?v=v73-1" defer></script>
 {% endif %}
 <script>
 (function(){
