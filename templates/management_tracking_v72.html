@@ -34,26 +34,36 @@
 {% endblock %}
 {% block scripts %}
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="{{ url_for('static', filename='shared_rail_map.js') }}?v=v40-1-3-hf4"></script>
 <script>
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-let map,lineLayer,markers=[];
+let map,lineLayer,markers=[],gpsLayer,railShared,layerControl;
 {% if can_view('management.gps_history') %}
-const railColors={'1':'#0054A6','2':'#008C5A','3':'#E6332A','4':'#F4C300','5':'#7A3E9D','6':'#F28C18','7':'#A60055','8':'#8C8C8C','9':'#00A092','10':'#00A5B5','11':'#F04B23','12':'#164F9C','13':'#009B62','15':'#9B9DA0','17':'#9A7A24'};
-const railNames={'1':'Azul','2':'Verde','3':'Vermelha','4':'Amarela','5':'Lilás','6':'Laranja','7':'Rubi','8':'Diamante','9':'Esmeralda','10':'Turquesa','11':'Coral','12':'Safira','13':'Jade','15':'Prata','17':'Ouro'};
-const railFallback={'4':[[-23.5362,-46.6335],[-23.5441,-46.6422],[-23.5489,-46.6520],[-23.5553,-46.6620],[-23.5608,-46.6719],[-23.5662,-46.6840],[-23.5673,-46.6930],[-23.5669,-46.7012],[-23.5718,-46.7080],[-23.5864,-46.7230],[-23.5944,-46.7330]],'17':[[-23.6217,-46.7012],[-23.6222,-46.6947],[-23.6209,-46.6878],[-23.6201,-46.6800],[-23.6210,-46.6732],[-23.6241,-46.6670],[-23.6288,-46.6633],[-23.6328,-46.6603]]};
-function railNo(v){const t=String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase();const m=t.match(/(?:^|\s)(0?1[0-7]|0?[1-9])(?:\s|\-|$)/);if(m)return String(Number(m[1]));for(const [k,n] of Object.entries({AZUL:'1',VERDE:'2',VERMELHA:'3',AMARELA:'4',LILAS:'5',LARANJA:'6',RUBI:'7',DIAMANTE:'8',ESMERALDA:'9',TURQUESA:'10',CORAL:'11',SAFIRA:'12',JADE:'13',PRATA:'15',OURO:'17'}))if(t.includes(k))return n;return ''}
-map=L.map('v72Map',{scrollWheelZoom:true}).setView([-23.5505,-46.6333],10);
-L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
-const railLayer=L.layerGroup().addTo(map), stationLayer=L.layerGroup().addTo(map), gpsLayer=L.layerGroup().addTo(map);
-L.control.layers(null,{'Linhas':railLayer,'Estações':stationLayer,'Histórico GPS':gpsLayer},{collapsed:false,position:'bottomright'}).addTo(map);
-const legend=L.control({position:'topleft'});legend.onAdd=()=>{const d=L.DomUtil.create('div','v72RailLegend');d.innerHTML='<strong>Linhas Metroferroviárias</strong>'+Object.keys(railColors).map(n=>`<div><b style="background:${railColors[n]}">${n}</b>${railNames[n]}</div>`).join('');L.DomEvent.disableClickPropagation(d);return d};legend.addTo(map);
+map=L.map('v72Map',{scrollWheelZoom:true,preferCanvas:false,zoomControl:true}).setView([-23.5505,-46.6333],10);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,tileSize:256,zoomOffset:0,updateWhenIdle:false,keepBuffer:4,attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
+gpsLayer=L.layerGroup().addTo(map);
 const v72MapContainer=document.getElementById('v72Map');
-function v72FixMapSize(){if(!map)return;requestAnimationFrame(()=>{map.invalidateSize({pan:false});setTimeout(()=>map.invalidateSize({pan:false}),120);setTimeout(()=>map.invalidateSize({pan:false}),350)})}
-if('ResizeObserver' in window&&v72MapContainer)new ResizeObserver(v72FixMapSize).observe(v72MapContainer);window.addEventListener('resize',v72FixMapSize);setTimeout(v72FixMapSize,0);
-async function loadRailBase(){try{const d=await fetch('/api/gestao/rastreabilidade-jornada/rede',{cache:'no-store'}).then(r=>r.json());const rows=d.rows||[];const groups={};rows.forEach(x=>{const n=railNo(x.line);if(n)(groups[n]??=[]).push(x);if(Number.isFinite(+x.reference_latitude)&&Number.isFinite(+x.reference_longitude)){L.circleMarker([+x.reference_latitude,+x.reference_longitude],{radius:4,color:'#fff',weight:2,fillColor:railColors[n]||'#64748b',fillOpacity:1}).bindTooltip(esc(x.location),{direction:'top'}).addTo(stationLayer)}});['4','17'].forEach(n=>groups[n]??=[]);Object.entries(groups).forEach(([n,sts])=>{let pts=sts.filter(x=>Number.isFinite(+x.reference_latitude)&&Number.isFinite(+x.reference_longitude)).map(x=>[+x.reference_latitude,+x.reference_longitude]);if(pts.length<2)pts=railFallback[n]||[];if(pts.length<2)return;L.polyline(pts,{color:'#fff',weight:11,opacity:.96,interactive:false}).addTo(railLayer);L.polyline(pts,{color:railColors[n]||'#64748b',weight:7,opacity:1}).bindPopup(`<b>Linha ${n} — ${railNames[n]||''}</b>`).addTo(railLayer)});v72FixMapSize()}catch(e){console.warn('Malha ferroviária',e)}}loadRailBase();
+function v72FixMapSize(){if(!map)return;requestAnimationFrame(()=>{map.invalidateSize({pan:false});setTimeout(()=>map&&map.invalidateSize({pan:false}),120);setTimeout(()=>map&&map.invalidateSize({pan:false}),350)})}
+if('ResizeObserver' in window&&v72MapContainer){const v72MapObserver=new ResizeObserver(()=>v72FixMapSize());v72MapObserver.observe(v72MapContainer)}
+window.addEventListener('resize',v72FixMapSize);window.addEventListener('orientationchange',v72FixMapSize);setTimeout(v72FixMapSize,0);
+async function loadRailBase(){
+  try{
+    const d=await fetch('/api/gestao/rastreabilidade-jornada/rede',{cache:'no-store'}).then(r=>r.json());
+    const rows=d.rows||[];
+    railShared=window.AutopassRailMap?.attach(map,rows);
+    if(layerControl){try{layerControl.remove()}catch(_){}}
+    const overlays={'Histórico GPS':gpsLayer};
+    if(railShared?.lines)overlays['Linhas']=railShared.lines;
+    if(railShared?.stations)overlays['Estações']=railShared.stations;
+    layerControl=L.control.layers(null,overlays,{collapsed:false,position:'bottomright'}).addTo(map);
+    map.setView([-23.5505,-46.6333],10);
+    v72FixMapSize();
+  }catch(e){console.warn('Malha ferroviária',e)}
+}
+loadRailBase();
 async function initGps(){const d=await fetch('/api/gestao/historico-gps',{cache:'no-store'}).then(r=>r.json());if(!d.ok)return;gpsUser.innerHTML='<option value="">Selecione</option>'+d.users.map(u=>`<option value="${u.id}">${esc(u.name)} · ${esc(u.company)}</option>`).join('');gpsDate.value=new Date().toISOString().slice(0,10)}
-function clearMap(){markers.forEach(m=>m.remove());markers=[];gpsLayer.clearLayers();if(lineLayer){lineLayer.remove();lineLayer=null}}
-async function loadGps(){if(!gpsUser.value)return;const d=await fetch(`/api/gestao/historico-gps?user_id=${gpsUser.value}&date=${gpsDate.value}`,{cache:'no-store'}).then(r=>r.json());if(!d.ok)return alert(d.error||'Falha');gpsRetention.textContent=`retenção ${d.retention_days} dias`;clearMap();const pts=[];gpsTimeline.innerHTML=d.events.map((e,i)=>`<div class="v72Event" data-i="${i}"><b>${esc(e.time)} · ${esc(e.station)}</b><br><small>${esc(e.company)} · ${esc(e.line)} · ${e.distance_m??'-'} m do ponto de referência</small></div>`).join('')||'<p class="muted">Nenhuma passagem registrada neste dia.</p>';d.events.forEach((e,i)=>{pts.push([e.latitude,e.longitude]);const m=L.marker([e.latitude,e.longitude]).addTo(gpsLayer).bindPopup(`<b>${esc(e.time)} · ${esc(e.station)}</b><br>${esc(e.line)} · ${esc(e.company)}`);markers.push(m)});if(pts.length){lineLayer=L.polyline(pts,{weight:4}).addTo(gpsLayer);v72FixMapSize();setTimeout(()=>map.fitBounds(L.latLngBounds(pts).pad(.15)),140)}else{v72FixMapSize()}document.querySelectorAll('.v72Event').forEach(el=>el.onclick=()=>markers[+el.dataset.i]?.openPopup())}
+function clearMap(){markers.forEach(m=>m.remove());markers=[];if(gpsLayer)gpsLayer.clearLayers();lineLayer=null}
+async function loadGps(){if(!gpsUser.value)return;const d=await fetch(`/api/gestao/historico-gps?user_id=${gpsUser.value}&date=${gpsDate.value}`,{cache:'no-store'}).then(r=>r.json());if(!d.ok)return alert(d.error||'Falha');gpsRetention.textContent=`retenção ${d.retention_days} dias`;clearMap();const pts=[];gpsTimeline.innerHTML=d.events.map((e,i)=>`<div class="v72Event" data-i="${i}"><b>${esc(e.time)} · ${esc(e.station)}</b><br><small>${esc(e.company)} · ${esc(e.line)} · ${e.distance_m??'-'} m do ponto de referência</small></div>`).join('')||'<p class="muted">Nenhuma passagem registrada neste dia.</p>';d.events.forEach((e,i)=>{pts.push([e.latitude,e.longitude]);const m=L.marker([e.latitude,e.longitude]).addTo(gpsLayer).bindPopup(`<b>${esc(e.time)} · ${esc(e.station)}</b><br>${esc(e.line)} · ${esc(e.company)}`);markers.push(m)});if(pts.length){lineLayer=L.polyline(pts,{weight:4}).addTo(gpsLayer);v72FixMapSize();setTimeout(()=>map.fitBounds(L.latLngBounds(pts).pad(.15)),140)}else{map.setView([-23.5505,-46.6333],10);v72FixMapSize()}document.querySelectorAll('.v72Event').forEach(el=>el.onclick=()=>markers[+el.dataset.i]?.openPopup())}
 gpsLoad.onclick=loadGps;initGps();
 {% endif %}
 
