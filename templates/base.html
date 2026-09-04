@@ -31,7 +31,7 @@
         {% if can_view('field.equipment') %}<a href="/patrimonio">Equipamentos</a>{% endif %}
         {% if can_view('field.evidence') %}<a href="/evidencias-campo">Evidências</a>{% endif %}
         {% if can_view('field.panorama') %}<a href="/visao-panoramica">Visão Panorâmica</a>{% endif %}
-        {% if can_view('field.chip_recarga') %}<a href="/troca-chips">Troca de Chips Recarga</a>{% endif %}
+        {% if can_view('field.chip_recarga') %}<a href="/troca-chips">Troca de Chips Recarga</a>{% endif %}{% if can_view('field.firmware_pos_cptm') %}<a href="/firmware-pos-cptm">Atualização Firmware POS - CPTM</a>{% endif %}
       </div></div>{% endif %}
       {% if can_view('implantation') %}
       <div class="navDrop"><button type="button" class="navDropBtn">Implantação de Hardware ▾</button><div class="navDropMenu">
@@ -77,7 +77,7 @@ document.getElementById('installPwa')?.addEventListener('click',async()=>{if(!v5
 if('serviceWorker' in navigator && (location.protocol==='https:' || location.hostname==='localhost')){
   window.addEventListener('load',async()=>{
     try{
-      const reg=await navigator.serviceWorker.register('/sw.js?v=v73-5',{scope:'/',updateViaCache:'none'});
+      const reg=await navigator.serviceWorker.register('/sw.js?v=v73-6',{scope:'/',updateViaCache:'none'});
       await reg.update();
     }catch(err){console.warn('Falha ao atualizar Service Worker',err);}
   },{once:true});
