@@ -1,0 +1,8 @@
+V73.2 HOTFIX2 — aplicar sobre V73.2 HOTFIX1
+Arquivos alterados:
+- app.py
+- templates/manager.js
+- templates/manager.html
+- templates/about.html
+- README_V73_2_HOTFIX2.md
+Após deploy: Ctrl+F5 uma vez e validar Dashboard Validador+TDI e Dashboard Troca de Chip Recarga.

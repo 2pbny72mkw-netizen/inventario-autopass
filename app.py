@@ -38,7 +38,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V73.2 HOTFIX1"
+APP_RELEASE = "V73.2 HOTFIX2"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -3615,6 +3615,36 @@ def _v716_base_identifier(a):
 def _v716_inventory_identifier(i):
     return str(i.asset_identifier or i.serial or "").strip()
 
+def _v732_recarga_tdi_assets():
+    """Base operacional única de Recarga/TDI.
+
+    A identidade prioriza terminal, depois série e asset_key. Não depende de
+    localidade para contar o parque; o vínculo geográfico é uma dimensão
+    posterior. Assim um ativo sem casamento de estação continua no total.
+    """
+    raw = BaseAsset.query.filter(
+        or_(
+            func.upper(func.coalesce(BaseAsset.equipment_type, '')).like('%VALID%'),
+            func.upper(func.coalesce(BaseAsset.equipment_type, '')) == 'TDI'
+        )
+    ).all()
+    out=[]; seen=set()
+    for a in raw:
+        typ=_canonical_equipment_type(a.equipment_type)
+        if typ not in ("VALIDADOR","TDI"):
+            continue
+        st=normalize(a.base_status)
+        if "INATIVO" in st or "FORA DO ESCOPO" in st:
+            continue
+        ident=normalize(a.terminal_number or a.serial or a.asset_key or a.top_id or a.qrcode_id or str(a.id))
+        # terminal/série são identidade física; empresa/linha/localidade não devem
+        # criar uma segunda cópia do mesmo equipamento após reimportação.
+        key=(typ, ident)
+        if key in seen:
+            continue
+        seen.add(key); out.append(a)
+    return out
+
 @app.get("/api/dashboard/inventory-equipment/<family>")
 @dashboard_required
 def inventory_equipment_dashboard_api(family):
@@ -3627,7 +3657,8 @@ def inventory_equipment_dashboard_api(family):
     filters["subtype"]=filters["subtype"].upper()
 
     base_rows=[]
-    for a in BaseAsset.query.all():
+    source_assets = _v732_recarga_tdi_assets() if family=="validator-tdi" else BaseAsset.query.all()
+    for a in source_assets:
         typ=_v716_norm_equipment_type(a.equipment_type)
         if typ not in family_types: continue
         st=str(a.base_status or "").strip()
@@ -3647,13 +3678,14 @@ def inventory_equipment_dashboard_api(family):
 
     # V73.2 — a dashboard usa uma única identidade operacional por ativo.
     # Reimportações não podem inflar o parque previsto com duplicatas físicas.
-    deduped=[]; seen=set()
-    for r in base_rows:
-        ident=normalize(r.get("asset") or r.get("serial") or str(r.get("base_asset_id")))
-        key=(r.get("type"),normalize(r.get("company")),_normalize_line_key(r.get("line")),normalize(r.get("locality")),ident)
-        if key in seen: continue
-        seen.add(key); deduped.append(r)
-    base_rows=deduped
+    if family != "validator-tdi":
+        deduped=[]; seen=set()
+        for r in base_rows:
+            ident=normalize(r.get("asset") or r.get("serial") or str(r.get("base_asset_id")))
+            key=(r.get("type"),normalize(r.get("company")),_normalize_line_key(r.get("line")),normalize(r.get("locality")),ident)
+            if key in seen: continue
+            seen.add(key); deduped.append(r)
+        base_rows=deduped
 
     inv_rows=Inventory.query.filter(Inventory.equipment_type.isnot(None)).all()
     inv_by_base={i.base_asset_id:i for i in inv_rows if i.base_asset_id}
@@ -9663,39 +9695,22 @@ def _chip_swap_locations_payload(force=False):
         # V60 REV2 PERFORMANCE: nunca executa sincronização pesada dentro de uma requisição.
         app.logger.warning("V60 REV2: base detalhada de validadores sem sentinela; sincronização deve ocorrer fora do request.")
 
-    validator_assets_raw = BaseAsset.query.filter(
-        or_(
-            func.upper(func.coalesce(BaseAsset.equipment_type, '')).like('%VALID%'),
-            func.upper(func.coalesce(BaseAsset.equipment_type, '')) == 'TDI'
-        )
-    ).all()
-
-    # V73.1 — Base canônica Recarga/TDI. A V73 podia somar a base detalhada
-    # nova aos contadores legados de Location.expected_validator, reproduzindo
-    # 671 + 592 = 1.263. Aqui a lista detalhada passa a ser a única fonte quando
-    # existir e os ativos são deduplicados por identidade operacional.
-    validator_assets = []
-    seen_asset_keys = set()
-    for asset in validator_assets_raw:
-        typ = _canonical_equipment_type(asset.equipment_type)
-        if typ not in ("VALIDADOR", "TDI") or "INATIVO" in normalize(asset.base_status) or "FORA DO ESCOPO" in normalize(asset.base_status):
-            continue
-        ident = normalize(asset.terminal_number or asset.serial or asset.asset_key or str(asset.id))
-        dedupe_key = (typ, normalize(asset.company), _normalize_line_key(asset.line), normalize(asset.locality), ident)
-        if dedupe_key in seen_asset_keys:
-            continue
-        seen_asset_keys.add(dedupe_key)
-        validator_assets.append(asset)
+    # V73.2 HOTFIX2 — a mesma base canônica alimenta Inventário Validador+TDI
+    # e Troca de Chip. Ativos sem vínculo de localidade NÃO somem do total.
+    validator_assets = _v732_recarga_tdi_assets()
 
     detailed_mode = bool(validator_assets)
+    unmatched_assets=[]
     for asset in validator_assets:
         candidates = by_line.get(_normalize_line_key(asset.line), ())
-        if not candidates:
-            continue
+        matched=False
         for loc in candidates:
             if _chip_swap_asset_matches_location(asset, loc):
                 assets_by_loc[loc.id].append(asset)
+                matched=True
                 break
+        if not matched:
+            unmatched_assets.append(asset)
 
     swaps_list = ChipSwap.query.all()
     swaps = {(x.location_id, x.base_asset_id): x for x in swaps_list}
@@ -9727,6 +9742,23 @@ def _chip_swap_locations_payload(force=False):
             this_dt = hist_sw.updated_at or hist_sw.completed_at or hist_sw.started_at
             if previous is None or (this_dt and (prev_dt is None or this_dt > prev_dt)):
                 historical_swap_index[key] = hist_sw
+    # HOTFIX2: índice global por identidade. O location_id antigo não pode
+    # impedir a recuperação quando a própria localidade/base foi recadastrada.
+    historical_swap_global = {}
+    for hist_sw in swaps_list:
+        hist_asset = historical_assets.get(hist_sw.base_asset_id)
+        if not hist_asset:
+            continue
+        hist_type=_canonical_equipment_type(hist_asset.equipment_type)
+        for raw_identity in (hist_asset.terminal_number, hist_asset.serial, hist_asset.asset_key, hist_asset.top_id, hist_asset.qrcode_id):
+            identity=normalize(raw_identity)
+            if not identity: continue
+            key=(hist_type, identity)
+            prev=historical_swap_global.get(key)
+            prev_dt=(prev.updated_at or prev.completed_at or prev.started_at) if prev else None
+            cur_dt=hist_sw.updated_at or hist_sw.completed_at or hist_sw.started_at
+            if prev is None or (cur_dt and (prev_dt is None or cur_dt>prev_dt)):
+                historical_swap_global[key]=hist_sw
     used_historical_swap_ids = set()
     swap_ids = [x.id for x in swaps_list]
     photo_map = {}
@@ -9766,6 +9798,14 @@ def _chip_swap_locations_payload(force=False):
                         used_historical_swap_ids.add(candidate.id)
                         historical_relinked = True
                         break
+            if not sw:
+                asset_type=_canonical_equipment_type(a.equipment_type)
+                for raw_identity in (a.terminal_number, a.serial, a.asset_key, a.top_id, a.qrcode_id):
+                    identity=normalize(raw_identity)
+                    if not identity: continue
+                    candidate=historical_swap_global.get((asset_type, identity))
+                    if candidate and candidate.id not in used_historical_swap_ids:
+                        sw=candidate; used_historical_swap_ids.add(candidate.id); historical_relinked=True; break
             photos = photo_map.get(sw.id, []) if sw else []
             op_item=op_active.get(str(a.terminal_number or ""))
             status = _activity_swap_status(sw.status if sw else ((op_item.desired_status if op_item else None) or "PENDENTE"))
@@ -9806,6 +9846,32 @@ def _chip_swap_locations_payload(force=False):
             "total": total, "concluded": concluded, "in_progress": progress, "pending": pending,
             "percent": round((concluded/total*100), 1) if total else 0, "validators": items,
         })
+
+    # Ativos válidos que não casaram com Location continuam visíveis. Isso
+    # torna a divergência auditável em vez de reduzir silenciosamente o parque.
+    if unmatched_assets:
+        groups={}
+        for a in unmatched_assets:
+            key=(str(a.company or "Não informado"), str(a.line or "Não informado"), str(a.locality or "Localidade não vinculada"))
+            groups.setdefault(key,[]).append(a)
+        for (company,line,locality),assets in groups.items():
+            items=[]
+            for a in assets:
+                sw=None; historical_relinked=False
+                asset_type=_canonical_equipment_type(a.equipment_type)
+                for raw_identity in (a.terminal_number,a.serial,a.asset_key,a.top_id,a.qrcode_id):
+                    identity=normalize(raw_identity)
+                    if not identity: continue
+                    candidate=historical_swap_global.get((asset_type,identity))
+                    if candidate and candidate.id not in used_historical_swap_ids:
+                        sw=candidate; used_historical_swap_ids.add(candidate.id); historical_relinked=True; break
+                photos=photo_map.get(sw.id,[]) if sw else []
+                status=_activity_swap_status(sw.status if sw else "PENDENTE")
+                if photos and status=="PENDENTE": status="CONCLUÍDA"
+                tech=users.get(sw.technician_id) if sw else None
+                items.append({"base_asset_id":a.id,"equipment_type":asset_type,"label":_chip_swap_asset_label(a),"serial":a.serial or "","model":a.model or "","status":status,"swap_id":sw.id if sw else None,"historical_relinked":historical_relinked,"technician":tech.name if tech else "","completed_by":"","completed_by_role":"","completed_at":sw.completed_at.isoformat()+"Z" if sw and sw.completed_at else None,"photo_count":len(photos),"notes":sw.notes if sw else "","test_result":sw.test_result if sw else "","test_notes":sw.test_notes if sw else "","photos":[{"id":ph.id,"url":"/uploads/"+ph.stored_name,"thumb_url":"/uploads/"+ph.stored_name+"?thumb=1","name":ph.original_name} for ph in photos]})
+            concluded=sum(1 for i in items if i["status"]=="CONCLUÍDA"); progress=sum(1 for i in items if i["status"]=="EM ANDAMENTO"); total=len(items)
+            rows.append({"id":None,"company":company,"line":line,"location":locality or "Localidade não vinculada","reference_latitude":None,"reference_longitude":None,"unmatched_location":True,"total":total,"concluded":concluded,"in_progress":progress,"pending":max(total-concluded-progress,0),"percent":round(concluded/total*100,1) if total else 0,"validators":items})
 
     _chip_swap_payload_cache["at"] = now
     _chip_swap_payload_cache["data"] = rows
