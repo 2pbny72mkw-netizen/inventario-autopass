@@ -38,7 +38,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V73"
+APP_RELEASE = "V73.1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -9653,16 +9653,32 @@ def _chip_swap_locations_payload(force=False):
         # V60 REV2 PERFORMANCE: nunca executa sincronização pesada dentro de uma requisição.
         app.logger.warning("V60 REV2: base detalhada de validadores sem sentinela; sincronização deve ocorrer fora do request.")
 
-    validator_assets = BaseAsset.query.filter(
+    validator_assets_raw = BaseAsset.query.filter(
         or_(
             func.upper(func.coalesce(BaseAsset.equipment_type, '')).like('%VALID%'),
             func.upper(func.coalesce(BaseAsset.equipment_type, '')) == 'TDI'
         )
     ).all()
 
-    for asset in validator_assets:
-        if _canonical_equipment_type(asset.equipment_type) not in ("VALIDADOR","TDI") or "INATIVO" in normalize(asset.base_status) or "FORA DO ESCOPO" in normalize(asset.base_status):
+    # V73.1 — Base canônica Recarga/TDI. A V73 podia somar a base detalhada
+    # nova aos contadores legados de Location.expected_validator, reproduzindo
+    # 671 + 592 = 1.263. Aqui a lista detalhada passa a ser a única fonte quando
+    # existir e os ativos são deduplicados por identidade operacional.
+    validator_assets = []
+    seen_asset_keys = set()
+    for asset in validator_assets_raw:
+        typ = _canonical_equipment_type(asset.equipment_type)
+        if typ not in ("VALIDADOR", "TDI") or "INATIVO" in normalize(asset.base_status) or "FORA DO ESCOPO" in normalize(asset.base_status):
             continue
+        ident = normalize(asset.terminal_number or asset.serial or asset.asset_key or str(asset.id))
+        dedupe_key = (typ, normalize(asset.company), _normalize_line_key(asset.line), normalize(asset.locality), ident)
+        if dedupe_key in seen_asset_keys:
+            continue
+        seen_asset_keys.add(dedupe_key)
+        validator_assets.append(asset)
+
+    detailed_mode = bool(validator_assets)
+    for asset in validator_assets:
         candidates = by_line.get(_normalize_line_key(asset.line), ())
         if not candidates:
             continue
@@ -9693,7 +9709,7 @@ def _chip_swap_locations_payload(force=False):
     rows = []
     for loc in locations:
         assets = assets_by_loc.get(loc.id, [])
-        if not assets and int(loc.expected_validator or 0) <= 0:
+        if not assets and (detailed_mode or int(loc.expected_validator or 0) <= 0):
             continue
         items = []
         for a in assets:
@@ -9727,7 +9743,7 @@ def _chip_swap_locations_payload(force=False):
             })
         # V56-A.4 HOTFIX3: a lista detalhada é a fonte principal. O contador legado
         # expected_validator fica apenas como fallback quando ainda não há ativos detalhados.
-        total = len(items) if items else int(loc.expected_validator or 0)
+        total = len(items) if detailed_mode else (len(items) if items else int(loc.expected_validator or 0))
         concluded = sum(1 for i in items if i["status"] == "CONCLUÍDA")
         progress = sum(1 for i in items if i["status"] == "EM ANDAMENTO")
         pending = max(total - concluded - progress, 0)
@@ -9980,7 +9996,9 @@ def chip_swap_dashboard_api():
                 })
     return jsonify({
         "ok": True,
-        "summary": {"total": total, "concluded": done, "in_progress": progress, "pending": pending, "percent": round(done/total*100, 1) if total else 0},
+        "summary": {"total": total, "concluded": done, "in_progress": progress, "pending": pending, "percent": round(done/total*100, 1) if total else 0,
+                    "validator_total": sum(1 for x in rows for v in x.get("validators", []) if v.get("equipment_type") == "VALIDADOR"),
+                    "tdi_total": sum(1 for x in rows for v in x.get("validators", []) if v.get("equipment_type") == "TDI")},
         "test_results": {"counts": result_counts, "labels": result_labels, "technical_pending": len(technical_pending)},
         "technical_pending": technical_pending,
         "locations": rows,
@@ -12295,12 +12313,17 @@ def v73_external_toggle(rid):
 def v73_links_page():
     if session.get("role") not in ("manager","manager_field"): abort(403)
     if request.method=="POST":
-        title=(request.form.get("title") or "").strip();url=(request.form.get("url") or "").strip()
+        title=(request.form.get("title") or "").strip();url=(request.form.get("url") or "").strip();rid=request.form.get("link_id",type=int)
         if not title or not url: flash("Título e URL são obrigatórios.","error")
         else:
-            db.session.add(ManagementLink(title=title,category=(request.form.get("category") or "Outros").strip(),url=url,notes=(request.form.get("notes") or "").strip(),created_by=session.get("user_id")));db.session.commit();flash("Link salvo com sucesso.","success")
+            row=db.session.get(ManagementLink,rid) if rid else ManagementLink(created_by=session.get("user_id"))
+            if rid and not row: abort(404)
+            row.title=title;row.category=(request.form.get("category") or "Outros").strip();row.url=url;row.notes=(request.form.get("notes") or "").strip();row.active=True
+            db.session.add(row);db.session.commit();flash("Link atualizado com sucesso." if rid else "Link salvo com sucesso.","success")
         return redirect("/gestao/resumo-links")
-    q=(request.args.get("q") or "").strip();query=ManagementLink.query.filter(ManagementLink.active.is_(True))
+    q=(request.args.get("q") or "").strip();show=(request.args.get("show") or "active").strip().lower();query=ManagementLink.query
+    if show=="active": query=query.filter(ManagementLink.active.is_(True))
+    elif show=="inactive": query=query.filter(ManagementLink.active.is_(False))
     if q: query=query.filter(or_(ManagementLink.title.ilike(f"%{q}%"),ManagementLink.category.ilike(f"%{q}%"),ManagementLink.notes.ilike(f"%{q}%")))
     return render_template("management_links_v73.html",rows=query.order_by(ManagementLink.category,ManagementLink.title).all(),app_release=APP_RELEASE)
 
@@ -12309,6 +12332,13 @@ def v73_links_page():
 def v73_link_delete(rid):
     if session.get("role") not in ("manager","manager_field"): abort(403)
     x=db.session.get(ManagementLink,rid) or abort(404);x.active=False;db.session.commit();return jsonify({"ok":True})
+
+
+@app.post("/api/gestao/resumo-links/<int:rid>/toggle")
+@login_required
+def v731_link_toggle(rid):
+    if session.get("role") not in ("manager","manager_field"): abort(403)
+    x=db.session.get(ManagementLink,rid) or abort(404);x.active=not x.active;db.session.commit();return jsonify({"ok":True,"active":x.active})
 
 def _apt_status(x):
     if not x.valid_until:return "SEM VALIDADE",None
@@ -12323,11 +12353,22 @@ def _apt_status(x):
 @login_required
 def v73_apt_page():
     if session.get("role") not in ("manager","manager_field","hr"):abort(403)
-    rows=AptRecord.query.filter(AptRecord.active.is_(True)).order_by(AptRecord.valid_until,AptRecord.collaborator_name).all(); data=[]
-    for x in rows:
-        vs,days=_apt_status(x);data.append({"row":x,"validity_status":vs,"days":days})
+    q=(request.args.get("q") or "").strip();validity=(request.args.get("validity") or "").strip().upper();process=(request.args.get("process") or "").strip().upper();active=(request.args.get("active") or "active").strip().lower();company=(request.args.get("company") or "").strip();line=(request.args.get("line") or "").strip()
+    query=AptRecord.query
+    if active=="active":query=query.filter(AptRecord.active.is_(True))
+    elif active=="inactive":query=query.filter(AptRecord.active.is_(False))
+    if q:query=query.filter(or_(AptRecord.collaborator_name.ilike(f"%{q}%"),AptRecord.apt_number.ilike(f"%{q}%"),AptRecord.company.ilike(f"%{q}%"),AptRecord.line.ilike(f"%{q}%")))
+    if process:query=query.filter(func.upper(AptRecord.process_status)==process)
+    if company:query=query.filter(AptRecord.company==company)
+    if line:query=query.filter(AptRecord.line==line)
+    raw=query.order_by(AptRecord.valid_until,AptRecord.collaborator_name).all();data=[]
+    for x in raw:
+        vs,days=_apt_status(x)
+        if validity and vs!=validity:continue
+        data.append({"row":x,"validity_status":vs,"days":days})
     summary={k:sum(1 for x in data if x["validity_status"]==k) for k in ("VENCIDA","ATÉ 15 DIAS","ATÉ 30 DIAS","ATÉ 40 DIAS","REGULAR","SEM VALIDADE")}
-    return render_template("apt_v73.html",items=data,summary=summary,total=len(data),app_release=APP_RELEASE)
+    companies=sorted({x.company for x in AptRecord.query.filter(AptRecord.company.isnot(None)).all() if x.company});lines=sorted({x.line for x in AptRecord.query.filter(AptRecord.line.isnot(None)).all() if x.line})
+    return render_template("apt_v73.html",items=data,summary=summary,total=len(data),companies=companies,lines=lines,filters={"q":q,"validity":validity,"process":process,"active":active,"company":company,"line":line},app_release=APP_RELEASE)
 
 @app.post("/api/rh/apt/import")
 @login_required
@@ -12339,7 +12380,7 @@ def v73_apt_import():
         import csv as _csv
         raw=f.read(); rows=[]
         if (f.filename or "").lower().endswith(".csv"):
-            txt=raw.decode("utf-8-sig",errors="replace");dialect=_csv.Sniffer().sniff(txt[:4000],delimiters=";,\\t");rows=list(_csv.DictReader(io.StringIO(txt),dialect=dialect))
+            txt=raw.decode("utf-8-sig",errors="replace");dialect=_csv.Sniffer().sniff(txt[:4000],delimiters=";,\t");rows=list(_csv.DictReader(io.StringIO(txt),dialect=dialect))
         else:
             wb=load_workbook(io.BytesIO(raw),data_only=True);ws=wb.active;vals=list(ws.values);heads=[str(x or "").strip() for x in vals[0]];rows=[dict(zip(heads,r)) for r in vals[1:]]
         def pick(r,*names):
@@ -12351,10 +12392,8 @@ def v73_apt_import():
         for r in rows:
             name=str(pick(r,"COLABORADOR","NOME","FUNCIONARIO","FUNCIONÁRIO") or "").strip();line=str(pick(r,"LINHA","LOCAL","LOCALIDADE") or "").strip();apt=str(pick(r,"APT","APT'S","APTS","Nº APT","NUMERO APT","NÚMERO APT") or "").strip()
             if not name or not apt:continue
-            # uma célula pode conter múltiplas APTs; separa por hífen apenas quando inicia nova APT
-            nums=re.findall(r'APT[-–][A-Z0-9-]+(?:\\s+[CS]/A)?',apt.upper()) or [apt]
-            valid=pick(r,"VALIDADE APT","VALIDADE","VENCIMENTO APT","VENCIMENTO APT'S")
-            vd=None
+            nums=re.findall(r'APT[-–][A-Z0-9-]+(?:\s+[CS]/A)?',apt.upper()) or [apt]
+            valid=pick(r,"VALIDADE APT","VALIDADE","VENCIMENTO APT","VENCIMENTO APT'S");vd=None
             if isinstance(valid,(datetime,date)):vd=valid.date() if isinstance(valid,datetime) else valid
             elif valid:
                 for fmt in ("%d/%m/%Y","%Y-%m-%d","%d/%m/%y"):
@@ -12364,9 +12403,25 @@ def v73_apt_import():
                 x=AptRecord.query.filter_by(collaborator_name=name,line=line,apt_number=num.strip()).first()
                 if not x:x=AptRecord(collaborator_name=name,line=line,apt_number=num.strip());created+=1
                 else:updated+=1
-                u=um.get(normalize(name));x.user_id=u.id if u else None;x.company=str(pick(r,"EMPRESA") or (u.company if u else "") or "").strip();x.valid_until=vd;x.process_status=str(pick(r,"STATUS","ANDAMENTO") or x.process_status or "AGUARDANDO").upper();db.session.add(x)
+                u=um.get(normalize(name));x.user_id=u.id if u else None;x.company=str(pick(r,"EMPRESA") or (u.company if u else "") or "").strip();x.valid_until=vd;x.process_status=str(pick(r,"STATUS","ANDAMENTO") or x.process_status or "AGUARDANDO").upper();x.active=True;db.session.add(x)
         db.session.commit();return jsonify({"ok":True,"created":created,"updated":updated})
     except Exception as e:db.session.rollback();return jsonify({"ok":False,"error":str(e)}),400
+
+@app.post("/api/rh/apt/<int:rid>/update")
+@login_required
+def v731_apt_update(rid):
+    if session.get("role") not in ("manager","manager_field","hr"):abort(403)
+    x=db.session.get(AptRecord,rid) or abort(404);d=request.get_json(silent=True) or {}
+    x.collaborator_name=(d.get("collaborator_name") or x.collaborator_name).strip();x.company=(d.get("company") or "").strip();x.line=(d.get("line") or "").strip();x.apt_number=(d.get("apt_number") or x.apt_number).strip();x.process_status=(d.get("process_status") or x.process_status or "AGUARDANDO").strip().upper();x.notes=(d.get("notes") or "").strip()
+    vu=(d.get("valid_until") or "").strip();x.valid_until=date.fromisoformat(vu) if vu else None
+    uid=d.get("user_id");x.user_id=int(uid) if uid else x.user_id
+    db.session.commit();return jsonify({"ok":True})
+
+@app.post("/api/rh/apt/<int:rid>/toggle")
+@login_required
+def v731_apt_toggle(rid):
+    if session.get("role") not in ("manager","manager_field","hr"):abort(403)
+    x=db.session.get(AptRecord,rid) or abort(404);x.active=not x.active;db.session.commit();return jsonify({"ok":True,"active":x.active})
 
 @app.post("/api/rh/apt/<int:rid>/pdf")
 @login_required
@@ -12388,8 +12443,20 @@ def v73_apt_pdf_get(rid):
 @login_required
 def v73_apt_export():
     if session.get("role") not in ("manager","manager_field","hr"):abort(403)
-    wb=Workbook();ws=wb.active;ws.title="APT";ws.append(["Colaborador","Empresa","Linha","Nº APT","Validade","Situação validade","Status processo","PDF"])
-    for x in AptRecord.query.filter(AptRecord.active.is_(True)).order_by(AptRecord.collaborator_name).all():vs,_=_apt_status(x);ws.append([x.collaborator_name,x.company,x.line,x.apt_number,x.valid_until,vs,x.process_status,"SIM" if x.pdf_key else "NÃO"])
+    q=(request.args.get("q") or "").strip().lower();validity=(request.args.get("validity") or "").strip().upper();process=(request.args.get("process") or "").strip().upper();active=(request.args.get("active") or "active").strip().lower();company=(request.args.get("company") or "").strip();line=(request.args.get("line") or "").strip()
+    rows=AptRecord.query.order_by(AptRecord.collaborator_name).all();filtered=[]
+    for x in rows:
+        vs,_=_apt_status(x)
+        if active=="active" and not x.active:continue
+        if active=="inactive" and x.active:continue
+        if q and q not in " ".join([x.collaborator_name or "",x.company or "",x.line or "",x.apt_number or ""]).lower():continue
+        if validity and vs!=validity:continue
+        if process and (x.process_status or "").upper()!=process:continue
+        if company and x.company!=company:continue
+        if line and x.line!=line:continue
+        filtered.append((x,vs))
+    wb=Workbook();ws=wb.active;ws.title="APT";ws.append(["Colaborador","Empresa","Linha","Nº APT","Validade","Situação validade","Status processo","Situação cadastro","PDF"])
+    for x,vs in filtered:ws.append([x.collaborator_name,x.company,x.line,x.apt_number,x.valid_until,vs,x.process_status,"ATIVO" if x.active else "INATIVO","SIM" if x.pdf_key else "NÃO"])
     ws.freeze_panes="A2";ws.auto_filter.ref=ws.dimensions;bio=io.BytesIO();wb.save(bio);bio.seek(0);return send_file(bio,as_attachment=True,download_name="controle_APT.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 @app.get("/api/me/apt")
