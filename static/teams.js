@@ -627,7 +627,7 @@ async function v58StartTeams(){
   }
 
   // 3) Atualização periódica só depois da primeira carga concluída.
-  setInterval(()=>loadTeams().catch(err=>console.error('[V59] atualização periódica de Equipes',err)),120000);
+  setInterval(()=>loadTeams().catch(err=>console.error('[V59] atualização periódica de Equipes',err)),15000);
 }
 
 if(document.readyState==='loading'){
