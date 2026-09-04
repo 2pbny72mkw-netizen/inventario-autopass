@@ -1,4 +1,4 @@
-window.AUTOPASS_MANAGER_VERSION='dashboard-v71-2-hf1';
+window.AUTOPASS_MANAGER_VERSION='dashboard-v36-0';
 console.log('AUTOPASS Dashboard Executivo V25 carregado');
 let locations=[];
 let dashboardData=null;
@@ -332,7 +332,7 @@ function ensureGpsMap(){
     $('referenceStatus').textContent='Referência salva.';
     if(referenceTempMarker){referenceTempMarker.remove();referenceTempMarker=null;}
     await loadAll();
-// V70.1: evidências carregadas sob demanda pela visão correspondente.
+loadFieldEvidenceSummary();
   });
 
   setTimeout(()=>gpsMap.invalidateSize(),100);
@@ -452,7 +452,7 @@ function renderGpsMap(items){
     const techInitials=String(x.technician||'?').trim().split(/\s+/).slice(0,2).map(v=>v[0]||'').join('').toUpperCase();
     const markerIcon=L.divIcon({
       className:'',
-      html:`<div class="gpsTechAvatar" style="outline:3px solid ${color}">${x.technician_photo_url?`<img loading="lazy" src="${esc(x.technician_photo_url)}?thumb=1" alt="">`:`<span>${esc(techInitials)}</span>`}</div>`,
+      html:`<div class="gpsTechAvatar" style="outline:3px solid ${color}">${x.technician_photo_url?`<img src="${esc(x.technician_photo_url)}" alt="">`:`<span>${esc(techInitials)}</span>`}</div>`,
       iconSize:[40,40],iconAnchor:[20,20]
     });
     const marker=L.marker([lat,lon],{icon:markerIcon}).addTo(gpsPointLayer);
@@ -582,7 +582,7 @@ async function loadAll(){
     updateExecutiveView();
 
     if($('lastUpdate')) $('lastUpdate').textContent='Atualizado em '+new Date().toLocaleString('pt-BR')+` · ${((performance.now()-started)/1000).toFixed(1)}s`;
-    if(v23ActiveView==='map') setTimeout(loadGpsDeferred,120);
+    setTimeout(loadGpsDeferred,120);
   }catch(err){
     console.error('Falha ao carregar dashboard',err);
     if($('lastUpdate')) $('lastUpdate').textContent='Falha ao atualizar — clique em Atualizar agora';
@@ -754,8 +754,12 @@ function renderExecutiveFilters(){
   if([...line.options].some(o=>o.value===oldL))line.value=oldL;
 }
 function executiveFilteredLocations(){
-  const c=$('execCompany')?.value||'',line=$('execLine')?.value||'',type=$('execType')?.value||'',status=$('execStatus')?.value||'';
-  return locations.filter(x=>{const st=String(x.survey_status||'').toUpperCase().replace('CONCLUÍDA','CONCLUIDA');return (!c||x.company===c)&&(!line||x.line===line)&&(!type||Number((x.expected_by_type||{})[type]||0)>0||Number((x.inventoried_by_type||{})[type]||0)>0)&&(!status||st===status);});
+  const c=$('execCompany')?.value||'',line=$('execLine')?.value||'',type=$('execType')?.value||'';
+  return locations.filter(x=>
+    (!c||x.company===c)&&
+    (!line||x.line===line)&&
+    (!type||Number((x.expected_by_type||{})[type]||0)>0||Number((x.inventoried_by_type||{})[type]||0)>0)
+  );
 }
 
 function renderExecutiveAnalytics(rows,type){
@@ -801,8 +805,6 @@ function renderV21ExecutiveCharts(rows,type){
 
 function renderV22Cockpit(){
   if(!dashboardData||!$('v22ExecutiveCockpit')) return;
-  const erows=executiveFilteredLocations(),active=!!(($('execCompany')?.value||'')||($('execLine')?.value||'')||($('execType')?.value||'')||($('execStatus')?.value||''));
-  if(active){const sts={};erows.forEach(x=>{const k=String(x.survey_status||'SEM STATUS');sts[k]=(sts[k]||0)+1});const vals=Object.entries(sts),mx=Math.max(1,...vals.map(x=>x[1]));$('v22Trend').innerHTML=vals.map(([k,v])=>`<div class="v22TrendCol"><b>${fmt(v)}</b><i style="height:${Math.max(8,v/mx*100)}%"></i><small>${esc(k.slice(0,7))}</small></div>`).join('');$('v22Productivity').innerHTML='<div class="muted">Produtividade individual não é inferida do filtro de localidade. Use o recorte operacional detalhado.</div>';const m=filteredLocationMetrics(erows,$('execType')?.value||'');$('v22EvidenceQuality').innerHTML=`<div class="v22EvidenceHero"><b>${erows.length}</b><span>localidades no recorte</span></div><div class="v22EvidenceRows"><span>Divergências <b>${fmt(m.divergences)}</b></span><span>Inoperantes <b>${fmt(m.inoperative)}</b></span></div>`;return;}
   const trend=dashboardData.trend_14d||[]; const max=Math.max(1,...trend.map(x=>Number(x.count||0)));
   $('v22Trend').innerHTML=trend.map(x=>{const h=Math.max(4,Math.round(Number(x.count||0)/max*100)); const d=new Date(x.date+'T12:00:00'); return `<div class="v22TrendCol"><b>${fmt(x.count||0)}</b><i style="height:${h}%"></i><small>${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}</small></div>`}).join('');
   const tech=dashboardData.top_technicians_14d||[]; const tmax=Math.max(1,...tech.map(x=>Number(x.count||0)));
@@ -845,18 +847,6 @@ function renderV25ExecutiveBI(){
   $('v25CompetitionBars').innerHTML=entries.length?entries.map(([k,v])=>`<div class="v25CompanyRow"><span>${esc(k)}</span><div class="v25CompanyTrack"><i style="width:${Math.round(Number(v)/m*100)}%"></i></div><b>${fmt(v)}</b></div>`).join(''):'<div class="muted">Nenhuma quantidade estruturada de concorrência encontrada nas evidências importadas.</div>';
 }
 
-function renderV526FilteredBI(rows,type){
-  const active=!!(($('execCompany')?.value||'')||($('execLine')?.value||'')||($('execStatus')?.value||'')||type);
-  if(!active)return;
-  const m=filteredLocationMetrics(rows,type),types=type?[type]:['ATM','VALIDADOR','POS','BLOQUEIO'];
-  const mix=types.map(t=>[typeLabel(t),Number(m.byType[t]?.e||m.byType[t]?.i||0)]).filter(x=>x[1]>0);
-  const mt=mix.reduce((a,x)=>a+x[1],0)||1;
-  if($('v25MixLegend'))$('v25MixLegend').innerHTML=mix.map(x=>`<span>${esc(x[0])}<b>${fmt(x[1])}</b></span>`).join('');
-  if($('v25MixPct'))$('v25MixPct').textContent=(m.expected?Math.round(m.inventoried/m.expected*100):0)+'%';
-  const groups={};rows.forEach(x=>{const k=x.company||'Não informado';groups[k]=(groups[k]||0)+1});const arr=Object.entries(groups).sort((a,b)=>b[1]-a[1]),mx=Math.max(1,...arr.map(x=>x[1]));
-  if($('v25CompanyCompare'))$('v25CompanyCompare').innerHTML=arr.map(([k,v])=>`<div class="v25CompanyRow"><span>${esc(k)}</span><div class="v25CompanyTrack"><i style="width:${v/mx*100}%"></i></div><b>${fmt(v)}</b></div>`).join('')||'<span class="muted">Sem dados no recorte.</span>';
-  if($('v25Attention'))$('v25Attention').innerHTML=`<article><b>${fmt(m.divergences)}</b><span>Divergências</span></article><article><b>${fmt(m.inoperative)}</b><span>Inoperantes</span></article><article><b>${fmt(rows.filter(x=>String(x.survey_status||'').toUpperCase()==='PENDENTE').length)}</b><span>Localidades pendentes</span></article><article><b>${fmt(rows.length)}</b><span>Localidades no recorte</span></article>`;
-}
 function updateExecutiveView(){
   if(!dashboardData) return;
   renderV25ExecutiveBI();
@@ -864,7 +854,6 @@ function updateExecutiveView(){
   const c=$('execCompany')?.value||'', line=$('execLine')?.value||'', type=$('execType')?.value||'';
   const noGeoFilters=!c&&!line;
   const rows=executiveFilteredLocations();
-  renderV526FilteredBI(rows,type);
 
   // Sem Empresa/Linha usamos os denominadores oficiais para os Big Numbers.
   if(noGeoFilters){
@@ -934,8 +923,6 @@ function updateExecutiveView(){
   renderLocations();
   renderV22Cockpit();
   renderV36Productivity();
-  // V71.2: sincroniza os três cards superiores com os mesmos KPIs/filtros já calculados.
-  if(typeof window.refreshV712Overview==='function') window.refreshV712Overview();
 }
 
 function renderCriticalLocations(){
@@ -1019,7 +1006,6 @@ if($('execCompany')) $('execCompany').onchange=()=>{
   applyExecutiveFilterToTable();
 };
 if($('execLine')) $('execLine').onchange=applyExecutiveFilterToTable;
-if($('execStatus')) $('execStatus').onchange=()=>{applyExecutiveFilterToTable();dashPanLocations();};
 if($('execType')) $('execType').onchange=()=>{
   document.querySelectorAll('.equipmentBig').forEach(x=>x.classList.toggle('active',x.dataset.type===$('execType').value));
   updateExecutiveView();
@@ -1029,7 +1015,6 @@ if($('execReset')) $('execReset').onclick=()=>{
   renderExecutiveFilters();
   $('execLine').value='';
   $('execType').value='';
-  if($('execStatus'))$('execStatus').value='';
   document.querySelectorAll('.equipmentBig').forEach(x=>x.classList.remove('active'));
   applyExecutiveFilterToTable();
 };
@@ -1080,7 +1065,6 @@ function v23SetView(view){
     el.hidden=!active;
   });
   document.querySelectorAll('.v23Nav').forEach(btn=>btn.classList.toggle('active',btn.dataset.v23View===v23ActiveView));
-  document.querySelectorAll('.executiveFilterBar.v23Shared').forEach(el=>{el.hidden=(v23ActiveView==='chips');});
   if(v23ActiveView==='map' && gpsMap) setTimeout(()=>gpsMap.invalidateSize(),140);
   window.scrollTo({top:0,behavior:document.body.classList.contains('v23TvMode')?'auto':'smooth'});
 }
@@ -1114,11 +1098,10 @@ function v23StartTv(){
   v23TvTimer=setInterval(v343SyncTv,5000);
 }
 function initV23DashboardNav(){
-  document.querySelectorAll('.v23Nav[data-v23-view]').forEach(btn=>btn.addEventListener('click',()=>v23SetView(btn.dataset.v23View))); // V49.2: links externos usam href real
+  document.querySelectorAll('.v23Nav[data-v23-view]').forEach(btn=>btn.addEventListener('click',()=>v23SetView(btn.dataset.v23View))); // V49.1: links externos preservam navegação real
   $('v23TvBtn')?.addEventListener('click',()=>{ window.open('/gerencial/tv','_blank','noopener'); });
   document.addEventListener('fullscreenchange',()=>{if(!document.fullscreenElement && document.body.classList.contains('v23TvMode'))v23StopTv();});
-  const initialView=new URLSearchParams(window.location.search).get('view')||'overview';
-  v23SetView(initialView);
+  v23SetView('overview');
 }
 
 initV23DashboardNav();
@@ -1158,10 +1141,10 @@ async function loadV30Contracts(){
     const sel=document.getElementById('v30Contract'); const before=sel.value;
     const opts=['<option value="">Todos</option>',...(d.contracts||[]).map(x=>`<option value="${esc(x)}">${esc(x)}</option>`)]; sel.innerHTML=opts.join(''); if([...sel.options].some(o=>o.value===before))sel.value=before;
     document.getElementById('v30ContractCount').textContent=fmt(d.count||0);
-    const risk=(d.assets||[]).filter(x=>String(x.contract_end||'').trim()).length;
+    const risk=(d.assets||[]).filter(x=>['VENCIDO','ATÉ 30 DIAS','31–60 DIAS','61–90 DIAS'].includes(x.contract_status)).length;
     document.getElementById('v30ContractRisk').textContent=fmt(risk);
-    const groups={}; (d.assets||[]).forEach(x=>{const k=x.contract||'Sem contrato';groups[k]=(groups[k]||0)+1}); const max=Math.max(1,...Object.values(groups));
-    box.innerHTML=Object.entries(groups).map(([k,v],i)=>`<div class="v30ContractRow"><span>${esc(k)}</span><div><i style="width:${Math.round(v/max*100)}%;background:${atmPalette[i%atmPalette.length]}"></i></div><b>${fmt(v)}</b></div>`).join('')||'<span class="muted">Nenhum ATM no recorte.</span>';
+    const groups={}; (d.assets||[]).forEach(x=>groups[x.contract_status]=(groups[x.contract_status]||0)+1); const max=Math.max(1,...Object.values(groups));
+    box.innerHTML=Object.entries(groups).map(([k,v])=>`<div class="v30ContractRow"><span>${esc(k)}</span><div><i style="width:${Math.round(v/max*100)}%"></i></div><b>${fmt(v)}</b></div>`).join('')||'<span class="muted">Nenhum ATM no recorte.</span>';
   }catch(err){box.innerHTML='<span class="muted">Não foi possível carregar contratos ATM.</span>'}
 }
 ['v30Contract','v30Horizon'].forEach(id=>document.getElementById(id)?.addEventListener('change',loadV30Contracts));
@@ -1169,7 +1152,7 @@ async function loadV30Contracts(){
 document.getElementById('v30ContractExport')?.addEventListener('click',()=>{
  const p=new URLSearchParams({company:document.getElementById('execCompany')?.value||'',line:document.getElementById('execLine')?.value||'',contract:document.getElementById('v30Contract')?.value||'',horizon:document.getElementById('v30Horizon')?.value||''}); location.href='/api/v30/atm-contracts/export?'+p.toString();
 });
-// V70.1: contratos ATM carregados sob demanda.
+setTimeout(loadV30Contracts,800);
 
 
 // V35 — visão geral operacional filtrável
@@ -1235,20 +1218,6 @@ function renderV35Overview(){
   const mixLegend=document.getElementById('v35MixLegend');
   if(mixLegend)mixLegend.innerHTML=mix.length?mix.map(x=>`<div><i style="background:${colors[x.type]}"></i><span>${esc(typeLabel(x.type))}</span><b>${fmt(x.value)}</b><small>${mixTotal?Math.round(x.value/mixTotal*100):0}%</small></div>`).join(''):'<div class="muted">Sem ativos no recorte.</div>';
 
-  // V71.2 HOTFIX1 — cards superiores sincronizados com o mesmo recorte da Execução consolidada / Mix do parque.
-  const upperGauge=document.getElementById('v491Gauge');
-  const upperGaugeValue=document.getElementById('v491GaugeValue');
-  if(upperGauge) upperGauge.style.setProperty('--pct',pct.toFixed(1));
-  if(upperGaugeValue) upperGaugeValue.textContent=pct.toFixed(1).replace('.',',')+'%';
-  const upperBars=document.getElementById('v491Bars3d');
-  if(upperBars){
-    const maxMix=Math.max(1,...mix.map(x=>Number(x.value||0)));
-    upperBars.innerHTML=mix.length?mix.map(x=>`<div class="v491Bar3dRow"><span>${esc(typeLabel(x.type))}</span><div><i style="width:${x.value?Math.max(3,Number(x.value||0)/maxMix*100):0}%;--bar:${colors[x.type]||'#2878d8'}"></i></div><b>${fmt(x.value)}</b></div>`).join(''):'<div class="muted">Sem ativos no recorte.</div>';
-  }
-  const upperDiv=document.getElementById('v526DivCount');
-  if(upperDiv) upperDiv.textContent=fmt(metrics.divergences||0);
-
-
   // Evolução por empresa — distribuição de status, não apenas um percentual isolado.
   const groups={};
   rows.forEach(x=>{const key=x.company||'Não informado';const g=groups[key]||(groups[key]={total:0,completed:0,progress:0,pending:0});g.total++;const st=String(x.survey_status||'').toUpperCase();if(st==='CONCLUIDA')g.completed++;else if(st==='EM ANDAMENTO')g.progress++;else g.pending++;});
@@ -1283,301 +1252,18 @@ document.querySelectorAll('.v35Status[data-status]').forEach(btn=>btn.addEventLi
 }));
 
 async function v39LoadTopdesk(){try{const r=await fetch('/api/topdesk/dashboard',{cache:'no-store'});if(!r.ok)return;const d=await r.json();if(!d.ok)return;const map={v39TdTotal:d.total,v39TdOpen:d.open,v39TdResolved:d.resolved,v39TdAssigned:d.assigned,v39TdUnassigned:d.unassigned};Object.entries(map).forEach(([id,v])=>{const e=document.getElementById(id);if(e)e.textContent=fmt(v)});const types=document.getElementById('v39TdTypes');if(types){const arr=Object.entries(d.by_type||{}).sort((a,b)=>b[1]-a[1]);const m=Math.max(1,...arr.map(x=>x[1]));types.innerHTML=arr.map(([k,v])=>`<div class="v25CompanyRow"><span>${esc(k)}</span><div class="v25CompanyTrack"><i style="width:${Math.round(v/m*100)}%"></i></div><b>${fmt(v)}</b></div>`).join('')||'<span class="muted">Sem chamados importados.</span>'}const loc=document.getElementById('v39TdLocations');if(loc){const arr=d.top_locations||[];const m=Math.max(1,...arr.map(x=>x.count));loc.innerHTML=arr.map(x=>`<div class="v25CompanyRow"><span>${esc(x.name)}</span><div class="v25CompanyTrack"><i style="width:${Math.round(x.count/m*100)}%"></i></div><b>${fmt(x.count)}</b></div>`).join('')||'<span class="muted">Sem localidades vinculadas.</span>'}}catch(e){console.warn('TopDesk dashboard',e)}}
-// V70.1: TopDesk carregado somente ao abrir a dashboard.
+document.addEventListener('DOMContentLoaded',v39LoadTopdesk);
 
-// V40.1.3 — Visões panorâmicas com status, progresso e filtros no Dashboard.
-let dashPanData=[];
-const dashPanEsc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
-// V59 — normalização compartilhada de status. Evita acoplamento Panorâmica <-> EMV.
-function v59NormStatus(value){
-  return String(value||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toUpperCase();
-}
+// V39.6 — consulta rápida de visões panorâmicas no Dashboard.
+let dashPanData=[];async function v396LoadPanorama(){try{const d=await fetch('/api/panoramas',{cache:'no-store'}).then(r=>r.json());dashPanData=d.locations||[];const fill=(id,vals,label)=>{const e=document.getElementById(id);if(!e)return;e.innerHTML=`<option value="">${label}</option>`+[...new Set(vals.filter(Boolean))].sort().map(v=>`<option>${esc(v)}</option>`).join('')};fill('dashPanCompany',dashPanData.map(x=>x.company),'Todas');fill('dashPanLine',dashPanData.map(x=>x.line),'Todas');v396PanLocations()}catch(e){console.warn(e)}}function v396PanLocations(){const c=document.getElementById('dashPanCompany')?.value||'',l=document.getElementById('dashPanLine')?.value||'',el=document.getElementById('dashPanLocation');if(!el)return;const a=dashPanData.filter(x=>(!c||x.company===c)&&(!l||x.line===l));el.innerHTML='<option value="">Selecione</option>'+a.map(x=>`<option value="${x.id}">${esc(x.location)} · ${esc(x.status)}</option>`).join('');document.getElementById('dashPanGallery').innerHTML='<p class="muted">Selecione uma localidade.</p>'}function v396ShowPan(){const id=+document.getElementById('dashPanLocation').value,x=dashPanData.find(a=>a.id===id),g=document.getElementById('dashPanGallery');if(!x||!g)return;g.innerHTML=x.points.flatMap(p=>p.photos.map(ph=>`<figure><a href="${esc(ph.url)}" target="_blank"><img loading="lazy" src="${esc(ph.url)}"></a><figcaption><b>${esc(p.name)}</b><br>${esc(ph.uploaded_by)} · ${new Date(ph.created_at).toLocaleString('pt-BR')}</figcaption></figure>`)).join('')||'<p class="muted">Nenhuma foto nesta localidade.</p>'}document.getElementById('dashPanCompany')?.addEventListener('change',v396PanLocations);document.getElementById('dashPanLine')?.addEventListener('change',v396PanLocations);document.getElementById('dashPanLocation')?.addEventListener('change',v396ShowPan);v396LoadPanorama();
 
-function dashPanFiltered(includeStatus=true){
-  const c=document.getElementById('dashPanCompany')?.value||'';
-  const l=document.getElementById('dashPanLine')?.value||'';
-  const st=document.getElementById('dashPanStatus')?.value||'';
-  const gc=document.getElementById('execCompany')?.value||'',gl=document.getElementById('execLine')?.value||'',gs=document.getElementById('execStatus')?.value||'';return dashPanData.filter(x=>(!gc||x.company===gc)&&(!gl||x.line===gl)&&(!c||x.company===c)&&(!l||x.line===l)&&(!includeStatus||!st||x.status===st)&&(!gs||String(x.status||'').toUpperCase().replace('CONCLUÍDA','CONCLUIDA')===gs));
-}
-function dashPanFill(id,vals,label){const e=document.getElementById(id);if(!e)return;const cur=e.value;e.innerHTML=`<option value="">${label}</option>`+[...new Set(vals.filter(Boolean))].sort((a,b)=>String(a).localeCompare(String(b),'pt-BR')).map(v=>`<option value="${dashPanEsc(v)}">${dashPanEsc(v)}</option>`).join('');if([...e.options].some(o=>o.value===cur))e.value=cur}
-function dashPanRenderSummary(){
-  const a=dashPanFiltered(true), total=a.length;
-  const done=a.filter(x=>v59NormStatus(x.status)==='CONCLUIDA').length;
-  const progress=a.filter(x=>v59NormStatus(x.status)==='EM ANDAMENTO').length;
-  const pending=a.filter(x=>v59NormStatus(x.status)==='PENDENTE').length;
-  const photos=a.reduce((n,x)=>n+Number(x.photo_count||0),0);
-  const pct=n=>total?Math.round(n*1000/total)/10:0;
-  const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v};
-  set('dashPanTotal',total);set('dashPanPending',pending);set('dashPanInProgress',progress);set('dashPanDone',done);set('dashPanPhotos',photos);
-  set('dashPanPendingPct',pct(pending)+'%');set('dashPanInProgressPct',pct(progress)+'%');set('dashPanDonePct',pct(done)+'%');set('dashPanPct',pct(done)+'%');
-  set('dashPanLegendDone',done);set('dashPanLegendProgress',progress);set('dashPanLegendPending',pending);
-  set('dashPanProgressText',`${done} de ${total} localidades concluídas · ${photos} foto(s) registradas.`);
-  const donut=document.getElementById('dashPanDonut');if(donut){const d=pct(done),p=pct(progress);donut.style.background=`conic-gradient(#20945b 0 ${d}%, #d58a12 ${d}% ${Math.min(100,d+p)}%, #c93c3c ${Math.min(100,d+p)}% 100%)`}
-  const bd=document.getElementById('dashPanBarDone'),bp=document.getElementById('dashPanBarProgress'),bn=document.getElementById('dashPanBarPending');
-  if(bd)bd.style.width=pct(done)+'%';if(bp)bp.style.width=pct(progress)+'%';if(bn)bn.style.width=pct(pending)+'%';
-}
-function dashPanLocations(){const gc=document.getElementById('execCompany')?.value||'',gl=document.getElementById('execLine')?.value||'';if(gc&&document.getElementById('dashPanCompany'))document.getElementById('dashPanCompany').value=gc;if(gl&&document.getElementById('dashPanLine'))document.getElementById('dashPanLine').value=gl;
-  const a=dashPanFiltered(true),el=document.getElementById('dashPanLocation');if(!el)return;
-  const cur=el.value;el.innerHTML='<option value="">Selecione</option>'+a.map(x=>`<option value="${x.id}">${dashPanEsc(x.location)} · ${dashPanEsc(x.status)}</option>`).join('');if([...el.options].some(o=>o.value===cur))el.value=cur;
-  if(!el.value){const g=document.getElementById('dashPanGallery');if(g)g.innerHTML='<p class="muted">Selecione uma localidade para visualizar as fotos.</p>'}
-  dashPanRenderSummary();
-}
-function dashPanShow(){const id=+document.getElementById('dashPanLocation')?.value,x=dashPanData.find(a=>a.id===id),g=document.getElementById('dashPanGallery');if(!g)return;if(!x){g.innerHTML='<p class="muted">Selecione uma localidade para visualizar as fotos.</p>';return}const photos=(x.points||[]).flatMap(p=>(p.photos||[]).map(ph=>`<figure><a href="${dashPanEsc(ph.url)}" target="_blank"><img loading="lazy" decoding="async" src="${dashPanEsc(ph.thumb_url||ph.url)}"></a><figcaption><b>${dashPanEsc(p.name)}</b><br>${dashPanEsc(ph.uploaded_by)} · ${new Date(ph.created_at).toLocaleString('pt-BR')}</figcaption></figure>`));g.innerHTML=photos.join('')||`<div class="dashPanEmpty"><b>${dashPanEsc(x.location)}</b><span>${dashPanEsc(x.status)} · nenhuma foto registrada.</span></div>`}
-async function dashPanLoad(){try{const r=await fetch('/api/panoramas',{cache:'no-store'});if(!r.ok)throw new Error('HTTP '+r.status);const d=await r.json();dashPanData=d.locations||[];dashPanFill('dashPanCompany',dashPanData.map(x=>x.company),'Todas');dashPanFill('dashPanLine',dashPanData.map(x=>x.line),'Todas');dashPanLocations()}catch(e){console.warn('panorama dashboard',e);const g=document.getElementById('dashPanGallery');if(g)g.innerHTML='<p class="muted">Não foi possível carregar o progresso das visões panorâmicas.</p>'}}
-document.getElementById('dashPanCompany')?.addEventListener('change',()=>{const c=document.getElementById('dashPanCompany')?.value||'';dashPanFill('dashPanLine',dashPanData.filter(x=>!c||x.company===c).map(x=>x.line),'Todas');dashPanLocations()});
-document.getElementById('dashPanLine')?.addEventListener('change',dashPanLocations);document.getElementById('dashPanStatus')?.addEventListener('change',dashPanLocations);document.getElementById('dashPanLocation')?.addEventListener('change',dashPanShow);if(v23ActiveView==='panorama')dashPanLoad();
-
+/* V39.7 · Dashboard Troca de Chips */
 let chipDashData={locations:[],technicians:[],summary:{}};
 function chipDashEsc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function chipDashOperation(company){const t=String(company||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase();if(t.includes('CPTM'))return 'CPTM';if(t.includes('METRO'))return 'Metrô';if(t.includes('VIA MOBILIDADE'))return 'Via Mobilidade';if(t.includes('VIAQUATRO')||t.includes('VIA QUATRO'))return 'ViaQuatro';return company||'Outros'}
 function chipDashFill(id,vals,label){const e=document.getElementById(id);if(!e)return;const cur=e.value;e.innerHTML=`<option value="">${label}</option>`+[...new Set(vals.filter(Boolean))].sort().map(v=>`<option>${chipDashEsc(v)}</option>`).join('');if([...e.options].some(o=>o.value===cur))e.value=cur}
-function v413Norm(s){return String(s??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/\b(LINHA|METRO|CPTM|VIA|MOBILIDADE|QUATRO)\b/g,' ').replace(/[^A-Z0-9]+/g,' ').replace(/\s+/g,' ').trim()}
-function v413LooseMatch(a,b){if(!a||!b)return true;const A=v413Norm(a),B=v413Norm(b);return A===B||A.includes(B)||B.includes(A)}
-function chipDashFilteredRows(){
-  const equipment=document.getElementById('chipDashEquipment')?.value||'',op=document.getElementById('chipDashOperation')?.value||'',c=document.getElementById('chipDashCompany')?.value||'',l=document.getElementById('chipDashLine')?.value||'',loc=document.getElementById('chipDashLocation')?.value||'',status=document.getElementById('chipDashStatus')?.value||'',test=document.getElementById('chipDashTestResult')?.value||'';
-  const gc=document.getElementById('execCompany')?.value||'',gl=document.getElementById('execLine')?.value||'',gs=document.getElementById('execStatus')?.value||'',gt=document.getElementById('execType')?.value||'';
-  const effectiveEquipment=equipment||(gt==='VALIDADOR'||gt==='TDI'?gt:'');
-  const base=(chipDashData.locations||[]).filter(x=>(!op||chipDashOperation(x.company)===op)&&(!gc||v413LooseMatch(x.company,gc))&&(!gl||v413LooseMatch(x.line,gl)));
-  let rows=base.filter(x=>(!c||x.company===c)&&(!l||x.line===l)&&(!loc||x.location===loc)).map(x=>{
-    let validators=(x.validators||[]).filter(v=>!effectiveEquipment||v.equipment_type===effectiveEquipment);
-    const effectiveStatus=status||(gs==='CONCLUIDA'?'CONCLUÍDA':gs);
-    if(effectiveStatus) validators=validators.filter(v=>effectiveStatus==='SEM REGISTRO'?!v.swap_id:v59NormStatus(v.status)===v59NormStatus(effectiveStatus));
-    if(test) validators=validators.filter(v=>(v.test_result||'SEM_RESULTADO')===test);
-    const concluded=validators.filter(v=>v59NormStatus(v.status)==='CONCLUIDA').length;
-    const inProgress=validators.filter(v=>v59NormStatus(v.status)==='EM ANDAMENTO').length;
-    const pending=validators.filter(v=>v59NormStatus(v.status)==='PENDENTE').length;
-    return {...x,validators,total:validators.length,concluded,in_progress:inProgress,pending,percent:validators.length?Math.round(concluded/validators.length*1000)/10:0};
-  }).filter(x=>x.total);
-  return {equipment,op,c,l,loc,status,test,base,rows}
-}
-function chipDashRender(){const f=chipDashFilteredRows(),{c,l,base,rows}=f;chipDashFill('chipDashCompany',base.map(x=>x.company),'Todas');chipDashFill('chipDashLine',base.filter(x=>!c||x.company===c).map(x=>x.line),'Todas');chipDashFill('chipDashLocation',base.filter(x=>(!c||x.company===c)&&(!l||x.line===l)).map(x=>x.location),'Todas');const total=rows.reduce((a,x)=>a+x.total,0),done=rows.reduce((a,x)=>a+x.concluded,0),prog=rows.reduce((a,x)=>a+x.in_progress,0),pend=rows.reduce((a,x)=>a+x.pending,0),pct=total?Math.round(done/total*1000)/10:0;[['chipDashTotal',total],['chipDashDone',done],['chipDashProgressN',prog],['chipDashPending',pend],['chipDashPct',pct+'%'],['chipLegendDone',done],['chipLegendProgress',prog],['chipLegendPending',pend],['chipDonutPct',pct+'%'],['chipDonutTotal',total+' total']].forEach(([i,v])=>{const e=document.getElementById(i);if(e)e.textContent=v});const bar=document.getElementById('chipDashBar');if(bar)bar.style.width=Math.min(pct,100)+'%';[['chipChartDone',done],['chipChartProgress',prog],['chipChartPending',pend]].forEach(([id,n])=>{const e=document.getElementById(id);if(e)e.style.width=(total?(n/total*100):0)+'%'});const donut=document.getElementById('chipDashDonut');if(donut){const d=total?done/total*100:0,p=total?prog/total*100:0;donut.style.background=`conic-gradient(#16824b 0 ${d}%, #d98b00 ${d}% ${d+p}%, #c93b3b ${d+p}% 100%)`}const el=document.getElementById('chipDashLocations');if(el)el.innerHTML=`<table class="chipDashTable"><thead><tr><th>Localidade</th><th>Progresso</th><th>Concl.</th><th>And.</th><th>Pend.</th></tr></thead><tbody>${[...rows].sort((a,b)=>a.percent-b.percent).map(x=>`<tr><td>${chipDashEsc(x.line)} · ${chipDashEsc(x.location)}</td><td><b>${x.percent}%</b></td><td>${x.concluded}/${x.total}</td><td>${x.in_progress}</td><td>${x.pending}</td></tr>`).join('')||'<tr><td colspan="5">Sem dados.</td></tr>'}</tbody></table>`;const oe=document.getElementById('chipDashOperations');if(oe){const ops={};(chipDashData.locations||[]).forEach(x=>{const k=chipDashOperation(x.company),o=ops[k]??={total:0,done:0,prog:0,pend:0};o.total+=x.total;o.done+=x.concluded;o.prog+=x.in_progress;o.pend+=x.pending});oe.innerHTML=Object.entries(ops).sort((a,b)=>(b[1].done/(b[1].total||1))-(a[1].done/(a[1].total||1))).map(([k,o])=>{const pc=o.total?Math.round(o.done/o.total*1000)/10:0;return `<div class="chipOpRow"><b>${chipDashEsc(k)}</b><div class="chipOpTrack"><i style="width:${pc}%"></i></div><span>${pc}% · ${o.done}/${o.total}</span></div>`}).join('')}const tech={};rows.forEach(x=>(x.validators||[]).forEach(v=>{if(!v.technician)return;const t=tech[v.technician]??={name:v.technician,total:0,done:0};t.total++;if(v.status==='CONCLUÍDA')t.done++}));const te=document.getElementById('chipDashTechs');if(te)te.innerHTML=`<table class="chipDashTable"><thead><tr><th>Técnico</th><th>Concluídas</th><th>Atividades</th></tr></thead><tbody>${Object.values(tech).sort((a,b)=>b.done-a.done).map(t=>`<tr><td>${chipDashEsc(t.name)}</td><td><b>${t.done}</b></td><td>${t.total}</td></tr>`).join('')||'<tr><td colspan="3">Sem atividade registrada.</td></tr>'}</tbody></table>`;chipDashRenderTestResults(rows)}
-function chipDashRenderTestResults(rows){const labels={TESTADO_OK:'Testado - OK',TESTADO_COM_DEFEITO:'Testado - com defeito',NAO_FOI_POSSIVEL_TESTAR:'Não foi possível testar',EQUIPAMENTO_INOPERANTE:'Equipamento inoperante',OUTRO:'Outro',SEM_RESULTADO:'Sem resultado'};const counts={};let total=0,pending=[];rows.forEach(x=>(x.validators||[]).forEach(v=>{if(!v.swap_id)return;const r=v.test_result||'SEM_RESULTADO';counts[r]=(counts[r]||0)+1;total++;if(r!=='TESTADO_OK')pending.push({x,v,r})}));const ok=counts.TESTADO_OK||0;const okEl=document.getElementById('chipTestOk'),pe=document.getElementById('chipTestPending');if(okEl)okEl.textContent=ok;if(pe)pe.textContent=pending.length;const chart=document.getElementById('chipTestResultChart');if(chart)chart.innerHTML=Object.entries(labels).map(([k,label])=>{const n=counts[k]||0,pct=total?Math.round(n/total*100):0;return `<div class="chipResultRow"><span>${chipDashEsc(label)}</span><div><i style="width:${pct}%"></i></div><b>${n}</b></div>`}).join('');const list=document.getElementById('chipTechnicalPendingList');if(list)list.innerHTML=pending.length?`<table class="chipDashTable"><thead><tr><th>Localidade</th><th>Terminal</th><th>Resultado</th><th>Técnico</th></tr></thead><tbody>${pending.slice(0,50).map(({x,v,r})=>`<tr><td>${chipDashEsc(x.line)} · ${chipDashEsc(x.location)}</td><td>${chipDashEsc(v.label||v.base_asset_id||'')}</td><td>${chipDashEsc(labels[r]||r)}</td><td>${chipDashEsc(v.technician||'—')}</td></tr>`).join('')}</tbody></table>`:'<p class="muted">Nenhuma pendência técnica registrada.</p>'}
+function chipDashFilteredRows(){const equipment=document.getElementById('chipDashEquipment')?.value||'',op=document.getElementById('chipDashOperation')?.value||'',c=document.getElementById('chipDashCompany')?.value||'',l=document.getElementById('chipDashLine')?.value||'',loc=document.getElementById('chipDashLocation')?.value||'',status=document.getElementById('chipDashStatus')?.value||'';const all=(chipDashData.locations||[]).map(x=>{const validators=(x.validators||[]).filter(v=>!equipment||v.equipment_type===equipment);const concluded=validators.filter(v=>v.status==='CONCLUÍDA').length,in_progress=validators.filter(v=>v.status==='EM ANDAMENTO').length,pending=validators.length-concluded-in_progress;return {...x,validators,total:validators.length,concluded,in_progress,pending,percent:validators.length?Math.round(concluded/validators.length*1000)/10:0}}).filter(x=>x.total);const base=all.filter(x=>!op||chipDashOperation(x.company)===op);let rows=base.filter(x=>(!c||x.company===c)&&(!l||x.line===l)&&(!loc||x.location===loc));if(status)rows=rows.map(x=>{const validators=(x.validators||[]).filter(v=>(v.status||'PENDENTE')===status);const concluded=validators.filter(v=>v.status==='CONCLUÍDA').length,in_progress=validators.filter(v=>v.status==='EM ANDAMENTO').length,pending=validators.length-concluded-in_progress;return {...x,validators,total:validators.length,concluded,in_progress,pending,percent:validators.length?Math.round(concluded/validators.length*1000)/10:0}}).filter(x=>x.total);return {equipment,op,c,l,loc,status,base,rows}}
+function chipDashRender(){const f=chipDashFilteredRows(),{c,l,base,rows}=f;chipDashFill('chipDashCompany',base.map(x=>x.company),'Todas');chipDashFill('chipDashLine',base.filter(x=>!c||x.company===c).map(x=>x.line),'Todas');chipDashFill('chipDashLocation',base.filter(x=>(!c||x.company===c)&&(!l||x.line===l)).map(x=>x.location),'Todas');const total=rows.reduce((a,x)=>a+x.total,0),done=rows.reduce((a,x)=>a+x.concluded,0),prog=rows.reduce((a,x)=>a+x.in_progress,0),pend=rows.reduce((a,x)=>a+x.pending,0),pct=total?Math.round(done/total*1000)/10:0;[['chipDashTotal',total],['chipDashDone',done],['chipDashProgressN',prog],['chipDashPending',pend],['chipDashPct',pct+'%'],['chipLegendDone',done],['chipLegendProgress',prog],['chipLegendPending',pend],['chipDonutPct',pct+'%'],['chipDonutTotal',total+' total']].forEach(([i,v])=>{const e=document.getElementById(i);if(e)e.textContent=v});const bar=document.getElementById('chipDashBar');if(bar)bar.style.width=Math.min(pct,100)+'%';[['chipChartDone',done],['chipChartProgress',prog],['chipChartPending',pend]].forEach(([id,n])=>{const e=document.getElementById(id);if(e)e.style.width=(total?(n/total*100):0)+'%'});const donut=document.getElementById('chipDashDonut');if(donut){const d=total?done/total*100:0,p=total?prog/total*100:0;donut.style.background=`conic-gradient(#16824b 0 ${d}%, #d98b00 ${d}% ${d+p}%, #c93b3b ${d+p}% 100%)`}const el=document.getElementById('chipDashLocations');if(el)el.innerHTML=`<table class="chipDashTable"><thead><tr><th>Localidade</th><th>Progresso</th><th>Concl.</th><th>And.</th><th>Pend.</th></tr></thead><tbody>${[...rows].sort((a,b)=>a.percent-b.percent).map(x=>`<tr><td>${chipDashEsc(x.line)} · ${chipDashEsc(x.location)}</td><td><b>${x.percent}%</b></td><td>${x.concluded}/${x.total}</td><td>${x.in_progress}</td><td>${x.pending}</td></tr>`).join('')||'<tr><td colspan="5">Sem dados.</td></tr>'}</tbody></table>`;const tech={};rows.forEach(x=>(x.validators||[]).forEach(v=>{if(!v.technician)return;const t=tech[v.technician]??={name:v.technician,total:0,done:0};t.total++;if(v.status==='CONCLUÍDA')t.done++}));const te=document.getElementById('chipDashTechs');if(te)te.innerHTML=`<table class="chipDashTable"><thead><tr><th>Técnico</th><th>Concluídas</th><th>Atividades</th></tr></thead><tbody>${Object.values(tech).sort((a,b)=>b.done-a.done).map(t=>`<tr><td>${chipDashEsc(t.name)}</td><td><b>${t.done}</b></td><td>${t.total}</td></tr>`).join('')||'<tr><td colspan="3">Sem atividade registrada.</td></tr>'}</tbody></table>`}
 function chipDashExportCsv(){const {rows,op,c,l,loc}=chipDashFilteredRows();const total=rows.reduce((a,x)=>a+x.total,0),done=rows.reduce((a,x)=>a+x.concluded,0),prog=rows.reduce((a,x)=>a+x.in_progress,0),pend=rows.reduce((a,x)=>a+x.pending,0),pct=total?Math.round(done/total*1000)/10:0;const q=v=>'"'+String(v??'').replace(/"/g,'""')+'"';const lines=[['RELATÓRIO TROCA DE CHIPS'],['Operação',op||'Todos'],['Empresa',c||'Todas'],['Linha',l||'Todas'],['Localidade',loc||'Todas'],[],['RESUMO'],['Total previsto','Concluídos','Em andamento','Pendentes','Progresso %'],[total,done,prog,pend,pct],[],['DETALHAMENTO'],['Operação','Empresa','Linha','Localidade','Terminal / ativo','Modelo','Status','Técnico']];rows.forEach(x=>(x.validators||[]).forEach(v=>lines.push([chipDashOperation(x.company),x.company,x.line,x.location,v.label||v.base_asset_id||'',v.model||'',v.status||'PENDENTE',v.technician||''])));const csv='\ufeff'+lines.map(r=>r.map(q).join(';')).join('\r\n');const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='troca_chips_'+new Date().toISOString().slice(0,10)+'.csv';document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url)}
 async function loadChipDashboard(){try{const j=await fetch('/api/chip-swaps/dashboard',{cache:'no-store'}).then(r=>r.json());if(!j.ok)return;chipDashData=j;chipDashFill('chipDashOperation',j.locations.map(x=>chipDashOperation(x.company)),'Todos');chipDashFill('chipDashCompany',j.locations.map(x=>x.company),'Todas');chipDashFill('chipDashLine',j.locations.map(x=>x.line),'Todas');chipDashFill('chipDashLocation',j.locations.map(x=>x.location),'Todas');chipDashRender()}catch(e){console.warn('chip dashboard',e)}}
-['chipDashEquipment','chipDashOperation','chipDashCompany','chipDashLine','chipDashLocation','chipDashStatus','chipDashTestResult'].forEach(id=>document.getElementById(id)?.addEventListener('change',chipDashRender));document.getElementById('chipDashExport')?.addEventListener('click',()=>{const f=chipDashFilteredRows();const p=new URLSearchParams();if(f.equipment)p.set('equipment',f.equipment);if(f.op)p.set('operation',f.op);if(f.c)p.set('company',f.c);if(f.l)p.set('line',f.l);if(f.loc)p.set('location',f.loc);if(f.status)p.set('status',f.status);if(f.test)p.set('test_result',f.test);window.location.href='/api/chip-swaps/export.xlsx?'+p.toString()});if(v23ActiveView==='chips')loadChipDashboard();
-
-document.getElementById('chipDashExportPending')?.addEventListener('click',()=>{const f=chipDashFilteredRows();const p=new URLSearchParams({pending_only:'1'});if(f.equipment)p.set('equipment',f.equipment);if(f.op)p.set('operation',f.op);if(f.c)p.set('company',f.c);if(f.l)p.set('line',f.l);if(f.loc)p.set('location',f.loc);if(f.status)p.set('status',f.status);if(f.test)p.set('test_result',f.test);window.location.href='/api/chip-swaps/export.xlsx?'+p.toString()});
-
-// V58 — Dashboard EMV: uma única implementação, aderente ao contrato real {ok, rows[]}.
-let emvDashRows=[];
-const emvNorm=v=>String(v??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toUpperCase().replace(/_/g,' ');
-function emvFill(id,vals,label){const e=document.getElementById(id);if(!e)return;const cur=e.value;e.innerHTML=`<option value="">${label}</option>`+[...new Set((vals||[]).filter(Boolean))].sort((a,b)=>String(a).localeCompare(String(b),'pt-BR')).map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('');if([...e.options].some(o=>o.value===cur))e.value=cur}
-function emvDashFiltered(){const c=document.getElementById('emvDashCompany')?.value||'',l=document.getElementById('emvDashLine')?.value||'',station=document.getElementById('emvDashStation')?.value||'',st=document.getElementById('emvDashStatus')?.value||'',result=document.getElementById('emvDashResult')?.value||'';return emvDashRows.filter(x=>(!c||x.company===c)&&(!l||x.line===l)&&(!station||(x.station_name||x.station)===station)&&(!st||emvNorm(x.status)===emvNorm(st))&&(!result||String(x.test_result||'')===result))}
-function renderEmvDashboard(){if(!document.getElementById('emvDashPanel'))return;const c=document.getElementById('emvDashCompany')?.value||'',l=document.getElementById('emvDashLine')?.value||'';emvFill('emvDashCompany',emvDashRows.map(x=>x.company),'Todas');emvFill('emvDashLine',emvDashRows.filter(x=>!c||x.company===c).map(x=>x.line),'Todas');emvFill('emvDashStation',emvDashRows.filter(x=>(!c||x.company===c)&&(!l||x.line===l)).map(x=>x.station_name||x.station),'Todas');const rows=emvDashFiltered(),total=rows.length,done=rows.filter(x=>emvNorm(x.status)==='CONCLUIDA').length,prog=rows.filter(x=>emvNorm(x.status)==='EM ANDAMENTO').length,pend=Math.max(0,total-done-prog),pct=total?done/total*100:0;const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v};[['emvDashTotal',total],['emvDashDone',done],['emvDashProgressN',prog],['emvDashPending',pend],['emvLegendDone',done],['emvLegendProgress',prog],['emvLegendPending',pend]].forEach(([id,v])=>set(id,Number(v).toLocaleString('pt-BR')));set('emvDashPct',pct.toFixed(1).replace('.',',')+'%');set('emvDonutPct',Math.round(pct)+'%');set('emvDonutTotal',total.toLocaleString('pt-BR')+' total');const bar=document.getElementById('emvDashBar');if(bar)bar.style.width=pct+'%';const donut=document.getElementById('emvDashDonut');if(donut)donut.style.background=`conic-gradient(#22a66a 0 ${pct}%,#e7edf4 ${pct}% 100%)`;[['emvChartDone',done],['emvChartProgress',prog],['emvChartPending',pend]].forEach(([id,n])=>{const e=document.getElementById(id);if(e)e.style.width=(total?n/total*100:0)+'%'});const group=(fn,completedOnly=false)=>{const m={};rows.filter(x=>!completedOnly||emvNorm(x.status)==='CONCLUIDA').forEach(x=>{const k=fn(x)||'Não informado';m[k]=(m[k]||0)+1});return Object.entries(m).sort((a,b)=>b[1]-a[1]).slice(0,20)};const stationRows=group(x=>x.station_name||x.station);const stationMax=Math.max(1,...stationRows.map(x=>x[1]));const se=document.getElementById('emvDashStations');if(se)se.innerHTML=stationRows.map(([k,v])=>`<div class="emvEvolutionRow"><span>${esc(k)}</span><div><i style="width:${v/stationMax*100}%"></i></div><b>${v}</b></div>`).join('')||'<p class="muted">Sem dados.</p>';const techRows=group(x=>x.completed_by||x.technician,true);const techMax=Math.max(1,...techRows.map(x=>x[1]));const te=document.getElementById('emvDashTechs');if(te)te.innerHTML=techRows.map(([k,v])=>`<div class="emvEvolutionRow"><span>${esc(k)}</span><div><i style="width:${v/techMax*100}%"></i></div><b>${v}</b></div>`).join('')||'<p class="muted">Sem atividade registrada.</p>';const link=document.querySelector('#emvDashPanel a[href^="/api/emv-chip-swaps/export.xlsx"]');if(link){const p=new URLSearchParams();if(c)p.set('company',c);if(l)p.set('line',l);const station=document.getElementById('emvDashStation')?.value||'',st=document.getElementById('emvDashStatus')?.value||'',res=document.getElementById('emvDashResult')?.value||'';if(station)p.set('station',station);if(st)p.set('status',st==='CONCLUIDA'?'CONCLUÍDA':st);if(res)p.set('test_result',res);link.href='/api/emv-chip-swaps/export.xlsx?'+p.toString()}}
-async function loadEmvDashboard(){if(!document.getElementById('emvDashPanel'))return;try{const r=await fetch('/api/emv-chip-swaps?compact=1&include_photos=0',{cache:'no-store',headers:{Accept:'application/json'}});if(!r.ok)throw new Error('HTTP '+r.status);const j=await r.json();emvDashRows=Array.isArray(j)?j:(Array.isArray(j?.rows)?j.rows:[]);console.info('[V59] EMV API:',emvDashRows.length,'registro(s) recebidos');renderEmvDashboard()}catch(e){console.error('[V59] EMV dashboard',e)}}
-['emvDashCompany','emvDashLine','emvDashStation','emvDashStatus','emvDashResult'] .forEach(id=>document.getElementById(id)?.addEventListener('change',renderEmvDashboard));if(v23ActiveView==='emv')loadEmvDashboard();
-
-// V43.0 — Dashboard 2.0 / Inventário ATM 360.
-let atmDashData=null;
-const atmPalette=['#1d4ed8','#0891b2','#7c3aed','#059669','#d97706','#dc2626','#475569'];
-function atmEsc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-function atmParams(){const p=new URLSearchParams();const pageQ=new URLSearchParams(window.location.search);if(pageQ.get('teamviewer_missing')==='1')p.set('teamviewer_missing','1');[['company','atmFCompany'],['line','atmFLine'],['locality','atmFLocation'],['model','atmFModel'],['contract','atmFContract'],['ownership','atmFOwnership'],['status','atmFStatus']].forEach(([k,id])=>{const e=document.getElementById(id);if(e?.value)p.set(k,e.value)});return p}
-function atmFill(id,values,label){const e=document.getElementById(id);if(!e)return;const old=e.value;e.innerHTML=`<option value="">${label}</option>`+(values||[]).map(v=>`<option value="${atmEsc(v)}">${atmEsc(v)}</option>`).join('');if([...e.options].some(o=>o.value===old))e.value=old}
-function atmSetFilter(id,value){const f=document.getElementById(id);if(!f)return; if(![...f.options].some(o=>o.value===value))f.add(new Option(value,value));f.value=value;loadAtmDashboard(false)}
-function atmBars(id,obj,filterId,limit=0){const e=document.getElementById(id);if(!e)return;let a=Object.entries(obj||{}).sort((x,y)=>y[1]-x[1]);if(limit)a=a.slice(0,limit);const m=Math.max(1,...a.map(x=>x[1]));e.innerHTML=a.map(([k,v],i)=>`<button class="barRow v424ClickableBar" data-value="${atmEsc(k)}"><span title="${atmEsc(k)}">${atmEsc(k)}</span><i><b style="width:${v/m*100}%;background:${atmPalette[i%atmPalette.length]}"></b></i><strong>${v}</strong></button>`).join('')||'<p class="muted">Sem dados.</p>';e.querySelectorAll('button').forEach(b=>b.onclick=()=>atmSetFilter(filterId,b.dataset.value))}
-function atmColumns(obj){const e=document.getElementById('atmColumnOperator');if(!e)return;const a=Object.entries(obj||{}).sort((x,y)=>y[1]-x[1]).slice(0,10),m=Math.max(1,...a.map(x=>x[1]));e.innerHTML=a.map(([k,v],i)=>`<button class="v430Column" data-value="${atmEsc(k)}"><b>${v}</b><i style="height:${Math.max(8,v/m*82)}%;--bar:${atmPalette[i%atmPalette.length]}"></i><span title="${atmEsc(k)}">${atmEsc(k)}</span></button>`).join('');e.querySelectorAll('button').forEach(b=>b.onclick=()=>atmSetFilter('atmFCompany',b.dataset.value))}
-function atmDonut(obj,id,legendId,filterId){const entries=Object.entries(obj||{}).sort((a,b)=>b[1]-a[1]),total=entries.reduce((a,x)=>a+x[1],0)||1;let at=0,parts=[];entries.slice(0,6).forEach(([k,v],i)=>{const n=at+v/total*100;parts.push(`${atmPalette[i%atmPalette.length]} ${at}% ${n}%`);at=n});if(at<100)parts.push(`#e8eef5 ${at}% 100%`);const d=document.getElementById(id);if(d)d.style.background=`conic-gradient(${parts.join(',')})`;const l=document.getElementById(legendId);if(l){l.innerHTML=entries.slice(0,6).map(([k,v],i)=>`<button data-value="${atmEsc(k)}"><i style="background:${atmPalette[i%atmPalette.length]}"></i>${atmEsc(k)} <b>${v}</b></button>`).join('');l.querySelectorAll('button').forEach(b=>b.onclick=()=>atmSetFilter(filterId,b.dataset.value))}}
-function atmHeatmap(obj){const e=document.getElementById('atmLineHeatmap');if(!e)return;const a=Object.entries(obj||{}).sort((x,y)=>y[1]-x[1]).slice(0,12),m=Math.max(1,...a.map(x=>x[1]));e.innerHTML=a.map(([k,v],i)=>`<button class="v430Heat" data-value="${atmEsc(k)}" style="--intensity:${20+Math.round(v/m*60)}%;--heat:${atmPalette[i%4]}"><b>${v}</b><span>${atmEsc(k)}</span></button>`).join('');e.querySelectorAll('button').forEach(b=>b.onclick=()=>atmSetFilter('atmFLine',b.dataset.value))}
-function atmContracts(d){const e=document.getElementById('atmContractStack');if(!e)return;const rows=d.assets||[],map={};rows.forEach(x=>{const k=x.contract||'SEM CONTRATO';map[k]??={total:0,leasing:0};map[k].total++;if(String(x.ownership).toUpperCase()==='LEASING')map[k].leasing++});const a=Object.entries(map).sort((x,y)=>y[1].total-x[1].total).slice(0,10),m=Math.max(1,...a.map(x=>x[1].total));e.innerHTML=a.map(([k,v])=>`<button class="v430StackRow" data-value="${atmEsc(k)}"><div class="v430StackLabel"><span>${atmEsc(k)}</span><b>${v.total}</b></div><div class="v430StackBar" style="width:${Math.max(18,v.total/m*100)}%"><i style="width:${(v.total-v.leasing)/v.total*100}%"></i><i style="width:${v.leasing/v.total*100}%"></i></div></button>`).join('');e.querySelectorAll('button').forEach(b=>b.onclick=()=>atmSetFilter('atmFContract',b.dataset.value))}
-function atmDrill(d){const e=document.getElementById('atmDrillCards');if(!e)return;const loc=Object.entries(d.locations||{}).sort((a,b)=>b[1]-a[1]).slice(0,12);e.innerHTML=loc.map(([k,v])=>`<button data-value="${atmEsc(k)}"><small>LOCALIDADE</small><b>${v} ATM${v!==1?'s':''}</b><span>${atmEsc(k)}</span></button>`).join('');e.querySelectorAll('button').forEach(b=>b.onclick=()=>atmSetFilter('atmFLocation',b.dataset.value))}
-async function loadAtmDashboard(fillOptions=true){
-  const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v};
-  try{
-    const r=await fetch('/api/dashboard/inventory-atm?'+atmParams(),{cache:'no-store',headers:{'Accept':'application/json'}});
-    if(!r.ok)throw new Error(`HTTP ${r.status}`);
-    const d=await r.json();
-    if(!d.ok)throw new Error(d.error||'API ATM retornou erro');
-    atmDashData=d;
-    const opts=d.options||{};
-    if(fillOptions){
-      atmFill('atmFCompany',opts.companies||[],'Todas operadoras');
-      atmFill('atmFLine',opts.lines||[],'Todas linhas');
-      atmFill('atmFLocation',opts.localities||[],'Todas localidades');
-      atmFill('atmFModel',opts.models||[],'Todos modelos');
-      atmFill('atmFContract',opts.contracts||[],'Todos contratos');
-      atmFill('atmFOwnership',opts.ownership||[],'Todo tipo de posse');
-      atmFill('atmFStatus',opts.statuses||[],'Todos status');
-    }
-    const assets=Array.isArray(d.assets)?d.assets:[];
-    const total=Number.isFinite(Number(d.total))?Number(d.total):assets.length;
-    const allocated=Number.isFinite(Number(d.allocated))?Number(d.allocated):assets.filter(x=>!x.stock).length;
-    const stock=Number.isFinite(Number(d.stock))?Number(d.stock):assets.filter(x=>x.stock).length;
-    set('atmKTotal',total);set('atmKAllocated',allocated);set('atmKStock',stock);
-    set('atmKCptmStations',d.cptm_stations||0);set('atmKMetroStations',d.metro_stations||0);set('atmKTeamviewer',d.teamviewer_count||0);
-    set('atmRowsTag',`${total} ATMs · API ${d.release||'—'}`);set('atmDonutTotal',total);set('atmAllocationA',allocated);set('atmAllocationS',stock);
-    const pct=total?Math.round(allocated/total*100):0;set('atmAllocationPct',pct+'%');
-    const ring=document.getElementById('atmAllocationRing');if(ring)ring.style.setProperty('--pct',pct+'%');
-    const leasing=assets.filter(x=>String(x.ownership).toUpperCase()==='LEASING').length;set('atmLeasingCount',leasing);
-    atmColumns(d.operators||{});atmDonut(d.models||{},'atmModelDonut','atmModelLegend','atmFModel');atmDonut(d.ownership||{},'atmOwnershipDonut','atmOwnershipLegend','atmFOwnership');atmBars('atmLocationRanking',d.locations||{},'atmFLocation',10);atmHeatmap(d.lines||{});atmContracts(d);atmDrill(d);
-    const cov=document.getElementById('atmCoverageTiles');if(cov){cov.innerHTML=`<button data-company="CPTM"><b>${d.cptm_stations||0}</b><span>CPTM</span><small>estações com ATM</small></button><button data-company="METRÔ"><b>${d.metro_stations||0}</b><span>Metrô</span><small>estações com ATM</small></button>`;cov.querySelectorAll('button').forEach(b=>b.onclick=()=>atmSetFilter('atmFCompany',b.dataset.company))}
-    set('atmDrillTitle',document.getElementById('atmFLocation')?.value||document.getElementById('atmFLine')?.value||document.getElementById('atmFCompany')?.value||'Explorar parque');
-    const rowsEl=document.getElementById('atmRows');if(rowsEl)rowsEl.innerHTML=assets.map(x=>`<tr><td>${atmEsc(x.company)}</td><td>${atmEsc(x.line)}</td><td><b>${atmEsc(x.locality)}</b></td><td>${atmEsc(x.asset_key)}</td><td>${atmEsc(x.model)}</td><td>${atmEsc(x.contract)}</td><td>${atmEsc(x.ownership)}</td><td>${atmEsc(x.teamviewer||'—')}</td><td><code>${atmEsc(x.teamviewer_id||'—')}</code></td><td><code>${atmEsc(x.ip||'—')}</code></td><td>${atmEsc(x.status)}</td></tr>`).join('')||'<tr><td colspan="11">Sem ATMs no recorte.</td></tr>';
-  }catch(err){
-    console.error('Dashboard ATM V50.3:',err);
-    ['atmKTotal','atmKAllocated','atmKStock','atmKCptmStations','atmKMetroStations','atmKTeamviewer'].forEach(id=>set(id,'—'));
-    set('atmRowsTag','Erro ao carregar dados');
-    const rowsEl=document.getElementById('atmRows');if(rowsEl)rowsEl.innerHTML=`<tr><td colspan="11"><b>Erro ao carregar a base ATM.</b> ${atmEsc(err.message||err)}</td></tr>`;
-  }
-}
-
-function initAtmDashboardV503(){
-  const panel=document.querySelector('[data-v23-panel="atm-inventory"]')||document.getElementById('atmKTotal');
-  if(!panel)return;
-  ['atmFCompany','atmFLine','atmFLocation','atmFModel','atmFContract','atmFOwnership','atmFStatus'].forEach(id=>document.getElementById(id)?.addEventListener('change',()=>loadAtmDashboard(true)));
-  document.getElementById('atmClear')?.addEventListener('click',()=>{['atmFCompany','atmFLine','atmFLocation','atmFModel','atmFContract','atmFOwnership','atmFStatus'].forEach(id=>{const e=document.getElementById(id);if(e)e.value=''});const q=new URLSearchParams(window.location.search);q.delete('teamviewer_missing');q.set('view','atm-inventory');history.replaceState(null,'',window.location.pathname+'?'+q.toString());loadAtmDashboard(true)});
-  document.getElementById('atmDashRefresh')?.addEventListener('click',()=>loadAtmDashboard(true));
-  document.getElementById('atmShowLocations')?.addEventListener('click',()=>{document.getElementById('atmAssetDetails')?.setAttribute('open','');document.getElementById('atmDrillTitle')?.scrollIntoView({behavior:'smooth'})});
-  document.getElementById('atmDashExport')?.addEventListener('click',()=>{if(!atmDashData)return;const rows=[['Operadora','Linha','Localidade','ATM','Modelo','Contrato','Posse','TeamViewer','ID TeamViewer','IP','Status'],...(atmDashData.assets||[]).map(x=>[x.company,x.line,x.locality,x.asset_key,x.model,x.contract,x.ownership,x.teamviewer,x.teamviewer_id,x.ip,x.status])];const csv=rows.map(r=>r.map(v=>'"'+String(v??'').replaceAll('"','""')+'"').join(';')).join('\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\ufeff'+csv],{type:'text/csv'}));a.download='dashboard_atm_v50_3.csv';a.click()});
-  if(v23ActiveView==='atm-inventory')loadAtmDashboard(true);
-}
-initAtmDashboardV503();
-
-
-// V50.4 — restaura carregamento da Dashboard Financeiro ATM
-// V46.0 — Dashboard Financeiro ATM (ADM)
-(function(){
- const panel=document.querySelector('[data-v23-panel="atm-financial"]'); if(!panel)return;
- const brl=v=>Number(v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
- const esc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
- const modelColors={'MINIWALL':'#2563eb','MK':'#10b981','MKNEO':'#f59e0b','TCI':'#8b5cf6','TCINEO':'#ef4444','TCIPLUS':'#06b6d4'};function bars(el,rows,valueKey,labelFn){const max=Math.max(1,...rows.map(x=>Number(x[valueKey]||0)));el.innerHTML=rows.map((x,i)=>`<button class="v460Bar"><span>${esc(x.model)}</span><i><b style="width:${Math.max(3,Number(x[valueKey]||0)/max*100)}%;background:${modelColors[String(x.model).toUpperCase()]||'#64748b'}"></b></i><strong>${labelFn(x[valueKey])}</strong></button>`).join('')}
- async function load(){const r=await fetch('/api/dashboard/atm-financial',{cache:'no-store'}),d=await r.json();if(!d.ok)return;
-  const t=d.totals||{};document.getElementById('finParkValue').textContent=brl(t.park_value);document.getElementById('finParkQty').textContent=`${t.park_qty} ATMs`;document.getElementById('finContractValue').textContent=brl(t.contract_value);document.getElementById('finContractQty').textContent=`${t.contract_qty} ATMs`;document.getElementById('finBilledValue').textContent=brl(t.billed_value);document.getElementById('finBilledQty').textContent=`${t.billed_qty} ATMs`;document.getElementById('finNotBilled').textContent=t.not_billed||0;
-  bars(document.getElementById('finModelBars'),d.models,'total_value',brl);bars(document.getElementById('finUnitBars'),d.models,'unit_value',brl);
-  const contracts=(d.contracts||[]).slice().sort((a,b)=>Number(b.value||0)-Number(a.value||0)),cmax=Math.max(1,...contracts.map(x=>Number(x.value||0)));const cb=document.getElementById('finContractBars');if(cb)cb.innerHTML=contracts.map((x,i)=>`<div class="v526ContractRow"><span title="${esc(x.contract)}">${esc(x.contract)}</span><i><b style="width:${Math.max(2,Number(x.value||0)/cmax*100)}%;background:${['#2563eb','#10b981','#f59e0b','#8b5cf6','#ef4444','#06b6d4'][i%6]}"></b></i><strong>${brl(x.value)} · ${x.qty} ATM${x.qty===1?'':'s'}</strong></div>`).join('')||'<p class="muted">Sem contratos no recorte.</p>';
-  const cmp=d.comparison||[];document.getElementById('finCompare').innerHTML=cmp.map((x,i)=>{const mx=Math.max(1,+x.park_qty||0,+x.contract_qty||0,+x.billed_qty||0),pct=(+x.park_qty?Math.round((+x.billed_qty)/(+x.park_qty)*1000)/10:0);return `<div class="v551CompareCard"><b>${esc(x.model)}</b><div class="v551CmpRow"><span>Parque</span><i><em style="width:${(+x.park_qty||0)/mx*100}%;background:#2563eb"></em></i><strong>${x.park_qty}</strong></div><div class="v551CmpRow"><span>Contratado</span><i><em style="width:${(+x.contract_qty||0)/mx*100}%;background:#f59e0b"></em></i><strong>${x.contract_qty}</strong></div><div class="v551CmpRow"><span>Faturado</span><i><em style="width:${(+x.billed_qty||0)/mx*100}%;background:#10b981"></em></i><strong>${x.billed_qty}</strong></div><small>${pct}% do parque faturado · diferença ${(+x.billed_qty)-(+x.park_qty)}</small></div>`}).join('');const dbx=document.getElementById('finDivergenceBars');if(dbx){const dr=cmp.map(x=>({model:x.model,d:Math.abs(Number(x.park_qty)-Number(x.billed_qty)),signed:Number(x.billed_qty)-Number(x.park_qty)})).sort((a,b)=>b.d-a.d),dm=Math.max(1,...dr.map(x=>x.d));dbx.innerHTML='<h3>Divergências por modelo</h3>'+dr.map(x=>`<div class="v526DivRow"><span>${esc(x.model)}</span><i><b style="width:${x.d/dm*100}%"></b></i><strong>${x.signed>0?'+':''}${x.signed}</strong></div>`).join('')}
-  document.getElementById('finRows').innerHTML=(d.models||[]).map(x=>`<tr><td><b>${esc(x.model)}</b></td><td>${x.leasing}</td><td>${x.non_leasing}</td><td>${x.stock}</td><td>${x.other}</td><td>${x.subtotal}</td><td>${brl(x.unit_value)}</td><td><b>${brl(x.total_value)}</b></td></tr>`).join('');
-  const sc=d.supplier_costs||{}, suppliers=sc.suppliers||[]; const st=sc.totals||{};
-  const fst=document.getElementById('finSupplierTotal'),fsc=document.getElementById('finSupplierCount'),fsr=document.getElementById('finSupplierRows');
-  if(fst)fst.textContent=brl(st.period_value); if(fsc)fsc.textContent=suppliers.length;
-  if(fsr)fsr.innerHTML=suppliers.map(x=>`<tr><td><b>${esc(x.supplier)}</b></td><td>${esc(x.description)}</td><td>${brl(x.avg_jan_jun_2026)}</td><td><b>${brl(x.period_value)}</b></td><td>${esc(x.category)}</td><td>${x.allocation_rule==='RATEIO'?'ATM 70% · POS 15% · Recarga 5% · Rack 9% · Outros 1%':esc(Object.keys(x.allocation_percentages||{})[0]||x.category)+' 100%'}</td></tr>`).join('');
- }
- document.querySelector('[data-v23-view="atm-financial"]')?.addEventListener('click',load);load();
-})();
-
-
-// V63 CORE 2.0 — carga sob demanda das dashboards operacionais pesadas.
-const V63_LAZY_LOADED=new Set();
-function v63LoadView(view){
-  if(V63_LAZY_LOADED.has(view))return; V63_LAZY_LOADED.add(view);
-  try{
-    if(view==='panorama' && typeof dashPanLoad==='function')dashPanLoad();
-    else if(view==='chips' && typeof loadChipDashboard==='function')loadChipDashboard();
-    else if(view==='emv' && typeof loadEmvDashboard==='function')loadEmvDashboard();
-    else if(view==='atm-inventory' && typeof loadAtmDashboard==='function'){loadAtmDashboard(true); if(typeof loadV30Contracts==='function')loadV30Contracts();}
-    else if(view==='topdesk' && typeof v39LoadTopdesk==='function')v39LoadTopdesk();
-    else if(view==='map' && typeof loadGpsDeferred==='function')loadGpsDeferred();
-    else if(view==='evidence' && typeof loadFieldEvidenceSummary==='function')loadFieldEvidenceSummary();
-  }catch(e){V63_LAZY_LOADED.delete(view);console.warn('[V63] lazy dashboard',view,e)}
-}
-document.querySelectorAll('.v23Nav[data-v23-view]').forEach(btn=>btn.addEventListener('click',()=>setTimeout(()=>v63LoadView(btn.dataset.v23View),0)));
-setTimeout(()=>v63LoadView(v23ActiveView),0);
-
-// V63 REV1 — links Atividade > Dashboard focam diretamente o painel correspondente.
-window.addEventListener('load',()=>{if(location.hash){const el=document.querySelector(location.hash);if(el)setTimeout(()=>el.scrollIntoView({behavior:'smooth',block:'start'}),180)}});
-
-// V66 REV2 — previsão dinâmica de término por janela configurável.
-async function v66Forecast(module,id){const el=document.getElementById(id);if(!el)return;try{const d=await fetch('/api/operational-forecast?module='+encodeURIComponent(module),{cache:'no-store'}).then(r=>r.json());if(!d.ok)throw new Error(d.error||'forecast');const eta=d.eta_days==null?'sem previsão':(d.eta_days===0?'concluída':`~${String(d.eta_days).replace('.',',')} dia(s)`);const date=d.eta_date?new Date(d.eta_date+'T12:00:00').toLocaleDateString('pt-BR'):'—';el.innerHTML=`<b>Tendência últimos ${d.window_days} dia(s):</b> ${d.completed_in_window} conclusão(ões) · ${String(d.daily_rate).replace('.',',')}/dia · <b>${eta}</b>${d.eta_date?' · previsão '+date:''} · ${d.trend.toLowerCase()} · confiança ${d.confidence.toLowerCase()}.`}catch(e){el.textContent='Tendência indisponível neste momento.'}}
-
-if(document.getElementById('emvForecast'))v66Forecast('emv','emvForecast');
-
-
-// V71.6 HOTFIX3 — sincronização determinística de dashboards.
-(function(){
-  const inventoryViews = new Set(["pos-inventory","validator-tdi-inventory","block-inventory"]);
-  let lastActivatedView = null;
-  let activationToken = 0;
-
-  function visiblePanelFor(view){
-    return document.querySelector(`[data-v23-panel="${CSS.escape(view)}"]`);
-  }
-
-  function forceShow(view){
-    const token = ++activationToken;
-    lastActivatedView = view;
-
-    document.querySelectorAll("[data-v23-panel]").forEach(panel => {
-      const isTarget = panel.getAttribute("data-v23-panel") === view;
-      if(panel.classList.contains("invFamilyDash")){
-        panel.classList.toggle("is-active", isTarget);
-      } else {
-        panel.style.display = isTarget ? "" : "none";
-      }
-    });
-
-    const target = visiblePanelFor(view);
-    if(target){
-      target.style.display = "";
-      if(target.classList.contains("invFamilyDash")) target.classList.add("is-active");
-    }
-
-    if(inventoryViews.has(view) && window.activateInventoryEquipmentDashboard){
-      window.activateInventoryEquipmentDashboard(view, {source:"manager-hf3"});
-    }
-
-    // fallback against race conditions from legacy handlers
-    setTimeout(() => {
-      if(token !== activationToken || lastActivatedView !== view) return;
-      const p = visiblePanelFor(view);
-      if(!p) return;
-      const hidden = getComputedStyle(p).display === "none" || p.offsetParent === null;
-      if(hidden){
-        p.style.display = "";
-        if(p.classList.contains("invFamilyDash")) p.classList.add("is-active");
-        if(inventoryViews.has(view) && window.activateInventoryEquipmentDashboard){
-          window.activateInventoryEquipmentDashboard(view, {source:"manager-hf3-fallback"});
-        }
-      }
-    }, 120);
-
-    return !!target;
-  }
-
-  document.addEventListener("click", ev => {
-    const item = ev.target.closest("[data-v23-view]");
-    if(!item) return;
-    const view = item.getAttribute("data-v23-view");
-    if(!view) return;
-    setTimeout(() => forceShow(view), 0);
-  }, true);
-
-  const boot = () => {
-    const q = new URLSearchParams(location.search);
-    const view = q.get("view") || document.querySelector("[data-v23-view].active,[data-v23-view].is-active")?.getAttribute("data-v23-view");
-    if(view) forceShow(view);
-  };
-
-  if(document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
-  else boot();
-
-  window.v716hf3ForceDashboard = forceShow;
-})();
-
-
-/* V72 — seletor móvel de dashboards */
-(function(){
-  function txt(el){return (el.getAttribute('data-label')||el.textContent||'').replace(/\s+/g,' ').trim()}
-  function active(el){return el.classList.contains('active')||el.getAttribute('aria-current')==='page'||el.getAttribute('aria-selected')==='true'||!!el.closest('.active')}
-  function init(){
-    const box=document.getElementById('v72MobileDashSwitch'),btn=document.getElementById('v72MobileDashButton'),
-          menu=document.getElementById('v72MobileDashMenu'),current=document.getElementById('v72MobileDashCurrent');
-    if(!box||!btn||!menu||!current)return;
-    const sels=['.dashSidebar a[href]','.dashSidebar button','.dashboard-sidebar a[href]','.dashboard-sidebar button','[data-dashboard-view]','[data-view]'];
-    const seen=new Set(),items=[];
-    sels.forEach(sel=>document.querySelectorAll(sel).forEach(el=>{
-      const label=txt(el); if(!label||label.length>80)return;
-      const key=(el.getAttribute('href')||'')+'|'+(el.dataset.dashboardView||el.dataset.view||'')+'|'+label;
-      if(seen.has(key))return; seen.add(key); items.push(el);
-    }));
-    if(!items.length){box.style.display='none';return}
-    let cur=items.find(active)||items[0]; current.textContent=txt(cur);
-    items.forEach(src=>{
-      const b=document.createElement('button');b.type='button';b.textContent=txt(src);if(src===cur||active(src))b.classList.add('active');
-      b.onclick=()=>{menu.hidden=true;btn.setAttribute('aria-expanded','false');current.textContent=txt(src);
-        const href=src.getAttribute('href');if(href&&href!=='#')location.href=href;else src.click()};
-      menu.appendChild(b);
-    });
-    btn.onclick=()=>{const open=menu.hidden;menu.hidden=!open;btn.setAttribute('aria-expanded',open?'true':'false')};
-    document.addEventListener('click',e=>{if(!box.contains(e.target)){menu.hidden=true;btn.setAttribute('aria-expanded','false')}});
-  }
-  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();
-})();
+['chipDashEquipment','chipDashOperation','chipDashCompany','chipDashLine','chipDashLocation','chipDashStatus','chipDashTestResult'].forEach(id=>document.getElementById(id)?.addEventListener('change',chipDashRender));document.getElementById('chipDashExport')?.addEventListener('click',chipDashExportCsv);loadChipDashboard();
