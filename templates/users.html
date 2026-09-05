@@ -2,7 +2,7 @@
 {% block title %}Usuários | Inventário SP{% endblock %}
 {% block content %}<style>
 .accessBox{border:1px solid #d7e1ee;border-radius:10px;padding:12px;background:#f8fbff}.accessToolbar{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}.accessGroup{border:1px solid #dbe5f0;border-radius:9px;background:#fff;margin-top:8px}.accessGroup>summary{cursor:pointer;padding:9px 10px;font-weight:800;display:flex;gap:8px;align-items:center}.accessChildren{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:7px;padding:0 10px 10px}.accessChildren label,.accessGroup>summary label{display:flex;gap:7px;align-items:center}.accessBox input[type=checkbox]{width:auto}.accessGroupCount{font-size:11px;color:#64748b;margin-left:auto;font-weight:600}
-.userActionRow{display:flex;gap:6px;flex-wrap:nowrap;align-items:center;min-width:310px}.userActionRow form{margin:0;display:inline-flex}.userActionRow button{white-space:nowrap}.accessCollapse{margin-left:auto}@media(max-width:760px){.userActionRow{min-width:0;flex-wrap:wrap}}
+.userConfigToolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px}.userDialog{border:0;border-radius:14px;padding:0;width:min(1100px,96vw);max-height:92vh}.userDialog::backdrop{background:rgba(15,23,42,.55)}.userDialog .card{margin:0;max-height:90vh;overflow:auto}.operAccessBox{border:1px solid #d7e1ee;border-radius:10px;padding:12px;background:#fff}.operAccessBox label{display:flex;align-items:center;gap:8px;margin:6px 0}.operAccessBox input{width:auto}.userActionRow{display:flex;gap:6px;flex-wrap:nowrap;align-items:center;min-width:310px}.userActionRow form{margin:0;display:inline-flex}.userActionRow button{white-space:nowrap}.accessCollapse{margin-left:auto}@media(max-width:760px){.userActionRow{min-width:0;flex-wrap:wrap}}
 </style>
 <section class="dashHero">
   <div>
@@ -12,8 +12,13 @@
   </div>
 </section>
 
+<div class="userConfigToolbar">
+  {% if can_view('users.create') and can_view('users.config.manage') %}<button type="button" class="primary" id="openNewUser">+ Incluir novo colaborador</button>{% endif %}
+  {% if can_view('users.export') %}<a class="secondary buttonLink" href="/usuarios/configuracoes-modelo.xlsx">Exportar matriz Excel</a>{% endif %}
+  {% if can_view('users.import') %}<a class="secondary buttonLink" href="/usuarios/importar-configuracoes">Importar configurações</a>{% endif %}
+</div>
 <section class="dashboardGrid">
-  {% if can_view('users.create') %}<article class="card">
+  {% if can_view('users.create') and can_view('users.config.manage') %}<dialog class="userDialog" id="newUserDialog"><article class="card">
     <div class="sectionHead">
       <div>
         <h2>Novo usuário</h2>
@@ -71,7 +76,7 @@
         </div>
         <div class="fieldExtended"><label>Data de admissão</label><input name="admission_date" type="date"></div>
         <div class="fieldExtended"><label>Data de desligamento</label><input name="termination_date" type="date"><small>Preencha somente quando aplicável.</small></div>
-        <div class="fieldExtended"><label>Locais de atuação</label><select name="operating_locations" multiple size="5"><option value="METRO">Metrô</option><option value="CPTM">CPTM</option><option value="L4">Linha 4</option><option value="L5">Linha 5</option><option value="OUTROS">Outros</option></select><small>Ctrl para selecionar mais de um.</small></div>
+        <div class="fieldExtended"><label>Locais de atuação</label><select name="operating_locations" multiple size="5"><option value="METRO">Metrô</option><option value="CPTM">CPTM</option><option value="L4">Linha 4</option><option value="L5">Linha 5</option><option value="OUTROS">Outros</option></select><small>Ctrl para selecionar mais de um.</small></div><div class="fieldExtended operAccessBox"><b>Acessos operacionais</b><label><input type="checkbox" name="access_metro" value="1"> Acesso Metrô</label><label><input type="checkbox" name="access_cptm" value="1"> Acesso CPTM</label><label><input type="checkbox" name="access_motiva_apt" value="1"> Acesso Motiva (APT)</label><small>Indica necessidade/elegibilidade. Metrô/CPTM alimentam as listas documentais; Motiva é cruzado com a APT do RH.</small></div>
         <div class="fieldExtended gpsField">
           <label style="display:flex;gap:8px;align-items:center;margin-top:26px"><input type="checkbox" name="gps_required" value="1" checked style="width:auto"> Exigir GPS operacional</label>
           <label style="display:flex;gap:8px;align-items:center;margin-top:26px"><input type="checkbox" name="gps_history_enabled" value="1" style="width:auto"> Histórico GPS por estações</label>
@@ -124,10 +129,10 @@
       </div>
 
       <div class="actions">
-        <button class="primary" type="submit">Criar usuário</button>
+        <button class="primary" type="submit">Criar usuário</button><button class="secondary" type="button" onclick="document.getElementById('newUserDialog').close()">Cancelar</button>
       </div>
     </form>
-  </article>{% endif %}
+  </article></dialog>{% endif %}
 
   <article class="card">
     <h2>Perfis de acesso</h2>
@@ -149,9 +154,10 @@
       <h2>Usuários cadastrados</h2>
       <p class="muted">Edite dados, redefina senhas e desative acessos. Exclusão definitiva ocorre apenas sem histórico; com histórico, o usuário é arquivado.</p>
     </div>
-    <div class="userHeaderActions"><span class="tag">{{ users|length }} usuário(s)</span>{% if can_view('users.export') %}<a class="secondary buttonLink" id="usersExportFiltered" href="/usuarios/exportar.xlsx">Exportar Excel</a>{% endif %}{% if archived_users %}<button type="button" class="secondary" id="toggleArchivedUsers">Ver arquivados ({{ archived_users|length }})</button>{% endif %}</div>
+    <div class="userHeaderActions"><button type="button" class="secondary" id="toggleUserList">Recolher lista</button><span class="tag">{{ users|length }} usuário(s)</span>{% if can_view('users.export') %}<a class="secondary buttonLink" id="usersExportFiltered" href="/usuarios/exportar.xlsx">Exportar Excel</a>{% endif %}{% if archived_users %}<button type="button" class="secondary" id="toggleArchivedUsers">Ver arquivados ({{ archived_users|length }})</button>{% endif %}</div>
   </div>
 
+  <div id="userListBody">
   <div class="userListFilters"><input id="usersSearch" placeholder="Procurar técnico / usuário / login / código"><select id="usersRoleFilter"><option value="">Todos os perfis</option><option value="technician">Técnico Field</option><option value="technician_implantation">Técnico Implantação</option><option value="manager">Gestor</option><option value="manager_field">Gestor Field</option><option value="hr">RH</option><option value="dispatcher">Dispatcher</option><option value="consultation">Consulta</option><option value="atm_financial_admin">ADM Financeiro</option></select><select id="usersCompanyFilter"><option value="">Todas as empresas</option>{% for c in users|map(attribute='company')|select|unique|sort %}<option value="{{ c }}">{{ c }}</option>{% endfor %}</select><select id="usersStatusFilter"><option value="">Todos os status</option><option value="ATIVO">Ativo</option><option value="INATIVO">Inativo</option></select><button type="button" class="secondary" id="usersClearFilters">Limpar filtros</button><span class="tag" id="usersFilteredCount"></span></div>
 
   <div class="tableWrap">
@@ -503,6 +509,7 @@
 })();
 </script>
 
+</div>
 {% if archived_users %}
 <section class="card archivedUsersPanel" id="archivedUsersPanel" hidden>
   <div class="sectionHead"><div><h2>Usuários arquivados</h2><p class="muted">Histórico separado da operação diária. Um colaborador que retornar deve ser reativado, preservando sua identidade histórica.</p></div><span class="tag">{{ archived_users|length }} arquivado(s)</span></div>
@@ -511,5 +518,5 @@
   </tbody></table></div>
 </section>
 {% endif %}
-<script>document.getElementById('toggleArchivedUsers')?.addEventListener('click',e=>{const p=document.getElementById('archivedUsersPanel');if(!p)return;p.hidden=!p.hidden;e.currentTarget.textContent=p.hidden?`Ver arquivados ({{ archived_users|length }})`:'Ocultar arquivados';});</script>
+<script>document.getElementById('openNewUser')?.addEventListener('click',()=>document.getElementById('newUserDialog')?.showModal());document.getElementById('newUserDialog')?.addEventListener('click',e=>{if(e.target===e.currentTarget)e.currentTarget.close()});document.getElementById('toggleUserList')?.addEventListener('click',e=>{const b=document.getElementById('userListBody');if(!b)return;b.hidden=!b.hidden;e.currentTarget.textContent=b.hidden?'Expandir lista':'Recolher lista';});document.getElementById('toggleArchivedUsers')?.addEventListener('click',e=>{const p=document.getElementById('archivedUsersPanel');if(!p)return;p.hidden=!p.hidden;e.currentTarget.textContent=p.hidden?`Ver arquivados ({{ archived_users|length }})`:'Ocultar arquivados';});</script>
 {% endblock %}

@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Importar Configurações | V74.1{% endblock %}
+{% block content %}
+<section class="dashHero"><div><span class="eyebrow">V74.1 · GOVERNANÇA</span><h1>Importar configurações de usuários</h1><p>Atualização em massa por <b>user_id</b>. Célula vazia preserva o valor atual.</p></div></section>
+<article class="card">
+  <div class="sectionHead"><div><h2>1. Enviar planilha</h2><p class="muted">Use preferencialmente a matriz exportada pelo próprio sistema.</p></div><a class="secondary buttonLink" href="/usuarios/configuracoes-modelo.xlsx">Baixar matriz atual</a></div>
+  <form method="post" enctype="multipart/form-data"><div class="grid2"><div><label>Arquivo Excel</label><input type="file" name="file" accept=".xlsx" required></div></div><div class="actions"><button class="primary" type="submit">Validar e mostrar prévia</button><a class="secondary buttonLink" href="/usuarios">Voltar</a></div></form>
+</article>
+{% if preview %}
+<article class="card" style="margin-top:16px">
+  <div class="sectionHead"><div><h2>2. Prévia antes de aplicar</h2><p class="muted">{{ preview.touched }} usuário(s) com alteração · {{ preview.changes|length }} mudança(s) · {{ preview.errors|length }} erro(s)</p></div></div>
+  {% if preview.errors %}<div class="notice" style="border-color:#c62828"><b>Erros encontrados</b>{% for e in preview.errors %}<div>{{e}}</div>{% endfor %}</div>{% endif %}
+  <div style="overflow:auto;max-height:460px"><table><thead><tr><th>user_id</th><th>Colaborador</th><th>Campo</th><th>Atual</th><th>Planilha</th></tr></thead><tbody>{% for x in preview.changes %}<tr><td>{{x.user_id}}</td><td>{{x.name}}</td><td>{{x.field}}</td><td>{{x.old}}</td><td><b>{{x.new}}</b></td></tr>{% else %}<tr><td colspan="5">Nenhuma alteração identificada.</td></tr>{% endfor %}</tbody></table></div>
+  {% if preview.changes and not preview.errors %}<form method="post" style="margin-top:14px"><input type="hidden" name="confirm_token" value="{{token}}"><button class="primary" type="submit" onclick="return confirm('Aplicar todas as alterações exibidas na prévia?')">Aplicar alterações</button></form>{% endif %}
+</article>
+{% endif %}
+{% endblock %}
