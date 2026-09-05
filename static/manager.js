@@ -1321,3 +1321,29 @@ function chipDashRender(){
 function chipDashExportCsv(){const {rows,op,c,l,loc}=chipDashFilteredRows();const total=rows.reduce((a,x)=>a+x.total,0),done=rows.reduce((a,x)=>a+x.concluded,0),prog=rows.reduce((a,x)=>a+x.in_progress,0),pend=rows.reduce((a,x)=>a+x.pending,0),pct=total?Math.round(done/total*1000)/10:0;const q=v=>'"'+String(v??'').replace(/"/g,'""')+'"';const lines=[['RELATÓRIO TROCA DE CHIPS'],['Operação',op||'Todos'],['Empresa',c||'Todas'],['Linha',l||'Todas'],['Localidade',loc||'Todas'],[],['RESUMO'],['Total previsto','Concluídos','Em andamento','Pendentes','Progresso %'],[total,done,prog,pend,pct],[],['DETALHAMENTO'],['Operação','Empresa','Linha','Localidade','Terminal / ativo','Modelo','Status','Técnico']];rows.forEach(x=>(x.validators||[]).forEach(v=>lines.push([chipDashOperation(x.company),x.company,x.line,x.location,v.label||v.base_asset_id||'',v.model||'',v.status||'PENDENTE',v.technician||''])));const csv='\ufeff'+lines.map(r=>r.map(q).join(';')).join('\r\n');const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='troca_chips_'+new Date().toISOString().slice(0,10)+'.csv';document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url)}
 async function loadChipDashboard(){try{const j=await fetch('/api/chip-swaps/dashboard',{cache:'no-store'}).then(r=>r.json());if(!j.ok)return;chipDashData=j;chipDashFill('chipDashOperation',j.locations.map(x=>chipDashOperation(x.company)),'Todos');chipDashFill('chipDashCompany',j.locations.map(x=>x.company),'Todas');chipDashFill('chipDashLine',j.locations.map(x=>x.line),'Todas');chipDashFill('chipDashLocation',j.locations.map(x=>x.location),'Todas');chipDashRender()}catch(e){console.warn('chip dashboard',e)}}
 ['chipDashEquipment','chipDashOperation','chipDashCompany','chipDashLine','chipDashLocation','chipDashStatus','chipDashTestResult'].forEach(id=>document.getElementById(id)?.addEventListener('change',chipDashRender));document.getElementById('chipDashExport')?.addEventListener('click',chipDashExportCsv);loadChipDashboard();
+
+/* V74 · Dashboard EMV visível — usa IDs emvDash* do painel atual. */
+(()=>{
+  const $=id=>document.getElementById(id); let rows=[];
+  const norm=s=>(s||'').toString().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase();
+  const statusOf=x=>{const s=norm(x.status);if(s.includes('CONCLUID'))return 'CONCLUIDA';if(s.includes('ANDAMENTO'))return 'EM ANDAMENTO';return 'PENDENTE'};
+  function fill(id,values,label){const e=$(id);if(!e)return;const cur=e.value;const vals=[...new Set(values.filter(Boolean))].sort((a,b)=>String(a).localeCompare(String(b),'pt-BR'));e.innerHTML=`<option value="">${label}</option>`+vals.map(v=>`<option>${String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;')}</option>`).join('');if(vals.includes(cur))e.value=cur}
+  function render(){
+    if(!$('emvDashPanel'))return;
+    const co=$('emvDashCompany')?.value||'',li=$('emvDashLine')?.value||'',st=$('emvDashStation')?.value||'',ss=$('emvDashStatus')?.value||'',rr=$('emvDashResult')?.value||'';
+    let a=rows.filter(x=>(!co||x.company===co)&&(!li||x.line===li)&&(!st||st===(x.station_name||x.station))&&(!ss||statusOf(x)===ss)&&(!rr||norm(x.test_result)===norm(rr)));
+    const total=a.length,done=a.filter(x=>statusOf(x)==='CONCLUIDA').length,prog=a.filter(x=>statusOf(x)==='EM ANDAMENTO').length,pend=Math.max(0,total-done-prog),pct=total?Math.round(done/total*1000)/10:0;
+    const set=(id,v)=>{const e=$(id);if(e)e.textContent=v};
+    [['emvDashTotal',total],['emvDashDone',done],['emvDashProgressN',prog],['emvDashPending',pend],['emvDashPct',pct+'%'],['emvDonutPct',pct+'%'],['emvDonutTotal',total+' total'],['emvLegendDone',done],['emvLegendProgress',prog],['emvLegendPending',pend]].forEach(([id,v])=>set(id,v));
+    if($('emvDashBar'))$('emvDashBar').style.width=pct+'%'; const pc=n=>total?n/total*100:0,d=pc(done),p=pc(prog);
+    if($('emvDashDonut'))$('emvDashDonut').style.background=`conic-gradient(#16824b 0 ${d}%,#d58a12 ${d}% ${d+p}%,#c93c3c ${d+p}% 100%)`;
+    [['emvChartDone',done],['emvChartProgress',prog],['emvChartPending',pend]].forEach(([id,n])=>{if($(id))$(id).style.width=pc(n)+'%'});
+    const byStation={};a.forEach(x=>{const k=x.station_name||x.station||'Sem estação';const z=byStation[k]||(byStation[k]={t:0,d:0});z.t++;if(statusOf(x)==='CONCLUIDA')z.d++});
+    if($('emvDashStations'))$('emvDashStations').innerHTML=Object.entries(byStation).sort((a,b)=>a[0].localeCompare(b[0],'pt-BR')).map(([k,v])=>`<div class="chipStationRow"><b>${k}</b><span>${v.d}/${v.t} · ${v.t?Math.round(v.d/v.t*100):0}%</span></div>`).join('')||'<p class="muted">Sem dados para os filtros.</p>';
+    const byTech={};a.forEach(x=>{const k=x.completed_by||x.technician;if(k){const z=byTech[k]||(byTech[k]={t:0,d:0});z.t++;if(statusOf(x)==='CONCLUIDA')z.d++}});
+    if($('emvDashTechs'))$('emvDashTechs').innerHTML=Object.entries(byTech).sort((a,b)=>b[1].d-a[1].d).map(([k,v])=>`<div class="chipStationRow"><b>${k}</b><span>${v.d} concluídos · ${v.t} registros</span></div>`).join('')||'<p class="muted">Sem produtividade para os filtros.</p>';
+  }
+  async function load(){if(!$('emvDashPanel'))return;try{const r=await fetch('/api/emv-chip-swaps?compact=1&include_photos=0',{cache:'no-store'}),j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Falha EMV');rows=j.rows||[];fill('emvDashCompany',rows.map(x=>x.company),'Todas');fill('emvDashLine',rows.map(x=>x.line),'Todas');fill('emvDashStation',rows.map(x=>x.station_name||x.station),'Todas');render()}catch(e){console.warn('V74 EMV dashboard',e)}}
+  ['emvDashCompany','emvDashLine','emvDashStation','emvDashStatus','emvDashResult'].forEach(id=>$(id)?.addEventListener('change',render));
+  load(); window.autopassReloadEmvDashboard=load;
+})();
