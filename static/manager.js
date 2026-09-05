@@ -1,4 +1,4 @@
-window.AUTOPASS_MANAGER_VERSION='dashboard-v36-0';
+window.AUTOPASS_MANAGER_VERSION='dashboard-v73-6-4';
 console.log('AUTOPASS Dashboard Executivo V25 carregado');
 let locations=[];
 let dashboardData=null;
@@ -1273,7 +1273,51 @@ function chipDashEsc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;'
 function chipDashOperation(company){const t=String(company||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase();if(t.includes('CPTM'))return 'CPTM';if(t.includes('METRO'))return 'Metrô';if(t.includes('VIA MOBILIDADE'))return 'Via Mobilidade';if(t.includes('VIAQUATRO')||t.includes('VIA QUATRO'))return 'ViaQuatro';return company||'Outros'}
 function chipDashFill(id,vals,label){const e=document.getElementById(id);if(!e)return;const cur=e.value;e.innerHTML=`<option value="">${label}</option>`+[...new Set(vals.filter(Boolean))].sort().map(v=>`<option>${chipDashEsc(v)}</option>`).join('');if([...e.options].some(o=>o.value===cur))e.value=cur}
 function chipDashFilteredRows(){const equipment=document.getElementById('chipDashEquipment')?.value||'',op=document.getElementById('chipDashOperation')?.value||'',c=document.getElementById('chipDashCompany')?.value||'',l=document.getElementById('chipDashLine')?.value||'',loc=document.getElementById('chipDashLocation')?.value||'',status=document.getElementById('chipDashStatus')?.value||'',testResult=document.getElementById('chipDashTestResult')?.value||'';const base=(chipDashData.locations||[]).filter(x=>!op||chipDashOperation(x.company)===op);let rows=base.filter(x=>(!c||x.company===c)&&(!l||x.line===l)&&(!loc||x.location===loc));if(equipment||status||testResult)rows=rows.map(x=>{const validators=(x.validators||[]).filter(v=>{const result=v.test_result||'SEM_RESULTADO';return(!equipment||(v.equipment_type||'').toUpperCase()===equipment)&&(!status||(v.status||'PENDENTE')===status)&&(!testResult||result===testResult)});const concluded=validators.filter(v=>v.status==='CONCLUÍDA').length,in_progress=validators.filter(v=>v.status==='EM ANDAMENTO').length,pending=validators.length-concluded-in_progress;return {...x,validators,total:validators.length,concluded,in_progress,pending,percent:validators.length?Math.round(concluded/validators.length*1000)/10:0}}).filter(x=>x.total);return {equipment,op,c,l,loc,status,testResult,base,rows}}
-function chipDashRender(){const f=chipDashFilteredRows(),{c,l,base,rows}=f;chipDashFill('chipDashCompany',base.map(x=>x.company),'Todas');chipDashFill('chipDashLine',base.filter(x=>!c||x.company===c).map(x=>x.line),'Todas');chipDashFill('chipDashLocation',base.filter(x=>(!c||x.company===c)&&(!l||x.line===l)).map(x=>x.location),'Todas');const total=rows.reduce((a,x)=>a+x.total,0),done=rows.reduce((a,x)=>a+x.concluded,0),prog=rows.reduce((a,x)=>a+x.in_progress,0),pend=rows.reduce((a,x)=>a+x.pending,0),pct=total?Math.round(done/total*1000)/10:0;[['chipDashTotal',total],['chipDashDone',done],['chipDashProgressN',prog],['chipDashPending',pend],['chipDashPct',pct+'%'],['chipLegendDone',done],['chipLegendProgress',prog],['chipLegendPending',pend],['chipDonutPct',pct+'%'],['chipDonutTotal',total+' total']].forEach(([i,v])=>{const e=document.getElementById(i);if(e)e.textContent=v});const bar=document.getElementById('chipDashBar');if(bar)bar.style.width=Math.min(pct,100)+'%';[['chipChartDone',done],['chipChartProgress',prog],['chipChartPending',pend]].forEach(([id,n])=>{const e=document.getElementById(id);if(e)e.style.width=(total?(n/total*100):0)+'%'});const donut=document.getElementById('chipDashDonut');if(donut){const d=total?done/total*100:0,p=total?prog/total*100:0;donut.style.background=`conic-gradient(#16824b 0 ${d}%, #d98b00 ${d}% ${d+p}%, #c93b3b ${d+p}% 100%)`}const el=document.getElementById('chipDashLocations');if(el)el.innerHTML=`<table class="chipDashTable"><thead><tr><th>Localidade</th><th>Progresso</th><th>Concl.</th><th>And.</th><th>Pend.</th></tr></thead><tbody>${[...rows].sort((a,b)=>a.percent-b.percent).map(x=>`<tr><td>${chipDashEsc(x.line)} · ${chipDashEsc(x.location)}</td><td><b>${x.percent}%</b></td><td>${x.concluded}/${x.total}</td><td>${x.in_progress}</td><td>${x.pending}</td></tr>`).join('')||'<tr><td colspan="5">Sem dados.</td></tr>'}</tbody></table>`;const tech={};rows.forEach(x=>(x.validators||[]).forEach(v=>{if(!v.technician)return;const t=tech[v.technician]??={name:v.technician,total:0,done:0};t.total++;if(v.status==='CONCLUÍDA')t.done++}));const te=document.getElementById('chipDashTechs');if(te)te.innerHTML=`<table class="chipDashTable"><thead><tr><th>Técnico</th><th>Concluídas</th><th>Atividades</th></tr></thead><tbody>${Object.values(tech).sort((a,b)=>b.done-a.done).map(t=>`<tr><td>${chipDashEsc(t.name)}</td><td><b>${t.done}</b></td><td>${t.total}</td></tr>`).join('')||'<tr><td colspan="3">Sem atividade registrada.</td></tr>'}</tbody></table>`}
+function chipDashRender(){
+  const f=chipDashFilteredRows(),{equipment,op,c,l,loc,status,testResult,base,rows}=f;
+  chipDashFill('chipDashCompany',base.map(x=>x.company),'Todas');
+  chipDashFill('chipDashLine',base.filter(x=>!c||x.company===c).map(x=>x.line),'Todas');
+  chipDashFill('chipDashLocation',base.filter(x=>(!c||x.company===c)&&(!l||x.line===l)).map(x=>x.location),'Todas');
+
+  // V73.6.4 — a API já entrega o resumo executivo consolidado.
+  // No recorte padrão ele é a fonte oficial dos KPIs; com filtros, recalculamos pelos itens filtrados.
+  const hasFilters=!!(equipment||op||c||l||loc||status||testResult);
+  const summary=chipDashData.summary||{};
+  let total,done,prog,pend,pct;
+  if(!hasFilters && Number.isFinite(Number(summary.total))){
+    total=Number(summary.total||0);
+    done=Number(summary.concluded||0);
+    prog=Number(summary.in_progress||0);
+    pend=Number(summary.pending||0);
+    pct=Number(summary.percent||0);
+  }else{
+    total=rows.reduce((a,x)=>a+Number(x.total||0),0);
+    done=rows.reduce((a,x)=>a+Number(x.concluded||0),0);
+    prog=rows.reduce((a,x)=>a+Number(x.in_progress||0),0);
+    pend=rows.reduce((a,x)=>a+Number(x.pending||0),0);
+    pct=total?Math.round(done/total*1000)/10:0;
+  }
+
+  [['chipDashTotal',total],['chipDashDone',done],['chipDashProgressN',prog],['chipDashPending',pend],['chipDashPct',pct+'%'],['chipLegendDone',done],['chipLegendProgress',prog],['chipLegendPending',pend],['chipDonutPct',pct+'%'],['chipDonutTotal',total+' total']].forEach(([i,v])=>{const e=document.getElementById(i);if(e)e.textContent=v});
+  const bar=document.getElementById('chipDashBar');if(bar)bar.style.width=Math.min(pct,100)+'%';
+  [['chipChartDone',done],['chipChartProgress',prog],['chipChartPending',pend]].forEach(([id,n])=>{const e=document.getElementById(id);if(e)e.style.width=(total?(n/total*100):0)+'%'});
+  const donut=document.getElementById('chipDashDonut');if(donut){const d=total?done/total*100:0,p=total?prog/total*100:0;donut.style.background=`conic-gradient(#16824b 0 ${d}%, #d98b00 ${d}% ${d+p}%, #c93b3b ${d+p}% 100%)`}
+
+  const el=document.getElementById('chipDashLocations');
+  if(el)el.innerHTML=`<table class="chipDashTable"><thead><tr><th>Localidade</th><th>Progresso</th><th>Concl.</th><th>And.</th><th>Pend.</th></tr></thead><tbody>${[...rows].sort((a,b)=>Number(a.percent||0)-Number(b.percent||0)).map(x=>`<tr><td>${chipDashEsc(x.line)} · ${chipDashEsc(x.location)}</td><td><b>${Number(x.percent||0)}%</b></td><td>${Number(x.concluded||0)}/${Number(x.total||0)}</td><td>${Number(x.in_progress||0)}</td><td>${Number(x.pending||0)}</td></tr>`).join('')||'<tr><td colspan="5">Sem dados.</td></tr>'}</tbody></table>`;
+
+  // Produtividade: no recorte padrão usa a consolidação da API; com filtros deriva dos itens visíveis.
+  let techRows=[];
+  if(!hasFilters && Array.isArray(chipDashData.technicians)){
+    techRows=chipDashData.technicians.map(t=>({name:t.name||'—',done:Number(t.concluded||0),total:Number(t.total||0)}));
+  }else{
+    const tech={};
+    rows.forEach(x=>(x.validators||[]).forEach(v=>{if(!v.technician)return;const t=tech[v.technician]??={name:v.technician,total:0,done:0};t.total++;if(v.status==='CONCLUÍDA')t.done++}));
+    techRows=Object.values(tech);
+  }
+  const te=document.getElementById('chipDashTechs');
+  if(te)te.innerHTML=`<table class="chipDashTable"><thead><tr><th>Técnico</th><th>Concluídas</th><th>Atividades</th></tr></thead><tbody>${techRows.sort((a,b)=>b.done-a.done||b.total-a.total).map(t=>`<tr><td>${chipDashEsc(t.name)}</td><td><b>${t.done}</b></td><td>${t.total}</td></tr>`).join('')||'<tr><td colspan="3">Sem atividade registrada.</td></tr>'}</tbody></table>`;
+}
 function chipDashExportCsv(){const {rows,op,c,l,loc}=chipDashFilteredRows();const total=rows.reduce((a,x)=>a+x.total,0),done=rows.reduce((a,x)=>a+x.concluded,0),prog=rows.reduce((a,x)=>a+x.in_progress,0),pend=rows.reduce((a,x)=>a+x.pending,0),pct=total?Math.round(done/total*1000)/10:0;const q=v=>'"'+String(v??'').replace(/"/g,'""')+'"';const lines=[['RELATÓRIO TROCA DE CHIPS'],['Operação',op||'Todos'],['Empresa',c||'Todas'],['Linha',l||'Todas'],['Localidade',loc||'Todas'],[],['RESUMO'],['Total previsto','Concluídos','Em andamento','Pendentes','Progresso %'],[total,done,prog,pend,pct],[],['DETALHAMENTO'],['Operação','Empresa','Linha','Localidade','Terminal / ativo','Modelo','Status','Técnico']];rows.forEach(x=>(x.validators||[]).forEach(v=>lines.push([chipDashOperation(x.company),x.company,x.line,x.location,v.label||v.base_asset_id||'',v.model||'',v.status||'PENDENTE',v.technician||''])));const csv='\ufeff'+lines.map(r=>r.map(q).join(';')).join('\r\n');const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='troca_chips_'+new Date().toISOString().slice(0,10)+'.csv';document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url)}
 async function loadChipDashboard(){try{const j=await fetch('/api/chip-swaps/dashboard',{cache:'no-store'}).then(r=>r.json());if(!j.ok)return;chipDashData=j;chipDashFill('chipDashOperation',j.locations.map(x=>chipDashOperation(x.company)),'Todos');chipDashFill('chipDashCompany',j.locations.map(x=>x.company),'Todas');chipDashFill('chipDashLine',j.locations.map(x=>x.line),'Todas');chipDashFill('chipDashLocation',j.locations.map(x=>x.location),'Todas');chipDashRender()}catch(e){console.warn('chip dashboard',e)}}
 ['chipDashEquipment','chipDashOperation','chipDashCompany','chipDashLine','chipDashLocation','chipDashStatus','chipDashTestResult'].forEach(id=>document.getElementById(id)?.addEventListener('change',chipDashRender));document.getElementById('chipDashExport')?.addEventListener('click',chipDashExportCsv);loadChipDashboard();
