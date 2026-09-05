@@ -1,4 +1,4 @@
-window.AUTOPASS_MANAGER_VERSION='dashboard-v73-6-4';
+window.AUTOPASS_MANAGER_VERSION='dashboard-v74-1';
 console.log('AUTOPASS Dashboard Executivo V25 carregado');
 let locations=[];
 let dashboardData=null;
@@ -1339,9 +1339,9 @@ async function loadChipDashboard(){try{const j=await fetch('/api/chip-swaps/dash
     if($('emvDashDonut'))$('emvDashDonut').style.background=`conic-gradient(#16824b 0 ${d}%,#d58a12 ${d}% ${d+p}%,#c93c3c ${d+p}% 100%)`;
     [['emvChartDone',done],['emvChartProgress',prog],['emvChartPending',pend]].forEach(([id,n])=>{if($(id))$(id).style.width=pc(n)+'%'});
     const byStation={};a.forEach(x=>{const k=x.station_name||x.station||'Sem estação';const z=byStation[k]||(byStation[k]={t:0,d:0});z.t++;if(statusOf(x)==='CONCLUIDA')z.d++});
-    if($('emvDashStations'))$('emvDashStations').innerHTML=Object.entries(byStation).sort((a,b)=>a[0].localeCompare(b[0],'pt-BR')).map(([k,v])=>`<div class="chipStationRow"><b>${k}</b><span>${v.d}/${v.t} · ${v.t?Math.round(v.d/v.t*100):0}%</span></div>`).join('')||'<p class="muted">Sem dados para os filtros.</p>';
+    if($('emvDashStations'))$('emvDashStations').innerHTML=Object.entries(byStation).sort((a,b)=>a[0].localeCompare(b[0],'pt-BR')).map(([k,v])=>`<div class="emvBarRow"><div class="emvBarLabel" title="${esc(k)}">${esc(k)}</div><div class="emvBarTrack"><i style="width:${v.t?Math.round(v.d/v.t*100):0}%"></i></div><div class="emvBarValue">${v.d}/${v.t} · ${v.t?Math.round(v.d/v.t*100):0}%</div></div>`).join('')||'<p class="muted">Sem dados para os filtros.</p>';
     const byTech={};a.forEach(x=>{const k=x.completed_by||x.technician;if(k){const z=byTech[k]||(byTech[k]={t:0,d:0});z.t++;if(statusOf(x)==='CONCLUIDA')z.d++}});
-    if($('emvDashTechs'))$('emvDashTechs').innerHTML=Object.entries(byTech).sort((a,b)=>b[1].d-a[1].d).map(([k,v])=>`<div class="chipStationRow"><b>${k}</b><span>${v.d} concluídos · ${v.t} registros</span></div>`).join('')||'<p class="muted">Sem produtividade para os filtros.</p>';
+    if($('emvDashTechs'))$('emvDashTechs').innerHTML=Object.entries(byTech).sort((a,b)=>b[1].d-a[1].d).map(([k,v])=>`<div class="emvBarRow"><div class="emvBarLabel" title="${esc(k)}">${esc(k)}</div><div class="emvBarTrack"><i style="width:${Math.min(100,Math.round(v.d/Math.max(1,v.t)*100))}%"></i></div><div class="emvBarValue">${v.d} / ${v.t}</div></div>`).join('')||'<p class="muted">Sem produtividade para os filtros.</p>';
   }
   async function load(){if(!$('emvDashPanel'))return;try{const r=await fetch('/api/emv-chip-swaps?compact=1&include_photos=0',{cache:'no-store'}),j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Falha EMV');rows=j.rows||[];fill('emvDashCompany',rows.map(x=>x.company),'Todas');fill('emvDashLine',rows.map(x=>x.line),'Todas');fill('emvDashStation',rows.map(x=>x.station_name||x.station),'Todas');render()}catch(e){console.warn('V74 EMV dashboard',e)}}
   ['emvDashCompany','emvDashLine','emvDashStation','emvDashStatus','emvDashResult'].forEach(id=>$(id)?.addEventListener('change',render));
