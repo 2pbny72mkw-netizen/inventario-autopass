@@ -1,0 +1,8 @@
+V77.1 — BOBINAS + ESTOQUE FIELD
+1. Publicar os arquivos deste pacote sobre a versão atual.
+2. Reiniciar a aplicação. As novas tabelas são criadas por create_all/checkfirst.
+3. Validar /field/bobinas, /dashboard/bobinas e /field/estoque.
+4. Em Dashboard Bobinas, testar primeiro as importações em ambiente controlado.
+5. A importação de bobinas preserva saldo legado não localizado; não entra no estoque confirmado.
+6. A aba Armários converte 1 caixa em 6 bobinas.
+7. Fotos de leitura de ATM seguem retenção configurável; ocorrências/uso de estoque mantêm evidência vinculada ao evento.
