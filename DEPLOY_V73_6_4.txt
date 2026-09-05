@@ -1,0 +1,13 @@
+V73.6.4 — deploy enxuto
+
+Arquivos desta versão:
+- app.py
+- static/manager.js
+- templates/manager.html
+- templates/about.html
+- README_V73_6_4.md
+
+Teste obrigatório após deploy:
+Dashboard EMV Trilhos -> confirmar KPIs e filtros.
+Dashboard ATM -> confirmar que permanece funcional.
+DevTools Network -> manager.js?v=v73-6-4 e /api/chip-swaps/dashboard HTTP 200.
