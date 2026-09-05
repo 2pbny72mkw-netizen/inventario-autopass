@@ -1,0 +1,17 @@
+V73.6.3 — Dashboard ATM / correção de atualização
+
+ARQUIVOS:
+- app.py
+- templates/manager.html
+- templates/about.html
+- static/atm_dashboard_v7363.js
+- README_V73_6_3.md
+
+DEPLOY:
+1. Aplicar os arquivos preservando as pastas.
+2. Reiniciar/redeploy da aplicação.
+3. Abrir /gerencial?view=atm-inventory.
+4. No Network, validar /api/dashboard/inventory-atm com HTTP 200.
+5. Confirmar KPIs e gráficos preenchidos.
+
+Não altera banco de dados e não exige migração.
