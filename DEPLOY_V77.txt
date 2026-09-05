@@ -1,0 +1,13 @@
+V77 — ENXUTA
+Base obrigatória: V76.2 já implantada.
+
+Substituir/adicionar somente os arquivos deste pacote, preservando banco e variáveis de ambiente.
+No primeiro startup, a migração V77-001 cria de forma aditiva as tabelas de Controle de Bobinas.
+
+Teste mínimo pós-deploy:
+1. Técnico Field > Field > Atividade Bobinas.
+2. Registrar leitura simples.
+3. Registrar troca com bobina trazida pelo técnico (não deve reduzir reserva).
+4. Registrar troca usando reserva da estação (deve reduzir 1).
+5. Registrar "Deixei bobina(s) reserva" sem troca (deve aumentar reserva).
+6. Gestor > Dashboard Bobinas / Insumos e validar KPIs/filtros/exportação.
