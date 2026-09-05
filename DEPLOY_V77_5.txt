@@ -1,0 +1,4 @@
+V77.5 ENXUTA
+Substituir os arquivos do pacote preservando banco, variáveis de ambiente e uploads.
+Reiniciar a aplicação após o deploy.
+Validar: /dashboard/bobinas, /api/bobinas/dashboard, /api/bobinas/options e /field/bobinas.
