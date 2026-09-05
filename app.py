@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V77.3"
+APP_RELEASE = "V77.4"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -16765,7 +16765,7 @@ def v771_bobbin_import():
     if not f or not f.filename:return jsonify({'ok':False,'error':'Selecione a planilha de controle de bobinas.'}),400
     try:data=_v771_parse_import(f)
     except Exception as exc:
-        app.logger.exception('V77.3: falha ao ler planilha de bobinas')
+        app.logger.exception('V77.4: falha ao ler planilha de bobinas')
         return jsonify({'ok':False,'error':f'Não foi possível ler a planilha: {exc}'}),400
     mode=(request.form.get('mode') or 'preview').lower()
     preview={'sheets':data['sheets'],'records_found':len(data['readings'])+len(data['divergences']),'atm_readings':len(data['readings']),'official_total':data['official_total'],'official_installed':data['official_installed'],'official_stock':data['official_stock'],'divergences_count':len(data['divergences']),'divergences':data['divergences'][:100],'unlocated_reserve_total':sum(x['qty'] for x in data['reserves']),'stations_with_unlocated_reserve':len(data['reserves']),'cabinet_points':len(data['cabinets']),'cabinet_bobbins_total':sum(x['bobbins'] for x in data['cabinets']),'warnings':data['warnings'][:100]}
@@ -16775,7 +16775,7 @@ def v771_bobbin_import():
         # A importação é um retrato. Substitui apenas leituras IMPORTACAO anteriores; nunca toca registros de campo.
         AtmBobbinReading.query.filter_by(event_type='IMPORTACAO').delete(synchronize_session=False)
         for x in data['readings']:
-            note=f"Importação V77.3 · aba {x['sheet']} · último técnico informado: {x['tech'] or '—'} · referência de reserva na planilha: {x['local_note'] or '—'}"
+            note=f"Importação V77.4 · aba {x['sheet']} · último técnico informado: {x['tech'] or '—'} · referência de reserva na planilha: {x['local_note'] or '—'}"
             db.session.add(AtmBobbinReading(company=x['company'],line=x['line'],station=x['station'],atm_id=x['atm_id'],percent_available=x['percent'],event_type='IMPORTACAO',bobbin_replaced=False,reserve_delta=0,reserve_after=None,notes=note,technician_id=session['user_id'],created_at=x['date']))
         # snapshot dos saldos legados ainda não localizados
         imported_keys=set()
@@ -16792,7 +16792,7 @@ def v771_bobbin_import():
         db.session.commit()
         return jsonify({'ok':True,'committed':True,'batch_id':batch.id,'batch_code':f'IMP-BOB-{datetime.utcnow().strftime("%Y%m%d")}-{batch.id:04d}','preview':preview,'release':APP_RELEASE})
     except Exception as exc:
-        db.session.rollback();app.logger.exception('V77.3: falha ao persistir importação de bobinas')
+        db.session.rollback();app.logger.exception('V77.4: falha ao persistir importação de bobinas')
         return jsonify({'ok':False,'error':f'Falha ao gravar a importação. Nenhum dado foi alterado: {exc}'}),500
 
 @app.get('/api/bobinas/importacoes/<int:batch_id>/divergencias')
@@ -16915,6 +16915,16 @@ def v77_bobbins_dashboard_api():
         if cabinet_ids:cabinet_bobbins=sum(float(x.qty_good or 0) for x in FieldStockBalance.query.filter(FieldStockBalance.item_id==bobitem.id,FieldStockBalance.point_id.in_(cabinet_ids)).all())
         in_distribution=sum(float(x.qty or 0) for x in FieldTechnicianLoad.query.filter_by(item_id=bobitem.id).all())
     summary.update({'atm_reserve_total':confirmed,'cabinet_bobbins':int(cabinet_bobbins),'in_distribution':int(in_distribution),'confirmed_total':int(confirmed+cabinet_bobbins+in_distribution),'cabinets':cabinet_count,'open_stock_incidents':open_incidents})
+    summary['total_reserves_available']=int(confirmed+cabinet_bobbins)
+    cabinet_rows=[]
+    if bobitem:
+        cps=FieldStockPoint.query.filter_by(point_type='ARMARIO',active=True).order_by(FieldStockPoint.line,FieldStockPoint.station,FieldStockPoint.name).all()
+        if company:cps=[x for x in cps if (x.company or '')==company]
+        if line:cps=[x for x in cps if (x.line or '')==line]
+        if station:cps=[x for x in cps if (x.station or '')==station]
+        for cp in cps:
+            bal=FieldStockBalance.query.filter_by(point_id=cp.id,item_id=bobitem.id).first()
+            cabinet_rows.append({'id':cp.id,'name':cp.name,'company':cp.company or '', 'line':cp.line or '', 'station':cp.station or '', 'bobbins':int(float(bal.qty_good or 0)) if bal else 0, 'updated_at':bal.updated_at.isoformat()+'Z' if bal and bal.updated_at else None})
     # Estações partem da base oficial, inclusive quando ainda não existe leitura.
     station_summary={}
     for a in filtered_official:
@@ -16929,7 +16939,7 @@ def v77_bobbins_dashboard_api():
     for k,r in station_summary.items():
         r['reserve']=stockmap.get(k,0);r['avg_pct']=round(r['sum_pct']/max(1,r['atms'])) if r['atms'] else None;r['missing']=max(0,r['official_atms']-r['atms']);r['last_at']=r['last_at'].isoformat()+'Z' if r['last_at'] else None
     station_rows=sorted(station_summary.values(),key=lambda r:(r['line'].casefold(),r['station'].casefold()))
-    return jsonify({'ok':True,'release':APP_RELEASE,'source':'BASE_OFICIAL_ATM_602','summary':summary,'rows':[_v771_bobbin_json(x,names) for x in latest],'history':[_v771_bobbin_json(x,names) for x in allrows[:500]],'stocks':[{'company':x.company,'line':x.line,'station':x.station,'atm_id':x.atm_id,'reserve_qty':x.reserve_qty,'updated_at':x.updated_at.isoformat()+'Z' if x.updated_at else None} for x in stockrows],'unlocated':[{'company':x.company,'line':x.line,'station':x.station,'imported_qty':x.imported_qty,'current_qty':x.current_qty,'status':x.status,'source_sheet':x.source_sheet,'last_inventory_at':x.last_inventory_at.isoformat()+'Z' if x.last_inventory_at else None} for x in unlocated],'stations':station_rows,'photo_retention_days':_v771_photo_retention_days()})
+    return jsonify({'ok':True,'release':APP_RELEASE,'source':'BASE_OFICIAL_ATM_602','summary':summary,'rows':[_v771_bobbin_json(x,names) for x in latest],'history':[_v771_bobbin_json(x,names) for x in allrows[:500]],'stocks':[{'company':x.company,'line':x.line,'station':x.station,'atm_id':x.atm_id,'reserve_qty':x.reserve_qty,'updated_at':x.updated_at.isoformat()+'Z' if x.updated_at else None} for x in stockrows],'unlocated':[{'company':x.company,'line':x.line,'station':x.station,'imported_qty':x.imported_qty,'current_qty':x.current_qty,'status':x.status,'source_sheet':x.source_sheet,'last_inventory_at':x.last_inventory_at.isoformat()+'Z' if x.last_inventory_at else None} for x in unlocated],'stations':station_rows,'cabinets_detail':cabinet_rows,'photo_retention_days':_v771_photo_retention_days()})
 
 # V77.1 — Estoque Field / armários e carga do técnico
 def _v771_stock_item(desc,unit='UN'):
@@ -17004,7 +17014,7 @@ def v771_field_stock_withdraw():
         db.session.commit()
         return jsonify({'ok':True,'load_after':load.qty,'stock_after':bal.qty_good})
     except Exception as exc:
-        db.session.rollback();app.logger.exception('V77.3: falha na retirada para carga do técnico')
+        db.session.rollback();app.logger.exception('V77.4: falha na retirada para carga do técnico')
         return jsonify({'ok':False,'error':'Não foi possível gerar a carga. Nenhuma movimentação foi realizada.'}),500
 
 @app.post('/api/field-stock/destinar')

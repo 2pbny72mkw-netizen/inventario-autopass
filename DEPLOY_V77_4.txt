@@ -1,0 +1,6 @@
+V77.4 ENXUTA
+1. Aplicar os arquivos deste pacote sobre a V77.3.
+2. Reiniciar a aplicação.
+3. Confirmar no Sobre: V77.4.
+4. Validar /dashboard/bobinas e /field/bobinas.
+5. Validar importação em prévia antes do commit.
