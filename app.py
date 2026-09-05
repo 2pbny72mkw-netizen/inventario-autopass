@@ -38,7 +38,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V73.6.4"
+APP_RELEASE = "V74"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -290,6 +290,10 @@ class User(db.Model):
     journey_control_enabled = db.Column(db.Boolean, nullable=False, default=False)
     customer_company_ids = db.Column(db.Text)  # JSON: empresas liberadas para perfil Cliente
     system_profile_id = db.Column(db.Integer, db.ForeignKey("system_profiles.id"), index=True)
+    # V74 — governança do colaborador
+    admission_date = db.Column(db.Date, index=True)
+    termination_date = db.Column(db.Date, index=True)
+    operating_locations_json = db.Column(db.Text)  # JSON: METRO/CPTM/L4/L5/OUTROS
 
 
 
@@ -756,6 +760,25 @@ class AptRecord(db.Model):
     created_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow)
     updated_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow,onupdate=datetime.utcnow)
     __table_args__=(db.UniqueConstraint("collaborator_name","line","apt_number",name="uq_apt_collab_line_number"),)
+
+# V74 — Autorizações operacionais vinculadas obrigatoriamente ao cadastro mestre de usuários
+class AccessAuthorization(db.Model):
+    __tablename__ = "access_authorizations"
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    operator = db.Column(db.String(80), nullable=False, index=True)
+    authorization_type = db.Column(db.String(100), nullable=False, default="ACESSO_OPERACIONAL", index=True)
+    authorization_number = db.Column(db.String(180), index=True)
+    issued_at = db.Column(db.Date, index=True)
+    valid_until = db.Column(db.Date, index=True)
+    status = db.Column(db.String(30), nullable=False, default="VALIDA", index=True)
+    lines_json = db.Column(db.Text)
+    document_key = db.Column(db.String(700))
+    notes = db.Column(db.Text)
+    active = db.Column(db.Boolean, nullable=False, default=True, index=True)
+    created_by = db.Column(db.Integer, db.ForeignKey("users.id"))
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 class ScheduleChangeRequest(db.Model):
     __tablename__="schedule_change_requests"
@@ -1742,7 +1765,12 @@ def _role_assignment_allowed(role):
     return role in ("technician", "technician_implantation", "hr")
 
 def _hr_target_allowed(user):
-    return bool(user) and (session.get("role") != "hr" or user.role in ("technician", "technician_implantation"))
+    if not user:return False
+    if session.get("role") != "hr":return True
+    if user.role not in ("technician", "technician_implantation"):return False
+    me=db.session.get(User,session.get("user_id"))
+    # V74: RH com empresa definida administra somente colaboradores da própria empresa.
+    return not me or not (me.company or "").strip() or (me.company or "").strip().lower()==(user.company or "").strip().lower()
 
 
 def hardware_implantation_required(fn):
@@ -6430,6 +6458,11 @@ def users_page():
     if session.get("role") == "hr":
         active_q = active_q.filter(User.role.in_(("technician", "technician_implantation")))
         archived_q = archived_q.filter(User.role.in_(("technician", "technician_implantation")))
+        me=db.session.get(User,session.get("user_id"))
+        if me and (me.company or "").strip():
+            company=(me.company or "").strip().lower()
+            active_q=active_q.filter(func.lower(func.coalesce(User.company,""))==company)
+            archived_q=archived_q.filter(func.lower(func.coalesce(User.company,""))==company)
     active_users = active_q.order_by(User.active.desc(), User.name).all()
     archived_users = archived_q.order_by(User.archived_at.desc(), User.name).all()
     return render_template(
@@ -6503,6 +6536,13 @@ def create_user():
     job_title = request.form.get("job_title", "").strip() or None
     personnel_status = request.form.get("personnel_status", "ATIVO").strip().upper() or "ATIVO"
     personnel_status_note = request.form.get("personnel_status_note", "").strip() or None
+    def _v74_form_date(name):
+        raw=(request.form.get(name) or "").strip()
+        try:return date.fromisoformat(raw) if raw else None
+        except:return None
+    admission_date=_v74_form_date("admission_date")
+    termination_date=_v74_form_date("termination_date")
+    operating_locations=[x for x in request.form.getlist("operating_locations") if x in ("METRO","CPTM","L4","L5","OUTROS")]
     gps_required = request.form.get("gps_required") == "1"
     gps_history_enabled = request.form.get("gps_history_enabled") == "1"
     journey_control_enabled = request.form.get("journey_control_enabled") == "1"
@@ -6564,6 +6604,9 @@ def create_user():
         job_title=job_title,
         personnel_status=personnel_status,
         personnel_status_note=personnel_status_note,
+        admission_date=admission_date,
+        termination_date=termination_date,
+        operating_locations_json=json.dumps(operating_locations,ensure_ascii=False),
         work_schedule_type=work_schedule_type if role in ("technician", "technician_implantation", "manager_field") else None,
         work_shift=work_shift if role in ("technician", "technician_implantation", "manager_field") else None,
         work_anchor_date=work_anchor_date if role in ("technician", "technician_implantation", "manager_field") and work_schedule_type == "12x36" else None,
@@ -6691,6 +6734,13 @@ def edit_user(user_id):
     job_title = request.form.get("job_title", user.job_title or "").strip() or None
     personnel_status = request.form.get("personnel_status", user.personnel_status or "ATIVO").strip().upper() or "ATIVO"
     personnel_status_note = request.form.get("personnel_status_note", user.personnel_status_note or "").strip() or None
+    def _v74_edit_date(name,current):
+        raw=(request.form.get(name) or "").strip()
+        try:return date.fromisoformat(raw) if raw else None
+        except:return current
+    admission_date=_v74_edit_date("admission_date",getattr(user,"admission_date",None))
+    termination_date=_v74_edit_date("termination_date",getattr(user,"termination_date",None))
+    operating_locations=[x for x in request.form.getlist("operating_locations") if x in ("METRO","CPTM","L4","L5","OUTROS")]
     gps_required = request.form.get("gps_required") == "1"
     gps_history_enabled = request.form.get("gps_history_enabled") == "1"
     journey_control_enabled = request.form.get("journey_control_enabled") == "1"
@@ -6803,6 +6853,9 @@ def edit_user(user_id):
     user.job_title = job_title
     user.personnel_status = personnel_status
     user.personnel_status_note = personnel_status_note
+    user.admission_date = admission_date
+    user.termination_date = termination_date
+    user.operating_locations_json = json.dumps(operating_locations,ensure_ascii=False)
     old_gps_required = bool(getattr(user, "gps_required", False))
     user.gps_required = gps_required if role in ("technician","technician_implantation","manager_field","dispatcher") else False
     user.gps_history_enabled = gps_history_enabled if role in ("technician","technician_implantation","manager_field","dispatcher") else False
@@ -12671,6 +12724,105 @@ def operational_forecast_api():
 
 
 # -----------------------------------------------------------------------------
+# V74 — Dossiê, Pessoas & Governança: Autorizações de Acesso
+# -----------------------------------------------------------------------------
+def _v74_people_scope(query, model_user_id):
+    """RH fica restrito à própria empresa; Gestores mantêm visão corporativa."""
+    if session.get("role") == "hr":
+        me=db.session.get(User,session.get("user_id"))
+        if me and (me.company or "").strip():
+            query=query.join(User, User.id==model_user_id).filter(func.lower(func.coalesce(User.company,""))==(me.company or "").strip().lower())
+    return query
+
+def _v74_auth_status(row):
+    if not row.active:return "INATIVA"
+    if (row.status or "").upper() in ("SUSPENSA","REVOGADA","PENDENTE"):return (row.status or "").upper()
+    if not row.valid_until:return "SEM VALIDADE"
+    days=(row.valid_until-datetime.now(V72_TZ).date()).days
+    if days<0:return "VENCIDA"
+    if days<=30:return "VENCE EM 30 DIAS"
+    return "VALIDA"
+
+@app.get('/rh/autorizacoes-acesso')
+@login_required
+def v74_access_authorizations_page():
+    if session.get('role') not in ('manager','manager_field','hr'):abort(403)
+    q=(request.args.get('q') or '').strip(); operator=(request.args.get('operator') or '').strip(); status=(request.args.get('status') or '').strip().upper()
+    query=_v74_people_scope(AccessAuthorization.query,AccessAuthorization.user_id)
+    if operator:query=query.filter(AccessAuthorization.operator==operator)
+    rows=query.order_by(AccessAuthorization.active.desc(),AccessAuthorization.valid_until,AccessAuthorization.id.desc()).all()
+    data=[]
+    for x in rows:
+        u=db.session.get(User,x.user_id); st=_v74_auth_status(x)
+        if q and q.lower() not in ' '.join([u.name if u else '',u.user_code if u else '',x.operator or '',x.authorization_number or '',x.authorization_type or '']).lower():continue
+        if status and st!=status:continue
+        data.append({'row':x,'user':u,'computed_status':st,'lines':', '.join(json.loads(x.lines_json or '[]')) if x.lines_json else ''})
+    uq=User.query.filter(User.active.is_(True),User.role.in_(("technician","technician_implantation","manager_field","dispatcher")))
+    if session.get('role')=='hr':
+        me=db.session.get(User,session.get('user_id'))
+        if me and (me.company or '').strip():uq=uq.filter(func.lower(func.coalesce(User.company,''))==(me.company or '').strip().lower())
+    users=uq.order_by(User.name).all()
+    operators=sorted({x.operator for x in AccessAuthorization.query.all() if x.operator})
+    return render_template('access_authorizations_v74.html',rows=data,users=users,operators=operators,app_release=APP_RELEASE)
+
+@app.post('/api/rh/autorizacoes-acesso')
+@login_required
+def v74_access_authorization_create():
+    if session.get('role') not in ('manager','manager_field','hr'):abort(403)
+    d=request.form; uid=d.get('user_id',type=int); u=db.session.get(User,uid) if uid else None
+    if not u:return jsonify({'ok':False,'error':'Selecione um colaborador cadastrado.'}),400
+    if session.get('role')=='hr':
+        me=db.session.get(User,session.get('user_id'))
+        if me and (me.company or '').strip().lower()!=(u.company or '').strip().lower():abort(403)
+    operator=(d.get('operator') or '').strip().upper(); kind=(d.get('authorization_type') or 'ACESSO_OPERACIONAL').strip().upper()
+    if not operator:return jsonify({'ok':False,'error':'Informe a operadora/autorizadora.'}),400
+    def pd(v):
+        try:return date.fromisoformat(v) if v else None
+        except:return None
+    lines=[x.strip() for x in (d.get('lines') or '').replace(';',',').split(',') if x.strip()]
+    x=AccessAuthorization(user_id=u.id,operator=operator,authorization_type=kind,authorization_number=(d.get('authorization_number') or '').strip() or None,issued_at=pd(d.get('issued_at')),valid_until=pd(d.get('valid_until')),status=(d.get('status') or 'VALIDA').strip().upper(),lines_json=json.dumps(lines,ensure_ascii=False),notes=(d.get('notes') or '').strip() or None,created_by=session.get('user_id'))
+    f=request.files.get('document')
+    if f and f.filename:
+        if not (f.filename or '').lower().endswith('.pdf'):return jsonify({'ok':False,'error':'O documento deve ser PDF.'}),400
+        raw=f.read()
+        if len(raw)>10*1024*1024:return jsonify({'ok':False,'error':'PDF deve ter no máximo 10 MB.'}),400
+        key=f"autorizacoes/{u.id}/{uuid.uuid4().hex}-{secure_filename(f.filename)}";_r2_put_bytes(key,raw,'application/pdf');x.document_key=key
+    db.session.add(x);db.session.flush();db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='ACCESS_AUTH_CREATE',entity_type='access_authorization',entity_id=str(x.id),detail=f'{u.name} | {operator} | {x.authorization_number or "sem número"}'));db.session.commit()
+    return redirect('/rh/autorizacoes-acesso')
+
+@app.post('/api/rh/autorizacoes-acesso/<int:rid>/toggle')
+@login_required
+def v74_access_authorization_toggle(rid):
+    if session.get('role') not in ('manager','manager_field','hr'):abort(403)
+    x=db.session.get(AccessAuthorization,rid) or abort(404);u=db.session.get(User,x.user_id)
+    if session.get('role')=='hr':
+        me=db.session.get(User,session.get('user_id'))
+        if me and (me.company or '').strip().lower()!=(u.company or '').strip().lower():abort(403)
+    x.active=not x.active;db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='ACCESS_AUTH_TOGGLE',entity_type='access_authorization',entity_id=str(x.id),detail=f'active={x.active}'));db.session.commit();return jsonify({'ok':True,'active':x.active})
+
+@app.get('/api/rh/autorizacoes-acesso/<int:rid>/pdf')
+@login_required
+def v74_access_authorization_pdf(rid):
+    x=db.session.get(AccessAuthorization,rid) or abort(404)
+    if session.get('role') not in ('manager','manager_field','hr') and x.user_id!=session.get('user_id'):abort(403)
+    if not x.document_key:abort(404)
+    return send_file(io.BytesIO(_r2_get_bytes(x.document_key)),mimetype='application/pdf',download_name=f'autorizacao-{x.id}.pdf')
+
+@app.get('/api/rh/autorizacoes-acesso/eligibilidade/<int:user_id>')
+@login_required
+def v74_access_eligibility(user_id):
+    operator=(request.args.get('operator') or '').strip().upper(); line=(request.args.get('line') or '').strip().upper(); today=datetime.now(V72_TZ).date()
+    q=AccessAuthorization.query.filter_by(user_id=user_id,active=True)
+    if operator:q=q.filter(func.upper(AccessAuthorization.operator)==operator)
+    rows=q.all();valid=[]
+    for x in rows:
+        if _v74_auth_status(x)!='VALIDA':continue
+        lines=[str(v).upper() for v in json.loads(x.lines_json or '[]')]
+        if line and lines and line not in lines:continue
+        valid.append(x)
+    return jsonify({'ok':True,'user_id':user_id,'operator':operator or None,'line':line or None,'eligible':bool(valid),'authorization_ids':[x.id for x in valid],'checked_at':today.isoformat()})
+
+# -----------------------------------------------------------------------------
 # V73 — Gestão/RH 2.0: localidades externas, links, APT, jornada e técnico próximo
 # -----------------------------------------------------------------------------
 def _v73_admin():
@@ -14953,6 +15105,19 @@ with app.app_context():
                     conn.execute(text("ALTER TABLE users ADD COLUMN journey_control_enabled BOOLEAN DEFAULT FALSE NOT NULL"))
     except Exception:
         app.logger.exception('Falha na migração aditiva V72 users')
+
+    # V74 — governança de pessoas e autorizações operacionais.
+    try:
+        insp=db.inspect(db.engine)
+        if insp.has_table('users'):
+            cols={c['name'] for c in insp.get_columns('users')}
+            with db.engine.begin() as conn:
+                if 'admission_date' not in cols: conn.execute(text("ALTER TABLE users ADD COLUMN admission_date DATE"))
+                if 'termination_date' not in cols: conn.execute(text("ALTER TABLE users ADD COLUMN termination_date DATE"))
+                if 'operating_locations_json' not in cols: conn.execute(text("ALTER TABLE users ADD COLUMN operating_locations_json TEXT"))
+        db.metadata.create_all(bind=db.engine,tables=[AccessAuthorization.__table__],checkfirst=True)
+    except Exception:
+        app.logger.exception('Falha na migração V74 Pessoas/Autorizações')
 
     # V68 REV2 — dupla assinatura na devolução (colaborador + responsável).
     try:

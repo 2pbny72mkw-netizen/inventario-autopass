@@ -1,0 +1,12 @@
+V74 — DEPLOY ENXUTO
+
+Substituir/adicionar os arquivos do pacote mantendo os demais arquivos da instalação.
+Reiniciar a aplicação para executar as migrações aditivas.
+Não remover tabelas nem executar DROP.
+
+Pós-deploy obrigatório:
+- abrir /sobre e confirmar V74;
+- abrir Dashboard EMV e validar números reais;
+- abrir RH > Autorizações de Acesso;
+- cadastrar uma autorização de teste vinculada a um usuário real de teste;
+- validar Console e Network antes de liberar uso em massa.
