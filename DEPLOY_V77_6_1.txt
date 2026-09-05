@@ -1,0 +1,8 @@
+V77.6.1 CORRETIVA — BOBINAS + ESTOQUE FIELD
+
+1. Aplicar os arquivos do pacote sobre a V77.6.
+2. Reiniciar a aplicação.
+3. Testar Metrô → 02 - Verde → Brigadeiro: a estação deve listar as ATMs oficiais mesmo sem leitura.
+4. Confirmar filtros em cascata Operadora → Linha → Estação.
+5. Validar badges de percentual e fontes ampliadas.
+6. Abrir Estoque Field e validar a matriz de itens x estoques e o seletor de estoque.
