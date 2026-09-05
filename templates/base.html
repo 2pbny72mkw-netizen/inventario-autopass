@@ -31,7 +31,7 @@
         {% if can_view('field.equipment') %}<a href="/patrimonio">Equipamentos</a>{% endif %}
         {% if can_view('field.evidence') %}<a href="/evidencias-campo">Evidências</a>{% endif %}
         {% if can_view('field.panorama') %}<a href="/visao-panoramica">Visão Panorâmica</a>{% endif %}
-        {% if can_view('field.chip_recarga') %}<a href="/troca-chips">Troca de Chips Recarga</a>{% endif %}{% if can_view('field.firmware_pos_cptm') %}<a href="/firmware-pos-cptm">Atualização Firmware POS - CPTM</a>{% endif %}
+        {% if can_view('field.chip_recarga') %}<a href="/troca-chips">Troca de Chips Recarga</a>{% endif %}{% if can_view('field.bobbins') %}<a href="/field/bobinas">Atividade Bobinas</a>{% endif %}{% if can_view('field.bobbins_dashboard') and session.get('role') in ('manager','manager_field','consultation') %}<a href="/dashboard/bobinas">Dashboard Bobinas / Insumos</a>{% endif %}{% if can_view('field.firmware_pos_cptm') %}<a href="/firmware-pos-cptm">Atualização Firmware POS - CPTM</a>{% endif %}
       </div></div>{% endif %}
       {% if can_view('implantation') %}
       <div class="navDrop"><button type="button" class="navDropBtn">Implantação de Hardware ▾</button><div class="navDropMenu">
