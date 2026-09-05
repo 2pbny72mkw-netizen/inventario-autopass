@@ -4,6 +4,11 @@
 <div class="versionCard"><b>V66 REV4.2 · Performance 2.0</b><p>Compatibilidade EMV legada em payload slim sem redirecionamento, renovação de cache dos scripts e ajuste do resumo TopDesk para reduzir processamento desnecessário.</p></div>
 {% endblock %}
 {% block content %}
+<div class="card" style="margin-bottom:16px">
+  <div class="cardHead"><div><h2>V73.6.3</h2><p>Dashboard ATM — correção de atualização dos indicadores.</p></div><span class="tag">05/09/2026</span></div>
+  <p>Adicionado carregador dedicado e sem cache para a Dashboard ATM, usando <code>/api/dashboard/inventory-atm</code>, com atualização dos KPIs, filtros, gráficos e detalhamento. O patch usa arquivo JS novo para evitar reaproveitamento de cache/service worker da versão anterior.</p>
+</div>
+
 <section class="dashHero">
   <div>
     <span class="eyebrow">SOBRE / VERSÕES</span>
