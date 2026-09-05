@@ -4,7 +4,6 @@
 <div class="versionCard"><b>V66 REV4.2 · Performance 2.0</b><p>Compatibilidade EMV legada em payload slim sem redirecionamento, renovação de cache dos scripts e ajuste do resumo TopDesk para reduzir processamento desnecessário.</p></div>
 {% endblock %}
 {% block content %}
-<div class="notice"><b>V77.3</b> · Bobinas/Estoque Field: base oficial ATM soberana (602 = 590 instaladas + 12 estoque), importação otimizada e persistente com divergências separadas, dashboard conforme esboço aprovado, GPS apenas como evidência e correção da regularização/carga do Estoque Field.</div>
 <div class="notice"><b>V77.2</b> · Bobinas + Estoque Field: correção dos endpoints de importação, terminais ATM pela base mestre, GPS vinculado à atividade, KPIs de troca/sem troca e refinamento visual da dashboard.</div>
 <div class="notice"><b>V77.1</b> · Controle de Bobinas ATM: atividade simplificada para o Técnico Field, dashboard separado de Bobinas/Insumos para gestão, histórico de leituras e trocas, estoque reserva independente e exportação filtrada.</div>
 <div class="notice"><b>V76.2</b> · Continuidade GPS e persistência operacional: configurações administrativas preservadas em PostgreSQL, heartbeat automático em primeiro plano e retomada imediata ao retornar ao PWA.</div>
@@ -48,6 +47,7 @@
 {% if session.get('role') not in ('technician','technician_implantation') %}
 <section class="card aboutHistoryCompact">
   <div class="sectionHead"><div><h2>Histórico recente</h2><p class="muted">Últimas versões em destaque. Abra o histórico completo para consultar versões antigas.</p></div></div>
+  <article><b>V77.4</b><span>Dashboard de Bobinas alinhada ao esboço aprovado: localidades completas, detalhe individual por ATM, reservas por ATM, total de reservas incluindo armários, quadro compacto de armários, gráficos e indicadores por ATM; listas longas iniciam com 5 registros.</span></article>
                                 
 <div class="versionItem featured">
   <div class="cardHead"><div><h2>V73.6.4</h2><p>Dashboard EMV Trilhos — correção dos indicadores executivos e versionamento do JavaScript.</p></div><span class="tag">05/09/2026</span></div>
