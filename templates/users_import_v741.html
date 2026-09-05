@@ -1,7 +1,7 @@
 {% extends "base.html" %}
-{% block title %}Importar Configurações | V74.1{% endblock %}
+{% block title %}Importar Configurações | V75{% endblock %}
 {% block content %}
-<section class="dashHero"><div><span class="eyebrow">V74.1 · GOVERNANÇA</span><h1>Importar configurações de usuários</h1><p>Atualização em massa por <b>user_id</b>. Célula vazia preserva o valor atual.</p></div></section>
+<section class="dashHero"><div><span class="eyebrow">V75 · GOVERNANÇA</span><h1>Importar configurações de usuários</h1><p>Atualização em massa por <b>user_id</b>. Célula vazia preserva o valor atual.</p></div></section>
 <article class="card">
   <div class="sectionHead"><div><h2>1. Enviar planilha</h2><p class="muted">Use preferencialmente a matriz exportada pelo próprio sistema.</p></div><a class="secondary buttonLink" href="/usuarios/configuracoes-modelo.xlsx">Baixar matriz atual</a></div>
   <form method="post" enctype="multipart/form-data"><div class="grid2"><div><label>Arquivo Excel</label><input type="file" name="file" accept=".xlsx" required></div></div><div class="actions"><button class="primary" type="submit">Validar e mostrar prévia</button><a class="secondary buttonLink" href="/usuarios">Voltar</a></div></form>

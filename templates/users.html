@@ -2,7 +2,7 @@
 {% block title %}Usuários | Inventário SP{% endblock %}
 {% block content %}<style>
 .accessBox{border:1px solid #d7e1ee;border-radius:10px;padding:12px;background:#f8fbff}.accessToolbar{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}.accessGroup{border:1px solid #dbe5f0;border-radius:9px;background:#fff;margin-top:8px}.accessGroup>summary{cursor:pointer;padding:9px 10px;font-weight:800;display:flex;gap:8px;align-items:center}.accessChildren{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:7px;padding:0 10px 10px}.accessChildren label,.accessGroup>summary label{display:flex;gap:7px;align-items:center}.accessBox input[type=checkbox]{width:auto}.accessGroupCount{font-size:11px;color:#64748b;margin-left:auto;font-weight:600}
-.userConfigToolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px}.userDialog{border:0;border-radius:14px;padding:0;width:min(1100px,96vw);max-height:92vh}.userDialog::backdrop{background:rgba(15,23,42,.55)}.userDialog .card{margin:0;max-height:90vh;overflow:auto}.operAccessBox{border:1px solid #d7e1ee;border-radius:10px;padding:12px;background:#fff}.operAccessBox label{display:flex;align-items:center;gap:8px;margin:6px 0}.operAccessBox input{width:auto}.userActionRow{display:flex;gap:6px;flex-wrap:nowrap;align-items:center;min-width:310px}.userActionRow form{margin:0;display:inline-flex}.userActionRow button{white-space:nowrap}.accessCollapse{margin-left:auto}@media(max-width:760px){.userActionRow{min-width:0;flex-wrap:wrap}}
+.userConfigToolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px}.userDialog{border:0;border-radius:14px;padding:0;width:min(1100px,96vw);max-height:92vh}.userDialog::backdrop{background:rgba(15,23,42,.55)}.userDialog .card{margin:0;max-height:90vh;overflow:auto}.operAccessBox{border:1px solid #d7e1ee;border-radius:10px;padding:12px;background:#fff}.operAccessBox label{display:flex;align-items:center;gap:8px;margin:6px 0}.operAccessBox input{width:auto}.locationChecks{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:6px;border:1px solid #d7e1ee;border-radius:10px;padding:10px}.locationChecks label{display:flex;gap:7px;align-items:center;margin:0}.locationChecks input{width:auto}.userActionRow{display:flex;gap:6px;flex-wrap:nowrap;align-items:center;min-width:310px}.userActionRow form{margin:0;display:inline-flex}.userActionRow button{white-space:nowrap}.accessCollapse{margin-left:auto}@media(max-width:760px){.userActionRow{min-width:0;flex-wrap:wrap}}
 </style>
 <section class="dashHero">
   <div>
@@ -76,7 +76,7 @@
         </div>
         <div class="fieldExtended"><label>Data de admissão</label><input name="admission_date" type="date"></div>
         <div class="fieldExtended"><label>Data de desligamento</label><input name="termination_date" type="date"><small>Preencha somente quando aplicável.</small></div>
-        <div class="fieldExtended"><label>Locais de atuação</label><select name="operating_locations" multiple size="5"><option value="METRO">Metrô</option><option value="CPTM">CPTM</option><option value="L4">Linha 4</option><option value="L5">Linha 5</option><option value="OUTROS">Outros</option></select><small>Ctrl para selecionar mais de um.</small></div><div class="fieldExtended operAccessBox"><b>Acessos operacionais</b><label><input type="checkbox" name="access_metro" value="1"> Acesso Metrô</label><label><input type="checkbox" name="access_cptm" value="1"> Acesso CPTM</label><label><input type="checkbox" name="access_motiva_apt" value="1"> Acesso Motiva (APT)</label><small>Indica necessidade/elegibilidade. Metrô/CPTM alimentam as listas documentais; Motiva é cruzado com a APT do RH.</small></div>
+        <div class="fieldExtended"><label>Locais de atuação</label><div class="locationChecks">{% for v,lbl in [('METRO','Metrô'),('CPTM','CPTM'),('L4','Linha 4'),('L5','Linha 5'),('OUTROS','Outros')] %}<label><input type="checkbox" name="operating_locations" value="{{v}}"> {{lbl}}</label>{% endfor %}</div><small>Marque para habilitar; desmarque para desabilitar.</small></div><div class="fieldExtended operAccessBox"><b>Acessos operacionais</b><label><input type="checkbox" name="access_metro" value="1"> Acesso Metrô</label><label><input type="checkbox" name="access_cptm" value="1"> Acesso CPTM</label><label><input type="checkbox" name="access_motiva_apt" value="1"> Acesso Motiva (APT)</label><small>Indica necessidade/elegibilidade. Metrô/CPTM alimentam as listas documentais; Motiva é cruzado com a APT do RH.</small></div>
         <div class="fieldExtended gpsField">
           <label style="display:flex;gap:8px;align-items:center;margin-top:26px"><input type="checkbox" name="gps_required" value="1" checked style="width:auto"> Exigir GPS operacional</label>
           <label style="display:flex;gap:8px;align-items:center;margin-top:26px"><input type="checkbox" name="gps_history_enabled" value="1" style="width:auto"> Histórico GPS por estações</label>
@@ -100,6 +100,8 @@
           <select name="work_anchor_status"><option value="TRABALHA">Trabalha</option><option value="FOLGA">Folga</option></select>
           <small>Define a alternância individual do 12x36.</small>
         </div>
+        <div class="fieldExtended"><label>CPF</label><input name="cpf" placeholder="000.000.000-00"><small>Obrigatório para emissão das listas oficiais de acesso.</small></div>
+        <div class="fieldExtended"><label>RG</label><input name="rg" placeholder="RG"><small>Obrigatório para emissão das listas oficiais de acesso.</small></div>
         <div>
           <label>E-mail corporativo</label>
           <input name="email" type="email" placeholder="nome@empresa.com.br" autocomplete="email">
@@ -300,7 +302,8 @@
                   </div>
                   <div class="editExtended"><label>Data de admissão</label><input name="admission_date" type="date" value="{{ u.admission_date.isoformat() if u.admission_date else '' }}"></div>
                   <div class="editExtended"><label>Data de desligamento</label><input name="termination_date" type="date" value="{{ u.termination_date.isoformat() if u.termination_date else '' }}"></div>
-                  <div class="editExtended"><label>Locais de atuação</label><select name="operating_locations" multiple size="5">{% for v,lbl in [('METRO','Metrô'),('CPTM','CPTM'),('L4','Linha 4'),('L5','Linha 5'),('OUTROS','Outros')] %}<option value="{{v}}" {% if ('\"' ~ v ~ '\"') in (u.operating_locations_json or '') %}selected{% endif %}>{{lbl}}</option>{% endfor %}</select></div>
+                  <div class="editExtended"><label>Locais de atuação</label><div class="locationChecks">{% for v,lbl in [('METRO','Metrô'),('CPTM','CPTM'),('L4','Linha 4'),('L5','Linha 5'),('OUTROS','Outros')] %}<label><input type="checkbox" name="operating_locations" value="{{v}}" {% if ('\"' ~ v ~ '\"') in (u.operating_locations_json or '') %}checked{% endif %}> {{lbl}}</label>{% endfor %}</div><small>Marque para habilitar; desmarque para desabilitar.</small></div>
+                  <div class="editExtended operAccessBox"><b>Acessos operacionais</b><label><input type="checkbox" name="access_metro" value="1" {% if u.access_metro %}checked{% endif %}> Acesso Metrô</label><label><input type="checkbox" name="access_cptm" value="1" {% if u.access_cptm %}checked{% endif %}> Acesso CPTM</label><label><input type="checkbox" name="access_motiva_apt" value="1" {% if u.access_motiva_apt %}checked{% endif %}> Acesso Motiva (APT)</label><small>A habilitação é operacional; a regularidade documental é validada separadamente.</small></div>
                   <div class="editExtended gpsField">
                     <label style="display:flex;gap:8px;align-items:center;margin-top:26px"><input type="checkbox" name="gps_required" value="1" style="width:auto" {% if u.gps_required %}checked{% endif %}> Exigir GPS operacional</label>
                     <label style="display:flex;gap:8px;align-items:center;margin-top:26px"><input type="checkbox" name="gps_history_enabled" value="1" style="width:auto" {% if u.gps_history_enabled %}checked{% endif %}> Histórico GPS por estações</label>
@@ -323,6 +326,8 @@
                     <label>Situação na data referência</label>
                     <select name="work_anchor_status"><option value="TRABALHA" {% if (u.work_anchor_status or 'TRABALHA') == 'TRABALHA' %}selected{% endif %}>Trabalha</option><option value="FOLGA" {% if u.work_anchor_status == 'FOLGA' %}selected{% endif %}>Folga</option></select>
                   </div>
+                  <div class="editExtended"><label>CPF</label><input name="cpf" value="{{ u.cpf or '' }}" placeholder="000.000.000-00"></div>
+                  <div class="editExtended"><label>RG</label><input name="rg" value="{{ u.rg or '' }}" placeholder="RG"></div>
                   <div>
                     <label>Código *</label>
                     <input name="user_code" value="{{ u.user_code or '' }}" required maxlength="30">
