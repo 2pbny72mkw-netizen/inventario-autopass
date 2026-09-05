@@ -1,0 +1,6 @@
+V75 CONSOLIDADA — ENXUTA
+
+Substituir os arquivos presentes neste pacote preservando os demais arquivos da instalação atual.
+Executar deploy/restart normal. As novas tabelas/colunas são criadas de forma aditiva no boot.
+
+ATENÇÃO: faça o checklist de Console/Network e regressão antes de liberar para uso em massa.

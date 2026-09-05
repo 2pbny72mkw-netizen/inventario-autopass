@@ -39,7 +39,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V74.1"
+APP_RELEASE = "V75"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -299,7 +299,36 @@ class User(db.Model):
     access_metro = db.Column(db.Boolean, nullable=False, default=False)
     access_cptm = db.Column(db.Boolean, nullable=False, default=False)
     access_motiva_apt = db.Column(db.Boolean, nullable=False, default=False)
+    # V75 — documentos operacionais
+    cpf = db.Column(db.String(20), index=True)
+    rg = db.Column(db.String(30), index=True)
 
+
+class ArrowActivity(db.Model):
+    __tablename__ = "arrow_activities"
+    id = db.Column(db.Integer, primary_key=True)
+    activity_date = db.Column(db.Date, nullable=False, index=True, default=date.today)
+    title = db.Column(db.String(220), nullable=False)
+    operator = db.Column(db.String(20), nullable=False, default="OUTROS", index=True)  # METRO/CPTM/MOTIVA/OUTROS
+    location_id = db.Column(db.Integer, db.ForeignKey("locations.id"), index=True)
+    technician_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    status = db.Column(db.String(30), nullable=False, default="PLANEJADA", index=True)
+    remote = db.Column(db.Boolean, nullable=False, default=False)
+    teamviewer_id = db.Column(db.String(120))
+    notes = db.Column(db.Text)
+    created_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+class ArrowActivityMaterial(db.Model):
+    __tablename__ = "arrow_activity_materials"
+    id = db.Column(db.Integer, primary_key=True)
+    activity_id = db.Column(db.Integer, db.ForeignKey("arrow_activities.id", ondelete="CASCADE"), nullable=False, index=True)
+    material_id = db.Column(db.Integer, db.ForeignKey("material_catalog_items.id"), nullable=False, index=True)
+    quantity = db.Column(db.Float, nullable=False, default=1)
+    consumed = db.Column(db.Boolean, nullable=False, default=False)
+    notes = db.Column(db.String(500))
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
 class AccessListRevision(db.Model):
     __tablename__ = "access_list_revisions"
@@ -6562,6 +6591,78 @@ def _v741_access_workbook(operator,users,revision):
     ws.freeze_panes="A5";ws.auto_filter.ref=f"B4:F{max(5,4+len(users))}"
     out=io.BytesIO();wb.save(out);out.seek(0);return out
 
+def _v75_user_photo_bytes(u):
+    stored=(u.photo_url or "").strip()
+    if not stored:return b""
+    try:
+        if stored.startswith("r2__"): return _r2_get_bytes(stored[4:])
+        # Fotos de usuário históricas usam a própria chave R2 sem prefixo r2__.
+        if _r2_available():
+            try:return _r2_get_bytes(stored)
+            except Exception:pass
+        candidates=[UPLOAD_DIR/stored, BASE_DIR/stored, STATIC_DIR/stored]
+        for x in candidates:
+            if x.exists() and x.is_file(): return x.read_bytes()
+    except Exception: app.logger.exception("V75: falha ao ler foto do usuário %s",u.id)
+    return b""
+
+def _v75_access_required_missing(u):
+    miss=[]
+    if not (u.company or "").strip():miss.append("FORNECEDOR")
+    if not (u.name or "").strip():miss.append("NOME")
+    if not (u.cpf or "").strip():miss.append("CPF")
+    if not (u.rg or "").strip():miss.append("RG")
+    if not _v75_user_photo_bytes(u):miss.append("FOTO")
+    return miss
+
+def _v75_access_pdf(operator, users, revision):
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
+    from reportlab.lib.utils import ImageReader
+    out=io.BytesIO(); doc=SimpleDocTemplate(out,pagesize=landscape(A4),rightMargin=24,leftMargin=24,topMargin=22,bottomMargin=22)
+    st=getSampleStyleSheet(); body=ParagraphStyle('v75body',parent=st['BodyText'],fontSize=8,leading=10)
+    story=[]
+    logo=STATIC_DIR/'autopass-logo.png'
+    if logo.exists():
+        try:
+            im=Image(str(logo),width=125,height=32); story.append(im)
+        except Exception: pass
+    story += [Spacer(1,5),Paragraph(f"<b>RELAÇÃO DE COLABORADORES — ACESSO {operator}</b>",ParagraphStyle('v75title',parent=st['Title'],fontSize=15,textColor=colors.HexColor('#17365D'))),Paragraph(f"Revisão {revision:02d} · {datetime.now(V72_TZ).strftime('%d/%m/%Y %H:%M')}",body),Spacer(1,10)]
+    data=[["FORNECEDOR","NOME","CPF","RG","FOTO"]]
+    for u in users:
+        photo="—"
+        raw=_v75_user_photo_bytes(u)
+        if raw:
+            try:
+                img=Image(io.BytesIO(raw),width=42,height=42); photo=img
+            except Exception: photo="Foto cadastrada"
+        data.append([u.company or "",u.name,u.cpf or "",u.rg or "",photo])
+    t=Table(data,colWidths=[150,220,115,105,70],repeatRows=1,rowHeights=[28]+[52]*(len(data)-1))
+    t.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#17365D')),('TEXTCOLOR',(0,0),(-1,0),colors.white),('FONTNAME',(0,0),(-1,0),'Helvetica-Bold'),('ALIGN',(0,0),(-1,0),'CENTER'),('VALIGN',(0,0),(-1,-1),'MIDDLE'),('GRID',(0,0),(-1,-1),.45,colors.HexColor('#B8C4D1')),('FONTSIZE',(0,1),(-2,-1),8),('LEFTPADDING',(0,0),(-1,-1),6),('RIGHTPADDING',(0,0),(-1,-1),6)]))
+    story.append(t);doc.build(story);out.seek(0);return out
+
+@app.post("/documentos/acessos/<operator>/gerar.pdf")
+@login_required
+def v75_access_list_generate_pdf(operator):
+    operator=operator.upper()
+    if operator not in ("METRO","CPTM") or not _has_access("materials.access_lists.manage"):abort(403)
+    eligible=_v741_eligible_users(operator)
+    ids=[int(x) for x in request.form.getlist("user_ids") if str(x).isdigit()]
+    # V75: documento oficial sempre contém TODOS os habilitados; não aceita exclusão silenciosa.
+    users=eligible
+    if not users: flash(f"Nenhum colaborador habilitado para {operator}.","error");return redirect('/documentos/acessos')
+    incomplete=[(u,_v75_access_required_missing(u)) for u in users if _v75_access_required_missing(u)]
+    if incomplete:
+        msg="; ".join(f"{u.name}: {', '.join(m)}" for u,m in incomplete[:8])
+        flash("Não foi possível gerar o PDF. Complete os campos obrigatórios — "+msg,"error");return redirect('/documentos/acessos')
+    last=db.session.query(func.max(AccessListRevision.revision)).filter_by(operator=operator).scalar() or 0; rev=last+1
+    r=AccessListRevision(operator=operator,revision=rev,status="PDF_GERADO",generated_by=session['user_id']);db.session.add(r);db.session.flush()
+    for u in users:db.session.add(AccessListMember(revision_id=r.id,user_id=u.id,name_snapshot=u.name,user_code_snapshot=u.user_code,company_snapshot=u.company,job_title_snapshot=u.job_title,photo_key_snapshot=u.photo_url))
+    db.session.commit();bio=_v75_access_pdf(operator,users,rev)
+    return send_file(bio,as_attachment=True,download_name=f"ACESSO_{operator}_REV{rev:02d}.pdf",mimetype="application/pdf")
+
 @app.get("/documentos/acessos")
 @login_required
 def v741_access_lists_page():
@@ -6610,6 +6711,13 @@ def v741_access_list_evidence(revision_id):
     for p in AccessListPending.query.filter_by(operator=row.operator,status="PENDENTE").all():p.status="CONCLUIDA";p.resolved_at=datetime.utcnow();p.resolved_by=session["user_id"];p.revision_id=row.id
     db.session.add(AuditEvent(user_id=session["user_id"],event_type="ACCESS_LIST_VALIDATED",entity_type="access_list_revision",entity_id=str(row.id),detail=f"{row.operator} REV{row.revision:02d} · evidência anexada"));db.session.commit();flash("Lista validada. Pendências relacionadas foram encerradas com evidência.");return redirect("/documentos/acessos")
 
+def _v75_role_label(role):
+    return {
+        "manager":"Gestor", "manager_field":"Gestor Field", "technician":"Técnico Field",
+        "technician_implantation":"Técnico Implantação", "consultation":"Consulta",
+        "hr":"RH", "dispatcher":"Dispatcher", "customer":"Cliente", "adm_finance":"ADM Financeiro"
+    }.get((role or "").strip().lower(), role or "")
+
 @app.get("/usuarios/configuracoes-modelo.xlsx")
 @user_admin_required
 def v741_users_config_export():
@@ -6619,16 +6727,16 @@ def v741_users_config_export():
         me=db.session.get(User,session.get("user_id")); users_q=users_q.filter(User.role.in_(("technician","technician_implantation")))
         if me and (me.company or "").strip():users_q=users_q.filter(func.lower(func.coalesce(User.company,""))==(me.company or "").strip().lower())
     rows=users_q.order_by(User.name).all();wb=Workbook();ws=wb.active;ws.title="COLABORADORES_CONFIG"
-    fixed=["user_id","Código","Usuário","Nome","Empresa","Perfil","Cargo","Ativo","Acesso Metrô","Acesso CPTM","Acesso Motiva (APT)","GPS obrigatório","Histórico GPS","Controle Jornada","Escala","Horário","Admissão","Desligamento"]
+    fixed=["user_id","Código","Usuário","Nome","Empresa","Perfil","Cargo","CPF","RG","Locais de atuação","Ativo","Acesso Metrô","Acesso CPTM","Acesso Motiva (APT)","GPS obrigatório","Histórico GPS","Controle Jornada","Escala","Horário","Admissão","Desligamento"]
     perms=list(ACCESS_SUBMODULES);headers=fixed+[f"PERM | {ACCESS_LABELS.get(p,p)}" for p in perms]
     ws.append(headers)
     for u in rows:
-        acc=_user_access_set(u); vals=[u.id,u.user_code or "",u.username,u.name,u.company or "",u.role,u.job_title or "","SIM" if u.active else "NÃO","SIM" if u.access_metro else "NÃO","SIM" if u.access_cptm else "NÃO","SIM" if u.access_motiva_apt else "NÃO","SIM" if u.gps_required else "NÃO","SIM" if u.gps_history_enabled else "NÃO","SIM" if u.journey_control_enabled else "NÃO",u.work_schedule_type or "",u.work_shift or "",u.admission_date,u.termination_date]+["SIM" if p in acc else "NÃO" for p in perms];ws.append(vals)
+        acc=_user_access_set(u); vals=[u.id,u.user_code or "",u.username,u.name,u.company or "",_v75_role_label(u.role),u.job_title or "",u.cpf or "",u.rg or "",", ".join(json.loads(u.operating_locations_json or "[]")),"SIM" if u.active else "NÃO","SIM" if u.access_metro else "NÃO","SIM" if u.access_cptm else "NÃO","SIM" if u.access_motiva_apt else "NÃO","SIM" if u.gps_required else "NÃO","SIM" if u.gps_history_enabled else "NÃO","SIM" if u.journey_control_enabled else "NÃO",u.work_schedule_type or "",u.work_shift or "",u.admission_date,u.termination_date]+["SIM" if p in acc else "NÃO" for p in perms];ws.append(vals)
     for cell in ws[1]:cell.font=Font(bold=True,color="FFFFFF");cell.fill=PatternFill("solid",fgColor="1F4E78");cell.alignment=Alignment(horizontal="center",vertical="center",wrap_text=True)
     ws.freeze_panes="A2";ws.auto_filter.ref=ws.dimensions
     for i in range(1,len(headers)+1):ws.column_dimensions[get_column_letter(i)].width=18 if i>5 else 16
     ws.column_dimensions["D"].width=32;ws.column_dimensions["E"].width=24
-    lg=wb.create_sheet("LEGENDA");lg.append(["Campo","Regra"]);lg.append(["user_id","Chave obrigatória. Nunca altere."]);lg.append(["SIM / NÃO","Célula vazia = não alterar. SIM ativa. NÃO desativa."]);lg.append(["Permissões","As colunas PERM refletem a matriz atual da plataforma. Novas funcionalidades aparecem em novas exportações."]);lg.append(["Modelo",f"V74.1 · {datetime.now(V72_TZ).strftime('%d/%m/%Y %H:%M')}"]);
+    lg=wb.create_sheet("LEGENDA");lg.append(["Campo","Regra"]);lg.append(["user_id","Chave obrigatória. Nunca altere."]);lg.append(["SIM / NÃO","Célula vazia = não alterar. SIM ativa. NÃO desativa."]);lg.append(["Permissões","As colunas PERM refletem a matriz atual da plataforma. Novas funcionalidades aparecem em novas exportações."]);lg.append(["Modelo",f"V75 · {datetime.now(V72_TZ).strftime('%d/%m/%Y %H:%M')}"]);
     out=io.BytesIO();wb.save(out);out.seek(0);return send_file(out,as_attachment=True,download_name=f"configuracoes_usuarios_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 def _v741_parse_yesno(v):
@@ -6662,6 +6770,15 @@ def _v741_read_user_config(raw,apply=False):
             old=bool(getattr(u,attr,False))
             if old!=new:local.append((h,"SIM" if old else "NÃO","SIM" if new else "NÃO"));
             if apply:setattr(u,attr,new)
+        for h,attr in (("CPF","cpf"),("RG","rg")):
+            if h in idx and row[idx[h]] not in (None,""):
+                new=str(row[idx[h]]).strip();old=str(getattr(u,attr) or "")
+                if old!=new:local.append((h,old or "—",new));
+                if apply:setattr(u,attr,new or None)
+        if "Locais de atuação" in idx and row[idx["Locais de atuação"]] not in (None,""):
+            raw=str(row[idx["Locais de atuação"]]);allowed={"METRO","CPTM","L4","L5","OUTROS"};newloc=[x.strip().upper() for x in re.split(r"[,;]",raw) if x.strip().upper() in allowed];oldloc=json.loads(u.operating_locations_json or "[]")
+            if oldloc!=newloc:local.append(("Locais de atuação",", ".join(oldloc) or "—",", ".join(newloc) or "—"))
+            if apply:u.operating_locations_json=json.dumps(newloc,ensure_ascii=False)
         # permissões: só altera colunas explicitamente SIM/NÃO; vazio preserva
         acc=set(_user_access_set(u)); acc_changed=False
         for h,p in perm_by_header.items():
@@ -6861,7 +6978,7 @@ def create_user():
         admission_date=admission_date,
         termination_date=termination_date,
         operating_locations_json=json.dumps(operating_locations,ensure_ascii=False),
-        access_metro=access_metro, access_cptm=access_cptm, access_motiva_apt=access_motiva_apt,
+        access_metro=access_metro, access_cptm=access_cptm, access_motiva_apt=access_motiva_apt, cpf=(request.form.get("cpf") or "").strip() or None, rg=(request.form.get("rg") or "").strip() or None,
         work_schedule_type=work_schedule_type if role in ("technician", "technician_implantation", "manager_field") else None,
         work_shift=work_shift if role in ("technician", "technician_implantation", "manager_field") else None,
         work_anchor_date=work_anchor_date if role in ("technician", "technician_implantation", "manager_field") and work_schedule_type == "12x36" else None,
@@ -7123,6 +7240,8 @@ def edit_user(user_id):
     user.access_metro = access_metro
     user.access_cptm = access_cptm
     user.access_motiva_apt = access_motiva_apt
+    user.cpf = (request.form.get("cpf") or "").strip() or None
+    user.rg = (request.form.get("rg") or "").strip() or None
     old_gps_required = bool(getattr(user, "gps_required", False))
     user.gps_required = gps_required if role in ("technician","technician_implantation","manager_field","dispatcher") else False
     user.gps_history_enabled = gps_history_enabled if role in ("technician","technician_implantation","manager_field","dispatcher") else False
@@ -13425,9 +13544,91 @@ def v73_schedule_review(rid):
 
 @app.get("/arrow")
 @login_required
-def v73_arrow():
-    if not _has_access("arrow.view"): abort(403)
-    return render_template("arrow_v73.html",app_release=APP_RELEASE)
+def v75_arrow():
+    if not _has_access("arrow.view"):abort(403)
+    techs=User.query.filter(User.archived_at.is_(None),User.active.is_(True),User.role.in_(["technician","technician_implantation"])).order_by(User.name).all()
+    locs=Location.query.order_by(Location.company,Location.line,Location.location).all()
+    mats=MaterialCatalogItem.query.filter_by(active=True).order_by(MaterialCatalogItem.description).all()
+    return render_template("arrow_v75.html",app_release=APP_RELEASE,technicians=techs,locations=locs,materials=mats)
+
+def _v75_arrow_eligibility(u,operator):
+    operator=(operator or "OUTROS").upper()
+    if operator=="METRO": ok=bool(u.access_metro);reason="Acesso Metrô não habilitado no perfil."
+    elif operator=="CPTM": ok=bool(u.access_cptm);reason="Acesso CPTM não habilitado no perfil."
+    elif operator=="MOTIVA": ok=bool(u.access_motiva_apt and _v741_has_valid_apt(u.id));reason="Acesso Motiva/APT não está regular."
+    else: ok=True;reason=""
+    return ok,reason
+
+@app.get("/api/arrow/eligibilidade/<int:uid>")
+@login_required
+def v75_arrow_eligibility_api(uid):
+    if not _has_access("arrow.view"):abort(403)
+    u=db.session.get(User,uid) or abort(404);op=(request.args.get('operator') or 'OUTROS').upper();ok,reason=_v75_arrow_eligibility(u,op)
+    return jsonify({'ok':True,'eligible':ok,'reason':reason,'operator':op,'access':{'metro':bool(u.access_metro),'cptm':bool(u.access_cptm),'motiva_apt':bool(u.access_motiva_apt),'apt_valid':_v741_has_valid_apt(u.id)}})
+
+@app.get("/api/arrow/activities")
+@login_required
+def v75_arrow_list_api():
+    if not _has_access("arrow.view"):abort(403)
+    q=ArrowActivity.query
+    d=(request.args.get('date') or '').strip();status=(request.args.get('status') or '').strip().upper();tech=request.args.get('technician_id',type=int)
+    if d:
+        try:q=q.filter_by(activity_date=date.fromisoformat(d))
+        except:pass
+    if status:q=q.filter_by(status=status)
+    if tech:q=q.filter_by(technician_id=tech)
+    rows=q.order_by(ArrowActivity.activity_date.desc(),ArrowActivity.id.desc()).limit(500).all();uids={x.technician_id for x in rows};lids={x.location_id for x in rows if x.location_id};uu={u.id:u for u in User.query.filter(User.id.in_(uids)).all()} if uids else {};ll={x.id:x for x in Location.query.filter(Location.id.in_(lids)).all()} if lids else {}
+    out=[]
+    for x in rows:
+        u=uu.get(x.technician_id);loc=ll.get(x.location_id);eligible,reason=_v75_arrow_eligibility(u,x.operator) if u else (False,'Colaborador não encontrado')
+        out.append({'id':x.id,'date':x.activity_date.isoformat(),'title':x.title,'operator':x.operator,'technician_id':x.technician_id,'technician':u.name if u else '—','location_id':x.location_id,'location':loc.location if loc else '—','line':loc.line if loc else '','company':loc.company if loc else '','status':x.status,'remote':x.remote,'teamviewer_id':x.teamviewer_id or '','notes':x.notes or '','eligible':eligible,'eligibility_reason':reason})
+    return jsonify({'ok':True,'rows':out})
+
+@app.post("/api/arrow/activities")
+@login_required
+def v75_arrow_create_api():
+    if not _has_access("arrow.manage"):abort(403)
+    d=request.get_json(silent=True) or {}
+    try:uid=int(d.get('technician_id'));u=db.session.get(User,uid)
+    except:u=None
+    if not u:return jsonify({'ok':False,'error':'Selecione um técnico válido.'}),400
+    op=(d.get('operator') or 'OUTROS').upper();eligible,reason=_v75_arrow_eligibility(u,op)
+    if not eligible:return jsonify({'ok':False,'error':reason}),409
+    try:wd=date.fromisoformat(d.get('date') or date.today().isoformat())
+    except:return jsonify({'ok':False,'error':'Data inválida.'}),400
+    title=(d.get('title') or '').strip()
+    if not title:return jsonify({'ok':False,'error':'Informe a atividade.'}),400
+    locid=int(d.get('location_id')) if str(d.get('location_id') or '').isdigit() else None
+    x=ArrowActivity(activity_date=wd,title=title,operator=op,location_id=locid,technician_id=u.id,status='PLANEJADA',remote=bool(d.get('remote')),teamviewer_id=(d.get('teamviewer_id') or '').strip(),notes=(d.get('notes') or '').strip(),created_by=session['user_id']);db.session.add(x);db.session.commit();return jsonify({'ok':True,'id':x.id})
+
+@app.post("/api/arrow/activities/<int:aid>/status")
+@login_required
+def v75_arrow_status_api(aid):
+    if not _has_access("arrow.manage"):abort(403)
+    x=db.session.get(ArrowActivity,aid) or abort(404);st=((request.get_json(silent=True) or {}).get('status') or '').upper()
+    if st not in ('PLANEJADA','EM ANDAMENTO','CONCLUÍDA','CANCELADA'):return jsonify({'ok':False,'error':'Status inválido.'}),400
+    x.status=st;db.session.commit();return jsonify({'ok':True})
+
+@app.get("/api/arrow/dashboard")
+@login_required
+def v75_arrow_dashboard_api():
+    if not (_has_access("arrow.dashboard") or _has_access("arrow.view")):abort(403)
+    rows=ArrowActivity.query.all();total=len(rows);done=sum(x.status=='CONCLUÍDA' for x in rows);prog=sum(x.status=='EM ANDAMENTO' for x in rows);pend=sum(x.status=='PLANEJADA' for x in rows);remote=sum(bool(x.remote) for x in rows)
+    return jsonify({'ok':True,'summary':{'total':total,'done':done,'in_progress':prog,'planned':pend,'remote':remote,'progress_pct':round(done/total*100,1) if total else 0}})
+
+@app.post("/api/arrow/activities/<int:aid>/materials")
+@login_required
+def v75_arrow_material_api(aid):
+    if not _has_access("arrow.manage"):abort(403)
+    a=db.session.get(ArrowActivity,aid) or abort(404);d=request.get_json(silent=True) or {}
+    try:mid=int(d.get('material_id'));qty=float(d.get('quantity') or 1)
+    except:return jsonify({'ok':False,'error':'Material/quantidade inválidos.'}),400
+    m=db.session.get(MaterialCatalogItem,mid)
+    if not m or qty<=0:return jsonify({'ok':False,'error':'Material/quantidade inválidos.'}),400
+    consumed=bool(d.get('consumed')) or (m.control_type or '').upper()=='CONSUMIVEL'
+    link=ArrowActivityMaterial(activity_id=a.id,material_id=m.id,quantity=qty,consumed=consumed,notes=(d.get('notes') or '').strip());db.session.add(link)
+    if consumed: db.session.add(MaterialMovement(user_id=a.technician_id,material_id=m.id,movement_type='CONSUMO_ARROW',quantity=qty,notes=f'Arrow #{a.id} — {a.title}',created_by=session['user_id']))
+    db.session.commit();return jsonify({'ok':True})
 
 
 @app.get("/api/v73/atividade-execucoes")
@@ -15397,7 +15598,9 @@ with app.app_context():
                 if 'access_metro' not in cols: conn.execute(text("ALTER TABLE users ADD COLUMN access_metro BOOLEAN DEFAULT FALSE NOT NULL"))
                 if 'access_cptm' not in cols: conn.execute(text("ALTER TABLE users ADD COLUMN access_cptm BOOLEAN DEFAULT FALSE NOT NULL"))
                 if 'access_motiva_apt' not in cols: conn.execute(text("ALTER TABLE users ADD COLUMN access_motiva_apt BOOLEAN DEFAULT FALSE NOT NULL"))
-        db.metadata.create_all(bind=db.engine,tables=[AccessAuthorization.__table__,AccessListRevision.__table__,AccessListMember.__table__,AccessListPending.__table__],checkfirst=True)
+                if 'cpf' not in cols: conn.execute(text("ALTER TABLE users ADD COLUMN cpf VARCHAR(20)"))
+                if 'rg' not in cols: conn.execute(text("ALTER TABLE users ADD COLUMN rg VARCHAR(30)"))
+        db.metadata.create_all(bind=db.engine,tables=[AccessAuthorization.__table__,AccessListRevision.__table__,AccessListMember.__table__,AccessListPending.__table__,ArrowActivity.__table__,ArrowActivityMaterial.__table__],checkfirst=True)
     except Exception:
         app.logger.exception('Falha na migração V74 Pessoas/Autorizações')
 
