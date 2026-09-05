@@ -1,0 +1,14 @@
+V77.3 — DEPLOY ENXUTO
+
+Substituir os arquivos do pacote mantendo os demais arquivos da aplicação.
+
+Validações obrigatórias após deploy:
+- APP_RELEASE = V77.3
+- Dashboard Bobinas exibe base oficial 602 / 590 instaladas / 12 estoque
+- /api/bobinas/options -> source BASE_OFICIAL_ATM_602
+- /api/bobinas/dashboard -> HTTP 200 e official_total/installed/stock corretos
+- Importação Bobinas: preview -> divergências -> commit -> dashboard atualizado
+- /api/field-stock/dashboard -> HTTP 200 (sem erro created_at)
+- Retirada Estoque Field -> baixa origem e cria carga na mesma transação
+
+A planilha de bobinas NÃO pode criar ou alterar o universo oficial de ATMs.
