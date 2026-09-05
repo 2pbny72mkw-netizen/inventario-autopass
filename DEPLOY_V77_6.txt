@@ -1,0 +1,18 @@
+V77.6 — ENXUTA
+
+Substituir:
+- app.py
+- templates/bobbin_dashboard_v77.html
+- templates/about.html
+
+Adicionar:
+- README_V77_6.md
+
+Após deploy:
+1. Confirmar menu superior padrão do sistema presente.
+2. Abrir /dashboard/bobinas.
+3. Validar KPIs e filtros.
+4. Selecionar linha/estação e abrir ATM no Detalhe da Estação.
+5. Confirmar Histórico, Evolução e Indicadores da ATM.
+6. Confirmar botão Importar planilha e prévia.
+7. Confirmar Estoque Field e Exportar.
