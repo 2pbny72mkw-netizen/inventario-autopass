@@ -1,5 +1,5 @@
 // V50.6 — cache seguro: páginas, dashboards e APIs nunca são interceptados.
-const CACHE = 'autopass-v69-2-static';
+const CACHE = 'autopass-v76-static';
 const PRECACHE = ['/static/autopass-icon-192.png','/static/autopass-icon-512.png'];
 self.addEventListener('install', event => {
   event.waitUntil((async()=>{const cache=await caches.open(CACHE);await cache.addAll(PRECACHE);await self.skipWaiting();})());
@@ -28,3 +28,6 @@ self.addEventListener('fetch', event => {
     }
   })());
 });
+// V76 — notificações locais exibidas pelo Service Worker quando o PWA está ativo.
+self.addEventListener('message',event=>{const d=event.data||{};if(d.type==='SHOW_NOTIFICATION'){self.registration.showNotification(d.title||'Sistema de Gestão',{body:d.body||'',icon:'/static/autopass-icon-192.png',badge:'/static/autopass-icon-192.png',tag:d.tag||'autopass-v76',renotify:true,data:{url:d.url||'/notificacoes'}});}});
+self.addEventListener('notificationclick',event=>{event.notification.close();const url=event.notification.data?.url||'/notificacoes';event.waitUntil(clients.matchAll({type:'window',includeUncontrolled:true}).then(ws=>{for(const w of ws){if('focus' in w){w.navigate(url);return w.focus();}}return clients.openWindow(url);}));});
