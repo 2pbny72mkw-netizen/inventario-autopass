@@ -1,0 +1,7 @@
+V76.1 — DEPLOY ENXUTO
+
+1. Substituir os arquivos contidos neste pacote preservando .env, uploads, data e banco.
+2. Reiniciar a aplicação.
+3. A migração V76.1-001 é aditiva/idempotente e executa uma única vez.
+4. Limpar cache do navegador/PWA ou fazer recarga forçada após o deploy.
+5. Validar Equipes, PDF de acessos, Firmware POS CPTM, Arrow e Notificações.

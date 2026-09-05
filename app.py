@@ -41,7 +41,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V76"
+APP_RELEASE = "V76.1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -3136,25 +3136,50 @@ def teams_status_api():
     except ValueError:
         return jsonify({"ok":False,"error":"Data operacional inválida."}),400
     scheduled=_schedule_today_db(target_date)
-    # V59: para datas passadas, a análise considera o encerramento daquele dia;
-    # para hoje, usa o relógio real de São Paulo. Datas futuras não marcam ausência/atraso.
-    is_today=(target_date==local_now.date())
-    is_future=(target_date>local_now.date())
+    is_today=(target_date==local_now.date()); is_future=(target_date>local_now.date())
     effective_local_now=(local_now if is_today else datetime.combine(target_date,datetime.max.time(),tzinfo=ZoneInfo("America/Sao_Paulo")))
     now_utc=effective_local_now.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
     start_local=datetime.combine(target_date,datetime.min.time(),tzinfo=ZoneInfo("America/Sao_Paulo")); start_utc=start_local.astimezone(ZoneInfo("UTC")).replace(tzinfo=None); end_utc=(start_local+timedelta(days=1)).astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+
+    # V76.1: quem trabalha por autorização extraordinária também pertence à operação da data,
+    # mesmo que a escala 5x2/12x36 indique folga.
+    scheduled_ids={int(m["user_id"]) for m in scheduled if m.get("user_id")}
+    auth_rows=WorkAccessRequest.query.filter(
+        WorkAccessRequest.status=="APROVADA",
+        WorkAccessRequest.approved_from.isnot(None),WorkAccessRequest.approved_until.isnot(None),
+        WorkAccessRequest.approved_from < end_utc,WorkAccessRequest.approved_until >= start_utc
+    ).order_by(WorkAccessRequest.approved_until.desc()).all()
+    profiles={p.user_id:p for p in TeamScheduleProfile.query.filter(TeamScheduleProfile.user_id.isnot(None)).all()}
+    for auth in auth_rows:
+        if auth.user_id in scheduled_ids: continue
+        u=db.session.get(User,auth.user_id)
+        if not u or not u.active or normalize(u.personnel_status or "ATIVO")!="ATIVO": continue
+        p=profiles.get(u.id)
+        member=_profile_to_dict(p,u) if p else {
+            "profile_id":None,"user_id":u.id,"linked_user_name":u.name,"linked":True,"name":u.name,
+            "category":"TECNICO","schedule_type":u.work_schedule_type or "5x2","shift":u.work_shift or "",
+            "supervision":"","entry":"","lines":[],"anchor_date":u.work_anchor_date.isoformat() if u.work_anchor_date else None,
+            "active":True,"company":u.company or "","job_title":u.job_title or "","personnel_status":u.personnel_status or "ATIVO",
+            "personnel_status_note":u.personnel_status_note or "","source":"AUTORIZACAO_EXTRAORDINARIA"
+        }
+        member["extraordinary_authorization"]=True; member["authorization_id"]=auth.id
+        member["authorization_until"]=auth.approved_until.replace(tzinfo=ZoneInfo("UTC")).astimezone(V72_TZ).isoformat() if auth.approved_until else None
+        scheduled.append(member); scheduled_ids.add(u.id)
+
     user_ids={int(m["user_id"]) for m in scheduled if m.get("user_id")}
     users={u.id:u for u in User.query.filter(User.id.in_(user_ids)).all()} if user_ids else {}
-    # Última posição do dia por usuário em uma consulta + join.
     pos_map={}
     if user_ids:
         sub=(db.session.query(TechnicianPosition.user_id,func.max(TechnicianPosition.captured_at).label("mx")).filter(TechnicianPosition.user_id.in_(user_ids),TechnicianPosition.captured_at>=start_utc,TechnicianPosition.captured_at<end_utc).group_by(TechnicianPosition.user_id).subquery())
         for p in db.session.query(TechnicianPosition).join(sub,and_(TechnicianPosition.user_id==sub.c.user_id,TechnicianPosition.captured_at==sub.c.mx)).all(): pos_map[p.user_id]=p
-    login_map={}; login_counts={}; gps_counts={}
+    login_map={}; login_counts={}; session_counts={}; gps_counts={}
     if user_ids:
         for uid,first_at,n in db.session.query(SessionEvent.user_id,func.min(SessionEvent.created_at),func.count(SessionEvent.id)).filter(SessionEvent.user_id.in_(user_ids),SessionEvent.event_type=="LOGIN",SessionEvent.created_at>=start_utc,SessionEvent.created_at<end_utc).group_by(SessionEvent.user_id).all(): login_map[uid]=first_at; login_counts[uid]=int(n)
+        session_counts={uid:int(n) for uid,n in db.session.query(SessionEvent.user_id,func.count(SessionEvent.id)).filter(SessionEvent.user_id.in_(user_ids),SessionEvent.created_at>=start_utc,SessionEvent.created_at<end_utc).group_by(SessionEvent.user_id).all()}
         gps_counts={uid:int(n) for uid,n in db.session.query(TechnicianPosition.user_id,func.count(TechnicianPosition.id)).filter(TechnicianPosition.user_id.in_(user_ids),TechnicianPosition.captured_at>=start_utc,TechnicianPosition.captured_at<end_utc).group_by(TechnicianPosition.user_id).all()}
     stations=Location.query.filter(Location.reference_latitude.isnot(None),Location.reference_longitude.isnot(None)).all()
+    reference_radius=float(_v50_settings().get("gps_radius_m",250) or 250)
+    stale_limit=10
     def nearest_station(lat,lon):
         if lat is None or lon is None:return None
         best=None
@@ -3163,25 +3188,37 @@ def teams_status_api():
             except Exception: continue
             if best is None or dist<best[0]: best=(dist,loc)
         if not best:return None
-        dist,loc=best; return {"id":loc.id,"name":loc.location,"company":loc.company or "","line":loc.line or "","distance_m":round(dist),"relation":"NA ESTAÇÃO" if dist<=float(_v50_settings().get("gps_radius_m",500) or 500) else "FORA DA ÁREA"}
-    rows=[]; summary={"in_operation":0,"late":0,"not_logged":0,"stale_gt10":0,"no_gps":0,"outside_locality":0,"not_started":0}
+        dist,loc=best; return {"id":loc.id,"name":loc.location,"company":loc.company or "","line":loc.line or "","distance_m":round(dist),"relation":"NA ESTAÇÃO" if dist<=reference_radius else "FORA DA ÁREA","radius_m":reference_radius}
+    rows=[]; summary={"in_operation":0,"late":0,"not_logged":0,"stale_gt10":0,"no_gps":0,"outside_locality":0,"not_started":0,"extraordinary":0,"session_inconsistency":0}
     for member in scheduled:
         uid=member.get("user_id"); user=users.get(uid); pos=pos_map.get(uid); minutes=max(0,int((now_utc-pos.captured_at).total_seconds()//60)) if pos else None
         shift=(member.get("shift") or member.get("entry") or "").strip(); m=re.search(r'(\d{1,2}):(\d{2})',shift); expected_local=None
         if m: expected_local=datetime.combine(target_date,datetime.min.time(),tzinfo=ZoneInfo("America/Sao_Paulo")).replace(hour=int(m.group(1)),minute=int(m.group(2)))
-        first_at=login_map.get(uid); login_local=first_at.replace(tzinfo=ZoneInfo("UTC")).astimezone(ZoneInfo("America/Sao_Paulo")) if first_at else None; late_minutes=max(0,int((login_local-expected_local).total_seconds()//60)) if login_local and expected_local else 0; station=nearest_station(pos.latitude,pos.longitude) if pos else None
-        if (is_future or (expected_local and effective_local_now<expected_local)) and not login_local: operation_status="AINDA NÃO INICIOU"; summary["not_started"]+=1
-        elif not login_local: operation_status="NÃO LOGOU"; summary["not_logged"]+=1
-        elif not pos: operation_status="SEM GPS"; summary["no_gps"]+=1
-        elif minutes is not None and minutes>10: operation_status="SEM POSIÇÃO >10 MIN"; summary["stale_gt10"]+=1
-        elif late_minutes>0: operation_status=f"ATRASADO {late_minutes} MIN"; summary["late"]+=1
-        else: operation_status="EM OPERAÇÃO"; summary["in_operation"]+=1
+        first_at=login_map.get(uid); login_local=first_at.replace(tzinfo=ZoneInfo("UTC")).astimezone(ZoneInfo("America/Sao_Paulo")) if first_at else None
+        late_minutes=max(0,int((login_local-expected_local).total_seconds()//60)) if login_local and expected_local else 0; station=nearest_station(pos.latitude,pos.longitude) if pos else None
+        extraordinary=bool(member.get("extraordinary_authorization")); summary["extraordinary"]+=1 if extraordinary else 0
+        # V76.1: GPS autenticado é evidência operacional. Nunca esconder GPS >10 min atrás de "NÃO LOGOU".
+        if minutes is not None and minutes>stale_limit:
+            operation_status=f"SEM POSIÇÃO >{stale_limit} MIN"; summary["stale_gt10"]+=1
+            if not login_local: summary["session_inconsistency"]+=1
+        elif pos and not login_local:
+            operation_status="EM OPERAÇÃO · SESSÃO GPS"; summary["in_operation"]+=1; summary["session_inconsistency"]+=1
+        elif (is_future or (expected_local and effective_local_now<expected_local)) and not login_local and not extraordinary:
+            operation_status="AINDA NÃO INICIOU"; summary["not_started"]+=1
+        elif not login_local:
+            operation_status="AGUARDANDO LOGIN · AUTORIZAÇÃO" if extraordinary else "NÃO LOGOU"; summary["not_logged"]+=1
+        elif not pos:
+            operation_status="SEM GPS"; summary["no_gps"]+=1
+        elif late_minutes>0 and not extraordinary:
+            operation_status=f"ATRASADO {late_minutes} MIN"; summary["late"]+=1
+        else:
+            operation_status="EM OPERAÇÃO · AUTORIZAÇÃO" if extraordinary else "EM OPERAÇÃO"; summary["in_operation"]+=1
         if station and station["relation"]=="FORA DA ÁREA": summary["outside_locality"]+=1
-        freshness="SEM SINAL" if minutes is None else ("ATUAL" if minutes<=5 else ("ATENÇÃO" if minutes<=15 else "ATRASADO"))
-        rows.append({**member,"gps_points_today":gps_counts.get(uid,0),"session_events_today":login_counts.get(uid,0),"photo_url":(f"/usuarios/{user.id}/foto" if user and user.photo_url else None),"photo_version":(str(user.photo_url) if user and user.photo_url else None),"latitude":pos.latitude if pos else None,"longitude":pos.longitude if pos else None,"accuracy":pos.accuracy if pos else None,"captured_at":(pos.captured_at.isoformat()+"Z") if pos else None,"minutes_since":minutes,"freshness":freshness,"first_login":login_local.strftime("%H:%M") if login_local else None,"late_minutes":late_minutes,"operation_status":operation_status,"nearest_station":station,"current_location":station["name"] if station else None})
+        freshness="SEM SINAL" if minutes is None else ("ATUAL" if minutes<=5 else ("ATENÇÃO" if minutes<=stale_limit else "ATRASADO"))
+        rows.append({**member,"gps_points_today":gps_counts.get(uid,0),"session_events_today":session_counts.get(uid,0),"login_events_today":login_counts.get(uid,0),"photo_url":(f"/usuarios/{user.id}/foto" if user and user.photo_url else None),"photo_version":(str(user.photo_url) if user and user.photo_url else None),"latitude":pos.latitude if pos else None,"longitude":pos.longitude if pos else None,"accuracy":pos.accuracy if pos else None,"captured_at":(pos.captured_at.isoformat()+"Z") if pos else None,"minutes_since":minutes,"freshness":freshness,"first_login":login_local.strftime("%H:%M") if login_local else None,"late_minutes":late_minutes,"operation_status":operation_status,"nearest_station":station,"current_location":station["name"] if station else None})
     counts={}
     for row in rows: counts[row["category"]]=counts.get(row["category"],0)+1
-    return jsonify({"ok":True,"date":target_date.isoformat(),"time":(local_now.strftime("%H:%M") if is_today else "23:59"),"is_today":is_today,"is_future":is_future,"scheduled":len(rows),"counts_by_category":counts,"summary":summary,"technicians":rows})
+    return jsonify({"ok":True,"date":target_date.isoformat(),"time":(local_now.strftime("%H:%M") if is_today else "23:59"),"is_today":is_today,"is_future":is_future,"scheduled":len(rows),"counts_by_category":counts,"summary":summary,"technicians":rows,"gps_reference_radius_m":reference_radius,"gps_stale_alert_minutes":stale_limit})
 
 
 @app.get("/api/equipes/colaboradores")
@@ -6701,7 +6738,7 @@ def _v75_access_pdf(operator, users, revision):
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
     from reportlab.lib.utils import ImageReader
     out=io.BytesIO(); doc=SimpleDocTemplate(out,pagesize=landscape(A4),rightMargin=24,leftMargin=24,topMargin=22,bottomMargin=22)
-    st=getSampleStyleSheet(); body=ParagraphStyle('v75body',parent=st['BodyText'],fontSize=8,leading=10)
+    st=getSampleStyleSheet(); body=ParagraphStyle('v761body',parent=st['BodyText'],fontSize=10,leading=12)
     story=[]
     logo=STATIC_DIR/'autopass-logo.png'
     if logo.exists():
@@ -6715,11 +6752,26 @@ def _v75_access_pdf(operator, users, revision):
         raw=_v75_user_photo_bytes(u)
         if raw:
             try:
-                img=Image(io.BytesIO(raw),width=42,height=42); photo=img
+                # V76.1: normaliza EXIF antes do ReportLab; evita foto girada/invertida em celular.
+                normalized=io.BytesIO(raw)
+                try:
+                    from PIL import Image as PILImage, ImageOps
+                    src=PILImage.open(io.BytesIO(raw))
+                    src=ImageOps.exif_transpose(src).convert("RGB")
+                    # Retrato 3:4 com corte central, sem distorção.
+                    w,h=src.size; target_ratio=3/4
+                    if w/h > target_ratio:
+                        nw=int(h*target_ratio); left=max(0,(w-nw)//2); src=src.crop((left,0,left+nw,h))
+                    else:
+                        nh=int(w/target_ratio); top=max(0,(h-nh)//2); src=src.crop((0,top,w,top+nh))
+                    normalized=io.BytesIO(); src.save(normalized,format="JPEG",quality=90); normalized.seek(0)
+                except Exception:
+                    normalized=io.BytesIO(raw)
+                img=Image(normalized,width=90,height=120); photo=img
             except Exception: photo="Foto cadastrada"
-        data.append([u.company or "",u.name,u.cpf or "",u.rg or "",photo])
-    t=Table(data,colWidths=[150,220,115,105,70],repeatRows=1,rowHeights=[28]+[52]*(len(data)-1))
-    t.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#17365D')),('TEXTCOLOR',(0,0),(-1,0),colors.white),('FONTNAME',(0,0),(-1,0),'Helvetica-Bold'),('ALIGN',(0,0),(-1,0),'CENTER'),('VALIGN',(0,0),(-1,-1),'MIDDLE'),('GRID',(0,0),(-1,-1),.45,colors.HexColor('#B8C4D1')),('FONTSIZE',(0,1),(-2,-1),8),('LEFTPADDING',(0,0),(-1,-1),6),('RIGHTPADDING',(0,0),(-1,-1),6)]))
+        data.append([Paragraph(str(u.company or ""),body),Paragraph(str(u.name or ""),body),Paragraph(str(u.cpf or ""),body),Paragraph(str(u.rg or ""),body),photo])
+    t=Table(data,colWidths=[150,215,112,100,105],repeatRows=1,rowHeights=[30]+[128]*(len(data)-1))
+    t.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#17365D')),('TEXTCOLOR',(0,0),(-1,0),colors.white),('FONTNAME',(0,0),(-1,0),'Helvetica-Bold'),('ALIGN',(0,0),(-1,0),'CENTER'),('VALIGN',(0,0),(-1,-1),'MIDDLE'),('GRID',(0,0),(-1,-1),.45,colors.HexColor('#B8C4D1')),('FONTSIZE',(0,1),(-2,-1),10),('LEFTPADDING',(0,0),(-1,-1),7),('RIGHTPADDING',(0,0),(-1,-1),7),('TOPPADDING',(0,1),(-1,-1),6),('BOTTOMPADDING',(0,1),(-1,-1),6)]))
     story.append(t);doc.build(story);out.seek(0);return out
 
 @app.post("/documentos/acessos/<operator>/gerar.pdf")
@@ -13650,7 +13702,7 @@ def v75_arrow_eligibility_api(uid):
 def v75_arrow_list_api():
     if not _has_access("arrow.view"):abort(403)
     q=ArrowActivity.query
-    d=(request.args.get('date') or '').strip();date_from=(request.args.get('from') or '').strip();date_to=(request.args.get('to') or '').strip();status=(request.args.get('status') or '').strip().upper();tech=request.args.get('technician_id',type=int)
+    d=(request.args.get('date') or '').strip();date_from=(request.args.get('from') or '').strip();date_to=(request.args.get('to') or '').strip();status=(request.args.get('status') or '').strip().upper();tech=request.args.get('technician_id',type=int);operator=(request.args.get('operator') or '').strip().upper();priority=(request.args.get('priority') or '').strip().upper();location_id=request.args.get('location_id',type=int)
     if d:
         try:q=q.filter_by(activity_date=date.fromisoformat(d))
         except:pass
@@ -13662,6 +13714,9 @@ def v75_arrow_list_api():
         except:pass
     if status:q=q.filter_by(status=status)
     if tech:q=q.filter_by(technician_id=tech)
+    if operator:q=q.filter_by(operator=operator)
+    if priority:q=q.filter_by(priority=priority)
+    if location_id:q=q.filter_by(location_id=location_id)
     rows=q.order_by(ArrowActivity.activity_date.desc(),ArrowActivity.id.desc()).limit(500).all();uids={x.technician_id for x in rows};lids={x.location_id for x in rows if x.location_id};uu={u.id:u for u in User.query.filter(User.id.in_(uids)).all()} if uids else {};ll={x.id:x for x in Location.query.filter(Location.id.in_(lids)).all()} if lids else {}
     out=[]
     for x in rows:
@@ -13722,8 +13777,9 @@ def v75_arrow_status_api(aid):
 @login_required
 def v75_arrow_dashboard_api():
     if not (_has_access("arrow.dashboard") or _has_access("arrow.view")):abort(403)
-    rows=ArrowActivity.query.all();total=len(rows);done=sum(x.status=='CONCLUÍDA' for x in rows);prog=sum(x.status=='EM ANDAMENTO' for x in rows);pend=sum(x.status=='PLANEJADA' for x in rows);remote=sum(bool(x.remote) for x in rows)
-    return jsonify({'ok':True,'summary':{'total':total,'done':done,'in_progress':prog,'planned':pend,'remote':remote,'progress_pct':round(done/total*100,1) if total else 0}})
+    rows=ArrowActivity.query.all();today=date.today();total=len(rows);done=sum(x.status=='CONCLUÍDA' for x in rows);prog=sum(x.status=='EM ANDAMENTO' for x in rows);pend=sum(x.status=='PLANEJADA' for x in rows);remote=sum(bool(x.remote) for x in rows);late=sum(x.activity_date<today and x.status not in ('CONCLUÍDA','CANCELADA') for x in rows);cancelled=sum(x.status=='CANCELADA' for x in rows)
+    tech_ids={x.technician_id for x in rows if x.activity_date==today and x.status!='CANCELADA'}; active_tech=User.query.filter(User.active.is_(True),User.role=='technician').count()
+    return jsonify({'ok':True,'summary':{'total':total,'done':done,'in_progress':prog,'planned':pend,'remote':remote,'late':late,'cancelled':cancelled,'technicians_allocated':len(tech_ids),'technicians_available':max(0,active_tech-len(tech_ids)),'progress_pct':round(done/total*100,1) if total else 0}})
 
 @app.post("/api/arrow/activities/<int:aid>/materials")
 @login_required
@@ -15623,6 +15679,18 @@ with app.app_context():
         try:db.session.rollback()
         except Exception:pass
         app.logger.exception('V76: falha na migração aditiva')
+    # V76.1 — saneamento único de cadastros Field legados que receberam novos controles como FALSE.
+    try:
+        if not SchemaMigration.query.filter_by(version='V76.1-001').first():
+            legacy=(User.query.filter(User.active.is_(True),User.role=='technician',User.gps_required.is_(True),User.gps_history_enabled.is_(False),User.journey_control_enabled.is_(False)).all())
+            for u in legacy:
+                u.gps_history_enabled=True;u.journey_control_enabled=True
+            db.session.add(SchemaMigration(version='V76.1-001',description=f'Saneamento Field legado: histórico GPS + controle de jornada ({len(legacy)} usuários)'))
+            db.session.commit()
+    except Exception:
+        try:db.session.rollback()
+        except Exception:pass
+        app.logger.exception('V76.1: falha no saneamento de cadastros Field legados')
     _apply_v70_migrations()
     _apply_v71_migrations()
     # V70.1 — registra uma única vez o Dashboard Chamados como dashboard nativa visível.
