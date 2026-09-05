@@ -40,7 +40,7 @@
       </div></div>{% endif %}
       {% if can_view('teams') or can_view('users') %}
       <div class="navDrop"><button type="button" class="navDropBtn">RH ▾</button><div class="navDropMenu">
-        {% if can_view('teams') %}<a href="/equipes">Equipes</a>{% endif %}{% if session.get('role') in ('manager','manager_field','hr') %}<a href="/rh/apt">APT</a>{% endif %}{% if can_view('users.view') %}<a href="/usuarios">Usuários</a>{% endif %}
+        {% if can_view('teams') %}<a href="/equipes">Equipes</a>{% endif %}{% if session.get('role') in ('manager','manager_field','hr') %}<a href="/rh/apt">APT</a><a href="/rh/autorizacoes-acesso">Autorizações de Acesso</a>{% endif %}{% if can_view('users.view') %}<a href="/usuarios">Usuários</a>{% endif %}
       </div></div>{% endif %}
       {% if can_view('portal') %}<div class="navDrop"><button type="button" class="navDropBtn">Portal do Cliente ▾</button><div class="navDropMenu"><a href="/portal-cliente">{% if session.get('role') == 'customer' %}Agendamentos{% else %}Recebimentos{% endif %}</a>{% if session.get('role') != 'customer' %}<a href="/portal-cliente/gestao-agendamentos">Gestão de Agendamentos</a>{% endif %}{% if session.get('role') == 'manager' %}<a href="/portal-cliente/cadastro-clientes">Cadastro de Clientes</a>{% endif %}</div></div>{% endif %}{% set _role = (current_user.role if current_user is defined and current_user else '')|lower %}
 {% if can_view('engineering') or _role in ['admin','adm','administrator','manager','gestor'] %}
