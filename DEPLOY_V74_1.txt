@@ -1,0 +1,19 @@
+V74.1 ENXUTA
+
+Base: V74 — Dossiê, Pessoas & Governança.
+Arquivos alterados/adicionados no pacote:
+- app.py
+- static/manager.js
+- templates/base.html
+- templates/manager.html
+- templates/users.html
+- templates/users_import_v741.html
+- templates/access_lists_v741.html
+- templates/about.html
+- README_V74_1.md
+- DEPLOY_V74_1.txt
+
+Deploy: substituir os arquivos mantendo a estrutura de pastas e reiniciar o serviço.
+As migrações são aditivas: colunas de acesso em users e novas tabelas de revisão/pendência documental são criadas automaticamente.
+
+Antes do uso em massa: executar o checklist do README_V74_1.md.

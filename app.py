@@ -33,12 +33,13 @@ from botocore.exceptions import ClientError, BotoCoreError
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
+from openpyxl.drawing.image import Image as XLImage
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V74"
+APP_RELEASE = "V74.1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -294,6 +295,49 @@ class User(db.Model):
     admission_date = db.Column(db.Date, index=True)
     termination_date = db.Column(db.Date, index=True)
     operating_locations_json = db.Column(db.Text)  # JSON: METRO/CPTM/L4/L5/OUTROS
+    # V74.1 — necessidade/elegibilidade de acesso operacional
+    access_metro = db.Column(db.Boolean, nullable=False, default=False)
+    access_cptm = db.Column(db.Boolean, nullable=False, default=False)
+    access_motiva_apt = db.Column(db.Boolean, nullable=False, default=False)
+
+
+class AccessListRevision(db.Model):
+    __tablename__ = "access_list_revisions"
+    id = db.Column(db.Integer, primary_key=True)
+    operator = db.Column(db.String(20), nullable=False, index=True)  # METRO/CPTM
+    revision = db.Column(db.Integer, nullable=False, default=1)
+    status = db.Column(db.String(30), nullable=False, default="GERADO", index=True)
+    generated_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    generated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    validated_by = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
+    validated_at = db.Column(db.DateTime, index=True)
+    evidence_key = db.Column(db.String(700))
+    evidence_note = db.Column(db.Text)
+    __table_args__ = (UniqueConstraint("operator","revision",name="uq_access_list_operator_revision"),)
+
+class AccessListMember(db.Model):
+    __tablename__ = "access_list_members"
+    id = db.Column(db.Integer, primary_key=True)
+    revision_id = db.Column(db.Integer, db.ForeignKey("access_list_revisions.id"), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    name_snapshot = db.Column(db.String(180), nullable=False)
+    user_code_snapshot = db.Column(db.String(30))
+    company_snapshot = db.Column(db.String(180))
+    job_title_snapshot = db.Column(db.String(120))
+    photo_key_snapshot = db.Column(db.String(700))
+    __table_args__ = (UniqueConstraint("revision_id","user_id",name="uq_access_list_revision_user"),)
+
+class AccessListPending(db.Model):
+    __tablename__ = "access_list_pending"
+    id = db.Column(db.Integer, primary_key=True)
+    operator = db.Column(db.String(20), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
+    reason = db.Column(db.String(500), nullable=False)
+    status = db.Column(db.String(20), nullable=False, default="PENDENTE", index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    resolved_at = db.Column(db.DateTime, index=True)
+    resolved_by = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
+    revision_id = db.Column(db.Integer, db.ForeignKey("access_list_revisions.id"), index=True)
 
 
 
@@ -1548,7 +1592,7 @@ ACCESS_GROUPS = {
         "teams.map","teams.today","teams.schedule","teams.manage","teams.export","teams.apt"
     )),
     "users": ("RH / Usuários", (
-        "users.view","users.create","users.edit","users.activate","users.delete","users.password","users.export"
+        "users.view","users.config.view","users.config.manage","users.create","users.edit","users.activate","users.delete","users.password","users.export","users.import"
     )),
     "finance": ("Financeiro", (
         "finance.support","finance.collection","finance.apuracao","finance.assistance","finance.implantation","finance.entries","finance.suppliers","finance.import","finance.edit","finance.delete"
@@ -1558,12 +1602,13 @@ ACCESS_GROUPS = {
         "management.calls","management.360","management.notifications","management.diagnostics","management.health","management.settings","management.dashboard_config","management.profiles","management.gps_history","management.work_authorizations","management.links","management.external_locations"
     )),
     "materials": ("Dossiê / Materiais", (
-        "materials.my_documents","materials.request","materials.catalog.view","materials.catalog.manage","materials.kits.manage","materials.delivery.create","materials.delivery.manage","materials.dossier.view"
+        "materials.my_documents","materials.request","materials.catalog.view","materials.catalog.manage","materials.kits.manage","materials.delivery.create","materials.delivery.manage","materials.dossier.view","materials.access_lists.view","materials.access_lists.manage"
     )),
     "engineering": ("Engenharia", (
         "engineering.items.view","engineering.items.manage","engineering.bom.view","engineering.bom.manage","engineering.import"
     )),
     "portal": ("Portal do Cliente", ("portal.appointments","portal.receive","portal.manage")),
+    "arrow": ("Arrow", ("arrow.view","arrow.manage","arrow.dashboard","arrow.remote")),
     "about_versions": ("Sobre / Versões", ("about.versions",)),
 }
 ACCESS_MODULES = tuple(ACCESS_GROUPS.keys())
@@ -1574,12 +1619,13 @@ ACCESS_LABELS = {
  "field.dashboard":"Dashboard Field","field.inventory":"Inventário / Lançamento","field.calls":"Chamados","field.preventive":"Solicitação Preventiva ATM","field.equipment":"Equipamentos","field.evidence":"Evidências","field.panorama":"Visão Panorâmica","field.chip_recarga":"Troca de Chips – Recarga","field.firmware_pos_cptm":"Atualização de Firmware POS – CPTM",
  "implantation.dashboard":"Dashboard Implantação","implantation.visits":"Visita a Campo / Relatório de Visita","implantation.reports":"Relatórios / Visitas recentes","implantation.emv":"Troca de Chips EMV – Trilhos","implantation.garage":"Troca de Chips Garagem",
  "teams.map":"Mapa operacional","teams.today":"Operação de Hoje","teams.schedule":"Escala por dias","teams.manage":"Gestão de equipes / escala","teams.export":"Exportar dados","teams.apt":"APT / Validades",
- "users.view":"Visualizar usuários","users.create":"Criar usuário","users.edit":"Editar usuário","users.activate":"Ativar / Desativar","users.delete":"Excluir / Arquivar","users.password":"Redefinir senha","users.export":"Exportar Excel",
+ "users.view":"Visualizar usuários","users.config.view":"Visualizar configurações de usuários","users.config.manage":"Gerenciar configurações de usuários","users.create":"Criar usuário","users.edit":"Editar usuário","users.activate":"Ativar / Desativar","users.delete":"Excluir / Arquivar","users.password":"Redefinir senha","users.export":"Exportar Excel","users.import":"Importar Excel de configurações",
  "finance.dashboard":"Dashboard Financeira","finance.support":"Suporte a Campo","finance.collection":"Coleta de Valores","finance.apuracao":"Apuração de Numerário","finance.assistance":"Assistência Técnica","finance.implantation":"Implantação de Hardware","finance.entries":"Lançamentos","finance.suppliers":"Empresas / Fornecedores","finance.import":"Importar planilha","finance.edit":"Editar lançamentos","finance.delete":"Excluir lançamentos",
  "management.calls":"Chamados","management.360":"Central 360","management.notifications":"Notificações","management.diagnostics":"Diagnóstico","management.health":"Saúde da Plataforma","management.settings":"Configurações","management.dashboard_config":"Configuração de Dashboards","management.profiles":"Perfis & Permissões","management.gps_history":"Histórico GPS por estações","management.work_authorizations":"Autorizações de jornada","management.links":"Resumo dos Links","management.external_locations":"Localidades externas",
- "materials.my_documents":"Meus documentos / Minha carga","materials.request":"Solicitar material","materials.catalog.view":"Visualizar catálogo","materials.catalog.manage":"Cadastrar / editar / inativar materiais","materials.kits.manage":"Gerenciar kits","materials.delivery.create":"Criar e enviar entregas","materials.delivery.manage":"Gerenciar aceites / correções","materials.dossier.view":"Dossiê dos colaboradores",
+ "materials.my_documents":"Meus documentos / Minha carga","materials.request":"Solicitar material","materials.catalog.view":"Visualizar catálogo","materials.catalog.manage":"Cadastrar / editar / inativar materiais","materials.kits.manage":"Gerenciar kits","materials.delivery.create":"Criar e enviar entregas","materials.delivery.manage":"Gerenciar aceites / correções","materials.dossier.view":"Dossiê dos colaboradores","materials.access_lists.view":"Listas de acesso Metrô / CPTM","materials.access_lists.manage":"Gerar / validar listas de acesso",
  "engineering.items.view":"Visualizar cadastro de itens","engineering.items.manage":"Cadastrar / editar itens","engineering.bom.view":"Visualizar estruturas BOM","engineering.bom.manage":"Criar / revisar BOM","engineering.import":"Importar planilhas de Engenharia",
  "portal.appointments":"Criar / consultar agendamentos","portal.receive":"Receber agendamentos","portal.manage":"Administrar Portal do Cliente",
+ "arrow.view":"Visualizar Arrow","arrow.manage":"Gerenciar Arrow / alocações","arrow.dashboard":"Dashboard Arrow","arrow.remote":"TeamViewer / Atendimento Remoto",
  "about.versions":"Histórico / Versões",
 }
 
@@ -1595,11 +1641,11 @@ def _expand_legacy_access(values):
 def _default_access_for_role(role):
     defaults={
       "manager":set(ACCESS_SUBMODULES),
-      "manager_field":{"engineering.items.view","engineering.bom.view","materials.my_documents","materials.request","materials.catalog.view","materials.catalog.manage","materials.kits.manage","materials.delivery.create","materials.delivery.manage","materials.dossier.view","dashboard.general","field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.firmware_pos_cptm","implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage","teams.map","teams.today","teams.schedule","teams.manage","teams.export","teams.apt","finance.dashboard","management.calls","management.360","management.notifications","management.diagnostics","management.gps_history","management.work_authorizations","portal.receive","portal.manage","about.versions"},
+      "manager_field":{"engineering.items.view","engineering.bom.view","materials.my_documents","materials.request","materials.catalog.view","materials.catalog.manage","materials.kits.manage","materials.delivery.create","materials.delivery.manage","materials.dossier.view","dashboard.general","field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.firmware_pos_cptm","implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage","teams.map","teams.today","teams.schedule","teams.manage","teams.export","teams.apt","finance.dashboard","management.calls","management.360","management.notifications","management.diagnostics","management.gps_history","management.work_authorizations","portal.receive","portal.manage","arrow.view","arrow.manage","arrow.dashboard","arrow.remote","materials.access_lists.view","materials.access_lists.manage","about.versions"},
       "technician":{"materials.my_documents","materials.request","field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.firmware_pos_cptm","about.versions"},
       "technician_implantation":{"materials.my_documents","materials.request","field.inventory","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.firmware_pos_cptm","implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage","about.versions"},
       "consultation":{"dashboard.general","field.dashboard","field.inventory","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.firmware_pos_cptm","teams.map","teams.today","teams.schedule","about.versions"},
-      "hr":{"materials.catalog.view","materials.dossier.view","teams.map","teams.today","teams.schedule","teams.manage","teams.export","teams.apt","users.view","users.create","users.edit","users.activate","users.password","users.export","about.versions"},
+      "hr":{"materials.catalog.view","materials.dossier.view","teams.map","teams.today","teams.schedule","teams.manage","teams.export","teams.apt","users.view","users.config.view","users.config.manage","users.create","users.edit","users.activate","users.password","users.export","users.import","materials.access_lists.view","materials.access_lists.manage","about.versions"},
       "dispatcher":{"dashboard.general","field.calls","field.chip_recarga","field.firmware_pos_cptm","teams.map","teams.today","teams.schedule","management.calls","about.versions"},
       "customer":{"portal.appointments"},
       "atm_financial_admin":{"finance.dashboard","finance.support","finance.collection","finance.apuracao","finance.assistance","finance.implantation","finance.entries","finance.suppliers","finance.import","finance.edit","finance.delete","about.versions"},
@@ -1625,6 +1671,10 @@ def _user_access_set(user=None):
             if prof and prof.active:
                 custom=json.loads(prof.access_json or "[]")
                 access=_expand_legacy_access({x for x in custom if x in ACCESS_ALL})
+                if user.role=="hr":
+                    if "users.view" in access: access.add("users.config.view")
+                    if "users.edit" in access or "users.create" in access: access.add("users.config.manage")
+                    if "users.export" in access: access.add("users.import")
                 if current_lookup and has_request_context(): g._autopass_access_set=access
                 return access
     except Exception:
@@ -1635,7 +1685,11 @@ def _user_access_set(user=None):
             access=_expand_legacy_access({x for x in custom if x in ACCESS_ALL})
             # RH sempre mantém as visualizações operacionais de Equipes em modo leitura,
             # mesmo quando o access_json foi salvo antes da criação das subpermissões atuais.
-            if user.role=="hr": access.update({"teams.map","teams.today","teams.schedule"})
+            if user.role=="hr":
+                access.update({"teams.map","teams.today","teams.schedule"})
+                if "users.view" in access: access.add("users.config.view")
+                if "users.edit" in access or "users.create" in access: access.add("users.config.manage")
+                if "users.export" in access: access.add("users.import")
             if current_lookup and has_request_context(): g._autopass_access_set=access
             return access
     except Exception: pass
@@ -6447,10 +6501,207 @@ def _resolve_role_selection(raw):
         return role,profile
     return raw,None
 
+# ============================================================================
+# V74.1 — Configuração em massa + governança das listas Metrô/CPTM/Motiva
+# ============================================================================
+def _v741_has_valid_apt(user_id):
+    today=date.today()
+    return AptRecord.query.filter(AptRecord.user_id==user_id,AptRecord.active.is_(True),AptRecord.valid_until.isnot(None),AptRecord.valid_until>=today).first() is not None
+
+def _v741_queue_access_pending(user,operator,reason):
+    if not user or operator not in ("METRO","CPTM","MOTIVA"): return None
+    exists=AccessListPending.query.filter_by(operator=operator,user_id=user.id,status="PENDENTE").first()
+    if exists:
+        exists.reason=reason; return exists
+    row=AccessListPending(operator=operator,user_id=user.id,reason=reason,status="PENDENTE")
+    db.session.add(row)
+    db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="ACCESS_LIST_PENDING_CREATED",entity_type="user",entity_id=str(user.id),detail=f"{operator} · {reason}"))
+    return row
+
+def _v741_access_flag(user,operator):
+    return bool(getattr(user,{"METRO":"access_metro","CPTM":"access_cptm","MOTIVA":"access_motiva_apt"}[operator],False))
+
+def _v741_sync_access_pendings():
+    # Controle preventivo Motiva: todo elegível sem APT válida gera pendência.
+    for u in User.query.filter(User.archived_at.is_(None),User.active.is_(True),User.access_motiva_apt.is_(True)).all():
+        if not _v741_has_valid_apt(u.id): _v741_queue_access_pending(u,"MOTIVA","Acesso Motiva (APT) habilitado sem APT válida/formalizada")
+
+def _v741_access_users(operator):
+    col=User.access_metro if operator=="METRO" else User.access_cptm
+    q=User.query.filter(User.archived_at.is_(None),User.active.is_(True),col.is_(True))
+    if session.get("role")=="hr":
+        me=db.session.get(User,session.get("user_id"))
+        if me and (me.company or "").strip(): q=q.filter(func.lower(func.coalesce(User.company,""))==(me.company or "").strip().lower())
+    return q.order_by(User.name).all()
+
+def _v741_photo_bytes(user):
+    if not user or not user.photo_url:return None
+    try:return _r2_get_bytes(user.photo_url)
+    except Exception:
+        try:
+            obj=r2_client().get_object(Bucket=os.environ["R2_BUCKET_NAME"],Key=user.photo_url);return obj["Body"].read()
+        except Exception:return None
+
+def _v741_access_workbook(operator,users,revision):
+    wb=Workbook();ws=wb.active;ws.title=f"Acesso {operator}"
+    ws.merge_cells("A1:F1");ws["A1"]=f"RELAÇÃO DE COLABORADORES — ACESSO {operator}";ws["A1"].font=Font(bold=True,size=14);ws["A1"].alignment=Alignment(horizontal="center")
+    ws.merge_cells("A2:F2");ws["A2"]=f"Revisão {revision:02d} · gerada em {datetime.now(V72_TZ).strftime('%d/%m/%Y %H:%M')} · Fonte: Cadastro Mestre de Usuários";ws["A2"].alignment=Alignment(horizontal="center")
+    headers=["Foto","user_id","Código","Colaborador","Empresa","Cargo"]
+    for c,h in enumerate(headers,1):
+        cell=ws.cell(4,c,h);cell.font=Font(bold=True,color="FFFFFF");cell.fill=PatternFill("solid",fgColor="1F4E78");cell.alignment=Alignment(horizontal="center")
+    ws.column_dimensions["A"].width=14;ws.column_dimensions["B"].width=10;ws.column_dimensions["C"].width=14;ws.column_dimensions["D"].width=34;ws.column_dimensions["E"].width=24;ws.column_dimensions["F"].width=26
+    for r,u in enumerate(users,5):
+        ws.row_dimensions[r].height=58
+        ws.cell(r,2,u.id);ws.cell(r,3,u.user_code or "");ws.cell(r,4,u.name);ws.cell(r,5,u.company or "");ws.cell(r,6,u.job_title or "")
+        raw=_v741_photo_bytes(u)
+        if raw:
+            try:
+                tmp=io.BytesIO(raw);img=XLImage(tmp);img.width=52;img.height=52;ws.add_image(img,f"A{r}")
+            except Exception:ws.cell(r,1,"Foto indisponível")
+        else:ws.cell(r,1,"Sem foto")
+    ws.freeze_panes="A5";ws.auto_filter.ref=f"B4:F{max(5,4+len(users))}"
+    out=io.BytesIO();wb.save(out);out.seek(0);return out
+
+@app.get("/documentos/acessos")
+@login_required
+def v741_access_lists_page():
+    if not _has_access("materials.access_lists.view"):abort(403)
+    _v741_sync_access_pendings();db.session.commit()
+    pend=AccessListPending.query.filter_by(status="PENDENTE").order_by(AccessListPending.created_at.desc()).all()
+    revs=AccessListRevision.query.order_by(AccessListRevision.generated_at.desc()).limit(30).all()
+    users={u.id:u for u in User.query.filter(User.id.in_([p.user_id for p in pend if p.user_id] or [-1])).all()}
+    metro_users=_v741_access_users("METRO");cptm_users=_v741_access_users("CPTM")
+    return render_template("access_lists_v741.html",pending=pend,revisions=revs,pending_users=users,metro_users=metro_users,cptm_users=cptm_users,metro_count=len(metro_users),cptm_count=len(cptm_users),motiva_count=User.query.filter(User.archived_at.is_(None),User.active.is_(True),User.access_motiva_apt.is_(True)).count(),app_release=APP_RELEASE)
+
+@app.post("/documentos/acessos/<operator>/gerar.xlsx")
+@login_required
+def v741_access_list_generate(operator):
+    operator=(operator or "").upper()
+    if operator not in ("METRO","CPTM") or not _has_access("materials.access_lists.manage"):abort(403)
+    selected={int(x) for x in request.form.getlist("user_ids") if str(x).isdigit()}
+    eligible=_v741_access_users(operator); users=[u for u in eligible if not selected or u.id in selected]
+    rev=(db.session.query(func.max(AccessListRevision.revision)).filter_by(operator=operator).scalar() or 0)+1
+    row=AccessListRevision(operator=operator,revision=rev,status="GERADO",generated_by=session["user_id"]);db.session.add(row);db.session.flush()
+    for u in users:db.session.add(AccessListMember(revision_id=row.id,user_id=u.id,name_snapshot=u.name,user_code_snapshot=u.user_code,company_snapshot=u.company,job_title_snapshot=u.job_title,photo_key_snapshot=u.photo_url))
+    for p in AccessListPending.query.filter_by(operator=operator,status="PENDENTE").all():p.revision_id=row.id
+    db.session.add(AuditEvent(user_id=session["user_id"],event_type="ACCESS_LIST_GENERATED",entity_type="access_list_revision",entity_id=str(row.id),detail=f"{operator} REV{rev:02d} · {len(users)} colaboradores"));db.session.commit()
+    out=_v741_access_workbook(operator,users,rev)
+    return send_file(out,as_attachment=True,download_name=f"Acesso_{operator}_REV{rev:02d}.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+@app.get("/api/documentos/acessos/<operator>/usuarios")
+@login_required
+def v741_access_list_users_api(operator):
+    operator=(operator or "").upper()
+    if operator not in ("METRO","CPTM") or not _has_access("materials.access_lists.view"):abort(403)
+    return jsonify({"ok":True,"users":[{"id":u.id,"name":u.name,"code":u.user_code,"company":u.company,"job_title":u.job_title,"photo":f"/usuarios/{u.id}/foto?thumb=1" if u.photo_url else None} for u in _v741_access_users(operator)]})
+
+@app.post("/documentos/acessos/<int:revision_id>/evidencia")
+@login_required
+def v741_access_list_evidence(revision_id):
+    if not _has_access("materials.access_lists.manage"):abort(403)
+    row=db.session.get(AccessListRevision,revision_id) or abort(404);f=request.files.get("evidence")
+    if not f or not f.filename:
+        flash("A evidência do envio é obrigatória para validar a lista.");return redirect("/documentos/acessos")
+    raw=f.read();
+    if len(raw)>8*1024*1024:flash("Evidência deve ter no máximo 8 MB.");return redirect("/documentos/acessos")
+    key=f"documentos/acessos/{row.operator}/REV{row.revision:02d}/{uuid.uuid4().hex}-{secure_filename(f.filename)}"
+    _r2_put_bytes(key,raw,f.mimetype or "application/octet-stream")
+    row.evidence_key=key;row.evidence_note=(request.form.get("note") or "").strip();row.status="VALIDADO";row.validated_by=session["user_id"];row.validated_at=datetime.utcnow()
+    for p in AccessListPending.query.filter_by(operator=row.operator,status="PENDENTE").all():p.status="CONCLUIDA";p.resolved_at=datetime.utcnow();p.resolved_by=session["user_id"];p.revision_id=row.id
+    db.session.add(AuditEvent(user_id=session["user_id"],event_type="ACCESS_LIST_VALIDATED",entity_type="access_list_revision",entity_id=str(row.id),detail=f"{row.operator} REV{row.revision:02d} · evidência anexada"));db.session.commit();flash("Lista validada. Pendências relacionadas foram encerradas com evidência.");return redirect("/documentos/acessos")
+
+@app.get("/usuarios/configuracoes-modelo.xlsx")
+@user_admin_required
+def v741_users_config_export():
+    if not _has_access("users.export"):abort(403)
+    users_q=User.query.filter(User.role!="customer")
+    if session.get("role")=="hr":
+        me=db.session.get(User,session.get("user_id")); users_q=users_q.filter(User.role.in_(("technician","technician_implantation")))
+        if me and (me.company or "").strip():users_q=users_q.filter(func.lower(func.coalesce(User.company,""))==(me.company or "").strip().lower())
+    rows=users_q.order_by(User.name).all();wb=Workbook();ws=wb.active;ws.title="COLABORADORES_CONFIG"
+    fixed=["user_id","Código","Usuário","Nome","Empresa","Perfil","Cargo","Ativo","Acesso Metrô","Acesso CPTM","Acesso Motiva (APT)","GPS obrigatório","Histórico GPS","Controle Jornada","Escala","Horário","Admissão","Desligamento"]
+    perms=list(ACCESS_SUBMODULES);headers=fixed+[f"PERM | {ACCESS_LABELS.get(p,p)}" for p in perms]
+    ws.append(headers)
+    for u in rows:
+        acc=_user_access_set(u); vals=[u.id,u.user_code or "",u.username,u.name,u.company or "",u.role,u.job_title or "","SIM" if u.active else "NÃO","SIM" if u.access_metro else "NÃO","SIM" if u.access_cptm else "NÃO","SIM" if u.access_motiva_apt else "NÃO","SIM" if u.gps_required else "NÃO","SIM" if u.gps_history_enabled else "NÃO","SIM" if u.journey_control_enabled else "NÃO",u.work_schedule_type or "",u.work_shift or "",u.admission_date,u.termination_date]+["SIM" if p in acc else "NÃO" for p in perms];ws.append(vals)
+    for cell in ws[1]:cell.font=Font(bold=True,color="FFFFFF");cell.fill=PatternFill("solid",fgColor="1F4E78");cell.alignment=Alignment(horizontal="center",vertical="center",wrap_text=True)
+    ws.freeze_panes="A2";ws.auto_filter.ref=ws.dimensions
+    for i in range(1,len(headers)+1):ws.column_dimensions[get_column_letter(i)].width=18 if i>5 else 16
+    ws.column_dimensions["D"].width=32;ws.column_dimensions["E"].width=24
+    lg=wb.create_sheet("LEGENDA");lg.append(["Campo","Regra"]);lg.append(["user_id","Chave obrigatória. Nunca altere."]);lg.append(["SIM / NÃO","Célula vazia = não alterar. SIM ativa. NÃO desativa."]);lg.append(["Permissões","As colunas PERM refletem a matriz atual da plataforma. Novas funcionalidades aparecem em novas exportações."]);lg.append(["Modelo",f"V74.1 · {datetime.now(V72_TZ).strftime('%d/%m/%Y %H:%M')}"]);
+    out=io.BytesIO();wb.save(out);out.seek(0);return send_file(out,as_attachment=True,download_name=f"configuracoes_usuarios_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+def _v741_parse_yesno(v):
+    if v is None or str(v).strip()=="":return None
+    s=normalize(str(v))
+    if s in ("SIM","S","1","TRUE","VERDADEIRO","YES"):return True
+    if s in ("NAO","N","0","FALSE","FALSO","NO"):return False
+    raise ValueError(f"Valor inválido: {v}. Use SIM, NÃO ou vazio.")
+
+def _v741_read_user_config(raw,apply=False):
+    wb=load_workbook(io.BytesIO(raw),data_only=True);ws=wb["COLABORADORES_CONFIG"] if "COLABORADORES_CONFIG" in wb.sheetnames else wb.active
+    headers=[str(c.value or "").strip() for c in ws[1]];idx={h:i for i,h in enumerate(headers)}
+    if "user_id" not in idx:raise ValueError("Coluna user_id não encontrada.")
+    perm_by_header={f"PERM | {ACCESS_LABELS.get(p,p)}":p for p in ACCESS_SUBMODULES}
+    changes=[];errors=[];touched=0
+    for rn,row in enumerate(ws.iter_rows(min_row=2,values_only=True),2):
+        uid=row[idx["user_id"]] if idx["user_id"]<len(row) else None
+        if uid in (None,""):continue
+        try:uid=int(uid)
+        except:errors.append(f"Linha {rn}: user_id inválido");continue
+        u=db.session.get(User,uid)
+        if not u:errors.append(f"Linha {rn}: user_id {uid} não encontrado");continue
+        if session.get("role")=="hr" and not _hr_target_allowed(u):errors.append(f"Linha {rn}: usuário fora do escopo do RH");continue
+        local=[]
+        fields={"Acesso Metrô":"access_metro","Acesso CPTM":"access_cptm","Acesso Motiva (APT)":"access_motiva_apt","GPS obrigatório":"gps_required","Histórico GPS":"gps_history_enabled","Controle Jornada":"journey_control_enabled","Ativo":"active"}
+        for h,attr in fields.items():
+            if h not in idx:continue
+            try:new=_v741_parse_yesno(row[idx[h]])
+            except ValueError as e:errors.append(f"Linha {rn} · {h}: {e}");continue
+            if new is None:continue
+            old=bool(getattr(u,attr,False))
+            if old!=new:local.append((h,"SIM" if old else "NÃO","SIM" if new else "NÃO"));
+            if apply:setattr(u,attr,new)
+        # permissões: só altera colunas explicitamente SIM/NÃO; vazio preserva
+        acc=set(_user_access_set(u)); acc_changed=False
+        for h,p in perm_by_header.items():
+            if h not in idx:continue
+            try:new=_v741_parse_yesno(row[idx[h]])
+            except ValueError as e:errors.append(f"Linha {rn} · {h}: {e}");continue
+            if new is None:continue
+            old=p in acc
+            if old!=new:local.append((h,"SIM" if old else "NÃO","SIM" if new else "NÃO"));acc_changed=True
+            if apply:
+                if new:acc.add(p)
+                else:acc.discard(p)
+        if apply and acc_changed:u.system_profile_id=None;u.access_json=json.dumps(sorted(acc),ensure_ascii=False)
+        if local:
+            touched+=1;changes.extend([{"user_id":u.id,"name":u.name,"field":a,"old":b,"new":c} for a,b,c in local])
+            if apply:
+                for op,attr in (("METRO","access_metro"),("CPTM","access_cptm")):
+                    if any(x[0]==("Acesso Metrô" if op=="METRO" else "Acesso CPTM") for x in local):_v741_queue_access_pending(u,op,"Configuração alterada por importação da matriz Excel")
+                if u.access_motiva_apt and not _v741_has_valid_apt(u.id):_v741_queue_access_pending(u,"MOTIVA","Acesso Motiva (APT) habilitado por importação sem APT válida")
+    return {"changes":changes,"errors":errors,"touched":touched}
+
+@app.route("/usuarios/importar-configuracoes",methods=["GET","POST"])
+@user_admin_required
+def v741_users_config_import():
+    if not _has_access("users.import"):abort(403)
+    preview=None;token=None
+    if request.method=="POST":
+        if request.form.get("confirm_token"):
+            token=secure_filename(request.form.get("confirm_token"));path=UPLOAD_DIR/f"user-config-{token}.xlsx"
+            if not path.exists():flash("Prévia expirada. Envie a planilha novamente.");return redirect(request.path)
+            raw=path.read_bytes();result=_v741_read_user_config(raw,apply=True);db.session.add(AuditEvent(user_id=session["user_id"],event_type="USER_CONFIG_IMPORT",entity_type="users",entity_id="bulk",detail=f"{result['touched']} usuários alterados · {len(result['changes'])} mudanças"));db.session.commit();path.unlink(missing_ok=True);flash(f"Importação aplicada: {result['touched']} usuário(s) alterado(s).");return redirect("/usuarios")
+        f=request.files.get("file")
+        if not f or not f.filename:flash("Selecione o arquivo Excel.");return redirect(request.path)
+        raw=f.read();preview=_v741_read_user_config(raw,apply=False);token=uuid.uuid4().hex; (UPLOAD_DIR/f"user-config-{token}.xlsx").write_bytes(raw)
+    return render_template("users_import_v741.html",preview=preview,token=token,app_release=APP_RELEASE)
+
 @app.route("/usuarios")
 @user_admin_required
 def users_page():
-    if not _has_access("users.view"): abort(403)
+    if not (_has_access("users.view") and _has_access("users.config.view")): abort(403)
     # V71.1 — acessos externos do Portal são administrados no Cadastro de Clientes,
     # não em RH / Usuários.
     active_q = User.query.filter(User.archived_at.is_(None), User.role != "customer")
@@ -6516,7 +6767,7 @@ def _next_user_code(role):
 @app.post("/usuarios/novo")
 @user_admin_required
 def create_user():
-    if not _has_access("users.create"): abort(403)
+    if not (_has_access("users.create") and _has_access("users.config.manage")): abort(403)
     name = request.form.get("name", "").strip()
     username = request.form.get("username", "").strip().lower()
     password = request.form.get("password", "")
@@ -6543,6 +6794,9 @@ def create_user():
     admission_date=_v74_form_date("admission_date")
     termination_date=_v74_form_date("termination_date")
     operating_locations=[x for x in request.form.getlist("operating_locations") if x in ("METRO","CPTM","L4","L5","OUTROS")]
+    access_metro = request.form.get("access_metro") == "1"
+    access_cptm = request.form.get("access_cptm") == "1"
+    access_motiva_apt = request.form.get("access_motiva_apt") == "1"
     gps_required = request.form.get("gps_required") == "1"
     gps_history_enabled = request.form.get("gps_history_enabled") == "1"
     journey_control_enabled = request.form.get("journey_control_enabled") == "1"
@@ -6607,6 +6861,7 @@ def create_user():
         admission_date=admission_date,
         termination_date=termination_date,
         operating_locations_json=json.dumps(operating_locations,ensure_ascii=False),
+        access_metro=access_metro, access_cptm=access_cptm, access_motiva_apt=access_motiva_apt,
         work_schedule_type=work_schedule_type if role in ("technician", "technician_implantation", "manager_field") else None,
         work_shift=work_shift if role in ("technician", "technician_implantation", "manager_field") else None,
         work_anchor_date=work_anchor_date if role in ("technician", "technician_implantation", "manager_field") and work_schedule_type == "12x36" else None,
@@ -6637,6 +6892,11 @@ def create_user():
         db.session.add(user)
         db.session.flush()
         _sync_user_schedule_profile(user)
+        if role == "technician":
+            if user.access_metro: _v741_queue_access_pending(user,"METRO","Novo Técnico Field habilitado para acesso ao Metrô")
+            if user.access_cptm: _v741_queue_access_pending(user,"CPTM","Novo Técnico Field habilitado para acesso à CPTM")
+            if user.access_motiva_apt and not _v741_has_valid_apt(user.id):
+                _v741_queue_access_pending(user,"MOTIVA","Técnico Field marcado para Acesso Motiva (APT) sem APT válida/formalizada")
         db.session.commit()
     except IntegrityError:
         db.session.rollback()
@@ -6706,7 +6966,7 @@ def toggle_user(user_id):
 @app.post("/usuarios/<int:user_id>/editar")
 @user_admin_required
 def edit_user(user_id):
-    if not _has_access("users.edit"): abort(403)
+    if not (_has_access("users.edit") and _has_access("users.config.manage")): abort(403)
     user = db.session.get(User, user_id)
     if not user:
         flash("Usuário não encontrado.")
@@ -6741,6 +7001,9 @@ def edit_user(user_id):
     admission_date=_v74_edit_date("admission_date",getattr(user,"admission_date",None))
     termination_date=_v74_edit_date("termination_date",getattr(user,"termination_date",None))
     operating_locations=[x for x in request.form.getlist("operating_locations") if x in ("METRO","CPTM","L4","L5","OUTROS")]
+    access_metro = request.form.get("access_metro") == "1"
+    access_cptm = request.form.get("access_cptm") == "1"
+    access_motiva_apt = request.form.get("access_motiva_apt") == "1"
     gps_required = request.form.get("gps_required") == "1"
     gps_history_enabled = request.form.get("gps_history_enabled") == "1"
     journey_control_enabled = request.form.get("journey_control_enabled") == "1"
@@ -6841,6 +7104,7 @@ def edit_user(user_id):
     remove_photo = request.form.get("remove_photo") == "1"
 
     old_role = user.role
+    old_access_flags={"METRO":bool(getattr(user,"access_metro",False)),"CPTM":bool(getattr(user,"access_cptm",False)),"MOTIVA":bool(getattr(user,"access_motiva_apt",False))}
     user.name = name
     user.username = username
     user.role = role
@@ -6856,6 +7120,9 @@ def edit_user(user_id):
     user.admission_date = admission_date
     user.termination_date = termination_date
     user.operating_locations_json = json.dumps(operating_locations,ensure_ascii=False)
+    user.access_metro = access_metro
+    user.access_cptm = access_cptm
+    user.access_motiva_apt = access_motiva_apt
     old_gps_required = bool(getattr(user, "gps_required", False))
     user.gps_required = gps_required if role in ("technician","technician_implantation","manager_field","dispatcher") else False
     user.gps_history_enabled = gps_history_enabled if role in ("technician","technician_implantation","manager_field","dispatcher") else False
@@ -6884,6 +7151,13 @@ def edit_user(user_id):
 
     try:
         _sync_user_schedule_profile(user)
+        new_access_flags={"METRO":bool(user.access_metro),"CPTM":bool(user.access_cptm),"MOTIVA":bool(user.access_motiva_apt)}
+        for op in ("METRO","CPTM"):
+            if old_access_flags[op] != new_access_flags[op]:
+                action="inclusão" if new_access_flags[op] else "retirada"
+                _v741_queue_access_pending(user,op,f"Alteração de acesso: {action} do colaborador na lista {op}")
+        if new_access_flags["MOTIVA"] and not _v741_has_valid_apt(user.id):
+            _v741_queue_access_pending(user,"MOTIVA","Acesso Motiva (APT) habilitado sem APT válida/formalizada")
         if old_gps_required != bool(user.gps_required):
             db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="USER_GPS_REQUIREMENT_CHANGE",entity_type="user",entity_id=str(user.id),detail=f"{user.name} · GPS obrigatório: {old_gps_required} -> {bool(user.gps_required)}"))
         if old_role != role:
@@ -6953,6 +7227,10 @@ def delete_or_archive_user(user_id):
         return redirect(url_for("users_page"))
 
     history = _user_operational_history_counts(user.id)
+    # V74.1: desligamento/exclusão de quem participa de lista exige nova formalização.
+    if getattr(user,"access_metro",False): _v741_queue_access_pending(user,"METRO","Colaborador desligado/arquivado e ainda constava como elegível ao Metrô")
+    if getattr(user,"access_cptm",False): _v741_queue_access_pending(user,"CPTM","Colaborador desligado/arquivado e ainda constava como elegível à CPTM")
+    if getattr(user,"access_motiva_apt",False): _v741_queue_access_pending(user,"MOTIVA","Colaborador desligado/arquivado com Acesso Motiva (APT) ativo")
     has_history = any(history.values())
     old_photo_key = user.photo_url
     schedule_profiles = TeamScheduleProfile.query.filter_by(user_id=user.id).all()
@@ -13148,6 +13426,7 @@ def v73_schedule_review(rid):
 @app.get("/arrow")
 @login_required
 def v73_arrow():
+    if not _has_access("arrow.view"): abort(403)
     return render_template("arrow_v73.html",app_release=APP_RELEASE)
 
 
@@ -15115,7 +15394,10 @@ with app.app_context():
                 if 'admission_date' not in cols: conn.execute(text("ALTER TABLE users ADD COLUMN admission_date DATE"))
                 if 'termination_date' not in cols: conn.execute(text("ALTER TABLE users ADD COLUMN termination_date DATE"))
                 if 'operating_locations_json' not in cols: conn.execute(text("ALTER TABLE users ADD COLUMN operating_locations_json TEXT"))
-        db.metadata.create_all(bind=db.engine,tables=[AccessAuthorization.__table__],checkfirst=True)
+                if 'access_metro' not in cols: conn.execute(text("ALTER TABLE users ADD COLUMN access_metro BOOLEAN DEFAULT FALSE NOT NULL"))
+                if 'access_cptm' not in cols: conn.execute(text("ALTER TABLE users ADD COLUMN access_cptm BOOLEAN DEFAULT FALSE NOT NULL"))
+                if 'access_motiva_apt' not in cols: conn.execute(text("ALTER TABLE users ADD COLUMN access_motiva_apt BOOLEAN DEFAULT FALSE NOT NULL"))
+        db.metadata.create_all(bind=db.engine,tables=[AccessAuthorization.__table__,AccessListRevision.__table__,AccessListMember.__table__,AccessListPending.__table__],checkfirst=True)
     except Exception:
         app.logger.exception('Falha na migração V74 Pessoas/Autorizações')
 
