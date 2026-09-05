@@ -77,7 +77,7 @@ document.getElementById('installPwa')?.addEventListener('click',async()=>{if(!v5
 if('serviceWorker' in navigator && (location.protocol==='https:' || location.hostname==='localhost')){
   window.addEventListener('load',async()=>{
     try{
-      const reg=await navigator.serviceWorker.register('/sw.js?v=v73-6-2',{scope:'/',updateViaCache:'none'});
+      const reg=await navigator.serviceWorker.register('/sw.js?v=v76',{scope:'/',updateViaCache:'none'});
       await reg.update();
     }catch(err){console.warn('Falha ao atualizar Service Worker',err);}
   },{once:true});
@@ -119,6 +119,23 @@ v50LoadNotifications();
   document.addEventListener('visibilitychange',()=>{clearTimeout(state.timer);schedule(document.visibilityState==='visible'?500:HIDDEN_MS);});
   window.addEventListener('pagehide',()=>{state.stopped=true;clearTimeout(state.timer);},{once:true});
   schedule(500);
+})();
+
+// V76 — central de alertas críticos. Polling funciona com o sistema/PWA ativo; WhatsApp cobre eventos críticos quando configurado no servidor.
+(function(){
+ let lastSeen=0;
+ async function pollV76(){
+  try{
+   const d=await fetch('/api/v76/notificacoes?unread=1',{cache:'no-store'}).then(r=>r.json());if(!d.ok)return;
+   const badge=document.getElementById('notificationCount');if(badge){badge.textContent=d.unread||0;badge.hidden=!(d.unread>0)}
+   const urgent=(d.rows||[]).filter(x=>['URGENTE','CRITICA'].includes(x.severity)&&x.id>lastSeen);
+   if(urgent.length){lastSeen=Math.max(lastSeen,...urgent.map(x=>x.id));const x=urgent[0];
+    if(Notification.permission==='granted'&&navigator.serviceWorker){const reg=await navigator.serviceWorker.ready;reg.active?.postMessage({type:'SHOW_NOTIFICATION',title:x.title,body:x.message,url:x.action_url,tag:'autopass-'+x.id});}
+   }
+  }catch(_e){}
+ }
+ document.getElementById('notificationBell')?.addEventListener('click',()=>{if('Notification' in window&&Notification.permission==='default')Notification.requestPermission();});
+ pollV76();setInterval(pollV76,30000);
 })();
 </script>
 
