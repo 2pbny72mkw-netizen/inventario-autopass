@@ -41,10 +41,10 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V76.1"
+APP_RELEASE = "V76.2"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
-FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
+FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
 FIELD_GPS_GOOD_ACCURACY_M = float(os.getenv("FIELD_GPS_GOOD_ACCURACY_M", "30"))
 FIELD_GPS_MAX_ACCURACY_M = float(os.getenv("FIELD_GPS_MAX_ACCURACY_M", "80"))
 _GPS_LAST_RETENTION_CLEANUP = 0.0
@@ -1960,11 +1960,21 @@ _V72_STATION_CACHE = {"at": 0.0, "rows": []}
 _V72_LAST_HISTORY_CLEANUP = 0.0
 
 def _v72_defaults():
+    # V76.2: PostgreSQL passa a ser a fonte persistente dos parâmetros operacionais.
+    # Defaults são usados somente quando a chave ainda não existe no banco.
     return {
+        "alert_activity_days": 7,
+        "alert_pending_days": 7,
+        "gps_radius_m": 250,
+        "dashboard_refresh_seconds": 60,
+        "gps_interval_seconds": 60,
+        "forecast_days_emv": 3,
+        "forecast_days_garagem": 3,
+        "forecast_days_recarga": 3,
         "gps_history_retention_days": 7,
         "gps_history_radius_m": 250,
-        "gps_history_ping_seconds": 20,
-        "gps_history_min_movement_m": 60,
+        "gps_history_ping_seconds": 10,
+        "gps_history_min_movement_m": 20,
         "journey_enforcement_enabled": 0,   # rollout seguro: ADM ativa quando desejar
         "journey_warning_minutes": 30,
         "journey_max_extension_hours": 6,
@@ -3045,14 +3055,15 @@ def technician_position_update():
         return jsonify({"ok":False,"error":"Coordenadas fora do intervalo"}),400
     uid=session["user_id"]; user=db.session.get(User,uid)
     previous=TechnicianPosition.query.filter_by(user_id=uid).order_by(TechnicianPosition.captured_at.desc()).first()
-    captured_at=datetime.utcnow()
+    captured_at=datetime.utcnow(); heartbeat_only=bool(data.get("heartbeat_only"))
     row=TechnicianPosition(user_id=uid,latitude=lat,longitude=lon,accuracy=acc,captured_at=captured_at,source=str(data.get("source") or "session_periodic")[:40])
     db.session.add(row)
-    station_result=_v7331_record_station_passage(user,lat,lon,acc,captured_at,previous_position=previous)
+    station_result={"heartbeat_only":True} if heartbeat_only else _v7331_record_station_passage(user,lat,lon,acc,captured_at,previous_position=previous)
     global _GPS_LAST_RETENTION_CLEANUP
     now_ts=time.time()
     if now_ts-_GPS_LAST_RETENTION_CLEANUP > 3600:
-        cutoff=datetime.utcnow()-timedelta(days=max(1,int(os.getenv("TEAM_GPS_RETENTION_DAYS","7"))))
+        retention_days=max(1,int(_v50_settings().get("gps_history_retention_days",7) or 7))
+        cutoff=datetime.utcnow()-timedelta(days=retention_days)
         TechnicianPosition.query.filter(TechnicianPosition.captured_at < cutoff).delete(synchronize_session=False)
         _GPS_LAST_RETENTION_CLEANUP=now_ts
     try:
@@ -3060,16 +3071,17 @@ def technician_position_update():
     except Exception:
         db.session.rollback(); raise
     station_result.pop("row",None)
-    return jsonify({"ok":True,"captured_at":row.captured_at.isoformat()+"Z","retention_days":7,"station_history":station_result})
+    return jsonify({"ok":True,"captured_at":row.captured_at.isoformat()+"Z","retention_days":max(1,int(_v50_settings().get("gps_history_retention_days",7) or 7)),"station_history":station_result})
 
 
 @app.get("/api/campo/config")
 @field_required
 def field_config_api():
+    cfg=_v50_settings()
     return jsonify({
         "ok": True,
         "release": APP_RELEASE,
-        "nearby_radius_m": FIELD_NEARBY_RADIUS_M,
+        "nearby_radius_m": max(100,int(cfg.get("gps_radius_m",250) or 250)),
         "gps_good_accuracy_m": FIELD_GPS_GOOD_ACCURACY_M,
         "gps_max_accuracy_m": FIELD_GPS_MAX_ACCURACY_M,
         "gps_warn_distance_m": float(os.getenv("FIELD_GPS_WARN_DISTANCE_M", "250")),
@@ -9240,7 +9252,7 @@ def my_work_status(ticket_id):
 def v38_gps_config():
     u=db.session.get(User, session.get("user_id"))
     required=bool(getattr(u,"gps_required",False)) if u else False
-    interval=max(60, int(_v50_settings().get("gps_interval_seconds", os.getenv("TEAM_GPS_INTERVAL_SECONDS", "300"))))
+    interval=max(60, int(_v50_settings().get("gps_interval_seconds", os.getenv("TEAM_GPS_INTERVAL_SECONDS", "60"))))
     v72=_v72_settings()
     history_enabled = bool(getattr(u,"gps_history_enabled",False)) if u else False
     # V73: histórico GPS deve funcionar mesmo quando o GPS obrigatório não estiver marcado.
@@ -13130,36 +13142,20 @@ def panorama_delete_photo_api(photo_id):
 V50_SETTINGS_PATH = DATA_DIR / "v50_admin_settings.json"
 
 def _v50_settings():
-    defaults = {
-        "alert_activity_days": 7,
-        "alert_pending_days": 7,
-        "gps_radius_m": FIELD_NEARBY_RADIUS_M,
-        "dashboard_refresh_seconds": 60,
-        "gps_interval_seconds": 300,
-        "forecast_days_emv": 3,
-        "forecast_days_garagem": 3,
-        "forecast_days_recarga": 3,
-        "gps_history_retention_days": 7,
-        "gps_history_radius_m": 250,
-        "gps_history_ping_seconds": 20,
-        "gps_history_min_movement_m": 60,
-        "journey_enforcement_enabled": 0,
-        "journey_warning_minutes": 30,
-        "journey_max_extension_hours": 6,
-        "journey_default_field": 1,
-        "journey_default_implantation": 0,
-    }
-    # V72 parameters are persisted in PostgreSQL, not only in the local filesystem.
+    # V76.2: o arquivo local é apenas compatibilidade legada. PostgreSQL é a fonte
+    # autoritativa e sempre vence, evitando reset de parâmetros a cada deploy.
+    defaults = _v72_defaults()
+    try:
+        if V50_SETTINGS_PATH.exists():
+            saved = json.loads(V50_SETTINGS_PATH.read_text(encoding="utf-8"))
+            if isinstance(saved, dict):
+                defaults.update({k:v for k,v in saved.items() if k in defaults})
+    except Exception:
+        app.logger.exception("Falha ao carregar configurações locais legadas V50")
     try:
         defaults.update(_v72_settings())
     except Exception:
         pass
-    try:
-        if V50_SETTINGS_PATH.exists():
-            saved = json.loads(V50_SETTINGS_PATH.read_text(encoding="utf-8"))
-            defaults.update({k:v for k,v in saved.items() if k in defaults})
-    except Exception:
-        app.logger.exception("Falha ao carregar configurações V50")
     return defaults
 
 @app.get("/configuracoes")
@@ -15691,6 +15687,48 @@ with app.app_context():
         try:db.session.rollback()
         except Exception:pass
         app.logger.exception('V76.1: falha no saneamento de cadastros Field legados')
+    # V76.2 — persistência definitiva das Configurações Operacionais no PostgreSQL.
+    # Não sobrescreve nenhuma chave que já esteja gravada pelo administrador.
+    try:
+        if not SchemaMigration.query.filter_by(version='V76.2-001').first():
+            row=db.session.get(V72SystemConfig,1)
+            if not row:
+                row=V72SystemConfig(id=1,settings_json='{}')
+            try:
+                persisted=json.loads(row.settings_json or '{}')
+                if not isinstance(persisted,dict): persisted={}
+            except Exception:
+                persisted={}
+            seed=_v72_defaults()
+            # Importa configuração local legada quando ainda existir no disco, sem deixar
+            # os antigos defaults fixos 3000 m / 300 s voltarem a dominar o sistema.
+            try:
+                legacy_saved=json.loads(V50_SETTINGS_PATH.read_text(encoding='utf-8')) if V50_SETTINGS_PATH.exists() else {}
+                if not isinstance(legacy_saved,dict): legacy_saved={}
+            except Exception:
+                legacy_saved={}
+            for key,value in legacy_saved.items():
+                if key in seed:
+                    seed[key]=value
+            if int(seed.get('gps_radius_m') or 0)==3000: seed['gps_radius_m']=250
+            if int(seed.get('gps_interval_seconds') or 0)==300: seed['gps_interval_seconds']=60
+            seed['gps_history_radius_m']=int(seed.get('gps_history_radius_m') or 250)
+            seed['gps_history_ping_seconds']=int(seed.get('gps_history_ping_seconds') or 10)
+            seed['gps_history_min_movement_m']=int(seed.get('gps_history_min_movement_m') or 20)
+            changed=[]
+            for key,value in seed.items():
+                if key not in persisted:
+                    persisted[key]=value;changed.append(key)
+            row.settings_json=json.dumps(persisted,ensure_ascii=False)
+            row.updated_at=datetime.utcnow()
+            db.session.add(row)
+            db.session.add(SchemaMigration(version='V76.2-001',description='Configurações operacionais persistidas em PostgreSQL; preserva valores existentes e remove reset por deploy'))
+            db.session.commit()
+            app.logger.info('V76.2: chaves operacionais persistidas: %s', ','.join(changed) if changed else 'nenhuma')
+    except Exception:
+        try:db.session.rollback()
+        except Exception:pass
+        app.logger.exception('V76.2: falha ao persistir configurações operacionais')
     _apply_v70_migrations()
     _apply_v71_migrations()
     # V70.1 — registra uma única vez o Dashboard Chamados como dashboard nativa visível.

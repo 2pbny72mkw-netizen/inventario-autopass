@@ -1,0 +1,11 @@
+V76.2 — DEPLOY ENXUTO
+
+1. Aplicar os arquivos deste pacote sobre a V76.1.
+2. Reiniciar a aplicação normalmente.
+3. A migração V76.2-001 executa uma única vez e NÃO sobrescreve configurações já persistidas.
+4. Após o deploy, validar em Gestão > Configurações Operacionais:
+   - Raio GPS de referência: valor administrativo preservado (seed 250 m se a chave nunca existiu).
+   - Intervalo GPS operacional: valor administrativo preservado (seed 60 s se a chave nunca existiu).
+5. No celular/PWA, manter a tela aberta por 2–3 minutos sem tocar na interface e confirmar atualização periódica.
+6. Abrir outro app e retornar ao PWA; a retomada deve ocorrer automaticamente ao voltar ao primeiro plano.
+7. Para diagnóstico no Console: AutopassGpsDebug().
