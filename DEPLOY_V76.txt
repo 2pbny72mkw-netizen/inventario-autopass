@@ -1,0 +1,9 @@
+V76 — DEPLOY ENXUTO
+
+1. Substituir os arquivos deste pacote preservando os demais arquivos do projeto.
+2. Deploy normal no Render.
+3. A migração é aditiva: cria v76_notifications e adiciona start_time/end_time/priority em arrow_activities.
+4. Não há remoção de tabela/coluna.
+5. Limpar cache/atualizar PWA se necessário; Service Worker usa versão v76.
+6. WhatsApp é opcional. Configure somente via variáveis de ambiente; nunca grave token no código.
+7. Executar o checklist do README_V76.md.

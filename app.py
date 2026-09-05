@@ -21,6 +21,8 @@ import tempfile
 import shutil
 import threading
 import html as html_lib
+import urllib.request
+import urllib.error
 from functools import wraps
 
 from flask import Flask, has_request_context, render_template, request, redirect, url_for, session, jsonify, flash, send_from_directory, Response, send_file, make_response, g, abort
@@ -39,7 +41,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V75"
+APP_RELEASE = "V76"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "3000"))
@@ -308,6 +310,9 @@ class ArrowActivity(db.Model):
     __tablename__ = "arrow_activities"
     id = db.Column(db.Integer, primary_key=True)
     activity_date = db.Column(db.Date, nullable=False, index=True, default=date.today)
+    start_time = db.Column(db.String(5))
+    end_time = db.Column(db.String(5))
+    priority = db.Column(db.String(20), nullable=False, default="NORMAL", index=True)
     title = db.Column(db.String(220), nullable=False)
     operator = db.Column(db.String(20), nullable=False, default="OUTROS", index=True)  # METRO/CPTM/MOTIVA/OUTROS
     location_id = db.Column(db.Integer, db.ForeignKey("locations.id"), index=True)
@@ -319,6 +324,22 @@ class ArrowActivity(db.Model):
     created_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+class V76Notification(db.Model):
+    __tablename__ = "v76_notifications"
+    id = db.Column(db.Integer, primary_key=True)
+    recipient_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    severity = db.Column(db.String(20), nullable=False, default="INFO", index=True)
+    category = db.Column(db.String(50), nullable=False, default="SISTEMA", index=True)
+    title = db.Column(db.String(220), nullable=False)
+    message = db.Column(db.String(1000), nullable=False)
+    action_url = db.Column(db.String(700))
+    entity_type = db.Column(db.String(80), index=True)
+    entity_id = db.Column(db.String(120), index=True)
+    whatsapp_status = db.Column(db.String(30))
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    read_at = db.Column(db.DateTime, index=True)
+
 
 class ArrowActivityMaterial(db.Model):
     __tablename__ = "arrow_activity_materials"
@@ -2301,9 +2322,67 @@ def v72_outside_journey_request_api():
         row = WorkAccessRequest(user_id=user.id,reason=reason,requested_minutes=minutes,status="PENDENTE")
         db.session.add(row)
     db.session.add(AuditEvent(user_id=user.id,event_type="WORK_ACCESS_REQUEST",entity_type="work_access",entity_id=str(row.id or ""),detail=f"{minutes} min · {reason}"))
+    db.session.flush()
+    _v76_notify_managers("Autorização de jornada pendente",f"{user.name} solicitou {minutes} min de acesso extraordinário. Motivo: {reason}",severity="URGENTE",category="AUTORIZACAO",action_url="/gestao/rastreabilidade-jornada",entity_type="work_access",entity_id=row.id,whatsapp=True)
     db.session.commit()
     return jsonify({"ok":True,"id":row.id,"status":row.status})
 
+
+def _v76_whatsapp_send(text_message):
+    """Canal oficial opcional via template previamente aprovado na WhatsApp Business Cloud API."""
+    token=(os.getenv("WHATSAPP_CLOUD_TOKEN") or "").strip()
+    phone_number_id=(os.getenv("WHATSAPP_PHONE_NUMBER_ID") or "").strip()
+    template_name=(os.getenv("WHATSAPP_ALERT_TEMPLATE") or "").strip()
+    template_lang=(os.getenv("WHATSAPP_ALERT_TEMPLATE_LANG") or "pt_BR").strip()
+    recipients=[re.sub(r"\D","",x) for x in (os.getenv("WHATSAPP_ALERT_RECIPIENTS") or "").split(",") if re.sub(r"\D","",x)]
+    if not token or not phone_number_id or not recipients:
+        return "NAO_CONFIGURADO"
+    if not template_name:
+        return "TEMPLATE_NAO_CONFIGURADO"
+    endpoint=f"https://graph.facebook.com/v22.0/{phone_number_id}/messages"
+    ok=0
+    for to in recipients:
+        payload=json.dumps({"messaging_product":"whatsapp","to":to,"type":"template","template":{"name":template_name,"language":{"code":template_lang},"components":[{"type":"body","parameters":[{"type":"text","text":text_message[:900]}]}]}}).encode("utf-8")
+        req=urllib.request.Request(endpoint,data=payload,method="POST",headers={"Authorization":f"Bearer {token}","Content-Type":"application/json"})
+        try:
+            with urllib.request.urlopen(req,timeout=8) as resp:
+                if 200 <= int(resp.status) < 300: ok+=1
+        except Exception:
+            app.logger.exception("V76: falha no alerta WhatsApp")
+    return "ENVIADO" if ok==len(recipients) else ("PARCIAL" if ok else "ERRO")
+
+def _v76_notify_managers(title,message,severity="URGENTE",category="AUTORIZACAO",action_url="/gestao/rastreabilidade-jornada",entity_type=None,entity_id=None,whatsapp=False):
+    managers=User.query.filter(User.archived_at.is_(None),User.active.is_(True),User.role.in_(["manager","manager_field"])).all()
+    rows=[]
+    for manager in managers:
+        row=V76Notification(recipient_id=manager.id,severity=severity,category=category,title=title,message=message,action_url=action_url,entity_type=entity_type,entity_id=str(entity_id) if entity_id is not None else None)
+        db.session.add(row);rows.append(row)
+    # Se a matriz customizada não puder ser avaliada fora da sessão, garante os gestores padrão.
+    if not rows:
+        for manager in managers:
+            row=V76Notification(recipient_id=manager.id,severity=severity,category=category,title=title,message=message,action_url=action_url,entity_type=entity_type,entity_id=str(entity_id) if entity_id is not None else None)
+            db.session.add(row);rows.append(row)
+    wa="NAO_SOLICITADO"
+    if whatsapp and severity in ("URGENTE","CRITICA"):
+        wa=_v76_whatsapp_send(f"{title}\n{message}\nAcesse o Sistema de Gestão para analisar e registrar a decisão.")
+        for row in rows: row.whatsapp_status=wa
+    return rows,wa
+
+@app.get("/api/v76/notificacoes")
+@login_required
+def v76_notifications_api():
+    uid=session.get("user_id");unread=(request.args.get("unread") or "").lower() in ("1","true","sim")
+    q=V76Notification.query.filter_by(recipient_id=uid)
+    if unread:q=q.filter(V76Notification.read_at.is_(None))
+    rows=q.order_by(V76Notification.created_at.desc()).limit(100).all()
+    return jsonify({"ok":True,"unread":V76Notification.query.filter_by(recipient_id=uid,read_at=None).count(),"rows":[{"id":x.id,"severity":x.severity,"category":x.category,"title":x.title,"message":x.message,"action_url":x.action_url or "","whatsapp_status":x.whatsapp_status or "","created_at":x.created_at.isoformat()+"Z","read":bool(x.read_at)} for x in rows]})
+
+@app.post("/api/v76/notificacoes/<int:nid>/lida")
+@login_required
+def v76_notification_read(nid):
+    row=db.session.get(V76Notification,nid) or abort(404)
+    if row.recipient_id!=session.get("user_id"):abort(403)
+    row.read_at=datetime.utcnow();db.session.commit();return jsonify({"ok":True})
 
 @app.get("/api/acesso-fora-jornada/status")
 def v72_outside_journey_status_api():
@@ -6648,7 +6727,7 @@ def _v75_access_pdf(operator, users, revision):
 def v75_access_list_generate_pdf(operator):
     operator=operator.upper()
     if operator not in ("METRO","CPTM") or not _has_access("materials.access_lists.manage"):abort(403)
-    eligible=_v741_eligible_users(operator)
+    eligible=_v741_access_users(operator)
     ids=[int(x) for x in request.form.getlist("user_ids") if str(x).isdigit()]
     # V75: documento oficial sempre contém TODOS os habilitados; não aceita exclusão silenciosa.
     users=eligible
@@ -13571,9 +13650,15 @@ def v75_arrow_eligibility_api(uid):
 def v75_arrow_list_api():
     if not _has_access("arrow.view"):abort(403)
     q=ArrowActivity.query
-    d=(request.args.get('date') or '').strip();status=(request.args.get('status') or '').strip().upper();tech=request.args.get('technician_id',type=int)
+    d=(request.args.get('date') or '').strip();date_from=(request.args.get('from') or '').strip();date_to=(request.args.get('to') or '').strip();status=(request.args.get('status') or '').strip().upper();tech=request.args.get('technician_id',type=int)
     if d:
         try:q=q.filter_by(activity_date=date.fromisoformat(d))
+        except:pass
+    if date_from:
+        try:q=q.filter(ArrowActivity.activity_date>=date.fromisoformat(date_from))
+        except:pass
+    if date_to:
+        try:q=q.filter(ArrowActivity.activity_date<=date.fromisoformat(date_to))
         except:pass
     if status:q=q.filter_by(status=status)
     if tech:q=q.filter_by(technician_id=tech)
@@ -13581,7 +13666,7 @@ def v75_arrow_list_api():
     out=[]
     for x in rows:
         u=uu.get(x.technician_id);loc=ll.get(x.location_id);eligible,reason=_v75_arrow_eligibility(u,x.operator) if u else (False,'Colaborador não encontrado')
-        out.append({'id':x.id,'date':x.activity_date.isoformat(),'title':x.title,'operator':x.operator,'technician_id':x.technician_id,'technician':u.name if u else '—','location_id':x.location_id,'location':loc.location if loc else '—','line':loc.line if loc else '','company':loc.company if loc else '','status':x.status,'remote':x.remote,'teamviewer_id':x.teamviewer_id or '','notes':x.notes or '','eligible':eligible,'eligibility_reason':reason})
+        out.append({'id':x.id,'date':x.activity_date.isoformat(),'start_time':x.start_time or '','end_time':x.end_time or '','priority':x.priority or 'NORMAL','title':x.title,'operator':x.operator,'technician_id':x.technician_id,'technician':u.name if u else '—','location_id':x.location_id,'location':loc.location if loc else '—','line':loc.line if loc else '','company':loc.company if loc else '','status':x.status,'remote':x.remote,'teamviewer_id':x.teamviewer_id or '','notes':x.notes or '','eligible':eligible,'eligibility_reason':reason})
     return jsonify({'ok':True,'rows':out})
 
 @app.post("/api/arrow/activities")
@@ -13599,7 +13684,31 @@ def v75_arrow_create_api():
     title=(d.get('title') or '').strip()
     if not title:return jsonify({'ok':False,'error':'Informe a atividade.'}),400
     locid=int(d.get('location_id')) if str(d.get('location_id') or '').isdigit() else None
-    x=ArrowActivity(activity_date=wd,title=title,operator=op,location_id=locid,technician_id=u.id,status='PLANEJADA',remote=bool(d.get('remote')),teamviewer_id=(d.get('teamviewer_id') or '').strip(),notes=(d.get('notes') or '').strip(),created_by=session['user_id']);db.session.add(x);db.session.commit();return jsonify({'ok':True,'id':x.id})
+    x=ArrowActivity(activity_date=wd,start_time=(d.get('start_time') or '').strip()[:5] or None,end_time=(d.get('end_time') or '').strip()[:5] or None,priority=(d.get('priority') or 'NORMAL').strip().upper()[:20],title=title,operator=op,location_id=locid,technician_id=u.id,status='PLANEJADA',remote=bool(d.get('remote')),teamviewer_id=(d.get('teamviewer_id') or '').strip(),notes=(d.get('notes') or '').strip(),created_by=session['user_id']);db.session.add(x);db.session.commit();return jsonify({'ok':True,'id':x.id})
+
+@app.post("/api/arrow/activities/<int:aid>/editar")
+@login_required
+def v76_arrow_edit_api(aid):
+    if not _has_access("arrow.manage"):abort(403)
+    x=db.session.get(ArrowActivity,aid) or abort(404);d=request.get_json(silent=True) or {}
+    if d.get("date"):
+        try:x.activity_date=date.fromisoformat(d["date"])
+        except:return jsonify({"ok":False,"error":"Data inválida."}),400
+    if d.get("technician_id") is not None:
+        try:u=db.session.get(User,int(d.get("technician_id")))
+        except:u=None
+        if not u:return jsonify({"ok":False,"error":"Técnico inválido."}),400
+        op=(d.get("operator") or x.operator or "OUTROS").upper();eligible,reason=_v75_arrow_eligibility(u,op)
+        if not eligible:return jsonify({"ok":False,"error":reason}),409
+        x.technician_id=u.id;x.operator=op
+    for key in ("title","notes","teamviewer_id"):
+        if key in d:setattr(x,key,(d.get(key) or "").strip())
+    if "location_id" in d:x.location_id=int(d.get("location_id")) if str(d.get("location_id") or "").isdigit() else None
+    if "start_time" in d:x.start_time=(d.get("start_time") or "").strip()[:5] or None
+    if "end_time" in d:x.end_time=(d.get("end_time") or "").strip()[:5] or None
+    if "priority" in d:x.priority=(d.get("priority") or "NORMAL").strip().upper()[:20]
+    if "remote" in d:x.remote=bool(d.get("remote"))
+    db.session.commit();return jsonify({"ok":True})
 
 @app.post("/api/arrow/activities/<int:aid>/status")
 @login_required
@@ -15498,6 +15607,22 @@ with app.app_context():
         if changed:db.session.commit();_chip_swap_payload_cache['at']=0
     except Exception:
         db.session.rollback();app.logger.exception('V73: falha ao sincronizar localidades Recarga/TDI')
+    # V76 — notificações críticas + agenda Arrow 7/30 dias. Migração aditiva/idempotente.
+    try:
+        db.metadata.create_all(bind=db.engine,tables=[V76Notification.__table__],checkfirst=True)
+        insp=db.inspect(db.engine)
+        if insp.has_table('arrow_activities'):
+            cols={c['name'] for c in insp.get_columns('arrow_activities')}
+            with db.engine.begin() as conn:
+                if 'start_time' not in cols: conn.execute(text("ALTER TABLE arrow_activities ADD COLUMN start_time VARCHAR(5)"))
+                if 'end_time' not in cols: conn.execute(text("ALTER TABLE arrow_activities ADD COLUMN end_time VARCHAR(5)"))
+                if 'priority' not in cols: conn.execute(text("ALTER TABLE arrow_activities ADD COLUMN priority VARCHAR(20) DEFAULT 'NORMAL'"))
+        if not SchemaMigration.query.filter_by(version='V76-001').first():
+            db.session.add(SchemaMigration(version='V76-001',description='Agenda Arrow 7/30 dias + central de notificações críticas + canal WhatsApp opcional'));db.session.commit()
+    except Exception:
+        try:db.session.rollback()
+        except Exception:pass
+        app.logger.exception('V76: falha na migração aditiva')
     _apply_v70_migrations()
     _apply_v71_migrations()
     # V70.1 — registra uma única vez o Dashboard Chamados como dashboard nativa visível.
