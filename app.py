@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V77.6.2"
+APP_RELEASE = "V77.7"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -16779,7 +16779,7 @@ def v771_bobbin_import():
     if not f or not f.filename:return jsonify({'ok':False,'error':'Selecione a planilha de controle de bobinas.'}),400
     try:data=_v771_parse_import(f)
     except Exception as exc:
-        app.logger.exception('V77.6.2: falha ao ler planilha de bobinas')
+        app.logger.exception('V77.7: falha ao ler planilha de bobinas')
         return jsonify({'ok':False,'error':f'Não foi possível ler a planilha: {exc}'}),400
     mode=(request.form.get('mode') or 'preview').lower()
     preview={'sheets':data['sheets'],'records_found':len(data['readings'])+len(data['divergences']),'atm_readings':len(data['readings']),'official_total':data['official_total'],'official_installed':data['official_installed'],'official_stock':data['official_stock'],'divergences_count':len(data['divergences']),'divergences':data['divergences'][:100],'unlocated_reserve_total':sum(x['qty'] for x in data['reserves']),'stations_with_unlocated_reserve':len(data['reserves']),'cabinet_points':len(data['cabinets']),'cabinet_bobbins_total':sum(x['bobbins'] for x in data['cabinets']),'warnings':data['warnings'][:100]}
@@ -16787,9 +16787,12 @@ def v771_bobbin_import():
     try:
         batch=AtmBobbinImportBatch(filename=secure_filename(f.filename),imported_by=session['user_id'],rows_imported=len(data['readings']),reserves_imported=sum(x['qty'] for x in data['reserves']),warnings_json=json.dumps({'warnings':data['warnings'][:200],'divergences':data['divergences'][:500]},ensure_ascii=False));db.session.add(batch);db.session.flush()
         # A importação é um retrato. Substitui apenas leituras IMPORTACAO anteriores; nunca toca registros de campo.
-        AtmBobbinReading.query.filter_by(event_type='IMPORTACAO').delete(synchronize_session=False)
+        # V77.7: snapshot por escopo. A última importação manda somente nas linhas/estações presentes no arquivo.
+        imported_scopes={(x['company'],x['line']) for x in data['readings']}
+        for company_scope,line_scope in imported_scopes:
+            AtmBobbinReading.query.filter_by(event_type='IMPORTACAO',company=company_scope,line=line_scope).delete(synchronize_session=False)
         for x in data['readings']:
-            note=f"Importação V77.6.2 · aba {x['sheet']} · último técnico informado: {x['tech'] or '—'} · referência de reserva na planilha: {x['local_note'] or '—'}"
+            note=f"Importação V77.7 · aba {x['sheet']} · último técnico informado: {x['tech'] or '—'} · referência de reserva na planilha: {x['local_note'] or '—'}"
             db.session.add(AtmBobbinReading(company=x['company'],line=x['line'],station=x['station'],atm_id=x['atm_id'],percent_available=x['percent'],event_type='IMPORTACAO',bobbin_replaced=False,reserve_delta=0,reserve_after=None,notes=note,technician_id=session['user_id'],created_at=x['date']))
         # snapshot dos saldos legados ainda não localizados
         imported_keys=set()
@@ -16806,7 +16809,7 @@ def v771_bobbin_import():
         db.session.commit()
         return jsonify({'ok':True,'committed':True,'batch_id':batch.id,'batch_code':f'IMP-BOB-{datetime.utcnow().strftime("%Y%m%d")}-{batch.id:04d}','preview':preview,'release':APP_RELEASE})
     except Exception as exc:
-        db.session.rollback();app.logger.exception('V77.6.2: falha ao persistir importação de bobinas')
+        db.session.rollback();app.logger.exception('V77.7: falha ao persistir importação de bobinas')
         return jsonify({'ok':False,'error':f'Falha ao gravar a importação. Nenhum dado foi alterado: {exc}'}),500
 
 @app.get('/api/bobinas/importacoes/<int:batch_id>/divergencias')

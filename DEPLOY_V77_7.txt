@@ -1,0 +1,2 @@
+V77.7 ENXUTA
+Substituir somente os arquivos deste pacote e reiniciar a aplicação. Não apagar banco/dados.
