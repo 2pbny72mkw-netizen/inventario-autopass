@@ -23,11 +23,12 @@ import threading
 import html as html_lib
 import urllib.request
 import urllib.error
+import math
 from functools import wraps
 
 from flask import Flask, has_request_context, render_template, request, redirect, url_for, session, jsonify, flash, send_from_directory, Response, send_file, make_response, g, abort
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import UniqueConstraint, Index, func, case, text, and_, event, or_
+from sqlalchemy import UniqueConstraint, Index, func, case, text, and_, event, or_, inspect
 from sqlalchemy.exc import IntegrityError
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -41,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V77.1"
+APP_RELEASE = "V77.2"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -799,6 +800,9 @@ class AtmBobbinReading(db.Model):
     technician_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
     latitude = db.Column(db.Float)
     longitude = db.Column(db.Float)
+    gps_accuracy = db.Column(db.Float)
+    gps_captured_at = db.Column(db.DateTime)
+    gps_distance_m = db.Column(db.Float)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
     __table_args__ = (Index("ix_bobbin_atm_created", "atm_id", "created_at"),)
 
@@ -15907,6 +15911,18 @@ with app.app_context():
         if not SchemaMigration.query.filter_by(version='V77.1-001').first():
             db.session.add(SchemaMigration(version='V77.1-001',description='Reserva por ATM, armários/estoque Field M16, carga do técnico, fotos, importação Excel, conciliação e ocorrências'))
             db.session.commit()
+        # V77.2 — GPS enriquecido no registro de bobinas. create_all não altera tabelas existentes.
+        cols={c['name'] for c in inspect(db.engine).get_columns('atm_bobbin_readings')}
+        additions=[]
+        if 'gps_accuracy' not in cols:additions.append('ALTER TABLE atm_bobbin_readings ADD COLUMN gps_accuracy FLOAT')
+        if 'gps_captured_at' not in cols:additions.append('ALTER TABLE atm_bobbin_readings ADD COLUMN gps_captured_at TIMESTAMP')
+        if 'gps_distance_m' not in cols:additions.append('ALTER TABLE atm_bobbin_readings ADD COLUMN gps_distance_m FLOAT')
+        if additions:
+            with db.engine.begin() as conn:
+                for cmd in additions:conn.execute(text(cmd))
+        if not SchemaMigration.query.filter_by(version='V77.2-001').first():
+            db.session.add(SchemaMigration(version='V77.2-001',description='Correção endpoints Estoque Field, ATM pela base mestre, GPS na atividade, KPIs troca/sem troca e dashboard Bobinas refinada'))
+            db.session.commit()
     except Exception:
         try: db.session.rollback()
         except Exception: pass
@@ -16442,8 +16458,73 @@ def _v771_cleanup_photos(force=False):
 
 def _v771_bobbin_json(x,names=None):
     names=names or {}; stock=_v771_stock(x.company,x.line,x.station,x.atm_id); ph=AtmBobbinPhoto.query.filter_by(reading_id=x.id).first()
-    return {'id':x.id,'company':x.company,'line':x.line,'station':x.station,'atm_id':x.atm_id,'percent_available':x.percent_available,'event_type':x.event_type,'bobbin_replaced':bool(x.bobbin_replaced),'replacement_origin':x.replacement_origin,'reserve_after':int(stock.reserve_qty or 0) if stock else (x.reserve_after if x.reserve_after is not None else 0),'notes':x.notes or '','technician_id':x.technician_id,'technician':names.get(x.technician_id,''),'created_at':x.created_at.isoformat()+'Z' if x.created_at else None,'has_photo':bool(ph),'photo_available':bool(ph and not ph.deleted_at and ph.expires_at>datetime.utcnow()),'photo_url':url_for('v771_bobbin_photo',photo_id=ph.id) if ph and not ph.deleted_at and ph.expires_at>datetime.utcnow() else None}
+    return {'id':x.id,'company':x.company,'line':x.line,'station':x.station,'atm_id':x.atm_id,'percent_available':x.percent_available,'event_type':x.event_type,'bobbin_replaced':bool(x.bobbin_replaced),'replacement_origin':x.replacement_origin,'reserve_after':int(stock.reserve_qty or 0) if stock else (x.reserve_after if x.reserve_after is not None else 0),'notes':x.notes or '','technician_id':x.technician_id,'technician':names.get(x.technician_id,''),'latitude':x.latitude,'longitude':x.longitude,'gps_accuracy':getattr(x,'gps_accuracy',None),'gps_captured_at':getattr(x,'gps_captured_at',None).isoformat()+'Z' if getattr(x,'gps_captured_at',None) else None,'gps_distance_m':getattr(x,'gps_distance_m',None),'created_at':x.created_at.isoformat()+'Z' if x.created_at else None,'has_photo':bool(ph),'photo_available':bool(ph and not ph.deleted_at and ph.expires_at>datetime.utcnow()),'photo_url':url_for('v771_bobbin_photo',photo_id=ph.id) if ph and not ph.deleted_at and ph.expires_at>datetime.utcnow() else None}
 
+
+
+def _v772_location_match(company='',line='',station=''):
+    nc,nl,ns=_v771_norm(company),_v771_norm(line),_v771_norm(station)
+    rows=Location.query.filter(Location.location.isnot(None)).all()
+    best=None;best_score=-1
+    for x in rows:
+        xs,xl,xc=_v771_norm(x.location),_v771_norm(x.line),_v771_norm(x.company)
+        score=0
+        if ns and xs==ns:score+=8
+        elif ns and (xs in ns or ns in xs):score+=5
+        if nl and xl==nl:score+=5
+        elif nl and (xl in nl or nl in xl):score+=3
+        if nc and xc==nc:score+=3
+        elif nc and (xc in nc or nc in xc):score+=1
+        if score>best_score:
+            best_score=score;best=x
+    return best if best_score>=8 else None
+
+def _v772_clean_stock_location(label):
+    raw=str(label or '').strip()
+    raw=re.sub(r'^(CD|ESTA[CÇ][AÃ]O|TERMINAL)\s+','',raw,flags=re.I).strip()
+    return raw
+
+def _v772_resolve_stock_location(label):
+    cleaned=_v772_clean_stock_location(label)
+    loc=_v772_location_match(station=cleaned)
+    if loc:return {'company':loc.company or '', 'line':loc.line or '', 'station':loc.location or cleaned}
+    return {'company':'','line':'','station':cleaned or str(label or '').strip()}
+
+def _v772_master_atm_map():
+    """Terminais ATM da base mestre do próprio sistema, com fallback para Inventário e histórico de bobinas."""
+    out={}
+    def add(company,line,station,aid):
+        aid=str(aid or '').strip()
+        if not aid:return
+        loc=_v772_location_match(company,line,station)
+        if loc:key=(loc.company or '',loc.line or '',loc.location or '')
+        else:key=(str(company or '').strip(),str(line or '').strip(),str(station or '').strip())
+        if key[2]:out.setdefault(key,set()).add(aid)
+    try:
+        assets=BaseAsset.query.filter(or_(func.upper(func.coalesce(BaseAsset.equipment_type,''))=='ATM',func.upper(func.coalesce(BaseAsset.products,'')).like('%ATM%'))).all()
+        for a in assets:
+            aid=a.terminal_number or a.asset_key or a.qrcode_id
+            add(a.company,a.line,a.locality,aid)
+    except Exception:
+        app.logger.exception('V77.2: falha ao carregar ATM da base_assets')
+    try:
+        rows=(db.session.query(Inventory,Location).join(Location,Inventory.location_id==Location.id)
+              .filter(func.upper(func.coalesce(Inventory.equipment_type,''))=='ATM').all())
+        for inv,loc in rows:add(loc.company,loc.line,loc.location,inv.asset_identifier)
+    except Exception:
+        app.logger.exception('V77.2: falha ao carregar ATM do inventário')
+    try:
+        for x in AtmBobbinReading.query.with_entities(AtmBobbinReading.company,AtmBobbinReading.line,AtmBobbinReading.station,AtmBobbinReading.atm_id).distinct().all():
+            add(x.company,x.line,x.station,x.atm_id)
+    except Exception:pass
+    return out
+
+def _v772_haversine_m(lat1,lon1,lat2,lon2):
+    try:
+        r=6371000.0;p1=math.radians(float(lat1));p2=math.radians(float(lat2));dp=math.radians(float(lat2)-float(lat1));dl=math.radians(float(lon2)-float(lon1))
+        a=math.sin(dp/2)**2+math.cos(p1)*math.cos(p2)*math.sin(dl/2)**2
+        return round(2*r*math.atan2(math.sqrt(a),math.sqrt(1-a)),1)
+    except Exception:return None
 @app.get('/field/bobinas')
 @login_required
 def v77_bobbins_activity_page():
@@ -16461,17 +16542,17 @@ def v77_bobbins_dashboard_page():
 def v77_bobbins_options():
     if not (_has_access('field.bobbins') or _has_access('field.bobbins_dashboard')): abort(403)
     locs=Location.query.order_by(Location.company,Location.line,Location.location).all()
-    locations=[{'company':x.company or '','line':x.line or '','station':x.location or ''} for x in locs if x.location]
-    atms={}
-    for x in AtmBobbinReading.query.with_entities(AtmBobbinReading.company,AtmBobbinReading.line,AtmBobbinReading.station,AtmBobbinReading.atm_id).distinct().all():
-        atms.setdefault((x.company or '',x.line or '',x.station or ''),set()).add(str(x.atm_id))
-    try:
-        official_path=DATA_DIR/'atm_official_082026.json'; official=json.loads(official_path.read_text(encoding='utf-8')) if official_path.exists() else []
-        for a in official:
-            company=str(a.get('company') or a.get('empresa') or ''); line=str(a.get('line') or a.get('linha') or ''); station=str(a.get('station') or a.get('location') or a.get('estacao') or a.get('locality') or ''); aid=str(a.get('terminal') or a.get('atm_id') or a.get('id_atm') or a.get('asset') or '').strip()
-            if station and aid: atms.setdefault((company,line,station),set()).add(aid)
-    except Exception:pass
-    return jsonify({'ok':True,'locations':locations,'atms':[{'company':k[0],'line':k[1],'station':k[2],'ids':sorted(v,key=lambda z:(len(z),z))} for k,v in atms.items()]})
+    locations=[];seen=set()
+    for x in locs:
+        if not x.location:continue
+        k=(x.company or '',x.line or '',x.location or '')
+        if k in seen:continue
+        seen.add(k);locations.append({'company':k[0],'line':k[1],'station':k[2]})
+    atms=_v772_master_atm_map()
+    payload=[]
+    for k,v in atms.items():
+        payload.append({'company':k[0],'line':k[1],'station':k[2],'ids':sorted(v,key=lambda z:(len(str(z)),str(z)))})
+    return jsonify({'ok':True,'release':APP_RELEASE,'source':'BASE_MESTRE_ATM','locations':locations,'atms':payload})
 
 @app.get('/api/bobinas/atm-status')
 @login_required
@@ -16499,15 +16580,34 @@ def v77_bobbins_register():
     try:reserve_qty=max(0,int(request.form.get('reserve_qty') or 0))
     except Exception:return jsonify({'ok':False,'error':'Informe quantas bobinas reserva existem nesta ATM.'}),400
     stock=_v771_stock(company,line,station,atm,True);old_reserve=int(stock.reserve_qty or 0);stock.reserve_qty=reserve_qty;stock.updated_by=session['user_id'];stock.updated_at=datetime.utcnow();db.session.add(stock)
-    pos=TechnicianPosition.query.filter_by(user_id=session['user_id']).order_by(TechnicianPosition.captured_at.desc()).first()
-    row=AtmBobbinReading(company=company,line=line,station=station,atm_id=atm,percent_available=pct,event_type='TROCA' if replaced else 'LEITURA',bobbin_replaced=replaced,replacement_origin=None,reserve_delta=reserve_qty-old_reserve,reserve_after=reserve_qty,notes=(request.form.get('notes') or '').strip(),technician_id=session['user_id'],latitude=pos.latitude if pos else None,longitude=pos.longitude if pos else None)
+
+    # V77.2: tenta usar o GPS capturado no instante do salvamento; fallback para a última posição da sessão.
+    lat=lon=acc=None;gps_at=None
+    try:
+        if request.form.get('latitude') not in (None,''):lat=float(request.form.get('latitude'))
+        if request.form.get('longitude') not in (None,''):lon=float(request.form.get('longitude'))
+        if request.form.get('gps_accuracy') not in (None,''):acc=float(request.form.get('gps_accuracy'))
+        raw_at=(request.form.get('gps_captured_at') or '').strip()
+        if raw_at:
+            try:gps_at=datetime.fromisoformat(raw_at.replace('Z','+00:00')).replace(tzinfo=None)
+            except Exception:gps_at=None
+    except Exception:lat=lon=acc=None
+    if lat is None or lon is None:
+        pos=TechnicianPosition.query.filter_by(user_id=session['user_id']).order_by(TechnicianPosition.captured_at.desc()).first()
+        if pos:lat=pos.latitude;lon=pos.longitude;acc=pos.accuracy;gps_at=pos.captured_at
+    distance=None
+    loc=_v772_location_match(company,line,station)
+    if loc and loc.reference_latitude is not None and loc.reference_longitude is not None and lat is not None and lon is not None:
+        distance=_v772_haversine_m(lat,lon,loc.reference_latitude,loc.reference_longitude)
+
+    row=AtmBobbinReading(company=company,line=line,station=station,atm_id=atm,percent_available=pct,event_type='TROCA' if replaced else 'LEITURA',bobbin_replaced=replaced,replacement_origin=None,reserve_delta=reserve_qty-old_reserve,reserve_after=reserve_qty,notes=(request.form.get('notes') or '').strip(),technician_id=session['user_id'],latitude=lat,longitude=lon,gps_accuracy=acc,gps_captured_at=gps_at,gps_distance_m=distance)
     db.session.add(row);db.session.flush()
     ext=Path(secure_filename(photo.filename)).suffix.lower() or '.jpg';stored_name=f"bobina_{row.id}_{uuid.uuid4().hex[:10]}{ext}"
     try:stored=_store_uploaded_file(photo,'bobinas',stored_name,photo.mimetype,max_mb=12)
     except Exception as exc:db.session.rollback();return jsonify({'ok':False,'error':str(exc)}),400
     ph=AtmBobbinPhoto(reading_id=row.id,storage_key=stored,original_name=secure_filename(photo.filename),content_type=photo.mimetype or 'image/jpeg',expires_at=datetime.utcnow()+timedelta(days=_v771_photo_retention_days()))
     db.session.add(ph);db.session.commit();_v771_cleanup_photos()
-    return jsonify({'ok':True,'id':row.id,'reserve_after':reserve_qty,'photo_retention_days':_v771_photo_retention_days()})
+    return jsonify({'ok':True,'id':row.id,'reserve_after':reserve_qty,'photo_retention_days':_v771_photo_retention_days(),'gps':{'captured':lat is not None and lon is not None,'accuracy':acc,'distance_m':distance}})
 
 @app.get('/api/bobinas/foto/<int:photo_id>')
 @login_required
@@ -16527,7 +16627,7 @@ def v771_bobbin_photo(photo_id):
 
 def _v771_parse_import(upload):
     wb=load_workbook(upload,data_only=True,read_only=True)
-    readings=[];reserves=[];warnings=[];used_sheets=[]
+    readings=[];reserves=[];cabinets=[];warnings=[];used_sheets=[]
     for ws in wb.worksheets:
         h1=[ws.cell(1,c).value for c in range(1,min(ws.max_column,40)+1)];h2=[ws.cell(2,c).value for c in range(1,min(ws.max_column,40)+1)]
         if not any('PORCENTAGEM DE BOBINA' in str(v or '').upper() for v in h1):continue
@@ -16543,6 +16643,7 @@ def _v771_parse_import(upload):
             reserve_raw=ws.cell(r,2).value
             try:reserve=max(0,int(float(reserve_raw))) if reserve_raw not in (None,'') else 0
             except Exception:reserve=0;warnings.append(f'{ws.title}!B{r}: reserva inválida')
+            # A planilha antiga não informa em qual ATM a reserva está: entra como saldo legado não localizado.
             if reserve>0:reserves.append({'company':company,'line':line,'station':station,'qty':reserve,'sheet':ws.title})
             last_date=ws.cell(r,4).value;tech=str(ws.cell(r,5).value or '').strip();local_note=str(ws.cell(r,3).value or '').strip()
             if isinstance(last_date,(int,float)):
@@ -16552,8 +16653,7 @@ def _v771_parse_import(upload):
                 except Exception:last_date=datetime.utcnow()
             if isinstance(last_date,date) and not isinstance(last_date,datetime):last_date=datetime.combine(last_date,datetime.min.time())
             if not isinstance(last_date,datetime):last_date=datetime.utcnow()
-            maxc=(obs_col-1) if obs_col else ws.max_column
-            c=6
+            maxc=(obs_col-1) if obs_col else ws.max_column;c=6
             while c<=maxc:
                 aid=ws.cell(r,c).value;pct=ws.cell(r,c+1).value if c+1<=maxc else None
                 aid=str(aid).strip() if aid not in (None,'') else ''
@@ -16563,7 +16663,22 @@ def _v771_parse_import(upload):
                     if pct_i in range(0,101,10):readings.append({'company':company,'line':line,'station':station,'atm_id':aid,'percent':pct_i,'date':last_date,'tech':tech,'sheet':ws.title,'local_note':local_note})
                     elif pct not in (None,''):warnings.append(f'{ws.title}!{get_column_letter(c+1)}{r}: percentual inválido para ATM {aid}')
                 c+=2
-    return {'readings':readings,'reserves':reserves,'warnings':warnings,'sheets':used_sheets}
+    # Aba Armários: 1 caixa = 6 bobinas. É estoque confirmado, não saldo legado.
+    if 'Armários' in wb.sheetnames:
+        ws=wb['Armários']
+        for r in range(2,ws.max_row+1):
+            label=str(ws.cell(r,1).value or '').strip()
+            if not label:continue
+            try:boxes=int(float(ws.cell(r,2).value or 0))
+            except Exception:continue
+            try:loose=int(float(ws.cell(r,3).value or 0))
+            except Exception:loose=0
+            # ignora linhas de total/legado textual
+            if boxes<0 or loose<0:continue
+            if boxes==0 and loose==0 and _v771_norm(label) in ('QUANTIDADETOTAL','TOTAL'):continue
+            resolved=_v772_resolve_stock_location(label)
+            cabinets.append({'label':label,'company':resolved['company'],'line':resolved['line'],'station':resolved['station'],'boxes':boxes,'loose':loose,'bobbins':boxes*6+loose})
+    return {'readings':readings,'reserves':reserves,'cabinets':cabinets,'warnings':warnings,'sheets':used_sheets}
 
 @app.post('/api/bobinas/importar')
 @login_required
@@ -16574,18 +16689,35 @@ def v771_bobbin_import():
     try:data=_v771_parse_import(f)
     except Exception as exc:return jsonify({'ok':False,'error':f'Não foi possível ler a planilha: {exc}'}),400
     mode=(request.form.get('mode') or 'preview').lower()
-    preview={'sheets':data['sheets'],'atm_readings':len(data['readings']),'unlocated_reserve_total':sum(x['qty'] for x in data['reserves']),'stations_with_unlocated_reserve':len(data['reserves']),'warnings':data['warnings'][:50]}
-    if mode!='commit':return jsonify({'ok':True,'preview':preview})
+    preview={'sheets':data['sheets'],'atm_readings':len(data['readings']),'unlocated_reserve_total':sum(x['qty'] for x in data['reserves']),'stations_with_unlocated_reserve':len(data['reserves']),'cabinet_points':len(data['cabinets']),'cabinet_bobbins_total':sum(x['bobbins'] for x in data['cabinets']),'warnings':data['warnings'][:50]}
+    if mode!='commit':return jsonify({'ok':True,'preview':preview,'release':APP_RELEASE})
     batch=AtmBobbinImportBatch(filename=secure_filename(f.filename),imported_by=session['user_id'],rows_imported=len(data['readings']),reserves_imported=sum(x['qty'] for x in data['reserves']),warnings_json=json.dumps(data['warnings'][:200],ensure_ascii=False));db.session.add(batch);db.session.flush()
     for x in data['readings']:
-        note=f"Importação V77.1 · aba {x['sheet']} · último técnico informado: {x['tech'] or '—'} · local da reserva na planilha: {x['local_note'] or '—'}"
+        note=f"Importação V77.2 · aba {x['sheet']} · último técnico informado: {x['tech'] or '—'} · local da reserva na planilha: {x['local_note'] or '—'}"
         db.session.add(AtmBobbinReading(company=x['company'],line=x['line'],station=x['station'],atm_id=x['atm_id'],percent_available=x['percent'],event_type='IMPORTACAO',bobbin_replaced=False,reserve_delta=0,reserve_after=None,notes=note,technician_id=session['user_id'],created_at=x['date']))
-    # Retrato de virada: substitui o saldo transitório não localizado da mesma estação; nunca soma importações repetidas.
     for x in data['reserves']:
         row=AtmBobbinUnlocatedReserve.query.filter_by(company=x['company'],line=x['line'],station=x['station']).first()
         if not row:row=AtmBobbinUnlocatedReserve(company=x['company'],line=x['line'],station=x['station'])
         row.imported_qty=x['qty'];row.current_qty=x['qty'];row.status='NAO_LOCALIZADA' if x['qty'] else 'CONCILIADA';row.source_sheet=x['sheet'];row.updated_at=datetime.utcnow();db.session.add(row)
-    db.session.commit();return jsonify({'ok':True,'committed':True,'batch_id':batch.id,'preview':preview})
+    item=_v771_stock_item('Bobina ATM','UN')
+    for x in data['cabinets']:
+        point=_v771_stock_point(f"Armário {x['label']}",'ARMARIO',x['company'],x['line'],x['station'])
+        bal=_v771_balance(point,item);bal.qty_good=x['bobbins'];bal.qty_bad=0;bal.updated_by=session['user_id'];bal.updated_at=datetime.utcnow()
+    db.session.commit();return jsonify({'ok':True,'committed':True,'batch_id':batch.id,'preview':preview,'release':APP_RELEASE})
+
+@app.post('/api/bobinas/importar-armarios')
+@login_required
+def v771_bobbin_cabinets_import_compat():
+    # Compatibilidade V77.1: a V77.2 importa a aba Armários junto com /api/bobinas/importar.
+    if not _has_access('field.bobbins_dashboard'):abort(403)
+    f=request.files.get('file')
+    if not f:return jsonify({'ok':False,'error':'Selecione a planilha de bobinas.'}),400
+    try:data=_v771_parse_import(f)
+    except Exception as exc:return jsonify({'ok':False,'error':str(exc)}),400
+    item=_v771_stock_item('Bobina ATM','UN');n=0
+    for x in data['cabinets']:
+        point=_v771_stock_point(f"Armário {x['label']}",'ARMARIO',x['company'],x['line'],x['station']);bal=_v771_balance(point,item);bal.qty_good=x['bobbins'];bal.qty_bad=0;bal.updated_by=session['user_id'];bal.updated_at=datetime.utcnow();n+=1
+    db.session.commit();return jsonify({'ok':True,'cabinets':n,'bobbins':sum(x['bobbins'] for x in data['cabinets']),'rule':'1 caixa = 6 bobinas','release':APP_RELEASE})
 
 @app.post('/api/bobinas/conciliar')
 @login_required
@@ -16615,11 +16747,13 @@ def v771_bobbin_config():
 def v77_bobbins_dashboard_api():
     if not _has_access('field.bobbins_dashboard'): abort(403)
     _v771_cleanup_photos();q=AtmBobbinReading.query
-    company=(request.args.get('company') or '').strip();line=(request.args.get('line') or '').strip();station=(request.args.get('station') or '').strip();atm=(request.args.get('atm') or '').strip();situation=(request.args.get('situation') or '').strip().upper()
+    company=(request.args.get('company') or '').strip();line=(request.args.get('line') or '').strip();station=(request.args.get('station') or '').strip();atm=(request.args.get('atm') or '').strip();situation=(request.args.get('situation') or '').strip().upper();replacement=(request.args.get('replacement') or '').strip().upper()
     if company:q=q.filter(AtmBobbinReading.company==company)
     if line:q=q.filter(AtmBobbinReading.line==line)
     if station:q=q.filter(AtmBobbinReading.station==station)
     if atm:q=q.filter(AtmBobbinReading.atm_id.ilike(f'%{atm}%'))
+    if replacement=='SIM':q=q.filter(AtmBobbinReading.bobbin_replaced.is_(True))
+    elif replacement=='NAO':q=q.filter(AtmBobbinReading.bobbin_replaced.is_(False),AtmBobbinReading.event_type!='IMPORTACAO')
     allrows=q.order_by(AtmBobbinReading.created_at.desc()).all();latest={}
     for x in allrows:
         key=(x.company,x.line,x.station,x.atm_id)
@@ -16640,7 +16774,6 @@ def v77_bobbins_dashboard_api():
     if station:uq=uq.filter_by(station=station)
     unlocated=uq.all();unlocated_total=sum(max(0,int(x.current_qty or 0)) for x in unlocated);now=datetime.utcnow()
     active_locations={(x.company,x.line,x.station) for x in unlocated};conciliated=sum(1 for x in unlocated if int(x.current_qty or 0)==0 or x.status=='CONCILIADA');conciliation_pct=round((conciliated/len(active_locations)*100),1) if active_locations else 100
-    # previsão simples e auditável: intervalo médio de troca; próximo vencimento aproximado quando há >=2 trocas.
     replacement_by_atm={}
     for x in allrows:
         if x.bobbin_replaced:replacement_by_atm.setdefault((x.company,x.line,x.station,x.atm_id),[]).append(x.created_at)
@@ -16652,8 +16785,10 @@ def v77_bobbins_dashboard_api():
             if gaps:
                 avg=sum(gaps)/len(gaps);last=dates[-1]
                 if 0 <= ((last+timedelta(days=avg))-now).days <= 7:predicted7+=1
-    summary={'atms':len(latest),'reserve_total':confirmed,'unlocated_total':unlocated_total,'critical':sum(x.percent_available<=10 for x in latest),'attention':sum(10<x.percent_available<=30 for x in latest),'replacements_30d':sum(x.bobbin_replaced and x.created_at>=now-timedelta(days=30) for x in allrows),'stale_30d':sum((now-x.created_at).days>=30 for x in latest),'predicted_7d':predicted7,'conciliation_pct':conciliation_pct}
-    bobitem=FieldStockItem.query.filter(func.lower(FieldStockItem.description).like('%bobina%')).first(); cabinet_bobbins=0; in_distribution=0; cabinet_count=0; open_incidents=FieldStockIncident.query.filter_by(status='ABERTA').count()
+    ops30=[x for x in allrows if x.created_at>=now-timedelta(days=30) and x.event_type in ('LEITURA','TROCA')]
+    repl30=sum(1 for x in ops30 if x.bobbin_replaced);no_repl30=sum(1 for x in ops30 if not x.bobbin_replaced);rate30=round(repl30/max(1,len(ops30))*100,1) if ops30 else 0
+    summary={'atms':len(latest),'reserve_total':confirmed,'unlocated_total':unlocated_total,'critical':sum(x.percent_available<=10 for x in latest),'attention':sum(10<x.percent_available<=30 for x in latest),'replacements_30d':repl30,'no_replacement_30d':no_repl30,'visits_30d':len(ops30),'replacement_rate_30d':rate30,'stale_30d':sum((now-x.created_at).days>=30 for x in latest),'predicted_7d':predicted7,'conciliation_pct':conciliation_pct}
+    bobitem=FieldStockItem.query.filter(func.lower(FieldStockItem.description).like('%bobina%')).first();cabinet_bobbins=0;in_distribution=0;cabinet_count=0;open_incidents=FieldStockIncident.query.filter_by(status='ABERTA').count()
     if bobitem:
         cabinet_ids=[x.id for x in FieldStockPoint.query.filter_by(point_type='ARMARIO',active=True).all()];cabinet_count=len(cabinet_ids)
         if cabinet_ids: cabinet_bobbins=sum(float(x.qty_good or 0) for x in FieldStockBalance.query.filter(FieldStockBalance.item_id==bobitem.id,FieldStockBalance.point_id.in_(cabinet_ids)).all())
@@ -16667,24 +16802,208 @@ def v77_bobbins_dashboard_api():
     stockmap={(x.company,x.line,x.station):0 for x in stockrows}
     for x in stockrows:stockmap[(x.company,x.line,x.station)]=stockmap.get((x.company,x.line,x.station),0)+int(x.reserve_qty or 0)
     for k,r in station_summary.items():r['reserve']=stockmap.get(k,0);r['avg_pct']=round(r['sum_pct']/max(1,r['atms']));r['last_at']=r['last_at'].isoformat()+'Z' if r['last_at'] else None
-    return jsonify({'ok':True,'summary':summary,'rows':[_v771_bobbin_json(x,names) for x in latest],'history':[_v771_bobbin_json(x,names) for x in allrows[:500]],'stocks':[{'company':x.company,'line':x.line,'station':x.station,'atm_id':x.atm_id,'reserve_qty':x.reserve_qty,'updated_at':x.updated_at.isoformat()+'Z' if x.updated_at else None} for x in stockrows],'unlocated':[{'company':x.company,'line':x.line,'station':x.station,'imported_qty':x.imported_qty,'current_qty':x.current_qty,'status':x.status,'source_sheet':x.source_sheet,'last_inventory_at':x.last_inventory_at.isoformat()+'Z' if x.last_inventory_at else None} for x in unlocated],'stations':list(station_summary.values()),'photo_retention_days':_v771_photo_retention_days()})
+    return jsonify({'ok':True,'release':APP_RELEASE,'summary':summary,'rows':[_v771_bobbin_json(x,names) for x in latest],'history':[_v771_bobbin_json(x,names) for x in allrows[:500]],'stocks':[{'company':x.company,'line':x.line,'station':x.station,'atm_id':x.atm_id,'reserve_qty':x.reserve_qty,'updated_at':x.updated_at.isoformat()+'Z' if x.updated_at else None} for x in stockrows],'unlocated':[{'company':x.company,'line':x.line,'station':x.station,'imported_qty':x.imported_qty,'current_qty':x.current_qty,'status':x.status,'source_sheet':x.source_sheet,'last_inventory_at':x.last_inventory_at.isoformat()+'Z' if x.last_inventory_at else None} for x in unlocated],'stations':list(station_summary.values()),'photo_retention_days':_v771_photo_retention_days()})
 
-# V77.1 — Estoque Field / armários e carga do técnico\ndef _v771_stock_item(desc,unit='UN'):\n    desc=str(desc or '').strip()\n    row=FieldStockItem.query.filter(func.lower(FieldStockItem.description)==desc.lower()).first()\n    if not row:\n        row=FieldStockItem(description=desc,unit=unit,category='BOBINA' if 'BOBINA' in _v771_norm(desc) else 'FIELD');db.session.add(row);db.session.flush()\n    return row\n\ndef _v771_stock_point(name,ptype='ARMARIO',company='',line='',station=''):\n    q=FieldStockPoint.query.filter(func.lower(FieldStockPoint.name)==str(name).strip().lower())\n    if station:q=q.filter(func.lower(FieldStockPoint.station)==str(station).strip().lower())\n    row=q.first()\n    if not row:\n        row=FieldStockPoint(name=str(name).strip(),point_type=ptype,company=company or None,line=line or None,station=station or None);db.session.add(row);db.session.flush()\n    return row\n\ndef _v771_balance(point,item):\n    row=FieldStockBalance.query.filter_by(point_id=point.id,item_id=item.id).first()\n    if not row:row=FieldStockBalance(point_id=point.id,item_id=item.id,qty_good=0,qty_bad=0);db.session.add(row);db.session.flush()\n    return row\n\ndef _v771_load(user_id,item):\n    row=FieldTechnicianLoad.query.filter_by(technician_id=user_id,item_id=item.id).first()\n    if not row:row=FieldTechnicianLoad(technician_id=user_id,item_id=item.id,qty=0);db.session.add(row);db.session.flush()\n    return row\n\n@app.get('/field/estoque')\n@login_required\ndef v771_field_stock_page():\n    if not (_has_access('field.bobbins') or _has_access('field.bobbins_dashboard')):abort(403)\n    return render_template('field_stock_v771.html',app_release=APP_RELEASE)\n\n@app.get('/api/field-stock/dashboard')\n@login_required\ndef v771_field_stock_dashboard():\n    if not (_has_access('field.bobbins') or _has_access('field.bobbins_dashboard')):abort(403)\n    points=FieldStockPoint.query.filter_by(active=True).order_by(FieldStockPoint.point_type,FieldStockPoint.name).all();items={x.id:x for x in FieldStockItem.query.all()}\n    balances=FieldStockBalance.query.all(); loads=FieldTechnicianLoad.query.filter(FieldTechnicianLoad.qty>0).all(); inc=FieldStockIncident.query.filter_by(status='ABERTA').all()\n    users={u.id:u.name for u in User.query.filter(User.id.in_({x.technician_id for x in loads})).all()} if loads else {}\n    pmap={x.id:x for x in points}\n    return jsonify({'ok':True,'points':[{'id':x.id,'name':x.name,'type':x.point_type,'company':x.company or '','line':x.line or '','station':x.station or ''} for x in points],\n      'balances':[{'point_id':x.point_id,'point':pmap[x.point_id].name if x.point_id in pmap else '', 'item_id':x.item_id,'item':items[x.item_id].description if x.item_id in items else '', 'unit':items[x.item_id].unit if x.item_id in items else 'UN','good':x.qty_good,'bad':x.qty_bad,'updated_at':x.updated_at.isoformat()+'Z'} for x in balances],\n      'loads':[{'technician_id':x.technician_id,'technician':users.get(x.technician_id,''),'item_id':x.item_id,'item':items[x.item_id].description if x.item_id in items else '', 'qty':x.qty,'updated_at':x.updated_at.isoformat()+'Z'} for x in loads],\n      'summary':{'stock_points':len(points),'cabinets':sum(x.point_type=='ARMARIO' for x in points),'central':sum(x.point_type=='CENTRAL' for x in points),'loads':sum(float(x.qty or 0) for x in loads),'open_incidents':len(inc)}})\n\n@app.post('/api/field-stock/retirar')\n@login_required\ndef v771_field_stock_withdraw():\n    d=request.form or request.get_json(silent=True) or {};point=db.session.get(FieldStockPoint,int(d.get('point_id') or 0));item=db.session.get(FieldStockItem,int(d.get('item_id') or 0));qty=float(d.get('qty') or 0)\n    if not point or not item or qty<=0:return jsonify({'ok':False,'error':'Estoque, item e quantidade são obrigatórios.'}),400\n    bal=_v771_balance(point,item)\n    if bal.qty_good<qty:return jsonify({'ok':False,'error':'Saldo insuficiente no estoque selecionado.'}),409\n    bal.qty_good-=qty;bal.updated_by=session['user_id'];bal.updated_at=datetime.utcnow();load=_v771_load(session['user_id'],item);load.qty+=qty;load.updated_at=datetime.utcnow()\n    db.session.add(FieldStockMovement(item_id=item.id,movement_type='RETIRADA_DISTRIBUICAO',qty=qty,source_point_id=point.id,technician_id=session['user_id'],justification=str(d.get('justification') or ''),status='EM_DISTRIBUICAO'));db.session.commit()\n    return jsonify({'ok':True,'load_after':load.qty})\n\n@app.post('/api/field-stock/destinar')\n@login_required\ndef v771_field_stock_destination():\n    d=request.form;item=db.session.get(FieldStockItem,int(d.get('item_id') or 0));qty=float(d.get('qty') or 0);load=_v771_load(session['user_id'],item) if item else None\n    if not item or qty<=0 or not load or load.qty<qty:return jsonify({'ok':False,'error':'Carga insuficiente ou dados inválidos.'}),409\n    justification=(d.get('justification') or '').strip();station=(d.get('station') or '').strip();asset=(d.get('asset') or '').strip();photo=request.files.get('photo')\n    if not justification or not station or not photo:return jsonify({'ok':False,'error':'Destino, justificativa e foto são obrigatórios.'}),400\n    key=None\n    try:key=_store_uploaded_file(photo,'estoque-field',f"uso_{uuid.uuid4().hex[:12]}{Path(secure_filename(photo.filename)).suffix.lower() or '.jpg'}",photo.mimetype,max_mb=12)\n    except Exception as e:return jsonify({'ok':False,'error':f'Falha ao salvar foto: {e}'}),400\n    load.qty-=qty;load.updated_at=datetime.utcnow();db.session.add(FieldStockMovement(item_id=item.id,movement_type='USO_DESTINO',qty=qty,technician_id=session['user_id'],destination_company=(d.get('company') or '').strip(),destination_line=(d.get('line') or '').strip(),destination_station=station,destination_asset=asset,justification=justification,removed_part_destination=(d.get('removed_part_destination') or '').strip(),photo_key=key,status='CONCLUIDO'));db.session.commit()\n    return jsonify({'ok':True,'load_after':load.qty})\n\n@app.post('/api/field-stock/regularizacao')\n@login_required\ndef v771_load_regularization():\n    d=request.get_json(silent=True) or {};item=db.session.get(FieldStockItem,int(d.get('item_id') or 0));qty=float(d.get('qty') or 0);reason=(d.get('reason') or '').strip()\n    if not item or qty<=0 or not reason:return jsonify({'ok':False,'error':'Item, quantidade e justificativa são obrigatórios.'}),400\n    load=_v771_load(session['user_id'],item)\n    if load.qty<qty:return jsonify({'ok':False,'error':'Quantidade maior que a carga atual.'}),409\n    r=FieldLoadRegularization(technician_id=session['user_id'],item_id=item.id,qty=qty,reason=reason);db.session.add(r);db.session.commit();return jsonify({'ok':True,'id':r.id,'status':'PENDENTE'})\n\n@app.post('/api/field-stock/regularizacao/<int:rid>/decidir')\n@login_required\ndef v771_load_regularization_decide(rid):\n    if not _has_access('field.bobbins_dashboard'):abort(403)\n    r=db.session.get(FieldLoadRegularization,rid) or abort(404);d=request.get_json(silent=True) or {};approve=bool(d.get('approve'));r.status='APROVADA' if approve else 'REJEITADA';r.decided_by=session['user_id'];r.decided_at=datetime.utcnow();r.decision_note=(d.get('note') or '').strip()\n    if approve:\n        load=FieldTechnicianLoad.query.filter_by(technician_id=r.technician_id,item_id=r.item_id).first()\n        if load:load.qty=max(0,float(load.qty or 0)-float(r.qty or 0));load.updated_at=datetime.utcnow()\n    db.session.commit();return jsonify({'ok':True,'status':r.status})\n\n@app.post('/api/field-stock/ocorrencia')\n@login_required\ndef v771_field_stock_incident():\n    point=db.session.get(FieldStockPoint,int(request.form.get('point_id') or 0));typ=(request.form.get('incident_type') or '').strip();photo=request.files.get('photo')\n    if not point or not typ or not photo:return jsonify({'ok':False,'error':'Armário/estoque, tipo da falha e foto são obrigatórios.'}),400\n    try:key=_store_uploaded_file(photo,'estoque-field-ocorrencias',f"oc_{uuid.uuid4().hex[:12]}{Path(secure_filename(photo.filename)).suffix.lower() or '.jpg'}",photo.mimetype,max_mb=12)\n    except Exception as e:return jsonify({'ok':False,'error':str(e)}),400\n    x=FieldStockIncident(point_id=point.id,incident_type=typ,description=(request.form.get('description') or '').strip(),photo_key=key,opened_by=session['user_id']);db.session.add(x);db.session.commit();return jsonify({'ok':True,'id':x.id})\n\n@app.post('/api/field-stock/importar')\n@login_required\ndef v771_field_stock_import():\n    if not _has_access('field.bobbins_dashboard'):abort(403)\n    f=request.files.get('file')\n    if not f:return jsonify({'ok':False,'error':'Selecione a planilha de estoque Field.'}),400\n    try:\n        wb=load_workbook(f.stream,data_only=True); imported=0;warnings=[]\n        if 'M16' in wb.sheetnames:\n            ws=wb['M16'];point=_v771_stock_point('M16','CENTRAL',station='Brigadeiro / M16')\n            for row in ws.iter_rows(min_row=2,values_only=True):\n                desc=str(row[0] or '').strip() if len(row)>0 else ''\n                if not desc or _v771_norm(desc) in ('ITENSRETIRADOS','ITEM'):continue\n                try:good=float(row[1] or 0);bad=float(row[2] or 0)\n                except:continue\n                item=_v771_stock_item(desc);bal=_v771_balance(point,item);bal.qty_good=good;bal.qty_bad=bad;bal.updated_by=session['user_id'];bal.updated_at=datetime.utcnow();imported+=1\n        # Planilha por localidades (ex.: POSVAlFON): cada coluna de item possui BOM/RUIM.\n        for sn in wb.sheetnames:\n            if sn in ('M16','Respostas ao formulário 1','Respostas ao formulário 2') or sn.startswith('Página'):continue\n            ws=wb[sn]\n            if ws.max_row<3:continue\n            h1=[str(c.value or '').strip() for c in ws[1]];h2=[str(c.value or '').strip() for c in ws[2]]\n            if not any(_v771_norm(x)=='LOCALIDADE' for x in h1):continue\n            for r in range(3,ws.max_row+1):\n                station=str(ws.cell(r,1).value or '').strip()\n                if not station:continue\n                point=_v771_stock_point(f'Armário {station}','ARMARIO',station=station)\n                col=4\n                while col<=ws.max_column:\n                    desc=str(ws.cell(1,col).value or '').strip()\n                    if desc:\n                        item=_v771_stock_item(desc);\n                        try:good=float(ws.cell(r,col).value or 0)\n                        except:good=0\n                        try:bad=float(ws.cell(r,col+1).value or 0) if col+1<=ws.max_column else 0\n                        except:bad=0\n                        if good or bad:\n                            bal=_v771_balance(point,item);bal.qty_good=good;bal.qty_bad=bad;bal.updated_by=session['user_id'];bal.updated_at=datetime.utcnow();imported+=1\n                    col+=2\n        db.session.commit();return jsonify({'ok':True,'imported':imported,'warnings':warnings})\n    except Exception as e:db.session.rollback();return jsonify({'ok':False,'error':str(e)}),400\n\n@app.post('/api/bobinas/importar-armarios')\n@login_required\ndef v771_bobbin_cabinets_import():\n    if not _has_access('field.bobbins_dashboard'):abort(403)\n    f=request.files.get('file')\n    if not f:return jsonify({'ok':False,'error':'Selecione a planilha de bobinas.'}),400\n    try:\n        wb=load_workbook(f.stream,data_only=True);ws=wb['Armários'] if 'Armários' in wb.sheetnames else None\n        if not ws:return jsonify({'ok':False,'error':'Aba Armários não encontrada.'}),400\n        item=_v771_stock_item('Bobina ATM','UN');n=0\n        for row in ws.iter_rows(min_row=2,values_only=True):\n            station=str(row[0] or '').strip() if row else ''\n            if not station:continue\n            try:boxes=int(float(row[1] or 0));loose=int(float(row[2] or 0))\n            except:continue\n            point=_v771_stock_point(f'Armário {station}','ARMARIO',station=station);bal=_v771_balance(point,item);bal.qty_good=boxes*6+loose;bal.qty_bad=0;bal.updated_by=session['user_id'];bal.updated_at=datetime.utcnow();n+=1\n        db.session.commit();return jsonify({'ok':True,'cabinets':n,'rule':'1 caixa = 6 bobinas'})\n    except Exception as e:db.session.rollback();return jsonify({'ok':False,'error':str(e)}),400\n\n@app.get('/api/bobinas/export.xlsx')
+# V77.1 — Estoque Field / armários e carga do técnico
+def _v771_stock_item(desc,unit='UN'):
+    desc=str(desc or '').strip()
+    row=FieldStockItem.query.filter(func.lower(FieldStockItem.description)==desc.lower()).first()
+    if not row:
+        row=FieldStockItem(description=desc,unit=unit,category='BOBINA' if 'BOBINA' in _v771_norm(desc) else 'FIELD');db.session.add(row);db.session.flush()
+    elif unit and unit!='UN' and row.unit!=unit:
+        row.unit=unit;db.session.add(row)
+    return row
+
+def _v771_stock_point(name,ptype='ARMARIO',company='',line='',station=''):
+    # Nome do ponto é a identidade estável. Na V77.2 os metadados de localização podem ser saneados sem duplicar o armário.
+    row=FieldStockPoint.query.filter(func.lower(FieldStockPoint.name)==str(name).strip().lower()).first()
+    if not row:
+        row=FieldStockPoint(name=str(name).strip(),point_type=ptype,company=company or None,line=line or None,station=station or None);db.session.add(row);db.session.flush()
+    else:
+        changed=False
+        if ptype and row.point_type!=ptype:row.point_type=ptype;changed=True
+        if company and row.company!=company:row.company=company;changed=True
+        if line and row.line!=line:row.line=line;changed=True
+        if station and row.station!=station:row.station=station;changed=True
+        if changed:db.session.add(row)
+    return row
+
+def _v771_balance(point,item):
+    row=FieldStockBalance.query.filter_by(point_id=point.id,item_id=item.id).first()
+    if not row:row=FieldStockBalance(point_id=point.id,item_id=item.id,qty_good=0,qty_bad=0);db.session.add(row);db.session.flush()
+    return row
+
+def _v771_load(user_id,item):
+    row=FieldTechnicianLoad.query.filter_by(technician_id=user_id,item_id=item.id).first()
+    if not row:row=FieldTechnicianLoad(technician_id=user_id,item_id=item.id,qty=0);db.session.add(row);db.session.flush()
+    return row
+
+@app.get('/field/estoque')
+@login_required
+def v771_field_stock_page():
+    if not (_has_access('field.bobbins') or _has_access('field.bobbins_dashboard')):abort(403)
+    return render_template('field_stock_v771.html',app_release=APP_RELEASE)
+
+@app.get('/api/field-stock/dashboard')
+@login_required
+def v771_field_stock_dashboard():
+    if not (_has_access('field.bobbins') or _has_access('field.bobbins_dashboard')):abort(403)
+    points=FieldStockPoint.query.filter_by(active=True).order_by(FieldStockPoint.point_type,FieldStockPoint.name).all();items={x.id:x for x in FieldStockItem.query.all()}
+    balances=FieldStockBalance.query.all(); loads=FieldTechnicianLoad.query.filter(FieldTechnicianLoad.qty>0).all(); inc=FieldStockIncident.query.filter_by(status='ABERTA').all()
+    user_ids={x.technician_id for x in loads};regs=[];can_manage=_has_access('field.bobbins_dashboard')
+    if can_manage:
+        regs=FieldLoadRegularization.query.filter_by(status='PENDENTE').order_by(FieldLoadRegularization.created_at.desc()).limit(100).all();user_ids.update(x.technician_id for x in regs)
+    users={u.id:u.name for u in User.query.filter(User.id.in_(user_ids)).all()} if user_ids else {};pmap={x.id:x for x in points}
+    my_loads=[x for x in loads if x.technician_id==session['user_id']]
+    return jsonify({'ok':True,'release':APP_RELEASE,'can_manage':can_manage,'points':[{'id':x.id,'name':x.name,'type':x.point_type,'company':x.company or '','line':x.line or '','station':x.station or ''} for x in points],
+      'balances':[{'point_id':x.point_id,'point':pmap[x.point_id].name if x.point_id in pmap else '', 'item_id':x.item_id,'item':items[x.item_id].description if x.item_id in items else '', 'unit':items[x.item_id].unit if x.item_id in items else 'UN','good':x.qty_good,'bad':x.qty_bad,'updated_at':x.updated_at.isoformat()+'Z'} for x in balances],
+      'loads':[{'technician_id':x.technician_id,'technician':users.get(x.technician_id,''),'item_id':x.item_id,'item':items[x.item_id].description if x.item_id in items else '', 'qty':x.qty,'updated_at':x.updated_at.isoformat()+'Z'} for x in loads],
+      'my_loads':[{'item_id':x.item_id,'item':items[x.item_id].description if x.item_id in items else '', 'qty':x.qty,'updated_at':x.updated_at.isoformat()+'Z'} for x in my_loads],
+      'regularizations':[{'id':x.id,'technician_id':x.technician_id,'technician':users.get(x.technician_id,''),'item_id':x.item_id,'item':items[x.item_id].description if x.item_id in items else '', 'qty':x.qty,'reason':x.reason,'created_at':x.created_at.isoformat()+'Z'} for x in regs],
+      'summary':{'stock_points':len(points),'cabinets':sum(x.point_type=='ARMARIO' for x in points),'central':sum(x.point_type=='CENTRAL' for x in points),'loads':sum(float(x.qty or 0) for x in loads),'my_load':sum(float(x.qty or 0) for x in my_loads),'open_incidents':len(inc),'pending_regularizations':len(regs)}})
+
+@app.post('/api/field-stock/retirar')
+@login_required
+def v771_field_stock_withdraw():
+    d=request.form or request.get_json(silent=True) or {};point=db.session.get(FieldStockPoint,int(d.get('point_id') or 0));item=db.session.get(FieldStockItem,int(d.get('item_id') or 0));qty=float(d.get('qty') or 0)
+    if not point or not item or qty<=0:return jsonify({'ok':False,'error':'Estoque, item e quantidade são obrigatórios.'}),400
+    bal=_v771_balance(point,item)
+    if bal.qty_good<qty:return jsonify({'ok':False,'error':'Saldo insuficiente no estoque selecionado.'}),409
+    bal.qty_good-=qty;bal.updated_by=session['user_id'];bal.updated_at=datetime.utcnow();load=_v771_load(session['user_id'],item);load.qty+=qty;load.updated_at=datetime.utcnow()
+    db.session.add(FieldStockMovement(item_id=item.id,movement_type='RETIRADA_DISTRIBUICAO',qty=qty,source_point_id=point.id,technician_id=session['user_id'],justification=str(d.get('justification') or ''),status='EM_DISTRIBUICAO'));db.session.commit()
+    return jsonify({'ok':True,'load_after':load.qty})
+
+@app.post('/api/field-stock/destinar')
+@login_required
+def v771_field_stock_destination():
+    d=request.form;item=db.session.get(FieldStockItem,int(d.get('item_id') or 0));qty=float(d.get('qty') or 0);load=_v771_load(session['user_id'],item) if item else None
+    if not item or qty<=0 or not load or load.qty<qty:return jsonify({'ok':False,'error':'Carga insuficiente ou dados inválidos.'}),409
+    justification=(d.get('justification') or '').strip();station=(d.get('station') or '').strip();asset=(d.get('asset') or '').strip();photo=request.files.get('photo')
+    if not justification or not station or not photo:return jsonify({'ok':False,'error':'Destino, justificativa e foto são obrigatórios.'}),400
+    key=None
+    try:key=_store_uploaded_file(photo,'estoque-field',f"uso_{uuid.uuid4().hex[:12]}{Path(secure_filename(photo.filename)).suffix.lower() or '.jpg'}",photo.mimetype,max_mb=12)
+    except Exception as e:return jsonify({'ok':False,'error':f'Falha ao salvar foto: {e}'}),400
+    load.qty-=qty;load.updated_at=datetime.utcnow();db.session.add(FieldStockMovement(item_id=item.id,movement_type='USO_DESTINO',qty=qty,technician_id=session['user_id'],destination_company=(d.get('company') or '').strip(),destination_line=(d.get('line') or '').strip(),destination_station=station,destination_asset=asset,justification=justification,removed_part_destination=(d.get('removed_part_destination') or '').strip(),photo_key=key,status='CONCLUIDO'));db.session.commit()
+    return jsonify({'ok':True,'load_after':load.qty})
+
+@app.post('/api/field-stock/regularizacao')
+@login_required
+def v771_load_regularization():
+    d=request.get_json(silent=True) or {};item=db.session.get(FieldStockItem,int(d.get('item_id') or 0));qty=float(d.get('qty') or 0);reason=(d.get('reason') or '').strip()
+    if not item or qty<=0 or not reason:return jsonify({'ok':False,'error':'Item, quantidade e justificativa são obrigatórios.'}),400
+    load=_v771_load(session['user_id'],item)
+    if load.qty<qty:return jsonify({'ok':False,'error':'Quantidade maior que a carga atual.'}),409
+    r=FieldLoadRegularization(technician_id=session['user_id'],item_id=item.id,qty=qty,reason=reason);db.session.add(r);db.session.commit();return jsonify({'ok':True,'id':r.id,'status':'PENDENTE'})
+
+@app.post('/api/field-stock/regularizacao/<int:rid>/decidir')
+@login_required
+def v771_load_regularization_decide(rid):
+    if not _has_access('field.bobbins_dashboard'):abort(403)
+    r=db.session.get(FieldLoadRegularization,rid) or abort(404);d=request.get_json(silent=True) or {};approve=bool(d.get('approve'));r.status='APROVADA' if approve else 'REJEITADA';r.decided_by=session['user_id'];r.decided_at=datetime.utcnow();r.decision_note=(d.get('note') or '').strip()
+    if approve:
+        load=FieldTechnicianLoad.query.filter_by(technician_id=r.technician_id,item_id=r.item_id).first()
+        if load:load.qty=max(0,float(load.qty or 0)-float(r.qty or 0));load.updated_at=datetime.utcnow()
+    db.session.commit();return jsonify({'ok':True,'status':r.status})
+
+@app.post('/api/field-stock/ocorrencia')
+@login_required
+def v771_field_stock_incident():
+    point=db.session.get(FieldStockPoint,int(request.form.get('point_id') or 0));typ=(request.form.get('incident_type') or '').strip();photo=request.files.get('photo')
+    if not point or not typ or not photo:return jsonify({'ok':False,'error':'Armário/estoque, tipo da falha e foto são obrigatórios.'}),400
+    try:key=_store_uploaded_file(photo,'estoque-field-ocorrencias',f"oc_{uuid.uuid4().hex[:12]}{Path(secure_filename(photo.filename)).suffix.lower() or '.jpg'}",photo.mimetype,max_mb=12)
+    except Exception as e:return jsonify({'ok':False,'error':str(e)}),400
+    x=FieldStockIncident(point_id=point.id,incident_type=typ,description=(request.form.get('description') or '').strip(),photo_key=key,opened_by=session['user_id']);db.session.add(x);db.session.commit();return jsonify({'ok':True,'id':x.id})
+
+
+def _v772_qty(value):
+    if value in (None,''):return 0.0
+    if isinstance(value,(int,float)):return float(value)
+    txt=str(value).strip().replace(',','.')
+    m=re.search(r'-?\d+(?:\.\d+)?',txt)
+    return float(m.group(0)) if m else 0.0
+
+def _v772_unit_from_value(value,default='UN'):
+    txt=str(value or '').upper()
+    if re.search(r'\bL\b',txt):return 'L'
+    if 'ML' in txt:return 'ML'
+    if 'M ' in txt or txt.endswith(' M'):return 'M'
+    return default
+
+@app.post('/api/field-stock/importar')
+@login_required
+def v771_field_stock_import():
+    if not _has_access('field.bobbins_dashboard'):abort(403)
+    f=request.files.get('file')
+    if not f:return jsonify({'ok':False,'error':'Selecione a planilha de estoque Field.'}),400
+    try:
+        wb=load_workbook(f.stream,data_only=True);records=[];warnings=[]
+        if 'M16' in wb.sheetnames:
+            ws=wb['M16']
+            for r in range(2,ws.max_row+1):
+                desc=str(ws.cell(r,1).value or '').strip()
+                norm=_v771_norm(desc)
+                if norm=='ITENSRETIRADOS':break
+                if not desc or norm=='ITEM':continue
+                raw_good=ws.cell(r,2).value;raw_bad=ws.cell(r,3).value
+                good=_v772_qty(raw_good);bad=_v772_qty(raw_bad);unit=_v772_unit_from_value(raw_good)
+                # Mantém itens zerados do cadastro de estoque; não importa o histórico de retiradas abaixo do marcador.
+                records.append({'point_name':'M16','point_type':'CENTRAL','company':'METRÔ','line':'Linha 2 - Verde','station':'Brigadeiro / M16','item':desc,'unit':unit,'good':good,'bad':bad})
+        # Abas de estoques locais. Interpreta pares BOM/RUIM e também colunas de quantidade única.
+        for sn in wb.sheetnames:
+            if sn in ('M16','Respostas ao formulário 1','Respostas ao formulário 2') or sn.startswith('Página'):continue
+            ws=wb[sn]
+            if ws.max_row<3:continue
+            h1=[str(c.value or '').strip() for c in ws[1]];h2=[str(c.value or '').strip() for c in ws[2]]
+            if not any(_v771_norm(x)=='LOCALIDADE' for x in h1):continue
+            specs=[];c=4
+            while c<=ws.max_column:
+                a=str(ws.cell(1,c).value or '').strip();b=str(ws.cell(2,c).value or '').strip();na,nb=_v771_norm(a),_v771_norm(b)
+                if 'OBSERVA' in na:c+=1;continue
+                if a:
+                    next_b=str(ws.cell(2,c+1).value or '').strip() if c+1<=ws.max_column else ''
+                    next_a=str(ws.cell(1,c+1).value or '').strip() if c+1<=ws.max_column else ''
+                    if nb=='BOM' and _v771_norm(next_b)=='RUIM' and not next_a:
+                        specs.append((a,c,c+1));c+=2;continue
+                    if nb in ('BOM','RUIM'):
+                        specs.append((a,c,None));c+=1;continue
+                    specs.append((a,c,None));c+=1;continue
+                if b and nb not in ('BOM','RUIM','ATUALIZACAO','TECNICOA','TECNICO'):
+                    specs.append((b,c,None))
+                c+=1
+            for r in range(3,ws.max_row+1):
+                raw_station=str(ws.cell(r,1).value or '').strip()
+                if not raw_station:continue
+                resolved=_v772_resolve_stock_location(raw_station)
+                for desc,good_col,bad_col in specs:
+                    good=_v772_qty(ws.cell(r,good_col).value);bad=_v772_qty(ws.cell(r,bad_col).value) if bad_col else 0
+                    if good or bad:
+                        records.append({'point_name':f'Armário {raw_station}','point_type':'ARMARIO','company':resolved['company'],'line':resolved['line'],'station':resolved['station'],'item':desc,'unit':'UN','good':good,'bad':bad})
+        preview={'records':len(records),'points':len({x['point_name'] for x in records}),'items':len({x['item'] for x in records}),'good_total':round(sum(float(x['good'] or 0) for x in records),2),'bad_total':round(sum(float(x['bad'] or 0) for x in records),2),'warnings':warnings[:50]}
+        if (request.form.get('mode') or 'preview').lower()!='commit':return jsonify({'ok':True,'preview':preview,'release':APP_RELEASE})
+        imported=0
+        for x in records:
+            point=_v771_stock_point(x['point_name'],x['point_type'],x['company'],x['line'],x['station']);item=_v771_stock_item(x['item'],x.get('unit') or 'UN');bal=_v771_balance(point,item);bal.qty_good=x['good'];bal.qty_bad=x['bad'];bal.updated_by=session['user_id'];bal.updated_at=datetime.utcnow();imported+=1
+        db.session.commit();return jsonify({'ok':True,'committed':True,'imported':imported,'preview':preview,'release':APP_RELEASE})
+    except Exception as e:db.session.rollback();return jsonify({'ok':False,'error':str(e)}),400
+
+@app.get('/api/bobinas/export.xlsx')
 @login_required
 def v77_bobbins_export():
     if not _has_access('field.bobbins_dashboard'): abort(403)
-    q=AtmBobbinReading.query;company=(request.args.get('company') or '').strip();line=(request.args.get('line') or '').strip();station=(request.args.get('station') or '').strip();atm=(request.args.get('atm') or '').strip();situation=(request.args.get('situation') or '').strip().upper()
+    q=AtmBobbinReading.query;company=(request.args.get('company') or '').strip();line=(request.args.get('line') or '').strip();station=(request.args.get('station') or '').strip();atm=(request.args.get('atm') or '').strip();situation=(request.args.get('situation') or '').strip().upper();replacement=(request.args.get('replacement') or '').strip().upper()
     if company:q=q.filter_by(company=company)
     if line:q=q.filter_by(line=line)
     if station:q=q.filter_by(station=station)
     if atm:q=q.filter(AtmBobbinReading.atm_id.ilike(f'%{atm}%'))
+    if replacement=='SIM':q=q.filter(AtmBobbinReading.bobbin_replaced.is_(True))
+    elif replacement=='NAO':q=q.filter(AtmBobbinReading.bobbin_replaced.is_(False),AtmBobbinReading.event_type!='IMPORTACAO')
     rows=q.order_by(AtmBobbinReading.created_at.desc()).all();ids={x.technician_id for x in rows};names={u.id:u.name for u in User.query.filter(User.id.in_(ids)).all()} if ids else {}
     if situation=='CRITICA':rows=[x for x in rows if x.percent_available<=10]
     elif situation=='ATENCAO':rows=[x for x in rows if 10<x.percent_available<=30]
     elif situation=='NORMAL':rows=[x for x in rows if x.percent_available>30]
-    wb=Workbook();ws=wb.active;ws.title='Bobinas ATM';ws.append(['Data/Hora','Operadora','Linha','Estação','ATM','% disponível','Evento','Reserva na ATM','Técnico','Observações'])
+    wb=Workbook();ws=wb.active;ws.title='Bobinas ATM';ws.append(['Data/Hora','Operadora','Linha','Estação','ATM','% disponível','Troca realizada','Evento','Reserva na ATM','Técnico','Latitude','Longitude','Precisão GPS (m)','Distância referência (m)','Observações'])
     for x in rows:
-        st=_v771_stock(x.company,x.line,x.station,x.atm_id);ws.append([x.created_at,x.company,x.line,x.station,x.atm_id,x.percent_available,x.event_type,int(st.reserve_qty or 0) if st else (x.reserve_after or 0),names.get(x.technician_id,''),x.notes or ''])
+        st=_v771_stock(x.company,x.line,x.station,x.atm_id);ws.append([x.created_at,x.company,x.line,x.station,x.atm_id,x.percent_available,'SIM' if x.bobbin_replaced else 'NÃO',x.event_type,int(st.reserve_qty or 0) if st else (x.reserve_after or 0),names.get(x.technician_id,''),x.latitude,x.longitude,getattr(x,'gps_accuracy',None),getattr(x,'gps_distance_m',None),x.notes or ''])
     ws2=wb.create_sheet('Reservas não localizadas');ws2.append(['Operadora','Linha','Estação','Importado','Não localizado atual','Status','Origem'])
     uq=AtmBobbinUnlocatedReserve.query
     if company:uq=uq.filter_by(company=company)
@@ -16692,7 +17011,7 @@ def v77_bobbins_export():
     if station:uq=uq.filter_by(station=station)
     for x in uq.order_by(AtmBobbinUnlocatedReserve.line,AtmBobbinUnlocatedReserve.station).all():ws2.append([x.company,x.line,x.station,x.imported_qty,x.current_qty,x.status,x.source_sheet or ''])
     for sh in (ws,ws2):
-        for c in sh[1]:c.font=Font(bold=True,color='FFFFFF');c.fill=PatternFill('solid',fgColor='17365D')
+        for c in sh[1]:c.font=Font(bold=True,color='FFFFFF');c.fill=PatternFill('solid',fgColor='315F93')
         sh.freeze_panes='A2';sh.auto_filter.ref=sh.dimensions
         for col in sh.columns:sh.column_dimensions[get_column_letter(col[0].column)].width=min(42,max(12,max(len(str(c.value or '')) for c in col)+2))
     bio=BytesIO();wb.save(bio);bio.seek(0);return send_file(bio,as_attachment=True,download_name=f"bobinas_atm_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')

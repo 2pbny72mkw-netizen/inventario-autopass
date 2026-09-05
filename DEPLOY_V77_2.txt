@@ -1,0 +1,15 @@
+V77.2 — DEPLOY ENXUTO
+
+1. Backup do banco antes do deploy.
+2. Substituir os arquivos deste pacote preservando a estrutura de pastas.
+3. Reiniciar o serviço/Gunicorn.
+4. Confirmar no /sobre que a versão exibida é V77.2.
+5. Teste obrigatório em Console/Network antes da homologação:
+   - GET /api/bobinas/options -> 200 JSON.
+   - Selecionar CPTM > 08 Diamante > Lapa/Sagrado Coração e validar Terminal ATM.
+   - POST /api/bobinas/importar em modo preview e commit -> 200 JSON.
+   - POST /api/field-stock/importar em modo preview e commit -> 200 JSON.
+   - Salvar uma Atividade Bobinas com foto e verificar GPS no histórico.
+   - Conferir KPIs Com troca / Sem troca na dashboard.
+
+Migração: V77.2-001 (aditiva). Não remove registros existentes.
