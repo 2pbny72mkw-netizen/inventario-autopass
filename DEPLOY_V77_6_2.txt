@@ -1,0 +1,7 @@
+V77.6.2 ENXUTA
+1. Aplicar app.py e os templates incluídos.
+2. Reiniciar o serviço.
+3. Testar importação Bobinas em modo prévia: leituras válidas devem casar com IDs/aliases da base oficial.
+4. Testar Metrô > Linha 2-Verde > Brigadeiro: ATMs oficiais devem aparecer no Detalhe da Estação.
+5. Testar Estoque Field: matriz fixa e Saldo por estoque recolhido.
+6. Conferir Sobre: sem histórico duplicado no topo; versão atual V77.6.2.

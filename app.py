@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V77.6.1"
+APP_RELEASE = "V77.6.2"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -16515,18 +16515,32 @@ def _v773_official_atm_rows():
         app.logger.exception('V77.3: base oficial ATM indisponível')
         return []
 
+def _v773_norm_atm_id(value):
+    """Normaliza IDs vindos de Excel/JSON sem perder a identidade do terminal."""
+    if value in (None, ''): return ''
+    txt=str(value).strip().upper()
+    if re.fullmatch(r'\d+\.0+',txt): txt=txt.split('.')[0]
+    txt=re.sub(r'\s+','',txt)
+    return txt
+
+def _v773_atm_aliases(row):
+    aliases=[]
+    for k in ('terminal_number','terminal','atm_id','id_top','asset_key','qrcode_id'):
+        n=_v773_norm_atm_id((row or {}).get(k))
+        if n and n not in aliases: aliases.append(n)
+    return aliases
+
 def _v773_atm_id(row):
-    for k in ('asset_key','id_top','terminal','terminal_number','atm_id'):
-        v=str((row or {}).get(k) or '').strip()
-        if v:return v
-    return ''
+    # Para Bobinas, prioriza o número operacional do terminal; asset_key continua como alias.
+    aliases=_v773_atm_aliases(row)
+    return aliases[0] if aliases else ''
 
 def _v773_official_index():
     rows=_v773_official_atm_rows(); by_id={}; installed=[]; stock=[]
     for r in rows:
-        aid=_v773_atm_id(r)
-        if not aid:continue
-        by_id[aid]=r
+        aliases=_v773_atm_aliases(r)
+        if not aliases:continue
+        for aid in aliases: by_id[aid]=r
         (stock if bool(r.get('stock')) else installed).append(r)
     return {'rows':rows,'by_id':by_id,'installed':installed,'stock':stock}
 
@@ -16551,8 +16565,8 @@ def _v773_norm_location(company,line,station):
     return (_v771_norm(company),_v771_norm(line),_v771_norm(station))
 
 def _v773_import_master_match(aid, sheet_company, sheet_line, sheet_station, official_by_id):
-    row=official_by_id.get(str(aid).strip())
-    if not row:return None,'ATM_NAO_OFICIAL',f'ATM {aid} não pertence à base oficial de 602 equipamentos.'
+    raw_aid=str(aid).strip(); norm_aid=_v773_norm_atm_id(raw_aid); row=official_by_id.get(norm_aid)
+    if not row:return None,'ATM_NAO_OFICIAL',f'ATM {raw_aid} não pertence à base oficial de 602 equipamentos.'
     if bool(row.get('stock')):return None,'ATM_EM_ESTOQUE',f'ATM {aid} está classificada como estoque na base oficial e não pode receber leitura operacional de estação.'
     mc,ml,ms=str(row.get('company') or '').strip(),str(row.get('line') or '').strip(),str(row.get('locality') or '').strip()
     nc,nl,ns=_v773_norm_location(sheet_company,sheet_line,sheet_station); oc,ol,os=_v773_norm_location(mc,ml,ms)
@@ -16560,7 +16574,7 @@ def _v773_import_master_match(aid, sheet_company, sheet_line, sheet_station, off
     if ns and os and ns!=os:dif.append(f'estação planilha={sheet_station} / oficial={ms}')
     if nl and ol and nl!=ol:dif.append(f'linha planilha={sheet_line} / oficial={ml}')
     if nc and oc and nc!=oc and sheet_company not in ('','IMPORTADO'):dif.append(f'operadora planilha={sheet_company} / oficial={mc}')
-    return {'company':mc,'line':ml,'station':ms,'atm_id':str(aid).strip()},('LOCALIDADE_DIVERGENTE' if dif else None),('; '.join(dif) if dif else '')
+    return {'company':mc,'line':ml,'station':ms,'atm_id':_v773_atm_id(row)},('LOCALIDADE_DIVERGENTE' if dif else None),('; '.join(dif) if dif else '')
 
 def _v772_haversine_m(lat1,lon1,lat2,lon2):
     try:
@@ -16721,7 +16735,7 @@ def _v771_parse_import(upload):
             if not isinstance(last_date,datetime):last_date=datetime.utcnow()
             maxc=(obs_col if obs_col is not None else len(vals)); c=5
             while c<maxc:
-                aid=vals[c] if c<len(vals) else None;pct=vals[c+1] if c+1<len(vals) else None;aid=str(aid).strip() if aid not in (None,'') else ''
+                aid=vals[c] if c<len(vals) else None;pct=vals[c+1] if c+1<len(vals) else None;aid=_v773_norm_atm_id(aid) if aid not in (None,'') else ''
                 if aid:
                     try:pct_i=int(float(pct))
                     except Exception:pct_i=None
@@ -16765,7 +16779,7 @@ def v771_bobbin_import():
     if not f or not f.filename:return jsonify({'ok':False,'error':'Selecione a planilha de controle de bobinas.'}),400
     try:data=_v771_parse_import(f)
     except Exception as exc:
-        app.logger.exception('V77.6: falha ao ler planilha de bobinas')
+        app.logger.exception('V77.6.2: falha ao ler planilha de bobinas')
         return jsonify({'ok':False,'error':f'Não foi possível ler a planilha: {exc}'}),400
     mode=(request.form.get('mode') or 'preview').lower()
     preview={'sheets':data['sheets'],'records_found':len(data['readings'])+len(data['divergences']),'atm_readings':len(data['readings']),'official_total':data['official_total'],'official_installed':data['official_installed'],'official_stock':data['official_stock'],'divergences_count':len(data['divergences']),'divergences':data['divergences'][:100],'unlocated_reserve_total':sum(x['qty'] for x in data['reserves']),'stations_with_unlocated_reserve':len(data['reserves']),'cabinet_points':len(data['cabinets']),'cabinet_bobbins_total':sum(x['bobbins'] for x in data['cabinets']),'warnings':data['warnings'][:100]}
@@ -16775,7 +16789,7 @@ def v771_bobbin_import():
         # A importação é um retrato. Substitui apenas leituras IMPORTACAO anteriores; nunca toca registros de campo.
         AtmBobbinReading.query.filter_by(event_type='IMPORTACAO').delete(synchronize_session=False)
         for x in data['readings']:
-            note=f"Importação V77.6 · aba {x['sheet']} · último técnico informado: {x['tech'] or '—'} · referência de reserva na planilha: {x['local_note'] or '—'}"
+            note=f"Importação V77.6.2 · aba {x['sheet']} · último técnico informado: {x['tech'] or '—'} · referência de reserva na planilha: {x['local_note'] or '—'}"
             db.session.add(AtmBobbinReading(company=x['company'],line=x['line'],station=x['station'],atm_id=x['atm_id'],percent_available=x['percent'],event_type='IMPORTACAO',bobbin_replaced=False,reserve_delta=0,reserve_after=None,notes=note,technician_id=session['user_id'],created_at=x['date']))
         # snapshot dos saldos legados ainda não localizados
         imported_keys=set()
@@ -16792,7 +16806,7 @@ def v771_bobbin_import():
         db.session.commit()
         return jsonify({'ok':True,'committed':True,'batch_id':batch.id,'batch_code':f'IMP-BOB-{datetime.utcnow().strftime("%Y%m%d")}-{batch.id:04d}','preview':preview,'release':APP_RELEASE})
     except Exception as exc:
-        db.session.rollback();app.logger.exception('V77.6: falha ao persistir importação de bobinas')
+        db.session.rollback();app.logger.exception('V77.6.2: falha ao persistir importação de bobinas')
         return jsonify({'ok':False,'error':f'Falha ao gravar a importação. Nenhum dado foi alterado: {exc}'}),500
 
 @app.get('/api/bobinas/importacoes/<int:batch_id>/divergencias')
@@ -16845,15 +16859,15 @@ def v77_bobbins_dashboard_api():
     if not _has_access('field.bobbins_dashboard'): abort(403)
     _v771_cleanup_photos()
     company=(request.args.get('company') or '').strip();line=(request.args.get('line') or '').strip();station=(request.args.get('station') or '').strip();atm=(request.args.get('atm') or '').strip();situation=(request.args.get('situation') or '').strip().upper();replacement=(request.args.get('replacement') or '').strip().upper()
-    official=_v773_official_index(); installed=official['installed']; official_ids={_v773_atm_id(x) for x in installed if _v773_atm_id(x)}
+    official=_v773_official_index(); installed=official['installed']; official_ids={a for x in installed for a in _v773_atm_aliases(x)}
     def official_match(a):
         if company and str(a.get('company') or '')!=company:return False
         if line and str(a.get('line') or '')!=line:return False
         if station and str(a.get('locality') or '')!=station:return False
-        if atm and atm.lower() not in _v773_atm_id(a).lower():return False
+        if atm and not any(_v773_norm_atm_id(atm) in alias for alias in _v773_atm_aliases(a)):return False
         return True
     filtered_official=[a for a in installed if official_match(a)]
-    filtered_ids={_v773_atm_id(a) for a in filtered_official if _v773_atm_id(a)}
+    filtered_ids={a for row in filtered_official for a in _v773_atm_aliases(row)}
     q=AtmBobbinReading.query
     if company:q=q.filter(AtmBobbinReading.company==company)
     if line:q=q.filter(AtmBobbinReading.line==line)
@@ -16863,8 +16877,8 @@ def v77_bobbins_dashboard_api():
     elif replacement=='NAO':q=q.filter(AtmBobbinReading.bobbin_replaced.is_(False),AtmBobbinReading.event_type!='IMPORTACAO')
     allrows=q.order_by(AtmBobbinReading.created_at.desc(),AtmBobbinReading.id.desc()).all()
     # Base mestre soberana: leituras de ATM não oficial nunca entram nos KPIs.
-    if official_ids:allrows=[x for x in allrows if str(x.atm_id or '') in official_ids]
-    if filtered_ids:allrows=[x for x in allrows if str(x.atm_id or '') in filtered_ids]
+    if official_ids:allrows=[x for x in allrows if _v773_norm_atm_id(x.atm_id) in official_ids]
+    if filtered_ids:allrows=[x for x in allrows if _v773_norm_atm_id(x.atm_id) in filtered_ids]
     elif any((company,line,station,atm)) and official['rows']:allrows=[]
     latest_map={}
     for x in allrows:
@@ -16880,8 +16894,8 @@ def v77_bobbins_dashboard_api():
     if line:stocks=stocks.filter_by(line=line)
     if station:stocks=stocks.filter_by(station=station)
     stockrows=stocks.all()
-    if official_ids:stockrows=[x for x in stockrows if str(x.atm_id or '') in official_ids]
-    if filtered_ids:stockrows=[x for x in stockrows if str(x.atm_id or '') in filtered_ids]
+    if official_ids:stockrows=[x for x in stockrows if _v773_norm_atm_id(x.atm_id) in official_ids]
+    if filtered_ids:stockrows=[x for x in stockrows if _v773_norm_atm_id(x.atm_id) in filtered_ids]
     confirmed=sum(max(0,int(x.reserve_qty or 0)) for x in stockrows)
     uq=AtmBobbinUnlocatedReserve.query
     if company:uq=uq.filter_by(company=company)
