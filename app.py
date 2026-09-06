@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V77.9.1"
+APP_RELEASE = "V77.9.2"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -13185,7 +13185,10 @@ def _panorama_payload():
         # Não faz fuzzy matching para evitar unir estações diferentes por engano.
         raw=str(value or '').strip()
         raw=re.sub(r'^\s*[A-Za-z0-9]{2,5}\s+-\s+', '', raw)
-        return _v771_norm(raw)
+        norm=_v771_norm(raw)
+        # V77.9.2: sufixos operacionais A/B não criam outra estação física (ex.: LPA - LAPA A).
+        norm=re.sub(r'\s+[AB]$', '', norm).strip()
+        return norm
 
     def _panorama_line_key(value):
         raw=_v771_norm(value)
@@ -13209,7 +13212,8 @@ def _panorama_payload():
     # retirada do prefixo operacional. Nenhum registro físico é excluído/migrado.
     groups={}
     for loc in locations:
-        key=(_v771_norm(loc.company), _panorama_line_key(loc.line), _panorama_station_key(loc.location))
+        # V77.9.2: identidade física = operadora + estação canônica. A linha deixa de duplicar integrações físicas.
+        key=(_v771_norm(loc.company), _panorama_station_key(loc.location))
         groups.setdefault(key,[]).append(loc)
 
     rows=[]
@@ -17031,7 +17035,7 @@ def v77_bobbins_dashboard_api():
     summary={'atms':monitored,'official_total':len(official['rows']) or 602,'official_installed':len(official['installed']) or 590,'official_stock':len(official['stock']) or 12,'official_filtered':official_den,'without_reading':without,'coverage_pct':round(monitored/max(1,official_den)*100,1),'reserve_total':confirmed,'unlocated_total':unlocated_total,'critical':sum(x.percent_available<=10 for x in latest_map.values()),'attention':sum(10<x.percent_available<=30 for x in latest_map.values()),'replacements_30d':repl30,'no_replacement_30d':no_repl30,'visits_30d':len(ops30),'replacement_rate_30d':rate30,'stale_30d':sum((now-x.created_at).days>=30 for x in latest_map.values()),'predicted_7d':predicted7,'conciliation_pct':conciliation_pct}
     bobitem=FieldStockItem.query.filter(func.lower(FieldStockItem.description).like('%bobina%')).first();cabinet_bobbins=0;in_distribution=0;cabinet_count=0;open_incidents=FieldStockIncident.query.filter_by(status='ABERTA').count()
     if bobitem:
-        cabinet_points=FieldStockPoint.query.filter_by(point_type='ARMARIO',active=True).all()
+        cabinet_points=FieldStockPoint.query.filter(FieldStockPoint.active.is_(True),FieldStockPoint.point_type.in_(['ARMARIO','ESTOQUE','CD'])).all()
         if company:cabinet_points=[x for x in cabinet_points if (x.company or '')==company]
         if line:cabinet_points=[x for x in cabinet_points if (x.line or '')==line]
         if station:cabinet_points=[x for x in cabinet_points if (x.station or '')==station]
@@ -17042,7 +17046,7 @@ def v77_bobbins_dashboard_api():
     summary['total_reserves_available']=int(confirmed+cabinet_bobbins)
     cabinet_rows=[]
     if bobitem:
-        cps=FieldStockPoint.query.filter_by(point_type='ARMARIO',active=True).order_by(FieldStockPoint.line,FieldStockPoint.station,FieldStockPoint.name).all()
+        cps=FieldStockPoint.query.filter(FieldStockPoint.active.is_(True),FieldStockPoint.point_type.in_(['ARMARIO','ESTOQUE','CD'])).order_by(FieldStockPoint.line,FieldStockPoint.station,FieldStockPoint.name).all()
         if company:cps=[x for x in cps if (x.company or '')==company]
         if line:cps=[x for x in cps if (x.line or '')==line]
         if station:cps=[x for x in cps if (x.station or '')==station]
@@ -17063,7 +17067,7 @@ def v77_bobbins_dashboard_api():
     for k,r in station_summary.items():
         r['reserve']=stockmap.get(k,0);r['avg_pct']=round(r['sum_pct']/max(1,r['atms'])) if r['atms'] else None;r['missing']=max(0,r['official_atms']-r['atms']);r['last_at']=r['last_at'].isoformat()+'Z' if r['last_at'] else None
     station_rows=sorted(station_summary.values(),key=lambda r:(r['line'].casefold(),r['station'].casefold()))
-    return jsonify({'ok':True,'release':APP_RELEASE,'source':'BASE_OFICIAL_ATM_602','summary':summary,'rows':[_v771_bobbin_json(x,names) for x in latest],'history':[_v771_bobbin_json(x,names) for x in allrows[:500]],'stocks':[{'company':x.company,'line':x.line,'station':x.station,'atm_id':x.atm_id,'reserve_qty':x.reserve_qty,'updated_at':x.updated_at.isoformat()+'Z' if x.updated_at else None} for x in stockrows],'unlocated':[{'company':x.company,'line':x.line,'station':x.station,'imported_qty':x.imported_qty,'current_qty':x.current_qty,'status':x.status,'source_sheet':x.source_sheet,'last_inventory_at':x.last_inventory_at.isoformat()+'Z' if x.last_inventory_at else None} for x in unlocated],'stations':station_rows,'cabinets_detail':cabinet_rows,'photo_retention_days':_v771_photo_retention_days()})
+    return jsonify({'ok':True,'release':APP_RELEASE,'source':'BASE_OFICIAL_ATM_602','summary':summary,'rows':[_v771_bobbin_json(x,names) for x in latest],'history':[_v771_bobbin_json(x,names) for x in allrows[:500]],'stocks':[{'company':x.company,'line':x.line,'station':x.station,'atm_id':x.atm_id,'reserve_qty':x.reserve_qty,'updated_at':x.updated_at.isoformat()+'Z' if x.updated_at else None} for x in stockrows],'unlocated':[{'company':x.company,'line':x.line,'station':x.station,'imported_qty':x.imported_qty,'current_qty':x.current_qty,'status':x.status,'source_sheet':x.source_sheet,'last_inventory_at':x.last_inventory_at.isoformat()+'Z' if x.last_inventory_at else None} for x in unlocated],'stations':station_rows,'cabinets_detail':cabinet_rows,'support_reserve_target':450,'photo_retention_days':_v771_photo_retention_days()})
 
 # V77.1 — Estoque Field / armários e carga do técnico
 def _v771_stock_item(desc,unit='UN'):

@@ -1670,3 +1670,8 @@ body.mapFullscreenOpen #gpsMap .autopassMapFullscreenControl{
 /* V77.9 — estabilização de dashboards e scroll */
 body[data-dashboard-view="overview"] .v34CommandCenter .v23DashboardContent{max-height:none!important;overflow:visible!important;}
 body[data-dashboard-view="overview"]{overflow-y:auto!important;}
+
+/* V77.9.2 — Visão Geral: scroll administrativo real; Modo TV permanece travado. */
+html:has(body[data-dashboard-view="overview"]:not(.v23TvMode)),body[data-dashboard-view="overview"]:not(.v23TvMode){height:auto!important;min-height:100%!important;overflow-y:auto!important;overflow-x:hidden!important;}
+body[data-dashboard-view="overview"]:not(.v23TvMode) main.wrap,body[data-dashboard-view="overview"]:not(.v23TvMode) .v23DashboardShell,body[data-dashboard-view="overview"]:not(.v23TvMode) .v23DashboardContent,body[data-dashboard-view="overview"]:not(.v23TvMode) .v23PanelActive{height:auto!important;min-height:0!important;max-height:none!important;overflow:visible!important;}
+body[data-dashboard-view="overview"]:not(.v23TvMode) .v34IntelligenceWall{height:auto!important;min-height:430px!important;max-height:none!important;}

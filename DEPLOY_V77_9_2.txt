@@ -1,0 +1,4 @@
+V77.9.2 ENXUTA
+Substituir somente os arquivos presentes neste pacote e reiniciar o serviço.
+Não há migração destrutiva de banco nesta versão.
+Após deploy, validar: menus ADM, Bobinas/Estoque, Dashboard Bobinas, termômetro, Panorâmica, scroll Visão Geral, Firmware POS, Arrow e Rastreabilidade.
