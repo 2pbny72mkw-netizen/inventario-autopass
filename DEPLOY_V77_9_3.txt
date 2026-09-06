@@ -1,0 +1,11 @@
+V77.9.3 — corretiva consolidada ENXUTA
+
+Arquivos: app.py, app.css, static/manager.js e templates alterados.
+Aplicar sobre V77.9.2.
+
+Principais pontos:
+- Visão Geral: scroll reforçado fora do Modo TV.
+- Bobinas: termômetro logo abaixo dos Big Numbers.
+- Bobinas: ajuste administrativo direto de %/reserva ATM e saldo de armário/estoque, com justificativa/auditoria e fora da produtividade.
+- Firmware POS-CPTM: removida evolução diária; mantido padrão de progresso da atividade.
+- Panorâmica: consolidação preserva distinção por linha (ex.: Lapa A x Lapa B).

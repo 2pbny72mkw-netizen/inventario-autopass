@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V77.9.2"
+APP_RELEASE = "V77.9.3"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -13212,8 +13212,10 @@ def _panorama_payload():
     # retirada do prefixo operacional. Nenhum registro físico é excluído/migrado.
     groups={}
     for loc in locations:
-        # V77.9.2: identidade física = operadora + estação canônica. A linha deixa de duplicar integrações físicas.
-        key=(_v771_norm(loc.company), _panorama_station_key(loc.location))
+        # V77.9.3: identidade canônica preserva a linha operacional.
+        # Ex.: LPA - LAPA A (Linha 07) e LAB - LAPA B (Linha 08) continuam localidades distintas,
+        # enquanto aliases da mesma linha (LAPA / LPA - LAPA A) podem ser consolidados.
+        key=(_v771_norm(loc.company), _panorama_line_key(loc.line), _panorama_station_key(loc.location))
         groups.setdefault(key,[]).append(loc)
 
     rows=[]
@@ -16966,6 +16968,52 @@ def v771_bobbin_config():
     try:days=max(1,min(90,int(d.get('photo_retention_days'))))
     except Exception:return jsonify({'ok':False,'error':'Retenção inválida.'}),400
     _v72_save_settings({'bobbin_photo_retention_days':days});db.session.commit();return jsonify({'ok':True,'photo_retention_days':days})
+
+@app.post('/api/bobinas/ajuste-administrativo')
+@login_required
+def v7793_bobbin_admin_adjustment():
+    # V77.9.3 — correção direta pelo ADM/Gestor, sempre auditada e fora da produtividade técnica.
+    if not _has_access('field.bobbins_dashboard'): abort(403)
+    d=request.get_json(silent=True) or {}
+    kind=(d.get('kind') or '').strip().upper()
+    reason=(d.get('reason') or '').strip()
+    if not reason: return jsonify({'ok':False,'error':'Justificativa obrigatória para ajuste administrativo.'}),400
+    try:
+        if kind=='ATM':
+            company=(d.get('company') or '').strip(); line=(d.get('line') or '').strip(); station=(d.get('station') or '').strip(); atm_id=(d.get('atm_id') or '').strip()
+            if not all((company,line,station,atm_id)): return jsonify({'ok':False,'error':'Empresa, linha, localidade e ATM são obrigatórios.'}),400
+            pct=int(d.get('percent_available'))
+            reserve=int(d.get('reserve_qty'))
+            if pct<0 or pct>100 or pct%10!=0: return jsonify({'ok':False,'error':'Percentual deve estar entre 0 e 100, em passos de 10.'}),400
+            if reserve<0: return jsonify({'ok':False,'error':'Reserva não pode ser negativa.'}),400
+            latest=AtmBobbinReading.query.filter_by(company=company,line=line,station=station,atm_id=atm_id).order_by(AtmBobbinReading.created_at.desc(),AtmBobbinReading.id.desc()).first()
+            old_pct=int(latest.percent_available) if latest else None
+            stock=_v771_stock(company,line,station,atm_id,create=True); old_res=int(stock.reserve_qty or 0)
+            stock.reserve_qty=reserve; stock.updated_by=session['user_id']; stock.updated_at=datetime.utcnow()
+            reading=AtmBobbinReading(company=company,line=line,station=station,atm_id=atm_id,percent_available=pct,event_type='AJUSTE_ADMINISTRATIVO',bobbin_replaced=False,replacement_origin='ADMIN',reserve_delta=reserve-old_res,reserve_after=reserve,notes=f'AJUSTE ADMINISTRATIVO | {reason} | % {old_pct if old_pct is not None else "—"}→{pct} | reserva {old_res}→{reserve}',technician_id=session['user_id'])
+            db.session.add(reading); db.session.add(stock)
+            db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='BOBINA_AJUSTE_ADMINISTRATIVO',entity_type='atm_bobbin',entity_id=atm_id,detail=f'{company} | {line} | {station} | % {old_pct if old_pct is not None else "—"}->{pct} | reserva {old_res}->{reserve} | {reason}'))
+            db.session.commit()
+            return jsonify({'ok':True,'kind':'ATM','percent_before':old_pct,'percent_after':pct,'reserve_before':old_res,'reserve_after':reserve})
+        if kind=='ESTOQUE':
+            point_id=int(d.get('point_id') or 0); new_qty=float(d.get('qty') or 0)
+            if new_qty<0: return jsonify({'ok':False,'error':'Quantidade não pode ser negativa.'}),400
+            point=db.session.get(FieldStockPoint,point_id)
+            if not point: return jsonify({'ok':False,'error':'Armário/estoque não encontrado.'}),404
+            item=FieldStockItem.query.filter(func.lower(FieldStockItem.description).like('%bobina%')).first()
+            if not item: return jsonify({'ok':False,'error':'Item Bobina não encontrado no estoque Field.'}),404
+            bal=_v771_balance(point,item); old=float(bal.qty_good or 0); delta=new_qty-old
+            bal.qty_good=new_qty; bal.updated_by=session['user_id']; bal.updated_at=datetime.utcnow()
+            db.session.add(FieldStockMovement(item_id=item.id,movement_type='AJUSTE_ADMINISTRATIVO',qty=delta,source_point_id=point.id,technician_id=session['user_id'],destination_company=point.company,destination_line=point.line,destination_station=point.station,destination_asset=point.name,justification=reason,status='CONCLUIDO'))
+            db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='ESTOQUE_BOBINA_AJUSTE_ADMINISTRATIVO',entity_type='field_stock_point',entity_id=str(point.id),detail=f'{point.name} | {old}->{new_qty} | {reason}'))
+            db.session.commit()
+            return jsonify({'ok':True,'kind':'ESTOQUE','before':old,'after':new_qty})
+        return jsonify({'ok':False,'error':'Tipo de ajuste inválido.'}),400
+    except (TypeError,ValueError):
+        db.session.rollback(); return jsonify({'ok':False,'error':'Valores inválidos para o ajuste.'}),400
+    except Exception:
+        db.session.rollback(); app.logger.exception('V77.9.3: ajuste administrativo de bobina')
+        return jsonify({'ok':False,'error':'Não foi possível salvar o ajuste administrativo.'}),500
 
 @app.get('/api/bobinas/dashboard')
 @login_required
