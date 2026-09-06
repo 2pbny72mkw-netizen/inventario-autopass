@@ -2,78 +2,53 @@
 {% block head %}
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
-.v72Grid{display:block;width:100%}.v72MapShell{display:block;width:100%;height:600px;position:relative;overflow:hidden;contain:layout paint;clip-path:inset(0 round 14px);border:1px solid #dfe5ec;box-sizing:border-box;border-radius:14px;margin-bottom:18px;background:#eef3f7}.v72Map{position:absolute!important;inset:0!important;display:block!important;width:100%!important;height:100%!important;min-height:0!important;max-height:none!important;overflow:hidden!important;isolation:isolate!important;z-index:0!important}.v72Map .leaflet-container{overflow:hidden!important}#v72Map .leaflet-map-pane{z-index:1!important}#v72Map .leaflet-tile-pane{z-index:100!important}#v72Map .leaflet-overlay-pane{z-index:400!important}#v72Map .leaflet-shadow-pane{z-index:500!important}#v72Map .leaflet-marker-pane{z-index:600!important}#v72Map .leaflet-tooltip-pane{z-index:650!important}#v72Map .leaflet-popup-pane{z-index:700!important}#v72Map .leaflet-control-container{position:absolute!important;inset:0!important;z-index:1000!important;pointer-events:none!important}#v72Map .leaflet-control{position:relative!important;z-index:1100!important;pointer-events:auto!important}#v72Map .autopass-rail-legend{width:auto!important;max-width:200px!important;height:auto!important;max-height:270px!important;overflow-y:auto!important;overflow-x:hidden!important;box-sizing:border-box!important}.v72RailLegend{background:#fff;padding:9px 11px;border-radius:9px;box-shadow:0 1px 5px #0003;font-size:12px;line-height:1.25}.v72RailLegend b{display:inline-block;width:22px;color:#fff;text-align:center;border-radius:4px;margin-right:5px}.v72RailLegend div{margin:3px 0}.v72Timeline{max-height:280px;overflow:auto}.v72Event{padding:10px 12px;border-bottom:1px solid #e6edf4;cursor:pointer}.v72Event:hover{background:#f5f9fd}.v72Event b{color:#0b2d4f}.v72Auth table{width:100%}.v72Auth td,.v72Auth th{padding:8px}.v72Auth .pending{font-weight:800;color:#a66400}@media(max-width:900px){.v72MapShell{height:500px}}
+.v78Tracking{max-width:1500px;margin:0 auto}.v78TrackHead{display:flex;justify-content:space-between;gap:18px;align-items:flex-start;flex-wrap:wrap}.v78MiniKpis{display:flex;gap:8px;flex-wrap:wrap}.v78MiniKpis span{background:#f4f8fc;border:1px solid #dbe7f2;border-radius:12px;padding:9px 12px;font-weight:800;color:#17345d}.v78Filters{display:grid;grid-template-columns:minmax(220px,1fr) minmax(180px,.9fr) auto;gap:12px;align-items:end}.v78MapShell{display:block;width:100%;height:600px;position:relative;overflow:hidden;border:1px solid #dbe5ef;box-sizing:border-box;border-radius:16px;margin-top:14px;background:#eef3f7}.v78Map{position:relative!important;display:block!important;width:100%!important;height:600px!important;overflow:hidden!important;border-radius:16px!important;isolation:isolate!important}.v78Map .leaflet-map-pane{z-index:1!important}.v78Map .leaflet-tile-pane{z-index:200!important}.v78Map .leaflet-overlay-pane{z-index:400!important}.v78Map .leaflet-shadow-pane{z-index:500!important}.v78Map .leaflet-marker-pane{z-index:600!important}.v78Map .leaflet-tooltip-pane{z-index:650!important}.v78Map .leaflet-popup-pane{z-index:700!important}.v78Map .leaflet-control-container{z-index:1000!important}.v78AvatarPin{background:transparent!important;border:0!important}.v78AvatarPin .pin{width:30px;height:30px;border-radius:50%;border:3px solid #0878d1;background:#fff;box-shadow:0 3px 9px #001c3b55;overflow:hidden;display:flex;align-items:center;justify-content:center}.v78AvatarPin img{width:100%;height:100%;object-fit:cover}.v78AvatarPin .dot{width:12px;height:12px;background:#0878d1;border-radius:50%;box-shadow:0 0 0 4px #fff}.v78TimelineBox{margin-top:14px;border:1px solid #dbe5ef;border-radius:14px;background:#fff;overflow:hidden}.v78TimelineBox summary{cursor:pointer;list-style:none;padding:15px 17px;font-weight:900;color:#17345d;display:flex;justify-content:space-between;align-items:center;background:#f7fafc}.v78TimelineBox summary::-webkit-details-marker{display:none}.v78TimelineBox summary:after{content:'⌄';font-size:20px}.v78TimelineBox[open] summary:after{content:'⌃'}.v78Timeline{max-height:320px;overflow:auto}.v78Event{padding:10px 14px;border-top:1px solid #edf2f7;cursor:pointer;display:grid;grid-template-columns:86px 1fr auto;gap:12px;align-items:center}.v78Event:hover{background:#f5f9fd}.v78Event b{color:#0b2d4f}.v78Event small{color:#64748b}.v72Auth table{width:100%}.v72Auth td,.v72Auth th{padding:8px}.v72Auth .pending{font-weight:800;color:#a66400}@media(max-width:900px){.v78Filters{grid-template-columns:1fr}.v78MapShell,.v78Map{height:500px!important}.v78Event{grid-template-columns:70px 1fr}.v78Event .coords{display:none}}
 </style>
 {% endblock %}
 {% block content %}
-<div class="pageHead"><span class="eyebrow">{{ app_release }} · GESTÃO</span><h1>Rastreabilidade & Jornada</h1><p>Histórico GPS por passagem em estações e autorizações extraordinárias de acesso.</p></div>
+<div class="v78Tracking">
+<div class="pageHead v78TrackHead"><div><span class="eyebrow">{{ app_release }} · GESTÃO</span><h1>Rastreabilidade & Jornada</h1><p>Histórico GPS por passagem em estações e autorizações extraordinárias de acesso.</p></div><div class="v78MiniKpis"><span id="kDate">Data —</span><span id="kStations">0 estação(ões)</span><span id="kPositions">0 posição(ões)</span><span id="kRetention">7 dias</span></div></div>
 
 {% if can_view('management.gps_history') %}
 <section class="card">
- <div class="sectionHead"><div><h2>Histórico GPS por estações</h2><p class="muted">Somente usuários habilitados individualmente aparecem na consulta.</p></div><span id="gpsRetention" class="tag">retenção</span></div>
- <div class="grid3">
+ <div class="sectionHead"><div><h2>Histórico GPS por estações</h2><p class="muted">Todas as posições GPS do período são plotadas; passagens por estação permanecem destacadas na auditoria.</p></div></div>
+ <div class="v78Filters">
   <label>Técnico<select id="gpsUser"><option value="">Selecione</option></select></label>
   <label>Data<input id="gpsDate" type="date"></label>
-  <div style="display:flex;align-items:end"><button id="gpsLoad">Consultar histórico</button></div>
+  <button id="gpsLoad">Consultar histórico</button>
  </div>
- <div class="v72Grid" style="margin-top:12px">
-   <div class="v72MapShell"><div id="v72Map" class="v72Map"></div></div>
-   <div><h3>Linha do tempo</h3><div id="gpsTimeline" class="v72Timeline"><p class="muted">Selecione um técnico e uma data.</p></div></div>
- </div>
+ <div class="v78MapShell"><div id="v72Map" class="v78Map"></div></div>
+ <details class="v78TimelineBox" id="timelineBox"><summary><span id="timelineSummary">Linha do tempo · selecione um técnico e uma data</span></summary><div id="gpsTimeline" class="v78Timeline"><p class="muted" style="padding:12px 14px">Selecione um técnico e uma data.</p></div></details>
 </section>
 {% endif %}
 
 {% if can_view('management.work_authorizations') %}
-<section class="card v72Auth" style="margin-top:14px">
- <div class="sectionHead"><div><h2>Autorizações de jornada</h2><p class="muted">Aprovação por tempo determinado, com auditoria.</p></div><button class="secondary" id="authReload">Atualizar</button></div>
- <div class="tableWrap"><table><thead><tr><th>Técnico</th><th>Solicitado</th><th>Motivo</th><th>Status</th><th>Data</th><th>Ação</th></tr></thead><tbody id="authRows"></tbody></table></div>
-</section>
+<section class="card v72Auth" style="margin-top:14px"><div class="sectionHead"><div><h2>Autorizações de jornada</h2><p class="muted">Aprovação por tempo determinado, com auditoria. Autorizações vencidas aparecem apenas no histórico.</p></div><button class="secondary" id="authReload">Atualizar</button></div><div class="tableWrap"><table><thead><tr><th>Técnico</th><th>Solicitado</th><th>Motivo</th><th>Status</th><th>Data</th><th>Ação</th></tr></thead><tbody id="authRows"></tbody></table></div></section>
 {% endif %}
-
 {% if session.get('role') in ('manager','manager_field') %}<section class="card v72Auth" style="margin-top:14px"><div class="sectionHead"><div><h2>Folgas e trocas de folga</h2><p class="muted">Trocas só chegam para aprovação depois do aceite do outro colaborador.</p></div><button class="secondary" id="scheduleReload">Atualizar</button></div><div class="tableWrap"><table><thead><tr><th>Solicitante</th><th>Tipo</th><th>Data</th><th>Troca com</th><th>Colega</th><th>Gestão</th><th>Ação</th></tr></thead><tbody id="scheduleRows"></tbody></table></div></section>{% endif %}
+</div>
 {% endblock %}
 {% block scripts %}
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="{{ url_for('static', filename='shared_rail_map.js') }}?v=v73-4"></script>
+<script src="{{ url_for('static', filename='shared_rail_map.js') }}?v=v77-8"></script>
 <script>
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-let map,lineLayer,markers=[],gpsLayer,railShared,layerControl;
+let map,gpsLayer,railShared,layerControl,markers=[];
 {% if can_view('management.gps_history') %}
-L.Icon.Default.mergeOptions({iconRetinaUrl:'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',iconUrl:'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',shadowUrl:'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png'});
-map=L.map('v72Map',{scrollWheelZoom:true,preferCanvas:false,zoomControl:true}).setView([-23.5505,-46.6333],11);
-L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png?v=734',{maxZoom:19,tileSize:256,zoomOffset:0,updateWhenIdle:false,keepBuffer:4,attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
-gpsLayer=L.layerGroup().addTo(map);
-const v72MapContainer=document.getElementById('v72Map');
-function v72EnsureInteraction(){if(!map)return;map.dragging?.enable();map.scrollWheelZoom?.enable();map.touchZoom?.enable();map.doubleClickZoom?.enable();map.boxZoom?.enable()}
-function v72FixMapSize(){if(!map)return;requestAnimationFrame(()=>{map.invalidateSize({pan:false});setTimeout(()=>map&&map.invalidateSize({pan:false}),120);setTimeout(()=>map&&map.invalidateSize({pan:false}),350)})}
-if('ResizeObserver' in window&&v72MapContainer){const v72MapObserver=new ResizeObserver(()=>v72FixMapSize());v72MapObserver.observe(v72MapContainer)}
-window.addEventListener('resize',v72FixMapSize);window.addEventListener('orientationchange',v72FixMapSize);setTimeout(v72FixMapSize,0);
-async function loadRailBase(){
-  try{
-    const d=await fetch('/api/gestao/rastreabilidade-jornada/rede',{cache:'no-store'}).then(r=>r.json());
-    const rows=d.rows||[];
-    railShared=window.AutopassRailMap?.attach(map,rows);
-    if(layerControl){try{layerControl.remove()}catch(_){}}
-    const overlays={'Histórico GPS':gpsLayer};
-    if(railShared?.lines)overlays['Linhas']=railShared.lines;
-    if(railShared?.stations)overlays['Estações']=railShared.stations;
-    layerControl=L.control.layers(null,overlays,{collapsed:false,position:'bottomright'}).addTo(map);
-    map.setView([-23.5505,-46.6333],11);
-    v72EnsureInteraction();v72FixMapSize();
-  }catch(e){console.warn('Malha ferroviária',e)}
-}
-loadRailBase();window.AutopassRailMap?.addFullscreen(map,'v72Map');v72EnsureInteraction();
-async function initGps(){const d=await fetch('/api/gestao/historico-gps',{cache:'no-store'}).then(r=>r.json());if(!d.ok)return;gpsUser.innerHTML='<option value="">Selecione</option>'+d.users.map(u=>`<option value="${u.id}">${esc(u.name)} · ${esc(u.company)}</option>`).join('');gpsDate.value=new Date().toISOString().slice(0,10)}
-function clearMap(){markers.forEach(m=>m.remove());markers=[];if(gpsLayer)gpsLayer.clearLayers();lineLayer=null}
-async function loadGps(){if(!gpsUser.value)return;const d=await fetch(`/api/gestao/historico-gps?user_id=${gpsUser.value}&date=${gpsDate.value}`,{cache:'no-store'}).then(r=>r.json());if(!d.ok)return alert(d.error||'Falha');gpsRetention.textContent=`retenção ${d.retention_days} dias · ${d.station_count||0} estação(ões) · ${d.position_count||0} posição(ões)`;clearMap();const pts=[];gpsTimeline.innerHTML=d.events.map((e,i)=>`<div class="v72Event" data-i="${i}"><b>${esc(e.time)} · ${esc(e.station)}</b><br><small>${esc(e.company)} · ${esc(e.line)} · ${e.distance_m??'-'} m do ponto de referência</small></div>`).join('')||'<p class="muted">Nenhuma passagem registrada neste dia.</p>';d.events.forEach((e,i)=>{pts.push([e.latitude,e.longitude]);const m=L.marker([e.latitude,e.longitude]).addTo(gpsLayer).bindPopup(`<b>${esc(e.time)} · ${esc(e.station)}</b><br>${esc(e.line)} · ${esc(e.company)}`);markers.push(m)});if(pts.length){lineLayer=L.polyline(pts,{weight:4}).addTo(gpsLayer);v72FixMapSize();setTimeout(()=>map.fitBounds(L.latLngBounds(pts).pad(.15)),140)}else{map.setView([-23.5505,-46.6333],11);v72FixMapSize()}document.querySelectorAll('.v72Event').forEach(el=>el.onclick=()=>markers[+el.dataset.i]?.openPopup())}
+map=L.map('v72Map',{scrollWheelZoom:true,zoomControl:true}).setView([-23.5505,-46.6333],11);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap contributors'}).addTo(map);gpsLayer=L.layerGroup().addTo(map);
+function fixMap(){requestAnimationFrame(()=>{map.invalidateSize({pan:false});setTimeout(()=>map.invalidateSize({pan:false}),120)})}window.addEventListener('resize',fixMap);
+async function loadRailBase(){try{const d=await fetch('/api/gestao/rastreabilidade-jornada/rede',{cache:'no-store'}).then(r=>r.json());railShared=window.AutopassRailMap?.attach(map,d.rows||[]);const overlays={'Trajeto / posições GPS':gpsLayer};if(railShared?.lines)overlays['Linhas']=railShared.lines;if(railShared?.stations)overlays['Estações']=railShared.stations;layerControl=L.control.layers(null,overlays,{collapsed:false,position:'topright'}).addTo(map);window.AutopassRailMap?.addFullscreen(map,'v72Map');fixMap()}catch(e){console.warn(e)}}loadRailBase();
+async function initGps(){const d=await fetch('/api/gestao/historico-gps',{cache:'no-store'}).then(r=>r.json());if(!d.ok)return;gpsUser.innerHTML='<option value="">Selecione</option>'+d.users.map(u=>`<option value="${u.id}" data-photo="${esc(u.photo_url||'')}">${esc(u.name)} · ${esc(u.company)}</option>`).join('');gpsDate.value=new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'})}
+function avatarIcon(photo){return L.divIcon({className:'v78AvatarPin',html:`<div class="pin">${photo?`<img src="${esc(photo)}" alt="">`:'<span class="dot"></span>'}</div>`,iconSize:[36,36],iconAnchor:[18,18],popupAnchor:[0,-18]})}
+function clearMap(){gpsLayer.clearLayers();markers=[]}
+async function loadGps(){if(!gpsUser.value)return;const d=await fetch(`/api/gestao/historico-gps?user_id=${gpsUser.value}&date=${gpsDate.value}`,{cache:'no-store'}).then(r=>r.json());if(!d.ok)return alert(d.error||'Falha');clearMap();const pts=[],photo=d.user?.photo_url||gpsUser.selectedOptions[0]?.dataset.photo||'';kDate.textContent=(d.date||gpsDate.value).split('-').reverse().join('/');kStations.textContent=`${d.station_count||0} estação(ões)`;kPositions.textContent=`${d.position_count||0} posição(ões)`;kRetention.textContent=`${d.retention_days||7} dias`;timelineSummary.textContent=`Linha do tempo (${d.position_count||d.events.length||0} posições)`;gpsTimeline.innerHTML=d.events.map((e,i)=>`<div class="v78Event" data-i="${i}"><b>${esc(e.time)}</b><span><b>${esc(e.station||'Posição GPS')}</b><br><small>${esc(e.company)} · ${esc(e.line)} · ${e.distance_m??'-'} m do ponto de referência</small></span><small class="coords">${Number(e.latitude).toFixed(5)}, ${Number(e.longitude).toFixed(5)}</small></div>`).join('')||'<p class="muted" style="padding:12px 14px">Nenhuma posição registrada neste dia.</p>';d.events.forEach((e,i)=>{const ll=[e.latitude,e.longitude];pts.push(ll);const m=L.marker(ll,{icon:avatarIcon(photo),zIndexOffset:1000}).addTo(gpsLayer).bindPopup(`<b>${esc(e.time)} · ${esc(e.station||'Posição GPS')}</b><br>${esc(e.line)} · ${esc(e.company)}<br>${e.distance_m??'-'} m do ponto de referência`);markers.push(m)});if(pts.length){L.polyline(pts,{weight:4,color:'#0878d1',opacity:.85}).addTo(gpsLayer);fixMap();setTimeout(()=>map.fitBounds(L.latLngBounds(pts).pad(.15)),140)}else{map.setView([-23.5505,-46.6333],11);fixMap()}document.querySelectorAll('.v78Event').forEach(el=>el.onclick=()=>{const m=markers[+el.dataset.i];if(m){map.panTo(m.getLatLng());m.openPopup()}})}
 gpsLoad.onclick=loadGps;initGps();
 {% endif %}
-
 {% if can_view('management.work_authorizations') %}
 async function loadAuth(){const d=await fetch('/api/gestao/autorizacoes-jornada',{cache:'no-store'}).then(r=>r.json());authRows.innerHTML=d.rows.map(x=>`<tr><td><b>${esc(x.user)}</b></td><td>${x.requested_minutes} min</td><td>${esc(x.reason)}</td><td class="${x.status==='PENDENTE'?'pending':''}">${esc(x.status)}</td><td>${x.requested_at?new Date(x.requested_at).toLocaleString('pt-BR'):'-'}</td><td>${x.status==='PENDENTE'?`<button onclick="decide(${x.id},'APROVAR',${x.requested_minutes})">Aprovar</button> <button class="secondary" onclick="decide(${x.id},'RECUSAR',${x.requested_minutes})">Recusar</button>`:(x.approved_until?`até ${new Date(x.approved_until).toLocaleString('pt-BR')}`:'-')}</td></tr>`).join('')||'<tr><td colspan="6">Sem solicitações.</td></tr>'}
-async function decide(id,action,suggested){let minutes=suggested,note='';if(action==='APROVAR'){const raw=prompt('Minutos de acesso autorizados:',String(suggested));if(raw===null)return;minutes=+raw||suggested}else{note=prompt('Motivo da recusa (opcional):','')||''}const r=await fetch(`/api/gestao/autorizacoes-jornada/${id}/decisao`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,minutes,note})}),d=await r.json();if(!d.ok)return alert(d.error||'Falha');loadAuth()}authReload.onclick=loadAuth;loadAuth();
+async function decide(id,action,suggested){let minutes=suggested,note='';if(action==='APROVAR'){const raw=prompt('Minutos de acesso autorizados:',String(suggested));if(raw===null)return;minutes=+raw||suggested}else note=prompt('Motivo da recusa (opcional):','')||'';const r=await fetch(`/api/gestao/autorizacoes-jornada/${id}/decisao`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,minutes,note})}),d=await r.json();if(!d.ok)return alert(d.error||'Falha');loadAuth()}authReload.onclick=loadAuth;loadAuth();
 {% endif %}
-
 {% if session.get('role') in ('manager','manager_field') %}
 async function loadSchedule(){const d=await fetch('/api/gestao/solicitacoes-jornada').then(r=>r.json());scheduleRows.innerHTML=d.rows.map(x=>`<tr><td><b>${esc(x.requester)}</b></td><td>${esc(x.type)}</td><td>${x.work_date}</td><td>${esc(x.swap_user||'-')} ${x.swap_date||''}</td><td>${esc(x.peer_status)}</td><td>${esc(x.manager_status)}</td><td>${x.manager_status==='PENDENTE'?`<button onclick="reviewSchedule(${x.id},true)">Aprovar</button> <button class="secondary" onclick="reviewSchedule(${x.id},false)">Rejeitar</button>`:'-'}</td></tr>`).join('')||'<tr><td colspan="7">Sem solicitações.</td></tr>'}async function reviewSchedule(id,approve){await fetch(`/api/gestao/solicitacoes-jornada/${id}/review`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({approve})});loadSchedule()}scheduleReload.onclick=loadSchedule;loadSchedule();
 {% endif %}

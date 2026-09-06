@@ -1,19 +1,11 @@
 {% extends "base.html" %}
+{% block head %}<style>
+.activityGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:16px}.activityCard{min-height:150px;border-radius:22px;padding:24px;text-decoration:none;color:#fff;display:flex;justify-content:space-between;align-items:center;box-shadow:0 10px 24px #17345d20;transition:.18s transform,.18s box-shadow}.activityCard:hover{transform:translateY(-2px);box-shadow:0 14px 30px #17345d2b}.activityCard small{font-size:13px;letter-spacing:.08em}.activityCard h2{margin:10px 0 6px;font-size:25px}.activityCard p{margin:0;font-size:16px}.activityGo{font-size:20px;font-weight:900;background:#ffffff25;border:1px solid #ffffff35;padding:11px 16px;border-radius:999px;white-space:nowrap}.activityTone1{background:linear-gradient(135deg,#0878d1,#1756a9)}.activityTone2{background:linear-gradient(135deg,#0aa36c,#087a52)}.activityTone3{background:linear-gradient(135deg,#7650dd,#5034ac)}.activityTone4{background:linear-gradient(135deg,#13a4b8,#1476b8)}.activityTone5{background:linear-gradient(135deg,#df8a16,#bd6510)}.activityTone6{background:linear-gradient(135deg,#b74793,#7f3575)}.activityTone7{background:linear-gradient(135deg,#3868d9,#2647a0)}.activityTone8{background:linear-gradient(135deg,#1c8d73,#176552)}@media(max-width:680px){.activityGrid{grid-template-columns:1fr}.activityCard{min-height:128px;padding:20px}.activityCard h2{font-size:24px}.activityGo{font-size:18px}}
+</style>{% endblock %}
 {% block content %}
-<div class="pageHead"><span class="eyebrow">V42.1 · CENTRAL DE ATIVIDADES</span><h1>Atividades</h1><p>Escolha uma atividade para iniciar ou continuar o trabalho de campo.</p></div>
-<section class="card">
-  <div class="sectionHead"><div><h2>Minhas atividades</h2><p class="muted">O estado é compartilhado: outro técnico autorizado pode continuar uma atividade já iniciada.</p></div></div>
-  <div id="activityGrid" class="activityGrid"><p class="muted">Carregando atividades...</p></div>
-</section>
+<div class="pageHead"><span class="eyebrow">{{ app_release or 'V77.8' }} · CENTRAL DE ATIVIDADES</span><h1>Atividades</h1><p>Escolha uma atividade para iniciar ou continuar o trabalho de campo.</p></div>
+<section class="card"><div class="sectionHead"><div><h2>Minhas atividades</h2><p class="muted">Toda atividade operacional habilitada para o seu perfil aparece aqui. Dashboards e áreas administrativas ficam fora desta central.</p></div></div><div id="activityGrid" class="activityGrid"><p class="muted">Carregando atividades...</p></div></section>
 <script>
-(async()=>{
-  const grid=document.getElementById('activityGrid');
-  const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-  try{
-    const r=await fetch('/api/atividades/resumo',{cache:'no-store'}),j=await r.json();
-    const tones={inventory:'activityTone1',chips:'activityTone2',emv:'activityTone3',panorama:'activityTone4',implantation:'activityTone5'};
-    grid.innerHTML=(j.activities||[]).map(a=>`<a class="activityCard ${tones[a.key]||'activityTone1'}" href="${esc(a.href)}"><div><small>ATIVIDADE</small><h2>${esc(a.title)}</h2><p><b>${esc(a.done)}</b> ${esc(a.label)}</p></div><span class="activityGo">Abrir →</span></a>`).join('')||'<p class="muted">Nenhuma atividade disponível para este perfil.</p>';
-  }catch(e){grid.innerHTML='<p class="muted">Não foi possível carregar as atividades.</p>'}
-})();
+(async()=>{const grid=document.getElementById('activityGrid'),esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));try{const r=await fetch('/api/atividades/resumo',{cache:'no-store'}),j=await r.json();const tones={inventory:'activityTone1',chips:'activityTone2',emv:'activityTone3',panorama:'activityTone4',implantation:'activityTone5',bobbins:'activityTone6',firmware:'activityTone7',garage:'activityTone8'};grid.innerHTML=(j.activities||[]).map(a=>`<a class="activityCard ${tones[a.key]||'activityTone1'}" href="${esc(a.href)}"><div><small>ATIVIDADE</small><h2>${esc(a.title)}</h2><p><b>${esc(a.done)}</b> ${esc(a.label)}</p></div><span class="activityGo">Abrir →</span></a>`).join('')||'<p class="muted">Nenhuma atividade disponível para este perfil.</p>'}catch(e){grid.innerHTML='<p class="muted">Não foi possível carregar as atividades.</p>'}})();
 </script>
 {% endblock %}
