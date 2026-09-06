@@ -1108,10 +1108,21 @@ function v23StartTv(){
   v23TvTimer=setInterval(v343SyncTv,5000);
 }
 function initV23DashboardNav(){
-  document.querySelectorAll('.v23Nav[data-v23-view]').forEach(btn=>btn.addEventListener('click',()=>v23SetView(btn.dataset.v23View))); // V49.1: links externos preservam navegação real
+  document.querySelectorAll('.v23Nav[data-v23-view]').forEach(btn=>btn.addEventListener('click',()=>{
+    const view=btn.dataset.v23View;
+    v23SetView(view);
+    if(['pos-inventory','validator-tdi-inventory','block-inventory'].includes(view) && window.activateInventoryEquipmentDashboard){
+      window.activateInventoryEquipmentDashboard(view);
+    }
+    const u=new URL(location.href); u.searchParams.set('view',view); history.replaceState(null,'',u);
+  }));
   $('v23TvBtn')?.addEventListener('click',()=>{ window.open('/gerencial/tv','_blank','noopener'); });
   document.addEventListener('fullscreenchange',()=>{if(!document.fullscreenElement && document.body.classList.contains('v23TvMode'))v23StopTv();});
-  v23SetView('overview');
+  const requested=new URLSearchParams(location.search).get('view')||'overview';
+  v23SetView(requested);
+  if(['pos-inventory','validator-tdi-inventory','block-inventory'].includes(requested)){
+    setTimeout(()=>window.activateInventoryEquipmentDashboard?.(requested),0);
+  }
 }
 
 initV23DashboardNav();
