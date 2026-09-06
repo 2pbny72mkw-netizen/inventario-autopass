@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V77.7"
+APP_RELEASE = "V77.8"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -2459,6 +2459,25 @@ def v72_enforce_journey_window():
     return None
 
 
+def _v78_close_work_access_notifications(request_id):
+    if request_id is None: return
+    now=datetime.utcnow()
+    V76Notification.query.filter(
+        V76Notification.entity_type=="work_access",
+        V76Notification.entity_id==str(request_id),
+        V76Notification.read_at.is_(None)
+    ).update({V76Notification.read_at:now},synchronize_session=False)
+
+def _v78_expire_work_access_requests(user_id=None):
+    now=datetime.utcnow()
+    q=WorkAccessRequest.query.filter(WorkAccessRequest.status=="APROVADA",WorkAccessRequest.approved_until.isnot(None),WorkAccessRequest.approved_until<=now)
+    if user_id is not None: q=q.filter(WorkAccessRequest.user_id==user_id)
+    expired=q.all()
+    for row in expired:
+        row.status="EXPIRADA"
+        _v78_close_work_access_notifications(row.id)
+    return len(expired)
+
 @app.get("/acesso-fora-jornada")
 def v72_outside_journey_page():
     uid = session.get("pending_user_id")
@@ -2468,13 +2487,14 @@ def v72_outside_journey_page():
     if not user or not user.active:
         session.clear()
         return redirect(url_for("login"))
+    _v78_expire_work_access_requests(user.id)
     state = _v72_journey_status(user)
     # Caso a jornada tenha iniciado enquanto o usuário aguardava.
     if state.get("allowed"):
         _v72_start_session(user, "LOGIN_JOURNEY_WINDOW")
         return redirect(_v72_redirect_for_user(user))
     max_hours = int(_v72_settings().get("journey_max_extension_hours",6) or 6)
-    latest = WorkAccessRequest.query.filter_by(user_id=user.id).order_by(WorkAccessRequest.requested_at.desc()).first()
+    latest = WorkAccessRequest.query.filter_by(user_id=user.id,status="PENDENTE").order_by(WorkAccessRequest.requested_at.desc()).first()
     return render_template(
         "outside_journey_v72.html", app_release=APP_RELEASE, user=user, state=state,
         latest=latest, max_hours=max_hours
@@ -2566,6 +2586,16 @@ def _v76_notify_managers(title,message,severity="URGENTE",category="AUTORIZACAO"
 @login_required
 def v76_notifications_api():
     uid=session.get("user_id");unread=(request.args.get("unread") or "").lower() in ("1","true","sim")
+    _v78_expire_work_access_requests()
+    stale=V76Notification.query.filter(V76Notification.recipient_id==uid,V76Notification.entity_type=="work_access",V76Notification.read_at.is_(None)).all()
+    if stale:
+        req_ids=[int(x.entity_id) for x in stale if str(x.entity_id or "").isdigit()]
+        req_map={x.id:x for x in WorkAccessRequest.query.filter(WorkAccessRequest.id.in_(req_ids)).all()} if req_ids else {}
+        now=datetime.utcnow()
+        for n in stale:
+            row=req_map.get(int(n.entity_id)) if str(n.entity_id or "").isdigit() else None
+            if not row or row.status!="PENDENTE": n.read_at=now
+        db.session.commit()
     q=V76Notification.query.filter_by(recipient_id=uid)
     if unread:q=q.filter(V76Notification.read_at.is_(None))
     rows=q.order_by(V76Notification.created_at.desc()).limit(100).all()
@@ -2584,11 +2614,12 @@ def v72_outside_journey_status_api():
     user = db.session.get(User, uid) if uid else None
     if not user:
         return jsonify({"ok":False,"error":"Sessão expirada."}),401
+    _v78_expire_work_access_requests(user.id)
     state = _v72_journey_status(user)
     if state.get("allowed"):
         _v72_start_session(user, "LOGIN_AUTHORIZED")
         return jsonify({"ok":True,"authorized":True,"redirect":_v72_redirect_for_user(user)})
-    latest = WorkAccessRequest.query.filter_by(user_id=user.id).order_by(WorkAccessRequest.requested_at.desc()).first()
+    latest = WorkAccessRequest.query.filter_by(user_id=user.id,status="PENDENTE").order_by(WorkAccessRequest.requested_at.desc()).first()
     return jsonify({
         "ok":True,"authorized":False,
         "status":latest.status if latest else None,
@@ -2648,7 +2679,7 @@ def v72_gps_history_api():
         return jsonify({"ok":False,"error":"Sem permissão para histórico GPS."}),403
     user_id=request.args.get("user_id",type=int);date_raw=(request.args.get("date") or "").strip()
     users=User.query.filter(User.active.is_(True),User.gps_history_enabled.is_(True)).order_by(User.name).all()
-    if not user_id:return jsonify({"ok":True,"users":[{"id":u.id,"name":u.name,"username":u.username,"role":u.role,"company":u.company or "","gps_history_enabled":bool(u.gps_history_enabled)} for u in users],"events":[]})
+    if not user_id:return jsonify({"ok":True,"users":[{"id":u.id,"name":u.name,"username":u.username,"role":u.role,"company":u.company or "","gps_history_enabled":bool(u.gps_history_enabled),"photo_url":(f"/usuarios/{u.id}/foto?thumb=1" if u.photo_url else None)} for u in users],"events":[]})
     u=db.session.get(User,user_id)
     if not u:return jsonify({"ok":False,"error":"Usuário não encontrado."}),404
     try:day=datetime.strptime(date_raw,"%Y-%m-%d").date() if date_raw else datetime.now(V72_TZ).date()
@@ -2675,8 +2706,8 @@ def v72_gps_history_api():
     for x in station_rows:
         local_dt=x.captured_at.replace(tzinfo=ZoneInfo("UTC")).astimezone(V72_TZ)
         station_events.append({"id":x.id,"station_id":x.location_id,"company":x.company or "","line":x.line or "","station":x.station or "Sem referência","latitude":x.latitude,"longitude":x.longitude,"accuracy":x.accuracy,"distance_m":x.distance_m,"inside":True,"relation":"NA ESTAÇÃO/LOCALIDADE","captured_at":local_dt.isoformat(),"time":local_dt.strftime("%H:%M:%S"),"source":"station_geofence"})
-    timeline = station_events if station_events else events
-    return jsonify({"ok":True,"user":{"id":u.id,"name":u.name,"username":u.username},"date":day.isoformat(),"events":timeline,"count":len(timeline),"position_count":len(events),"raw_position_count":len(positions),"station_count":len(station_events),"source":"station_history" if station_events else "technician_positions","retention_days":int(_v72_settings().get("gps_history_retention_days",7) or 7),"reference_radius_m":radius})
+    timeline = events
+    return jsonify({"ok":True,"user":{"id":u.id,"name":u.name,"username":u.username,"photo_url":(f"/usuarios/{u.id}/foto?thumb=1" if u.photo_url else None)},"date":day.isoformat(),"events":timeline,"count":len(timeline),"position_count":len(events),"raw_position_count":len(positions),"station_count":len(station_events),"source":"station_history" if station_events else "technician_positions","retention_days":int(_v72_settings().get("gps_history_retention_days",7) or 7),"reference_radius_m":radius})
 
 
 @app.get("/api/gestao/historico-gps/diagnostico/<int:user_id>")
@@ -2739,12 +2770,14 @@ def v72_work_authorization_decision_api(req_id):
     row.reviewed_by=session.get("user_id");row.reviewed_at=datetime.utcnow();row.review_note=note
     if action=="RECUSAR":
         row.status="RECUSADA";row.approved_from=None;row.approved_until=None
+        _v78_close_work_access_notifications(row.id)
     else:
         try: minutes=int(data.get("minutes") or row.requested_minutes)
         except Exception: minutes=row.requested_minutes
         max_minutes=max(60,int(_v72_settings().get("journey_max_extension_hours",6) or 6)*60)
         minutes=max(30,min(max_minutes,minutes))
         row.status="APROVADA";row.approved_from=datetime.utcnow();row.approved_until=datetime.utcnow()+timedelta(minutes=minutes)
+        _v78_close_work_access_notifications(row.id)
     db.session.add(AuditEvent(
         user_id=session.get("user_id"),event_type="WORK_ACCESS_DECISION",
         entity_type="work_access",entity_id=str(row.id),
@@ -10425,7 +10458,7 @@ def recent_audit_api():
 def activities_page():
     if session.get("role") not in ("technician", "technician_implantation", "manager", "manager_field"):
         return redirect(url_for("manager" if session.get("role") in ("consultation", "dispatcher") else "teams_page"))
-    return render_template("activities.html")
+    return render_template("activities.html", app_release=APP_RELEASE)
 
 
 @app.get("/api/atividades/resumo")
@@ -10434,26 +10467,30 @@ def activities_summary_api():
     uid=session.get("user_id")
     role=session.get("role")
     activities=[]
-    if role in ("technician","manager","manager_field"):
-        inv_today=Inventory.query.filter(Inventory.technician_id==uid, func.date(Inventory.created_at)==datetime.utcnow().date()).count()
-        swaps=ChipSwap.query.filter_by(technician_id=uid).all()
-        chip_done=sum(1 for x in swaps if x.status=="CONCLUÍDO")
-        pan=PanoramaPoint.query.filter_by(created_by=uid).count()
-        candidates = [
-          ("field.inventory", {"key":"inventory","title":"Inventário / Lançamento","href":"/tecnico","done":inv_today,"label":"lançamentos hoje"}),
-          ("field.chip_recarga", {"key":"chips","title":"Troca de Chip Recarga","href":"/troca-chips","done":chip_done,"label":"concluídos"}),
-          ("field.panorama", {"key":"panorama","title":"Visão Panorâmica","href":"/visao-panoramica","done":pan,"label":"pontos registrados"})]
-        activities += [item for perm,item in candidates if _has_access(perm)]
-    if role in ("manager","technician_implantation"):
-        emv_done=EmvChipSwap.query.filter_by(status="CONCLUÍDA").count()
-        
-        if _has_access("implantation.emv"):
-            activities.append({"key":"emv","title":"Troca de Chips EMV - Trilhos","href":"/troca-chips-emv","done":emv_done,"label":"concluídos"})
+    today=datetime.utcnow().date()
+    inv_today=Inventory.query.filter(Inventory.technician_id==uid, func.date(Inventory.created_at)==today).count()
+    swaps=ChipSwap.query.filter_by(technician_id=uid).all()
+    chip_done=sum(1 for x in swaps if x.status=="CONCLUÍDO")
+    pan=PanoramaPoint.query.filter_by(created_by=uid).count()
+    bob_today=AtmBobbinReading.query.filter(AtmBobbinReading.technician_id==uid,func.date(AtmBobbinReading.created_at)==today).count() if 'AtmBobbinReading' in globals() else 0
+    fw_done=PosFirmwareCptm.query.filter_by(technician_id=uid,status="CONCLUÍDO").count() if 'PosFirmwareCptm' in globals() else 0
+    garage_done=GarageChipSwap.query.filter_by(technician_id=uid,status="CONCLUÍDA").count() if 'GarageChipSwap' in globals() else 0
+    emv_done=EmvChipSwap.query.filter_by(technician_id=uid,status="CONCLUÍDA").count() if 'EmvChipSwap' in globals() else 0
+    candidates=[
+      ("field.inventory",{"key":"inventory","title":"Inventário / Lançamento","href":"/tecnico","done":inv_today,"label":"lançamentos hoje"}),
+      ("field.chip_recarga",{"key":"chips","title":"Troca de Chip Recarga","href":"/troca-chips","done":chip_done,"label":"concluídos"}),
+      ("field.panorama",{"key":"panorama","title":"Visão Panorâmica","href":"/visao-panoramica","done":pan,"label":"pontos registrados"}),
+      ("field.bobbins",{"key":"bobbins","title":"Controle de Bobinas","href":"/field/bobinas","done":bob_today,"label":"registros hoje"}),
+      ("field.firmware_pos_cptm",{"key":"firmware","title":"Atualização Firmware POS","href":"/firmware-pos-cptm","done":fw_done,"label":"concluídos"}),
+      ("implantation.garage",{"key":"garage","title":"Troca de Chip Garagem","href":"/troca-chips-garagem","done":garage_done,"label":"concluídos"}),
+      ("implantation.emv",{"key":"emv","title":"Troca de Chips EMV - Trilhos","href":"/troca-chips-emv","done":emv_done,"label":"concluídos"}),
+    ]
+    for perm,item in candidates:
+        if _has_access(perm): activities.append(item)
+    if _has_access("implantation.visits") or _has_access("implantation.reports"):
         done=HardwareFieldVisit.query.filter_by(status="FINALIZADO").count()
-        
-        if _has_access("implantation.visits") or _has_access("implantation.reports"):
-            activities.append({"key":"implantation","title":"Implantação de Hardware","href":"/implantacao-hardware","done":done,"label":"visitas finalizadas"})
-    return jsonify({"ok":True,"activities":activities})
+        activities.append({"key":"implantation","title":"Implantação de Hardware","href":"/implantacao-hardware","done":done,"label":"visitas finalizadas"})
+    return jsonify({"ok":True,"release":APP_RELEASE,"activities":activities})
 
 
 # V73.6.2 · Campanha Atualização de Firmware POS – CPTM · base importável

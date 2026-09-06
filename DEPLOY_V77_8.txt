@@ -1,0 +1,9 @@
+V77.8 ENXUTA
+
+Substituir somente os arquivos presentes neste pacote, preservando todo o restante da instalação.
+
+Após deploy:
+- Reiniciar a aplicação.
+- Confirmar /sobre = V77.8.
+- Fazer hard refresh no navegador para evitar JS antigo em cache.
+- Validar Rastreabilidade/Jornada, Visão Panorâmica, Central de Atividades e Agenda Arrow conforme README_V77_8.md.
