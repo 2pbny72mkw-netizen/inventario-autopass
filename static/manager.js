@@ -1069,6 +1069,16 @@ function v23SetView(view){
   v23ActiveView=view||'overview';
   document.body.dataset.dashboardView=v23ActiveView;
   document.body.dataset.dashboardView=v23ActiveView;
+  // V77.9.3: Visão Geral usa scroll da janela; evita containers antigos com overflow travado.
+  if(!document.body.classList.contains('v23TvMode')){
+    const overview=v23ActiveView==='overview';
+    document.documentElement.style.setProperty('overflow-y', overview?'auto':'');
+    document.body.style.setProperty('overflow-y', overview?'auto':'');
+    document.body.style.setProperty('height', overview?'auto':'');
+    const main=document.querySelector('main.wrap'); if(main){main.style.setProperty('height',overview?'auto':'');main.style.setProperty('max-height',overview?'none':'');main.style.setProperty('overflow-y',overview?'visible':'');}
+    const shell=document.querySelector('.v23DashboardShell'); if(shell){shell.style.setProperty('height',overview?'auto':'');shell.style.setProperty('max-height',overview?'none':'');shell.style.setProperty('overflow',overview?'visible':'');}
+    const content=document.querySelector('.v23DashboardContent'); if(content){content.style.setProperty('height',overview?'auto':'');content.style.setProperty('max-height',overview?'none':'');content.style.setProperty('overflow',overview?'visible':'');}
+  }
   document.querySelectorAll('.v23Panel').forEach(el=>{
     const active=String(el.dataset.v23Panel||'').split(/\s+/).includes(v23ActiveView);
     el.classList.toggle('v23PanelActive',active);
