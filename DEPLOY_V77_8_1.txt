@@ -1,0 +1,18 @@
+V77.8.1 — PATCH ENXUTO SOBRE V77.8
+
+Copiar/substituir os arquivos deste pacote preservando os demais arquivos da V77.8.
+
+Arquivos alterados:
+- app.py
+- templates/base.html
+- templates/about.html
+- templates/bobbin_dashboard_v77.html
+- README_V77_8_1.md
+
+Pontos críticos pós-deploy:
+1. Agenda Arrow deve voltar a exibir a grade/calendário 2.0 e cards coloridos.
+2. Central de Atividades deve exibir cards coloridos e legíveis no mobile.
+3. Rastreabilidade/Jornada deve manter o mapa contido em 600px e posições/fotos acima dos tiles.
+4. Visão Panorâmica deve listar somente o universo ferroviário (Metrô, CPTM, ViaMobilidade 8/9 e Linha 17).
+5. Bobinas: clicar no histórico da ATM deve abrir auditoria do registro/foto.
+6. Bobinas: Histórico por técnico/data deve mostrar resumo diário e quadro por técnico.

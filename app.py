@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V77.8"
+APP_RELEASE = "V77.8.1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -13166,8 +13166,18 @@ def panorama_page():
 
 
 def _panorama_payload():
-    # V42.2.3.1 PERFORMANCE — elimina consultas N+1.
+    # V77.8.1 — Visão Panorâmica restrita ao universo ferroviário com ATM.
+    # A base geral de localidades contém pontos externos que não pertencem a esta atividade.
     locations = Location.query.order_by(Location.company, Location.line, Location.location).all()
+    def _rail_scope(loc):
+        company=_v771_norm(getattr(loc,'company',''))
+        line=_v771_norm(getattr(loc,'line',''))
+        if company in ('METRO','CPTM'): return True
+        if 'VIA MOBILIDADE' in company and (line.startswith('08') or line.startswith('8') or line.startswith('09') or line.startswith('9')): return True
+        # Linha 17 pode aparecer sob diferentes empresas/nomenclaturas históricas.
+        if line.startswith('17') or 'LINHA 17' in line: return True
+        return False
+    locations=[x for x in locations if _rail_scope(x)]
     if not locations: return []
     loc_ids=[x.id for x in locations]
     points=(PanoramaPoint.query.filter(PanoramaPoint.location_id.in_(loc_ids)).order_by(PanoramaPoint.location_id,PanoramaPoint.point_name).all())
@@ -16509,7 +16519,7 @@ def _v771_cleanup_photos(force=False):
 
 def _v771_bobbin_json(x,names=None):
     names=names or {}; stock=_v771_stock(x.company,x.line,x.station,x.atm_id); ph=AtmBobbinPhoto.query.filter_by(reading_id=x.id).first()
-    return {'id':x.id,'company':x.company,'line':x.line,'station':x.station,'atm_id':x.atm_id,'percent_available':x.percent_available,'event_type':x.event_type,'bobbin_replaced':bool(x.bobbin_replaced),'replacement_origin':x.replacement_origin,'reserve_after':int(stock.reserve_qty or 0) if stock else (x.reserve_after if x.reserve_after is not None else 0),'notes':x.notes or '','technician_id':x.technician_id,'technician':names.get(x.technician_id,''),'latitude':x.latitude,'longitude':x.longitude,'gps_accuracy':getattr(x,'gps_accuracy',None),'gps_captured_at':getattr(x,'gps_captured_at',None).isoformat()+'Z' if getattr(x,'gps_captured_at',None) else None,'gps_distance_m':getattr(x,'gps_distance_m',None),'created_at':x.created_at.isoformat()+'Z' if x.created_at else None,'has_photo':bool(ph),'photo_available':bool(ph and not ph.deleted_at and ph.expires_at>datetime.utcnow()),'photo_url':url_for('v771_bobbin_photo',photo_id=ph.id) if ph and not ph.deleted_at and ph.expires_at>datetime.utcnow() else None}
+    return {'id':x.id,'company':x.company,'line':x.line,'station':x.station,'atm_id':x.atm_id,'percent_available':x.percent_available,'event_type':x.event_type,'bobbin_replaced':bool(x.bobbin_replaced),'replacement_origin':x.replacement_origin,'reserve_delta':x.reserve_delta,'reserve_after':int(stock.reserve_qty or 0) if stock else (x.reserve_after if x.reserve_after is not None else 0),'notes':x.notes or '','technician_id':x.technician_id,'technician':names.get(x.technician_id,''),'latitude':x.latitude,'longitude':x.longitude,'gps_accuracy':getattr(x,'gps_accuracy',None),'gps_captured_at':getattr(x,'gps_captured_at',None).isoformat()+'Z' if getattr(x,'gps_captured_at',None) else None,'gps_distance_m':getattr(x,'gps_distance_m',None),'created_at':x.created_at.isoformat()+'Z' if x.created_at else None,'has_photo':bool(ph),'photo_available':bool(ph and not ph.deleted_at and ph.expires_at>datetime.utcnow()),'photo_url':url_for('v771_bobbin_photo',photo_id=ph.id) if ph and not ph.deleted_at and ph.expires_at>datetime.utcnow() else None}
 
 
 
@@ -17184,6 +17194,47 @@ def v771_field_stock_import():
             point=_v771_stock_point(x['point_name'],x['point_type'],x['company'],x['line'],x['station']);item=_v771_stock_item(x['item'],x.get('unit') or 'UN');bal=_v771_balance(point,item);bal.qty_good=x['good'];bal.qty_bad=x['bad'];bal.updated_by=session['user_id'];bal.updated_at=datetime.utcnow();imported+=1
         db.session.commit();return jsonify({'ok':True,'committed':True,'imported':imported,'preview':preview,'release':APP_RELEASE})
     except Exception as e:db.session.rollback();return jsonify({'ok':False,'error':str(e)}),400
+
+@app.get('/api/bobinas/historico-tecnico')
+@login_required
+def v7781_bobbin_technician_history():
+    if not _has_access('field.bobbins_dashboard'): abort(403)
+    raw_date=(request.args.get('date') or '').strip()
+    try: day=datetime.strptime(raw_date,'%Y-%m-%d').date() if raw_date else datetime.now(V72_TZ).date()
+    except Exception: return jsonify({'ok':False,'error':'Data inválida.'}),400
+    start_local=datetime.combine(day,datetime.min.time(),tzinfo=V72_TZ);end_local=start_local+timedelta(days=1)
+    start_utc=start_local.astimezone(ZoneInfo('UTC')).replace(tzinfo=None);end_utc=end_local.astimezone(ZoneInfo('UTC')).replace(tzinfo=None)
+    tech_id=int(request.args.get('technician_id') or 0)
+    base_q=AtmBobbinReading.query.filter(AtmBobbinReading.created_at>=start_utc,AtmBobbinReading.created_at<end_utc)
+    day_rows=base_q.order_by(AtmBobbinReading.created_at.desc()).all()
+    q=base_q
+    if tech_id:q=q.filter(AtmBobbinReading.technician_id==tech_id)
+    rows=q.order_by(AtmBobbinReading.created_at.desc()).all()
+    ids={x.technician_id for x in day_rows if x.technician_id}
+    all_ids=[x[0] for x in db.session.query(AtmBobbinReading.technician_id).filter(AtmBobbinReading.technician_id.isnot(None)).distinct().all()]
+    users={u.id:u.name for u in User.query.filter(User.id.in_(set(all_ids)|ids)).all()} if (all_ids or ids) else {}
+    mq=(FieldStockMovement.query.join(FieldStockItem,FieldStockItem.id==FieldStockMovement.item_id)
+        .filter(FieldStockMovement.created_at>=start_utc,FieldStockMovement.created_at<end_utc,func.upper(FieldStockItem.description).like('%BOBINA%')))
+    if tech_id:mq=mq.filter(FieldStockMovement.technician_id==tech_id)
+    moves=mq.order_by(FieldStockMovement.created_at.desc()).all()
+    move_user_ids={x.technician_id for x in moves if x.technician_id}
+    if move_user_ids:
+        users.update({u.id:u.name for u in User.query.filter(User.id.in_(move_user_ids)).all()})
+    point_ids={x.source_point_id for x in moves if x.source_point_id}|{x.destination_point_id for x in moves if x.destination_point_id}
+    points={x.id:x.name for x in FieldStockPoint.query.filter(FieldStockPoint.id.in_(point_ids)).all()} if point_ids else {}
+    item_ids={x.item_id for x in moves};items={x.id:x.description for x in FieldStockItem.query.filter(FieldStockItem.id.in_(item_ids)).all()} if item_ids else {}
+    out=[_v771_bobbin_json(x,users) for x in rows]
+    atm_ids={str(x.atm_id or '') for x in rows};stations={(x.company,x.line,x.station) for x in rows}
+    summary={'records':len(rows),'atms':len(atm_ids),'stations':len(stations),'replacements':sum(bool(x.bobbin_replaced) for x in rows),'readings':sum(not bool(x.bobbin_replaced) for x in rows),'reserve_changes':sum((x.reserve_delta or 0)!=0 for x in rows),'movements':len(moves)}
+    movement_rows=[{'id':x.id,'created_at':x.created_at.isoformat()+'Z' if x.created_at else None,'technician_id':x.technician_id,'technician':users.get(x.technician_id,''),'type':x.movement_type,'qty':x.qty,'item':items.get(x.item_id,''),'source':points.get(x.source_point_id,''),'destination':points.get(x.destination_point_id,'') or x.destination_station or '', 'asset':x.destination_asset or '', 'justification':x.justification or '', 'status':x.status} for x in moves]
+    techs=[{'id':uid,'name':name} for uid,name in sorted(users.items(),key=lambda kv:(kv[1] or '').casefold())]
+    by={}
+    for x in day_rows:
+        r=by.setdefault(x.technician_id,{'technician_id':x.technician_id,'technician':users.get(x.technician_id,'—'),'records':0,'atms':set(),'stations':set(),'replacements':0,'readings':0})
+        r['records']+=1;r['atms'].add(str(x.atm_id or ''));r['stations'].add((x.company,x.line,x.station));r['replacements']+=1 if x.bobbin_replaced else 0;r['readings']+=0 if x.bobbin_replaced else 1
+    by_tech=[{'technician_id':r['technician_id'],'technician':r['technician'],'records':r['records'],'atms':len(r['atms']),'stations':len(r['stations']),'replacements':r['replacements'],'readings':r['readings']} for r in by.values()]
+    by_tech.sort(key=lambda r:(-r['records'],(r['technician'] or '').casefold()))
+    return jsonify({'ok':True,'date':day.isoformat(),'technicians':techs,'summary':summary,'by_technician':by_tech,'rows':out,'movements':movement_rows,'release':APP_RELEASE})
 
 @app.get('/api/bobinas/export.xlsx')
 @login_required
