@@ -1,0 +1,11 @@
+V77.9.4 — ENXUTA
+
+Arquivos alterados:
+- app.py
+- templates/bobbin_dashboard_v77.html
+- templates/about.html
+- README_V77_9_4.md
+
+Não exige migração destrutiva de banco.
+Após deploy, validar `/api/bobinas/dashboard`: release V77.9.4, summary.atms, summary.without_reading, missing_atms e support_reserve_target.
+No Dashboard de Bobinas, clicar em "ATMs monitoradas" para revisar nominalmente os equipamentos sem monitoramento.

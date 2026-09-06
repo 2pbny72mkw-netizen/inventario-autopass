@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V77.9.3"
+APP_RELEASE = "V77.9.4"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -17000,7 +17000,7 @@ def v7793_bobbin_admin_adjustment():
             if new_qty<0: return jsonify({'ok':False,'error':'Quantidade não pode ser negativa.'}),400
             point=db.session.get(FieldStockPoint,point_id)
             if not point: return jsonify({'ok':False,'error':'Armário/estoque não encontrado.'}),404
-            item=FieldStockItem.query.filter(func.lower(FieldStockItem.description).like('%bobina%')).first()
+            item=FieldStockItem.query.filter(func.lower(FieldStockItem.description)=='bobina atm').first() or FieldStockItem.query.filter(func.lower(FieldStockItem.description).like('%bobina%')).first()
             if not item: return jsonify({'ok':False,'error':'Item Bobina não encontrado no estoque Field.'}),404
             bal=_v771_balance(point,item); old=float(bal.qty_good or 0); delta=new_qty-old
             bal.qty_good=new_qty; bal.updated_by=session['user_id']; bal.updated_at=datetime.utcnow()
@@ -17080,8 +17080,22 @@ def v77_bobbins_dashboard_api():
     repl30=sum(1 for x in ops30 if x.bobbin_replaced);no_repl30=sum(1 for x in ops30 if not x.bobbin_replaced);rate30=round(repl30/max(1,len(ops30))*100,1) if ops30 else 0
     official_den=len(filtered_official) if official['rows'] else 590
     monitored=len(latest_map);without=max(0,official_den-monitored)
+    monitored_norm={_v773_norm_atm_id(x.atm_id) for x in latest_map.values() if _v773_norm_atm_id(x.atm_id)}
+    missing_atms=[]
+    for row in filtered_official:
+        aliases=_v773_atm_aliases(row)
+        if not any(a in monitored_norm for a in aliases):
+            missing_atms.append({
+                'atm_id':_v773_atm_id(row),
+                'company':str(row.get('company') or ''),
+                'line':str(row.get('line') or ''),
+                'station':str(row.get('locality') or ''),
+                'status':'SEM_MONITORAMENTO',
+                'reason':'ATM oficial instalada sem leitura registrada no Controle de Bobinas.'
+            })
+    missing_atms.sort(key=lambda x:(x['company'],x['line'],x['station'],x['atm_id']))
     summary={'atms':monitored,'official_total':len(official['rows']) or 602,'official_installed':len(official['installed']) or 590,'official_stock':len(official['stock']) or 12,'official_filtered':official_den,'without_reading':without,'coverage_pct':round(monitored/max(1,official_den)*100,1),'reserve_total':confirmed,'unlocated_total':unlocated_total,'critical':sum(x.percent_available<=10 for x in latest_map.values()),'attention':sum(10<x.percent_available<=30 for x in latest_map.values()),'replacements_30d':repl30,'no_replacement_30d':no_repl30,'visits_30d':len(ops30),'replacement_rate_30d':rate30,'stale_30d':sum((now-x.created_at).days>=30 for x in latest_map.values()),'predicted_7d':predicted7,'conciliation_pct':conciliation_pct}
-    bobitem=FieldStockItem.query.filter(func.lower(FieldStockItem.description).like('%bobina%')).first();cabinet_bobbins=0;in_distribution=0;cabinet_count=0;open_incidents=FieldStockIncident.query.filter_by(status='ABERTA').count()
+    bobitem=FieldStockItem.query.filter(func.lower(FieldStockItem.description)=='bobina atm').first() or FieldStockItem.query.filter(func.lower(FieldStockItem.description).like('%bobina%')).first();cabinet_bobbins=0;in_distribution=0;cabinet_count=0;open_incidents=FieldStockIncident.query.filter_by(status='ABERTA').count()
     if bobitem:
         cabinet_points=FieldStockPoint.query.filter(FieldStockPoint.active.is_(True),FieldStockPoint.point_type.in_(['ARMARIO','ESTOQUE','CD'])).all()
         if company:cabinet_points=[x for x in cabinet_points if (x.company or '')==company]
@@ -17115,7 +17129,7 @@ def v77_bobbins_dashboard_api():
     for k,r in station_summary.items():
         r['reserve']=stockmap.get(k,0);r['avg_pct']=round(r['sum_pct']/max(1,r['atms'])) if r['atms'] else None;r['missing']=max(0,r['official_atms']-r['atms']);r['last_at']=r['last_at'].isoformat()+'Z' if r['last_at'] else None
     station_rows=sorted(station_summary.values(),key=lambda r:(r['line'].casefold(),r['station'].casefold()))
-    return jsonify({'ok':True,'release':APP_RELEASE,'source':'BASE_OFICIAL_ATM_602','summary':summary,'rows':[_v771_bobbin_json(x,names) for x in latest],'history':[_v771_bobbin_json(x,names) for x in allrows[:500]],'stocks':[{'company':x.company,'line':x.line,'station':x.station,'atm_id':x.atm_id,'reserve_qty':x.reserve_qty,'updated_at':x.updated_at.isoformat()+'Z' if x.updated_at else None} for x in stockrows],'unlocated':[{'company':x.company,'line':x.line,'station':x.station,'imported_qty':x.imported_qty,'current_qty':x.current_qty,'status':x.status,'source_sheet':x.source_sheet,'last_inventory_at':x.last_inventory_at.isoformat()+'Z' if x.last_inventory_at else None} for x in unlocated],'stations':station_rows,'cabinets_detail':cabinet_rows,'support_reserve_target':450,'photo_retention_days':_v771_photo_retention_days()})
+    return jsonify({'ok':True,'release':APP_RELEASE,'source':'BASE_OFICIAL_ATM_602','summary':summary,'rows':[_v771_bobbin_json(x,names) for x in latest],'history':[_v771_bobbin_json(x,names) for x in allrows[:500]],'stocks':[{'company':x.company,'line':x.line,'station':x.station,'atm_id':x.atm_id,'reserve_qty':x.reserve_qty,'updated_at':x.updated_at.isoformat()+'Z' if x.updated_at else None} for x in stockrows],'unlocated':[{'company':x.company,'line':x.line,'station':x.station,'imported_qty':x.imported_qty,'current_qty':x.current_qty,'status':x.status,'source_sheet':x.source_sheet,'last_inventory_at':x.last_inventory_at.isoformat()+'Z' if x.last_inventory_at else None} for x in unlocated],'stations':station_rows,'cabinets_detail':cabinet_rows,'missing_atms':missing_atms,'support_reserve_target':450,'support_reserve_unit':'BOBINAS','photo_retention_days':_v771_photo_retention_days()})
 
 # V77.1 — Estoque Field / armários e carga do técnico
 def _v771_stock_item(desc,unit='UN'):
