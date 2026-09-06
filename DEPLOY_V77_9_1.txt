@@ -1,0 +1,18 @@
+V77.9.1 — CONSOLIDAÇÃO / CORRETIVA
+
+Base: V77.8.1 enviada em 06/09/2026.
+
+Principais correções:
+- Dashboard POS, Validador + TDI e Bloqueio: corrige navegação /gerencial?view=... e dispara carregamento da API específica.
+- Visão Geral: remove travamento de scroll fora do Modo TV.
+- Arrow: restaura menu por permissões (Agenda, Atividades/Alocações, Dashboard, Atendimento Remoto) e modos 7/30 dias.
+- Rastreabilidade: avatar GPS ampliado, preservando janela fixa 600px e z-index Leaflet já validados.
+- Preserva Visão Panorâmica ferroviária, Bobinas/auditoria e Central de Atividades da V77.8.1.
+
+Deploy: substituir os arquivos deste pacote ou publicar o pacote completo. Reiniciar serviço. Fazer hard refresh/cache PWA após deploy.
+
+VALIDAÇÃO V77.9.1 APÓS DEPLOY
+1. Abrir Visão Panorâmica e confirmar que não há duplicidade ABR - AGUA BRANCA / AGUA BRANCA na listagem.
+2. Confirmar que estações já concluídas continuam com fotos e status concluído.
+3. No Console: fetch('/api/panoramic/locations').then(r=>r.json()).then(console.log) deve retornar JSON HTTP 200.
+4. Confirmar cabeçalho X-Autopass-Release = V77.9.1.

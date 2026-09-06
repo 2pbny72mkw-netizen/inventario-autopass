@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V77.9"
+APP_RELEASE = "V77.9.1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -13166,17 +13166,32 @@ def panorama_page():
 
 
 def _panorama_payload():
-    # V77.8.1 — Visão Panorâmica restrita ao universo ferroviário com ATM.
-    # A base geral de localidades contém pontos externos que não pertencem a esta atividade.
+    # V77.9.1 — consolidação não destrutiva das localidades da Visão Panorâmica.
+    # A tabela Location possui aliases históricos (ex.: "ABR - AGUA BRANCA" e
+    # "AGUA BRANCA"). A API passa a apresentar uma única estação canônica sem
+    # mover/apagar PanoramaPoint/PanoramaPhoto nem alterar IDs históricos no banco.
     locations = Location.query.order_by(Location.company, Location.line, Location.location).all()
+
     def _rail_scope(loc):
         company=_v771_norm(getattr(loc,'company',''))
         line=_v771_norm(getattr(loc,'line',''))
         if company in ('METRO','CPTM'): return True
         if 'VIA MOBILIDADE' in company and (line.startswith('08') or line.startswith('8') or line.startswith('09') or line.startswith('9')): return True
-        # Linha 17 pode aparecer sob diferentes empresas/nomenclaturas históricas.
         if line.startswith('17') or 'LINHA 17' in line: return True
         return False
+
+    def _panorama_station_key(value):
+        # Remove somente prefixos operacionais explícitos antes de " - ".
+        # Não faz fuzzy matching para evitar unir estações diferentes por engano.
+        raw=str(value or '').strip()
+        raw=re.sub(r'^\s*[A-Za-z0-9]{2,5}\s+-\s+', '', raw)
+        return _v771_norm(raw)
+
+    def _panorama_line_key(value):
+        raw=_v771_norm(value)
+        m=re.match(r'^0*(\d{1,2})\b', raw)
+        return m.group(1).zfill(2) if m else raw
+
     locations=[x for x in locations if _rail_scope(x)]
     if not locations: return []
     loc_ids=[x.id for x in locations]
@@ -13189,23 +13204,68 @@ def _panorama_payload():
     for ph in photos: photos_by_point.setdefault(ph.point_id,[]).append(ph)
     points_by_location={}
     for pt in points: points_by_location.setdefault(pt.location_id,[]).append(pt)
-    rows=[]
+
+    # Agrupa apenas aliases seguros: mesma empresa, mesma linha e mesmo nome após
+    # retirada do prefixo operacional. Nenhum registro físico é excluído/migrado.
+    groups={}
     for loc in locations:
+        key=(_v771_norm(loc.company), _panorama_line_key(loc.line), _panorama_station_key(loc.location))
+        groups.setdefault(key,[]).append(loc)
+
+    rows=[]
+    for _, aliases in groups.items():
+        def _score(loc):
+            pts=points_by_location.get(loc.id,[])
+            photo_count=sum(len(photos_by_point.get(pt.id,[])) for pt in pts)
+            return (1 if photo_count else 0, photo_count, len(pts), 1 if (loc.panorama_status_override or '').strip() else 0,
+                    1 if loc.reference_latitude is not None and loc.reference_longitude is not None else 0, -loc.id)
+        primary=max(aliases,key=_score)
+
         p_out=[]; total=0
-        for pt in points_by_location.get(loc.id,[]):
-            pp=photos_by_point.get(pt.id,[]); total+=len(pp); creator=users.get(pt.created_by,"—")
-            p_out.append({"id":pt.id,"name":pt.point_name,"notes":pt.notes or "","technician":creator,"status":"CONCLUÍDA" if pp else "EM ANDAMENTO","photos":[{"id":ph.id,"url":"/uploads/"+ph.stored_name,"thumb_url":"/uploads/"+ph.stored_name+"?thumb=1","name":ph.original_name,"stored_name":ph.stored_name,"uploaded_by":users.get(ph.uploaded_by,"—"),"created_at":ph.created_at.isoformat()+"Z" if ph.created_at else None,"latitude":ph.latitude,"longitude":ph.longitude} for ph in pp]})
+        for loc in aliases:
+            for pt in points_by_location.get(loc.id,[]):
+                pp=photos_by_point.get(pt.id,[]); total+=len(pp); creator=users.get(pt.created_by,"—")
+                p_out.append({"id":pt.id,"name":pt.point_name,"notes":pt.notes or "","technician":creator,
+                    "status":"CONCLUÍDA" if pp else "EM ANDAMENTO",
+                    "source_location_id":loc.id,
+                    "photos":[{"id":ph.id,"url":"/uploads/"+ph.stored_name,"thumb_url":"/uploads/"+ph.stored_name+"?thumb=1","name":ph.original_name,"stored_name":ph.stored_name,"uploaded_by":users.get(ph.uploaded_by,"—"),"created_at":ph.created_at.isoformat()+"Z" if ph.created_at else None,"latitude":ph.latitude,"longitude":ph.longitude} for ph in pp]})
+
         auto_status="PENDENTE" if not p_out else ("CONCLUÍDA" if all(x["photos"] for x in p_out) else "EM ANDAMENTO")
-        override=(loc.panorama_status_override or "").strip().upper().replace("CONCLUIDA","CONCLUÍDA")
+        # Override do registro principal prevalece; na ausência dele preserva um
+        # override histórico existente em qualquer alias, sem sobrescrevê-lo no BD.
+        override=(primary.panorama_status_override or '').strip().upper().replace("CONCLUIDA","CONCLUÍDA")
+        if not override:
+            for loc in aliases:
+                candidate=(loc.panorama_status_override or '').strip().upper().replace("CONCLUIDA","CONCLUÍDA")
+                if candidate in ("PENDENTE","EM ANDAMENTO","CONCLUÍDA"):
+                    override=candidate; break
         status=override if override in ("PENDENTE","EM ANDAMENTO","CONCLUÍDA") else auto_status
         techs=sorted({x["technician"] for x in p_out if x.get("technician") and x["technician"]!="—"})
-        rows.append({"id":loc.id,"company":loc.company,"line":loc.line,"location":loc.location,"reference_latitude":loc.reference_latitude,"reference_longitude":loc.reference_longitude,"status":status,"auto_status":auto_status,"status_override":bool(override),"photo_count":total,"technicians":techs,"points":p_out})
+        lat=primary.reference_latitude; lon=primary.reference_longitude
+        if lat is None or lon is None:
+            coord=next((x for x in aliases if x.reference_latitude is not None and x.reference_longitude is not None),None)
+            if coord: lat,lon=coord.reference_latitude,coord.reference_longitude
+        rows.append({"id":primary.id,"company":primary.company,"line":primary.line,"location":primary.location,
+            "reference_latitude":lat,"reference_longitude":lon,"status":status,"auto_status":auto_status,
+            "status_override":bool(override),"photo_count":total,"technicians":techs,"points":p_out,
+            "alias_location_ids":[x.id for x in aliases],"alias_count":len(aliases)})
+
+    rows.sort(key=lambda x:(_v771_norm(x.get('company')),_panorama_line_key(x.get('line')),_panorama_station_key(x.get('location'))))
     return rows
 
 @app.get("/api/panoramas")
 @login_required
 def panorama_list_api():
     return jsonify({"ok":True,"locations":_panorama_payload()})
+
+@app.get("/api/panoramic/locations")
+@login_required
+def panorama_locations_compat_api():
+    """V77.9.1: compatibilidade com frontend legado; sempre retorna JSON."""
+    resp=jsonify({"ok":True,"locations":_panorama_payload(),"release":APP_RELEASE,"legacy":True})
+    resp.headers["X-Autopass-Canonical"]="/api/panoramas"
+    resp.headers["X-Autopass-Deprecated"]="1"
+    return resp
 
 @app.post("/api/panoramas/<int:location_id>/points")
 @field_required
