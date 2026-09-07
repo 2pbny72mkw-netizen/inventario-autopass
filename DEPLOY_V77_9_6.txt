@@ -1,0 +1,8 @@
+V77.9.6
+1. Publicar os arquivos do pacote sobre a versão V77.9.5.
+2. Reiniciar a aplicação para atualizar APP_RELEASE e permissões.
+3. Testar Gestão > Configuração de Dashboards e posicionar Dashboard Bobinas.
+4. Testar Estoque Field com ADM/Gestor: incluir item e editar saldo de M16/armário.
+5. Testar permissão field.stock_manage em Configurações de Usuários/Perfis.
+6. Abrir Dashboard Bobinas e conferir tempo de resposta/telemetria.
+7. Conferir Exportar ATM, POS e Bloqueio com e sem filtros.

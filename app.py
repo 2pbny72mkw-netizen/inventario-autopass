@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V77.9.5"
+APP_RELEASE = "V77.9.6"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -1809,7 +1809,7 @@ def login_required(fn):
 ACCESS_GROUPS = {
     "dashboard": ("Dashboard Geral", ("dashboard.general",)),
     "field": ("Field", (
-        "field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.firmware_pos_cptm","field.bobbins","field.bobbins_dashboard"
+        "field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.firmware_pos_cptm","field.bobbins","field.bobbins_dashboard","field.stock_manage"
     )),
     "implantation": ("Implantação de Hardware", (
         "implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage"
@@ -1842,7 +1842,7 @@ ACCESS_SUBMODULES = tuple(k for _g,(_label,children) in ACCESS_GROUPS.items() fo
 ACCESS_ALL = set(ACCESS_MODULES) | set(ACCESS_SUBMODULES)
 ACCESS_LABELS = {
  "dashboard.general":"Dashboard Geral",
- "field.dashboard":"Dashboard Field","field.inventory":"Inventário / Lançamento","field.calls":"Chamados","field.preventive":"Solicitação Preventiva ATM","field.equipment":"Equipamentos","field.evidence":"Evidências","field.panorama":"Visão Panorâmica","field.chip_recarga":"Troca de Chips – Recarga","field.firmware_pos_cptm":"Atualização de Firmware POS – CPTM","field.bobbins":"Atividade Bobinas","field.bobbins_dashboard":"Dashboard de Bobinas / Insumos",
+ "field.dashboard":"Dashboard Field","field.inventory":"Inventário / Lançamento","field.calls":"Chamados","field.preventive":"Solicitação Preventiva ATM","field.equipment":"Equipamentos","field.evidence":"Evidências","field.panorama":"Visão Panorâmica","field.chip_recarga":"Troca de Chips – Recarga","field.firmware_pos_cptm":"Atualização de Firmware POS – CPTM","field.bobbins":"Atividade Bobinas","field.bobbins_dashboard":"Dashboard de Bobinas / Insumos","field.stock_manage":"Alterar estoque consolidado / armários / bobinas",
  "implantation.dashboard":"Dashboard Implantação","implantation.visits":"Visita a Campo / Relatório de Visita","implantation.reports":"Relatórios / Visitas recentes","implantation.emv":"Troca de Chips EMV – Trilhos","implantation.garage":"Troca de Chips Garagem",
  "teams.map":"Mapa operacional","teams.today":"Operação de Hoje","teams.schedule":"Escala por dias","teams.manage":"Gestão de equipes / escala","teams.export":"Exportar dados","teams.apt":"APT / Validades",
  "users.view":"Visualizar usuários","users.config.view":"Visualizar configurações de usuários","users.config.manage":"Gerenciar configurações de usuários","users.create":"Criar usuário","users.edit":"Editar usuário","users.activate":"Ativar / Desativar","users.delete":"Excluir / Arquivar","users.password":"Redefinir senha","users.export":"Exportar Excel","users.import":"Importar Excel de configurações",
@@ -1867,7 +1867,7 @@ def _expand_legacy_access(values):
 def _default_access_for_role(role):
     defaults={
       "manager":set(ACCESS_SUBMODULES),
-      "manager_field":{"engineering.items.view","engineering.bom.view","materials.my_documents","materials.request","materials.catalog.view","materials.catalog.manage","materials.kits.manage","materials.delivery.create","materials.delivery.manage","materials.dossier.view","dashboard.general","field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.firmware_pos_cptm","field.bobbins","field.bobbins_dashboard","implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage","teams.map","teams.today","teams.schedule","teams.manage","teams.export","teams.apt","finance.dashboard","management.calls","management.360","management.notifications","management.diagnostics","management.gps_history","management.work_authorizations","portal.receive","portal.manage","arrow.view","arrow.manage","arrow.dashboard","arrow.remote","materials.access_lists.view","materials.access_lists.manage","about.versions"},
+      "manager_field":{"engineering.items.view","engineering.bom.view","materials.my_documents","materials.request","materials.catalog.view","materials.catalog.manage","materials.kits.manage","materials.delivery.create","materials.delivery.manage","materials.dossier.view","dashboard.general","field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.firmware_pos_cptm","field.bobbins","field.bobbins_dashboard","field.stock_manage","implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage","teams.map","teams.today","teams.schedule","teams.manage","teams.export","teams.apt","finance.dashboard","management.calls","management.360","management.notifications","management.diagnostics","management.gps_history","management.work_authorizations","portal.receive","portal.manage","arrow.view","arrow.manage","arrow.dashboard","arrow.remote","materials.access_lists.view","materials.access_lists.manage","about.versions"},
       "technician":{"materials.my_documents","materials.request","field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.firmware_pos_cptm","field.bobbins","about.versions"},
       "technician_implantation":{"materials.my_documents","materials.request","field.inventory","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.firmware_pos_cptm","field.bobbins","implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage","about.versions"},
       "consultation":{"dashboard.general","field.dashboard","field.inventory","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.firmware_pos_cptm","field.bobbins_dashboard","teams.map","teams.today","teams.schedule","about.versions"},
@@ -1898,7 +1898,7 @@ def _user_access_set(user=None):
                 custom=json.loads(prof.access_json or "[]")
                 access=_expand_legacy_access({x for x in custom if x in ACCESS_ALL})
                 if user.role in ("technician","technician_implantation"): access.add("field.bobbins")
-                if user.role=="manager_field": access.update({"field.bobbins","field.bobbins_dashboard"})
+                if user.role=="manager_field": access.update({"field.bobbins","field.bobbins_dashboard","field.stock_manage"})
                 if user.role=="hr":
                     if "users.view" in access: access.add("users.config.view")
                     if "users.edit" in access or "users.create" in access: access.add("users.config.manage")
@@ -1914,7 +1914,7 @@ def _user_access_set(user=None):
             # RH sempre mantém as visualizações operacionais de Equipes em modo leitura,
             # mesmo quando o access_json foi salvo antes da criação das subpermissões atuais.
             if user.role in ("technician","technician_implantation"): access.add("field.bobbins")
-            if user.role=="manager_field": access.update({"field.bobbins","field.bobbins_dashboard"})
+            if user.role=="manager_field": access.update({"field.bobbins","field.bobbins_dashboard","field.stock_manage"})
             if user.role=="hr":
                 access.update({"teams.map","teams.today","teams.schedule"})
                 if "users.view" in access: access.add("users.config.view")
@@ -1926,7 +1926,7 @@ def _user_access_set(user=None):
     access=_default_access_for_role(user.role)
     # V77: Atividade Bobinas é atividade operacional padrão de todos os técnicos; dashboard permanece gerencial.
     if user.role in ("technician","technician_implantation"): access.add("field.bobbins")
-    if user.role=="manager_field": access.update({"field.bobbins","field.bobbins_dashboard"})
+    if user.role=="manager_field": access.update({"field.bobbins","field.bobbins_dashboard","field.stock_manage"})
     if current_lookup and has_request_context(): g._autopass_access_set=access
     return access
 
@@ -14314,6 +14314,7 @@ BUILTIN_DASHBOARD_CATALOG = [
     {"key":"overview","label":"Visão Geral","group":"VISÃO GERAL","icon":"▦","roles":[]},
     {"key":"execution","label":"Inventário","group":"ATIVIDADES","icon":"▥","roles":[]},
     {"key":"atm-inventory","label":"Dashboard ATM","group":"ATIVIDADES","icon":"▦","roles":[]},
+    {"key":"bobbin-dashboard","label":"Dashboard Bobinas","group":"ATIVIDADES","icon":"▦","roles":["manager","manager_field"]},
     {"key":"pos-inventory","label":"Dashboard POS","group":"ATIVIDADES","icon":"▦","roles":[]},
     {"key":"validator-tdi-inventory","label":"Dashboard Validador + TDI","group":"ATIVIDADES","icon":"▦","roles":[]},
     {"key":"block-inventory","label":"Dashboard Bloqueio","group":"ATIVIDADES","icon":"▦","roles":[]},
@@ -16583,9 +16584,25 @@ def _v771_cleanup_photos(force=False):
         try:db.session.commit()
         except Exception:db.session.rollback()
 
-def _v771_bobbin_json(x,names=None):
-    names=names or {}; stock=_v771_stock(x.company,x.line,x.station,x.atm_id); ph=AtmBobbinPhoto.query.filter_by(reading_id=x.id).first()
-    return {'id':x.id,'company':x.company,'line':x.line,'station':x.station,'atm_id':x.atm_id,'percent_available':x.percent_available,'event_type':x.event_type,'bobbin_replaced':bool(x.bobbin_replaced),'replacement_origin':x.replacement_origin,'reserve_delta':x.reserve_delta,'reserve_after':int(stock.reserve_qty or 0) if stock else (x.reserve_after if x.reserve_after is not None else 0),'notes':x.notes or '','technician_id':x.technician_id,'technician':names.get(x.technician_id,''),'latitude':x.latitude,'longitude':x.longitude,'gps_accuracy':getattr(x,'gps_accuracy',None),'gps_captured_at':getattr(x,'gps_captured_at',None).isoformat()+'Z' if getattr(x,'gps_captured_at',None) else None,'gps_distance_m':getattr(x,'gps_distance_m',None),'created_at':x.created_at.isoformat()+'Z' if x.created_at else None,'has_photo':bool(ph),'photo_available':bool(ph and not ph.deleted_at and ph.expires_at>datetime.utcnow()),'photo_url':url_for('v771_bobbin_photo',photo_id=ph.id) if ph and not ph.deleted_at and ph.expires_at>datetime.utcnow() else None}
+def _v771_bobbin_json(x,names=None,stock_by_key=None,photo_by_reading=None,now=None):
+    """Serializa leitura de bobina.
+
+    V77.9.6: quando mapas pré-carregados são fornecidos, evita as duas consultas
+    N+1 históricas (estoque + foto) por leitura no dashboard. Chamadas legadas
+    continuam compatíveis e consultam individualmente apenas fora do dashboard.
+    """
+    names=names or {}; now=now or datetime.utcnow()
+    key=(str(x.company or ''),str(x.line or ''),str(x.station or ''),str(x.atm_id or ''))
+    if stock_by_key is None:
+        stock=_v771_stock(x.company,x.line,x.station,x.atm_id)
+    else:
+        stock=stock_by_key.get(key)
+    if photo_by_reading is None:
+        ph=AtmBobbinPhoto.query.filter_by(reading_id=x.id).first()
+    else:
+        ph=photo_by_reading.get(x.id)
+    photo_ok=bool(ph and not ph.deleted_at and ph.expires_at>now)
+    return {'id':x.id,'company':x.company,'line':x.line,'station':x.station,'atm_id':x.atm_id,'percent_available':x.percent_available,'event_type':x.event_type,'bobbin_replaced':bool(x.bobbin_replaced),'replacement_origin':x.replacement_origin,'reserve_delta':x.reserve_delta,'reserve_after':int(stock.reserve_qty or 0) if stock else (x.reserve_after if x.reserve_after is not None else 0),'notes':x.notes or '','technician_id':x.technician_id,'technician':names.get(x.technician_id,''),'latitude':x.latitude,'longitude':x.longitude,'gps_accuracy':getattr(x,'gps_accuracy',None),'gps_captured_at':getattr(x,'gps_captured_at',None).isoformat()+'Z' if getattr(x,'gps_captured_at',None) else None,'gps_distance_m':getattr(x,'gps_distance_m',None),'created_at':x.created_at.isoformat()+'Z' if x.created_at else None,'has_photo':bool(ph),'photo_available':photo_ok,'photo_url':url_for('v771_bobbin_photo',photo_id=ph.id) if photo_ok else None}
 
 
 
@@ -16704,7 +16721,13 @@ def v77_bobbins_activity_page():
 @login_required
 def v77_bobbins_dashboard_page():
     if not _has_access('field.bobbins_dashboard'): abort(403)
-    return render_template('bobbin_dashboard_v77.html',app_release=APP_RELEASE)
+    return render_template('bobbin_dashboard_v77.html',app_release=APP_RELEASE,embedded=False)
+
+@app.get('/dashboard/bobinas/embed')
+@login_required
+def v7796_bobbins_dashboard_embed():
+    if not _has_access('field.bobbins_dashboard'): abort(403)
+    return render_template('bobbin_dashboard_v77.html',app_release=APP_RELEASE,embedded=True)
 
 @app.get('/api/bobinas/options')
 @login_required
@@ -16975,8 +16998,8 @@ def v771_bobbin_config():
 @app.post('/api/bobinas/ajuste-administrativo')
 @login_required
 def v7793_bobbin_admin_adjustment():
-    # V77.9.3 — correção direta pelo ADM/Gestor, sempre auditada e fora da produtividade técnica.
-    if not _has_access('field.bobbins_dashboard'): abort(403)
+    # V77.9.6 — permissão específica para alteração de estoque/bobinas, com auditoria.
+    if not _has_access('field.stock_manage'): abort(403)
     d=request.get_json(silent=True) or {}
     kind=(d.get('kind') or '').strip().upper()
     reason=(d.get('reason') or '').strip()
@@ -17115,8 +17138,12 @@ def v77_bobbins_dashboard_api():
         if company:cps=[x for x in cps if (x.company or '')==company]
         if line:cps=[x for x in cps if (x.line or '')==line]
         if station:cps=[x for x in cps if (x.station or '')==station]
+        cp_ids=[x.id for x in cps]
+        balance_by_point={}
+        if cp_ids:
+            balance_by_point={x.point_id:x for x in FieldStockBalance.query.filter(FieldStockBalance.item_id==bobitem.id,FieldStockBalance.point_id.in_(cp_ids)).all()}
         for cp in cps:
-            bal=FieldStockBalance.query.filter_by(point_id=cp.id,item_id=bobitem.id).first()
+            bal=balance_by_point.get(cp.id)
             cabinet_rows.append({'id':cp.id,'name':cp.name,'company':cp.company or '', 'line':cp.line or '', 'station':cp.station or '', 'bobbins':int(float(bal.qty_good or 0)) if bal else 0, 'updated_at':bal.updated_at.isoformat()+'Z' if bal and bal.updated_at else None})
     # Estações partem da base oficial, inclusive quando ainda não existe leitura.
     station_summary={}
@@ -17145,7 +17172,18 @@ def v77_bobbins_dashboard_api():
         op=x.company or 'NÃO INFORMADO';operator_summary.setdefault(op,{'company':op,'official_atms':0,'atms':0,'sum_pct':0,'critical':0,'attention':0,'reserve':0,'last_at':None,'last_tech':''})['reserve']+=int(x.reserve_qty or 0)
     for r in operator_summary.values():r['avg_pct']=round(r['sum_pct']/max(1,r['atms'])) if r['atms'] else None;r['missing']=max(0,r['official_atms']-r['atms']);r['last_at']=r['last_at'].isoformat()+'Z' if r['last_at'] else None
     operator_rows=sorted(operator_summary.values(),key=lambda r:r['company'].casefold())
-    return jsonify({'ok':True,'release':APP_RELEASE,'source':'BASE_OFICIAL_ATM_602','summary':summary,'rows':[_v771_bobbin_json(x,names) for x in latest],'history':[_v771_bobbin_json(x,names) for x in allrows[:500]],'stocks':[{'company':x.company,'line':x.line,'station':x.station,'atm_id':x.atm_id,'reserve_qty':x.reserve_qty,'updated_at':x.updated_at.isoformat()+'Z' if x.updated_at else None} for x in stockrows],'unlocated':[{'company':x.company,'line':x.line,'station':x.station,'imported_qty':x.imported_qty,'current_qty':x.current_qty,'status':x.status,'source_sheet':x.source_sheet,'last_inventory_at':x.last_inventory_at.isoformat()+'Z' if x.last_inventory_at else None} for x in unlocated],'stations':station_rows,'operators':operator_rows,'cabinets_detail':cabinet_rows,'missing_atms':missing_atms,'support_reserve_target':450,'support_reserve_unit':'BOBINAS','photo_retention_days':_v771_photo_retention_days()})
+    # V77.9.6 PERFORMANCE: pré-carrega estoque e fotos uma única vez. Antes,
+    # _v771_bobbin_json executava até 2 queries extras por leitura (N+1),
+    # gerando mais de mil queries em uma única abertura do dashboard.
+    stock_by_key={(str(x.company or ''),str(x.line or ''),str(x.station or ''),str(x.atm_id or '')):x for x in stockrows}
+    payload_readings=list({x.id:x for x in (latest + allrows[:500])}.values())
+    reading_ids=[x.id for x in payload_readings]
+    photo_by_reading={}
+    if reading_ids:
+        photo_by_reading={x.reading_id:x for x in AtmBobbinPhoto.query.filter(AtmBobbinPhoto.reading_id.in_(reading_ids)).order_by(AtmBobbinPhoto.id.desc()).all()}
+    rows_json=[_v771_bobbin_json(x,names,stock_by_key,photo_by_reading,now) for x in latest]
+    history_json=[_v771_bobbin_json(x,names,stock_by_key,photo_by_reading,now) for x in allrows[:500]]
+    return jsonify({'ok':True,'release':APP_RELEASE,'source':'BASE_OFICIAL_ATM_602','can_stock_manage':_has_access('field.stock_manage'),'summary':summary,'rows':rows_json,'history':history_json,'stocks':[{'company':x.company,'line':x.line,'station':x.station,'atm_id':x.atm_id,'reserve_qty':x.reserve_qty,'updated_at':x.updated_at.isoformat()+'Z' if x.updated_at else None} for x in stockrows],'unlocated':[{'company':x.company,'line':x.line,'station':x.station,'imported_qty':x.imported_qty,'current_qty':x.current_qty,'status':x.status,'source_sheet':x.source_sheet,'last_inventory_at':x.last_inventory_at.isoformat()+'Z' if x.last_inventory_at else None} for x in unlocated],'stations':station_rows,'operators':operator_rows,'cabinets_detail':cabinet_rows,'missing_atms':missing_atms,'support_reserve_target':450,'support_reserve_unit':'BOBINAS','photo_retention_days':_v771_photo_retention_days()})
 
 # V77.1 — Estoque Field / armários e carga do técnico
 def _v771_stock_item(desc,unit='UN'):
@@ -17184,26 +17222,69 @@ def _v771_load(user_id,item):
 @app.get('/field/estoque')
 @login_required
 def v771_field_stock_page():
-    if not (_has_access('field.bobbins') or _has_access('field.bobbins_dashboard')):abort(403)
+    if not (_has_access('field.bobbins') or _has_access('field.bobbins_dashboard') or _has_access('field.stock_manage')):abort(403)
     return render_template('field_stock_v771.html',app_release=APP_RELEASE)
 
 @app.get('/api/field-stock/dashboard')
 @login_required
 def v771_field_stock_dashboard():
-    if not (_has_access('field.bobbins') or _has_access('field.bobbins_dashboard')):abort(403)
+    if not (_has_access('field.bobbins') or _has_access('field.bobbins_dashboard') or _has_access('field.stock_manage')):abort(403)
     points=FieldStockPoint.query.filter_by(active=True).order_by(FieldStockPoint.point_type,FieldStockPoint.name).all();items={x.id:x for x in FieldStockItem.query.all()}
     balances=FieldStockBalance.query.all(); loads=FieldTechnicianLoad.query.filter(FieldTechnicianLoad.qty>0).all(); inc=FieldStockIncident.query.filter_by(status='ABERTA').all()
-    user_ids={x.technician_id for x in loads};regs=[];can_manage=_has_access('field.bobbins_dashboard')
+    user_ids={x.technician_id for x in loads};regs=[];can_manage=_has_access('field.bobbins_dashboard');can_stock_manage=_has_access('field.stock_manage')
     if can_manage:
         regs=FieldLoadRegularization.query.filter_by(status='PENDENTE').order_by(FieldLoadRegularization.requested_at.desc()).limit(100).all();user_ids.update(x.technician_id for x in regs)
     users={u.id:u.name for u in User.query.filter(User.id.in_(user_ids)).all()} if user_ids else {};pmap={x.id:x for x in points}
     my_loads=[x for x in loads if x.technician_id==session['user_id']]
-    return jsonify({'ok':True,'release':APP_RELEASE,'can_manage':can_manage,'points':[{'id':x.id,'name':x.name,'type':x.point_type,'company':x.company or '','line':x.line or '','station':x.station or ''} for x in points],
+    return jsonify({'ok':True,'release':APP_RELEASE,'can_manage':can_manage,'can_stock_manage':can_stock_manage,'items':[{'id':x.id,'code':x.code or '','description':x.description,'category':x.category or '','unit':x.unit or 'UN','active':bool(x.active)} for x in sorted(items.values(),key=lambda i:(i.description or '').casefold()) if x.active],'points':[{'id':x.id,'name':x.name,'type':x.point_type,'company':x.company or '','line':x.line or '','station':x.station or ''} for x in points],
       'balances':[{'point_id':x.point_id,'point':pmap[x.point_id].name if x.point_id in pmap else '', 'item_id':x.item_id,'item':items[x.item_id].description if x.item_id in items else '', 'unit':items[x.item_id].unit if x.item_id in items else 'UN','good':x.qty_good,'bad':x.qty_bad,'updated_at':x.updated_at.isoformat()+'Z'} for x in balances],
       'loads':[{'technician_id':x.technician_id,'technician':users.get(x.technician_id,''),'item_id':x.item_id,'item':items[x.item_id].description if x.item_id in items else '', 'qty':x.qty,'updated_at':x.updated_at.isoformat()+'Z'} for x in loads],
       'my_loads':[{'item_id':x.item_id,'item':items[x.item_id].description if x.item_id in items else '', 'qty':x.qty,'updated_at':x.updated_at.isoformat()+'Z'} for x in my_loads],
       'regularizations':[{'id':x.id,'technician_id':x.technician_id,'technician':users.get(x.technician_id,''),'item_id':x.item_id,'item':items[x.item_id].description if x.item_id in items else '', 'qty':x.qty,'reason':x.reason,'created_at':x.requested_at.isoformat()+'Z' if x.requested_at else None} for x in regs],
       'summary':{'stock_points':len(points),'cabinets':sum(x.point_type=='ARMARIO' for x in points),'central':sum(x.point_type=='CENTRAL' for x in points),'loads':sum(float(x.qty or 0) for x in loads),'my_load':sum(float(x.qty or 0) for x in my_loads),'open_incidents':len(inc),'pending_regularizations':len(regs)}})
+
+@app.post('/api/field-stock/item')
+@login_required
+def v7796_field_stock_item_create():
+    if not _has_access('field.stock_manage'): abort(403)
+    d=request.get_json(silent=True) or {}
+    desc=(d.get('description') or '').strip(); code=(d.get('code') or '').strip(); category=(d.get('category') or '').strip(); unit=(d.get('unit') or 'UN').strip().upper()[:30]
+    reason=(d.get('reason') or '').strip(); point_id=int(d.get('point_id') or 0); good=float(d.get('good') or 0); bad=float(d.get('bad') or 0)
+    if not desc:return jsonify({'ok':False,'error':'Descrição do item é obrigatória.'}),400
+    if good<0 or bad<0:return jsonify({'ok':False,'error':'Quantidades não podem ser negativas.'}),400
+    existing=FieldStockItem.query.filter(func.lower(FieldStockItem.description)==desc.lower()).first()
+    if existing and existing.active:return jsonify({'ok':False,'error':'Já existe um item ativo com esta descrição.'}),409
+    item=existing or FieldStockItem(description=desc)
+    item.code=code or None; item.category=category or None; item.unit=unit or 'UN'; item.active=True; db.session.add(item); db.session.flush()
+    points=FieldStockPoint.query.filter_by(active=True).all()
+    for point in points:
+        bal=_v771_balance(point,item)
+        if point.id==point_id:
+            bal.qty_good=good; bal.qty_bad=bad; bal.updated_by=session['user_id']; bal.updated_at=datetime.utcnow()
+    db.session.add(FieldStockMovement(item_id=item.id,movement_type='AJUSTE_ADMINISTRATIVO',qty=good,source_point_id=point_id or None,technician_id=session['user_id'],justification=f'CADASTRO ITEM | {reason or "Inclusão manual no estoque consolidado"}',status='CONCLUIDO'))
+    try:db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='ESTOQUE_ITEM_INCLUIDO',entity_type='field_stock_item',entity_id=str(item.id),detail=f'{desc} | unidade {item.unit} | saldo inicial {good} | {reason}'))
+    except Exception:pass
+    db.session.commit();return jsonify({'ok':True,'id':item.id,'description':item.description})
+
+@app.post('/api/field-stock/saldo')
+@login_required
+def v7796_field_stock_balance_adjust():
+    if not _has_access('field.stock_manage'): abort(403)
+    d=request.get_json(silent=True) or {}
+    try: point_id=int(d.get('point_id') or 0); item_id=int(d.get('item_id') or 0); good=float(d.get('good') or 0); bad=float(d.get('bad') or 0)
+    except (TypeError,ValueError):return jsonify({'ok':False,'error':'Valores inválidos.'}),400
+    reason=(d.get('reason') or '').strip()
+    if not reason:return jsonify({'ok':False,'error':'Justificativa obrigatória para alteração de estoque.'}),400
+    if good<0 or bad<0:return jsonify({'ok':False,'error':'Quantidades não podem ser negativas.'}),400
+    point=db.session.get(FieldStockPoint,point_id); item=db.session.get(FieldStockItem,item_id)
+    if not point or not item:return jsonify({'ok':False,'error':'Estoque ou item não encontrado.'}),404
+    bal=_v771_balance(point,item); old_good=float(bal.qty_good or 0); old_bad=float(bal.qty_bad or 0)
+    bal.qty_good=good; bal.qty_bad=bad; bal.updated_by=session['user_id']; bal.updated_at=datetime.utcnow()
+    delta=good-old_good
+    db.session.add(FieldStockMovement(item_id=item.id,movement_type='AJUSTE_ADMINISTRATIVO',qty=delta,source_point_id=point.id,technician_id=session['user_id'],destination_company=point.company,destination_line=point.line,destination_station=point.station,destination_asset=point.name,justification=f'{reason} | bom {old_good}->{good} | ruim {old_bad}->{bad}',status='CONCLUIDO'))
+    try:db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='ESTOQUE_SALDO_AJUSTADO',entity_type='field_stock_balance',entity_id=f'{point.id}:{item.id}',detail=f'{point.name} | {item.description} | bom {old_good}->{good} | ruim {old_bad}->{bad} | {reason}'))
+    except Exception:pass
+    db.session.commit();return jsonify({'ok':True,'good_before':old_good,'good_after':good,'bad_before':old_bad,'bad_after':bad})
 
 @app.post('/api/field-stock/retirar')
 @login_required
