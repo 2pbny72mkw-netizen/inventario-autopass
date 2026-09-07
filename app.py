@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V78.3"
+APP_RELEASE = "V78.4"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -16349,9 +16349,10 @@ def _eng_bom_json(b):
     nat=imp=cons=0.;items=[]
     for x,it in pairs:
         qty=float(x.quantity or 0);origin=(it.default_origin or x.origin or "NACIONAL").upper();group=(getattr(x,"cost_group",None) or "MATERIAL").upper()
-        master_hint=((getattr(it,"category",None) or "")+" "+(getattr(it,"item_type",None) or "")).upper();code_type=(getattr(it,"code_type",None) or "")
-        if group=="MATERIAL" and (code_type=="04" or "CONSUM" in master_hint or "EMBAL" in master_hint): group="CONSUMO"
-        if group=="MATERIAL" and (code_type in ("12","13") or "SERVI" in master_hint): group="SERVICO"
+        # V78.4: o grupo dentro da BOM é uma classificação da própria estrutura.
+        # O Cadastro Mestre apenas sugere o grupo na inclusão; depois de salvo,
+        # MATERIAL / CONSUMO / SERVICO deve respeitar a escolha da Engenharia.
+        code_type=(getattr(it,"code_type",None) or "")
         stored_currency=(x.currency or getattr(it,"default_currency",None) or "BRL").upper()
         fob_pending=origin=="IMPORTADO" and stored_currency!="USD"
         currency="USD" if origin=="IMPORTADO" else ("BRL" if origin=="NACIONAL" else stored_currency)
@@ -16365,7 +16366,7 @@ def _eng_bom_json(b):
         else:nat+=nat_total
         items.append({"id":x.id,"item_id":it.id,"internal_part_number":it.internal_part_number,"manufacturer_part_number":it.manufacturer_part_number or "",
         "ncm":getattr(it,"ncm",None) or "","description":it.description_pt or it.description_en or "","quantity":qty,"origin":origin,"cost_group":group,
-        "manufacturer":getattr(it,"manufacturer",None) or "","category":getattr(it,"category",None) or "","code_type":getattr(it,"code_type",None) or "","supplier":getattr(it,"default_supplier",None) or x.supplier or "","supplier_part_number":getattr(it,"supplier_part_number",None) or x.supplier_part_number or it.manufacturer_part_number or "","lead_time_days":x.lead_time_days,"reference_unit_cost":float(getattr(it,"reference_unit_cost",0) or 0),
+        "manufacturer":getattr(it,"manufacturer",None) or "","category":getattr(it,"category",None) or "","code_type":getattr(it,"code_type",None) or "","item_type":getattr(it,"item_type",None) or "MATERIAL","linked_bom_id":getattr(it,"linked_bom_id",None),"supplier":getattr(it,"default_supplier",None) or x.supplier or "","supplier_part_number":getattr(it,"supplier_part_number",None) or x.supplier_part_number or it.manufacturer_part_number or "","lead_time_days":x.lead_time_days,"reference_unit_cost":float(getattr(it,"reference_unit_cost",0) or 0),
         "currency":currency,"unit_cost":raw_unit,"fob_pending":fob_pending,"raw_total_cost":round(raw_total,2),"nationalized_unit_cost":round(nat_unit,2),"total_cost":round(nat_total,2)})
     total=nat+imp+cons;q=float(b.quantity_reference or 1) or 1
     return {"id":b.id,"product_code":b.product_code,"product_name":b.product_name,"product_ncm":getattr(b,"product_ncm",None) or "","revision":b.revision,"status":b.status,
@@ -16837,8 +16838,8 @@ def engineering_bom_export_api(bid):
     d=_eng_bom_json(b);wb=Workbook();ws=wb.active;ws.title="BOM"
     ws.append(["Produto",d["product_code"],d["product_name"],"NCM Produto",d.get("product_ncm",""),"Revisão",d["revision"],"Status",d["status"]])
     ws.append(["Qtd. referência",d["quantity_reference"],"Nacional",d["national_cost"],"Importado nacionalizado",d["imported_cost"],"Consumo",d.get("consumption_cost",0),"Total",d["total_cost"],"Unitário",d["unit_cost"]]);ws.append([])
-    ws.append(["Código Interno","MPN","NCM Item","Descrição","Qtd.","Grupo","Origem","Fabricante","PN Fabricante / MPN","Lead Time","Moeda","FOB/Custo Unit.","Custo Nac. Unit.","Total Nac."])
-    for x in d["items"]:ws.append([x["internal_part_number"],x["manufacturer_part_number"],x.get("ncm","") ,x["description"],x["quantity"],x.get("cost_group","MATERIAL"),x["origin"],x.get("manufacturer",""),x["supplier_part_number"],x["lead_time_days"],x["currency"],x["unit_cost"],x.get("nationalized_unit_cost",x["unit_cost"]),x["total_cost"]])
+    ws.append(["Código Interno","MPN","NCM Item","Descrição","Qtd.","Grupo","Origem","Fabricante","PN Fabricante / MPN","Lead Time","Moeda","FOB Unit. US$","Custo Unit. R$","Total R$"])
+    for x in d["items"]:ws.append([x["internal_part_number"],x["manufacturer_part_number"],x.get("ncm","") ,x["description"],x["quantity"],x.get("cost_group","MATERIAL"),x["origin"],x.get("manufacturer",""),x["supplier_part_number"],x["lead_time_days"],x["currency"],x["unit_cost"] if x["origin"]=="IMPORTADO" else "",x.get("nationalized_unit_cost",x["unit_cost"]),x["total_cost"]])
     for c in ws[4]:c.font=Font(bold=True,color="FFFFFF");c.fill=PatternFill("solid",fgColor="17365D")
     ws.freeze_panes="A5";ws.auto_filter.ref=f"A4:N{ws.max_row}"
     for i in range(1,15):ws.column_dimensions[get_column_letter(i)].width=40 if i==4 else 20
@@ -16865,8 +16866,8 @@ def engineering_pricing_export_api(sid):
     ws=wb.active;ws.title="Estrutura-BOM"
     ws.append(["Produto",d["product_code"],d["product_name"],"NCM Produto",d.get("product_ncm",""),"Revisão",d["revision"],"Quantidade estudo",qty])
     ws.append(["Nacional",d["national_cost"],"Importado nacionalizado",d["imported_cost"],"Consumo",d.get("consumption_cost",0),"Total BOM",d["total_cost"],"Custo unitário",d["unit_cost"]]);ws.append([])
-    ws.append(["Código Interno","MPN","NCM Item","Descrição","Qtd.","Grupo","Origem","Fabricante","PN Fabricante / MPN","Lead Time","Moeda","FOB/Custo Unit.","Custo Nac. Unit.","Total Nac."])
-    for x in d["items"]:ws.append([x["internal_part_number"],x["manufacturer_part_number"],x.get("ncm","") ,x["description"],x["quantity"],x.get("cost_group","MATERIAL"),x["origin"],x.get("manufacturer",""),x["supplier_part_number"],x["lead_time_days"],x["currency"],x["unit_cost"],x.get("nationalized_unit_cost",x["unit_cost"]),x["total_cost"]])
+    ws.append(["Código Interno","MPN","NCM Item","Descrição","Qtd.","Grupo","Origem","Fabricante","PN Fabricante / MPN","Lead Time","Moeda","FOB Unit. US$","Custo Unit. R$","Total R$"])
+    for x in d["items"]:ws.append([x["internal_part_number"],x["manufacturer_part_number"],x.get("ncm","") ,x["description"],x["quantity"],x.get("cost_group","MATERIAL"),x["origin"],x.get("manufacturer",""),x["supplier_part_number"],x["lead_time_days"],x["currency"],x["unit_cost"] if x["origin"]=="IMPORTADO" else "",x.get("nationalized_unit_cost",x["unit_cost"]),x["total_cost"]])
     sv=wb.create_sheet("Preço de Venda");sv.append(["Estudo",st.study_name,"Produto",d["product_code"],"Revisão",d["revision"],"Quantidade",qty]);sv.append([]);sv.append(["Índice / Componente","Parâmetro aplicado","Base de cálculo","Valor calculado"])
     sv.append(["IPI",ipi*100,gross,ipi_v]);sv.append(["ICMS",icms*100,gross,icms_v]);sv.append(["PIS",pis*100,no_ipi,pis_v]);sv.append(["COFINS",cof*100,no_ipi,cof_v]);sv.append(["ISS",iss*100,no_ipi,iss_v]);sv.append(["Despesas ADM",admin*100,float(d.get("unit_cost") or 0)+assembly,industrial-(float(d.get("unit_cost") or 0)+assembly)]);sv.append(["Fator importação",d.get("import_factor",1.8),d.get("imported_cost",0),d.get("imported_cost",0)]);sv.append(["Cotação USD/BRL",d.get("usd_brl",0),"Referência da configuração",d.get("usd_brl",0)]);sv.append([]);sv.append(["Memória / Resultado","Valor","Quantidade", "Total lote"])
     for row in [("Nacionais (BOM)",d["national_cost"]/(d["quantity_reference"] or 1)),("Importados nacionalizados",d["imported_cost"]/(d["quantity_reference"] or 1)),("Consumo",d.get("consumption_cost",0)/(d["quantity_reference"] or 1)),("Montagem / mão de obra",assembly),("Despesas ADM (%)",admin*100),("Fator importação",d.get("import_factor",1.8)),("USD / BRL",d.get("usd_brl",0)),("Custo industrial unitário",industrial),("Venda c/ IPI",gross),("IPI",ipi_v),("Valor s/ IPI",no_ipi),("ICMS",icms_v),("PIS",pis_v),("COFINS",cof_v),("ISS",iss_v),("Venda líquida",net),("Lucro unitário",profit),("Margem efetiva (%)",margin),("Venda total do lote",gross*qty)]:sv.append([row[0],row[1],qty,row[1]*qty if isinstance(row[1],(int,float)) and row[0] not in ("Despesas ADM (%)","Fator importação","USD / BRL","Margem efetiva (%)") else ""])
