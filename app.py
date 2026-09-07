@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V78.1"
+APP_RELEASE = "V78.2"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -536,6 +536,12 @@ class EngineeringItem(db.Model):
     supplier_part_number=db.Column(db.String(180))
     default_currency=db.Column(db.String(10),default="BRL")
     reference_unit_cost=db.Column(db.Float,default=0)
+    item_type=db.Column(db.String(30),nullable=False,default="MATERIAL",index=True)
+    lifecycle_status=db.Column(db.String(30),nullable=False,default="ATIVO",index=True)
+    substitute_item_id=db.Column(db.Integer,db.ForeignKey("engineering_items.id"),index=True)
+    linked_bom_id=db.Column(db.Integer,db.ForeignKey("engineering_boms.id"),index=True)
+    eol_date=db.Column(db.Date)
+    lifecycle_notes=db.Column(db.Text)
     datasheet_url=db.Column(db.String(1200))
     author=db.Column(db.String(160))
     source_sheet=db.Column(db.String(160))
@@ -555,6 +561,7 @@ class EngineeringBom(db.Model):
     quantity_reference=db.Column(db.Float,nullable=False,default=1)
     currency_rate=db.Column(db.Float)
     notes=db.Column(db.Text)
+    source_bom_id=db.Column(db.Integer,db.ForeignKey("engineering_boms.id"),index=True)
     created_by=db.Column(db.Integer,db.ForeignKey("users.id"))
     created_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow)
     updated_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow,onupdate=datetime.utcnow)
@@ -15985,6 +15992,15 @@ with app.app_context():
                 if "supplier_part_number" not in _ec: conn.execute(text("ALTER TABLE engineering_items ADD COLUMN supplier_part_number VARCHAR(180)"))
                 if "default_currency" not in _ec: conn.execute(text("ALTER TABLE engineering_items ADD COLUMN default_currency VARCHAR(10) DEFAULT 'BRL'"))
                 if "reference_unit_cost" not in _ec: conn.execute(text("ALTER TABLE engineering_items ADD COLUMN reference_unit_cost FLOAT DEFAULT 0"))
+                if "item_type" not in _ec: conn.execute(text("ALTER TABLE engineering_items ADD COLUMN item_type VARCHAR(30) DEFAULT 'MATERIAL' NOT NULL"))
+                if "lifecycle_status" not in _ec: conn.execute(text("ALTER TABLE engineering_items ADD COLUMN lifecycle_status VARCHAR(30) DEFAULT 'ATIVO' NOT NULL"))
+                if "substitute_item_id" not in _ec: conn.execute(text("ALTER TABLE engineering_items ADD COLUMN substitute_item_id INTEGER REFERENCES engineering_items(id)"))
+                if "linked_bom_id" not in _ec: conn.execute(text("ALTER TABLE engineering_items ADD COLUMN linked_bom_id INTEGER REFERENCES engineering_boms(id)"))
+                if "eol_date" not in _ec: conn.execute(text("ALTER TABLE engineering_items ADD COLUMN eol_date DATE"))
+                if "lifecycle_notes" not in _ec: conn.execute(text("ALTER TABLE engineering_items ADD COLUMN lifecycle_notes TEXT"))
+            if insp.has_table("engineering_boms"):
+                _bc={c["name"] for c in insp.get_columns("engineering_boms")}
+                if "source_bom_id" not in _bc: conn.execute(text("ALTER TABLE engineering_boms ADD COLUMN source_bom_id INTEGER REFERENCES engineering_boms(id)"))
             if insp.has_table("engineering_boms") and "product_ncm" not in {c["name"] for c in insp.get_columns("engineering_boms")}: conn.execute(text("ALTER TABLE engineering_boms ADD COLUMN product_ncm VARCHAR(20)"))
             if insp.has_table("engineering_bom_items") and "cost_group" not in {c["name"] for c in insp.get_columns("engineering_bom_items")}: conn.execute(text("ALTER TABLE engineering_bom_items ADD COLUMN cost_group VARCHAR(30) DEFAULT 'MATERIAL'"))
         if not SchemaMigration.query.filter_by(version="V77.9.8-001").first():
@@ -16293,7 +16309,7 @@ def _eng_item_json(x):
     return {"id":x.id,"internal_part_number":x.internal_part_number,"manufacturer_part_number":x.manufacturer_part_number or "",
     "description_pt":x.description_pt or "","description_en":x.description_en or "","manufacturer":x.manufacturer or "",
     "category":x.category or "","ncm":getattr(x,"ncm",None) or "","unit":x.unit or "UN","default_origin":x.default_origin or "NACIONAL",
-    "default_supplier":getattr(x,"default_supplier",None) or "","supplier_part_number":getattr(x,"supplier_part_number",None) or "","default_currency":getattr(x,"default_currency",None) or "BRL","reference_unit_cost":float(getattr(x,"reference_unit_cost",0) or 0),"datasheet_url":x.datasheet_url or "","author":x.author or "","source_sheet":x.source_sheet or "","active":bool(x.active)}
+    "default_supplier":getattr(x,"default_supplier",None) or "","supplier_part_number":getattr(x,"supplier_part_number",None) or "","default_currency":getattr(x,"default_currency",None) or "BRL","reference_unit_cost":float(getattr(x,"reference_unit_cost",0) or 0),"item_type":getattr(x,"item_type",None) or "MATERIAL","lifecycle_status":getattr(x,"lifecycle_status",None) or "ATIVO","substitute_item_id":getattr(x,"substitute_item_id",None),"linked_bom_id":getattr(x,"linked_bom_id",None),"eol_date":x.eol_date.isoformat() if getattr(x,"eol_date",None) else None,"lifecycle_notes":getattr(x,"lifecycle_notes",None) or "","datasheet_url":x.datasheet_url or "","author":x.author or "","source_sheet":x.source_sheet or "","active":bool(x.active)}
 def _eng_bom_json(b):
     pairs=(db.session.query(EngineeringBomItem,EngineeringItem).join(EngineeringItem,EngineeringItem.id==EngineeringBomItem.item_id)
            .filter(EngineeringBomItem.bom_id==b.id).all())
@@ -16317,7 +16333,7 @@ def _eng_bom_json(b):
     return {"id":b.id,"product_code":b.product_code,"product_name":b.product_name,"product_ncm":getattr(b,"product_ncm",None) or "","revision":b.revision,"status":b.status,
     "quantity_reference":q,"currency_rate":b.currency_rate,"notes":b.notes or "","national_cost":round(nat,2),
     "imported_cost":round(imp,2),"consumption_cost":round(cons,2),"total_cost":round(total,2),"unit_cost":round(total/q,2),
-    "import_factor":factor,"usd_brl":usd,"items":items}
+    "import_factor":factor,"usd_brl":usd,"source_bom_id":getattr(b,"source_bom_id",None),"items":items}
 
 @app.get("/engenharia")
 @login_required
@@ -16356,7 +16372,14 @@ def engineering_item_save_api():
     x.default_supplier=_eng_norm(d.get("default_supplier"));x.supplier_part_number=_eng_norm(d.get("supplier_part_number"));x.default_currency=(_eng_norm(d.get("default_currency")) or "BRL").upper()
     try:x.reference_unit_cost=max(float(str(d.get("reference_unit_cost") or 0).replace(",",".")),0)
     except:x.reference_unit_cost=0
-    x.datasheet_url=_eng_norm(d.get("datasheet_url"));x.author=_eng_norm(d.get("author"));x.active=True
+    x.item_type=(_eng_norm(d.get("item_type")) or "MATERIAL").upper();x.lifecycle_status=(_eng_norm(d.get("lifecycle_status")) or "ATIVO").upper()
+    try:x.substitute_item_id=int(d.get("substitute_item_id")) if d.get("substitute_item_id") else None
+    except:x.substitute_item_id=None
+    try:x.linked_bom_id=int(d.get("linked_bom_id")) if d.get("linked_bom_id") else None
+    except:x.linked_bom_id=None
+    try:x.eol_date=datetime.strptime(d.get("eol_date"),"%Y-%m-%d").date() if d.get("eol_date") else None
+    except:x.eol_date=None
+    x.lifecycle_notes=_eng_norm(d.get("lifecycle_notes"));x.datasheet_url=_eng_norm(d.get("datasheet_url"));x.author=_eng_norm(d.get("author"));x.active=x.lifecycle_status not in ("INATIVO",)
     db.session.add(x);db.session.commit();return jsonify({"ok":True,"item":_eng_item_json(x)})
 
 @app.post("/api/engineering/items/import")
@@ -16394,6 +16417,34 @@ def engineering_items_import_api():
         db.session.commit();return jsonify({"ok":True,"created":created,"updated":updated,"skipped":skipped})
     except Exception as e:
         db.session.rollback();app.logger.exception("V72 Engenharia import");return jsonify({"ok":False,"error":str(e)}),400
+
+@app.get("/api/engineering/items/import-model.xlsx")
+@login_required
+def engineering_items_import_model_v782():
+    wb=Workbook();ws=wb.active;ws.title="Cadastro de Itens"
+    ws.append(["Código interno","MPN","NCM","Descrição PT","Descrição EN","Fabricante","Categoria","Unidade","Origem","Fornecedor","PN fornecedor","Moeda","Preço referência","Tipo item","Status ciclo de vida","Código substituto","Data EOL","Observações"])
+    ws.append(["EX-001","PN-001","8471.80.00","Exemplo de componente","Example component","Fabricante","ELETRÔNICO","UN","NACIONAL","Fornecedor","PN-FORN","BRL",10.5,"MATERIAL","ATIVO","","",""])
+    for c in ws[1]: c.font=Font(bold=True)
+    for col in ws.columns: ws.column_dimensions[col[0].column_letter].width=min(max(len(str(x.value or "")) for x in col)+2,28)
+    bio=io.BytesIO();wb.save(bio);bio.seek(0);return send_file(bio,as_attachment=True,download_name="Modelo_Cadastro_Itens_Engenharia_V78_2.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+@app.get("/api/engineering/items/<int:iid>/where-used")
+@login_required
+def engineering_item_where_used_v782(iid):
+    it=db.session.get(EngineeringItem,iid)
+    if not it:return jsonify({"ok":False,"error":"Item não encontrado."}),404
+    direct=[]
+    for bi,b in db.session.query(EngineeringBomItem,EngineeringBom).join(EngineeringBom,EngineeringBom.id==EngineeringBomItem.bom_id).filter(EngineeringBomItem.item_id==iid).all():
+        direct.append({"bom_id":b.id,"product_code":b.product_code,"product_name":b.product_name,"revision":b.revision,"status":b.status,"quantity":bi.quantity})
+    indirect=[]
+    # Se o item compõe uma BOM vinculada a um item SUBESTRUTURA, localiza onde essa subestrutura é usada.
+    parent_bom_ids={x[1].id for x in db.session.query(EngineeringBomItem,EngineeringBom).join(EngineeringBom,EngineeringBom.id==EngineeringBomItem.bom_id).filter(EngineeringBomItem.item_id==iid).all()}
+    if parent_bom_ids:
+        subitems=EngineeringItem.query.filter(EngineeringItem.linked_bom_id.in_(parent_bom_ids)).all()
+        for sub in subitems:
+            for bi,b in db.session.query(EngineeringBomItem,EngineeringBom).join(EngineeringBom,EngineeringBom.id==EngineeringBomItem.bom_id).filter(EngineeringBomItem.item_id==sub.id).all():
+                indirect.append({"via_item_id":sub.id,"via_code":sub.internal_part_number,"via_description":sub.description_pt,"bom_id":b.id,"product_code":b.product_code,"product_name":b.product_name,"revision":b.revision,"status":b.status})
+    return jsonify({"ok":True,"item":_eng_item_json(it),"direct":direct,"indirect":indirect,"impact_count":len(direct)+len(indirect)})
 
 @app.get("/api/engineering/boms")
 @login_required
@@ -16493,8 +16544,9 @@ def engineering_bom_clone_api(bid):
     if not ((_has_access("engineering.bom.manage")) or ((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower() in ("admin","adm","administrator","manager","gestor"))):return jsonify({"ok":False,"error":"Sem permissão."}),403
     s=db.session.get(EngineeringBom,bid);d=request.get_json(silent=True) or {};rev=_eng_norm(d.get("revision"))
     if not s or not rev:return jsonify({"ok":False,"error":"BOM/revisão inválida."}),400
-    if EngineeringBom.query.filter(func.lower(EngineeringBom.product_code)==s.product_code.lower(),func.lower(EngineeringBom.revision)==rev.lower()).first():return jsonify({"ok":False,"error":"Revisão já existente."}),409
-    n=EngineeringBom(product_code=s.product_code,product_name=s.product_name,product_ncm=getattr(s,"product_ncm",None),revision=rev,status="RASCUNHO",quantity_reference=s.quantity_reference,currency_rate=s.currency_rate,notes=s.notes,created_by=session.get("user_id"))
+    code=_eng_norm(d.get("product_code")) or s.product_code;name=_eng_norm(d.get("product_name")) or s.product_name
+    if EngineeringBom.query.filter(func.lower(EngineeringBom.product_code)==code.lower(),func.lower(EngineeringBom.revision)==rev.lower()).first():return jsonify({"ok":False,"error":"Estrutura/revisão já existente."}),409
+    n=EngineeringBom(product_code=code,product_name=name,product_ncm=getattr(s,"product_ncm",None),revision=rev,status="RASCUNHO",quantity_reference=s.quantity_reference,currency_rate=s.currency_rate,notes=s.notes,source_bom_id=s.id,created_by=session.get("user_id"))
     db.session.add(n);db.session.flush()
     for x in EngineeringBomItem.query.filter_by(bom_id=s.id):
         db.session.add(EngineeringBomItem(bom_id=n.id,item_id=x.item_id,quantity=x.quantity,origin=x.origin,cost_group=getattr(x,"cost_group",None) or "MATERIAL",supplier=x.supplier,supplier_part_number=x.supplier_part_number,lead_time_days=x.lead_time_days,unit_cost=x.unit_cost,currency=x.currency,notes=x.notes))
@@ -16696,7 +16748,7 @@ def v713_pending_export():
     ws.freeze_panes='A2'; ws.auto_filter.ref=ws.dimensions
     widths=[22,28,24,30,26,18,32,26]
     for i,w in enumerate(widths,1): ws.column_dimensions[get_column_letter(i)].width=w
-    bio=BytesIO(); wb.save(bio); bio.seek(0)
+    bio=io.BytesIO(); wb.save(bio); bio.seek(0)
     return send_file(bio,as_attachment=True,download_name=f"pendencias_operacionais_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 # -----------------------------------------------------------------------------
@@ -17671,7 +17723,7 @@ def v77_bobbins_export():
         for c in sh[1]:c.font=Font(bold=True,color='FFFFFF');c.fill=PatternFill('solid',fgColor='315F93')
         sh.freeze_panes='A2';sh.auto_filter.ref=sh.dimensions
         for col in sh.columns:sh.column_dimensions[get_column_letter(col[0].column)].width=min(42,max(12,max(len(str(c.value or '')) for c in col)+2))
-    bio=BytesIO();wb.save(bio);bio.seek(0);return send_file(bio,as_attachment=True,download_name=f"bobinas_atm_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    bio=io.BytesIO();wb.save(bio);bio.seek(0);return send_file(bio,as_attachment=True,download_name=f"bobinas_atm_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "5000")), debug=False)
