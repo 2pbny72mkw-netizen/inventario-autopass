@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V77.9.8"
+APP_RELEASE = "V78"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -16588,6 +16588,42 @@ def engineering_bom_export_api(bid):
     ws.freeze_panes="A5";ws.auto_filter.ref=f"A4:N{ws.max_row}"
     for i in range(1,15):ws.column_dimensions[get_column_letter(i)].width=40 if i==4 else 20
     bio=io.BytesIO();wb.save(bio);bio.seek(0);return send_file(bio,as_attachment=True,download_name=f"BOM_{b.product_code}_{b.revision}.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+@app.get("/api/engineering/pricing/<int:sid>/export.xlsx")
+@login_required
+def engineering_pricing_export_api(sid):
+    if not (_has_access("engineering.pricing.view") or _has_access("engineering.bom.view") or ((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower() in ("admin","adm","administrator","manager","gestor"))):abort(403)
+    st=db.session.get(EngineeringPricingStudy,sid)
+    if not st:abort(404)
+    b=db.session.get(EngineeringBom,st.bom_id)
+    if not b:abort(404)
+    d=_eng_bom_json(b)
+    try:data=json.loads(st.data_json or "{}")
+    except:data={}
+    qty=max(float(st.quantity or 1),.000001);assembly=max(float(data.get("assembly") or 0),0);admin=max(float(data.get("admin_pct") or 0),0)/100
+    industrial=(float(d.get("unit_cost") or 0)+assembly)*(1+admin)
+    sale=data.get("sale") or {};gross=max(float(sale.get("gross") or 0),0);ipi=max(float(sale.get("ipi") or 0),0)/100;icms=max(float(sale.get("icms") or 0),0)/100;pis=max(float(sale.get("pis") or 0),0)/100;cof=max(float(sale.get("cofins") or 0),0)/100;iss=max(float(sale.get("iss") or 0),0)/100
+    no_ipi=gross/(1+ipi) if 1+ipi else gross;ipi_v=gross-no_ipi;icms_v=gross*icms;pis_v=no_ipi*pis;cof_v=no_ipi*cof;iss_v=no_ipi*iss;net=no_ipi-icms_v-pis_v-cof_v-iss_v;profit=net-industrial;margin=(profit/gross*100) if gross else 0
+    rent=data.get("rental") or {};years=max(float(rent.get("years") or 1),1);rm=max(float(rent.get("margin") or 0),0)/100;rt=max(float(rent.get("tax") or 0),0)/100;rr=max(float(rent.get("recurring") or 0),0)/100;den=1-rm-rt-rr;economic=industrial/den if den>0 else 0;months=years*12;monthly=economic/months if months else 0
+    wb=Workbook()
+    ws=wb.active;ws.title="Estrutura-BOM"
+    ws.append(["Produto",d["product_code"],d["product_name"],"NCM Produto",d.get("product_ncm",""),"Revisão",d["revision"],"Quantidade estudo",qty])
+    ws.append(["Nacional",d["national_cost"],"Importado nacionalizado",d["imported_cost"],"Consumo",d.get("consumption_cost",0),"Total BOM",d["total_cost"],"Custo unitário",d["unit_cost"]]);ws.append([])
+    ws.append(["Código Interno","MPN","NCM Item","Descrição","Qtd.","Grupo","Origem","Fornecedor","PN Fornecedor","Lead Time","Moeda","FOB/Custo Unit.","Custo Nac. Unit.","Total Nac."])
+    for x in d["items"]:ws.append([x["internal_part_number"],x["manufacturer_part_number"],x.get("ncm","") ,x["description"],x["quantity"],x.get("cost_group","MATERIAL"),x["origin"],x["supplier"],x["supplier_part_number"],x["lead_time_days"],x["currency"],x["unit_cost"],x.get("nationalized_unit_cost",x["unit_cost"]),x["total_cost"]])
+    sv=wb.create_sheet("Preço de Venda");sv.append(["Estudo",st.study_name,"Produto",d["product_code"],"Revisão",d["revision"],"Quantidade",qty]);sv.append([]);sv.append(["Componente","Valor"])
+    for row in [("Nacionais (BOM)",d["national_cost"]/(d["quantity_reference"] or 1)),("Importados nacionalizados",d["imported_cost"]/(d["quantity_reference"] or 1)),("Consumo",d.get("consumption_cost",0)/(d["quantity_reference"] or 1)),("Montagem / mão de obra",assembly),("Despesas ADM (%)",admin*100),("Fator importação",d.get("import_factor",1.8)),("USD / BRL",d.get("usd_brl",0)),("Custo industrial unitário",industrial),("Venda c/ IPI",gross),("IPI",ipi_v),("Valor s/ IPI",no_ipi),("ICMS",icms_v),("PIS",pis_v),("COFINS",cof_v),("ISS",iss_v),("Venda líquida",net),("Lucro unitário",profit),("Margem efetiva (%)",margin),("Venda total do lote",gross*qty)]:sv.append(row)
+    rv=wb.create_sheet("Preço de Locação");rv.append(["Estudo",st.study_name,"Produto",d["product_code"],"Revisão",d["revision"],"Quantidade",qty]);rv.append([]);rv.append(["Componente","Valor"])
+    for row in [("Custo industrial unitário",industrial),("Prazo (anos)",years),("Prazo (meses)",months),("Margem locação (%)",rm*100),("Impostos locação (%)",rt*100),("Custos recorrentes (%)",rr*100),("Valor econômico unitário",economic),("Locação mensal unitária",monthly),("Locação mensal do lote",monthly*qty),("Receita total do contrato",monthly*qty*months)]:rv.append(row)
+    for sh in wb.worksheets:
+        for cell in sh[1]:cell.font=Font(bold=True,color="FFFFFF");cell.fill=PatternFill("solid",fgColor="17365D")
+        if sh.max_row>=3:
+            for cell in sh[3]:cell.font=Font(bold=True,color="FFFFFF");cell.fill=PatternFill("solid",fgColor="17365D")
+        for i in range(1,sh.max_column+1):sh.column_dimensions[get_column_letter(i)].width=32 if i in (1,4) else 20
+    bio=io.BytesIO();wb.save(bio);bio.seek(0)
+    safe=re.sub(r'[^A-Za-z0-9_-]+','_',st.study_name or 'ESTUDO')
+    return send_file(bio,as_attachment=True,download_name=f"Engenharia_{safe}_{d['product_code']}_{d['revision']}.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
 # -----------------------------------------------------------------------------
