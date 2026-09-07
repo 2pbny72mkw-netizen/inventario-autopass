@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V77.9.6"
+APP_RELEASE = "V77.9.7"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -4326,15 +4326,26 @@ def inventory_atm_dashboard_api():
     except Exception:
         all_rows=[]
     all_rows=_v551_apply_contract_reference(all_rows)
+    # V77.9.7 — complementa a base oficial com dimensões operacionais da planilha ATM
+    # (Produto e Transaciona), mantendo ID TOP como chave de correlação e a base 602 como soberana.
+    try:
+        comp_rows=json.loads((DATA_DIR / "atm_complement_20260820.json").read_text(encoding="utf-8"))
+    except Exception:
+        comp_rows=[]
+    comp_by_id={str(x.get("ID TOP") or "").strip():x for x in comp_rows if str(x.get("ID TOP") or "").strip()}
+    for _a in all_rows:
+        _c=comp_by_id.get(str(_a.get("id_top") or "").strip()) or {}
+        _a["product"]=str(_c.get("PRODUTOS") or "").strip()
+        _a["transactions"]=str(_c.get("TRANSACIONA") or "").strip()
     # V55.4: modelo ATM é uma dimensão controlada. IDs/terminais numéricos não podem contaminar o filtro Modelo.
     valid_atm_models={"TCI","MK","MKNEO","TCINEO","MINIWALL","TCIPLUS","DCASH"}
     for _a in all_rows:
         _raw_model=str(_a.get("model") or "").strip().upper()
         _a["model_raw"]=_raw_model
         _a["model"]=_raw_model if _raw_model in valid_atm_models else "Modelo não identificado"
-    filters={k:(request.args.get(k) or "").strip() for k in ("company","line","locality","model","contract","ownership","status")}
+    filters={k:(request.args.get(k) or "").strip() for k in ("company","line","locality","model","contract","product","transactions","ownership","status")}
     teamviewer_missing=(request.args.get("teamviewer_missing") or "").strip() in ("1","true","TRUE","sim","SIM")
-    field_map={"company":"company","line":"line","locality":"locality","model":"model","contract":"contract","ownership":"ownership","status":"status"}
+    field_map={"company":"company","line":"line","locality":"locality","model":"model","contract":"contract","product":"product","transactions":"transactions","ownership":"ownership","status":"status"}
     rows=[x for x in all_rows if all(not filters[k] or str(x.get(field_map[k],""))==filters[k] for k in filters)]
     if teamviewer_missing:
         rows=[x for x in rows if not str(x.get("teamviewer_id") or "").strip()]
@@ -4364,11 +4375,11 @@ def inventory_atm_dashboard_api():
     return jsonify({"ok":True,"release":APP_RELEASE,"source":"INVENTARIO AUTOPASS - EQUIPAMENTOS DE CAMPO - 082026.xlsm / aba ATM",
         "official_total":602,"official_allocated":590,"official_stock":12,"total":len(rows),
         "allocated":sum(1 for x in rows if not x.get("stock")),"stock":sum(1 for x in rows if x.get("stock")),
-        "operators":agg("company"),"models":agg("model"),"contracts":agg("contract"),"ownership":agg("ownership"),"locations":agg("locality"),"lines":agg("line"),
+        "operators":agg("company"),"models":agg("model"),"contracts":agg("contract"),"products":agg("product"),"transactions":agg("transactions"),"ownership":agg("ownership"),"locations":agg("locality"),"lines":agg("line"),
         "cptm_stations":len({str(x.get("locality") or "").strip() for x in rows if str(x.get("company") or "").upper()=="CPTM" and str(x.get("locality") or "").strip()}),
         "metro_stations":len({str(x.get("locality") or "").strip() for x in rows if str(x.get("company") or "").upper() in ("METRÔ","METRO") and str(x.get("locality") or "").strip()}),
         "teamviewer_count":sum(1 for x in rows if str(x.get("teamviewer_id") or "").strip()),"assets":rows,
-        "options":{"companies":facet_options("company","company"),"lines":facet_options("line","line"),"localities":facet_options("locality","locality"),"models":facet_options("model","model"),"contracts":facet_options("contract","contract"),"ownership":facet_options("ownership","ownership"),"statuses":facet_options("status","status")}})
+        "options":{"companies":facet_options("company","company"),"lines":facet_options("line","line"),"localities":facet_options("locality","locality"),"models":facet_options("model","model"),"contracts":facet_options("contract","contract"),"products":facet_options("product","product"),"transactions":facet_options("transactions","transactions"),"ownership":facet_options("ownership","ownership"),"statuses":facet_options("status","status")}})
 
 @app.get("/api/dashboard/atm-financial")
 @login_required
@@ -14619,6 +14630,37 @@ def materials_catalog_api():
     _materials_require('materials.catalog.view')
     rows=MaterialCatalogItem.query.order_by(MaterialCatalogItem.active.desc(),MaterialCatalogItem.description).all()
     return jsonify({'ok':True,'rows':[{'id':x.id,'code':x.code,'category':x.category,'description':x.description,'brand':x.brand or '', 'model':x.model or '', 'unit':x.unit,'control_type':x.control_type,'quantity_mode':x.quantity_mode or 'INTEIRO','photo_file':x.photo_file or '', 'photo_url':('/uploads/'+x.photo_file+'?thumb=1' if x.photo_file else ''),'purchase_url':x.purchase_url or '','active':x.active} for x in rows]})
+
+@app.get('/api/materials/catalog/export.xlsx')
+@login_required
+def materials_catalog_export_api():
+    _materials_require('materials.catalog.view')
+    q=(request.args.get('q') or '').strip().casefold()
+    rows=MaterialCatalogItem.query.order_by(MaterialCatalogItem.active.desc(),MaterialCatalogItem.description).all()
+    if q:
+        rows=[x for x in rows if q in ' '.join([x.code or '',x.category or '',x.description or '',x.brand or '',x.model or '']).casefold()]
+    wb=Workbook(); ws=wb.active; ws.title='Catálogo de Materiais'
+    headers=['Foto','Código','Categoria','Descrição','Marca','Modelo','Unidade','Controle','Tipo de quantidade','Status','Link para compra','Criado em','Atualizado em']
+    ws.append(headers)
+    for c in ws[1]:
+        c.font=Font(bold=True,color='FFFFFF'); c.fill=PatternFill('solid',fgColor='173F6D'); c.alignment=Alignment(horizontal='center',vertical='center')
+    ws.freeze_panes='A2'; ws.auto_filter.ref=f'A1:M{max(1,len(rows)+1)}'
+    for idx,x in enumerate(rows,start=2):
+        ws.append(['',x.code,x.category,x.description,x.brand or '',x.model or '',x.unit,x.control_type,x.quantity_mode or 'INTEIRO','Ativo' if x.active else 'Inativo',x.purchase_url or '',x.created_at.strftime('%d/%m/%Y %H:%M') if x.created_at else '',x.updated_at.strftime('%d/%m/%Y %H:%M') if x.updated_at else ''])
+        ws.row_dimensions[idx].height=62
+        if x.photo_file:
+            try:
+                raw=_r2_get_bytes(x.photo_file[4:]) if x.photo_file.startswith('r2__') else (UPLOAD_DIR/x.photo_file).read_bytes()
+                img=XLImage(io.BytesIO(raw)); img.width=76; img.height=56; ws.add_image(img,f'A{idx}')
+            except Exception:
+                ws.cell(idx,1).value='Foto indisponível'
+        else:
+            ws.cell(idx,1).value='Sem foto'
+        for cell in ws[idx]: cell.alignment=Alignment(vertical='center',wrap_text=True)
+    widths={'A':14,'B':16,'C':18,'D':42,'E':20,'F':20,'G':10,'H':18,'I':20,'J':12,'K':42,'L':18,'M':18}
+    for col,w in widths.items(): ws.column_dimensions[col].width=w
+    bio=io.BytesIO(); wb.save(bio); bio.seek(0)
+    return send_file(bio,as_attachment=True,download_name=f"catalogo_materiais_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 @app.post('/api/materials/catalog')
 @login_required

@@ -1,0 +1,9 @@
+V77.9.7 — Dashboards, Bobinas e Catálogo
+
+1. Publicar os arquivos da versão e reiniciar a aplicação.
+2. Dashboard ATM: validar cabeçalho padrão POS, botão Exportar, filtros Produto e Transaciona.
+3. Clicar nos Big Numbers ATM/POS/Bloqueio e validar detalhamento, busca, fechar e exportar.
+4. Dashboard Bobinas: validar velocímetro semicircular de reservas e acesso ao detalhamento.
+5. Documentos & Materiais > Catálogo: validar Exportar catálogo e conferir dados/fotos no Excel.
+6. Validar responsividade e largura das dashboards.
+7. Coletar nova telemetria após o teste.
