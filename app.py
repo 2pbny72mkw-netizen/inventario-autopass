@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V78.2 REV1"
+APP_RELEASE = "V78.2 REV3"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -545,6 +545,10 @@ class EngineeringItem(db.Model):
     datasheet_url=db.Column(db.String(1200))
     author=db.Column(db.String(160))
     source_sheet=db.Column(db.String(160))
+    source_key=db.Column(db.String(80),index=True)
+    brand=db.Column(db.String(180),index=True)
+    supplier_cnpj=db.Column(db.String(30),index=True)
+    source_payload_json=db.Column(db.Text)
     active=db.Column(db.Boolean,nullable=False,default=True,index=True)
     created_by=db.Column(db.Integer,db.ForeignKey("users.id"))
     created_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow)
@@ -15998,6 +16002,10 @@ with app.app_context():
                 if "linked_bom_id" not in _ec: conn.execute(text("ALTER TABLE engineering_items ADD COLUMN linked_bom_id INTEGER REFERENCES engineering_boms(id)"))
                 if "eol_date" not in _ec: conn.execute(text("ALTER TABLE engineering_items ADD COLUMN eol_date DATE"))
                 if "lifecycle_notes" not in _ec: conn.execute(text("ALTER TABLE engineering_items ADD COLUMN lifecycle_notes TEXT"))
+                if "source_key" not in _ec: conn.execute(text("ALTER TABLE engineering_items ADD COLUMN source_key VARCHAR(80)"))
+                if "brand" not in _ec: conn.execute(text("ALTER TABLE engineering_items ADD COLUMN brand VARCHAR(180)"))
+                if "supplier_cnpj" not in _ec: conn.execute(text("ALTER TABLE engineering_items ADD COLUMN supplier_cnpj VARCHAR(30)"))
+                if "source_payload_json" not in _ec: conn.execute(text("ALTER TABLE engineering_items ADD COLUMN source_payload_json TEXT"))
             if insp.has_table("engineering_boms"):
                 _bc={c["name"] for c in insp.get_columns("engineering_boms")}
                 if "source_bom_id" not in _bc: conn.execute(text("ALTER TABLE engineering_boms ADD COLUMN source_bom_id INTEGER REFERENCES engineering_boms(id)"))
@@ -16309,7 +16317,7 @@ def _eng_item_json(x):
     return {"id":x.id,"internal_part_number":x.internal_part_number,"manufacturer_part_number":x.manufacturer_part_number or "",
     "description_pt":x.description_pt or "","description_en":x.description_en or "","manufacturer":x.manufacturer or "",
     "category":x.category or "","ncm":getattr(x,"ncm",None) or "","unit":x.unit or "UN","default_origin":x.default_origin or "NACIONAL",
-    "default_supplier":getattr(x,"default_supplier",None) or "","supplier_part_number":getattr(x,"supplier_part_number",None) or "","default_currency":getattr(x,"default_currency",None) or "BRL","reference_unit_cost":float(getattr(x,"reference_unit_cost",0) or 0),"item_type":getattr(x,"item_type",None) or "MATERIAL","lifecycle_status":getattr(x,"lifecycle_status",None) or "ATIVO","substitute_item_id":getattr(x,"substitute_item_id",None),"linked_bom_id":getattr(x,"linked_bom_id",None),"eol_date":x.eol_date.isoformat() if getattr(x,"eol_date",None) else None,"lifecycle_notes":getattr(x,"lifecycle_notes",None) or "","datasheet_url":x.datasheet_url or "","author":x.author or "","source_sheet":x.source_sheet or "","active":bool(x.active)}
+    "default_supplier":getattr(x,"default_supplier",None) or "","supplier_part_number":getattr(x,"supplier_part_number",None) or "","default_currency":getattr(x,"default_currency",None) or "BRL","reference_unit_cost":float(getattr(x,"reference_unit_cost",0) or 0),"item_type":getattr(x,"item_type",None) or "MATERIAL","lifecycle_status":getattr(x,"lifecycle_status",None) or "ATIVO","substitute_item_id":getattr(x,"substitute_item_id",None),"linked_bom_id":getattr(x,"linked_bom_id",None),"eol_date":x.eol_date.isoformat() if getattr(x,"eol_date",None) else None,"lifecycle_notes":getattr(x,"lifecycle_notes",None) or "","datasheet_url":x.datasheet_url or "","author":x.author or "","source_sheet":x.source_sheet or "","source_key":getattr(x,"source_key",None) or "","brand":getattr(x,"brand",None) or "","supplier_cnpj":getattr(x,"supplier_cnpj",None) or "","active":bool(x.active)}
 def _eng_bom_json(b):
     pairs=(db.session.query(EngineeringBomItem,EngineeringItem).join(EngineeringItem,EngineeringItem.id==EngineeringBomItem.item_id)
            .filter(EngineeringBomItem.bom_id==b.id).all())
@@ -16382,51 +16390,135 @@ def engineering_item_save_api():
     x.lifecycle_notes=_eng_norm(d.get("lifecycle_notes"));x.datasheet_url=_eng_norm(d.get("datasheet_url"));x.author=_eng_norm(d.get("author"));x.active=x.lifecycle_status not in ("INATIVO",)
     db.session.add(x);db.session.commit();return jsonify({"ok":True,"item":_eng_item_json(x)})
 
+def _eng_official_decimal(v):
+    if v is None or v == "": return 0.0
+    if isinstance(v,(int,float)): return float(v)
+    t=str(v).strip().replace("R$","").replace("US$","").replace(" ","")
+    if not t:return 0.0
+    if "," in t and "." in t:
+        if t.rfind(",")>t.rfind("."):t=t.replace(".","").replace(",",".")
+        else:t=t.replace(",","")
+    elif "," in t:t=t.replace(".","").replace(",",".")
+    try:return float(t)
+    except:return 0.0
+
+def _eng_official_currency(v):
+    t=_eng_norm(v).upper()
+    if t in ("REAL","REAIS","BRL","R$"):return "BRL"
+    if t in ("DOLAR","DÓLAR","USD","US$"):return "USD"
+    if t in ("EURO","EUR","€"):return "EUR"
+    return t or "BRL"
+
+def _eng_parse_official_base(source):
+    wb=load_workbook(source,read_only=True,data_only=True)
+    ws=wb["SQL Results"] if "SQL Results" in wb.sheetnames else wb[wb.sheetnames[0]]
+    rows=ws.iter_rows(values_only=True)
+    try:headers=[str(x or "").strip().upper() for x in next(rows)]
+    except StopIteration:raise ValueError("Planilha oficial vazia.")
+    idx={h:i for i,h in enumerate(headers) if h}
+    required=("CODIGO","DESCRICAO","DESCR_STATUS","DESCR_FAMILIA","DESCR_GRUPO")
+    missing=[x for x in required if x not in idx]
+    if missing:raise ValueError("Base incompatível. Colunas oficiais ausentes: "+", ".join(missing))
+    out=[];seen=set();duplicates=[];skipped=0
+    def cell(row,name):
+        i=idx.get(name);return row[i] if i is not None and i<len(row) else None
+    for rn,row in enumerate(rows,2):
+        code=_eng_norm(cell(row,"CODIGO"));desc=_eng_norm(cell(row,"DESCRICAO"))
+        if not code and not desc:continue
+        if not code or not desc:skipped+=1;continue
+        key=code.upper()
+        if key in seen:duplicates.append(f"linha {rn}: {code}");continue
+        seen.add(key)
+        status=(_eng_norm(cell(row,"DESCR_STATUS")) or "ATIVO").upper()
+        origin=(_eng_norm(cell(row,"DESCR_FAMILIA")) or "NACIONAL").upper()
+        if "IMPORT" in origin:origin="IMPORTADO"
+        elif "NACION" in origin:origin="NACIONAL"
+        supplier_name=_eng_norm(cell(row,"NOME REDUZIDO"));supplier_cnpj=_eng_norm(cell(row,"CNPJ_FORNECEDOR"))
+        raw={headers[i]:row[i] for i in range(min(len(headers),len(row))) if headers[i] and row[i] not in (None,"")}
+        for k,v in list(raw.items()):
+            if isinstance(v,(datetime,date)):raw[k]=v.isoformat()
+            elif not isinstance(v,(str,int,float,bool,type(None))):raw[k]=str(v)
+        out.append({
+            "code":code,"source_key":_eng_norm(cell(row,"CHAVE")),"codigo_interno_origem":_eng_norm(cell(row,"CODIGO_INTERNO")),
+            "description":desc,"description_en":"","manufacturer":_eng_norm(cell(row,"FABRICANTE")),"brand":_eng_norm(cell(row,"MARCA")),
+            "category":_eng_norm(cell(row,"DESCR_GRUPO")) or _eng_norm(cell(row,"DESCR_LINHA")),"ncm":_eng_norm(cell(row,"CLASSIFICACAO")),
+            "unit":_eng_norm(cell(row,"DESCR_UNID")) or "UN","origin":origin,"supplier":supplier_name or supplier_cnpj,"supplier_cnpj":supplier_cnpj,
+            "currency":_eng_official_currency(cell(row,"HOMOLOG_DESCR_MOEDA") or cell(row,"MOEDA_BASE_PARA_CUSTOS")),
+            "reference_cost":max(_eng_official_decimal(cell(row,"HOMOLOG_PRECO_VENDA")),0),"status":status,"active":status=="ATIVO",
+            "payload":json.dumps(raw,ensure_ascii=False,separators=(",",":"))
+        })
+    if duplicates:raise ValueError("A base oficial contém códigos duplicados: "+"; ".join(duplicates[:10]))
+    if not out:raise ValueError("Nenhum item válido encontrado na base oficial.")
+    return out,skipped
+
+def _eng_sync_official_base(source,user_id=None):
+    rows,skipped=_eng_parse_official_base(source)
+    existing={str(x.internal_part_number or "").upper():x for x in EngineeringItem.query.all()}
+    official_codes={r["code"].upper() for r in rows}
+    stale=[x for k,x in existing.items() if k not in official_codes]
+    stale_ids=[x.id for x in stale]
+    removed_bom_items=0
+    if stale_ids:
+        EngineeringItem.query.filter(EngineeringItem.substitute_item_id.in_(stale_ids)).update({EngineeringItem.substitute_item_id:None},synchronize_session=False)
+        removed_bom_items=EngineeringBomItem.query.filter(EngineeringBomItem.item_id.in_(stale_ids)).delete(synchronize_session=False)
+        EngineeringItem.query.filter(EngineeringItem.id.in_(stale_ids)).delete(synchronize_session=False)
+    created=updated=0
+    for r in rows:
+        x=existing.get(r["code"].upper())
+        if x is None:
+            x=EngineeringItem(internal_part_number=r["code"],created_by=user_id);created+=1
+        else:updated+=1
+        x.internal_part_number=r["code"]
+        # A base oficial não possui MPN/PN de fornecedor dedicado; não inferir a partir de CODIGO_INTERNO.
+        x.manufacturer_part_number="";x.supplier_part_number=""
+        x.description_pt=r["description"];x.description_en=r["description_en"];x.manufacturer=r["manufacturer"];x.brand=r["brand"]
+        x.category=r["category"];x.ncm=r["ncm"];x.unit=r["unit"];x.default_origin=r["origin"];x.default_supplier=r["supplier"];x.supplier_cnpj=r["supplier_cnpj"]
+        x.default_currency=r["currency"];x.reference_unit_cost=r["reference_cost"];x.item_type="MATERIAL";x.lifecycle_status=r["status"] if r["status"] else "ATIVO"
+        x.substitute_item_id=None;x.linked_bom_id=None;x.eol_date=None;x.lifecycle_notes="";x.datasheet_url="";x.author="BASE OFICIAL BOHM"
+        x.source_sheet="BASE_CADASTRO_BOHM_V8 / SQL Results";x.source_key=r["source_key"];x.source_payload_json=r["payload"];x.active=bool(r["active"])
+        db.session.add(x)
+    db.session.flush()
+    db.session.commit()
+    return {"created":created,"updated":updated,"deleted":len(stale),"removed_bom_items":removed_bom_items,"skipped":skipped,"total":len(rows),
+            "active":sum(1 for r in rows if r["active"]),"national":sum(1 for r in rows if r["origin"]=="NACIONAL"),"imported":sum(1 for r in rows if r["origin"]=="IMPORTADO")}
+
+# V78.2 REV3 — BASE_CADASTRO_BOHM_V8 é a fonte oficial do Cadastro Mestre de Itens.
+# A sincronização é executada uma única vez por ambiente; futuras atualizações usam o botão de importação.
+with app.app_context():
+    try:
+        _official_marker="V78.2-REV3-ENGINEERING-OFFICIAL-BASE"
+        _official_path=BASE_DIR/"data"/"BASE_CADASTRO_BOHM_V8.xlsx"
+        if _official_path.exists() and not SchemaMigration.query.filter_by(version=_official_marker).first():
+            _stats=_eng_sync_official_base(_official_path,None)
+            db.session.add(SchemaMigration(version=_official_marker,description=f"Base oficial Engenharia BOHM: {_stats['total']} itens; {_stats['national']} nacionais; {_stats['imported']} importados"))
+            db.session.commit()
+            app.logger.info("V78.2 REV3 base oficial Engenharia sincronizada: %s",_stats)
+    except Exception:
+        try:db.session.rollback()
+        except Exception:pass
+        app.logger.exception("V78.2 REV3: falha ao sincronizar BASE_CADASTRO_BOHM_V8")
+
 @app.post("/api/engineering/items/import")
 @login_required
 def engineering_items_import_api():
     if not ((_has_access("engineering.import")) or ((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower() in ("admin","adm","administrator","manager","gestor"))):return jsonify({"ok":False,"error":"Sem permissão."}),403
     f=request.files.get("file")
-    if not f:return jsonify({"ok":False,"error":"Selecione a planilha."}),400
+    if not f:return jsonify({"ok":False,"error":"Selecione a BASE_CADASTRO_BOHM_V8.xlsx ou uma atualização no mesmo layout oficial."}),400
     try:
-        wb=load_workbook(f.stream,read_only=True,data_only=True);created=updated=skipped=0
-        for ws in wb.worksheets:
-            hr=None;heads=[]
-            for rn,row in enumerate(ws.iter_rows(min_row=1,max_row=min(ws.max_row,30),values_only=True),1):
-                hh=[_eng_header(v) for v in row]
-                if any(("internal part number" in h or "codigo interno" in h) for h in hh):hr=rn;heads=hh;break
-            if not hr:continue
-            def col(*names):
-                for i,h in enumerate(heads):
-                    if any(n in h for n in names):return i
-                return None
-            ci=col("internal part number","codigo interno");cm=col("manufacturer part number","manufacture part number","mpn","codigo fabricante")
-            cpt=col("technical description portuguese","descricao tecnica portugues","description portuguese");cncm=col("ncm","ncm item")
-            cen=col("technical description english","description english");cf=col("manufacturer","fabricante");cd=col("datasheet","data sheet");ca=col("author","autor")
-            for row in ws.iter_rows(min_row=hr+1,values_only=True):
-                code=_eng_norm(row[ci] if ci is not None and ci<len(row) else "")
-                if not code:continue
-                pt=_eng_norm(row[cpt] if cpt is not None and cpt<len(row) else "");en=_eng_norm(row[cen] if cen is not None and cen<len(row) else "")
-                if not(pt or en):skipped+=1;continue
-                x=EngineeringItem.query.filter(func.lower(EngineeringItem.internal_part_number)==code.lower()).first();new=x is None
-                if new:x=EngineeringItem(internal_part_number=code,created_by=session.get("user_id"))
-                x.manufacturer_part_number=_eng_norm(row[cm] if cm is not None and cm<len(row) else "");x.description_pt=pt or en;x.description_en=en
-                x.manufacturer=_eng_norm(row[cf] if cf is not None and cf<len(row) else "");x.category=ws.title;x.ncm=_eng_norm(row[cncm] if cncm is not None and cncm<len(row) else getattr(x,"ncm",None))
-                x.datasheet_url=_eng_norm(row[cd] if cd is not None and cd<len(row) else "");x.author=_eng_norm(row[ca] if ca is not None and ca<len(row) else "")
-                x.source_sheet=ws.title;x.unit=x.unit or "UN";x.active=True;db.session.add(x);created+=int(new);updated+=int(not new)
-        db.session.commit();return jsonify({"ok":True,"created":created,"updated":updated,"skipped":skipped})
+        stats=_eng_sync_official_base(f.stream,session.get("user_id"))
+        try:
+            db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="ENGINEERING_OFFICIAL_BASE_IMPORTED",entity_type="engineering_items",entity_id="BASE_CADASTRO_BOHM_V8",detail=json.dumps(stats,ensure_ascii=False)));db.session.commit()
+        except Exception:db.session.rollback()
+        return jsonify({"ok":True,**stats,"official_base":"BASE_CADASTRO_BOHM_V8"})
     except Exception as e:
-        db.session.rollback();app.logger.exception("V72 Engenharia import");return jsonify({"ok":False,"error":str(e)}),400
+        db.session.rollback();app.logger.exception("V78.2 REV3 base oficial Engenharia");return jsonify({"ok":False,"error":str(e)}),400
 
 @app.get("/api/engineering/items/import-model.xlsx")
 @login_required
 def engineering_items_import_model_v782():
-    wb=Workbook();ws=wb.active;ws.title="Cadastro de Itens"
-    ws.append(["Código interno","MPN","NCM","Descrição PT","Descrição EN","Fabricante","Categoria","Unidade","Origem","Fornecedor","PN fornecedor","Moeda","Preço referência","Tipo item","Status ciclo de vida","Código substituto","Data EOL","Observações"])
-    ws.append(["EX-001","PN-001","8471.80.00","Exemplo de componente","Example component","Fabricante","ELETRÔNICO","UN","NACIONAL","Fornecedor","PN-FORN","BRL",10.5,"MATERIAL","ATIVO","","",""])
-    for c in ws[1]: c.font=Font(bold=True)
-    for col in ws.columns: ws.column_dimensions[col[0].column_letter].width=min(max(len(str(x.value or "")) for x in col)+2,28)
-    bio=io.BytesIO();wb.save(bio);bio.seek(0);return send_file(bio,as_attachment=True,download_name="Modelo_Cadastro_Itens_Engenharia_V78_2.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    path=BASE_DIR/"data"/"BASE_CADASTRO_BOHM_V8.xlsx"
+    if not path.exists():return jsonify({"ok":False,"error":"Base oficial de Engenharia não encontrada no pacote."}),404
+    return send_file(path,as_attachment=True,download_name="BASE_CADASTRO_BOHM_V8_OFICIAL.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 @app.get("/api/engineering/items/<int:iid>/where-used")
 @login_required
