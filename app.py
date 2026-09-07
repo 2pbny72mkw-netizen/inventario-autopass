@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V77.9.7"
+APP_RELEASE = "V77.9.8"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -529,6 +529,7 @@ class EngineeringItem(db.Model):
     description_en=db.Column(db.String(500))
     manufacturer=db.Column(db.String(180),index=True)
     category=db.Column(db.String(120),index=True)
+    ncm=db.Column(db.String(20),index=True)
     unit=db.Column(db.String(30),nullable=False,default="UN")
     default_origin=db.Column(db.String(30),default="NACIONAL")
     datasheet_url=db.Column(db.String(1200))
@@ -544,6 +545,7 @@ class EngineeringBom(db.Model):
     id=db.Column(db.Integer,primary_key=True)
     product_code=db.Column(db.String(100),nullable=False,index=True)
     product_name=db.Column(db.String(240),nullable=False)
+    product_ncm=db.Column(db.String(20),index=True)
     revision=db.Column(db.String(60),nullable=False,default="REV01")
     status=db.Column(db.String(30),nullable=False,default="RASCUNHO",index=True)
     quantity_reference=db.Column(db.Float,nullable=False,default=1)
@@ -561,6 +563,7 @@ class EngineeringBomItem(db.Model):
     item_id=db.Column(db.Integer,db.ForeignKey("engineering_items.id"),nullable=False,index=True)
     quantity=db.Column(db.Float,nullable=False,default=1)
     origin=db.Column(db.String(30),nullable=False,default="NACIONAL",index=True)
+    cost_group=db.Column(db.String(30),nullable=False,default="MATERIAL",index=True)
     supplier=db.Column(db.String(180))
     supplier_part_number=db.Column(db.String(180))
     lead_time_days=db.Column(db.Integer)
@@ -570,6 +573,17 @@ class EngineeringBomItem(db.Model):
     created_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow)
     updated_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow,onupdate=datetime.utcnow)
     __table_args__=(UniqueConstraint("bom_id","item_id",name="uq_engineering_bom_item"),)
+
+class EngineeringPricingStudy(db.Model):
+    __tablename__="engineering_pricing_studies"
+    id=db.Column(db.Integer,primary_key=True)
+    bom_id=db.Column(db.Integer,db.ForeignKey("engineering_boms.id",ondelete="CASCADE"),nullable=False,index=True)
+    study_name=db.Column(db.String(120),nullable=False,default="ESTUDO")
+    quantity=db.Column(db.Float,nullable=False,default=1)
+    data_json=db.Column(db.Text,nullable=False,default="{}")
+    created_by=db.Column(db.Integer,db.ForeignKey("users.id"))
+    created_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow)
+    updated_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow,onupdate=datetime.utcnow)
 
 # V67 — Dossiê do Colaborador / Materiais e Ferramentas
 class MaterialCatalogItem(db.Model):
@@ -1831,7 +1845,7 @@ ACCESS_GROUPS = {
         "materials.my_documents","materials.request","materials.catalog.view","materials.catalog.manage","materials.kits.manage","materials.delivery.create","materials.delivery.manage","materials.dossier.view","materials.access_lists.view","materials.access_lists.manage"
     )),
     "engineering": ("Engenharia", (
-        "engineering.items.view","engineering.items.manage","engineering.bom.view","engineering.bom.manage","engineering.import"
+        "engineering.items.view","engineering.items.manage","engineering.bom.view","engineering.bom.manage","engineering.import","engineering.pricing.view","engineering.pricing.manage"
     )),
     "portal": ("Portal do Cliente", ("portal.appointments","portal.receive","portal.manage")),
     "arrow": ("Arrow", ("arrow.view","arrow.manage","arrow.dashboard","arrow.remote")),
@@ -1849,7 +1863,7 @@ ACCESS_LABELS = {
  "finance.dashboard":"Dashboard Financeira","finance.support":"Suporte a Campo","finance.collection":"Coleta de Valores","finance.apuracao":"Apuração de Numerário","finance.assistance":"Assistência Técnica","finance.implantation":"Implantação de Hardware","finance.entries":"Lançamentos","finance.suppliers":"Empresas / Fornecedores","finance.import":"Importar planilha","finance.edit":"Editar lançamentos","finance.delete":"Excluir lançamentos",
  "management.calls":"Chamados","management.360":"Central 360","management.notifications":"Notificações","management.diagnostics":"Diagnóstico","management.health":"Saúde da Plataforma","management.settings":"Configurações","management.dashboard_config":"Configuração de Dashboards","management.profiles":"Perfis & Permissões","management.gps_history":"Histórico GPS por estações","management.work_authorizations":"Autorizações de jornada","management.links":"Resumo dos Links","management.external_locations":"Localidades externas",
  "materials.my_documents":"Meus documentos / Minha carga","materials.request":"Solicitar material","materials.catalog.view":"Visualizar catálogo","materials.catalog.manage":"Cadastrar / editar / inativar materiais","materials.kits.manage":"Gerenciar kits","materials.delivery.create":"Criar e enviar entregas","materials.delivery.manage":"Gerenciar aceites / correções","materials.dossier.view":"Dossiê dos colaboradores","materials.access_lists.view":"Listas de acesso Metrô / CPTM","materials.access_lists.manage":"Gerar / validar listas de acesso",
- "engineering.items.view":"Visualizar cadastro de itens","engineering.items.manage":"Cadastrar / editar itens","engineering.bom.view":"Visualizar estruturas BOM","engineering.bom.manage":"Criar / revisar BOM","engineering.import":"Importar planilhas de Engenharia",
+ "engineering.items.view":"Visualizar cadastro de itens","engineering.items.manage":"Cadastrar / editar itens","engineering.bom.view":"Visualizar estruturas BOM","engineering.bom.manage":"Criar / revisar BOM","engineering.import":"Importar planilhas de Engenharia","engineering.pricing.view":"Visualizar formação de preço","engineering.pricing.manage":"Criar / editar estudos de preço",
  "portal.appointments":"Criar / consultar agendamentos","portal.receive":"Receber agendamentos","portal.manage":"Administrar Portal do Cliente",
  "arrow.view":"Visualizar Arrow","arrow.manage":"Gerenciar Arrow / alocações","arrow.dashboard":"Dashboard Arrow","arrow.remote":"TeamViewer / Atendimento Remoto",
  "about.versions":"Histórico / Versões",
@@ -1867,7 +1881,7 @@ def _expand_legacy_access(values):
 def _default_access_for_role(role):
     defaults={
       "manager":set(ACCESS_SUBMODULES),
-      "manager_field":{"engineering.items.view","engineering.bom.view","materials.my_documents","materials.request","materials.catalog.view","materials.catalog.manage","materials.kits.manage","materials.delivery.create","materials.delivery.manage","materials.dossier.view","dashboard.general","field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.firmware_pos_cptm","field.bobbins","field.bobbins_dashboard","field.stock_manage","implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage","teams.map","teams.today","teams.schedule","teams.manage","teams.export","teams.apt","finance.dashboard","management.calls","management.360","management.notifications","management.diagnostics","management.gps_history","management.work_authorizations","portal.receive","portal.manage","arrow.view","arrow.manage","arrow.dashboard","arrow.remote","materials.access_lists.view","materials.access_lists.manage","about.versions"},
+      "manager_field":{"engineering.items.view","engineering.bom.view","engineering.pricing.view","materials.my_documents","materials.request","materials.catalog.view","materials.catalog.manage","materials.kits.manage","materials.delivery.create","materials.delivery.manage","materials.dossier.view","dashboard.general","field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.firmware_pos_cptm","field.bobbins","field.bobbins_dashboard","field.stock_manage","implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage","teams.map","teams.today","teams.schedule","teams.manage","teams.export","teams.apt","finance.dashboard","management.calls","management.360","management.notifications","management.diagnostics","management.gps_history","management.work_authorizations","portal.receive","portal.manage","arrow.view","arrow.manage","arrow.dashboard","arrow.remote","materials.access_lists.view","materials.access_lists.manage","about.versions"},
       "technician":{"materials.my_documents","materials.request","field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.firmware_pos_cptm","field.bobbins","about.versions"},
       "technician_implantation":{"materials.my_documents","materials.request","field.inventory","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.firmware_pos_cptm","field.bobbins","implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage","about.versions"},
       "consultation":{"dashboard.general","field.dashboard","field.inventory","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.firmware_pos_cptm","field.bobbins_dashboard","teams.map","teams.today","teams.schedule","about.versions"},
@@ -2164,6 +2178,8 @@ def _v72_defaults():
         "journey_default_field": 1,
         "journey_default_implantation": 0,
         "bobbin_photo_retention_days": 7,
+        "engineering_import_factor": 1.8,
+        "engineering_usd_brl": 5.40,
     }
 
 def _v72_settings():
@@ -13489,6 +13505,12 @@ def v50_settings_api():
             except Exception: return jsonify({"ok":False,"error":f"Valor inválido para {key}."}),400
             if not lo <= val <= hi: return jsonify({"ok":False,"error":f"{key} deve ficar entre {lo} e {hi}."}),400
             current[key]=val
+    for key,lo,hi in (("engineering_import_factor",1.0,5.0),("engineering_usd_brl",1.0,20.0)):
+        if key in payload:
+            try: val=float(payload[key])
+            except Exception:return jsonify({"ok":False,"error":f"Valor inválido para {key}."}),400
+            if not lo<=val<=hi:return jsonify({"ok":False,"error":f"{key} deve ficar entre {lo} e {hi}."}),400
+            current[key]=val
     V50_SETTINGS_PATH.write_text(json.dumps(current,ensure_ascii=False,indent=2),encoding="utf-8")
     _v72_save_settings(current)
     db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="CONFIG_UPDATE",entity_type="settings",entity_id="v50",detail=json.dumps(current,ensure_ascii=False)))
@@ -15948,6 +15970,19 @@ with app.app_context():
     # V39.7.1: não deixa a criação das novas tabelas de Troca de Chips bloquear o startup.
     core_tables=[t for t in db.metadata.sorted_tables if t.name not in ("chip_swaps","chip_swap_photos")]
     db.metadata.create_all(bind=db.engine, tables=core_tables, checkfirst=True)
+    # V77.9.8 — Engenharia: NCM, grupo de custo e estudos de formação comercial.
+    try:
+        insp=db.inspect(db.engine)
+        with db.engine.begin() as conn:
+            if insp.has_table("engineering_items") and "ncm" not in {c["name"] for c in insp.get_columns("engineering_items")}: conn.execute(text("ALTER TABLE engineering_items ADD COLUMN ncm VARCHAR(20)"))
+            if insp.has_table("engineering_boms") and "product_ncm" not in {c["name"] for c in insp.get_columns("engineering_boms")}: conn.execute(text("ALTER TABLE engineering_boms ADD COLUMN product_ncm VARCHAR(20)"))
+            if insp.has_table("engineering_bom_items") and "cost_group" not in {c["name"] for c in insp.get_columns("engineering_bom_items")}: conn.execute(text("ALTER TABLE engineering_bom_items ADD COLUMN cost_group VARCHAR(30) DEFAULT 'MATERIAL'"))
+        if not SchemaMigration.query.filter_by(version="V77.9.8-001").first():
+            db.session.add(SchemaMigration(version="V77.9.8-001",description="Engenharia: NCM, grupos de custo, nacionalização USD e formação de preço Venda/Locação"));db.session.commit()
+    except Exception:
+        try:db.session.rollback()
+        except Exception:pass
+        app.logger.exception("V77.9.8: falha na migração de Engenharia")
     # V73: carga inicial do controle APT enviado para a versão. É idempotente e mantém o importador para futuras atualizações.
     try:
         seed_path=BASE_DIR/'data'/'apt_v73_initial.csv'
@@ -16247,31 +16282,39 @@ def _eng_header(v):
 def _eng_item_json(x):
     return {"id":x.id,"internal_part_number":x.internal_part_number,"manufacturer_part_number":x.manufacturer_part_number or "",
     "description_pt":x.description_pt or "","description_en":x.description_en or "","manufacturer":x.manufacturer or "",
-    "category":x.category or "","unit":x.unit or "UN","default_origin":x.default_origin or "NACIONAL",
+    "category":x.category or "","ncm":getattr(x,"ncm",None) or "","unit":x.unit or "UN","default_origin":x.default_origin or "NACIONAL",
     "datasheet_url":x.datasheet_url or "","author":x.author or "","source_sheet":x.source_sheet or "","active":bool(x.active)}
 def _eng_bom_json(b):
     pairs=(db.session.query(EngineeringBomItem,EngineeringItem).join(EngineeringItem,EngineeringItem.id==EngineeringBomItem.item_id)
            .filter(EngineeringBomItem.bom_id==b.id).all())
-    nat=imp=0.;items=[]
+    cfg=_v72_settings();factor=float(cfg.get("engineering_import_factor",1.8) or 1.8);usd=float(cfg.get("engineering_usd_brl",5.4) or 5.4)
+    nat=imp=cons=0.;items=[]
     for x,it in pairs:
-        total=float(x.quantity or 0)*float(x.unit_cost or 0)
-        if (x.origin or "").upper()=="IMPORTADO":imp+=total
-        else:nat+=total
+        qty=float(x.quantity or 0);raw_unit=float(x.unit_cost or 0);currency=(x.currency or "BRL").upper();origin=(x.origin or "NACIONAL").upper();group=(getattr(x,"cost_group",None) or "MATERIAL").upper()
+        raw_total=qty*raw_unit
+        nat_unit=raw_unit
+        if origin=="IMPORTADO" and currency=="USD": nat_unit=raw_unit*factor*usd
+        elif origin=="IMPORTADO" and currency=="BRL": nat_unit=raw_unit
+        nat_total=qty*nat_unit
+        if group=="CONSUMO":cons+=nat_total
+        elif origin=="IMPORTADO":imp+=nat_total
+        else:nat+=nat_total
         items.append({"id":x.id,"item_id":it.id,"internal_part_number":it.internal_part_number,"manufacturer_part_number":it.manufacturer_part_number or "",
-        "description":it.description_pt or it.description_en or "","quantity":float(x.quantity or 0),"origin":x.origin or "NACIONAL",
+        "ncm":getattr(it,"ncm",None) or "","description":it.description_pt or it.description_en or "","quantity":qty,"origin":origin,"cost_group":group,
         "supplier":x.supplier or "","supplier_part_number":x.supplier_part_number or "","lead_time_days":x.lead_time_days,
-        "currency":x.currency or "BRL","unit_cost":float(x.unit_cost or 0),"total_cost":round(total,2)})
-    total=nat+imp;q=float(b.quantity_reference or 1) or 1
-    return {"id":b.id,"product_code":b.product_code,"product_name":b.product_name,"revision":b.revision,"status":b.status,
+        "currency":currency,"unit_cost":raw_unit,"raw_total_cost":round(raw_total,2),"nationalized_unit_cost":round(nat_unit,2),"total_cost":round(nat_total,2)})
+    total=nat+imp+cons;q=float(b.quantity_reference or 1) or 1
+    return {"id":b.id,"product_code":b.product_code,"product_name":b.product_name,"product_ncm":getattr(b,"product_ncm",None) or "","revision":b.revision,"status":b.status,
     "quantity_reference":q,"currency_rate":b.currency_rate,"notes":b.notes or "","national_cost":round(nat,2),
-    "imported_cost":round(imp,2),"total_cost":round(total,2),"unit_cost":round(total/q,2),"items":items}
+    "imported_cost":round(imp,2),"consumption_cost":round(cons,2),"total_cost":round(total,2),"unit_cost":round(total/q,2),
+    "import_factor":factor,"usd_brl":usd,"items":items}
 
 @app.get("/engenharia")
 @login_required
 def engineering_page():
     user=db.session.get(User,session.get("user_id"))
     role=(getattr(user,"role","") or "").lower() if user else ""
-    allowed = role in ("admin","adm","administrator","manager","gestor") or _has_access("engineering.items.view") or _has_access("engineering.bom.view")
+    allowed = role in ("admin","adm","administrator","manager","gestor") or _has_access("engineering.items.view") or _has_access("engineering.bom.view") or _has_access("engineering.pricing.view")
     if not allowed: abort(403)
     return render_template("engineering.html",app_release=APP_RELEASE)
 
@@ -16298,7 +16341,7 @@ def engineering_item_save_api():
     x=db.session.get(EngineeringItem,iid) if iid else EngineeringItem(created_by=session.get("user_id"))
     if not x:return jsonify({"ok":False,"error":"Item não encontrado."}),404
     x.internal_part_number=code;x.manufacturer_part_number=_eng_norm(d.get("manufacturer_part_number"));x.description_pt=desc
-    x.description_en=_eng_norm(d.get("description_en"));x.manufacturer=_eng_norm(d.get("manufacturer"));x.category=_eng_norm(d.get("category"))
+    x.description_en=_eng_norm(d.get("description_en"));x.manufacturer=_eng_norm(d.get("manufacturer"));x.category=_eng_norm(d.get("category"));x.ncm=_eng_norm(d.get("ncm"))
     x.unit=_eng_norm(d.get("unit")) or "UN";x.default_origin=(_eng_norm(d.get("default_origin")) or "NACIONAL").upper()
     x.datasheet_url=_eng_norm(d.get("datasheet_url"));x.author=_eng_norm(d.get("author"));x.active=True
     db.session.add(x);db.session.commit();return jsonify({"ok":True,"item":_eng_item_json(x)})
@@ -16322,7 +16365,7 @@ def engineering_items_import_api():
                     if any(n in h for n in names):return i
                 return None
             ci=col("internal part number","codigo interno");cm=col("manufacturer part number","manufacture part number","mpn","codigo fabricante")
-            cpt=col("technical description portuguese","descricao tecnica portugues","description portuguese")
+            cpt=col("technical description portuguese","descricao tecnica portugues","description portuguese");cncm=col("ncm","ncm item")
             cen=col("technical description english","description english");cf=col("manufacturer","fabricante");cd=col("datasheet","data sheet");ca=col("author","autor")
             for row in ws.iter_rows(min_row=hr+1,values_only=True):
                 code=_eng_norm(row[ci] if ci is not None and ci<len(row) else "")
@@ -16332,7 +16375,7 @@ def engineering_items_import_api():
                 x=EngineeringItem.query.filter(func.lower(EngineeringItem.internal_part_number)==code.lower()).first();new=x is None
                 if new:x=EngineeringItem(internal_part_number=code,created_by=session.get("user_id"))
                 x.manufacturer_part_number=_eng_norm(row[cm] if cm is not None and cm<len(row) else "");x.description_pt=pt or en;x.description_en=en
-                x.manufacturer=_eng_norm(row[cf] if cf is not None and cf<len(row) else "");x.category=ws.title
+                x.manufacturer=_eng_norm(row[cf] if cf is not None and cf<len(row) else "");x.category=ws.title;x.ncm=_eng_norm(row[cncm] if cncm is not None and cncm<len(row) else getattr(x,"ncm",None))
                 x.datasheet_url=_eng_norm(row[cd] if cd is not None and cd<len(row) else "");x.author=_eng_norm(row[ca] if ca is not None and ca<len(row) else "")
                 x.source_sheet=ws.title;x.unit=x.unit or "UN";x.active=True;db.session.add(x);created+=int(new);updated+=int(not new)
         db.session.commit();return jsonify({"ok":True,"created":created,"updated":updated,"skipped":skipped})
@@ -16342,7 +16385,7 @@ def engineering_items_import_api():
 @app.get("/api/engineering/boms")
 @login_required
 def engineering_boms_api():
-    if not ((_has_access("engineering.bom.view")) or ((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower() in ("admin","adm","administrator","manager","gestor"))):return jsonify({"ok":False,"error":"Sem permissão."}),403
+    if not ((_has_access("engineering.bom.view")) or _has_access("engineering.pricing.view") or ((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower() in ("admin","adm","administrator","manager","gestor"))):return jsonify({"ok":False,"error":"Sem permissão."}),403
     return jsonify({"ok":True,"boms":[_eng_bom_json(x) for x in EngineeringBom.query.order_by(EngineeringBom.product_code,EngineeringBom.revision.desc()).all()]})
 
 @app.post("/api/engineering/boms")
@@ -16354,7 +16397,7 @@ def engineering_bom_save_api():
     if EngineeringBom.query.filter(func.lower(EngineeringBom.product_code)==code.lower(),func.lower(EngineeringBom.revision)==rev.lower()).first():return jsonify({"ok":False,"error":"Revisão já existente."}),409
     try:q=float(d.get("quantity_reference") or 1)
     except:q=1
-    b=EngineeringBom(product_code=code,product_name=name,revision=rev,status=(_eng_norm(d.get("status")) or "RASCUNHO").upper(),quantity_reference=q,notes=_eng_norm(d.get("notes")),created_by=session.get("user_id"))
+    b=EngineeringBom(product_code=code,product_name=name,product_ncm=_eng_norm(d.get("product_ncm")),revision=rev,status=(_eng_norm(d.get("status")) or "RASCUNHO").upper(),quantity_reference=q,notes=_eng_norm(d.get("notes")),created_by=session.get("user_id"))
     db.session.add(b);db.session.commit();return jsonify({"ok":True,"bom":_eng_bom_json(b)})
 
 @app.post("/api/engineering/boms/<int:bid>/items")
@@ -16364,15 +16407,63 @@ def engineering_bom_item_save_api(bid):
     b=db.session.get(EngineeringBom,bid);d=request.get_json(silent=True) or {};it=db.session.get(EngineeringItem,int(d.get("item_id") or 0))
     if not b or not it:return jsonify({"ok":False,"error":"BOM ou item não encontrado."}),404
     x=EngineeringBomItem.query.filter_by(bom_id=bid,item_id=it.id).first() or EngineeringBomItem(bom_id=bid,item_id=it.id)
+    old={"quantity":x.quantity,"origin":x.origin,"cost_group":getattr(x,"cost_group",None),"supplier":x.supplier,"supplier_part_number":x.supplier_part_number,"lead_time_days":x.lead_time_days,"unit_cost":x.unit_cost,"currency":x.currency} if x.id else None
     try:x.quantity=float(d.get("quantity") or 1)
     except:x.quantity=1
     try:x.unit_cost=float(str(d.get("unit_cost") or 0).replace(",","."))
     except:x.unit_cost=0
     try:x.lead_time_days=int(float(d.get("lead_time_days"))) if d.get("lead_time_days") else None
     except:x.lead_time_days=None
-    x.origin=(_eng_norm(d.get("origin")) or it.default_origin or "NACIONAL").upper();x.supplier=_eng_norm(d.get("supplier"))
+    x.origin=(_eng_norm(d.get("origin")) or it.default_origin or "NACIONAL").upper();x.cost_group=(_eng_norm(d.get("cost_group")) or "MATERIAL").upper();x.supplier=_eng_norm(d.get("supplier"))
     x.supplier_part_number=_eng_norm(d.get("supplier_part_number"));x.currency=(_eng_norm(d.get("currency")) or "BRL").upper()
-    db.session.add(x);db.session.commit();return jsonify({"ok":True,"bom":_eng_bom_json(b)})
+    db.session.add(x);db.session.flush();new={"quantity":x.quantity,"origin":x.origin,"cost_group":x.cost_group,"supplier":x.supplier,"supplier_part_number":x.supplier_part_number,"lead_time_days":x.lead_time_days,"unit_cost":x.unit_cost,"currency":x.currency}
+    db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="ENGINEERING_BOM_ITEM_UPDATED" if old else "ENGINEERING_BOM_ITEM_CREATED",entity_type="engineering_bom_item",entity_id=str(x.id),detail=json.dumps({"before":old,"after":new},ensure_ascii=False)))
+    db.session.commit();return jsonify({"ok":True,"bom":_eng_bom_json(b)})
+
+@app.patch("/api/engineering/boms/<int:bid>")
+@login_required
+def engineering_bom_update_api(bid):
+    if not ((_has_access("engineering.bom.manage")) or ((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower() in ("admin","adm","administrator","manager","gestor"))):return jsonify({"ok":False,"error":"Sem permissão."}),403
+    b=db.session.get(EngineeringBom,bid);d=request.get_json(silent=True) or {}
+    if not b:return jsonify({"ok":False,"error":"BOM não encontrada."}),404
+    old={"product_code":b.product_code,"product_name":b.product_name,"product_ncm":getattr(b,"product_ncm",None),"revision":b.revision,"status":b.status,"quantity_reference":b.quantity_reference,"notes":b.notes}
+    code=_eng_norm(d.get("product_code",b.product_code));name=_eng_norm(d.get("product_name",b.product_name));rev=_eng_norm(d.get("revision",b.revision)) or b.revision
+    if not code or not name:return jsonify({"ok":False,"error":"Código e descrição são obrigatórios."}),400
+    dup=EngineeringBom.query.filter(EngineeringBom.id!=bid,func.lower(EngineeringBom.product_code)==code.lower(),func.lower(EngineeringBom.revision)==rev.lower()).first()
+    if dup:return jsonify({"ok":False,"error":"Já existe esta revisão para o produto."}),409
+    b.product_code=code;b.product_name=name;b.product_ncm=_eng_norm(d.get("product_ncm"));b.revision=rev;b.status=(_eng_norm(d.get("status")) or b.status or "RASCUNHO").upper();b.notes=_eng_norm(d.get("notes"))
+    try:b.quantity_reference=max(float(d.get("quantity_reference") or 1),.000001)
+    except:b.quantity_reference=1
+    new={"product_code":b.product_code,"product_name":b.product_name,"product_ncm":b.product_ncm,"revision":b.revision,"status":b.status,"quantity_reference":b.quantity_reference,"notes":b.notes}
+    db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="ENGINEERING_BOM_UPDATED",entity_type="engineering_bom",entity_id=str(b.id),detail=json.dumps({"before":old,"after":new},ensure_ascii=False)))
+    db.session.commit();return jsonify({"ok":True,"bom":_eng_bom_json(b)})
+
+@app.get("/api/engineering/pricing")
+@login_required
+def engineering_pricing_list_api():
+    if not (_has_access("engineering.pricing.view") or _has_access("engineering.bom.view") or ((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower() in ("admin","adm","administrator","manager","gestor"))):return jsonify({"ok":False,"error":"Sem permissão."}),403
+    bid=int(request.args.get("bom_id") or 0);q=EngineeringPricingStudy.query
+    if bid:q=q.filter_by(bom_id=bid)
+    rows=q.order_by(EngineeringPricingStudy.updated_at.desc()).limit(100).all();out=[]
+    for x in rows:
+        try:data=json.loads(x.data_json or "{}")
+        except:data={}
+        out.append({"id":x.id,"bom_id":x.bom_id,"study_name":x.study_name,"quantity":x.quantity,"data":data,"updated_at":x.updated_at.isoformat() if x.updated_at else None})
+    cfg=_v72_settings();return jsonify({"ok":True,"studies":out,"config":{"import_factor":cfg.get("engineering_import_factor",1.8),"usd_brl":cfg.get("engineering_usd_brl",5.4)}})
+
+@app.post("/api/engineering/pricing")
+@login_required
+def engineering_pricing_save_api():
+    if not (_has_access("engineering.pricing.manage") or ((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower() in ("admin","adm","administrator","manager","gestor"))):return jsonify({"ok":False,"error":"Sem permissão."}),403
+    d=request.get_json(silent=True) or {};sid=int(d.get("id") or 0);bid=int(d.get("bom_id") or 0);b=db.session.get(EngineeringBom,bid)
+    if not b:return jsonify({"ok":False,"error":"BOM não encontrada."}),404
+    try:qty=max(float(d.get("quantity") or 1),.000001)
+    except:qty=1
+    x=db.session.get(EngineeringPricingStudy,sid) if sid else EngineeringPricingStudy(bom_id=bid,created_by=session.get("user_id"))
+    if not x:return jsonify({"ok":False,"error":"Estudo não encontrado."}),404
+    old=x.data_json if sid else None;x.bom_id=bid;x.quantity=qty;x.study_name=_eng_norm(d.get("study_name")) or f"PV-{b.product_code}";x.data_json=json.dumps(d.get("data") or {},ensure_ascii=False);db.session.add(x);db.session.flush()
+    db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="ENGINEERING_PRICING_SAVED",entity_type="engineering_pricing",entity_id=str(x.id),detail=json.dumps({"bom_id":bid,"quantity":qty,"before":old,"after":d.get("data") or {}},ensure_ascii=False)))
+    db.session.commit();return jsonify({"ok":True,"id":x.id,"updated_at":x.updated_at.isoformat() if x.updated_at else None})
 
 @app.delete("/api/engineering/boms/<int:bid>/items/<int:rid>")
 @login_required
@@ -16389,10 +16480,10 @@ def engineering_bom_clone_api(bid):
     s=db.session.get(EngineeringBom,bid);d=request.get_json(silent=True) or {};rev=_eng_norm(d.get("revision"))
     if not s or not rev:return jsonify({"ok":False,"error":"BOM/revisão inválida."}),400
     if EngineeringBom.query.filter(func.lower(EngineeringBom.product_code)==s.product_code.lower(),func.lower(EngineeringBom.revision)==rev.lower()).first():return jsonify({"ok":False,"error":"Revisão já existente."}),409
-    n=EngineeringBom(product_code=s.product_code,product_name=s.product_name,revision=rev,status="RASCUNHO",quantity_reference=s.quantity_reference,currency_rate=s.currency_rate,notes=s.notes,created_by=session.get("user_id"))
+    n=EngineeringBom(product_code=s.product_code,product_name=s.product_name,product_ncm=getattr(s,"product_ncm",None),revision=rev,status="RASCUNHO",quantity_reference=s.quantity_reference,currency_rate=s.currency_rate,notes=s.notes,created_by=session.get("user_id"))
     db.session.add(n);db.session.flush()
     for x in EngineeringBomItem.query.filter_by(bom_id=s.id):
-        db.session.add(EngineeringBomItem(bom_id=n.id,item_id=x.item_id,quantity=x.quantity,origin=x.origin,supplier=x.supplier,supplier_part_number=x.supplier_part_number,lead_time_days=x.lead_time_days,unit_cost=x.unit_cost,currency=x.currency,notes=x.notes))
+        db.session.add(EngineeringBomItem(bom_id=n.id,item_id=x.item_id,quantity=x.quantity,origin=x.origin,cost_group=getattr(x,"cost_group",None) or "MATERIAL",supplier=x.supplier,supplier_part_number=x.supplier_part_number,lead_time_days=x.lead_time_days,unit_cost=x.unit_cost,currency=x.currency,notes=x.notes))
     db.session.commit();return jsonify({"ok":True,"bom":_eng_bom_json(n)})
 
 
@@ -16475,7 +16566,7 @@ def engineering_bom_import_commit_api(bid):
             it=db.session.get(EngineeringItem,int(r["item_id"]))
             if not it:continue
             x=EngineeringBomItem.query.filter_by(bom_id=bid,item_id=it.id).first() or EngineeringBomItem(bom_id=bid,item_id=it.id)
-            x.quantity=max(_eng_bom_num(r.get("quantity"),1),.000001);x.origin=(_eng_norm(r.get("origin")) or "NACIONAL").upper();x.supplier=_eng_norm(r.get("supplier"));x.supplier_part_number=_eng_norm(r.get("supplier_part_number"));x.currency=(_eng_norm(r.get("currency")) or "BRL").upper();x.unit_cost=max(_eng_bom_num(r.get("unit_cost"),0),0)
+            x.quantity=max(_eng_bom_num(r.get("quantity"),1),.000001);x.origin=(_eng_norm(r.get("origin")) or "NACIONAL").upper();x.cost_group=(_eng_norm(r.get("cost_group")) or "MATERIAL").upper();x.supplier=_eng_norm(r.get("supplier"));x.supplier_part_number=_eng_norm(r.get("supplier_part_number"));x.currency=(_eng_norm(r.get("currency")) or "BRL").upper();x.unit_cost=max(_eng_bom_num(r.get("unit_cost"),0),0)
             try:x.lead_time_days=int(r.get("lead_time_days")) if r.get("lead_time_days") not in (None,"") else None
             except:x.lead_time_days=None
             db.session.add(x);n+=1
@@ -16489,13 +16580,13 @@ def engineering_bom_export_api(bid):
     b=db.session.get(EngineeringBom,bid)
     if not b:abort(404)
     d=_eng_bom_json(b);wb=Workbook();ws=wb.active;ws.title="BOM"
-    ws.append(["Produto",d["product_code"],d["product_name"],"Revisão",d["revision"],"Status",d["status"]])
-    ws.append(["Qtd. referência",d["quantity_reference"],"Nacional",d["national_cost"],"Importado",d["imported_cost"],"Total",d["total_cost"],"Unitário",d["unit_cost"]]);ws.append([])
-    ws.append(["Código Interno","MPN","Descrição","Qtd.","Origem","Fornecedor","PN Fornecedor","Lead Time","Moeda","Custo Unitário","Custo Total"])
-    for x in d["items"]:ws.append([x["internal_part_number"],x["manufacturer_part_number"],x["description"],x["quantity"],x["origin"],x["supplier"],x["supplier_part_number"],x["lead_time_days"],x["currency"],x["unit_cost"],x["total_cost"]])
+    ws.append(["Produto",d["product_code"],d["product_name"],"NCM Produto",d.get("product_ncm",""),"Revisão",d["revision"],"Status",d["status"]])
+    ws.append(["Qtd. referência",d["quantity_reference"],"Nacional",d["national_cost"],"Importado nacionalizado",d["imported_cost"],"Consumo",d.get("consumption_cost",0),"Total",d["total_cost"],"Unitário",d["unit_cost"]]);ws.append([])
+    ws.append(["Código Interno","MPN","NCM Item","Descrição","Qtd.","Grupo","Origem","Fornecedor","PN Fornecedor","Lead Time","Moeda","FOB/Custo Unit.","Custo Nac. Unit.","Total Nac."])
+    for x in d["items"]:ws.append([x["internal_part_number"],x["manufacturer_part_number"],x.get("ncm","") ,x["description"],x["quantity"],x.get("cost_group","MATERIAL"),x["origin"],x["supplier"],x["supplier_part_number"],x["lead_time_days"],x["currency"],x["unit_cost"],x.get("nationalized_unit_cost",x["unit_cost"]),x["total_cost"]])
     for c in ws[4]:c.font=Font(bold=True,color="FFFFFF");c.fill=PatternFill("solid",fgColor="17365D")
-    ws.freeze_panes="A5";ws.auto_filter.ref=f"A4:K{ws.max_row}"
-    for i in range(1,12):ws.column_dimensions[get_column_letter(i)].width=40 if i==3 else 20
+    ws.freeze_panes="A5";ws.auto_filter.ref=f"A4:N{ws.max_row}"
+    for i in range(1,15):ws.column_dimensions[get_column_letter(i)].width=40 if i==4 else 20
     bio=io.BytesIO();wb.save(bio);bio.seek(0);return send_file(bio,as_attachment=True,download_name=f"BOM_{b.product_code}_{b.revision}.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
