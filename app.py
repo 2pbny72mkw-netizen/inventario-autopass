@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V78"
+APP_RELEASE = "V78.1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -532,6 +532,10 @@ class EngineeringItem(db.Model):
     ncm=db.Column(db.String(20),index=True)
     unit=db.Column(db.String(30),nullable=False,default="UN")
     default_origin=db.Column(db.String(30),default="NACIONAL")
+    default_supplier=db.Column(db.String(180))
+    supplier_part_number=db.Column(db.String(180))
+    default_currency=db.Column(db.String(10),default="BRL")
+    reference_unit_cost=db.Column(db.Float,default=0)
     datasheet_url=db.Column(db.String(1200))
     author=db.Column(db.String(160))
     source_sheet=db.Column(db.String(160))
@@ -15975,6 +15979,12 @@ with app.app_context():
         insp=db.inspect(db.engine)
         with db.engine.begin() as conn:
             if insp.has_table("engineering_items") and "ncm" not in {c["name"] for c in insp.get_columns("engineering_items")}: conn.execute(text("ALTER TABLE engineering_items ADD COLUMN ncm VARCHAR(20)"))
+            if insp.has_table("engineering_items"):
+                _ec={c["name"] for c in insp.get_columns("engineering_items")}
+                if "default_supplier" not in _ec: conn.execute(text("ALTER TABLE engineering_items ADD COLUMN default_supplier VARCHAR(180)"))
+                if "supplier_part_number" not in _ec: conn.execute(text("ALTER TABLE engineering_items ADD COLUMN supplier_part_number VARCHAR(180)"))
+                if "default_currency" not in _ec: conn.execute(text("ALTER TABLE engineering_items ADD COLUMN default_currency VARCHAR(10) DEFAULT 'BRL'"))
+                if "reference_unit_cost" not in _ec: conn.execute(text("ALTER TABLE engineering_items ADD COLUMN reference_unit_cost FLOAT DEFAULT 0"))
             if insp.has_table("engineering_boms") and "product_ncm" not in {c["name"] for c in insp.get_columns("engineering_boms")}: conn.execute(text("ALTER TABLE engineering_boms ADD COLUMN product_ncm VARCHAR(20)"))
             if insp.has_table("engineering_bom_items") and "cost_group" not in {c["name"] for c in insp.get_columns("engineering_bom_items")}: conn.execute(text("ALTER TABLE engineering_bom_items ADD COLUMN cost_group VARCHAR(30) DEFAULT 'MATERIAL'"))
         if not SchemaMigration.query.filter_by(version="V77.9.8-001").first():
@@ -16283,14 +16293,14 @@ def _eng_item_json(x):
     return {"id":x.id,"internal_part_number":x.internal_part_number,"manufacturer_part_number":x.manufacturer_part_number or "",
     "description_pt":x.description_pt or "","description_en":x.description_en or "","manufacturer":x.manufacturer or "",
     "category":x.category or "","ncm":getattr(x,"ncm",None) or "","unit":x.unit or "UN","default_origin":x.default_origin or "NACIONAL",
-    "datasheet_url":x.datasheet_url or "","author":x.author or "","source_sheet":x.source_sheet or "","active":bool(x.active)}
+    "default_supplier":getattr(x,"default_supplier",None) or "","supplier_part_number":getattr(x,"supplier_part_number",None) or "","default_currency":getattr(x,"default_currency",None) or "BRL","reference_unit_cost":float(getattr(x,"reference_unit_cost",0) or 0),"datasheet_url":x.datasheet_url or "","author":x.author or "","source_sheet":x.source_sheet or "","active":bool(x.active)}
 def _eng_bom_json(b):
     pairs=(db.session.query(EngineeringBomItem,EngineeringItem).join(EngineeringItem,EngineeringItem.id==EngineeringBomItem.item_id)
            .filter(EngineeringBomItem.bom_id==b.id).all())
     cfg=_v72_settings();factor=float(cfg.get("engineering_import_factor",1.8) or 1.8);usd=float(cfg.get("engineering_usd_brl",5.4) or 5.4)
     nat=imp=cons=0.;items=[]
     for x,it in pairs:
-        qty=float(x.quantity or 0);raw_unit=float(x.unit_cost or 0);currency=(x.currency or "BRL").upper();origin=(x.origin or "NACIONAL").upper();group=(getattr(x,"cost_group",None) or "MATERIAL").upper()
+        qty=float(x.quantity or 0);raw_unit=float(x.unit_cost or 0);currency=(getattr(it,"default_currency",None) or x.currency or "BRL").upper();origin=(it.default_origin or x.origin or "NACIONAL").upper();group=(getattr(x,"cost_group",None) or "MATERIAL").upper()
         raw_total=qty*raw_unit
         nat_unit=raw_unit
         if origin=="IMPORTADO" and currency=="USD": nat_unit=raw_unit*factor*usd
@@ -16301,7 +16311,7 @@ def _eng_bom_json(b):
         else:nat+=nat_total
         items.append({"id":x.id,"item_id":it.id,"internal_part_number":it.internal_part_number,"manufacturer_part_number":it.manufacturer_part_number or "",
         "ncm":getattr(it,"ncm",None) or "","description":it.description_pt or it.description_en or "","quantity":qty,"origin":origin,"cost_group":group,
-        "supplier":x.supplier or "","supplier_part_number":x.supplier_part_number or "","lead_time_days":x.lead_time_days,
+        "supplier":getattr(it,"default_supplier",None) or x.supplier or "","supplier_part_number":getattr(it,"supplier_part_number",None) or x.supplier_part_number or it.manufacturer_part_number or "","lead_time_days":x.lead_time_days,"reference_unit_cost":float(getattr(it,"reference_unit_cost",0) or 0),
         "currency":currency,"unit_cost":raw_unit,"raw_total_cost":round(raw_total,2),"nationalized_unit_cost":round(nat_unit,2),"total_cost":round(nat_total,2)})
     total=nat+imp+cons;q=float(b.quantity_reference or 1) or 1
     return {"id":b.id,"product_code":b.product_code,"product_name":b.product_name,"product_ncm":getattr(b,"product_ncm",None) or "","revision":b.revision,"status":b.status,
@@ -16343,6 +16353,9 @@ def engineering_item_save_api():
     x.internal_part_number=code;x.manufacturer_part_number=_eng_norm(d.get("manufacturer_part_number"));x.description_pt=desc
     x.description_en=_eng_norm(d.get("description_en"));x.manufacturer=_eng_norm(d.get("manufacturer"));x.category=_eng_norm(d.get("category"));x.ncm=_eng_norm(d.get("ncm"))
     x.unit=_eng_norm(d.get("unit")) or "UN";x.default_origin=(_eng_norm(d.get("default_origin")) or "NACIONAL").upper()
+    x.default_supplier=_eng_norm(d.get("default_supplier"));x.supplier_part_number=_eng_norm(d.get("supplier_part_number"));x.default_currency=(_eng_norm(d.get("default_currency")) or "BRL").upper()
+    try:x.reference_unit_cost=max(float(str(d.get("reference_unit_cost") or 0).replace(",",".")),0)
+    except:x.reference_unit_cost=0
     x.datasheet_url=_eng_norm(d.get("datasheet_url"));x.author=_eng_norm(d.get("author"));x.active=True
     db.session.add(x);db.session.commit();return jsonify({"ok":True,"item":_eng_item_json(x)})
 
@@ -16414,8 +16427,9 @@ def engineering_bom_item_save_api(bid):
     except:x.unit_cost=0
     try:x.lead_time_days=int(float(d.get("lead_time_days"))) if d.get("lead_time_days") else None
     except:x.lead_time_days=None
-    x.origin=(_eng_norm(d.get("origin")) or it.default_origin or "NACIONAL").upper();x.cost_group=(_eng_norm(d.get("cost_group")) or "MATERIAL").upper();x.supplier=_eng_norm(d.get("supplier"))
-    x.supplier_part_number=_eng_norm(d.get("supplier_part_number"));x.currency=(_eng_norm(d.get("currency")) or "BRL").upper()
+    x.origin=(it.default_origin or "NACIONAL").upper();x.cost_group=(_eng_norm(d.get("cost_group")) or "MATERIAL").upper();x.supplier=getattr(it,"default_supplier",None) or ""
+    x.supplier_part_number=getattr(it,"supplier_part_number",None) or it.manufacturer_part_number or "";x.currency=(getattr(it,"default_currency",None) or "BRL").upper()
+    if d.get("unit_cost") in (None,""): x.unit_cost=float(getattr(it,"reference_unit_cost",0) or 0)
     db.session.add(x);db.session.flush();new={"quantity":x.quantity,"origin":x.origin,"cost_group":x.cost_group,"supplier":x.supplier,"supplier_part_number":x.supplier_part_number,"lead_time_days":x.lead_time_days,"unit_cost":x.unit_cost,"currency":x.currency}
     db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="ENGINEERING_BOM_ITEM_UPDATED" if old else "ENGINEERING_BOM_ITEM_CREATED",entity_type="engineering_bom_item",entity_id=str(x.id),detail=json.dumps({"before":old,"after":new},ensure_ascii=False)))
     db.session.commit();return jsonify({"ok":True,"bom":_eng_bom_json(b)})
@@ -16612,8 +16626,9 @@ def engineering_pricing_export_api(sid):
     ws.append(["Nacional",d["national_cost"],"Importado nacionalizado",d["imported_cost"],"Consumo",d.get("consumption_cost",0),"Total BOM",d["total_cost"],"Custo unitário",d["unit_cost"]]);ws.append([])
     ws.append(["Código Interno","MPN","NCM Item","Descrição","Qtd.","Grupo","Origem","Fornecedor","PN Fornecedor","Lead Time","Moeda","FOB/Custo Unit.","Custo Nac. Unit.","Total Nac."])
     for x in d["items"]:ws.append([x["internal_part_number"],x["manufacturer_part_number"],x.get("ncm","") ,x["description"],x["quantity"],x.get("cost_group","MATERIAL"),x["origin"],x["supplier"],x["supplier_part_number"],x["lead_time_days"],x["currency"],x["unit_cost"],x.get("nationalized_unit_cost",x["unit_cost"]),x["total_cost"]])
-    sv=wb.create_sheet("Preço de Venda");sv.append(["Estudo",st.study_name,"Produto",d["product_code"],"Revisão",d["revision"],"Quantidade",qty]);sv.append([]);sv.append(["Componente","Valor"])
-    for row in [("Nacionais (BOM)",d["national_cost"]/(d["quantity_reference"] or 1)),("Importados nacionalizados",d["imported_cost"]/(d["quantity_reference"] or 1)),("Consumo",d.get("consumption_cost",0)/(d["quantity_reference"] or 1)),("Montagem / mão de obra",assembly),("Despesas ADM (%)",admin*100),("Fator importação",d.get("import_factor",1.8)),("USD / BRL",d.get("usd_brl",0)),("Custo industrial unitário",industrial),("Venda c/ IPI",gross),("IPI",ipi_v),("Valor s/ IPI",no_ipi),("ICMS",icms_v),("PIS",pis_v),("COFINS",cof_v),("ISS",iss_v),("Venda líquida",net),("Lucro unitário",profit),("Margem efetiva (%)",margin),("Venda total do lote",gross*qty)]:sv.append(row)
+    sv=wb.create_sheet("Preço de Venda");sv.append(["Estudo",st.study_name,"Produto",d["product_code"],"Revisão",d["revision"],"Quantidade",qty]);sv.append([]);sv.append(["Índice / Componente","Parâmetro aplicado","Base de cálculo","Valor calculado"])
+    sv.append(["IPI",ipi*100,gross,ipi_v]);sv.append(["ICMS",icms*100,gross,icms_v]);sv.append(["PIS",pis*100,no_ipi,pis_v]);sv.append(["COFINS",cof*100,no_ipi,cof_v]);sv.append(["ISS",iss*100,no_ipi,iss_v]);sv.append(["Despesas ADM",admin*100,float(d.get("unit_cost") or 0)+assembly,industrial-(float(d.get("unit_cost") or 0)+assembly)]);sv.append(["Fator importação",d.get("import_factor",1.8),d.get("imported_cost",0),d.get("imported_cost",0)]);sv.append(["Cotação USD/BRL",d.get("usd_brl",0),"Referência da configuração",d.get("usd_brl",0)]);sv.append([]);sv.append(["Memória / Resultado","Valor","Quantidade", "Total lote"])
+    for row in [("Nacionais (BOM)",d["national_cost"]/(d["quantity_reference"] or 1)),("Importados nacionalizados",d["imported_cost"]/(d["quantity_reference"] or 1)),("Consumo",d.get("consumption_cost",0)/(d["quantity_reference"] or 1)),("Montagem / mão de obra",assembly),("Despesas ADM (%)",admin*100),("Fator importação",d.get("import_factor",1.8)),("USD / BRL",d.get("usd_brl",0)),("Custo industrial unitário",industrial),("Venda c/ IPI",gross),("IPI",ipi_v),("Valor s/ IPI",no_ipi),("ICMS",icms_v),("PIS",pis_v),("COFINS",cof_v),("ISS",iss_v),("Venda líquida",net),("Lucro unitário",profit),("Margem efetiva (%)",margin),("Venda total do lote",gross*qty)]:sv.append([row[0],row[1],qty,row[1]*qty if isinstance(row[1],(int,float)) and row[0] not in ("Despesas ADM (%)","Fator importação","USD / BRL","Margem efetiva (%)") else ""])
     rv=wb.create_sheet("Preço de Locação");rv.append(["Estudo",st.study_name,"Produto",d["product_code"],"Revisão",d["revision"],"Quantidade",qty]);rv.append([]);rv.append(["Componente","Valor"])
     for row in [("Custo industrial unitário",industrial),("Prazo (anos)",years),("Prazo (meses)",months),("Margem locação (%)",rm*100),("Impostos locação (%)",rt*100),("Custos recorrentes (%)",rr*100),("Valor econômico unitário",economic),("Locação mensal unitária",monthly),("Locação mensal do lote",monthly*qty),("Receita total do contrato",monthly*qty*months)]:rv.append(row)
     for sh in wb.worksheets:
