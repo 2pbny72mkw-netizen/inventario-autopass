@@ -1,0 +1,5 @@
+V77.9.5
+
+Deploy normal sobre a versão anterior.
+Não remove tabelas nem altera a base oficial ATM.
+Após deploy, validar: importação Bobinas em modo prévia; visão inicial por operadora; Exportar nas dashboards ATM, POS e Bloqueio.

@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V77.9.4"
+APP_RELEASE = "V77.9.5"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -16683,11 +16683,10 @@ def _v773_import_master_match(aid, sheet_company, sheet_line, sheet_station, off
     if bool(row.get('stock')):return None,'ATM_EM_ESTOQUE',f'ATM {aid} está classificada como estoque na base oficial e não pode receber leitura operacional de estação.'
     mc,ml,ms=str(row.get('company') or '').strip(),str(row.get('line') or '').strip(),str(row.get('locality') or '').strip()
     nc,nl,ns=_v773_norm_location(sheet_company,sheet_line,sheet_station); oc,ol,os=_v773_norm_location(mc,ml,ms)
-    dif=[]
-    if ns and os and ns!=os:dif.append(f'estação planilha={sheet_station} / oficial={ms}')
-    if nl and ol and nl!=ol:dif.append(f'linha planilha={sheet_line} / oficial={ml}')
-    if nc and oc and nc!=oc and sheet_company not in ('','IMPORTADO'):dif.append(f'operadora planilha={sheet_company} / oficial={mc}')
-    return {'company':mc,'line':ml,'station':ms,'atm_id':_v773_atm_id(row)},('LOCALIDADE_DIVERGENTE' if dif else None),('; '.join(dif) if dif else '')
+    # V77.9.5: o ID ATM é a chave soberana. Diferenças textuais de linha/localidade
+    # são apenas aliases operacionais e nunca bloqueiam nem viram divergência da carga.
+    # Empresa/linha/localidade retornadas são SEMPRE as da base oficial.
+    return {'company':mc,'line':ml,'station':ms,'atm_id':_v773_atm_id(row)},None,''
 
 def _v772_haversine_m(lat1,lon1,lat2,lon2):
     try:
@@ -16862,9 +16861,10 @@ def _v771_parse_import(upload):
                     elif pct not in (None,''):
                         warnings.append(f'{ws.title}!{get_column_letter(c+2)}{rnum}: percentual inválido para ATM {aid}')
                 c+=2
-    # Armários: 1 caixa = 6 bobinas.
-    if 'Armários' in wb.sheetnames:
-        ws=wb['Armários'];rows=ws.iter_rows(values_only=True)
+    # Armários: 1 caixa = 6 bobinas. Aceita espaços/acentuação no nome da aba.
+    cabinet_sheet=next((name for name in wb.sheetnames if _v771_norm(str(name).strip()) in ('ARMARIOS','ARMARIO')),None)
+    if cabinet_sheet:
+        ws=wb[cabinet_sheet];rows=ws.iter_rows(values_only=True)
         try:next(rows)
         except StopIteration:rows=[]
         for rnum,row in enumerate(rows,start=2):
@@ -16895,7 +16895,10 @@ def v771_bobbin_import():
         app.logger.exception('V77.7: falha ao ler planilha de bobinas')
         return jsonify({'ok':False,'error':f'Não foi possível ler a planilha: {exc}'}),400
     mode=(request.form.get('mode') or 'preview').lower()
-    preview={'sheets':data['sheets'],'records_found':len(data['readings'])+len(data['divergences']),'atm_readings':len(data['readings']),'official_total':data['official_total'],'official_installed':data['official_installed'],'official_stock':data['official_stock'],'divergences_count':len(data['divergences']),'divergences':data['divergences'][:100],'unlocated_reserve_total':sum(x['qty'] for x in data['reserves']),'stations_with_unlocated_reserve':len(data['reserves']),'cabinet_points':len(data['cabinets']),'cabinet_bobbins_total':sum(x['bobbins'] for x in data['cabinets']),'warnings':data['warnings'][:100]}
+    outside=[d for d in data['divergences'] if d.get('type')=='ATM_NAO_OFICIAL']
+    stock_div=[d for d in data['divergences'] if d.get('type')=='ATM_EM_ESTOQUE']
+    other_div=[d for d in data['divergences'] if d.get('type') not in ('ATM_NAO_OFICIAL','ATM_EM_ESTOQUE')]
+    preview={'sheets':data['sheets'],'records_found':len(data['readings'])+len(data['divergences']),'atm_readings':len(data['readings']),'official_total':data['official_total'],'official_installed':data['official_installed'],'official_stock':data['official_stock'],'divergences_count':len(data['divergences']),'outside_official_count':len(outside),'stock_atm_count':len(stock_div),'blocking_divergences_count':len(other_div),'load_ready':bool(data['readings']),'divergences':data['divergences'][:100],'unlocated_reserve_total':sum(x['qty'] for x in data['reserves']),'stations_with_unlocated_reserve':len(data['reserves']),'cabinet_points':len(data['cabinets']),'cabinet_bobbins_total':sum(x['bobbins'] for x in data['cabinets']),'warnings':data['warnings'][:100]}
     if mode!='commit':return jsonify({'ok':True,'preview':preview,'release':APP_RELEASE})
     try:
         batch=AtmBobbinImportBatch(filename=secure_filename(f.filename),imported_by=session['user_id'],rows_imported=len(data['readings']),reserves_imported=sum(x['qty'] for x in data['reserves']),warnings_json=json.dumps({'warnings':data['warnings'][:200],'divergences':data['divergences'][:500]},ensure_ascii=False));db.session.add(batch);db.session.flush()
@@ -16905,7 +16908,7 @@ def v771_bobbin_import():
         for company_scope,line_scope in imported_scopes:
             AtmBobbinReading.query.filter_by(event_type='IMPORTACAO',company=company_scope,line=line_scope).delete(synchronize_session=False)
         for x in data['readings']:
-            note=f"Importação V77.7 · aba {x['sheet']} · último técnico informado: {x['tech'] or '—'} · referência de reserva na planilha: {x['local_note'] or '—'}"
+            note=f"Importação V77.9.5 · aba {x['sheet']} · último técnico informado: {x['tech'] or '—'} · referência de reserva na planilha: {x['local_note'] or '—'}"
             db.session.add(AtmBobbinReading(company=x['company'],line=x['line'],station=x['station'],atm_id=x['atm_id'],percent_available=x['percent'],event_type='IMPORTACAO',bobbin_replaced=False,reserve_delta=0,reserve_after=None,notes=note,technician_id=session['user_id'],created_at=x['date']))
         # snapshot dos saldos legados ainda não localizados
         imported_keys=set()
@@ -17129,7 +17132,20 @@ def v77_bobbins_dashboard_api():
     for k,r in station_summary.items():
         r['reserve']=stockmap.get(k,0);r['avg_pct']=round(r['sum_pct']/max(1,r['atms'])) if r['atms'] else None;r['missing']=max(0,r['official_atms']-r['atms']);r['last_at']=r['last_at'].isoformat()+'Z' if r['last_at'] else None
     station_rows=sorted(station_summary.values(),key=lambda r:(r['line'].casefold(),r['station'].casefold()))
-    return jsonify({'ok':True,'release':APP_RELEASE,'source':'BASE_OFICIAL_ATM_602','summary':summary,'rows':[_v771_bobbin_json(x,names) for x in latest],'history':[_v771_bobbin_json(x,names) for x in allrows[:500]],'stocks':[{'company':x.company,'line':x.line,'station':x.station,'atm_id':x.atm_id,'reserve_qty':x.reserve_qty,'updated_at':x.updated_at.isoformat()+'Z' if x.updated_at else None} for x in stockrows],'unlocated':[{'company':x.company,'line':x.line,'station':x.station,'imported_qty':x.imported_qty,'current_qty':x.current_qty,'status':x.status,'source_sheet':x.source_sheet,'last_inventory_at':x.last_inventory_at.isoformat()+'Z' if x.last_inventory_at else None} for x in unlocated],'stations':station_rows,'cabinets_detail':cabinet_rows,'missing_atms':missing_atms,'support_reserve_target':450,'support_reserve_unit':'BOBINAS','photo_retention_days':_v771_photo_retention_days()})
+    # V77.9.5: sem filtros, a primeira leitura é consolidada por operadora, não Linha 1.
+    operator_summary={}
+    for a in filtered_official:
+        op=str(a.get('company') or 'NÃO INFORMADO').strip() or 'NÃO INFORMADO'
+        r=operator_summary.setdefault(op,{'company':op,'official_atms':0,'atms':0,'sum_pct':0,'critical':0,'attention':0,'reserve':0,'last_at':None,'last_tech':''});r['official_atms']+=1
+    for x in latest_map.values():
+        op=x.company or 'NÃO INFORMADO';r=operator_summary.setdefault(op,{'company':op,'official_atms':0,'atms':0,'sum_pct':0,'critical':0,'attention':0,'reserve':0,'last_at':None,'last_tech':''})
+        r['atms']+=1;r['sum_pct']+=x.percent_available;r['critical']+=1 if x.percent_available<=10 else 0;r['attention']+=1 if 10<x.percent_available<=30 else 0
+        if r['last_at'] is None or x.created_at>r['last_at']:r['last_at']=x.created_at;r['last_tech']=names.get(x.technician_id,'')
+    for x in stockrows:
+        op=x.company or 'NÃO INFORMADO';operator_summary.setdefault(op,{'company':op,'official_atms':0,'atms':0,'sum_pct':0,'critical':0,'attention':0,'reserve':0,'last_at':None,'last_tech':''})['reserve']+=int(x.reserve_qty or 0)
+    for r in operator_summary.values():r['avg_pct']=round(r['sum_pct']/max(1,r['atms'])) if r['atms'] else None;r['missing']=max(0,r['official_atms']-r['atms']);r['last_at']=r['last_at'].isoformat()+'Z' if r['last_at'] else None
+    operator_rows=sorted(operator_summary.values(),key=lambda r:r['company'].casefold())
+    return jsonify({'ok':True,'release':APP_RELEASE,'source':'BASE_OFICIAL_ATM_602','summary':summary,'rows':[_v771_bobbin_json(x,names) for x in latest],'history':[_v771_bobbin_json(x,names) for x in allrows[:500]],'stocks':[{'company':x.company,'line':x.line,'station':x.station,'atm_id':x.atm_id,'reserve_qty':x.reserve_qty,'updated_at':x.updated_at.isoformat()+'Z' if x.updated_at else None} for x in stockrows],'unlocated':[{'company':x.company,'line':x.line,'station':x.station,'imported_qty':x.imported_qty,'current_qty':x.current_qty,'status':x.status,'source_sheet':x.source_sheet,'last_inventory_at':x.last_inventory_at.isoformat()+'Z' if x.last_inventory_at else None} for x in unlocated],'stations':station_rows,'operators':operator_rows,'cabinets_detail':cabinet_rows,'missing_atms':missing_atms,'support_reserve_target':450,'support_reserve_unit':'BOBINAS','photo_retention_days':_v771_photo_retention_days()})
 
 # V77.1 — Estoque Field / armários e carga do técnico
 def _v771_stock_item(desc,unit='UN'):
