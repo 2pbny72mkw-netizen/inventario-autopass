@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V78.4"
+APP_RELEASE = "V78.4 REV1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -16342,32 +16342,47 @@ def _eng_item_json(x):
     "description_pt":x.description_pt or "","description_en":x.description_en or "","manufacturer":x.manufacturer or "",
     "category":x.category or "","ncm":getattr(x,"ncm",None) or "","unit":x.unit or "UN","default_origin":x.default_origin or "NACIONAL",
     "default_supplier":getattr(x,"default_supplier",None) or "","supplier_part_number":getattr(x,"supplier_part_number",None) or "","default_currency":getattr(x,"default_currency",None) or "BRL","reference_unit_cost":float(getattr(x,"reference_unit_cost",0) or 0),"item_type":getattr(x,"item_type",None) or "MATERIAL","lifecycle_status":getattr(x,"lifecycle_status",None) or "ATIVO","substitute_item_id":getattr(x,"substitute_item_id",None),"linked_bom_id":getattr(x,"linked_bom_id",None),"eol_date":x.eol_date.isoformat() if getattr(x,"eol_date",None) else None,"lifecycle_notes":getattr(x,"lifecycle_notes",None) or "","datasheet_url":x.datasheet_url or "","author":x.author or "","source_sheet":x.source_sheet or "","source_key":getattr(x,"source_key",None) or "","brand":getattr(x,"brand",None) or "","supplier_cnpj":getattr(x,"supplier_cnpj",None) or "","code_group":getattr(x,"code_group",None) or "","code_origin":getattr(x,"code_origin",None) or "","code_type":getattr(x,"code_type",None) or "","code_sequence":getattr(x,"code_sequence",None),"active":bool(x.active)}
-def _eng_bom_json(b):
+def _eng_bom_json(b,_seen=None):
+    _seen=set(_seen or set())
+    if b.id in _seen:
+        return {"id":b.id,"product_code":b.product_code,"product_name":b.product_name,"product_ncm":getattr(b,"product_ncm",None) or "","revision":b.revision,"status":b.status,"quantity_reference":float(b.quantity_reference or 1) or 1,"currency_rate":b.currency_rate,"notes":b.notes or "","national_cost":0,"imported_cost":0,"consumption_cost":0,"total_cost":0,"unit_cost":0,"import_factor":1.8,"usd_brl":5.4,"source_bom_id":getattr(b,"source_bom_id",None),"items":[],"cycle":True}
+    _seen.add(b.id)
     pairs=(db.session.query(EngineeringBomItem,EngineeringItem).join(EngineeringItem,EngineeringItem.id==EngineeringBomItem.item_id)
            .filter(EngineeringBomItem.bom_id==b.id).all())
     cfg=_v72_settings();factor=float(cfg.get("engineering_import_factor",1.8) or 1.8);usd=float(cfg.get("engineering_usd_brl",5.4) or 5.4)
     nat=imp=cons=0.;items=[]
     for x,it in pairs:
         qty=float(x.quantity or 0);origin=(it.default_origin or x.origin or "NACIONAL").upper();group=(getattr(x,"cost_group",None) or "MATERIAL").upper()
-        # V78.4: o grupo dentro da BOM é uma classificação da própria estrutura.
-        # O Cadastro Mestre apenas sugere o grupo na inclusão; depois de salvo,
-        # MATERIAL / CONSUMO / SERVICO deve respeitar a escolha da Engenharia.
-        code_type=(getattr(it,"code_type",None) or "")
         stored_currency=(x.currency or getattr(it,"default_currency",None) or "BRL").upper()
-        fob_pending=origin=="IMPORTADO" and stored_currency!="USD"
-        currency="USD" if origin=="IMPORTADO" else ("BRL" if origin=="NACIONAL" else stored_currency)
-        raw_unit=0.0 if fob_pending else float(x.unit_cost or 0)
-        raw_total=qty*raw_unit
-        nat_unit=raw_unit
-        if origin=="IMPORTADO": nat_unit=raw_unit*factor*usd
+        linked=None;derived_from_bom=False
+        linked_id=getattr(it,"linked_bom_id",None)
+        if (getattr(it,"item_type",None) or "").upper()=="SUBESTRUTURA" and linked_id:
+            lb=db.session.get(EngineeringBom,linked_id)
+            if lb and lb.id not in _seen:
+                linked=_eng_bom_json(lb,_seen)
+                derived_from_bom=True
+        if derived_from_bom:
+            # Subestrutura tem custo calculado pela sua própria BOM. O vínculo superior não duplica componentes;
+            # usa o custo unitário consolidado da revisão vinculada e preserva a explosão apenas para visualização.
+            raw_unit=float(linked.get("unit_cost") or 0)
+            currency="BRL"
+            fob_pending=False
+            nat_unit=raw_unit
+            raw_total=qty*raw_unit
+        else:
+            fob_pending=origin=="IMPORTADO" and stored_currency!="USD"
+            currency="USD" if origin=="IMPORTADO" else ("BRL" if origin=="NACIONAL" else stored_currency)
+            raw_unit=0.0 if fob_pending else float(x.unit_cost or 0)
+            raw_total=qty*raw_unit
+            nat_unit=raw_unit*factor*usd if origin=="IMPORTADO" else raw_unit
         nat_total=qty*nat_unit
         if group=="CONSUMO":cons+=nat_total
         elif origin=="IMPORTADO":imp+=nat_total
         else:nat+=nat_total
         items.append({"id":x.id,"item_id":it.id,"internal_part_number":it.internal_part_number,"manufacturer_part_number":it.manufacturer_part_number or "",
         "ncm":getattr(it,"ncm",None) or "","description":it.description_pt or it.description_en or "","quantity":qty,"origin":origin,"cost_group":group,
-        "manufacturer":getattr(it,"manufacturer",None) or "","category":getattr(it,"category",None) or "","code_type":getattr(it,"code_type",None) or "","item_type":getattr(it,"item_type",None) or "MATERIAL","linked_bom_id":getattr(it,"linked_bom_id",None),"supplier":getattr(it,"default_supplier",None) or x.supplier or "","supplier_part_number":getattr(it,"supplier_part_number",None) or x.supplier_part_number or it.manufacturer_part_number or "","lead_time_days":x.lead_time_days,"reference_unit_cost":float(getattr(it,"reference_unit_cost",0) or 0),
-        "currency":currency,"unit_cost":raw_unit,"fob_pending":fob_pending,"raw_total_cost":round(raw_total,2),"nationalized_unit_cost":round(nat_unit,2),"total_cost":round(nat_total,2)})
+        "manufacturer":getattr(it,"manufacturer",None) or "","category":getattr(it,"category",None) or "","code_type":getattr(it,"code_type",None) or "","item_type":getattr(it,"item_type",None) or "MATERIAL","linked_bom_id":linked_id,"supplier":getattr(it,"default_supplier",None) or x.supplier or "","supplier_part_number":getattr(it,"supplier_part_number",None) or x.supplier_part_number or it.manufacturer_part_number or "","lead_time_days":x.lead_time_days,"reference_unit_cost":float(getattr(it,"reference_unit_cost",0) or 0),
+        "currency":currency,"unit_cost":raw_unit,"fob_pending":fob_pending,"derived_from_bom":derived_from_bom,"linked_bom_unit_cost":float(linked.get("unit_cost") or 0) if linked else None,"raw_total_cost":round(raw_total,2),"nationalized_unit_cost":round(nat_unit,2),"total_cost":round(nat_total,2)})
     total=nat+imp+cons;q=float(b.quantity_reference or 1) or 1
     return {"id":b.id,"product_code":b.product_code,"product_name":b.product_name,"product_ncm":getattr(b,"product_ncm",None) or "","revision":b.revision,"status":b.status,
     "quantity_reference":q,"currency_rate":b.currency_rate,"notes":b.notes or "","national_cost":round(nat,2),
