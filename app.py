@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V78.4 REV1"
+APP_RELEASE = "V78.5"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -582,6 +582,8 @@ class EngineeringBom(db.Model):
     currency_rate=db.Column(db.Float)
     notes=db.Column(db.Text)
     source_bom_id=db.Column(db.Integer,db.ForeignKey("engineering_boms.id"),index=True)
+    bom_kind=db.Column(db.String(30),nullable=False,default="PRODUTO",index=True)
+    product_item_id=db.Column(db.Integer,db.ForeignKey("engineering_items.id"),index=True)
     created_by=db.Column(db.Integer,db.ForeignKey("users.id"))
     created_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow)
     updated_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow,onupdate=datetime.utcnow)
@@ -16029,6 +16031,8 @@ with app.app_context():
             if insp.has_table("engineering_boms"):
                 _bc={c["name"] for c in insp.get_columns("engineering_boms")}
                 if "source_bom_id" not in _bc: conn.execute(text("ALTER TABLE engineering_boms ADD COLUMN source_bom_id INTEGER REFERENCES engineering_boms(id)"))
+                if "bom_kind" not in _bc: conn.execute(text("ALTER TABLE engineering_boms ADD COLUMN bom_kind VARCHAR(30) DEFAULT 'PRODUTO' NOT NULL"))
+                if "product_item_id" not in _bc: conn.execute(text("ALTER TABLE engineering_boms ADD COLUMN product_item_id INTEGER REFERENCES engineering_items(id)"))
             if insp.has_table("engineering_boms") and "product_ncm" not in {c["name"] for c in insp.get_columns("engineering_boms")}: conn.execute(text("ALTER TABLE engineering_boms ADD COLUMN product_ncm VARCHAR(20)"))
             if insp.has_table("engineering_bom_items") and "cost_group" not in {c["name"] for c in insp.get_columns("engineering_bom_items")}: conn.execute(text("ALTER TABLE engineering_bom_items ADD COLUMN cost_group VARCHAR(30) DEFAULT 'MATERIAL'"))
         db.metadata.create_all(bind=db.engine,tables=[EngineeringCodeRule.__table__],checkfirst=True)
@@ -16345,7 +16349,7 @@ def _eng_item_json(x):
 def _eng_bom_json(b,_seen=None):
     _seen=set(_seen or set())
     if b.id in _seen:
-        return {"id":b.id,"product_code":b.product_code,"product_name":b.product_name,"product_ncm":getattr(b,"product_ncm",None) or "","revision":b.revision,"status":b.status,"quantity_reference":float(b.quantity_reference or 1) or 1,"currency_rate":b.currency_rate,"notes":b.notes or "","national_cost":0,"imported_cost":0,"consumption_cost":0,"total_cost":0,"unit_cost":0,"import_factor":1.8,"usd_brl":5.4,"source_bom_id":getattr(b,"source_bom_id",None),"items":[],"cycle":True}
+        return {"id":b.id,"product_code":b.product_code,"product_name":b.product_name,"product_ncm":getattr(b,"product_ncm",None) or "","revision":b.revision,"status":b.status,"quantity_reference":float(b.quantity_reference or 1) or 1,"currency_rate":b.currency_rate,"notes":b.notes or "","national_cost":0,"imported_cost":0,"consumption_cost":0,"total_cost":0,"unit_cost":0,"import_factor":1.8,"usd_brl":5.4,"source_bom_id":getattr(b,"source_bom_id",None),"bom_kind":getattr(b,"bom_kind",None) or "PRODUTO","product_item_id":getattr(b,"product_item_id",None),"phantom_item_id":(EngineeringItem.query.filter_by(linked_bom_id=b.id,item_type="PHANTOM").with_entities(EngineeringItem.id).scalar()),"items":[],"cycle":True}
     _seen.add(b.id)
     pairs=(db.session.query(EngineeringBomItem,EngineeringItem).join(EngineeringItem,EngineeringItem.id==EngineeringBomItem.item_id)
            .filter(EngineeringBomItem.bom_id==b.id).all())
@@ -16356,7 +16360,7 @@ def _eng_bom_json(b,_seen=None):
         stored_currency=(x.currency or getattr(it,"default_currency",None) or "BRL").upper()
         linked=None;derived_from_bom=False
         linked_id=getattr(it,"linked_bom_id",None)
-        if (getattr(it,"item_type",None) or "").upper()=="SUBESTRUTURA" and linked_id:
+        if (getattr(it,"item_type",None) or "").upper() in ("SUBESTRUTURA","PHANTOM") and linked_id:
             lb=db.session.get(EngineeringBom,linked_id)
             if lb and lb.id not in _seen:
                 linked=_eng_bom_json(lb,_seen)
@@ -16387,7 +16391,7 @@ def _eng_bom_json(b,_seen=None):
     return {"id":b.id,"product_code":b.product_code,"product_name":b.product_name,"product_ncm":getattr(b,"product_ncm",None) or "","revision":b.revision,"status":b.status,
     "quantity_reference":q,"currency_rate":b.currency_rate,"notes":b.notes or "","national_cost":round(nat,2),
     "imported_cost":round(imp,2),"consumption_cost":round(cons,2),"total_cost":round(total,2),"unit_cost":round(total/q,2),
-    "import_factor":factor,"usd_brl":usd,"source_bom_id":getattr(b,"source_bom_id",None),"items":items}
+    "import_factor":factor,"usd_brl":usd,"source_bom_id":getattr(b,"source_bom_id",None),"bom_kind":getattr(b,"bom_kind",None) or "PRODUTO","product_item_id":getattr(b,"product_item_id",None),"phantom_item_id":(EngineeringItem.query.filter_by(linked_bom_id=b.id,item_type="PHANTOM").with_entities(EngineeringItem.id).scalar()),"items":items}
 
 @app.get("/engenharia")
 @login_required
@@ -16460,7 +16464,7 @@ def engineering_codification_next_api():
 @login_required
 def engineering_items_api():
     if not ((_has_access("engineering.items.view")) or ((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower() in ("admin","adm","administrator","manager","gestor"))):return jsonify({"ok":False,"error":"Sem permissão."}),403
-    q=_eng_norm(request.args.get("q"));z=EngineeringItem.query
+    q=_eng_norm(request.args.get("q"));z=EngineeringItem.query.filter(func.upper(EngineeringItem.item_type)!="PHANTOM")
     if q:
         like=f"%{q}%";z=z.filter(or_(EngineeringItem.internal_part_number.ilike(like),EngineeringItem.manufacturer_part_number.ilike(like),
         EngineeringItem.description_pt.ilike(like),EngineeringItem.description_en.ilike(like),EngineeringItem.manufacturer.ilike(like)))
@@ -16659,13 +16663,32 @@ def engineering_boms_api():
 @login_required
 def engineering_bom_save_api():
     if not ((_has_access("engineering.bom.manage")) or ((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower() in ("admin","adm","administrator","manager","gestor"))):return jsonify({"ok":False,"error":"Sem permissão."}),403
-    d=request.get_json(silent=True) or {};code=_eng_norm(d.get("product_code"));name=_eng_norm(d.get("product_name"));rev=_eng_norm(d.get("revision")) or "REV01"
-    if not code or not name:return jsonify({"ok":False,"error":"Código e descrição do produto são obrigatórios."}),400
+    d=request.get_json(silent=True) or {};kind=(_eng_norm(d.get("bom_kind")) or "PRODUTO").upper();rev=_eng_norm(d.get("revision")) or "REV01"
+    product_item_id=int(d.get("product_item_id") or 0) if str(d.get("product_item_id") or '').isdigit() else 0
+    master=db.session.get(EngineeringItem,product_item_id) if product_item_id else None
+    if kind=="PRODUTO" and master:
+        code=master.internal_part_number;name=master.description_pt or master.description_en;pncm=getattr(master,"ncm",None) or ""
+    else:
+        code=_eng_norm(d.get("product_code"));name=_eng_norm(d.get("product_name"));pncm=_eng_norm(d.get("product_ncm"))
+    if kind=="PRODUTO" and not master:return jsonify({"ok":False,"error":"Selecione um produto do Cadastro Mestre de Itens."}),400
+    if not code or not name:return jsonify({"ok":False,"error":"Código e descrição são obrigatórios."}),400
     if EngineeringBom.query.filter(func.lower(EngineeringBom.product_code)==code.lower(),func.lower(EngineeringBom.revision)==rev.lower()).first():return jsonify({"ok":False,"error":"Revisão já existente."}),409
     try:q=float(d.get("quantity_reference") or 1)
     except:q=1
-    b=EngineeringBom(product_code=code,product_name=name,product_ncm=_eng_norm(d.get("product_ncm")),revision=rev,status=(_eng_norm(d.get("status")) or "RASCUNHO").upper(),quantity_reference=q,notes=_eng_norm(d.get("notes")),created_by=session.get("user_id"))
+    b=EngineeringBom(product_code=code,product_name=name,product_ncm=pncm,revision=rev,status=(_eng_norm(d.get("status")) or "RASCUNHO").upper(),quantity_reference=q,notes=_eng_norm(d.get("notes")),bom_kind=kind,product_item_id=(master.id if master else None),created_by=session.get("user_id"))
     db.session.add(b);db.session.commit();return jsonify({"ok":True,"bom":_eng_bom_json(b)})
+
+@app.post("/api/engineering/substructures")
+@login_required
+def engineering_substructure_save_v785():
+    if not ((_has_access("engineering.bom.manage")) or ((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower() in ("admin","adm","administrator","manager","gestor"))):return jsonify({"ok":False,"error":"Sem permissão."}),403
+    d=request.get_json(silent=True) or {};code=_eng_norm(d.get("code")).upper();name=_eng_norm(d.get("description"));rev=_eng_norm(d.get("revision")) or "REV01"
+    if not code or not name:return jsonify({"ok":False,"error":"Código e descrição da subestrutura são obrigatórios."}),400
+    if EngineeringBom.query.filter(func.lower(EngineeringBom.product_code)==code.lower(),func.lower(EngineeringBom.revision)==rev.lower()).first():return jsonify({"ok":False,"error":"Subestrutura/revisão já existente."}),409
+    if EngineeringItem.query.filter(func.lower(EngineeringItem.internal_part_number)==code.lower()).first():return jsonify({"ok":False,"error":"Código já utilizado no cadastro mestre ou em outro Phantom Item."}),409
+    b=EngineeringBom(product_code=code,product_name=name,revision=rev,status="RASCUNHO",quantity_reference=1,bom_kind="SUBESTRUTURA",notes=_eng_norm(d.get("notes")),created_by=session.get("user_id"));db.session.add(b);db.session.flush()
+    ph=EngineeringItem(internal_part_number=code,description_pt=name,unit="UN",default_origin="NACIONAL",default_currency="BRL",reference_unit_cost=0,item_type="PHANTOM",lifecycle_status="ATIVO",linked_bom_id=b.id,source_sheet="PHANTOM_SUBESTRUTURA",author="ENGENHARIA",active=True,created_by=session.get("user_id"));db.session.add(ph);db.session.commit()
+    return jsonify({"ok":True,"bom":_eng_bom_json(b),"phantom":_eng_item_json(ph)})
 
 @app.post("/api/engineering/boms/<int:bid>/items")
 @login_required
@@ -16751,7 +16774,7 @@ def engineering_bom_clone_api(bid):
     if not s or not rev:return jsonify({"ok":False,"error":"BOM/revisão inválida."}),400
     code=_eng_norm(d.get("product_code")) or s.product_code;name=_eng_norm(d.get("product_name")) or s.product_name
     if EngineeringBom.query.filter(func.lower(EngineeringBom.product_code)==code.lower(),func.lower(EngineeringBom.revision)==rev.lower()).first():return jsonify({"ok":False,"error":"Estrutura/revisão já existente."}),409
-    n=EngineeringBom(product_code=code,product_name=name,product_ncm=getattr(s,"product_ncm",None),revision=rev,status="RASCUNHO",quantity_reference=s.quantity_reference,currency_rate=s.currency_rate,notes=s.notes,source_bom_id=s.id,created_by=session.get("user_id"))
+    n=EngineeringBom(product_code=code,product_name=name,product_ncm=getattr(s,"product_ncm",None),revision=rev,status="RASCUNHO",quantity_reference=s.quantity_reference,currency_rate=s.currency_rate,notes=s.notes,source_bom_id=s.id,bom_kind=getattr(s,"bom_kind",None) or "PRODUTO",product_item_id=getattr(s,"product_item_id",None),created_by=session.get("user_id"))
     db.session.add(n);db.session.flush()
     for x in EngineeringBomItem.query.filter_by(bom_id=s.id):
         db.session.add(EngineeringBomItem(bom_id=n.id,item_id=x.item_id,quantity=x.quantity,origin=x.origin,cost_group=getattr(x,"cost_group",None) or "MATERIAL",supplier=x.supplier,supplier_part_number=x.supplier_part_number,lead_time_days=x.lead_time_days,unit_cost=x.unit_cost,currency=x.currency,notes=x.notes))
