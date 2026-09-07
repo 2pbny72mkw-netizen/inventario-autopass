@@ -40,11 +40,20 @@ async function load(panel){
    panel.classList.remove("loading");
  }
 }
+function openGenericDrill(panel,title,rows){
+ const modal=document.getElementById('dashDrillModal');if(!modal)return;
+ const head=document.getElementById('dashDrillHead'),body=document.getElementById('dashDrillBody'),sub=document.getElementById('dashDrillSub'),search=document.getElementById('dashDrillSearch'),exp=document.getElementById('dashDrillExport');
+ const cols=[['Empresa','company'],['Linha','line'],['Localidade','locality'],['Tipo','type'],['Ativo','asset'],['Série','serial'],['Modelo','model'],['Fornecedor','supplier'],['Status','status'],['Inventariado','inventoried']];
+ const render=()=>{const q=String(search?.value||'').toLowerCase(),shown=(rows||[]).filter(r=>!q||cols.map(c=>String(r[c[1]]??'')).join(' ').toLowerCase().includes(q));head.innerHTML='<tr>'+cols.map(c=>`<th>${esc(c[0])}</th>`).join('')+'</tr>';body.innerHTML=shown.map(r=>'<tr>'+cols.map(c=>`<td>${esc(c[1]==='inventoried'?(r.inventoried?'SIM':'NÃO'):r[c[1]])}</td>`).join('')+'</tr>').join('')||'<tr><td colspan="10">Nenhum registro.</td></tr>';sub.textContent=shown.length+' registro(s) exibido(s)'};
+ document.getElementById('dashDrillTitle').textContent=title;search.value='';modal.hidden=false;document.body.classList.add('dashDrillOpen');search.oninput=render;exp.onclick=()=>csvDownload(rows||[],panel.dataset.family+'_detalhe');render();
+}
 function init(panel){
  if(panel.dataset.ready)return;panel.dataset.ready="1";
  panel.querySelectorAll("[data-filter]").forEach(el=>el.addEventListener("change",()=>load(panel)));
  panel.querySelector(".invClear")?.addEventListener("click",()=>{panel.querySelectorAll("[data-filter]").forEach(e=>e.value="");load(panel)});
  panel.querySelector(".invExport")?.addEventListener("click",()=>{const d=cache.get(panel);if(d)csvDownload(d.assets||[],panel.dataset.family)});
+ panel.querySelectorAll('.invKpis article').forEach(card=>{card.style.cursor='pointer';card.addEventListener('click',()=>{const d=cache.get(panel);if(!d)return;const key=card.querySelector('[data-kpi]')?.dataset.kpi||'total';let rows=d.assets||[];if(key==='inbase'||key==='coverage')rows=rows.filter(r=>r.inventoried);else if(key==='missing')rows=rows.filter(r=>!r.inventoried);else if(key==='divergences')rows=rows.filter(r=>r.divergence);else if(key==='locations'||key==='stations'){const seen=new Set();rows=rows.filter(r=>{const k=[r.company,r.line,r.locality].join('|');if(!r.locality||seen.has(k))return false;seen.add(k);return true}).map(r=>({...r,type:'',asset:'',serial:'',model:'',supplier:'',version:'',status:'',inventoried:false}))}openGenericDrill(panel,card.querySelector('span')?.textContent||'Detalhamento',rows)})});
+ document.querySelectorAll('[data-close-drill]').forEach(x=>{if(!x.dataset.boundGeneric){x.dataset.boundGeneric='1';x.addEventListener('click',()=>{document.getElementById('dashDrillModal').hidden=true;document.body.classList.remove('dashDrillOpen')})}});
 }
 function activate(view,opts={}){
  document.querySelectorAll(".invFamilyDash").forEach(p=>p.classList.remove("is-active"));

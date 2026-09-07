@@ -23,6 +23,8 @@
       locality: $('atmFLocation')?.value || '',
       model: $('atmFModel')?.value || '',
       contract: $('atmFContract')?.value || '',
+      product: $('atmFProduct')?.value || '',
+      transactions: $('atmFTransactions')?.value || '',
       ownership: $('atmFOwnership')?.value || '',
       status: $('atmFStatus')?.value || ''
     };
@@ -46,6 +48,8 @@
     fillSelect('atmFLocation',o.localities,'Todas localidades');
     fillSelect('atmFModel',o.models,'Todos modelos');
     fillSelect('atmFContract',o.contracts,'Todos contratos');
+    fillSelect('atmFProduct',o.products,'Todos produtos');
+    fillSelect('atmFTransactions',o.transactions,'Todas transações');
     fillSelect('atmFOwnership',o.ownership,'Todo tipo de posse');
     fillSelect('atmFStatus',o.statuses,'Todos status');
   }
@@ -134,7 +138,7 @@
     const rows=d.assets||[];
     setText('atmRowsTag',`${fmt(rows.length)} ATMs`);
     const tbody=$('atmRows');
-    if(tbody) tbody.innerHTML=rows.length?rows.map(a=>`<tr><td>${esc(a.company||'')}</td><td>${esc(a.line||'')}</td><td>${esc(a.locality||'')}</td><td><b>${esc(assetId(a))}</b></td><td>${esc(a.model||'')}</td><td>${esc(a.contract||'Sem contrato')}</td><td>${esc(a.ownership||'')}</td><td>${String(a.teamviewer_id||'').trim()?'Sim':'Não'}</td><td>${esc(a.teamviewer_id||'')}</td><td>${esc(a.ip||a.ip_address||'')}</td><td>${esc(a.status||'')}</td></tr>`).join(''):'<tr><td colspan="11">Nenhum ATM encontrado no recorte.</td></tr>';
+    if(tbody) tbody.innerHTML=rows.length?rows.map(a=>`<tr><td>${esc(a.company||'')}</td><td>${esc(a.line||'')}</td><td>${esc(a.locality||'')}</td><td><b>${esc(assetId(a))}</b></td><td>${esc(a.model||'')}</td><td>${esc(a.contract||'Sem contrato')}</td><td>${esc(a.product||'')}</td><td>${esc(a.transactions||'')}</td><td>${esc(a.ownership||'')}</td><td>${String(a.teamviewer_id||'').trim()?'Sim':'Não'}</td><td>${esc(a.teamviewer_id||'')}</td><td>${esc(a.ip||a.ip_address||'')}</td><td>${esc(a.status||'')}</td></tr>`).join(''):'<tr><td colspan="13">Nenhum ATM encontrado no recorte.</td></tr>';
     setHtml('atmDrillCards',`<article><span>Recorte atual</span><b>${fmt(rows.length)}</b><small>ATMs</small></article><article><span>Operações</span><b>${fmt(Object.keys(d.operators||{}).length)}</b><small>operadoras</small></article><article><span>Localidades</span><b>${fmt(Object.keys(d.locations||{}).length)}</b><small>com ATM</small></article><article><span>Modelos</span><b>${fmt(Object.keys(d.models||{}).length)}</b><small>no recorte</small></article>`);
   }
 
@@ -179,8 +183,8 @@
   function exportCsv(){
     const d=lastPayload; if(!d) return;
     const q=v=>'"'+String(v??'').replaceAll('"','""')+'"';
-    const lines=[['Operadora','Linha','Localidade','ATM','Modelo','Contrato','Posse','TeamViewer','IP','Status']];
-    (d.assets||[]).forEach(a=>lines.push([a.company,a.line,a.locality,assetId(a),a.model,a.contract,a.ownership,a.teamviewer_id,a.ip||a.ip_address,a.status]));
+    const lines=[['Operadora','Linha','Localidade','ATM','Modelo','Contrato','Produto','Transaciona','Posse','TeamViewer','IP','Status']];
+    (d.assets||[]).forEach(a=>lines.push([a.company,a.line,a.locality,assetId(a),a.model,a.contract,a.product,a.transactions,a.ownership,a.teamviewer_id,a.ip||a.ip_address,a.status]));
     const csv='\ufeff'+lines.map(row=>row.map(q).join(';')).join('\r\n');
     const blob=new Blob([csv],{type:'text/csv;charset=utf-8'}), url=URL.createObjectURL(blob), a=document.createElement('a');
     a.href=url; a.download='dashboard_atm_'+new Date().toISOString().slice(0,10)+'.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
@@ -197,13 +201,32 @@
     return btn;
   }
 
+  let drillRows=[],drillTitle='';
+  function drillCols(){return [['Operadora','company'],['Linha','line'],['Localidade','locality'],['ATM',null],['Modelo','model'],['Produto','product'],['Transaciona','transactions'],['Contrato','contract'],['Posse','ownership'],['Status','status']]}
+  function renderDrillRows(){
+    const modal=$('dashDrillModal'), body=$('dashDrillBody'), head=$('dashDrillHead'); if(!modal||!body||!head)return;
+    const q=norm($('dashDrillSearch')?.value||''), cols=drillCols();
+    const rows=drillRows.filter(a=>!q||norm(cols.map(([_,k])=>k?a[k]:assetId(a)).join(' ')).includes(q));
+    head.innerHTML='<tr>'+cols.map(([h])=>`<th>${esc(h)}</th>`).join('')+'</tr>';
+    body.innerHTML=rows.length?rows.map(a=>'<tr>'+cols.map(([_,k])=>`<td>${esc(k?a[k]:assetId(a))}</td>`).join('')+'</tr>').join(''):'<tr><td colspan="10">Nenhum registro.</td></tr>';
+    setText('dashDrillSub',`${fmt(rows.length)} registro(s) exibido(s)`);
+  }
+  function openDrill(title,rows){drillTitle=title;drillRows=rows||[];setText('dashDrillTitle',title);const m=$('dashDrillModal');if(m){m.hidden=false;document.body.classList.add('dashDrillOpen');}if($('dashDrillSearch'))$('dashDrillSearch').value='';renderDrillRows()}
+  function closeDrill(){const m=$('dashDrillModal');if(m)m.hidden=true;document.body.classList.remove('dashDrillOpen')}
+  function kpiRows(kind){const rows=lastPayload?.assets||[];if(kind==='allocated')return rows.filter(a=>!a.stock);if(kind==='stock')return rows.filter(a=>a.stock);if(kind==='cptm'||kind==='metro'){const wanted=kind==='cptm'?['CPTM']:['METRO','METRÔ'],seen=new Set(),out=[];rows.filter(a=>wanted.includes(norm(a.company))).forEach(a=>{const k=[a.company,a.line,a.locality].join('|');if(!seen.has(k)){seen.add(k);out.push({...a,asset_key:'—',id_top:'—',model:'',product:'',transactions:'',contract:'',ownership:'',status:''})}});return out}if(kind==='teamviewer')return rows.filter(a=>String(a.teamviewer_id||'').trim());return rows}
+  function exportDrill(){const q=v=>'"'+String(v??'').replaceAll('"','""')+'"',cols=drillCols();const lines=[[...cols.map(x=>x[0])],...drillRows.map(a=>cols.map(([_,k])=>k?a[k]:assetId(a)))];const blob=new Blob(['\ufeff'+lines.map(r=>r.map(q).join(';')).join('\r\n')],{type:'text/csv;charset=utf-8'}),u=URL.createObjectURL(blob),a=document.createElement('a');a.href=u;a.download='detalhamento_'+drillTitle.toLowerCase().replace(/[^a-z0-9]+/gi,'_')+'.csv';a.click();URL.revokeObjectURL(u)}
+
   function bind(){
     if(!hasAtmDom()) return;
     ensureExportButton();
-    ['atmFCompany','atmFLine','atmFLocation','atmFModel','atmFContract','atmFOwnership','atmFStatus'].forEach(id=>$(id)?.addEventListener('change',loadAtmDashboard));
-    $('atmClear')?.addEventListener('click',()=>{ ['atmFCompany','atmFLine','atmFLocation','atmFModel','atmFContract','atmFOwnership','atmFStatus'].forEach(id=>{if($(id))$(id).value='';}); loadAtmDashboard(); });
+    ['atmFCompany','atmFLine','atmFLocation','atmFModel','atmFContract','atmFProduct','atmFTransactions','atmFOwnership','atmFStatus'].forEach(id=>$(id)?.addEventListener('change',loadAtmDashboard));
+    $('atmClear')?.addEventListener('click',()=>{ ['atmFCompany','atmFLine','atmFLocation','atmFModel','atmFContract','atmFProduct','atmFTransactions','atmFOwnership','atmFStatus'].forEach(id=>{if($(id))$(id).value='';}); loadAtmDashboard(); });
     $('atmDashRefresh')?.addEventListener('click',loadAtmDashboard);
     $('atmDashExport')?.addEventListener('click',exportCsv);
+    const kpis=[['atmKTotal','Total oficial','total'],['atmKAllocated','Alocados','allocated'],['atmKStock','Estoque','stock'],['atmKCptmStations','Estações CPTM','cptm'],['atmKMetroStations','Estações Metrô','metro'],['atmKTeamviewer','TeamViewer','teamviewer']];
+    kpis.forEach(([id,title,kind])=>$(id)?.closest('.kpi')?.addEventListener('click',()=>openDrill(title,kpiRows(kind))));
+    document.querySelectorAll('[data-close-drill]').forEach(x=>x.addEventListener('click',closeDrill));
+    $('dashDrillSearch')?.addEventListener('input',renderDrillRows); $('dashDrillExport')?.addEventListener('click',exportDrill);
     $('atmShowLocations')?.addEventListener('click',()=>{ const details=$('atmAssetDetails'); if(details){details.open=true;details.scrollIntoView({behavior:'smooth',block:'start'});} });
     window.AutopassATM7363={reload:loadAtmDashboard,getData:()=>lastPayload};
     setTimeout(loadAtmDashboard,80);
