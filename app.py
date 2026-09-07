@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V78.2 REV3"
+APP_RELEASE = "V78.3"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -549,10 +549,26 @@ class EngineeringItem(db.Model):
     brand=db.Column(db.String(180),index=True)
     supplier_cnpj=db.Column(db.String(30),index=True)
     source_payload_json=db.Column(db.Text)
+    code_group=db.Column(db.String(2),index=True)
+    code_origin=db.Column(db.String(2),index=True)
+    code_type=db.Column(db.String(2),index=True)
+    code_sequence=db.Column(db.Integer,index=True)
     active=db.Column(db.Boolean,nullable=False,default=True,index=True)
     created_by=db.Column(db.Integer,db.ForeignKey("users.id"))
     created_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow)
     updated_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow,onupdate=datetime.utcnow)
+
+class EngineeringCodeRule(db.Model):
+    __tablename__="engineering_code_rules"
+    id=db.Column(db.Integer,primary_key=True)
+    dimension=db.Column(db.String(20),nullable=False,index=True)  # GRUPO | ORIGEM | TIPO
+    code=db.Column(db.String(10),nullable=False)
+    description=db.Column(db.String(180),nullable=False)
+    active=db.Column(db.Boolean,nullable=False,default=True,index=True)
+    created_by=db.Column(db.Integer,db.ForeignKey("users.id"))
+    created_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow)
+    updated_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow,onupdate=datetime.utcnow)
+    __table_args__=(UniqueConstraint("dimension","code",name="uq_engineering_code_rule"),)
 
 class EngineeringBom(db.Model):
     __tablename__="engineering_boms"
@@ -16006,11 +16022,19 @@ with app.app_context():
                 if "brand" not in _ec: conn.execute(text("ALTER TABLE engineering_items ADD COLUMN brand VARCHAR(180)"))
                 if "supplier_cnpj" not in _ec: conn.execute(text("ALTER TABLE engineering_items ADD COLUMN supplier_cnpj VARCHAR(30)"))
                 if "source_payload_json" not in _ec: conn.execute(text("ALTER TABLE engineering_items ADD COLUMN source_payload_json TEXT"))
+                if "code_group" not in _ec: conn.execute(text("ALTER TABLE engineering_items ADD COLUMN code_group VARCHAR(2)"))
+                if "code_origin" not in _ec: conn.execute(text("ALTER TABLE engineering_items ADD COLUMN code_origin VARCHAR(2)"))
+                if "code_type" not in _ec: conn.execute(text("ALTER TABLE engineering_items ADD COLUMN code_type VARCHAR(2)"))
+                if "code_sequence" not in _ec: conn.execute(text("ALTER TABLE engineering_items ADD COLUMN code_sequence INTEGER"))
             if insp.has_table("engineering_boms"):
                 _bc={c["name"] for c in insp.get_columns("engineering_boms")}
                 if "source_bom_id" not in _bc: conn.execute(text("ALTER TABLE engineering_boms ADD COLUMN source_bom_id INTEGER REFERENCES engineering_boms(id)"))
             if insp.has_table("engineering_boms") and "product_ncm" not in {c["name"] for c in insp.get_columns("engineering_boms")}: conn.execute(text("ALTER TABLE engineering_boms ADD COLUMN product_ncm VARCHAR(20)"))
             if insp.has_table("engineering_bom_items") and "cost_group" not in {c["name"] for c in insp.get_columns("engineering_bom_items")}: conn.execute(text("ALTER TABLE engineering_bom_items ADD COLUMN cost_group VARCHAR(30) DEFAULT 'MATERIAL'"))
+        db.metadata.create_all(bind=db.engine,tables=[EngineeringCodeRule.__table__],checkfirst=True)
+        if not SchemaMigration.query.filter_by(version="V78.2.4-001").first():
+            _eng_seed_code_rules()
+            db.session.add(SchemaMigration(version="V78.2.4-001",description="Engenharia: codificação configurável Grupo.Origem.Tipo.Sequencial"));db.session.commit()
         if not SchemaMigration.query.filter_by(version="V77.9.8-001").first():
             db.session.add(SchemaMigration(version="V77.9.8-001",description="Engenharia: NCM, grupos de custo, nacionalização USD e formação de preço Venda/Locação"));db.session.commit()
     except Exception:
@@ -16317,26 +16341,32 @@ def _eng_item_json(x):
     return {"id":x.id,"internal_part_number":x.internal_part_number,"manufacturer_part_number":x.manufacturer_part_number or "",
     "description_pt":x.description_pt or "","description_en":x.description_en or "","manufacturer":x.manufacturer or "",
     "category":x.category or "","ncm":getattr(x,"ncm",None) or "","unit":x.unit or "UN","default_origin":x.default_origin or "NACIONAL",
-    "default_supplier":getattr(x,"default_supplier",None) or "","supplier_part_number":getattr(x,"supplier_part_number",None) or "","default_currency":getattr(x,"default_currency",None) or "BRL","reference_unit_cost":float(getattr(x,"reference_unit_cost",0) or 0),"item_type":getattr(x,"item_type",None) or "MATERIAL","lifecycle_status":getattr(x,"lifecycle_status",None) or "ATIVO","substitute_item_id":getattr(x,"substitute_item_id",None),"linked_bom_id":getattr(x,"linked_bom_id",None),"eol_date":x.eol_date.isoformat() if getattr(x,"eol_date",None) else None,"lifecycle_notes":getattr(x,"lifecycle_notes",None) or "","datasheet_url":x.datasheet_url or "","author":x.author or "","source_sheet":x.source_sheet or "","source_key":getattr(x,"source_key",None) or "","brand":getattr(x,"brand",None) or "","supplier_cnpj":getattr(x,"supplier_cnpj",None) or "","active":bool(x.active)}
+    "default_supplier":getattr(x,"default_supplier",None) or "","supplier_part_number":getattr(x,"supplier_part_number",None) or "","default_currency":getattr(x,"default_currency",None) or "BRL","reference_unit_cost":float(getattr(x,"reference_unit_cost",0) or 0),"item_type":getattr(x,"item_type",None) or "MATERIAL","lifecycle_status":getattr(x,"lifecycle_status",None) or "ATIVO","substitute_item_id":getattr(x,"substitute_item_id",None),"linked_bom_id":getattr(x,"linked_bom_id",None),"eol_date":x.eol_date.isoformat() if getattr(x,"eol_date",None) else None,"lifecycle_notes":getattr(x,"lifecycle_notes",None) or "","datasheet_url":x.datasheet_url or "","author":x.author or "","source_sheet":x.source_sheet or "","source_key":getattr(x,"source_key",None) or "","brand":getattr(x,"brand",None) or "","supplier_cnpj":getattr(x,"supplier_cnpj",None) or "","code_group":getattr(x,"code_group",None) or "","code_origin":getattr(x,"code_origin",None) or "","code_type":getattr(x,"code_type",None) or "","code_sequence":getattr(x,"code_sequence",None),"active":bool(x.active)}
 def _eng_bom_json(b):
     pairs=(db.session.query(EngineeringBomItem,EngineeringItem).join(EngineeringItem,EngineeringItem.id==EngineeringBomItem.item_id)
            .filter(EngineeringBomItem.bom_id==b.id).all())
     cfg=_v72_settings();factor=float(cfg.get("engineering_import_factor",1.8) or 1.8);usd=float(cfg.get("engineering_usd_brl",5.4) or 5.4)
     nat=imp=cons=0.;items=[]
     for x,it in pairs:
-        qty=float(x.quantity or 0);raw_unit=float(x.unit_cost or 0);currency=(getattr(it,"default_currency",None) or x.currency or "BRL").upper();origin=(it.default_origin or x.origin or "NACIONAL").upper();group=(getattr(x,"cost_group",None) or "MATERIAL").upper()
+        qty=float(x.quantity or 0);origin=(it.default_origin or x.origin or "NACIONAL").upper();group=(getattr(x,"cost_group",None) or "MATERIAL").upper()
+        master_hint=((getattr(it,"category",None) or "")+" "+(getattr(it,"item_type",None) or "")).upper();code_type=(getattr(it,"code_type",None) or "")
+        if group=="MATERIAL" and (code_type=="04" or "CONSUM" in master_hint or "EMBAL" in master_hint): group="CONSUMO"
+        if group=="MATERIAL" and (code_type in ("12","13") or "SERVI" in master_hint): group="SERVICO"
+        stored_currency=(x.currency or getattr(it,"default_currency",None) or "BRL").upper()
+        fob_pending=origin=="IMPORTADO" and stored_currency!="USD"
+        currency="USD" if origin=="IMPORTADO" else ("BRL" if origin=="NACIONAL" else stored_currency)
+        raw_unit=0.0 if fob_pending else float(x.unit_cost or 0)
         raw_total=qty*raw_unit
         nat_unit=raw_unit
-        if origin=="IMPORTADO" and currency=="USD": nat_unit=raw_unit*factor*usd
-        elif origin=="IMPORTADO" and currency=="BRL": nat_unit=raw_unit
+        if origin=="IMPORTADO": nat_unit=raw_unit*factor*usd
         nat_total=qty*nat_unit
         if group=="CONSUMO":cons+=nat_total
         elif origin=="IMPORTADO":imp+=nat_total
         else:nat+=nat_total
         items.append({"id":x.id,"item_id":it.id,"internal_part_number":it.internal_part_number,"manufacturer_part_number":it.manufacturer_part_number or "",
         "ncm":getattr(it,"ncm",None) or "","description":it.description_pt or it.description_en or "","quantity":qty,"origin":origin,"cost_group":group,
-        "supplier":getattr(it,"default_supplier",None) or x.supplier or "","supplier_part_number":getattr(it,"supplier_part_number",None) or x.supplier_part_number or it.manufacturer_part_number or "","lead_time_days":x.lead_time_days,"reference_unit_cost":float(getattr(it,"reference_unit_cost",0) or 0),
-        "currency":currency,"unit_cost":raw_unit,"raw_total_cost":round(raw_total,2),"nationalized_unit_cost":round(nat_unit,2),"total_cost":round(nat_total,2)})
+        "manufacturer":getattr(it,"manufacturer",None) or "","category":getattr(it,"category",None) or "","code_type":getattr(it,"code_type",None) or "","supplier":getattr(it,"default_supplier",None) or x.supplier or "","supplier_part_number":getattr(it,"supplier_part_number",None) or x.supplier_part_number or it.manufacturer_part_number or "","lead_time_days":x.lead_time_days,"reference_unit_cost":float(getattr(it,"reference_unit_cost",0) or 0),
+        "currency":currency,"unit_cost":raw_unit,"fob_pending":fob_pending,"raw_total_cost":round(raw_total,2),"nationalized_unit_cost":round(nat_unit,2),"total_cost":round(nat_total,2)})
     total=nat+imp+cons;q=float(b.quantity_reference or 1) or 1
     return {"id":b.id,"product_code":b.product_code,"product_name":b.product_name,"product_ncm":getattr(b,"product_ncm",None) or "","revision":b.revision,"status":b.status,
     "quantity_reference":q,"currency_rate":b.currency_rate,"notes":b.notes or "","national_cost":round(nat,2),
@@ -16351,6 +16381,64 @@ def engineering_page():
     allowed = role in ("admin","adm","administrator","manager","gestor") or _has_access("engineering.items.view") or _has_access("engineering.bom.view") or _has_access("engineering.pricing.view")
     if not allowed: abort(403)
     return render_template("engineering.html",app_release=APP_RELEASE)
+
+def _eng_code_seed():
+    return {
+      "GRUPO":[("00","Revenda"),("01","Industrializado"),("02","Serviço MO"),("03","Produto acabado"),("04","Consumo"),("05","Ativo"),("06","Reservado / futuro")],
+      "ORIGEM":[("00","Nacional"),("01","Importado")],
+      "TIPO":[("00","Componentes eletrônicos"),("01","Componentes plástico / vidro"),("02","Componente metálico"),("03","Cabos"),("04","Embalagens / Etiquetas"),("05","Sub conjunto"),("06","Placa montada"),("07","Produto montado"),("08","Produto comprado"),("09","Suprimentos - predial"),("10","Suprimentos - AT"),("11","Ativos"),("12","Serviços - facilities"),("13","Serviços - MO AT")]
+    }
+
+def _eng_seed_code_rules():
+    if EngineeringCodeRule.query.count(): return
+    for dim,rows in _eng_code_seed().items():
+        for code,desc in rows: db.session.add(EngineeringCodeRule(dimension=dim,code=code,description=desc,active=True))
+    db.session.commit()
+
+def _eng_code_rules_json():
+    _eng_seed_code_rules()
+    rows=EngineeringCodeRule.query.order_by(EngineeringCodeRule.dimension,EngineeringCodeRule.code).all()
+    return [{"id":x.id,"dimension":x.dimension,"code":x.code,"description":x.description,"active":bool(x.active)} for x in rows]
+
+def _eng_next_generated_code(group_code,origin_code,type_code):
+    parts=[str(group_code or '').zfill(2),str(origin_code or '').zfill(2),str(type_code or '').zfill(2)]
+    if any(len(x)!=2 or not x.isdigit() for x in parts): raise ValueError("Grupo, Origem e Tipo devem possuir códigos numéricos de 2 posições.")
+    prefix='.'.join(parts)+'.'
+    max_seq=0
+    for (raw,) in db.session.query(EngineeringItem.internal_part_number).filter(EngineeringItem.internal_part_number.like(prefix+'%')).all():
+        m=re.fullmatch(re.escape(prefix)+r'(\d{5})',str(raw or ''))
+        if m:max_seq=max(max_seq,int(m.group(1)))
+    if max_seq>=99999: raise ValueError("Sequencial esgotado para esta combinação.")
+    return prefix+f"{max_seq+1:05d}"
+
+@app.get("/api/engineering/codification")
+@login_required
+def engineering_codification_api():
+    if not ((_has_access("engineering.items.view")) or ((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower() in ("admin","adm","administrator","manager","gestor"))):return jsonify({"ok":False,"error":"Sem permissão."}),403
+    return jsonify({"ok":True,"format":"GG.OO.TT.SSSSS","example":"01.01.06.00015","rules":_eng_code_rules_json()})
+
+@app.post("/api/engineering/codification")
+@login_required
+def engineering_codification_save_api():
+    if not ((_has_access("engineering.items.manage")) or ((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower() in ("admin","adm","administrator","manager","gestor"))):return jsonify({"ok":False,"error":"Sem permissão."}),403
+    d=request.get_json(silent=True) or {}; rid=int(d.get('id') or 0);dim=_eng_norm(d.get('dimension')).upper();code=_eng_norm(d.get('code'));desc=_eng_norm(d.get('description'))
+    if dim not in ('GRUPO','ORIGEM','TIPO'):return jsonify({"ok":False,"error":"Dimensão inválida."}),400
+    if not re.fullmatch(r'\d{2}',code):return jsonify({"ok":False,"error":"O código deve possuir exatamente 2 dígitos."}),400
+    if not desc:return jsonify({"ok":False,"error":"Descrição obrigatória."}),400
+    dup=EngineeringCodeRule.query.filter_by(dimension=dim,code=code)
+    if rid:dup=dup.filter(EngineeringCodeRule.id!=rid)
+    if dup.first():return jsonify({"ok":False,"error":"Código já existente nesta classificação."}),409
+    x=db.session.get(EngineeringCodeRule,rid) if rid else EngineeringCodeRule(dimension=dim,created_by=session.get('user_id'))
+    if not x:return jsonify({"ok":False,"error":"Linha não encontrada."}),404
+    x.code=code;x.description=desc;x.active=bool(d.get('active',True));db.session.add(x);db.session.commit()
+    return jsonify({"ok":True,"rule":{"id":x.id,"dimension":x.dimension,"code":x.code,"description":x.description,"active":x.active}})
+
+@app.get("/api/engineering/codification/next-code")
+@login_required
+def engineering_codification_next_api():
+    try:code=_eng_next_generated_code(request.args.get('group'),request.args.get('origin'),request.args.get('type'))
+    except ValueError as e:return jsonify({"ok":False,"error":str(e)}),400
+    return jsonify({"ok":True,"code":code})
 
 @app.get("/api/engineering/items")
 @login_required
@@ -16367,14 +16455,21 @@ def engineering_items_api():
 @login_required
 def engineering_item_save_api():
     if not ((_has_access("engineering.items.manage")) or ((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower() in ("admin","adm","administrator","manager","gestor"))):return jsonify({"ok":False,"error":"Sem permissão."}),403
-    d=request.get_json(silent=True) or {};iid=int(d.get("id") or 0);code=_eng_norm(d.get("internal_part_number"));desc=_eng_norm(d.get("description_pt"))
+    d=request.get_json(silent=True) or {};iid=int(d.get("id") or 0);desc=_eng_norm(d.get("description_pt"));code=_eng_norm(d.get("internal_part_number"))
+    if not iid and d.get("code_group") is not None:
+        try: code=_eng_next_generated_code(d.get("code_group"),d.get("code_origin"),d.get("code_type"))
+        except ValueError as e:return jsonify({"ok":False,"error":str(e)}),400
     if not code or not desc:return jsonify({"ok":False,"error":"Código interno e descrição são obrigatórios."}),400
+    cg=_eng_norm(d.get("code_group"));co=_eng_norm(d.get("code_origin"));ct=_eng_norm(d.get("code_type"))
     dup=EngineeringItem.query.filter(func.lower(EngineeringItem.internal_part_number)==code.lower())
     if iid:dup=dup.filter(EngineeringItem.id!=iid)
     if dup.first():return jsonify({"ok":False,"error":"Código interno já cadastrado."}),409
     x=db.session.get(EngineeringItem,iid) if iid else EngineeringItem(created_by=session.get("user_id"))
     if not x:return jsonify({"ok":False,"error":"Item não encontrado."}),404
     x.internal_part_number=code;x.manufacturer_part_number=_eng_norm(d.get("manufacturer_part_number"));x.description_pt=desc
+    if not iid and cg and co and ct:
+        x.code_group=cg;x.code_origin=co;x.code_type=ct
+        m=re.search(r"(\d{5})$",code);x.code_sequence=int(m.group(1)) if m else None
     x.description_en=_eng_norm(d.get("description_en"));x.manufacturer=_eng_norm(d.get("manufacturer"));x.category=_eng_norm(d.get("category"));x.ncm=_eng_norm(d.get("ncm"))
     x.unit=_eng_norm(d.get("unit")) or "UN";x.default_origin=(_eng_norm(d.get("default_origin")) or "NACIONAL").upper()
     x.default_supplier=_eng_norm(d.get("default_supplier"));x.supplier_part_number=_eng_norm(d.get("supplier_part_number"));x.default_currency=(_eng_norm(d.get("default_currency")) or "BRL").upper()
@@ -16571,8 +16666,10 @@ def engineering_bom_item_save_api(bid):
     try:x.lead_time_days=int(float(d.get("lead_time_days"))) if d.get("lead_time_days") else None
     except:x.lead_time_days=None
     x.origin=(it.default_origin or "NACIONAL").upper();x.cost_group=(_eng_norm(d.get("cost_group")) or "MATERIAL").upper();x.supplier=getattr(it,"default_supplier",None) or ""
-    x.supplier_part_number=getattr(it,"supplier_part_number",None) or it.manufacturer_part_number or "";x.currency=(getattr(it,"default_currency",None) or "BRL").upper()
-    if d.get("unit_cost") in (None,""): x.unit_cost=float(getattr(it,"reference_unit_cost",0) or 0)
+    x.supplier_part_number=getattr(it,"supplier_part_number",None) or it.manufacturer_part_number or "";x.currency="USD" if x.origin=="IMPORTADO" else "BRL"
+    if d.get("unit_cost") in (None,""):
+        ref_currency=(getattr(it,"default_currency",None) or "BRL").upper()
+        x.unit_cost=float(getattr(it,"reference_unit_cost",0) or 0) if (x.origin!="IMPORTADO" or ref_currency=="USD") else 0
     db.session.add(x);db.session.flush();new={"quantity":x.quantity,"origin":x.origin,"cost_group":x.cost_group,"supplier":x.supplier,"supplier_part_number":x.supplier_part_number,"lead_time_days":x.lead_time_days,"unit_cost":x.unit_cost,"currency":x.currency}
     db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="ENGINEERING_BOM_ITEM_UPDATED" if old else "ENGINEERING_BOM_ITEM_CREATED",entity_type="engineering_bom_item",entity_id=str(x.id),detail=json.dumps({"before":old,"after":new},ensure_ascii=False)))
     db.session.commit();return jsonify({"ok":True,"bom":_eng_bom_json(b)})
@@ -16724,7 +16821,7 @@ def engineering_bom_import_commit_api(bid):
             it=db.session.get(EngineeringItem,int(r["item_id"]))
             if not it:continue
             x=EngineeringBomItem.query.filter_by(bom_id=bid,item_id=it.id).first() or EngineeringBomItem(bom_id=bid,item_id=it.id)
-            x.quantity=max(_eng_bom_num(r.get("quantity"),1),.000001);x.origin=(_eng_norm(r.get("origin")) or "NACIONAL").upper();x.cost_group=(_eng_norm(r.get("cost_group")) or "MATERIAL").upper();x.supplier=_eng_norm(r.get("supplier"));x.supplier_part_number=_eng_norm(r.get("supplier_part_number"));x.currency=(_eng_norm(r.get("currency")) or "BRL").upper();x.unit_cost=max(_eng_bom_num(r.get("unit_cost"),0),0)
+            x.quantity=max(_eng_bom_num(r.get("quantity"),1),.000001);x.origin=(it.default_origin or _eng_norm(r.get("origin")) or "NACIONAL").upper();x.cost_group=(_eng_norm(r.get("cost_group")) or "MATERIAL").upper();x.supplier=getattr(it,"default_supplier",None) or _eng_norm(r.get("supplier"));x.supplier_part_number=getattr(it,"supplier_part_number",None) or _eng_norm(r.get("supplier_part_number"));x.currency="USD" if x.origin=="IMPORTADO" else "BRL";x.unit_cost=max(_eng_bom_num(r.get("unit_cost"),0),0)
             try:x.lead_time_days=int(r.get("lead_time_days")) if r.get("lead_time_days") not in (None,"") else None
             except:x.lead_time_days=None
             db.session.add(x);n+=1
@@ -16740,8 +16837,8 @@ def engineering_bom_export_api(bid):
     d=_eng_bom_json(b);wb=Workbook();ws=wb.active;ws.title="BOM"
     ws.append(["Produto",d["product_code"],d["product_name"],"NCM Produto",d.get("product_ncm",""),"Revisão",d["revision"],"Status",d["status"]])
     ws.append(["Qtd. referência",d["quantity_reference"],"Nacional",d["national_cost"],"Importado nacionalizado",d["imported_cost"],"Consumo",d.get("consumption_cost",0),"Total",d["total_cost"],"Unitário",d["unit_cost"]]);ws.append([])
-    ws.append(["Código Interno","MPN","NCM Item","Descrição","Qtd.","Grupo","Origem","Fornecedor","PN Fornecedor","Lead Time","Moeda","FOB/Custo Unit.","Custo Nac. Unit.","Total Nac."])
-    for x in d["items"]:ws.append([x["internal_part_number"],x["manufacturer_part_number"],x.get("ncm","") ,x["description"],x["quantity"],x.get("cost_group","MATERIAL"),x["origin"],x["supplier"],x["supplier_part_number"],x["lead_time_days"],x["currency"],x["unit_cost"],x.get("nationalized_unit_cost",x["unit_cost"]),x["total_cost"]])
+    ws.append(["Código Interno","MPN","NCM Item","Descrição","Qtd.","Grupo","Origem","Fabricante","PN Fabricante / MPN","Lead Time","Moeda","FOB/Custo Unit.","Custo Nac. Unit.","Total Nac."])
+    for x in d["items"]:ws.append([x["internal_part_number"],x["manufacturer_part_number"],x.get("ncm","") ,x["description"],x["quantity"],x.get("cost_group","MATERIAL"),x["origin"],x.get("manufacturer",""),x["supplier_part_number"],x["lead_time_days"],x["currency"],x["unit_cost"],x.get("nationalized_unit_cost",x["unit_cost"]),x["total_cost"]])
     for c in ws[4]:c.font=Font(bold=True,color="FFFFFF");c.fill=PatternFill("solid",fgColor="17365D")
     ws.freeze_panes="A5";ws.auto_filter.ref=f"A4:N{ws.max_row}"
     for i in range(1,15):ws.column_dimensions[get_column_letter(i)].width=40 if i==4 else 20
@@ -16768,8 +16865,8 @@ def engineering_pricing_export_api(sid):
     ws=wb.active;ws.title="Estrutura-BOM"
     ws.append(["Produto",d["product_code"],d["product_name"],"NCM Produto",d.get("product_ncm",""),"Revisão",d["revision"],"Quantidade estudo",qty])
     ws.append(["Nacional",d["national_cost"],"Importado nacionalizado",d["imported_cost"],"Consumo",d.get("consumption_cost",0),"Total BOM",d["total_cost"],"Custo unitário",d["unit_cost"]]);ws.append([])
-    ws.append(["Código Interno","MPN","NCM Item","Descrição","Qtd.","Grupo","Origem","Fornecedor","PN Fornecedor","Lead Time","Moeda","FOB/Custo Unit.","Custo Nac. Unit.","Total Nac."])
-    for x in d["items"]:ws.append([x["internal_part_number"],x["manufacturer_part_number"],x.get("ncm","") ,x["description"],x["quantity"],x.get("cost_group","MATERIAL"),x["origin"],x["supplier"],x["supplier_part_number"],x["lead_time_days"],x["currency"],x["unit_cost"],x.get("nationalized_unit_cost",x["unit_cost"]),x["total_cost"]])
+    ws.append(["Código Interno","MPN","NCM Item","Descrição","Qtd.","Grupo","Origem","Fabricante","PN Fabricante / MPN","Lead Time","Moeda","FOB/Custo Unit.","Custo Nac. Unit.","Total Nac."])
+    for x in d["items"]:ws.append([x["internal_part_number"],x["manufacturer_part_number"],x.get("ncm","") ,x["description"],x["quantity"],x.get("cost_group","MATERIAL"),x["origin"],x.get("manufacturer",""),x["supplier_part_number"],x["lead_time_days"],x["currency"],x["unit_cost"],x.get("nationalized_unit_cost",x["unit_cost"]),x["total_cost"]])
     sv=wb.create_sheet("Preço de Venda");sv.append(["Estudo",st.study_name,"Produto",d["product_code"],"Revisão",d["revision"],"Quantidade",qty]);sv.append([]);sv.append(["Índice / Componente","Parâmetro aplicado","Base de cálculo","Valor calculado"])
     sv.append(["IPI",ipi*100,gross,ipi_v]);sv.append(["ICMS",icms*100,gross,icms_v]);sv.append(["PIS",pis*100,no_ipi,pis_v]);sv.append(["COFINS",cof*100,no_ipi,cof_v]);sv.append(["ISS",iss*100,no_ipi,iss_v]);sv.append(["Despesas ADM",admin*100,float(d.get("unit_cost") or 0)+assembly,industrial-(float(d.get("unit_cost") or 0)+assembly)]);sv.append(["Fator importação",d.get("import_factor",1.8),d.get("imported_cost",0),d.get("imported_cost",0)]);sv.append(["Cotação USD/BRL",d.get("usd_brl",0),"Referência da configuração",d.get("usd_brl",0)]);sv.append([]);sv.append(["Memória / Resultado","Valor","Quantidade", "Total lote"])
     for row in [("Nacionais (BOM)",d["national_cost"]/(d["quantity_reference"] or 1)),("Importados nacionalizados",d["imported_cost"]/(d["quantity_reference"] or 1)),("Consumo",d.get("consumption_cost",0)/(d["quantity_reference"] or 1)),("Montagem / mão de obra",assembly),("Despesas ADM (%)",admin*100),("Fator importação",d.get("import_factor",1.8)),("USD / BRL",d.get("usd_brl",0)),("Custo industrial unitário",industrial),("Venda c/ IPI",gross),("IPI",ipi_v),("Valor s/ IPI",no_ipi),("ICMS",icms_v),("PIS",pis_v),("COFINS",cof_v),("ISS",iss_v),("Venda líquida",net),("Lucro unitário",profit),("Margem efetiva (%)",margin),("Venda total do lote",gross*qty)]:sv.append([row[0],row[1],qty,row[1]*qty if isinstance(row[1],(int,float)) and row[0] not in ("Despesas ADM (%)","Fator importação","USD / BRL","Margem efetiva (%)") else ""])
