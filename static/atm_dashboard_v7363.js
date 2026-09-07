@@ -186,8 +186,20 @@
     a.href=url; a.download='dashboard_atm_'+new Date().toISOString().slice(0,10)+'.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
   }
 
+  function ensureExportButton(){
+    let btn=$('atmDashExport');
+    if(btn) return btn;
+    const actions=familyRoot()?.querySelector('.heroActions');
+    if(!actions) return null;
+    btn=document.createElement('button');
+    btn.type='button'; btn.id='atmDashExport'; btn.className='secondary'; btn.textContent='Exportar ATM';
+    actions.insertBefore(btn,actions.firstChild);
+    return btn;
+  }
+
   function bind(){
     if(!hasAtmDom()) return;
+    ensureExportButton();
     ['atmFCompany','atmFLine','atmFLocation','atmFModel','atmFContract','atmFOwnership','atmFStatus'].forEach(id=>$(id)?.addEventListener('change',loadAtmDashboard));
     $('atmClear')?.addEventListener('click',()=>{ ['atmFCompany','atmFLine','atmFLocation','atmFModel','atmFContract','atmFOwnership','atmFStatus'].forEach(id=>{if($(id))$(id).value='';}); loadAtmDashboard(); });
     $('atmDashRefresh')?.addEventListener('click',loadAtmDashboard);

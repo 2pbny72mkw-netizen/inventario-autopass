@@ -1410,6 +1410,7 @@ body.mapFullscreenOpen #gpsMap .autopassMapFullscreenControl{
 .historyDetails summary{cursor:pointer;font-weight:800;padding:12px 14px;color:#15345b}
 .historyScroll{max-height:320px;overflow:auto;padding:0 12px 12px}
 .aboutHistoryCompact .historyRow{display:grid;grid-template-columns:90px 1fr;gap:14px;padding:10px 8px;border-bottom:1px solid #e7edf5}
+.aboutHistoryCompact .versionItem{display:grid;grid-template-columns:90px 1fr;gap:14px;padding:11px 8px;border-bottom:1px solid #e7edf5;align-items:start}.aboutHistoryCompact .versionItem>b{color:#17345d}.aboutHistoryCompact .versionItem>span{line-height:1.45}.aboutHistoryCompact .versionItem.featured{display:block;padding:14px 8px}.aboutHistoryCompact>.sectionHead{margin-bottom:4px}
 #panCollapsedPicker{margin-top:12px;padding:12px}
 #panCollapsedPicker select{width:100%}
 
