@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V78.7"
+APP_RELEASE = "V78.8"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -16421,7 +16421,8 @@ def _eng_code_rules_json():
     return [{"id":x.id,"dimension":x.dimension,"code":x.code,"description":x.description,"active":bool(x.active)} for x in rows]
 
 def _eng_next_generated_code(group_code,origin_code,type_code):
-    parts=[str(group_code or '').zfill(2),str(origin_code or '').zfill(2),str(type_code or '').zfill(2)]
+    # V78.8 regra oficial: Origem . Grupo . Tipo . Sequencial
+    parts=[str(origin_code or '').zfill(2),str(group_code or '').zfill(2),str(type_code or '').zfill(2)]
     if any(len(x)!=2 or not x.isdigit() for x in parts): raise ValueError("Grupo, Origem e Tipo devem possuir códigos numéricos de 2 posições.")
     prefix='.'.join(parts)+'.'
     max_seq=0
@@ -16435,7 +16436,7 @@ def _eng_next_generated_code(group_code,origin_code,type_code):
 @login_required
 def engineering_codification_api():
     if not ((_has_access("engineering.items.view")) or ((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower() in ("admin","adm","administrator","manager","gestor"))):return jsonify({"ok":False,"error":"Sem permissão."}),403
-    return jsonify({"ok":True,"format":"GG.OO.TT.SSSSS","example":"01.01.06.00015","rules":_eng_code_rules_json()})
+    return jsonify({"ok":True,"format":"OO.GG.TT.SSSSS","example":"01.01.06.00015","rules":_eng_code_rules_json()})
 
 @app.post("/api/engineering/codification")
 @login_required
@@ -16730,6 +16731,30 @@ def engineering_bom_update_api(bid):
     new={"product_code":b.product_code,"product_name":b.product_name,"product_ncm":b.product_ncm,"revision":b.revision,"status":b.status,"quantity_reference":b.quantity_reference,"notes":b.notes}
     db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="ENGINEERING_BOM_UPDATED",entity_type="engineering_bom",entity_id=str(b.id),detail=json.dumps({"before":old,"after":new},ensure_ascii=False)))
     db.session.commit();return jsonify({"ok":True,"bom":_eng_bom_json(b)})
+
+@app.delete("/api/engineering/boms/<int:bid>")
+@login_required
+def engineering_bom_delete_v788(bid):
+    role=((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower())
+    if role not in ("admin","adm","administrator"):
+        return jsonify({"ok":False,"error":"Somente ADM pode excluir uma estrutura."}),403
+    b=db.session.get(EngineeringBom,bid)
+    if not b:return jsonify({"ok":False,"error":"BOM não encontrada."}),404
+    linked_items=EngineeringItem.query.filter_by(linked_bom_id=bid).all()
+    linked_ids=[x.id for x in linked_items]
+    used=[]
+    if linked_ids:
+        used=db.session.query(EngineeringBomItem,EngineeringBom).join(EngineeringBom,EngineeringBom.id==EngineeringBomItem.bom_id).filter(EngineeringBomItem.item_id.in_(linked_ids),EngineeringBomItem.bom_id!=bid).all()
+    studies=EngineeringPricingStudy.query.filter_by(bom_id=bid).count()
+    if used or studies:
+        refs=[f"{bb.product_code} {bb.revision}" for _,bb in used]
+        return jsonify({"ok":False,"error":"Estrutura possui vínculos e não pode ser excluída.","used_in":refs,"pricing_studies":studies}),409
+    old={"product_code":b.product_code,"product_name":b.product_name,"revision":b.revision,"bom_kind":b.bom_kind}
+    EngineeringBomItem.query.filter_by(bom_id=bid).delete(synchronize_session=False)
+    for it in linked_items: db.session.delete(it)
+    db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="ENGINEERING_BOM_DELETED",entity_type="engineering_bom",entity_id=str(b.id),detail=json.dumps(old,ensure_ascii=False)))
+    db.session.delete(b);db.session.commit()
+    return jsonify({"ok":True})
 
 @app.get("/api/engineering/pricing")
 @login_required
