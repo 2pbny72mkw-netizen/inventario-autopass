@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V78.6"
+APP_RELEASE = "V78.7"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -16867,21 +16867,65 @@ def engineering_bom_import_commit_api(bid):
         db.session.commit();return jsonify({"ok":True,"imported":n,"bom":_eng_bom_json(b)})
     except Exception as e:db.session.rollback();return jsonify({"ok":False,"error":str(e)}),400
 
+
+def _eng_bom_flat_rows(b, level=0, parent_code="", seen=None, inherited=False):
+    """Flatten a BOM tree for Excel while preserving hierarchy and avoiding double-counting.
+    Direct children of the selected BOM are accounting rows. Descendants expanded from a
+    Phantom/substructure are informational because the Phantom consolidated cost is already
+    accounted for in the parent BOM.
+    """
+    seen=set(seen or set())
+    if b.id in seen:return []
+    seen.add(b.id)
+    d=_eng_bom_json(b)
+    out=[]
+    root_type="SUBESTRUTURA" if (d.get("bom_kind") or "").upper()=="SUBESTRUTURA" else "PRODUTO FINAL"
+    out.append({"level":level,"parent_code":parent_code,"record_type":root_type,"code":d.get("product_code","") or "","revision":d.get("revision","") or "","mpn":"","ncm":d.get("product_ncm","") or "","description":d.get("product_name","") or "","quantity":d.get("quantity_reference",1),"group":"","origin":"","manufacturer":"","supplier_pn":"","lead":"","currency":"","fob":"","unit_brl":d.get("unit_cost",0),"total_brl":d.get("total_cost",0),"counts":"NÃO — CABEÇALHO"})
+    for x in d.get("items") or []:
+        linked_id=x.get("linked_bom_id")
+        is_phantom=bool(linked_id)
+        out.append({"level":level+1,"parent_code":d.get("product_code","") or "","record_type":"PHANTOM" if is_phantom else "ITEM","code":x.get("internal_part_number","") or "","revision":"","mpn":x.get("manufacturer_part_number","") or "","ncm":x.get("ncm","") or "","description":x.get("description","") or "","quantity":x.get("quantity",0),"group":x.get("cost_group","MATERIAL") or "MATERIAL","origin":x.get("origin","") or "","manufacturer":x.get("manufacturer","") or "","supplier_pn":x.get("supplier_part_number","") or "","lead":x.get("lead_time_days","") if x.get("lead_time_days") is not None else "","currency":x.get("currency","") or "","fob":x.get("unit_cost",0) if x.get("origin")=="IMPORTADO" and not x.get("derived_from_bom") else "","unit_brl":x.get("nationalized_unit_cost",x.get("unit_cost",0)),"total_brl":x.get("total_cost",0),"counts":"NÃO — DETALHE" if inherited else "SIM"})
+        if linked_id:
+            lb=db.session.get(EngineeringBom,int(linked_id))
+            if lb and lb.id not in seen:
+                child_rows=_eng_bom_flat_rows(lb,level+1,x.get("internal_part_number","") or d.get("product_code","") or "",seen,True)
+                # skip nested BOM root because the Phantom line above already represents it
+                out.extend(child_rows[1:] if child_rows else [])
+    return out
+
 @app.get("/api/engineering/boms/<int:bid>/export.xlsx")
 @login_required
 def engineering_bom_export_api(bid):
     if not ((_has_access("engineering.bom.view")) or ((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower() in ("admin","adm","administrator","manager","gestor"))):abort(403)
     b=db.session.get(EngineeringBom,bid)
     if not b:abort(404)
-    d=_eng_bom_json(b);wb=Workbook();ws=wb.active;ws.title="BOM"
+    d=_eng_bom_json(b);rows=_eng_bom_flat_rows(b)
+    wb=Workbook();ws=wb.active;ws.title="BOM Multinível"
     ws.append(["Produto",d["product_code"],d["product_name"],"NCM Produto",d.get("product_ncm",""),"Revisão",d["revision"],"Status",d["status"]])
     ws.append(["Qtd. referência",d["quantity_reference"],"Nacional",d["national_cost"],"Importado nacionalizado",d["imported_cost"],"Consumo",d.get("consumption_cost",0),"Total",d["total_cost"],"Unitário",d["unit_cost"]]);ws.append([])
-    ws.append(["Código Interno","MPN","NCM Item","Descrição","Qtd.","Grupo","Origem","Fabricante","PN Fabricante / MPN","Lead Time","Moeda","FOB Unit. US$","Custo Unit. R$","Total R$"])
-    for x in d["items"]:ws.append([x["internal_part_number"],x["manufacturer_part_number"],x.get("ncm","") ,x["description"],x["quantity"],x.get("cost_group","MATERIAL"),x["origin"],x.get("manufacturer",""),x["supplier_part_number"],x["lead_time_days"],x["currency"],x["unit_cost"] if x["origin"]=="IMPORTADO" else "",x.get("nationalized_unit_cost",x["unit_cost"]),x["total_cost"]])
-    for c in ws[4]:c.font=Font(bold=True,color="FFFFFF");c.fill=PatternFill("solid",fgColor="17365D")
-    ws.freeze_panes="A5";ws.auto_filter.ref=f"A4:N{ws.max_row}"
-    for i in range(1,15):ws.column_dimensions[get_column_letter(i)].width=40 if i==4 else 20
-    bio=io.BytesIO();wb.save(bio);bio.seek(0);return send_file(bio,as_attachment=True,download_name=f"BOM_{b.product_code}_{b.revision}.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    headers=["Nível","Item pai","Tipo de registro","Código","Revisão","MPN","NCM Item","Descrição / Estrutura","Qtd.","Grupo","Origem","Fabricante","PN Fabricante / MPN","Lead Time","Moeda","FOB Unit. US$","Custo Unit. R$","Total R$","Contabiliza no total"]
+    ws.append(headers)
+    for r in rows:
+        ws.append([f"N{r['level']}",r['parent_code'],r['record_type'],r['code'],r['revision'],r['mpn'],r['ncm'],r['description'],r['quantity'],r['group'],r['origin'],r['manufacturer'],r['supplier_pn'],r['lead'],r['currency'],r['fob'],r['unit_brl'],r['total_brl'],r['counts']])
+        rr=ws.max_row
+        ws.cell(rr,8).alignment=Alignment(indent=min(int(r['level']),15),vertical="center")
+        if r['record_type']=="PHANTOM":
+            fill=PatternFill("solid",fgColor="E9D5FF")
+            for c in ws[rr]:c.fill=fill
+        elif r['level']==0:
+            fill=PatternFill("solid",fgColor="1D4ED8")
+            for c in ws[rr]:c.fill=fill;c.font=Font(bold=True,color="FFFFFF")
+        elif r['origin']=="IMPORTADO":
+            fill=PatternFill("solid",fgColor="FFF1E6")
+            for c in ws[rr]:c.fill=fill
+        elif r['origin']=="NACIONAL":
+            fill=PatternFill("solid",fgColor="ECFDF5")
+            for c in ws[rr]:c.fill=fill
+    for c in ws[4]:c.font=Font(bold=True,color="FFFFFF");c.fill=PatternFill("solid",fgColor="0B2D45")
+    ws.freeze_panes="A5";ws.auto_filter.ref=f"A4:S{ws.max_row}"
+    widths=[10,18,18,20,14,18,16,48,12,16,14,24,24,12,12,18,18,18,22]
+    for i,w in enumerate(widths,1):ws.column_dimensions[get_column_letter(i)].width=w
+    bio=io.BytesIO();wb.save(bio);bio.seek(0);return send_file(bio,as_attachment=True,download_name=f"BOM_{b.product_code}_{b.revision}_MULTINIVEL.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
 @app.get("/api/engineering/pricing/<int:sid>/export.xlsx")
@@ -16904,8 +16948,10 @@ def engineering_pricing_export_api(sid):
     ws=wb.active;ws.title="Estrutura-BOM"
     ws.append(["Produto",d["product_code"],d["product_name"],"NCM Produto",d.get("product_ncm",""),"Revisão",d["revision"],"Quantidade estudo",qty])
     ws.append(["Nacional",d["national_cost"],"Importado nacionalizado",d["imported_cost"],"Consumo",d.get("consumption_cost",0),"Total BOM",d["total_cost"],"Custo unitário",d["unit_cost"]]);ws.append([])
-    ws.append(["Código Interno","MPN","NCM Item","Descrição","Qtd.","Grupo","Origem","Fabricante","PN Fabricante / MPN","Lead Time","Moeda","FOB Unit. US$","Custo Unit. R$","Total R$"])
-    for x in d["items"]:ws.append([x["internal_part_number"],x["manufacturer_part_number"],x.get("ncm","") ,x["description"],x["quantity"],x.get("cost_group","MATERIAL"),x["origin"],x.get("manufacturer",""),x["supplier_part_number"],x["lead_time_days"],x["currency"],x["unit_cost"] if x["origin"]=="IMPORTADO" else "",x.get("nationalized_unit_cost",x["unit_cost"]),x["total_cost"]])
+    ws.append(["Nível","Item pai","Tipo","Código","Revisão","MPN","NCM Item","Descrição / Estrutura","Qtd.","Grupo","Origem","Fabricante","PN Fabricante / MPN","Lead Time","Moeda","FOB Unit. US$","Custo Unit. R$","Total R$","Contabiliza no total"])
+    for r in _eng_bom_flat_rows(b):
+        ws.append([f"N{r['level']}",r['parent_code'],r['record_type'],r['code'],r['revision'],r['mpn'],r['ncm'],r['description'],r['quantity'],r['group'],r['origin'],r['manufacturer'],r['supplier_pn'],r['lead'],r['currency'],r['fob'],r['unit_brl'],r['total_brl'],r['counts']])
+        ws.cell(ws.max_row,8).alignment=Alignment(indent=min(int(r['level']),15),vertical="center")
     sv=wb.create_sheet("Preço de Venda");sv.append(["Estudo",st.study_name,"Produto",d["product_code"],"Revisão",d["revision"],"Quantidade",qty]);sv.append([]);sv.append(["Índice / Componente","Parâmetro aplicado","Base de cálculo","Valor calculado"])
     sv.append(["IPI",ipi*100,gross,ipi_v]);sv.append(["ICMS",icms*100,gross,icms_v]);sv.append(["PIS",pis*100,no_ipi,pis_v]);sv.append(["COFINS",cof*100,no_ipi,cof_v]);sv.append(["ISS",iss*100,no_ipi,iss_v]);sv.append(["Despesas ADM",admin*100,float(d.get("unit_cost") or 0)+assembly,industrial-(float(d.get("unit_cost") or 0)+assembly)]);sv.append(["Fator importação",d.get("import_factor",1.8),d.get("imported_cost",0),d.get("imported_cost",0)]);sv.append(["Cotação USD/BRL",d.get("usd_brl",0),"Referência da configuração",d.get("usd_brl",0)]);sv.append([]);sv.append(["Memória / Resultado","Valor","Quantidade", "Total lote"])
     for row in [("Nacionais (BOM)",d["national_cost"]/(d["quantity_reference"] or 1)),("Importados nacionalizados",d["imported_cost"]/(d["quantity_reference"] or 1)),("Consumo",d.get("consumption_cost",0)/(d["quantity_reference"] or 1)),("Montagem / mão de obra",assembly),("Despesas ADM (%)",admin*100),("Fator importação",d.get("import_factor",1.8)),("USD / BRL",d.get("usd_brl",0)),("Custo industrial unitário",industrial),("Venda c/ IPI",gross),("IPI",ipi_v),("Valor s/ IPI",no_ipi),("ICMS",icms_v),("PIS",pis_v),("COFINS",cof_v),("ISS",iss_v),("Venda líquida",net),("Lucro unitário",profit),("Margem efetiva (%)",margin),("Venda total do lote",gross*qty)]:sv.append([row[0],row[1],qty,row[1]*qty if isinstance(row[1],(int,float)) and row[0] not in ("Despesas ADM (%)","Fator importação","USD / BRL","Margem efetiva (%)") else ""])
