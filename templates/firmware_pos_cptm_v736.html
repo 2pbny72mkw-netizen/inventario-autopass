@@ -5,8 +5,8 @@
 @media(max-width:900px){.fwFilters,.fwGrid,.fwEvidence,.fwImportGrid{grid-template-columns:1fr 1fr}.fwProgressStats{grid-template-columns:repeat(2,1fr)}.fwEdit{padding:12px}.fwPanel{max-height:calc(100vh - 24px)}}
 @media(max-width:620px){.fwFilters,.fwGrid,.fwEvidence,.fwImportGrid{grid-template-columns:1fr}.fwProgressHead{align-items:center}.fwProgressPct{font-size:20px}}
 </style>
-<div class="fwHero"><div><h1>Atualização de Firmware POS – CPTM</h1><p id="fwSubtitle">Campanha operacional · base importável</p></div><div class="fwActions">{% if session.get('role') in ['manager','manager_field'] %}<button class="fwBtn secondary" type="button" id="btnImport">Importar base</button>{% endif %}</div></div>
-{% if session.get('role') in ['manager','manager_field'] %}
+<div class="fwHero"><div><h1>Atualização de Firmware POS – CPTM</h1><p id="fwSubtitle">Campanha operacional · base importável</p></div><div class="fwActions">{% if can_view('field.firmware_pos_cptm') %}<button class="fwBtn secondary" type="button" id="btnImport">Importar base</button>{% endif %}</div></div>
+{% if can_view('field.firmware_pos_cptm') %}
 <div class="fwImportBox" id="fwImportBox">
   <form id="fwImportForm">
     <div class="fwImportGrid">

@@ -12,7 +12,7 @@
   <div class="heroActions">
     <button class="secondary" id="refreshTeams" type="button">Atualizar</button>
     {% if can_view('teams.export') %}<button class="secondary" id="exportScale" type="button">Exportar tabela Excel</button>{% endif %}
-    {% if can_view('teams.manage') and session.get('role') == 'manager' %}
+    {% if can_view('teams.manage') %}
     <button class="primary" id="openScheduleAdmin" type="button">Gerenciar escala</button>
     {% endif %}
   </div>
@@ -113,7 +113,7 @@
 </section>
 {% endif %}
 
-{% if can_view('teams.manage') and session.get('role') == 'manager' %}
+{% if can_view('teams.manage') %}
 <div id="scheduleAdminModal" class="scheduleModal hidden">
   <div class="scheduleModalPanel">
     <div class="sectionHead">
