@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V78.8"
+APP_RELEASE = "V78.9"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -1865,7 +1865,7 @@ ACCESS_GROUPS = {
         "teams.map","teams.today","teams.schedule","teams.manage","teams.export","teams.apt"
     )),
     "users": ("RH / Usuários", (
-        "users.view","users.config.view","users.config.manage","users.create","users.edit","users.activate","users.delete","users.password","users.export","users.import"
+        "users.view","users.config.view","users.config.manage","users.create","users.edit","users.activate","users.delete","users.password","users.export","users.import","users.roles.manage","users.scope.all"
     )),
     "finance": ("Financeiro", (
         "finance.support","finance.collection","finance.apuracao","finance.assistance","finance.implantation","finance.entries","finance.suppliers","finance.import","finance.edit","finance.delete"
@@ -1892,7 +1892,7 @@ ACCESS_LABELS = {
  "field.dashboard":"Dashboard Field","field.inventory":"Inventário / Lançamento","field.calls":"Chamados","field.preventive":"Solicitação Preventiva ATM","field.equipment":"Equipamentos","field.evidence":"Evidências","field.panorama":"Visão Panorâmica","field.chip_recarga":"Troca de Chips – Recarga","field.firmware_pos_cptm":"Atualização de Firmware POS – CPTM","field.bobbins":"Atividade Bobinas","field.bobbins_dashboard":"Dashboard de Bobinas / Insumos","field.stock_manage":"Alterar estoque consolidado / armários / bobinas",
  "implantation.dashboard":"Dashboard Implantação","implantation.visits":"Visita a Campo / Relatório de Visita","implantation.reports":"Relatórios / Visitas recentes","implantation.emv":"Troca de Chips EMV – Trilhos","implantation.garage":"Troca de Chips Garagem",
  "teams.map":"Mapa operacional","teams.today":"Operação de Hoje","teams.schedule":"Escala por dias","teams.manage":"Gestão de equipes / escala","teams.export":"Exportar dados","teams.apt":"APT / Validades",
- "users.view":"Visualizar usuários","users.config.view":"Visualizar configurações de usuários","users.config.manage":"Gerenciar configurações de usuários","users.create":"Criar usuário","users.edit":"Editar usuário","users.activate":"Ativar / Desativar","users.delete":"Excluir / Arquivar","users.password":"Redefinir senha","users.export":"Exportar Excel","users.import":"Importar Excel de configurações",
+ "users.view":"Visualizar usuários","users.config.view":"Visualizar configurações de usuários","users.config.manage":"Gerenciar configurações de usuários","users.create":"Criar usuário","users.edit":"Editar usuário","users.activate":"Ativar / Desativar","users.delete":"Excluir / Arquivar","users.password":"Redefinir senha","users.export":"Exportar Excel","users.import":"Importar Excel de configurações","users.roles.manage":"Atribuir perfis administrativos / sensíveis","users.scope.all":"Administrar usuários de todas as empresas",
  "finance.dashboard":"Dashboard Financeira","finance.support":"Suporte a Campo","finance.collection":"Coleta de Valores","finance.apuracao":"Apuração de Numerário","finance.assistance":"Assistência Técnica","finance.implantation":"Implantação de Hardware","finance.entries":"Lançamentos","finance.suppliers":"Empresas / Fornecedores","finance.import":"Importar planilha","finance.edit":"Editar lançamentos","finance.delete":"Excluir lançamentos",
  "management.calls":"Chamados","management.360":"Central 360","management.notifications":"Notificações","management.diagnostics":"Diagnóstico","management.health":"Saúde da Plataforma","management.settings":"Configurações","management.dashboard_config":"Configuração de Dashboards","management.profiles":"Perfis & Permissões","management.gps_history":"Histórico GPS por estações","management.work_authorizations":"Autorizações de jornada","management.links":"Resumo dos Links","management.external_locations":"Localidades externas",
  "materials.my_documents":"Meus documentos / Minha carga","materials.request":"Solicitar material","materials.catalog.view":"Visualizar catálogo","materials.catalog.manage":"Cadastrar / editar / inativar materiais","materials.kits.manage":"Gerenciar kits","materials.delivery.create":"Criar e enviar entregas","materials.delivery.manage":"Gerenciar aceites / correções","materials.dossier.view":"Dossiê dos colaboradores","materials.access_lists.view":"Listas de acesso Metrô / CPTM","materials.access_lists.manage":"Gerar / validar listas de acesso",
@@ -1926,54 +1926,40 @@ def _default_access_for_role(role):
     return defaults.get(role,set())
 
 def _user_access_set(user=None):
-    # V66 REV3: o cache de permissões pertence SOMENTE ao usuário autenticado.
-    # Ao renderizar RH/Usuários também consultamos user_access(u) para cada usuário
-    # listado. A versão anterior sobrescrevia o cache global da requisição com as
-    # permissões do primeiro técnico e fazia os botões Editar/Ativar desaparecerem
-    # das linhas seguintes para RH.
+    """V78.9 — permissões efetivas sem amarração por nome de perfil.
+
+    ADM (role=manager) continua superusuário. Para qualquer outro usuário,
+    a fonte de verdade é exclusivamente o perfil configurável vinculado ou,
+    na ausência dele, o access_json individual. Nenhuma permissão é acrescentada
+    ou retirada por ser RH, Técnico, Dispatcher, Gestor Field etc.
+    """
     current_lookup = user is None
     if current_lookup and has_request_context() and hasattr(g, "_autopass_access_set"):
         return g._autopass_access_set
     if current_lookup:
         uid=session.get("user_id")
         user=db.session.get(User,uid) if uid else None
-    if not user:return set()
+    if not user:
+        return set()
+    if getattr(user, "role", None) == "manager":
+        access=set(ACCESS_SUBMODULES)
+        if current_lookup and has_request_context(): g._autopass_access_set=access
+        return access
     try:
         if getattr(user,"system_profile_id",None):
             prof=db.session.get(SystemProfile,user.system_profile_id)
             if prof and prof.active:
                 custom=json.loads(prof.access_json or "[]")
-                access=_expand_legacy_access({x for x in custom if x in ACCESS_ALL})
-                if user.role in ("technician","technician_implantation"): access.add("field.bobbins")
-                if user.role=="manager_field": access.update({"field.bobbins","field.bobbins_dashboard","field.stock_manage"})
-                if user.role=="hr":
-                    if "users.view" in access: access.add("users.config.view")
-                    if "users.edit" in access or "users.create" in access: access.add("users.config.manage")
-                    if "users.export" in access: access.add("users.import")
+                access=_expand_legacy_access({x for x in custom if x in ACCESS_ALL}) if isinstance(custom,list) else set()
                 if current_lookup and has_request_context(): g._autopass_access_set=access
                 return access
     except Exception:
         pass
     try:
-        custom=json.loads(user.access_json or "null")
-        if isinstance(custom,list):
-            access=_expand_legacy_access({x for x in custom if x in ACCESS_ALL})
-            # RH sempre mantém as visualizações operacionais de Equipes em modo leitura,
-            # mesmo quando o access_json foi salvo antes da criação das subpermissões atuais.
-            if user.role in ("technician","technician_implantation"): access.add("field.bobbins")
-            if user.role=="manager_field": access.update({"field.bobbins","field.bobbins_dashboard","field.stock_manage"})
-            if user.role=="hr":
-                access.update({"teams.map","teams.today","teams.schedule"})
-                if "users.view" in access: access.add("users.config.view")
-                if "users.edit" in access or "users.create" in access: access.add("users.config.manage")
-                if "users.export" in access: access.add("users.import")
-            if current_lookup and has_request_context(): g._autopass_access_set=access
-            return access
-    except Exception: pass
-    access=_default_access_for_role(user.role)
-    # V77: Atividade Bobinas é atividade operacional padrão de todos os técnicos; dashboard permanece gerencial.
-    if user.role in ("technician","technician_implantation"): access.add("field.bobbins")
-    if user.role=="manager_field": access.update({"field.bobbins","field.bobbins_dashboard","field.stock_manage"})
+        custom=json.loads(user.access_json or "[]")
+        access=_expand_legacy_access({x for x in custom if x in ACCESS_ALL}) if isinstance(custom,list) else set()
+    except Exception:
+        access=set()
     if current_lookup and has_request_context(): g._autopass_access_set=access
     return access
 
@@ -1989,15 +1975,17 @@ def _has_access(permission):
         return permission in access or group in access
     return False
 
-def _parse_access_form(role):
+def _parse_access_form(role=None):
+    """V78.9 — salva exatamente o que foi marcado na matriz.
+
+    O parâmetro role é mantido apenas por compatibilidade de chamadas antigas;
+    ele não filtra mais permissões.
+    """
     raw=request.form.getlist("access_modules")
     allowed={x for x in raw if x in ACCESS_ALL}
-    # Se o formulário novo mandar filhos, salvamos os filhos; pais antigos permanecem aceitos por compatibilidade.
-    if role=="atm_financial_admin": allowed={x for x in allowed if x.startswith("finance.") or x in ("finance","finance_dashboard","about_versions","about.versions")}
-    if role=="hr": allowed={x for x in allowed if x.startswith("teams.") or x.startswith("users.") or x.startswith("materials.") or x in ("teams","users","materials","about_versions","about.versions")}
-    if role in ("technician","technician_implantation"):
-        allowed={x for x in allowed if not (x.startswith("users.") or x.startswith("finance.") or x.startswith("management.")) and x not in ("users","finance","finance_dashboard","management")}
-    return sorted(allowed if request.form.get("access_config_present")=="1" else _default_access_for_role(role))
+    if request.form.get("access_config_present") == "1":
+        return sorted(allowed)
+    return []
 
 @app.context_processor
 def inject_access_helpers():
@@ -2009,9 +1997,7 @@ def manager_required(fn):
         if not session.get("user_id"):
             return redirect(url_for("login"))
         if session.get("role") != "manager":
-            if session.get("role") == "hr":
-                return redirect(url_for("teams_page"))
-            return redirect(url_for("manager" if session.get("role") == "consultation" else "technician"))
+            return redirect(_v789_landing_for_user())
         return fn(*args, **kwargs)
     return inner
 
@@ -2024,14 +2010,9 @@ def dashboard_required(fn):
             return redirect(url_for("login"))
         if not _has_access("dashboard"):
             # Nunca voltar para /dashboard, pois /dashboard aponta para /gerencial.
-            role=(session.get("role") or "").strip().lower()
             if request.path.startswith("/api/"):
                 return jsonify({"ok":False,"error":"Sem permissão para Dashboard."}),403
-            if role in ("technician","technician_implantation","manager_field"):
-                return redirect(url_for("activities_page"))
-            if role=="hr":
-                return redirect(url_for("teams_page"))
-            return redirect(url_for("about"))
+            return redirect(_v789_landing_for_user())
         return fn(*args, **kwargs)
     return inner
 
@@ -2057,7 +2038,7 @@ def topdesk_required(fn):
         if not _has_access("management"):
             if request.path.startswith("/api/"):
                 return jsonify({"ok": False, "error": "Sem permissão para operação TopDesk."}), 403
-            return redirect(url_for("manager" if session.get("role") == "consultation" else "technician_work"))
+            return redirect(_v789_landing_for_user())
         return fn(*args, **kwargs)
     return inner
 
@@ -2090,21 +2071,33 @@ def _current_user_is_superadmin():
 
 
 def _role_assignment_allowed(role):
-    role = (role or "").strip()
-    # RH administra somente perfis operacionais. Perfis sensíveis ficam restritos ao ADM.
-    if session.get("role") == "hr":
-        return role in ("technician", "technician_implantation")
-    if role in ("manager", "manager_field", "consultation", "dispatcher", "atm_financial_admin", "customer"):
-        return _current_user_is_superadmin()
-    return role in ("technician", "technician_implantation", "hr")
+    """V78.9 — atribuição de perfil também obedece à matriz.
+
+    ADM pode atribuir qualquer perfil. Usuários não-ADM precisam da permissão
+    explícita users.roles.manage para perfis administrativos/sensíveis.
+    """
+    role=(role or "").strip()
+    valid={"manager","manager_field","technician","technician_implantation","consultation","hr","dispatcher","atm_financial_admin","customer"}
+    if role not in valid:
+        return False
+    if _current_user_is_superadmin() or session.get("role") == "manager":
+        return True
+    sensitive={"manager","manager_field","consultation","dispatcher","hr","atm_financial_admin","customer"}
+    return role not in sensitive or _has_access("users.roles.manage")
 
 def _hr_target_allowed(user):
-    if not user:return False
-    if session.get("role") != "hr":return True
-    if user.role not in ("technician", "technician_implantation"):return False
+    """Compatibilidade de nome: escopo agora é por permissão, não por perfil RH."""
+    if not user:
+        return False
+    if session.get("role") == "manager" or _has_access("users.scope.all"):
+        return True
     me=db.session.get(User,session.get("user_id"))
-    # V74: RH com empresa definida administra somente colaboradores da própria empresa.
-    return not me or not (me.company or "").strip() or (me.company or "").strip().lower()==(user.company or "").strip().lower()
+    if not me:
+        return False
+    # Sem users.scope.all, a administração fica limitada à própria empresa.
+    my_company=(me.company or "").strip().casefold()
+    target_company=(user.company or "").strip().casefold()
+    return bool(my_company) and my_company == target_company
 
 
 def hardware_implantation_required(fn):
@@ -2116,7 +2109,7 @@ def hardware_implantation_required(fn):
         if not _has_access("implantation"):
             if request.path.startswith("/api/"):
                 return jsonify({"ok": False, "error": "Acesso restrito à Implantação de Hardware."}), 403
-            return redirect(url_for("manager" if session.get("role") in ("manager","consultation","dispatcher") else "activities_page"))
+            return redirect(_v789_landing_for_user())
         return fn(*args, **kwargs)
     return inner
 
@@ -2170,15 +2163,10 @@ def _v72_fix_chip_swap_double_slash():
 @app.get("/dashboard")
 @login_required
 def dashboard_landing():
-    # V72: central única em /gerencial, sem possibilidade de loop.
-    if _has_access("dashboard"):
+    # V78.9: destino inicial é calculado pelas permissões efetivas.
+    if _has_access("dashboard.general") or _has_access("dashboard"):
         return redirect(url_for("manager"))
-    role=(session.get("role") or "").strip().lower()
-    if role in ("technician","technician_implantation","manager_field"):
-        return redirect(url_for("activities_page"))
-    if role=="hr":
-        return redirect(url_for("teams_page"))
-    return redirect(url_for("about"))
+    return redirect(_v789_landing_for_user())
 
 
 # ============================================================================
@@ -2351,14 +2339,37 @@ def _v72_start_session(user, event_type="LOGIN"):
     except Exception:
         db.session.rollback()
 
+def _v789_landing_for_user(user=None):
+    """Primeira tela definida pelas permissões efetivas, nunca pelo nome do perfil."""
+    if user is not None and getattr(user, "role", None) == "manager":
+        return url_for("manager")
+    access=_user_access_set(user) if user is not None else _user_access_set()
+    priority=[
+        ("dashboard.general", "manager"),
+        ("field.bobbins", "v77_bobbins_activity_page"),
+        ("field.bobbins_dashboard", "v77_bobbins_dashboard_page"),
+        ("field.inventory", "activities_page"),
+        ("field.dashboard", "field_dashboard_page"),
+        ("implantation.visits", "hardware_implantation_page"),
+        ("implantation.dashboard", "hardware_implantation_dashboard_page"),
+        ("teams.today", "teams_page"),
+        ("teams.map", "teams_page"),
+        ("users.view", "users_page"),
+        ("finance.dashboard", "financial_cost_management_page"),
+        ("engineering.items.view", "engineering_page"),
+        ("engineering.bom.view", "engineering_page"),
+        ("portal.appointments", "portal_cliente_page"),
+        ("materials.my_documents", "materials_home_page"),
+        ("about.versions", "about"),
+    ]
+    for perm, endpoint in priority:
+        if perm in access or perm.split('.',1)[0] in access:
+            if endpoint in app.view_functions:
+                return url_for(endpoint)
+    return url_for("my_profile_page")
+
 def _v72_redirect_for_user(user):
-    if user.role == "hr":
-        return url_for("teams_page")
-    if user.role == "atm_financial_admin":
-        return url_for("financial_cost_management_page")
-    if user.role == "customer":
-        return url_for("portal_cliente_page")
-    return url_for("manager" if user.role in ("manager","manager_field","consultation","dispatcher") else "activities_page")
+    return _v789_landing_for_user(user)
 
 def _v72_station_refs():
     now = time.time()
@@ -2426,16 +2437,7 @@ def _v7331_record_station_passage(user, lat, lon, accuracy=None, captured_at=Non
 def index():
     if not session.get("user_id"):
         return redirect(url_for("login"))
-    role = session.get("role")
-    if role == "hr":
-        return redirect(url_for("teams_page"))
-    if role == "atm_financial_admin":
-        return redirect(url_for("financial_cost_management_page"))
-    if role == "customer":
-        return redirect(url_for("portal_cliente_page"))
-    if role in ("manager", "manager_field", "consultation", "dispatcher", "technician", "technician_implantation"):
-        return redirect(url_for("dashboard_landing"))
-    return redirect(url_for("my_profile_page"))
+    return redirect(_v789_landing_for_user())
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -4434,8 +4436,8 @@ def inventory_atm_dashboard_api():
 @login_required
 def atm_financial_dashboard_api():
     # V46: visão financeira restrita ao ADM/Gestor principal.
-    if session.get("role") not in ("manager", "manager_field", "atm_financial_admin"):
-        return jsonify({"ok":False,"error":"Dashboard financeira restrita aos perfis autorizados."}),403
+    if not _has_access("finance.dashboard"):
+        return jsonify({"ok":False,"error":"Sem permissão para Dashboard Financeira."}),403
     path=DATA_DIR / "atm_financial_082026.json"
     try:
         payload=json.loads(path.read_text(encoding="utf-8"))
@@ -4783,17 +4785,14 @@ def hardware_field_visit_page():
 @app.get("/dashboard/implantacao")
 @login_required
 def hardware_implantation_dashboard_canonical():
-    if session.get("role") not in ("manager","manager_field","technician_implantation"):
+    if not _has_access("implantation.dashboard"):
         abort(403)
-    # V55.2: gestores visualizam a dashboard dentro do shell gerencial; não como atividade.
-    if session.get("role") in ("manager","manager_field"):
-        return redirect("/gerencial?view=implantation-dashboard")
     return render_template("hardware_implantation_dashboard.html", app_release=APP_RELEASE)
 
 @app.get("/dashboard/implantacao/embed")
 @login_required
 def hardware_implantation_dashboard_embed():
-    if session.get("role") not in ("manager","manager_field"):
+    if not _has_access("implantation.dashboard"):
         abort(403)
     return render_template("hardware_implantation_dashboard.html", app_release=APP_RELEASE, embedded=True)
 
@@ -5100,14 +5099,14 @@ def _local_storage_snapshot():
 @app.get("/inteligencia-operacional")
 @login_required
 def operational_intelligence_page():
-    if session.get("role") not in ("manager","manager_field"):
-        return redirect(url_for("dashboard_landing"))
+    if not _has_access("management.360"):
+        return redirect(_v789_landing_for_user())
     return render_template("operational_intelligence.html", app_release=APP_RELEASE)
 
 @app.get("/api/inteligencia-operacional")
 @login_required
 def operational_intelligence_api():
-    if session.get("role") not in ("manager","manager_field"):
+    if not _has_access("management.360"):
         return jsonify({"ok":False,"error":"Sem permissão."}),403
     now=datetime.utcnow(); active_roles=("technician","technician_implantation","manager_field")
     techs=User.query.filter(User.active.is_(True),User.role.in_(active_roles)).all(); tech_ids=[u.id for u in techs]
@@ -5165,19 +5164,19 @@ def _v70_index_snapshot():
 @login_required
 def telemetry_page():
     # V70: rota legada preservada. A navegação oficial é Saúde da Plataforma.
-    if session.get("role") != "manager" and not _has_access("management.health"): abort(403)
+    if not _has_access("management.health"): abort(403)
     return redirect(url_for("platform_health_page"))
 
 @app.get("/saude-plataforma")
 @login_required
 def platform_health_page():
-    if session.get("role") != "manager" and not _has_access("management.health"): abort(403)
+    if not _has_access("management.health"): abort(403)
     return render_template("telemetry.html", app_release=APP_RELEASE)
 
 @app.get("/api/telemetria/resumo")
 @login_required
 def telemetry_summary_api():
-    if session.get("role") != "manager" and not _has_access("management.health"): return jsonify({"ok":False,"error":"Sem permissão para Saúde da Plataforma."}),403
+    if not _has_access("management.health"): return jsonify({"ok":False,"error":"Sem permissão para Saúde da Plataforma."}),403
     try:
         minutes=max(5,min(int(request.args.get("minutes") or 60),1440)); since=datetime.utcnow()-timedelta(minutes=minutes)
         q=PerformanceMetric.query.filter(PerformanceMetric.created_at>=since)
@@ -5218,7 +5217,7 @@ def telemetry_summary_api():
 @app.get("/api/telemetria/export.xlsx")
 @login_required
 def telemetry_export_xlsx():
-    if session.get("role") != "manager":
+    if not _has_access("management.health"):
         abort(403)
     # Reaproveita exatamente o mesmo snapshot exibido na tela, respeitando a janela selecionada.
     result = telemetry_summary_api()
@@ -5315,13 +5314,13 @@ def telemetry_export_xlsx():
 @app.get("/diagnostico")
 @login_required
 def diagnostics_page():
-    if session.get("role") not in ("manager","manager_field"): return redirect(url_for("dashboard_landing"))
+    if not _has_access("management.diagnostics"): return redirect(_v789_landing_for_user())
     return render_template("diagnostics.html", app_release=APP_RELEASE)
 
 @app.get("/api/diagnostico/resumo")
 @login_required
 def diagnostics_api():
-    if session.get("role") not in ("manager","manager_field"): return jsonify({"ok":False,"error":"Sem permissão."}),403
+    if not _has_access("management.diagnostics"): return jsonify({"ok":False,"error":"Sem permissão."}),403
     events=AuditEvent.query.order_by(AuditEvent.created_at.desc()).limit(150).all()
     user_ids={e.user_id for e in events if e.user_id}
     users={u.id:u.name for u in User.query.filter(User.id.in_(user_ids)).all()} if user_ids else {}
@@ -6889,7 +6888,7 @@ def attachments(inventory_id):
 @app.route('/perfis', methods=['GET','POST'])
 @login_required
 def system_profiles_page():
-    if session.get('role')!='manager' and not _has_access('management.profiles'): abort(403)
+    if not _has_access('management.profiles'): abort(403)
     if request.method=='POST':
         name=(request.form.get('name') or '').strip(); base=(request.form.get('base_role') or 'none').strip()
         if not name: flash('Informe o nome do perfil.'); return redirect('/perfis')
@@ -6905,7 +6904,7 @@ def system_profiles_page():
 @app.post('/perfis/<int:pid>/salvar')
 @login_required
 def system_profile_save(pid):
-    if session.get('role')!='manager' and not _has_access('management.profiles'): abort(403)
+    if not _has_access('management.profiles'): abort(403)
     p=db.session.get(SystemProfile,pid) or abort(404)
     name=(request.form.get('name') or '').strip(); base=(request.form.get('base_role') or p.base_role or 'none').strip()
     if base not in ('none','technician','technician_implantation','manager_field','consultation','dispatcher','hr','atm_financial_admin'): base='none'
@@ -6917,7 +6916,7 @@ def system_profile_save(pid):
 @app.post('/perfis/<int:pid>/excluir')
 @login_required
 def system_profile_delete(pid):
-    if session.get('role')!='manager' and not _has_access('management.profiles'): abort(403)
+    if not _has_access('management.profiles'): abort(403)
     p=db.session.get(SystemProfile,pid)
     if p:
         linked=User.query.filter_by(system_profile_id=p.id).count()
@@ -6963,7 +6962,7 @@ def _v741_sync_access_pendings():
 def _v741_access_users(operator):
     col=User.access_metro if operator=="METRO" else User.access_cptm
     q=User.query.filter(User.archived_at.is_(None),User.active.is_(True),col.is_(True))
-    if session.get("role")=="hr":
+    if session.get("role") != "manager" and not _has_access("users.scope.all"):
         me=db.session.get(User,session.get("user_id"))
         if me and (me.company or "").strip(): q=q.filter(func.lower(func.coalesce(User.company,""))==(me.company or "").strip().lower())
     return q.order_by(User.name).all()
@@ -7143,8 +7142,9 @@ def _v75_role_label(role):
 def v741_users_config_export():
     if not _has_access("users.export"):abort(403)
     users_q=User.query.filter(User.role!="customer")
-    if session.get("role")=="hr":
-        me=db.session.get(User,session.get("user_id")); users_q=users_q.filter(User.role.in_(("technician","technician_implantation")))
+    if session.get("role") != "manager" and not _has_access("users.scope.all"):
+        me=db.session.get(User,session.get("user_id"))
+        if me and (me.company or "").strip(): users_q=users_q.filter(func.lower(User.company)==(me.company or "").strip().lower())
         if me and (me.company or "").strip():users_q=users_q.filter(func.lower(func.coalesce(User.company,""))==(me.company or "").strip().lower())
     rows=users_q.order_by(User.name).all();wb=Workbook();ws=wb.active;ws.title="COLABORADORES_CONFIG"
     fixed=["user_id","Código","Usuário","Nome","Empresa","Perfil","Cargo","CPF","RG","Locais de atuação","Ativo","Acesso Metrô","Acesso CPTM","Acesso Motiva (APT)","GPS obrigatório","Histórico GPS","Controle Jornada","Escala","Horário","Admissão","Desligamento"]
@@ -7179,7 +7179,7 @@ def _v741_read_user_config(raw,apply=False):
         except:errors.append(f"Linha {rn}: user_id inválido");continue
         u=db.session.get(User,uid)
         if not u:errors.append(f"Linha {rn}: user_id {uid} não encontrado");continue
-        if session.get("role")=="hr" and not _hr_target_allowed(u):errors.append(f"Linha {rn}: usuário fora do escopo do RH");continue
+        if not _hr_target_allowed(u):errors.append(f"Linha {rn}: usuário fora do escopo permitido ao seu perfil");continue
         local=[]
         fields={"Acesso Metrô":"access_metro","Acesso CPTM":"access_cptm","Acesso Motiva (APT)":"access_motiva_apt","GPS obrigatório":"gps_required","Histórico GPS":"gps_history_enabled","Controle Jornada":"journey_control_enabled","Ativo":"active"}
         for h,attr in fields.items():
@@ -7243,9 +7243,7 @@ def users_page():
     # não em RH / Usuários.
     active_q = User.query.filter(User.archived_at.is_(None), User.role != "customer")
     archived_q = User.query.filter(User.archived_at.isnot(None), User.role != "customer")
-    if session.get("role") == "hr":
-        active_q = active_q.filter(User.role.in_(("technician", "technician_implantation")))
-        archived_q = archived_q.filter(User.role.in_(("technician", "technician_implantation")))
+    if session.get("role") != "manager" and not _has_access("users.scope.all"):
         me=db.session.get(User,session.get("user_id"))
         if me and (me.company or "").strip():
             company=(me.company or "").strip().lower()
@@ -7257,8 +7255,8 @@ def users_page():
         "users.html",
         users=active_users,
         archived_users=archived_users,
-        can_assign_sensitive_roles=_current_user_is_superadmin(),
-        is_hr_admin=session.get("role") == "hr",
+        can_assign_sensitive_roles=(session.get("role")=="manager" or _has_access("users.roles.manage")),
+        is_hr_admin=(session.get("role") != "manager" and not _has_access("users.scope.all")),
         customer_companies=CustomerCompany.query.filter_by(active=True).order_by(CustomerCompany.legal_name).all(),
         customer_company_map={u.id:_customer_company_ids(u) for u in active_users},
         system_profiles=SystemProfile.query.filter_by(active=True).order_by(SystemProfile.name).all(),
@@ -7450,7 +7448,9 @@ def user_photo(user_id):
     user = db.session.get(User, user_id)
     if not user or not user.photo_url:
         return "", 404
-    if session.get("role") == "hr" and user.role not in ("technician", "technician_implantation"):
+    if not (_has_access("users.view") or user.id == session.get("user_id")):
+        return "", 404
+    if user.id != session.get("user_id") and not _hr_target_allowed(user):
         return "", 404
 
     try:
@@ -7483,7 +7483,7 @@ def toggle_user(user_id):
         flash("Usuário não encontrado.")
         return redirect(url_for("users_page"))
     if not _hr_target_allowed(user):
-        flash("RH pode administrar somente perfis operacionais autorizados.")
+        flash("Seu perfil não possui escopo para administrar este usuário.")
         return redirect(url_for("users_page"))
 
     if user.id == session.get("user_id"):
@@ -7509,7 +7509,7 @@ def edit_user(user_id):
         flash("Usuário não encontrado.")
         return redirect(url_for("users_page"))
     if not _hr_target_allowed(user):
-        flash("RH pode administrar somente perfis operacionais autorizados.")
+        flash("Seu perfil não possui escopo para administrar este usuário.")
         return redirect(url_for("users_page"))
 
     name = request.form.get("name", "").strip()
@@ -7561,7 +7561,7 @@ def edit_user(user_id):
         flash("Perfil de acesso inválido.")
         return redirect(url_for("users_page"))
     if not _role_assignment_allowed(role):
-        flash("Somente o Administrador principal pode atribuir os perfis Gestor ou Consulta.")
+        flash("Seu perfil não possui permissão para atribuir este perfil de acesso.")
         return redirect(url_for("users_page"))
 
     allowed_personnel_status = {"ATIVO", "FERIAS", "AFASTADO", "LICENCA", "FOLGA_PROGRAMADA", "OUTRO"}
@@ -7749,7 +7749,7 @@ def _user_operational_history_counts(user_id):
 
 
 @app.post("/usuarios/<int:user_id>/excluir")
-@manager_required
+@user_admin_required
 def delete_or_archive_user(user_id):
     if not _has_access("users.delete"): abort(403)
     user = db.session.get(User, user_id)
@@ -7845,11 +7845,11 @@ def reactivate_user(user_id):
         flash("Usuário arquivado não encontrado.")
         return redirect(url_for("users_page"))
     if not _hr_target_allowed(user):
-        flash("RH pode administrar somente perfis operacionais autorizados.")
+        flash("Seu perfil não possui escopo para administrar este usuário.")
         return redirect(url_for("users_page"))
     # RH não pode restaurar diretamente um perfil sensível.
-    if user.role in ("manager", "consultation", "dispatcher", "hr") and not _current_user_is_superadmin():
-        flash("Somente o Administrador principal pode reativar usuários Gestor ou Consulta.")
+    if user.role in ("manager", "manager_field", "consultation", "dispatcher", "hr", "atm_financial_admin", "customer") and not (session.get("role")=="manager" or _has_access("users.roles.manage")):
+        flash("Seu perfil não possui permissão para reativar perfis administrativos/sensíveis.")
         return redirect(url_for("users_page"))
     base_login = normalize(user.name).lower().replace(" ", ".")[:60] or f"usuario{user.id}"
     base_login = re.sub(r"[^a-z0-9._-]+", "", base_login) or f"usuario{user.id}"
@@ -7887,7 +7887,10 @@ def export_users_excel():
         c.fill = PatternFill("solid", fgColor="17345D")
         c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
     role_label={"manager":"Gestor","technician":"Técnico de Campo","technician_implantation":"Técnico Implantação","manager_field":"Gestor Field","consultation":"Consulta","hr":"RH","dispatcher":"Dispatcher","atm_financial_admin":"ADM Financeiro","customer":"Cliente"}
-    q=(User.query.filter(User.role.in_(("technician","technician_implantation"))) if session.get("role") == "hr" else User.query)
+    q=User.query
+    if session.get("role") != "manager" and not _has_access("users.scope.all"):
+        me=db.session.get(User,session.get("user_id"))
+        if me and (me.company or "").strip(): q=q.filter(func.lower(User.company)==(me.company or "").strip().lower())
     term=(request.args.get("q") or "").strip(); role_f=(request.args.get("role") or "").strip(); company_f=(request.args.get("company") or "").strip(); status_f=(request.args.get("status") or "").strip().upper()
     if term:
         like=f"%{term}%"; q=q.filter(db.or_(User.name.ilike(like),User.username.ilike(like),User.user_code.ilike(like),User.job_title.ilike(like)))
@@ -10391,15 +10394,15 @@ def cleanup_v352_test_reference():
 @login_required
 def management_360_page():
     """V47: visão gerencial integrada, preservando FIELD e IMPLANTAÇÃO como domínios distintos."""
-    if session.get("role") not in ("manager", "manager_field"):
-        return redirect(url_for("dashboard_landing"))
+    if not _has_access("management.360"):
+        return redirect(_v789_landing_for_user())
     return render_template("management_360.html", app_release=APP_RELEASE)
 
 
 @app.get("/api/gestao-360/resumo")
 @login_required
 def management_360_summary_api():
-    if session.get("role") not in ("manager", "manager_field"):
+    if not _has_access("management.360"):
         return jsonify({"ok": False, "error": "Sem permissão para a Central 360."}), 403
 
     # FIELD: inventário, Recarga e Visão Panorâmica. EMV não pertence ao Field.
@@ -10474,7 +10477,7 @@ def global_search_api():
 @app.get("/api/gestao-360/alertas")
 @login_required
 def management_360_alerts_api():
-    if session.get("role") not in ("manager","manager_field"):
+    if not _has_access("management.360"):
         return jsonify({"ok":False,"error":"Sem permissão."}),403
     # FIELD
     official_path=DATA_DIR / "atm_official_082026.json"
@@ -10505,7 +10508,7 @@ def management_360_alerts_api():
 @app.get("/api/auditoria/recente")
 @login_required
 def recent_audit_api():
-    if session.get("role") not in ("manager","manager_field"):
+    if not _has_access("management.diagnostics"):
         return jsonify({"ok":False,"error":"Sem permissão."}),403
     rows=AuditEvent.query.order_by(AuditEvent.created_at.desc()).limit(20).all()
     user_ids={x.user_id for x in rows if x.user_id}
@@ -10516,8 +10519,8 @@ def recent_audit_api():
 @app.get("/atividades")
 @login_required
 def activities_page():
-    if session.get("role") not in ("technician", "technician_implantation", "manager", "manager_field"):
-        return redirect(url_for("manager" if session.get("role") in ("consultation", "dispatcher") else "teams_page"))
+    if not _has_access("field"):
+        return redirect(_v789_landing_for_user())
     return render_template("activities.html", app_release=APP_RELEASE)
 
 
@@ -10658,7 +10661,7 @@ def pos_firmware_cptm_list():
 @app.post("/api/firmware-pos-cptm/import")
 @login_required
 def pos_firmware_cptm_import():
-    if not _pos_fw_allowed() or session.get("role") not in ("manager","manager_field"): abort(403)
+    if not _has_access("field.firmware_pos_cptm"): abort(403)
     _ensure_pos_firmware_cptm()
     f=request.files.get("file")
     if not f or not f.filename: return jsonify({"ok":False,"error":"Selecione uma planilha .xlsx."}),400
@@ -10691,7 +10694,7 @@ def pos_firmware_cptm_import():
 @app.post("/api/firmware-pos-cptm/<int:rid>")
 @login_required
 def pos_firmware_cptm_save(rid):
-    if not _pos_fw_allowed() or session.get("role")=="consultation": abort(403)
+    if not _has_access("field.firmware_pos_cptm"): abort(403)
     _ensure_pos_firmware_cptm(); r=db.session.get(PosFirmwareCptm,rid) or abort(404)
     if not r.active: return jsonify({"ok":False,"error":"Este POS não pertence à base ativa da campanha."}),409
     status=(request.form.get("status") or r.status or "PENDENTE").upper().strip()
@@ -10720,7 +10723,7 @@ def pos_firmware_cptm_save(rid):
 @app.delete("/api/firmware-pos-cptm/photos/<int:pid>")
 @login_required
 def pos_firmware_cptm_photo_delete(pid):
-    if not _pos_fw_allowed() or session.get("role")=="consultation": abort(403)
+    if not _has_access("field.firmware_pos_cptm"): abort(403)
     p=db.session.get(PosFirmwareCptmPhoto,pid) or abort(404)
     try:
         if p.stored_name.startswith("r2__") and _r2_available(): r2_client().delete_object(Bucket=os.environ["R2_BUCKET_NAME"],Key=p.stored_name[4:])
@@ -10734,7 +10737,7 @@ def pos_firmware_cptm_photo_delete(pid):
 @login_required
 def chip_swap_page():
     if not _has_access("field.chip_recarga"): abort(403)
-    if session.get("role") not in ("manager", "manager_field", "technician", "consultation", "dispatcher"):
+    if not _has_access("field.chip_recarga"):
         return redirect(url_for("teams_page"))
     return render_template("chip_swap.html")
 
@@ -11082,8 +11085,8 @@ def chip_swap_save_api(location_id, base_asset_id):
 @app.post("/api/chip-swaps/<int:location_id>/<int:base_asset_id>/admin-status")
 @dashboard_required
 def chip_swap_admin_status_api(location_id, base_asset_id):
-    if session.get("role") not in ("manager", "manager_field"):
-        return jsonify({"ok":False,"error":"Alteração administrativa restrita ao ADM/Gestor."}),403
+    if not _has_access("field.chip_recarga"):
+        return jsonify({"ok":False,"error":"Sem permissão para esta alteração."}),403
     loc=db.session.get(Location,location_id); asset=db.session.get(BaseAsset,base_asset_id)
     if not loc or not asset or _canonical_equipment_type(asset.equipment_type) not in ("VALIDADOR","TDI") or not _chip_swap_asset_matches_location(asset,loc):
         return jsonify({"ok":False,"error":"Validador de Recarga/TDI não encontrado nesta localidade."}),404
@@ -11209,7 +11212,7 @@ def _chip_operation_name(company):
 @app.get("/api/chip-swaps/base-diagnostico")
 @login_required
 def v733_chip_base_diagnostic():
-    if session.get("role") not in ("manager","manager_field"):
+    if not _has_access("field.chip_recarga"):
         return jsonify({"ok":False,"error":"Sem permissão."}),403
     raw=BaseAsset.query.filter(or_(func.upper(func.coalesce(BaseAsset.equipment_type,'')).like('%VALID%'),func.upper(func.coalesce(BaseAsset.equipment_type,''))=='TDI')).all()
     scoped=[a for a in raw if _canonical_equipment_type(a.equipment_type) in ("VALIDADOR","TDI") and "FORA DO ESCOPO" not in normalize(a.base_status)]
@@ -11484,8 +11487,9 @@ def _op_apply(module, rows, user_id):
 @app.get("/api/operational-base/template.xlsx")
 @login_required
 def operational_base_template():
-    if session.get("role") not in ("manager","manager_field"): abort(403)
     module=(request.args.get("module") or "emv").lower()
+    perm={"recarga":"field.chip_recarga","emv":"implantation.emv","garagem":"implantation.garage"}.get(module)
+    if not perm or not _has_access(perm): abort(403)
     if module not in _OP_MODULES: return jsonify({"ok":False,"error":"Módulo inválido."}),400
     wb=Workbook(); ws=wb.active; ws.title="Base operacional"
     ws.append(["empresa","terminal","estação","linha","status"])
@@ -11499,8 +11503,9 @@ def operational_base_template():
 @app.post("/api/operational-base/import/preview")
 @login_required
 def operational_base_import_preview():
-    if session.get("role") not in ("manager","manager_field"): return jsonify({"ok":False,"error":"Importação restrita a Gestor/ADM."}),403
     module=(request.args.get("module") or "").lower()
+    perm={"recarga":"field.chip_recarga","emv":"implantation.emv","garagem":"implantation.garage"}.get(module)
+    if not perm or not _has_access(perm): return jsonify({"ok":False,"error":"Sem permissão para importar esta base operacional."}),403
     if module not in _OP_MODULES: return jsonify({"ok":False,"error":"Módulo inválido."}),400
     try:
         rows=_op_parse_upload(request.files.get("file")); return jsonify({"ok":True,"module":module,"summary":_op_preview(module,rows)})
@@ -11510,8 +11515,9 @@ def operational_base_import_preview():
 @app.post("/api/operational-base/import")
 @login_required
 def operational_base_import_apply():
-    if session.get("role") not in ("manager","manager_field"): return jsonify({"ok":False,"error":"Importação restrita a Gestor/ADM."}),403
     module=(request.args.get("module") or "").lower()
+    perm={"recarga":"field.chip_recarga","emv":"implantation.emv","garagem":"implantation.garage"}.get(module)
+    if not perm or not _has_access(perm): return jsonify({"ok":False,"error":"Sem permissão para importar esta base operacional."}),403
     if module not in _OP_MODULES: return jsonify({"ok":False,"error":"Módulo inválido."}),400
     try:
         rows=_op_parse_upload(request.files.get("file")); summary=_op_apply(module,rows,session.get("user_id")); return jsonify({"ok":True,"summary":summary,"message":"Base atualizada. Registros ausentes não foram apagados; pendentes ausentes saíram do escopo operacional."})
@@ -12018,8 +12024,9 @@ def emv_chip_delete(terminal):
     return jsonify({"ok":True})
 
 def _cleanup_activity_photos(kind):
-    if session.get('role') not in ('manager','manager_field'):
-        return jsonify({'ok':False,'error':'Limpeza restrita ao Gestor/ADM.'}),403
+    perm='field.chip_recarga' if kind=='recarga' else 'implantation.emv'
+    if not _has_access(perm):
+        return jsonify({'ok':False,'error':'Sem permissão para limpar evidências desta atividade.'}),403
     data=request.get_json(silent=True) or {}; confirm=str(data.get('confirm') or '').strip().upper()
     if confirm!='CONFIRMAR': return jsonify({'ok':False,'error':'Digite CONFIRMAR para remover as evidências temporárias.'}),400
     if kind=='recarga':
@@ -12130,7 +12137,7 @@ def _fin_supplier_duplicates(suppliers):
     return {k:v for k,v in groups.items() if len(v)>1}
 
 def _financial_admin_allowed():
-    return session.get("role") in ("manager", "atm_financial_admin")
+    return _has_access("finance")
 
 
 @app.get("/financeiro/dashboard")
@@ -12146,7 +12153,7 @@ def financial_dashboard_page():
 @app.get("/financeiro/dashboard/embed")
 @login_required
 def financial_dashboard_embed():
-    if session.get("role") not in ("manager","manager_field","atm_financial_admin"):
+    if not _has_access("finance.dashboard"):
         abort(403)
     return render_template("financial_dashboard.html", app_release=APP_RELEASE, embedded=True)
 
@@ -12158,13 +12165,13 @@ def financial_home():
 @app.get("/financeiro/implantacao")
 @login_required
 def financial_implantation_page():
-    if session.get("role") not in ("manager","manager_field","atm_financial_admin"): return redirect(url_for("dashboard_landing"))
+    if not _has_access("finance.implantation"): return redirect(_v789_landing_for_user())
     return render_template("financial_area_placeholder.html", app_release=APP_RELEASE, area="Implantação")
 
 @app.get("/financeiro/assistencia-tecnica")
 @login_required
 def financial_assistance_page():
-    if session.get("role") not in ("manager","manager_field","atm_financial_admin"): return redirect(url_for("dashboard_landing"))
+    if not _has_access("finance.assistance"): return redirect(_v789_landing_for_user())
     return render_template("financial_area_placeholder.html", app_release=APP_RELEASE, area="Assistência Técnica")
 
 @app.get("/financeiro/coleta-valores")
@@ -12173,8 +12180,6 @@ def financial_assistance_page():
 def financial_cash_collection_page():
     if not _has_access("finance.collection"):
         return redirect(url_for("dashboard_landing"))
-    if session.get("role") not in ("manager", "manager_field", "atm_financial_admin"):
-        return redirect(url_for("dashboard_landing"))
     return render_template("financial_cash_collection.html", app_release=APP_RELEASE)
 
 @app.get("/financeiro/lancamentos")
@@ -12182,14 +12187,14 @@ def financial_cash_collection_page():
 @app.get("/financeiro/suporte-campo")
 @login_required
 def financial_cost_management_page():
-    if not (_has_access("finance.entries") or _has_access("finance.support") or _has_access("finance.suppliers")) or not _financial_admin_allowed():
+    if not (_has_access("finance.entries") or _has_access("finance.support") or _has_access("finance.suppliers")):
         return redirect(url_for("dashboard_landing"))
     return render_template("financial_cost_management.html", app_release=APP_RELEASE)
 
 @app.get("/financeiro/lancamentos/embed")
 @login_required
 def financial_cost_management_embed():
-    if session.get("role") not in ("manager","manager_field","atm_financial_admin"):
+    if not (_has_access("finance.entries") or _has_access("finance.support") or _has_access("finance.suppliers")):
         abort(403)
     return render_template("financial_cost_management.html", app_release=APP_RELEASE, embedded=True)
 
@@ -12197,7 +12202,7 @@ def financial_cost_management_embed():
 @login_required
 def v56a_performance_status():
     """Diagnóstico leve da normalização V56-A sem varrer objetos ORM completos."""
-    if session.get("role") not in ("manager","manager_field","atm_financial_admin"):
+    if not _has_access("finance.support"):
         abort(403)
     total=db.session.query(func.count(TopDeskTicket.id)).scalar() or 0
     normalized=db.session.query(func.count(TopDeskTicket.id)).filter(TopDeskTicket.created_at.isnot(None)).scalar() or 0
@@ -12232,7 +12237,7 @@ def release_routes_v553():
 @app.get("/api/financeiro/cadastros")
 @login_required
 def financial_catalog_api():
-    if session.get("role") not in ("manager","manager_field","atm_financial_admin"):
+    if not _has_access("finance.support"):
         return jsonify({"ok":False,"error":"Sem permissão."}),403
     suppliers=FinancialSupplier.query.order_by(FinancialSupplier.name).all()
     services=FinancialService.query.order_by(FinancialService.name).all()
@@ -12264,7 +12269,7 @@ def financial_catalog_api():
 @app.post("/api/financeiro/fornecedores")
 @login_required
 def financial_supplier_create_api():
-    if not _financial_admin_allowed(): return jsonify({"ok":False,"error":"Sem permissão."}),403
+    if not _has_access("finance.import"): return jsonify({"ok":False,"error":"Sem permissão."}),403
     d=request.get_json(silent=True) or {}; name=(d.get("name") or "").strip()
     if not name: return jsonify({"ok":False,"error":"Informe a empresa/fornecedor."}),400
     cnpj=re.sub(r"\D","",(d.get("cnpj") or ""))
@@ -12309,7 +12314,7 @@ def financial_supplier_update_api(row_id):
 @app.get("/api/financeiro/pendencias-cadastro")
 @login_required
 def financial_pending_profiles_api():
-    if session.get("role") not in ("manager","manager_field","atm_financial_admin"): return jsonify({"ok":False,"error":"Sem permissão."}),403
+    if not _has_access("finance.suppliers"): return jsonify({"ok":False,"error":"Sem permissão."}),403
     suppliers=FinancialSupplier.query.filter(FinancialSupplier.active.isnot(False)).order_by(FinancialSupplier.name).all()
     duplicates=_fin_supplier_duplicates(suppliers); dup_ids={s.id for grp in duplicates.values() for s in grp}
     rows=[]
@@ -12327,7 +12332,7 @@ def financial_pending_profiles_api():
 @app.post("/api/financeiro/fornecedores/consolidar-duplicados")
 @login_required
 def financial_supplier_merge_duplicates_api():
-    if session.get("role")!="manager": return jsonify({"ok":False,"error":"Consolidação restrita ao ADM."}),403
+    if not _has_access("finance.delete"): return jsonify({"ok":False,"error":"Sem permissão para consolidar fornecedores."}),403
     suppliers=FinancialSupplier.query.order_by(FinancialSupplier.id).all()
     groups=_fin_supplier_duplicates(suppliers); merged=0
     try:
@@ -12358,7 +12363,7 @@ def financial_supplier_merge_duplicates_api():
 @app.get("/api/financeiro/fornecedores/<int:row_id>/padroes")
 @login_required
 def financial_supplier_patterns_api(row_id):
-    if session.get("role") not in ("manager","manager_field","atm_financial_admin"): return jsonify({"ok":False,"error":"Sem permissão."}),403
+    if not _has_access("finance.suppliers"): return jsonify({"ok":False,"error":"Sem permissão."}),403
     supplier=db.session.get(FinancialSupplier,row_id)
     if not supplier:return jsonify({"ok":False,"error":"Fornecedor não encontrado."}),404
     rows=FinancialMonthlyCost.query.filter_by(supplier_id=row_id).order_by(FinancialMonthlyCost.competence.desc(),FinancialMonthlyCost.updated_at.desc()).limit(8).all()
@@ -12369,7 +12374,7 @@ def financial_supplier_patterns_api(row_id):
 @app.delete("/api/financeiro/fornecedores/<int:row_id>")
 @login_required
 def financial_supplier_delete_api(row_id):
-    if session.get("role") not in ("manager","atm_financial_admin"): return jsonify({"ok":False,"error":"Sem permissão para excluir fornecedor."}),403
+    if not _has_access("finance.delete"): return jsonify({"ok":False,"error":"Sem permissão para excluir fornecedor."}),403
     row=db.session.get(FinancialSupplier,row_id)
     if not row: return jsonify({"ok":False,"error":"Fornecedor não encontrado."}),404
     name=row.name
@@ -12387,7 +12392,7 @@ def financial_supplier_delete_api(row_id):
 @app.delete("/api/financeiro/servicos/<int:row_id>")
 @login_required
 def financial_service_delete_api(row_id):
-    if session.get("role") not in ("manager","atm_financial_admin"): return jsonify({"ok":False,"error":"Sem permissão para excluir serviço."}),403
+    if not _has_access("finance.delete"): return jsonify({"ok":False,"error":"Sem permissão para excluir serviço."}),403
     row=db.session.get(FinancialService,row_id)
     if not row: return jsonify({"ok":False,"error":"Serviço não encontrado."}),404
     used=FinancialMonthlyCost.query.filter_by(service_id=row.id).count()
@@ -12412,7 +12417,7 @@ def _fin_payload(row, users=None, sups=None, svcs=None):
 @login_required
 def financial_monthly_costs_api():
     if request.method=="GET":
-        if session.get("role") not in ("manager","manager_field","atm_financial_admin"): return jsonify({"ok":False,"error":"Sem permissão."}),403
+        if not _has_access("finance.entries"): return jsonify({"ok":False,"error":"Sem permissão."}),403
         comp=(request.args.get("competence") or "").strip();q=FinancialMonthlyCost.query
         if comp:q=q.filter_by(competence=comp)
         users={u.id:u.name for u in User.query.all()}; sups={x.id:x.name for x in FinancialSupplier.query.all()}; svcs={x.id:x.name for x in FinancialService.query.all()}
@@ -12437,7 +12442,7 @@ def financial_monthly_cost_update_api(row_id):
     row=db.session.get(FinancialMonthlyCost,row_id)
     if not row: return jsonify({"ok":False,"error":"Lançamento não encontrado."}),404
     if request.method=="DELETE":
-        if session.get("role")!="manager": return jsonify({"ok":False,"error":"Somente ADM pode excluir lançamento."}),403
+        if not _has_access("finance.delete"): return jsonify({"ok":False,"error":"Sem permissão para excluir lançamento."}),403
         detail=f"{row.competence} · R$ {row.amount:.2f}";db.session.delete(row);db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="FIN_MONTHLY_COST_DELETE",entity_type="financial_monthly_cost",entity_id=str(row_id),detail=detail));db.session.commit();return jsonify({"ok":True})
     if not _financial_admin_allowed(): return jsonify({"ok":False,"error":"Sem permissão."}),403
     d=request.get_json(silent=True) or {}; sid=int(d.get("supplier_id") or row.supplier_id); service_text=(d.get("service") or getattr(row,"service_text",None) or "").strip(); center=(d.get("cost_center") or getattr(row,"cost_center",None) or "SUPORTE_CAMPO").strip().upper(); center_id=(d.get("cost_center_id") or getattr(row,"cost_center_id",None) or _fin_cost_center_id_for_key(center)).strip().upper(); project=(d.get("project",getattr(row,"project",None)) or "").strip(); comp=(d.get("competence") or row.competence).strip()
@@ -12651,7 +12656,7 @@ def _fin_import_transactions_wb(wb, filename, user_id, job_id=None):
 @app.get("/financeiro/apuracao")
 @login_required
 def financial_cash_reconciliation_page():
-    if not _financial_admin_allowed() or not _has_access("finance.apuracao"):
+    if not _has_access("finance.apuracao"):
         return redirect(url_for("dashboard_landing"))
     return render_template("financial_cash_reconciliation.html",app_release=APP_RELEASE)
 
@@ -12688,7 +12693,7 @@ def _financial_import_worker(job_id, paths, filenames, user_id):
 @app.post("/api/financeiro/apuracao/importar")
 @login_required
 def financial_cash_reconciliation_import():
-    if not _financial_admin_allowed() or not _has_access("finance.apuracao"):
+    if not _has_access("finance.apuracao"):
         return jsonify({"ok":False,"error":"Sem permissão."}),403
     uploaded=request.files.getlist("files") or ([request.files.get("file")] if request.files.get("file") else [])
     uploaded=[f for f in uploaded if f and f.filename]
@@ -12713,7 +12718,7 @@ def financial_cash_reconciliation_import():
 @app.get("/api/financeiro/apuracao/importar/<job_id>/status")
 @login_required
 def financial_cash_reconciliation_import_status(job_id):
-    if not _financial_admin_allowed() or not _has_access("finance.apuracao"):
+    if not _has_access("finance.apuracao"):
         return jsonify({"ok":False,"error":"Sem permissão."}),403
     job=_fin_job_snapshot(job_id)
     if not job:return jsonify({"ok":False,"error":"Importação não encontrada ou servidor reiniciado."}),404
@@ -12722,7 +12727,7 @@ def financial_cash_reconciliation_import_status(job_id):
 @app.get("/api/financeiro/apuracao/importar/active")
 @login_required
 def financial_cash_reconciliation_import_active():
-    if not _financial_admin_allowed() or not _has_access("finance.apuracao"):
+    if not _has_access("finance.apuracao"):
         return jsonify({"ok":False,"error":"Sem permissão."}),403
     uid=session.get("user_id")
     with FIN_IMPORT_LOCK:
@@ -12733,7 +12738,7 @@ def financial_cash_reconciliation_import_active():
 @app.get("/api/financeiro/apuracao/terminais")
 @login_required
 def financial_cash_reconciliation_terminals():
-    if not _financial_admin_allowed() or not _has_access("finance.apuracao"): return jsonify({"ok":False,"error":"Sem permissão."}),403
+    if not _has_access("finance.apuracao"): return jsonify({"ok":False,"error":"Sem permissão."}),403
     now=time.time(); cached=_FIN_TERMINALS_CACHE.get("payload")
     if cached is not None and now-float(_FIN_TERMINALS_CACHE.get("at") or 0) < _FIN_TERMINALS_CACHE_TTL:
         resp=jsonify(cached); resp.headers["X-Autopass-Cache"]="HIT"; return resp
@@ -12765,7 +12770,7 @@ def financial_cash_reconciliation_terminals():
 @app.get("/api/financeiro/apuracao/coletas")
 @login_required
 def financial_cash_reconciliation_collections():
-    if not _financial_admin_allowed() or not _has_access("finance.apuracao"): return jsonify({"ok":False,"error":"Sem permissão."}),403
+    if not _has_access("finance.apuracao"): return jsonify({"ok":False,"error":"Sem permissão."}),403
     terminal=_fin_terminal(request.args.get("terminal"));
     if not terminal:return jsonify({"ok":True,"rows":[]})
     rows=FinancialCashCollection.query.filter_by(terminal=terminal).order_by(FinancialCashCollection.end_at).all()
@@ -12774,7 +12779,7 @@ def financial_cash_reconciliation_collections():
 @app.get("/api/financeiro/apuracao/calcular")
 @login_required
 def financial_cash_reconciliation_calculate():
-    if not _financial_admin_allowed() or not _has_access("finance.apuracao"): return jsonify({"ok":False,"error":"Sem permissão."}),403
+    if not _has_access("finance.apuracao"): return jsonify({"ok":False,"error":"Sem permissão."}),403
     terminal=_fin_terminal(request.args.get("terminal")); a=db.session.get(FinancialCashCollection,int(request.args.get("initial_id") or 0)); b=db.session.get(FinancialCashCollection,int(request.args.get("final_id") or 0))
     if not terminal or not a or not b or a.terminal!=terminal or b.terminal!=terminal:return jsonify({"ok":False,"error":"Selecione terminal, coleta inicial e coleta final válidos."}),400
     if b.end_at<=a.end_at:return jsonify({"ok":False,"error":"A coleta final deve ser posterior à coleta inicial."}),400
@@ -12803,7 +12808,7 @@ def financial_cash_reconciliation_calculate():
 @app.get("/api/financeiro/apuracao/calcular-multiplos")
 @login_required
 def financial_cash_reconciliation_multi():
-    if not _financial_admin_allowed() or not _has_access("finance.apuracao"): return jsonify({"ok":False,"error":"Sem permissão."}),403
+    if not _has_access("finance.apuracao"): return jsonify({"ok":False,"error":"Sem permissão."}),403
     terminals=[_fin_terminal(x) for x in request.args.getlist("terminal") if _fin_terminal(x)]
     primary=_fin_terminal(request.args.get("primary")); a=db.session.get(FinancialCashCollection,int(request.args.get("initial_id") or 0)); b=db.session.get(FinancialCashCollection,int(request.args.get("final_id") or 0))
     if not terminals or not primary or not a or not b or a.terminal!=primary or b.terminal!=primary or b.end_at<=a.end_at: return jsonify({"ok":False,"error":"Selecione terminais e o intervalo de coletas do terminal de referência."}),400
@@ -12836,7 +12841,7 @@ def financial_cash_reconciliation_multi():
 @app.get("/api/financeiro/apuracao/calcular-periodo")
 @login_required
 def financial_cash_reconciliation_period():
-    if not _financial_admin_allowed() or not _has_access("finance.apuracao"):
+    if not _has_access("finance.apuracao"):
         return jsonify({"ok":False,"error":"Sem permissão."}),403
     terminals=list(dict.fromkeys([_fin_terminal(x) for x in request.args.getlist("terminal") if _fin_terminal(x)]))[:500]
     try:
@@ -12870,7 +12875,7 @@ def financial_cash_reconciliation_period():
 @app.get("/api/financeiro/apuracao/exportar.xlsx")
 @login_required
 def financial_cash_reconciliation_export():
-    if not _financial_admin_allowed() or not _has_access("finance.apuracao"): abort(403)
+    if not _has_access("finance.apuracao"): abort(403)
     terminal=_fin_terminal(request.args.get("terminal")); a=db.session.get(FinancialCashCollection,int(request.args.get("initial_id") or 0)); b=db.session.get(FinancialCashCollection,int(request.args.get("final_id") or 0))
     if not terminal or not a or not b or a.terminal!=terminal or b.terminal!=terminal or b.end_at<=a.end_at: return "Filtros inválidos",400
     txs=FinancialATMTransaction.query.filter(FinancialATMTransaction.terminal==terminal,FinancialATMTransaction.transaction_at>a.end_at,FinancialATMTransaction.transaction_at<=b.end_at,FinancialATMTransaction.status.in_(["V","A"])).order_by(FinancialATMTransaction.transaction_at).all()
@@ -12887,7 +12892,7 @@ def financial_cash_reconciliation_export():
 @app.get("/api/financeiro/apuracao/exportar-multiplos.xlsx")
 @login_required
 def financial_cash_reconciliation_export_multi():
-    if not _financial_admin_allowed() or not _has_access("finance.apuracao"): abort(403)
+    if not _has_access("finance.apuracao"): abort(403)
     terminals=[_fin_terminal(x) for x in request.args.getlist("terminal") if _fin_terminal(x)]; primary=_fin_terminal(request.args.get("primary")); a=db.session.get(FinancialCashCollection,int(request.args.get("initial_id") or 0)); b=db.session.get(FinancialCashCollection,int(request.args.get("final_id") or 0))
     if not terminals or not primary or not a or not b or a.terminal!=primary or b.terminal!=primary or b.end_at<=a.end_at:return "Filtros inválidos",400
     wb=Workbook(); ws=wb.active; ws.title="Comparativo"; ws.append(["Terminal","Localidade","Coleta inicial","Coleta final","Dias","Qtd transações - status V+A","Valor transações","Valor recolhido","Valor declarado","Valor apurado","Qtde cédulas","Dif. Apurado x Transações","Dif. transações x declarado","Dif. apurado x declarado","% Apurado x Transações","Status"])
@@ -12961,7 +12966,7 @@ def financial_import_xlsx():
 @app.get("/api/financeiro/export.xlsx")
 @login_required
 def financial_export_xlsx():
-    if session.get("role") not in ("manager","manager_field","atm_financial_admin"): abort(403)
+    if not _has_access("finance.entries"): abort(403)
     comps=set(x for x in (request.args.get('competences') or '').split(',') if x); center=(request.args.get('center') or 'ALL'); product=(request.args.get('product') or 'ALL').upper()
     q=FinancialMonthlyCost.query
     if comps:q=q.filter(FinancialMonthlyCost.competence.in_(comps))
@@ -13220,8 +13225,8 @@ def panorama_export_pptx_legacy():
 @login_required
 def panorama_page():
     if not _has_access("field.panorama"): abort(403)
-    if session.get("role") not in ("manager", "manager_field", "technician", "consultation"):
-        return redirect(url_for("activities_page" if session.get("role") == "technician_implantation" else "teams_page"))
+    if not _has_access("field.panorama"):
+        return redirect(_v789_landing_for_user())
     return render_template("panorama.html")
 
 
@@ -13553,7 +13558,7 @@ def v50_settings_api():
 @app.get("/api/command-center/hoje")
 @login_required
 def v50_command_center_today():
-    if session.get("role") not in ("manager","manager_field"):
+    if not _has_access("management.360"):
         return jsonify({"ok":False,"error":"Sem permissão."}),403
     today=datetime.utcnow().date()
     inv_today=Inventory.query.filter(func.date(Inventory.created_at)==today).count()
@@ -13614,8 +13619,8 @@ def operational_forecast_api():
 # V74 — Dossiê, Pessoas & Governança: Autorizações de Acesso
 # -----------------------------------------------------------------------------
 def _v74_people_scope(query, model_user_id):
-    """RH fica restrito à própria empresa; Gestores mantêm visão corporativa."""
-    if session.get("role") == "hr":
+    """Escopo corporativo definido pela matriz; sem regra especial por perfil RH."""
+    if session.get("role") != "manager" and not _has_access("users.scope.all"):
         me=db.session.get(User,session.get("user_id"))
         if me and (me.company or "").strip():
             query=query.join(User, User.id==model_user_id).filter(func.lower(func.coalesce(User.company,""))==(me.company or "").strip().lower())
@@ -13633,7 +13638,7 @@ def _v74_auth_status(row):
 @app.get('/rh/autorizacoes-acesso')
 @login_required
 def v74_access_authorizations_page():
-    if session.get('role') not in ('manager','manager_field','hr'):abort(403)
+    if not _has_access('teams.apt'):abort(403)
     q=(request.args.get('q') or '').strip(); operator=(request.args.get('operator') or '').strip(); status=(request.args.get('status') or '').strip().upper()
     query=_v74_people_scope(AccessAuthorization.query,AccessAuthorization.user_id)
     if operator:query=query.filter(AccessAuthorization.operator==operator)
@@ -13645,7 +13650,7 @@ def v74_access_authorizations_page():
         if status and st!=status:continue
         data.append({'row':x,'user':u,'computed_status':st,'lines':', '.join(json.loads(x.lines_json or '[]')) if x.lines_json else ''})
     uq=User.query.filter(User.active.is_(True),User.role.in_(("technician","technician_implantation","manager_field","dispatcher")))
-    if session.get('role')=='hr':
+    if session.get('role')!='manager' and not _has_access('users.scope.all'):
         me=db.session.get(User,session.get('user_id'))
         if me and (me.company or '').strip():uq=uq.filter(func.lower(func.coalesce(User.company,''))==(me.company or '').strip().lower())
     users=uq.order_by(User.name).all()
@@ -13655,10 +13660,10 @@ def v74_access_authorizations_page():
 @app.post('/api/rh/autorizacoes-acesso')
 @login_required
 def v74_access_authorization_create():
-    if session.get('role') not in ('manager','manager_field','hr'):abort(403)
+    if not _has_access('teams.apt'):abort(403)
     d=request.form; uid=d.get('user_id',type=int); u=db.session.get(User,uid) if uid else None
     if not u:return jsonify({'ok':False,'error':'Selecione um colaborador cadastrado.'}),400
-    if session.get('role')=='hr':
+    if session.get('role')!='manager' and not _has_access('users.scope.all'):
         me=db.session.get(User,session.get('user_id'))
         if me and (me.company or '').strip().lower()!=(u.company or '').strip().lower():abort(403)
     operator=(d.get('operator') or '').strip().upper(); kind=(d.get('authorization_type') or 'ACESSO_OPERACIONAL').strip().upper()
@@ -13680,9 +13685,9 @@ def v74_access_authorization_create():
 @app.post('/api/rh/autorizacoes-acesso/<int:rid>/toggle')
 @login_required
 def v74_access_authorization_toggle(rid):
-    if session.get('role') not in ('manager','manager_field','hr'):abort(403)
+    if not _has_access('teams.apt'):abort(403)
     x=db.session.get(AccessAuthorization,rid) or abort(404);u=db.session.get(User,x.user_id)
-    if session.get('role')=='hr':
+    if session.get('role')!='manager' and not _has_access('users.scope.all'):
         me=db.session.get(User,session.get('user_id'))
         if me and (me.company or '').strip().lower()!=(u.company or '').strip().lower():abort(403)
     x.active=not x.active;db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='ACCESS_AUTH_TOGGLE',entity_type='access_authorization',entity_id=str(x.id),detail=f'active={x.active}'));db.session.commit();return jsonify({'ok':True,'active':x.active})
@@ -13691,7 +13696,7 @@ def v74_access_authorization_toggle(rid):
 @login_required
 def v74_access_authorization_pdf(rid):
     x=db.session.get(AccessAuthorization,rid) or abort(404)
-    if session.get('role') not in ('manager','manager_field','hr') and x.user_id!=session.get('user_id'):abort(403)
+    if not _has_access('teams.apt') and x.user_id!=session.get('user_id'):abort(403)
     if not x.document_key:abort(404)
     return send_file(io.BytesIO(_r2_get_bytes(x.document_key)),mimetype='application/pdf',download_name=f'autorizacao-{x.id}.pdf')
 
@@ -13713,12 +13718,12 @@ def v74_access_eligibility(user_id):
 # V73 — Gestão/RH 2.0: localidades externas, links, APT, jornada e técnico próximo
 # -----------------------------------------------------------------------------
 def _v73_admin():
-    return session.get("role") in ("manager","manager_field","hr")
+    return _has_access("teams.manage") or _has_access("teams.apt")
 
 @app.route("/gestao/localidades-externas",methods=["GET","POST"])
 @login_required
 def v73_external_locations_page():
-    if session.get("role") not in ("manager","manager_field"): abort(403)
+    if not _has_access("management.external_locations"): abort(403)
     if request.method=="POST":
         d=request.form
         try:
@@ -13740,13 +13745,13 @@ def v73_external_locations_page():
 @app.post("/api/gestao/localidades-externas/<int:rid>/toggle")
 @login_required
 def v73_external_toggle(rid):
-    if session.get("role") not in ("manager","manager_field"): abort(403)
+    if not _has_access("management.external_locations"): abort(403)
     x=db.session.get(ExternalLocation,rid) or abort(404);x.active=not x.active;db.session.commit();return jsonify({"ok":True,"active":x.active})
 
 @app.route("/gestao/resumo-links",methods=["GET","POST"])
 @login_required
 def v73_links_page():
-    if session.get("role") not in ("manager","manager_field"): abort(403)
+    if not _has_access("management.links"): abort(403)
     if request.method=="POST":
         title=(request.form.get("title") or "").strip();url=(request.form.get("url") or "").strip();rid=request.form.get("link_id",type=int)
         if not title or not url: flash("Título e URL são obrigatórios.","error")
@@ -13765,14 +13770,14 @@ def v73_links_page():
 @app.post("/api/gestao/resumo-links/<int:rid>/delete")
 @login_required
 def v73_link_delete(rid):
-    if session.get("role") not in ("manager","manager_field"): abort(403)
+    if not _has_access("management.links"): abort(403)
     x=db.session.get(ManagementLink,rid) or abort(404);x.active=False;db.session.commit();return jsonify({"ok":True})
 
 
 @app.post("/api/gestao/resumo-links/<int:rid>/toggle")
 @login_required
 def v731_link_toggle(rid):
-    if session.get("role") not in ("manager","manager_field"): abort(403)
+    if not _has_access("management.links"): abort(403)
     x=db.session.get(ManagementLink,rid) or abort(404);x.active=not x.active;db.session.commit();return jsonify({"ok":True,"active":x.active})
 
 def _apt_status(x):
@@ -13799,7 +13804,7 @@ def _apt_date(value):
 @app.get("/rh/apt")
 @login_required
 def v73_apt_page():
-    if session.get("role") not in ("manager","manager_field","hr"):abort(403)
+    if not _has_access("teams.apt"):abort(403)
     q=(request.args.get("q") or "").strip();validity=(request.args.get("validity") or "").strip().upper();process=(request.args.get("process") or "").strip().upper();active=(request.args.get("active") or "active").strip().lower();company=(request.args.get("company") or "").strip();line=(request.args.get("line") or "").strip()
     nr10=(request.args.get('nr10') or '').strip().upper();nr35=(request.args.get('nr35') or '').strip().upper();aso=(request.args.get('aso') or '').strip().upper();integration=(request.args.get('integration') or '').strip().upper()
     query=AptRecord.query
@@ -13827,7 +13832,7 @@ def v73_apt_page():
 @app.post('/api/rh/apt/create')
 @login_required
 def v735_apt_create():
-    if session.get('role') not in ('manager','manager_field','hr'):abort(403)
+    if not _has_access('teams.apt'):abort(403)
     d=request.get_json(silent=True) or {};uid=d.get('user_id');u=db.session.get(User,int(uid)) if uid else None
     name=(d.get('collaborator_name') or (u.name if u else '') or '').strip();apt=(d.get('apt_number') or '').strip()
     if not name or not apt:return jsonify({'ok':False,'error':'Informe colaborador e número da APT.'}),400
@@ -13838,7 +13843,7 @@ def v735_apt_create():
 @app.post("/api/rh/apt/import")
 @login_required
 def v73_apt_import():
-    if session.get("role") not in ("manager","manager_field","hr"):abort(403)
+    if not _has_access("teams.apt"):abort(403)
     f=request.files.get("file")
     if not f:return jsonify({"ok":False,"error":"Selecione a planilha."}),400
     try:
@@ -13876,7 +13881,7 @@ def v73_apt_import():
 @app.post("/api/rh/apt/<int:rid>/update")
 @login_required
 def v731_apt_update(rid):
-    if session.get("role") not in ("manager","manager_field","hr"):abort(403)
+    if not _has_access("teams.apt"):abort(403)
     x=db.session.get(AptRecord,rid) or abort(404);d=request.get_json(silent=True) or {}
     uid=d.get('user_id');u=db.session.get(User,int(uid)) if uid else None
     x.collaborator_name=(d.get("collaborator_name") or (u.name if u else x.collaborator_name)).strip();x.company=(d.get("company") or (u.company if u else '') or "").strip();x.line=(d.get("line") or "").strip();x.apt_number=(d.get("apt_number") or x.apt_number).strip();x.process_status=(d.get("process_status") or x.process_status or "AGUARDANDO").strip().upper();x.notes=(d.get("notes") or "").strip()
@@ -13887,13 +13892,13 @@ def v731_apt_update(rid):
 @app.post("/api/rh/apt/<int:rid>/toggle")
 @login_required
 def v731_apt_toggle(rid):
-    if session.get("role") not in ("manager","manager_field","hr"):abort(403)
+    if not _has_access("teams.apt"):abort(403)
     x=db.session.get(AptRecord,rid) or abort(404);x.active=not x.active;db.session.commit();return jsonify({"ok":True,"active":x.active})
 
 @app.post("/api/rh/apt/<int:rid>/pdf")
 @login_required
 def v73_apt_pdf(rid):
-    if session.get("role") not in ("manager","manager_field","hr"):abort(403)
+    if not _has_access("teams.apt"):abort(403)
     x=db.session.get(AptRecord,rid) or abort(404);f=request.files.get("pdf")
     if not f or not (f.filename or "").lower().endswith(".pdf"):return jsonify({"ok":False,"error":"Envie um PDF."}),400
     key=f"apt/{x.id}/{uuid.uuid4().hex}-{secure_filename(f.filename)}";_r2_put_bytes(key,f.read(),"application/pdf");x.pdf_key=key;db.session.commit();return jsonify({"ok":True})
@@ -13901,7 +13906,7 @@ def v73_apt_pdf(rid):
 @app.delete('/api/rh/apt/<int:rid>/pdf')
 @login_required
 def v735_apt_pdf_delete(rid):
-    if session.get('role') not in ('manager','manager_field','hr'):abort(403)
+    if not _has_access('teams.apt'):abort(403)
     x=db.session.get(AptRecord,rid) or abort(404)
     if not x.pdf_key:return jsonify({'ok':True})
     old=x.pdf_key
@@ -13913,14 +13918,14 @@ def v735_apt_pdf_delete(rid):
 @login_required
 def v73_apt_pdf_get(rid):
     x=db.session.get(AptRecord,rid) or abort(404)
-    if session.get("role") not in ("manager","manager_field","hr") and x.user_id!=session.get("user_id"):abort(403)
+    if not _has_access("teams.apt") and x.user_id!=session.get("user_id"):abort(403)
     if not x.pdf_key:abort(404)
     return send_file(io.BytesIO(_r2_get_bytes(x.pdf_key)),mimetype="application/pdf",download_name=f"{x.apt_number}.pdf")
 
 @app.get("/api/rh/apt/export.xlsx")
 @login_required
 def v73_apt_export():
-    if session.get("role") not in ("manager","manager_field","hr"):abort(403)
+    if not _has_access("teams.apt"):abort(403)
     q=(request.args.get("q") or "").strip().lower();validity=(request.args.get("validity") or "").strip().upper();process=(request.args.get("process") or "").strip().upper();active=(request.args.get("active") or "active").strip().lower();company=(request.args.get("company") or "").strip();line=(request.args.get("line") or "").strip();nr10=(request.args.get('nr10') or '').strip().upper();nr35=(request.args.get('nr35') or '').strip().upper();aso=(request.args.get('aso') or '').strip().upper();integration=(request.args.get('integration') or '').strip().upper()
     rows=AptRecord.query.order_by(AptRecord.collaborator_name).all();filtered=[]
     for x in rows:
@@ -13949,7 +13954,7 @@ def v73_my_apt():
 @app.get("/api/equipes/destinos-proximidade")
 @login_required
 def v732h3_nearest_destinations():
-    if session.get("role") not in ("manager","manager_field","hr","dispatcher"): abort(403)
+    if not _has_access("teams.map"): abort(403)
     rows=[]; seen=set()
     for loc in Location.query.filter(Location.reference_latitude.isnot(None),Location.reference_longitude.isnot(None)).order_by(Location.company,Location.line,Location.location).all():
         key=("L",loc.id); seen.add(key)
@@ -13971,14 +13976,14 @@ def v732h3_nearest_destinations():
 @app.get("/api/gestao/rastreabilidade-jornada/rede")
 @login_required
 def v732h3_tracking_network():
-    if not (_has_access("management.gps_history") or session.get("role") in ("manager","manager_field")): abort(403)
+    if not _has_access("management.gps_history"): abort(403)
     rows=Location.query.filter(Location.reference_latitude.isnot(None),Location.reference_longitude.isnot(None)).order_by(Location.line,Location.location).all()
     return jsonify({"ok":True,"rows":[{"id":x.id,"company":x.company or "","line":x.line or "","location":x.location or "","reference_latitude":x.reference_latitude,"reference_longitude":x.reference_longitude} for x in rows]})
 
 @app.get("/api/equipes/tecnicos-proximos")
 @login_required
 def v73_nearest_technicians():
-    if session.get("role") not in ("manager","manager_field","hr","dispatcher"):abort(403)
+    if not _has_access("teams.map"):abort(403)
     loc_id=request.args.get("location_id",type=int);loc=db.session.get(Location,loc_id) if loc_id else None
     if not loc or loc.reference_latitude is None:return jsonify({"ok":False,"error":"Estação sem coordenada de referência."}),400
     cutoff=datetime.utcnow()-timedelta(minutes=30);techs=User.query.filter(User.active.is_(True),User.role.in_(("technician","technician_implantation"))).all();out=[]
@@ -14022,14 +14027,14 @@ def v73_schedule_peer(rid):
 @app.get("/api/gestao/solicitacoes-jornada")
 @login_required
 def v73_schedule_manage_list():
-    if session.get("role") not in ("manager","manager_field"):abort(403)
+    if not _has_access("management.work_authorizations"):abort(403)
     rows=ScheduleChangeRequest.query.order_by(ScheduleChangeRequest.created_at.desc()).limit(300).all();ids={z for x in rows for z in (x.requester_id,x.swap_user_id) if z};names={u.id:u.name for u in User.query.filter(User.id.in_(ids)).all()} if ids else {}
     return jsonify({"ok":True,"rows":[{"id":x.id,"requester":names.get(x.requester_id,""),"type":x.request_type,"work_date":x.work_date.isoformat(),"swap_user":names.get(x.swap_user_id,""),"swap_date":x.swap_date.isoformat() if x.swap_date else None,"reason":x.reason,"peer_status":x.peer_status,"manager_status":x.manager_status} for x in rows]})
 
 @app.post("/api/gestao/solicitacoes-jornada/<int:rid>/review")
 @login_required
 def v73_schedule_review(rid):
-    if session.get("role") not in ("manager","manager_field"):abort(403)
+    if not _has_access("management.work_authorizations"):abort(403)
     x=db.session.get(ScheduleChangeRequest,rid) or abort(404);approve=bool((request.get_json(silent=True) or {}).get("approve"));x.manager_status="APROVADA" if approve else "REJEITADA";x.reviewed_by=session.get("user_id");db.session.commit();return jsonify({"ok":True})
 
 @app.get("/arrow")
@@ -14172,15 +14177,15 @@ def v73_activity_executions():
 @app.get("/notificacoes")
 @login_required
 def notifications_page():
-    if session.get('role') not in ('manager','manager_field'):
-        return redirect(url_for('dashboard_landing'))
+    if not _has_access('management.notifications'):
+        return redirect(_v789_landing_for_user())
     return render_template('notifications.html', app_release=APP_RELEASE)
 
 
 @app.get("/api/notificacoes")
 @login_required
 def v50_notifications_api():
-    if session.get("role") not in ("manager","manager_field"):
+    if not _has_access("management.notifications"):
         return jsonify({"ok":True,"count":0,"items":[]})
     # Notificações derivadas das exceções operacionais, sem duplicar uma nova tabela nesta versão.
     official_path=DATA_DIR / "atm_official_082026.json"
@@ -14352,7 +14357,7 @@ DASHBOARD_CATALOG = {
 }
 
 def _dashboard_admin_required():
-    if session.get("role") != "manager": abort(403)
+    if not _has_access("management.dashboard_config"): abort(403)
 
 def _dash_cfg(row):
     try: cfg=json.loads(row.config_json or "{}")
@@ -14362,11 +14367,9 @@ def _dash_cfg(row):
     return {"id":row.id,"name":row.name,"slug":row.slug,"data_source":row.data_source,"config":cfg,"published":bool(row.published),"tv_enabled":bool(row.tv_enabled),"tv_order":row.tv_order or 0,"tv_seconds":row.tv_seconds or 30,"allowed_roles":roles}
 
 def _dashboard_visible(row):
-    if session.get("role")=="manager": return True
     if not row.published: return False
-    try: roles=json.loads(row.allowed_roles_json or "[]")
-    except Exception: roles=[]
-    return not roles or session.get("role") in roles
+    # V78.9: allowed_roles_json é legado e não participa mais da autorização.
+    return _has_access("dashboard.general")
 
 @app.context_processor
 def _v62_dashboard_context():
@@ -14397,6 +14400,17 @@ BUILTIN_DASHBOARD_CATALOG = [
     {"key":"competition","label":"Concorrência","group":"OPERAÇÃO","icon":"◉","roles":[]},
 ]
 
+BUILTIN_DASHBOARD_PERMISSIONS = {
+    "overview":"dashboard.general", "execution":"field.inventory",
+    "atm-inventory":"field.dashboard", "bobbin-dashboard":"field.bobbins_dashboard",
+    "pos-inventory":"field.dashboard", "validator-tdi-inventory":"field.dashboard",
+    "block-inventory":"field.dashboard", "financial-dashboard":"finance.dashboard",
+    "journal":"field.dashboard", "topdesk":"management.calls", "map":"teams.map",
+    "panorama":"field.panorama", "chips":"field.chip_recarga", "emv":"implantation.emv",
+    "garage":"implantation.garage", "implantation-dashboard":"implantation.dashboard",
+    "ranking":"dashboard.general", "competition":"dashboard.general",
+}
+
 def _builtin_dashboard_menu_items():
     try: saved={x.dashboard_key:x for x in BuiltinDashboardSetting.query.all()}
     except Exception: saved={}
@@ -14406,9 +14420,9 @@ def _builtin_dashboard_menu_items():
         try: allowed=json.loads(row.allowed_roles_json or '[]') if row else list(item.get('roles') or [])
         except Exception: allowed=list(item.get('roles') or [])
         if not visible: continue
-        role=session.get('role')
-        if allowed and role not in allowed: continue
-        out.append({**item,'order':order,'allowed_roles':allowed})
+        permission=BUILTIN_DASHBOARD_PERMISSIONS.get(item['key'], 'dashboard.general')
+        if not _has_access(permission): continue
+        out.append({**item,'order':order,'allowed_roles':allowed,'permission':permission})
     return sorted(out,key=lambda x:(x['order'],x['label']))
 
 @app.context_processor
@@ -14418,7 +14432,7 @@ def _builtin_dashboards_context():
 @app.route('/gestao/configuracao-dashboards',methods=['GET','POST'])
 @login_required
 def builtin_dashboard_settings_page():
-    if session.get('role')!='manager' and not _has_access('management.dashboard_config'): abort(403)
+    if not _has_access('management.dashboard_config'): abort(403)
     if request.method=='POST':
         for idx,item in enumerate(BUILTIN_DASHBOARD_CATALOG,1):
             key=item['key']; row=BuiltinDashboardSetting.query.filter_by(dashboard_key=key).first()
@@ -15166,7 +15180,7 @@ def _customer_companies_for_user(u):
     return []
 
 def _portal_internal():
-    return session.get('role') != 'customer' and (_has_access('portal.receive') or _has_access('portal.manage'))
+    return _has_access('portal.receive') or _has_access('portal.manage')
 
 def _portal_can_see(a):
     if _portal_internal(): return True
@@ -15261,7 +15275,7 @@ Acesse o Portal do Cliente para visualizar e baixar os PDFs individuais.")
 @app.get('/portal-cliente/cadastro-clientes/exportar.xlsx')
 @login_required
 def portal_customer_export_xlsx():
-    if session.get('role')!='manager': abort(403)
+    if not _has_access('portal.manage'): abort(403)
     rows=CustomerCompany.query.order_by(CustomerCompany.active.desc(),CustomerCompany.legal_name).all()
     wb=Workbook(); ws=wb.active; ws.title='Clientes e Garagens'
     headers=['Razão Social','Nome Fantasia / Garagem','CNPJ','Inscrição Estadual','Contato','Cargo / Função','Telefone','Celular','E-mail','Endereço de Retirada','Cidade / Região','UF','CEP','Status','Cadastro','Pendências','Observações']
@@ -15284,7 +15298,7 @@ def portal_customer_export_xlsx():
 @app.get('/portal-cliente/cadastro-clientes/modelo.xlsx')
 @login_required
 def portal_customer_model_xlsx():
-    if session.get('role')!='manager': abort(403)
+    if not _has_access('portal.manage'): abort(403)
     wb=Workbook(); ws=wb.active; ws.title='Importar Clientes'
     headers=['Razão Social *','Nome Fantasia','CNPJ','Inscrição Estadual','Contato Principal','Cargo/Função','Telefone','Celular','E-mail','Endereço','Cidade','UF','CEP','Observações','Status']
     ws.append(headers); ws.append(['Empresa Exemplo Ltda','Empresa Exemplo','00.000.000/0001-00','','Contato','Gestor','','','','','São Paulo','SP','','','ATIVO'])
@@ -15296,7 +15310,7 @@ def portal_customer_model_xlsx():
 @app.post('/portal-cliente/cadastro-clientes/importar')
 @login_required
 def portal_customer_import_xlsx():
-    if session.get('role')!='manager': abort(403)
+    if not _has_access('portal.manage'): abort(403)
     f=request.files.get('file')
     if not f or not (f.filename or '').lower().endswith('.xlsx'): flash('Selecione uma planilha .xlsx válida.'); return redirect('/portal-cliente/cadastro-clientes')
     try: wb=load_workbook(f,read_only=True,data_only=True); ws=wb['Importar Clientes'] if 'Importar Clientes' in wb.sheetnames else wb.active
@@ -15318,7 +15332,7 @@ def portal_customer_import_xlsx():
 @app.route('/portal-cliente/cadastro-clientes', methods=['GET','POST'])
 @login_required
 def portal_customer_companies():
-    if session.get('role')!='manager': abort(403)
+    if not _has_access('portal.manage'): abort(403)
     if request.method=='POST':
         d=request.form; legal=(d.get('legal_name') or '').strip()
         if not legal: flash('Razão social é obrigatória.'); return redirect(request.path)
@@ -15329,7 +15343,7 @@ def portal_customer_companies():
 @app.post('/portal-cliente/cadastro-clientes/<int:cid>/editar')
 @login_required
 def portal_customer_company_edit(cid):
-    if session.get('role')!='manager': abort(403)
+    if not _has_access('portal.manage'): abort(403)
     c=db.session.get(CustomerCompany,cid)
     if not c: abort(404)
     d=request.form; legal=(d.get('legal_name') or '').strip()
@@ -15342,7 +15356,7 @@ def portal_customer_company_edit(cid):
 @app.post('/portal-cliente/cadastro-clientes/<int:cid>/excluir')
 @login_required
 def portal_customer_company_delete(cid):
-    if session.get('role')!='manager': abort(403)
+    if not _has_access('portal.manage'): abort(403)
     c=db.session.get(CustomerCompany,cid)
     if not c: abort(404)
     linked_users=[u for u in User.query.all() if cid in _customer_company_ids(u)]
@@ -15358,7 +15372,7 @@ def portal_customer_company_delete(cid):
 @app.post('/portal-cliente/cadastro-clientes/acessos/novo')
 @login_required
 def portal_customer_access_create():
-    if session.get('role')!='manager': abort(403)
+    if not _has_access('portal.manage'): abort(403)
     d=request.form
     try: cid=int(d.get('company_id') or 0)
     except Exception: cid=0
@@ -15382,7 +15396,7 @@ def portal_customer_access_create():
 @app.post('/portal-cliente/cadastro-clientes/acessos/<int:uid>/editar')
 @login_required
 def portal_customer_access_edit(uid):
-    if session.get('role')!='manager': abort(403)
+    if not _has_access('portal.manage'): abort(403)
     u=db.session.get(User,uid)
     if not u or u.role!='customer': abort(404)
     d=request.form
@@ -15652,7 +15666,7 @@ def v71_schedule_management_api():
     programmed_today=[x for x in rows if x['date']==today.isoformat() and str(x.get('status') or '').upper()!='CANCELADO']
     routes=[{'id':r.id,'garage':r.garage_name,'weekday':r.weekday,'weekday_label':_V71_WEEKDAY_LABELS.get(r.weekday,''),'contact':r.contact_name or '', 'address':r.address or '', 'region':r.region or '', 'active':r.active} for r in LogisticsGarageRoute.query.order_by(LogisticsGarageRoute.weekday,LogisticsGarageRoute.garage_name).all()]
     blocked=[{'id':x.id,'date':x.blocked_date.isoformat(),'description':x.description or ''} for x in LogisticsBlockedDate.query.filter_by(active=True).order_by(LogisticsBlockedDate.blocked_date).all()]
-    return jsonify({'ok':True,'today':today.isoformat(),'rows':rows,'daily':daily,'requested_today':requested_today,'programmed_today':programmed_today,'routes':routes,'blocked':blocked,'can_manage_appointments':session.get('role')=='manager'})
+    return jsonify({'ok':True,'today':today.isoformat(),'rows':rows,'daily':daily,'requested_today':requested_today,'programmed_today':programmed_today,'routes':routes,'blocked':blocked,'can_manage_appointments':_has_access('portal.manage')})
 
 @app.patch('/api/portal/appointments/<int:aid>/programacao')
 @login_required
@@ -15672,7 +15686,7 @@ def v71_program_appointment(aid):
 @app.post('/api/portal/appointments/<int:aid>/cancel')
 @login_required
 def v712_cancel_appointment(aid):
-    if not _portal_internal() or session.get('role')!='manager': abort(403)
+    if not _has_access('portal.manage'): abort(403)
     a=db.session.get(CustomerAppointment,aid)
     if not a: abort(404)
     if str(a.status or '').upper()=='CANCELADO': return jsonify({'ok':True,'status':'CANCELADO'})
@@ -15685,7 +15699,7 @@ def v712_cancel_appointment(aid):
 @app.delete('/api/portal/appointments/<int:aid>')
 @login_required
 def v712_delete_appointment(aid):
-    if not _portal_internal() or session.get('role')!='manager': abort(403)
+    if not _has_access('portal.manage'): abort(403)
     a=db.session.get(CustomerAppointment,aid)
     if not a: abort(404)
     received=CustomerAppointmentEquipment.query.filter_by(appointment_id=a.id,received=True).count()
@@ -16398,7 +16412,7 @@ def _eng_bom_json(b,_seen=None):
 def engineering_page():
     user=db.session.get(User,session.get("user_id"))
     role=(getattr(user,"role","") or "").lower() if user else ""
-    allowed = role in ("admin","adm","administrator","manager","gestor") or _has_access("engineering.items.view") or _has_access("engineering.bom.view") or _has_access("engineering.pricing.view")
+    allowed = _has_access("engineering.items.view") or _has_access("engineering.bom.view") or _has_access("engineering.pricing.view")
     if not allowed: abort(403)
     return render_template("engineering.html",app_release=APP_RELEASE)
 
@@ -16435,13 +16449,13 @@ def _eng_next_generated_code(group_code,origin_code,type_code):
 @app.get("/api/engineering/codification")
 @login_required
 def engineering_codification_api():
-    if not ((_has_access("engineering.items.view")) or ((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower() in ("admin","adm","administrator","manager","gestor"))):return jsonify({"ok":False,"error":"Sem permissão."}),403
+    if not _has_access("engineering.items.view"):return jsonify({"ok":False,"error":"Sem permissão."}),403
     return jsonify({"ok":True,"format":"OO.GG.TT.SSSSS","example":"01.01.06.00015","rules":_eng_code_rules_json()})
 
 @app.post("/api/engineering/codification")
 @login_required
 def engineering_codification_save_api():
-    if not ((_has_access("engineering.items.manage")) or ((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower() in ("admin","adm","administrator","manager","gestor"))):return jsonify({"ok":False,"error":"Sem permissão."}),403
+    if not _has_access("engineering.items.manage"):return jsonify({"ok":False,"error":"Sem permissão."}),403
     d=request.get_json(silent=True) or {}; rid=int(d.get('id') or 0);dim=_eng_norm(d.get('dimension')).upper();code=_eng_norm(d.get('code'));desc=_eng_norm(d.get('description'))
     if dim not in ('GRUPO','ORIGEM','TIPO'):return jsonify({"ok":False,"error":"Dimensão inválida."}),400
     if not re.fullmatch(r'\d{2}',code):return jsonify({"ok":False,"error":"O código deve possuir exatamente 2 dígitos."}),400
@@ -16464,7 +16478,7 @@ def engineering_codification_next_api():
 @app.get("/api/engineering/items")
 @login_required
 def engineering_items_api():
-    if not ((_has_access("engineering.items.view")) or ((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower() in ("admin","adm","administrator","manager","gestor"))):return jsonify({"ok":False,"error":"Sem permissão."}),403
+    if not _has_access("engineering.items.view"):return jsonify({"ok":False,"error":"Sem permissão."}),403
     q=_eng_norm(request.args.get("q"));z=EngineeringItem.query.filter(func.upper(EngineeringItem.item_type)!="PHANTOM")
     if q:
         like=f"%{q}%";z=z.filter(or_(EngineeringItem.internal_part_number.ilike(like),EngineeringItem.manufacturer_part_number.ilike(like),
@@ -16475,7 +16489,7 @@ def engineering_items_api():
 @app.post("/api/engineering/items")
 @login_required
 def engineering_item_save_api():
-    if not ((_has_access("engineering.items.manage")) or ((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower() in ("admin","adm","administrator","manager","gestor"))):return jsonify({"ok":False,"error":"Sem permissão."}),403
+    if not _has_access("engineering.items.manage"):return jsonify({"ok":False,"error":"Sem permissão."}),403
     d=request.get_json(silent=True) or {};iid=int(d.get("id") or 0);desc=_eng_norm(d.get("description_pt"));code=_eng_norm(d.get("internal_part_number"))
     if not iid and d.get("code_group") is not None:
         try: code=_eng_next_generated_code(d.get("code_group"),d.get("code_origin"),d.get("code_type"))
@@ -16617,7 +16631,7 @@ with app.app_context():
 @app.post("/api/engineering/items/import")
 @login_required
 def engineering_items_import_api():
-    if not ((_has_access("engineering.import")) or ((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower() in ("admin","adm","administrator","manager","gestor"))):return jsonify({"ok":False,"error":"Sem permissão."}),403
+    if not _has_access("engineering.import"):return jsonify({"ok":False,"error":"Sem permissão."}),403
     f=request.files.get("file")
     if not f:return jsonify({"ok":False,"error":"Selecione a BASE_CADASTRO_BOHM_V8.xlsx ou uma atualização no mesmo layout oficial."}),400
     try:
@@ -16657,13 +16671,13 @@ def engineering_item_where_used_v782(iid):
 @app.get("/api/engineering/boms")
 @login_required
 def engineering_boms_api():
-    if not ((_has_access("engineering.bom.view")) or _has_access("engineering.pricing.view") or ((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower() in ("admin","adm","administrator","manager","gestor"))):return jsonify({"ok":False,"error":"Sem permissão."}),403
+    if not (_has_access("engineering.bom.view") or _has_access("engineering.pricing.view")):return jsonify({"ok":False,"error":"Sem permissão."}),403
     return jsonify({"ok":True,"boms":[_eng_bom_json(x) for x in EngineeringBom.query.order_by(EngineeringBom.product_code,EngineeringBom.revision.desc()).all()]})
 
 @app.post("/api/engineering/boms")
 @login_required
 def engineering_bom_save_api():
-    if not ((_has_access("engineering.bom.manage")) or ((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower() in ("admin","adm","administrator","manager","gestor"))):return jsonify({"ok":False,"error":"Sem permissão."}),403
+    if not _has_access("engineering.bom.manage"):return jsonify({"ok":False,"error":"Sem permissão."}),403
     d=request.get_json(silent=True) or {};kind=(_eng_norm(d.get("bom_kind")) or "PRODUTO").upper();rev=_eng_norm(d.get("revision")) or "REV01"
     product_item_id=int(d.get("product_item_id") or 0) if str(d.get("product_item_id") or '').isdigit() else 0
     master=db.session.get(EngineeringItem,product_item_id) if product_item_id else None
@@ -16682,7 +16696,7 @@ def engineering_bom_save_api():
 @app.post("/api/engineering/substructures")
 @login_required
 def engineering_substructure_save_v785():
-    if not ((_has_access("engineering.bom.manage")) or ((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower() in ("admin","adm","administrator","manager","gestor"))):return jsonify({"ok":False,"error":"Sem permissão."}),403
+    if not _has_access("engineering.bom.manage"):return jsonify({"ok":False,"error":"Sem permissão."}),403
     d=request.get_json(silent=True) or {};code=_eng_norm(d.get("code")).upper();name=_eng_norm(d.get("description"));rev=_eng_norm(d.get("revision")) or "REV01"
     if not code or not name:return jsonify({"ok":False,"error":"Código e descrição da subestrutura são obrigatórios."}),400
     if EngineeringBom.query.filter(func.lower(EngineeringBom.product_code)==code.lower(),func.lower(EngineeringBom.revision)==rev.lower()).first():return jsonify({"ok":False,"error":"Subestrutura/revisão já existente."}),409
@@ -16694,7 +16708,7 @@ def engineering_substructure_save_v785():
 @app.post("/api/engineering/boms/<int:bid>/items")
 @login_required
 def engineering_bom_item_save_api(bid):
-    if not ((_has_access("engineering.bom.manage")) or ((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower() in ("admin","adm","administrator","manager","gestor"))):return jsonify({"ok":False,"error":"Sem permissão."}),403
+    if not _has_access("engineering.bom.manage"):return jsonify({"ok":False,"error":"Sem permissão."}),403
     b=db.session.get(EngineeringBom,bid);d=request.get_json(silent=True) or {};it=db.session.get(EngineeringItem,int(d.get("item_id") or 0))
     if not b or not it:return jsonify({"ok":False,"error":"BOM ou item não encontrado."}),404
     x=EngineeringBomItem.query.filter_by(bom_id=bid,item_id=it.id).first() or EngineeringBomItem(bom_id=bid,item_id=it.id)
@@ -16717,7 +16731,7 @@ def engineering_bom_item_save_api(bid):
 @app.patch("/api/engineering/boms/<int:bid>")
 @login_required
 def engineering_bom_update_api(bid):
-    if not ((_has_access("engineering.bom.manage")) or ((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower() in ("admin","adm","administrator","manager","gestor"))):return jsonify({"ok":False,"error":"Sem permissão."}),403
+    if not _has_access("engineering.bom.manage"):return jsonify({"ok":False,"error":"Sem permissão."}),403
     b=db.session.get(EngineeringBom,bid);d=request.get_json(silent=True) or {}
     if not b:return jsonify({"ok":False,"error":"BOM não encontrada."}),404
     old={"product_code":b.product_code,"product_name":b.product_name,"product_ncm":getattr(b,"product_ncm",None),"revision":b.revision,"status":b.status,"quantity_reference":b.quantity_reference,"notes":b.notes}
@@ -16735,8 +16749,7 @@ def engineering_bom_update_api(bid):
 @app.delete("/api/engineering/boms/<int:bid>")
 @login_required
 def engineering_bom_delete_v788(bid):
-    role=((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower())
-    if role not in ("admin","adm","administrator"):
+    if session.get("role") != "manager":
         return jsonify({"ok":False,"error":"Somente ADM pode excluir uma estrutura."}),403
     b=db.session.get(EngineeringBom,bid)
     if not b:return jsonify({"ok":False,"error":"BOM não encontrada."}),404
@@ -16759,7 +16772,7 @@ def engineering_bom_delete_v788(bid):
 @app.get("/api/engineering/pricing")
 @login_required
 def engineering_pricing_list_api():
-    if not (_has_access("engineering.pricing.view") or _has_access("engineering.bom.view") or ((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower() in ("admin","adm","administrator","manager","gestor"))):return jsonify({"ok":False,"error":"Sem permissão."}),403
+    if not (_has_access("engineering.pricing.view") or _has_access("engineering.bom.view")):return jsonify({"ok":False,"error":"Sem permissão."}),403
     bid=int(request.args.get("bom_id") or 0);q=EngineeringPricingStudy.query
     if bid:q=q.filter_by(bom_id=bid)
     rows=q.order_by(EngineeringPricingStudy.updated_at.desc()).limit(100).all();out=[]
@@ -16772,7 +16785,7 @@ def engineering_pricing_list_api():
 @app.post("/api/engineering/pricing")
 @login_required
 def engineering_pricing_save_api():
-    if not (_has_access("engineering.pricing.manage") or ((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower() in ("admin","adm","administrator","manager","gestor"))):return jsonify({"ok":False,"error":"Sem permissão."}),403
+    if not _has_access("engineering.pricing.manage"):return jsonify({"ok":False,"error":"Sem permissão."}),403
     d=request.get_json(silent=True) or {};sid=int(d.get("id") or 0);bid=int(d.get("bom_id") or 0);b=db.session.get(EngineeringBom,bid)
     if not b:return jsonify({"ok":False,"error":"BOM não encontrada."}),404
     try:qty=max(float(d.get("quantity") or 1),.000001)
@@ -16786,7 +16799,7 @@ def engineering_pricing_save_api():
 @app.delete("/api/engineering/boms/<int:bid>/items/<int:rid>")
 @login_required
 def engineering_bom_item_delete_api(bid,rid):
-    if not ((_has_access("engineering.bom.manage")) or ((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower() in ("admin","adm","administrator","manager","gestor"))):return jsonify({"ok":False,"error":"Sem permissão."}),403
+    if not _has_access("engineering.bom.manage"):return jsonify({"ok":False,"error":"Sem permissão."}),403
     x=EngineeringBomItem.query.filter_by(id=rid,bom_id=bid).first()
     if not x:return jsonify({"ok":False,"error":"Componente não encontrado."}),404
     db.session.delete(x);db.session.commit();return jsonify({"ok":True})
@@ -16794,7 +16807,7 @@ def engineering_bom_item_delete_api(bid,rid):
 @app.post("/api/engineering/boms/<int:bid>/clone")
 @login_required
 def engineering_bom_clone_api(bid):
-    if not ((_has_access("engineering.bom.manage")) or ((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower() in ("admin","adm","administrator","manager","gestor"))):return jsonify({"ok":False,"error":"Sem permissão."}),403
+    if not _has_access("engineering.bom.manage"):return jsonify({"ok":False,"error":"Sem permissão."}),403
     s=db.session.get(EngineeringBom,bid);d=request.get_json(silent=True) or {};rev=_eng_norm(d.get("revision"))
     if not s or not rev:return jsonify({"ok":False,"error":"BOM/revisão inválida."}),400
     code=_eng_norm(d.get("product_code")) or s.product_code;name=_eng_norm(d.get("product_name")) or s.product_name
@@ -16808,7 +16821,7 @@ def engineering_bom_clone_api(bid):
 
 def _eng_bom_import_permission():
     role=((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower())
-    return _has_access("engineering.import") or _has_access("engineering.bom.manage") or role in ("admin","adm","administrator","manager","gestor")
+    return _has_access("engineering.import") or _has_access("engineering.bom.manage")
 
 def _eng_bom_num(v,default=0.0):
     if v is None or str(v).strip()=="":return default
@@ -16921,7 +16934,7 @@ def _eng_bom_flat_rows(b, level=0, parent_code="", seen=None, inherited=False):
 @app.get("/api/engineering/boms/<int:bid>/export.xlsx")
 @login_required
 def engineering_bom_export_api(bid):
-    if not ((_has_access("engineering.bom.view")) or ((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower() in ("admin","adm","administrator","manager","gestor"))):abort(403)
+    if not _has_access("engineering.bom.view"):abort(403)
     b=db.session.get(EngineeringBom,bid)
     if not b:abort(404)
     d=_eng_bom_json(b);rows=_eng_bom_flat_rows(b)
@@ -16956,7 +16969,7 @@ def engineering_bom_export_api(bid):
 @app.get("/api/engineering/pricing/<int:sid>/export.xlsx")
 @login_required
 def engineering_pricing_export_api(sid):
-    if not (_has_access("engineering.pricing.view") or _has_access("engineering.bom.view") or ((getattr(db.session.get(User,session.get("user_id")),"role","") or "").lower() in ("admin","adm","administrator","manager","gestor"))):abort(403)
+    if not (_has_access("engineering.pricing.view") or _has_access("engineering.bom.view")):abort(403)
     st=db.session.get(EngineeringPricingStudy,sid)
     if not st:abort(404)
     b=db.session.get(EngineeringBom,st.bom_id)
