@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V78.9"
+APP_RELEASE = "V78.9.1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -4367,8 +4367,7 @@ def inventory_equipment_dashboard_api(family):
 @app.get("/api/dashboard/inventory-atm")
 @dashboard_required
 def inventory_atm_dashboard_api():
-    if session.get("role")=="technician":
-        return jsonify({"ok":False,"error":"Dashboard ATM restrita à gestão."}),403
+    # V78.9.1 — sem bloqueio por nome de perfil; acesso definido por @dashboard_required / Matriz.
     # V42.4.1: a Dashboard ATM usa a planilha oficial 08/2026 como universo mestre.
     # Base oficial: 590 alocados + 12 estoque = 602 ATMs. Levantamentos de campo não alteram esse universo.
     official_path=DATA_DIR / "atm_official_082026.json"
@@ -7238,7 +7237,7 @@ def v741_users_config_import():
 @app.route("/usuarios")
 @user_admin_required
 def users_page():
-    if not (_has_access("users.view") and _has_access("users.config.view")): abort(403)
+    if not _has_access("users.view"): abort(403)
     # V71.1 — acessos externos do Portal são administrados no Cadastro de Clientes,
     # não em RH / Usuários.
     active_q = User.query.filter(User.archived_at.is_(None), User.role != "customer")
@@ -7302,7 +7301,7 @@ def _next_user_code(role):
 @app.post("/usuarios/novo")
 @user_admin_required
 def create_user():
-    if not (_has_access("users.create") and _has_access("users.config.manage")): abort(403)
+    if not _has_access("users.create"): abort(403)
     name = request.form.get("name", "").strip()
     username = request.form.get("username", "").strip().lower()
     password = request.form.get("password", "")
@@ -7503,7 +7502,7 @@ def toggle_user(user_id):
 @app.post("/usuarios/<int:user_id>/editar")
 @user_admin_required
 def edit_user(user_id):
-    if not (_has_access("users.edit") and _has_access("users.config.manage")): abort(403)
+    if not _has_access("users.edit"): abort(403)
     user = db.session.get(User, user_id)
     if not user:
         flash("Usuário não encontrado.")
