@@ -1,0 +1,9 @@
+V79.1 — pacote enxuto
+
+Substituir os arquivos do pacote preservando a estrutura de pastas e realizar novo deploy/restart.
+Após o deploy, abrir Financeiro > Coleta de Valores e confirmar as três abas:
+- Visão Geral / Custos
+- Monitoramento
+- Programação de Coletas
+
+Se o navegador mantiver a tela anterior, executar recarga forçada (Ctrl+F5). Os scripts da tela usam cache-buster v=79.1.
