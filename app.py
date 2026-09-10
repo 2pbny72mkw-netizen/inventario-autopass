@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V78.9.2"
+APP_RELEASE = "V78.9.3"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -338,6 +338,8 @@ class ArrowActivity(db.Model):
     created_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    deleted_at = db.Column(db.DateTime, index=True)
+    deleted_by = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
 
 class V76Notification(db.Model):
     __tablename__ = "v76_notifications"
@@ -1090,6 +1092,13 @@ class AptRecord(db.Model):
     created_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow)
     updated_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow,onupdate=datetime.utcnow)
     __table_args__=(db.UniqueConstraint("collaborator_name","line","apt_number",name="uq_apt_collab_line_number"),)
+
+class AptRequiredLine(db.Model):
+    __tablename__="apt_required_lines"
+    id=db.Column(db.Integer,primary_key=True)
+    line=db.Column(db.String(120),nullable=False,unique=True,index=True)
+    active=db.Column(db.Boolean,nullable=False,default=True,index=True)
+    created_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow)
 
 # V74 — Autorizações operacionais vinculadas obrigatoriamente ao cadastro mestre de usuários
 class AccessAuthorization(db.Model):
@@ -1894,7 +1903,7 @@ ACCESS_GROUPS = {
         "engineering.items.view","engineering.items.manage","engineering.bom.view","engineering.bom.manage","engineering.import","engineering.pricing.view","engineering.pricing.manage"
     )),
     "portal": ("Portal do Cliente", ("portal.appointments","portal.receive","portal.manage")),
-    "arrow": ("Arrow", ("arrow.view","arrow.manage","arrow.dashboard","arrow.remote")),
+    "arrow": ("Arrow", ("arrow.view","arrow.manage","arrow.delete","arrow.dashboard","arrow.remote")),
     "about_versions": ("Sobre / Versões", ("about.versions",)),
 }
 ACCESS_MODULES = tuple(ACCESS_GROUPS.keys())
@@ -1911,7 +1920,7 @@ ACCESS_LABELS = {
  "materials.my_documents":"Meus documentos / Minha carga","materials.request":"Solicitar material","materials.catalog.view":"Visualizar catálogo","materials.catalog.manage":"Cadastrar / editar / inativar materiais","materials.kits.manage":"Gerenciar kits","materials.delivery.create":"Criar e enviar entregas","materials.delivery.manage":"Gerenciar aceites / correções","materials.dossier.view":"Dossiê dos colaboradores","materials.access_lists.view":"Listas de acesso Metrô / CPTM","materials.access_lists.manage":"Gerar / validar listas de acesso",
  "engineering.items.view":"Visualizar cadastro de itens","engineering.items.manage":"Cadastrar / editar itens","engineering.bom.view":"Visualizar estruturas BOM","engineering.bom.manage":"Criar / revisar BOM","engineering.import":"Importar planilhas de Engenharia","engineering.pricing.view":"Visualizar formação de preço","engineering.pricing.manage":"Criar / editar estudos de preço",
  "portal.appointments":"Criar / consultar agendamentos","portal.receive":"Receber agendamentos","portal.manage":"Administrar Portal do Cliente",
- "arrow.view":"Visualizar Arrow","arrow.manage":"Gerenciar Arrow / alocações","arrow.dashboard":"Dashboard Arrow","arrow.remote":"TeamViewer / Atendimento Remoto",
+ "arrow.view":"Visualizar Arrow","arrow.manage":"Gerenciar Arrow / alocações","arrow.delete":"Excluir atividades Arrow","arrow.dashboard":"Dashboard Arrow","arrow.remote":"TeamViewer / Atendimento Remoto",
  "about.versions":"Histórico / Versões",
 }
 
@@ -1927,7 +1936,7 @@ def _expand_legacy_access(values):
 def _default_access_for_role(role):
     defaults={
       "manager":set(ACCESS_SUBMODULES),
-      "manager_field":{"engineering.items.view","engineering.bom.view","engineering.pricing.view","materials.my_documents","materials.request","materials.catalog.view","materials.catalog.manage","materials.kits.manage","materials.delivery.create","materials.delivery.manage","materials.dossier.view","dashboard.general","field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.firmware_pos_cptm","field.bobbins","field.bobbins_dashboard","field.stock_manage","implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage","teams.map","teams.today","teams.schedule","teams.manage","teams.export","teams.apt","finance.dashboard","management.calls","management.360","management.notifications","management.diagnostics","management.gps_history","management.work_authorizations","portal.receive","portal.manage","arrow.view","arrow.manage","arrow.dashboard","arrow.remote","materials.access_lists.view","materials.access_lists.manage","about.versions"},
+      "manager_field":{"engineering.items.view","engineering.bom.view","engineering.pricing.view","materials.my_documents","materials.request","materials.catalog.view","materials.catalog.manage","materials.kits.manage","materials.delivery.create","materials.delivery.manage","materials.dossier.view","dashboard.general","field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.firmware_pos_cptm","field.bobbins","field.bobbins_dashboard","field.stock_manage","implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage","teams.map","teams.today","teams.schedule","teams.manage","teams.export","teams.apt","finance.dashboard","management.calls","management.360","management.notifications","management.diagnostics","management.gps_history","management.work_authorizations","portal.receive","portal.manage","arrow.view","arrow.manage","arrow.delete","arrow.dashboard","arrow.remote","materials.access_lists.view","materials.access_lists.manage","about.versions"},
       "technician":{"materials.my_documents","materials.request","field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.firmware_pos_cptm","field.bobbins","about.versions"},
       "technician_implantation":{"materials.my_documents","materials.request","field.inventory","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.firmware_pos_cptm","field.bobbins","implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage","about.versions"},
       "consultation":{"dashboard.general","field.dashboard","field.inventory","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.firmware_pos_cptm","field.bobbins_dashboard","teams.map","teams.today","teams.schedule","about.versions"},
@@ -13812,6 +13821,13 @@ def _apt_date(value):
     if not raw:return None
     return date.fromisoformat(raw)
 
+def _v7893_apt_required_lines():
+    try:
+        rows=AptRequiredLine.query.filter_by(active=True).order_by(AptRequiredLine.line).all()
+        if rows:return [x.line for x in rows]
+    except Exception:pass
+    return ['04 - AMARELA','05 - LILÁS','08 - DIAMANTE','09 - ESMERALDA']
+
 @app.get("/rh/apt")
 @login_required
 def v73_apt_page():
@@ -13838,8 +13854,9 @@ def v73_apt_page():
     companies=sorted({x.company for x in AptRecord.query.filter(AptRecord.company.isnot(None)).all() if x.company});lines=sorted({x.line for x in AptRecord.query.filter(AptRecord.line.isnot(None)).all() if x.line})
     users=User.query.filter(User.active.is_(True)).order_by(User.name).all()
     apt_users=[{"id":u.id,"name":u.name,"company":u.company or "","job_title":u.job_title or "","username":u.username} for u in users if u.role not in ('customer',)]
-    apt_lines=sorted({x.line for x in Location.query.all() if x.line and (str(x.line).strip().startswith('04') or str(x.line).strip().startswith('05'))}) or ['04 - AMARELA','05 - LILÁS']
-    return render_template("apt_v73.html",items=data,summary=summary,total=len(data),companies=companies,lines=lines,apt_users=apt_users,apt_lines=apt_lines,filters={"q":q,"validity":validity,"process":process,"active":active,"company":company,"line":line,"nr10":nr10,"nr35":nr35,"aso":aso,"integration":integration},app_release=APP_RELEASE)
+    apt_user_companies=sorted({x['company'] for x in apt_users if x['company']},key=lambda x:normalize(x))
+    apt_lines=_v7893_apt_required_lines()
+    return render_template("apt_v73.html",items=data,summary=summary,total=len(data),companies=companies,lines=lines,apt_users=apt_users,apt_user_companies=apt_user_companies,apt_lines=apt_lines,filters={"q":q,"validity":validity,"process":process,"active":active,"company":company,"line":line,"nr10":nr10,"nr35":nr35,"aso":aso,"integration":integration},app_release=APP_RELEASE)
 
 @app.post('/api/rh/apt/create')
 @login_required
@@ -13848,7 +13865,7 @@ def v735_apt_create():
     d=request.get_json(silent=True) or {};uid=d.get('user_id');u=db.session.get(User,int(uid)) if uid else None
     if not u:return jsonify({'ok':False,'error':'Selecione um colaborador existente no Cadastro de Usuários.'}),400
     name=(u.name or '').strip();apt=(d.get('apt_number') or '').strip();line=(d.get('line') or '').strip()
-    allowed_lines={x.line for x in Location.query.all() if x.line and (str(x.line).strip().startswith('04') or str(x.line).strip().startswith('05'))} or {'04 - AMARELA','05 - LILÁS'}
+    allowed_lines=set(_v7893_apt_required_lines())
     if not apt or line not in allowed_lines:return jsonify({'ok':False,'error':'Informe o número da APT e selecione uma linha que exige APT.'}),400
     x=AptRecord(user_id=u.id,collaborator_name=name,company=(u.company or '').strip(),line=line,apt_number=apt,process_status=(d.get('process_status') or 'AGUARDANDO').strip().upper(),active=True)
     for fld in ('valid_until','nr10_valid_until','nr35_valid_until','aso_scheduled_at','aso_valid_until','integration_scheduled_at','integration_valid_until'):setattr(x,fld,_apt_date(d.get(fld)))
@@ -14062,7 +14079,8 @@ def v75_arrow():
     locs=Location.query.order_by(Location.company,Location.line,Location.location).all()
     arrow_locs=ArrowLocation.query.filter_by(active=True).order_by(ArrowLocation.name).all()
     mats=MaterialCatalogItem.query.filter_by(active=True).order_by(MaterialCatalogItem.description).all()
-    return render_template("arrow_v75.html",app_release=APP_RELEASE,technicians=techs,locations=locs,arrow_locations=arrow_locs,materials=mats)
+    tech_companies=sorted({(u.company or '').strip() for u in techs if (u.company or '').strip()},key=lambda x:normalize(x))
+    current=db.session.get(User,session.get('user_id'));return render_template("arrow_v75.html",app_release=APP_RELEASE,technicians=techs,technician_companies=tech_companies,locations=locs,arrow_locations=arrow_locs,materials=mats,current_user_id=session.get('user_id'),current_username=(current.username if current else ''),can_manage=_has_access('arrow.manage'),can_delete=_has_access('arrow.delete') or _has_access('arrow.manage'))
 
 @app.get("/api/arrow/localidades")
 @login_required
@@ -14095,12 +14113,41 @@ def v75_arrow_eligibility_api(uid):
     u=db.session.get(User,uid) or abort(404);op=(request.args.get('operator') or 'OUTROS').upper();ok,reason=_v75_arrow_eligibility(u,op)
     return jsonify({'ok':True,'eligible':ok,'reason':reason,'operator':op,'access':{'metro':bool(u.access_metro),'cptm':bool(u.access_cptm),'motiva_apt':bool(u.access_motiva_apt),'apt_valid':_v741_has_valid_apt(u.id)}})
 
+def _v7893_arrow_can_edit(activity):
+    if not _has_access("arrow.manage"):return False
+    user=db.session.get(User,session.get("user_id"))
+    if user and user.role in ("technician","technician_implantation") and activity.technician_id!=user.id:return False
+    return True
+
+def _v7893_arrow_can_delete(activity):
+    if not (_has_access("arrow.delete") or _has_access("arrow.manage")):return False
+    user=db.session.get(User,session.get("user_id"))
+    if user and user.role in ("technician","technician_implantation") and activity.technician_id!=user.id:return False
+    return True
+
+def _v7893_arrow_location_label(activity):
+    if getattr(activity,'arrow_location_id',None):
+        a=db.session.get(ArrowLocation,activity.arrow_location_id)
+        return ((a.code+' · ') if a and a.code else '')+(a.name if a else 'Localidade externa')
+    if activity.location_id:
+        l=db.session.get(Location,activity.location_id)
+        return l.location if l else 'Localidade'
+    return 'Localidade não informada'
+
+def _v7893_arrow_notify(activity,title,message,severity="INFO"):
+    # Evita duplicidade idêntica ainda não lida para a mesma atividade/usuário.
+    exists=V76Notification.query.filter_by(recipient_id=activity.technician_id,category="ARROW",entity_type="arrow_activity",entity_id=str(activity.id),title=title,read_at=None).first()
+    if exists and exists.message==message:return exists
+    row=V76Notification(recipient_id=activity.technician_id,severity=severity,category="ARROW",title=title,message=message,action_url=f"/arrow?mine=1&activity={activity.id}#minhas",entity_type="arrow_activity",entity_id=str(activity.id))
+    db.session.add(row);return row
+
 @app.get("/api/arrow/activities")
 @login_required
 def v75_arrow_list_api():
     if not _has_access("arrow.view"):abort(403)
-    q=ArrowActivity.query
-    d=(request.args.get('date') or '').strip();date_from=(request.args.get('from') or '').strip();date_to=(request.args.get('to') or '').strip();status=(request.args.get('status') or '').strip().upper();tech=request.args.get('technician_id',type=int);operator=(request.args.get('operator') or '').strip().upper();priority=(request.args.get('priority') or '').strip().upper();location_id=request.args.get('location_id',type=int);arrow_location_id=request.args.get('arrow_location_id',type=int)
+    q=ArrowActivity.query.filter(ArrowActivity.deleted_at.is_(None))
+    d=(request.args.get('date') or '').strip();date_from=(request.args.get('from') or '').strip();date_to=(request.args.get('to') or '').strip();status=(request.args.get('status') or '').strip().upper();tech=request.args.get('technician_id',type=int);operator=(request.args.get('operator') or '').strip().upper();priority=(request.args.get('priority') or '').strip().upper();location_id=request.args.get('location_id',type=int);arrow_location_id=request.args.get('arrow_location_id',type=int);tech_company=(request.args.get('technician_company') or '').strip();mine=(request.args.get('mine') or '').lower() in ('1','true','sim')
+    if mine:tech=int(session.get('user_id') or 0)
     if d:
         try:q=q.filter_by(activity_date=date.fromisoformat(d))
         except:pass
@@ -14112,6 +14159,9 @@ def v75_arrow_list_api():
         except:pass
     if status:q=q.filter_by(status=status)
     if tech:q=q.filter_by(technician_id=tech)
+    if tech_company:
+        ids=[u.id for u in User.query.filter(User.archived_at.is_(None),User.active.is_(True),func.lower(func.coalesce(User.company,''))==tech_company.lower()).all()]
+        q=q.filter(ArrowActivity.technician_id.in_(ids if ids else [-1]))
     if operator:q=q.filter_by(operator=operator)
     if priority:q=q.filter_by(priority=priority)
     if location_id:q=q.filter_by(location_id=location_id)
@@ -14120,8 +14170,8 @@ def v75_arrow_list_api():
     out=[]
     for x in rows:
         u=uu.get(x.technician_id);loc=ll.get(x.location_id);aloc=aa.get(getattr(x,'arrow_location_id',None));eligible,reason=_v75_arrow_eligibility(u,x.operator) if u else (False,'Colaborador não encontrado')
-        out.append({'id':x.id,'date':x.activity_date.isoformat(),'start_time':x.start_time or '','end_time':x.end_time or '','priority':x.priority or 'NORMAL','title':x.title,'operator':x.operator,'technician_id':x.technician_id,'technician':u.name if u else '—','location_id':x.location_id,'arrow_location_id':getattr(x,'arrow_location_id',None),'location':(aloc.name if aloc else (loc.location if loc else '—')),'line':('GARAGEM' if aloc else (loc.line if loc else '')),'company':('OUTROS' if aloc else (loc.company if loc else '')),'location_code':(aloc.code if aloc else ''),'address':(aloc.address if aloc else ''),'status':x.status,'remote':x.remote,'teamviewer_id':x.teamviewer_id or '','notes':x.notes or '','eligible':eligible,'eligibility_reason':reason})
-    return jsonify({'ok':True,'rows':out})
+        out.append({'id':x.id,'date':x.activity_date.isoformat(),'start_time':x.start_time or '','end_time':x.end_time or '','priority':x.priority or 'NORMAL','title':x.title,'operator':x.operator,'technician_id':x.technician_id,'technician':u.name if u else '—','technician_company':u.company if u else '','location_id':x.location_id,'arrow_location_id':getattr(x,'arrow_location_id',None),'location':(aloc.name if aloc else (loc.location if loc else '—')),'line':('GARAGEM' if aloc else (loc.line if loc else '')),'company':('OUTROS' if aloc else (loc.company if loc else '')),'location_code':(aloc.code if aloc else ''),'address':(aloc.address if aloc else ''),'status':x.status,'remote':x.remote,'teamviewer_id':x.teamviewer_id or '','notes':x.notes or '','eligible':eligible,'eligibility_reason':reason,'can_edit':_v7893_arrow_can_edit(x),'can_delete':_v7893_arrow_can_delete(x)})
+    return jsonify({'ok':True,'rows':out,'current_user_id':session.get('user_id')})
 
 @app.post("/api/arrow/activities")
 @login_required
@@ -14141,13 +14191,15 @@ def v75_arrow_create_api():
     alocid=int(d.get('arrow_location_id')) if str(d.get('arrow_location_id') or '').isdigit() else None
     if op=='OUTROS' and not alocid:return jsonify({'ok':False,'error':'Selecione uma localidade cadastrada para OUTROS.'}),400
     if op!='OUTROS' and not locid:return jsonify({'ok':False,'error':'Selecione linha e estação/localidade.'}),400
-    x=ArrowActivity(activity_date=wd,start_time=(d.get('start_time') or '').strip()[:5] or None,end_time=(d.get('end_time') or '').strip()[:5] or None,priority=(d.get('priority') or 'NORMAL').strip().upper()[:20],title=title,operator=op,location_id=locid,arrow_location_id=alocid,technician_id=u.id,status='PLANEJADA',remote=bool(d.get('remote')),teamviewer_id=(d.get('teamviewer_id') or '').strip(),notes=(d.get('notes') or '').strip(),created_by=session['user_id']);db.session.add(x);db.session.commit();return jsonify({'ok':True,'id':x.id})
+    x=ArrowActivity(activity_date=wd,start_time=(d.get('start_time') or '').strip()[:5] or None,end_time=(d.get('end_time') or '').strip()[:5] or None,priority=(d.get('priority') or 'NORMAL').strip().upper()[:20],title=title,operator=op,location_id=locid,arrow_location_id=alocid,technician_id=u.id,status='PLANEJADA',remote=bool(d.get('remote')),teamviewer_id=(d.get('teamviewer_id') or '').strip(),notes=(d.get('notes') or '').strip(),created_by=session['user_id']);db.session.add(x);db.session.flush();loclabel=_v7893_arrow_location_label(x);when=wd.strftime('%d/%m/%Y')+((f" · {x.start_time}" if x.start_time else ''));_v7893_arrow_notify(x,'Nova atividade Arrow atribuída',f'{when} · {x.title} · {loclabel} · Prioridade {x.priority or "NORMAL"}');db.session.commit();return jsonify({'ok':True,'id':x.id})
 
 @app.post("/api/arrow/activities/<int:aid>/editar")
 @login_required
 def v76_arrow_edit_api(aid):
-    if not _has_access("arrow.manage"):abort(403)
-    x=db.session.get(ArrowActivity,aid) or abort(404);d=request.get_json(silent=True) or {}
+    x=db.session.get(ArrowActivity,aid) or abort(404)
+    if x.deleted_at is not None:abort(404)
+    if not _v7893_arrow_can_edit(x):abort(403)
+    d=request.get_json(silent=True) or {};before={'date':x.activity_date,'technician_id':x.technician_id,'operator':x.operator,'location_id':x.location_id,'arrow_location_id':getattr(x,'arrow_location_id',None),'start_time':x.start_time,'end_time':x.end_time,'title':x.title,'priority':x.priority}
     if d.get("date"):
         try:x.activity_date=date.fromisoformat(d["date"])
         except:return jsonify({"ok":False,"error":"Data inválida."}),400
@@ -14166,21 +14218,43 @@ def v76_arrow_edit_api(aid):
     if "end_time" in d:x.end_time=(d.get("end_time") or "").strip()[:5] or None
     if "priority" in d:x.priority=(d.get("priority") or "NORMAL").strip().upper()[:20]
     if "remote" in d:x.remote=bool(d.get("remote"))
+    changed=(before['date']!=x.activity_date or before['technician_id']!=x.technician_id or before['operator']!=x.operator or before['location_id']!=x.location_id or before['arrow_location_id']!=getattr(x,'arrow_location_id',None) or before['start_time']!=x.start_time or before['end_time']!=x.end_time or before['title']!=x.title or before['priority']!=x.priority)
+    if before['technician_id']!=x.technician_id:
+        loclabel=_v7893_arrow_location_label(x);_v7893_arrow_notify(x,'Nova atividade Arrow atribuída',f'{x.activity_date.strftime("%d/%m/%Y")} · {x.title} · {loclabel} · Prioridade {x.priority or "NORMAL"}')
+    elif changed:
+        loclabel=_v7893_arrow_location_label(x);_v7893_arrow_notify(x,'Atividade Arrow atualizada',f'{x.activity_date.strftime("%d/%m/%Y")} · {x.title} · {loclabel} · Horário {x.start_time or "—"}–{x.end_time or "—"}')
     db.session.commit();return jsonify({"ok":True})
 
 @app.post("/api/arrow/activities/<int:aid>/status")
 @login_required
 def v75_arrow_status_api(aid):
-    if not _has_access("arrow.manage"):abort(403)
-    x=db.session.get(ArrowActivity,aid) or abort(404);st=((request.get_json(silent=True) or {}).get('status') or '').upper()
+    x=db.session.get(ArrowActivity,aid) or abort(404)
+    if x.deleted_at is not None:abort(404)
+    if not _v7893_arrow_can_edit(x):abort(403)
+    st=((request.get_json(silent=True) or {}).get('status') or '').upper()
     if st not in ('PLANEJADA','EM ANDAMENTO','CONCLUÍDA','CANCELADA'):return jsonify({'ok':False,'error':'Status inválido.'}),400
-    x.status=st;db.session.commit();return jsonify({'ok':True})
+    old=x.status;x.status=st
+    if st=='CANCELADA' and old!='CANCELADA':_v7893_arrow_notify(x,'Atividade Arrow cancelada',f'{x.activity_date.strftime("%d/%m/%Y")} · {x.title} · {_v7893_arrow_location_label(x)}',severity='ATENCAO')
+    elif st!=old:_v7893_arrow_notify(x,'Status da atividade Arrow alterado',f'{x.title} · {old or "—"} → {st}')
+    db.session.commit();return jsonify({'ok':True})
+
+@app.delete("/api/arrow/activities/<int:aid>")
+@login_required
+def v7893_arrow_delete_api(aid):
+    x=db.session.get(ArrowActivity,aid) or abort(404)
+    if x.deleted_at is not None:return jsonify({'ok':True})
+    if not _v7893_arrow_can_delete(x):abort(403)
+    snapshot={'date':x.activity_date.isoformat(),'title':x.title,'technician_id':x.technician_id,'operator':x.operator,'location':_v7893_arrow_location_label(x),'status':x.status}
+    x.deleted_at=datetime.utcnow();x.deleted_by=session.get('user_id')
+    db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='ARROW_ATIVIDADE_EXCLUIDA',entity_type='arrow_activity',entity_id=str(x.id),detail=json.dumps(snapshot,ensure_ascii=False)))
+    _v7893_arrow_notify(x,'Atividade Arrow excluída',f'{x.activity_date.strftime("%d/%m/%Y")} · {x.title} · {snapshot["location"]}',severity='ATENCAO')
+    db.session.commit();return jsonify({'ok':True})
 
 @app.get("/api/arrow/dashboard")
 @login_required
 def v75_arrow_dashboard_api():
     if not (_has_access("arrow.dashboard") or _has_access("arrow.view")):abort(403)
-    rows=ArrowActivity.query.all();today=date.today();total=len(rows);done=sum(x.status=='CONCLUÍDA' for x in rows);prog=sum(x.status=='EM ANDAMENTO' for x in rows);pend=sum(x.status=='PLANEJADA' for x in rows);remote=sum(bool(x.remote) for x in rows);late=sum(x.activity_date<today and x.status not in ('CONCLUÍDA','CANCELADA') for x in rows);cancelled=sum(x.status=='CANCELADA' for x in rows)
+    rows=ArrowActivity.query.filter(ArrowActivity.deleted_at.is_(None)).all();today=date.today();total=len(rows);done=sum(x.status=='CONCLUÍDA' for x in rows);prog=sum(x.status=='EM ANDAMENTO' for x in rows);pend=sum(x.status=='PLANEJADA' for x in rows);remote=sum(bool(x.remote) for x in rows);late=sum(x.activity_date<today and x.status not in ('CONCLUÍDA','CANCELADA') for x in rows);cancelled=sum(x.status=='CANCELADA' for x in rows)
     tech_ids={x.technician_id for x in rows if x.activity_date==today and x.status!='CANCELADA'}; active_tech=User.query.filter(User.active.is_(True),User.role=='technician').count()
     return jsonify({'ok':True,'summary':{'total':total,'done':done,'in_progress':prog,'planned':pend,'remote':remote,'late':late,'cancelled':cancelled,'technicians_allocated':len(tech_ids),'technicians_available':max(0,active_tech-len(tech_ids)),'progress_pct':round(done/total*100,1) if total else 0}})
 
@@ -14216,7 +14290,7 @@ def v73_activity_executions():
 @app.get("/notificacoes")
 @login_required
 def notifications_page():
-    if not _has_access('management.notifications'):
+    if not (_has_access('management.notifications') or _has_access('arrow.view')):
         return redirect(_v789_landing_for_user())
     return render_template('notifications.html', app_release=APP_RELEASE)
 
@@ -16169,6 +16243,23 @@ with app.app_context():
         try:db.session.rollback()
         except Exception:pass
         app.logger.exception('V78.9.2: falha na migração Arrow/localidades')
+    # V78.9.3 — Arrow individual/notificações/exclusão + linhas APT configuráveis.
+    try:
+        db.metadata.create_all(bind=db.engine,tables=[AptRequiredLine.__table__],checkfirst=True)
+        insp=db.inspect(db.engine)
+        if insp.has_table('arrow_activities'):
+            cols={c['name'] for c in insp.get_columns('arrow_activities')}
+            with db.engine.begin() as conn:
+                if 'deleted_at' not in cols:conn.execute(text("ALTER TABLE arrow_activities ADD COLUMN deleted_at TIMESTAMP"))
+                if 'deleted_by' not in cols:conn.execute(text("ALTER TABLE arrow_activities ADD COLUMN deleted_by INTEGER"))
+        for line in ('04 - AMARELA','05 - LILÁS','08 - DIAMANTE','09 - ESMERALDA'):
+            if not AptRequiredLine.query.filter(func.upper(AptRequiredLine.line)==line).first():db.session.add(AptRequiredLine(line=line,active=True))
+        if not SchemaMigration.query.filter_by(version='V78.9.3-001').first():db.session.add(SchemaMigration(version='V78.9.3-001',description='Arrow: Minhas Atividades, notificações, cores por técnico, exclusão auditada, filtros; APT 04/05/08/09 configuráveis'))
+        db.session.commit()
+    except Exception:
+        try:db.session.rollback()
+        except Exception:pass
+        app.logger.exception('V78.9.3: falha na migração Arrow/APT')
     # V76 — notificações críticas + agenda Arrow 7/30 dias. Migração aditiva/idempotente.
     try:
         db.metadata.create_all(bind=db.engine,tables=[V76Notification.__table__],checkfirst=True)
