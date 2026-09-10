@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V79.1"
+APP_RELEASE = "V79.2"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -802,6 +802,8 @@ class FinancialCashCollection(db.Model):
     processed_media_type = db.Column(db.String(40))
     processing_charge = db.Column(db.Float)
     monitoring_note = db.Column(db.Text)
+    denomination_json = db.Column(db.Text, nullable=False, default="[]")
+    transport_charge = db.Column(db.Float)
     source_file = db.Column(db.String(255))
     source_hash = db.Column(db.String(64), nullable=False, unique=True, index=True)
     imported_by = db.Column(db.Integer, db.ForeignKey("users.id"))
@@ -823,6 +825,20 @@ class FinancialCashSchedule(db.Model):
     source_file = db.Column(db.String(255))
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+class FinancialCashPlanOverride(db.Model):
+    __tablename__ = "financial_cash_plan_overrides"
+    id = db.Column(db.Integer, primary_key=True)
+    terminal = db.Column(db.String(40), nullable=False, index=True)
+    original_date = db.Column(db.Date, nullable=False, index=True)
+    scheduled_date = db.Column(db.Date, nullable=False, index=True)
+    scheduled_time = db.Column(db.String(5))
+    status = db.Column(db.String(40), nullable=False, default="REAGENDADA", index=True)
+    note = db.Column(db.Text)
+    updated_by = db.Column(db.Integer, db.ForeignKey("users.id"))
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    __table_args__ = (db.UniqueConstraint("terminal","original_date",name="uq_cash_override_terminal_original"),)
 
 class FinancialATMTransaction(db.Model):
     __tablename__ = "financial_atm_transactions"
@@ -12131,7 +12147,7 @@ def migrate_financial_v524_columns():
         commands.extend(sup_commands)
         # V56-B: dados físicos do processamento TBForte para análise de numerário/cédulas.
         cash_cols={c["name"] for c in inspector.get_columns("financial_cash_collections")} if "financial_cash_collections" in inspector.get_table_names() else set()
-        for col,sql in (("processed_note_count","INTEGER"),("processed_media_type","VARCHAR(40)"),("processing_charge","FLOAT"),("monitoring_note","TEXT")):
+        for col,sql in (("processed_note_count","INTEGER"),("processed_media_type","VARCHAR(40)"),("processing_charge","FLOAT"),("monitoring_note","TEXT"),("denomination_json","TEXT NOT NULL DEFAULT '[]'"),("transport_charge","FLOAT")):
             if col not in cash_cols: commands.append(f"ALTER TABLE financial_cash_collections ADD COLUMN {col} {sql}")
         # Índices de leitura pesada observados na Telemetria V60.
         tables=set(inspector.get_table_names())
@@ -12872,7 +12888,7 @@ def _v79_cash_base():
     return rows
 
 def _v79_seed_cash_module():
-    db.metadata.create_all(bind=db.engine,tables=[FinancialCashSchedule.__table__],checkfirst=True)
+    db.metadata.create_all(bind=db.engine,tables=[FinancialCashSchedule.__table__,FinancialCashPlanOverride.__table__],checkfirst=True)
     seed_path=DATA_DIR/'v79_cash_seed.json'
     if not seed_path.exists(): return
     payload=json.loads(seed_path.read_text(encoding='utf-8'))
@@ -12905,88 +12921,205 @@ def _v79_seed_cash_module():
         if item.get('declared_amount') is not None: row.declared_amount=float(item.get('declared_amount'))
         if item.get('processed_amount') is not None: row.processed_amount=float(item.get('processed_amount'))
         if item.get('note'): row.monitoring_note=str(item.get('note'))
+    # V79.2: extrato consolidado TBForte JAN-AGO/2026. Correlaciona somente ATMs da base oficial.
+    history_path=STATIC_DIR/'cash_collection_history_jan_aug_2026.json'
+    if history_path.exists():
+        try:
+            hp=json.loads(history_path.read_text(encoding='utf-8')); official_terms={x['terminal'] for x in _v79_cash_base()}
+            for item in hp.get('events') or []:
+                terminal=str(item.get('terminal') or '').strip()
+                if terminal not in official_terms: continue
+                day=date.fromisoformat(item.get('date')); tm=(item.get('end_time') or '12:00')[:5]
+                try: hh,mm=[int(x) for x in tm.split(':')[:2]]
+                except Exception: hh,mm=12,0
+                end=datetime.combine(day,datetime.strptime(f'{hh:02d}:{mm:02d}','%H:%M').time()); gtv=str(item.get('gtv') or '')
+                sig=hashlib.sha256(f"V79.2|TBFORTE|{terminal}|{day.isoformat()}|{gtv}".encode()).hexdigest()
+                row=FinancialCashCollection.query.filter_by(source_hash=sig).first()
+                if not row:
+                    # Não duplica carga V79 anterior da mesma ATM/data; enriquece quando possível.
+                    row=FinancialCashCollection.query.filter(FinancialCashCollection.terminal==terminal,FinancialCashCollection.collection_date==day).order_by(FinancialCashCollection.end_at.desc()).first()
+                if not row:
+                    row=FinancialCashCollection(terminal=terminal,point_name=item.get('point') or '',collection_date=day,start_at=end,end_at=end,collected_amount=float(item.get('collected_amount') or 0),gtv=gtv,route=str(item.get('route') or ''),municipality=item.get('municipality') or '',source_file=hp.get('source') or 'Extrato TBForte JAN-AGO/2026',source_hash=sig,imported_by=None)
+                    db.session.add(row)
+                row.point_name=item.get('point') or row.point_name; row.collection_date=day; row.end_at=end
+                row.collected_amount=float(item.get('collected_amount') or row.collected_amount or 0); row.gtv=gtv or row.gtv
+                if item.get('declared_amount') is not None: row.declared_amount=float(item.get('declared_amount'))
+                if item.get('processed_amount') is not None: row.processed_amount=float(item.get('processed_amount'))
+                if item.get('processed_note_count') is not None: row.processed_note_count=int(item.get('processed_note_count') or 0)
+                if item.get('processed_media_type'): row.processed_media_type=item.get('processed_media_type')
+                if item.get('processing_charge') is not None: row.processing_charge=float(item.get('processing_charge') or 0)
+                if item.get('transport_charge') is not None: row.transport_charge=float(item.get('transport_charge') or 0)
+            if not SchemaMigration.query.filter_by(version='V79.2-001').first():
+                db.session.add(SchemaMigration(version='V79.2-001',description='Coleta de Valores: período livre, edição/reagendamento, composição opcional de cédulas e histórico TBForte JAN-AGO/2026'))
+        except Exception:
+            app.logger.exception("V79.2: falha ao carregar histórico TBForte JAN-AGO/2026")
     if not SchemaMigration.query.filter_by(version='V79-001').first():
         db.session.add(SchemaMigration(version='V79-001',description='Coleta de Valores: base oficial 602, universo 256 dinheiro+cartão, programação TBForte, monitoramento, alertas e exportação filtrada'))
     db.session.commit()
+
+def _v792_dates_range(schedule,start,end):
+    out=[]; cursor=date(start.year,start.month,1)
+    seen=set()
+    while cursor<=end:
+        for item in _v79_planned_dates(schedule,cursor.year,cursor.month):
+            d=date.fromisoformat(item["date"])
+            if start<=d<=end and (item["original_date"],item["date"]) not in seen:
+                seen.add((item["original_date"],item["date"])); out.append(item)
+        cursor=(date(cursor.year+1,1,1) if cursor.month==12 else date(cursor.year,cursor.month+1,1))
+    return sorted(out,key=lambda x:x["date"])
+
+def _v792_occurrence_status(ev,planned_date,override=None):
+    if ev:
+        dec=None if ev.declared_amount is None else float(ev.declared_amount); ap=None if ev.processed_amount is None else float(ev.processed_amount)
+        if ap is None: return "AGUARDANDO_APURACAO"
+        return "REALIZADA_COM_DIVERGENCIA" if dec is not None and abs(ap-dec)>=.01 else "REALIZADA_NO_PRAZO"
+    if override and override.status: return override.status
+    return "NAO_REALIZADA" if planned_date<date.today() else "PROGRAMADA"
+
+def _v792_cash_payload(start,end):
+    schedules={x.terminal:x for x in FinancialCashSchedule.query.filter(FinancialCashSchedule.active.is_(True)).all()}
+    official=_v79_cash_base(); terminals=[x["terminal"] for x in official]
+    collections=FinancialCashCollection.query.filter(FinancialCashCollection.terminal.in_(terminals),FinancialCashCollection.collection_date>=start,FinancialCashCollection.collection_date<=end).order_by(FinancialCashCollection.end_at).all() if terminals else []
+    by_terminal={}
+    for x in collections: by_terminal.setdefault(x.terminal,[]).append(x)
+    overrides=FinancialCashPlanOverride.query.filter(FinancialCashPlanOverride.terminal.in_(terminals),FinancialCashPlanOverride.original_date<=end,FinancialCashPlanOverride.scheduled_date>=start).all() if terminals else []
+    omap={(x.terminal,x.original_date.isoformat()):x for x in overrides}
+    rows=[]; planned_all=[]
+    horizon=end+timedelta(days=100)
+    for a in official:
+        t=a["terminal"]; sch=schedules.get(t); events=by_terminal.get(t,[])
+        planned=_v792_dates_range(sch,start,end) if sch else []
+        future=_v792_dates_range(sch,start,horizon) if sch else []
+        event_by_date={}
+        for x in events: event_by_date.setdefault(x.collection_date.isoformat(),x)
+        occurrences=[]
+        for idx,p in enumerate(planned):
+            original=p["original_date"]; ov=omap.get((t,original))
+            effective=ov.scheduled_date.isoformat() if ov else p["date"]
+            ev=event_by_date.get(effective) or event_by_date.get(p["date"])
+            pd=date.fromisoformat(effective); status=_v792_occurrence_status(ev,pd,ov)
+            dec=None if not ev or ev.declared_amount is None else round(float(ev.declared_amount),2)
+            ap=None if not ev or ev.processed_amount is None else round(float(ev.processed_amount),2)
+            diff=round(ap-dec,2) if dec is not None and ap is not None else None
+            nxt=next((f for f in future if date.fromisoformat(f["date"])>pd),None)
+            occurrences.append({**p,"date":effective,"scheduled_original":p["date"],"status":status,"override_id":ov.id if ov else None,
+                "event_id":ev.id if ev else None,"time":(ev.end_at.strftime("%H:%M") if ev else (ov.scheduled_time if ov else "")),
+                "declared_amount":dec,"processed_amount":ap,"difference":diff,"note":((ev.monitoring_note or "") if ev else (ov.note or "" if ov else "")),
+                "next_prediction":nxt["date"] if nxt else None})
+            planned_all.append((t,occurrences[-1]))
+        planned_dates={o["date"] for o in occurrences}; extra=[]
+        for ev in events:
+            if ev.collection_date.isoformat() in planned_dates: continue
+            dec=None if ev.declared_amount is None else float(ev.declared_amount); ap=None if ev.processed_amount is None else float(ev.processed_amount)
+            diff=round(ap-dec,2) if dec is not None and ap is not None else None
+            extra.append({"date":ev.collection_date.isoformat(),"original_date":ev.collection_date.isoformat(),"status":"COLETA_EXTRA","event_id":ev.id,"time":ev.end_at.strftime("%H:%M"),"declared_amount":dec,"processed_amount":ap,"difference":diff,"note":ev.monitoring_note or ev.processed_media_type or "","next_prediction":None})
+        all_ev=sorted(events,key=lambda x:x.end_at); last=all_ev[-1] if all_ev else None
+        next_occ=next((o for o in occurrences if date.fromisoformat(o["date"])>=date.today() and o["status"] in ("PROGRAMADA","PENDENTE_COLETA","REAGENDADA")),None)
+        rows.append({"terminal":t,"company":a.get("company") or "","line":a.get("line") or "","station":a.get("locality") or "","model":a.get("model") or "","products":a.get("products") or "","transactions":a.get("transactions") or "",
+            "bag_type":sch.bag_type if sch else "","schedule":_v79_schedule_text(sch) if sch else "Sem programação","weekly_days":json.loads(sch.weekly_days_json or "[]") if sch else [],"month_days":json.loads(sch.month_days_json or "[]") if sch else [],
+            "branch":sch.branch if sch else "","address":sch.collection_address if sch else "","has_schedule":bool(sch),"planned":occurrences,"extra":extra,"next_collection":next_occ,
+            "last_collection":None if not last else {"date":last.collection_date.isoformat(),"time":last.end_at.strftime("%H:%M"),"declared_amount":last.declared_amount,"processed_amount":last.processed_amount,"difference":None if last.declared_amount is None or last.processed_amount is None else round(float(last.processed_amount)-float(last.declared_amount),2),"note":last.monitoring_note or ""}})
+    summary={"official_total":602,"cash_card_total":len(official),"scheduled_atms":sum(1 for x in rows if x["has_schedule"]),"without_schedule":sum(1 for x in rows if not x["has_schedule"]),"planned":len(planned_all),
+        "done":sum(1 for _,o in planned_all if o["status"].startswith("REALIZADA")),"missing":sum(1 for _,o in planned_all if o["status"]=="NAO_REALIZADA"),"divergences":sum(1 for _,o in planned_all if o["status"]=="REALIZADA_COM_DIVERGENCIA"),"awaiting":sum(1 for _,o in planned_all if o["status"]=="AGUARDANDO_APURACAO")}
+    return {"ok":True,"release":APP_RELEASE,"start":start.isoformat(),"end":end.isoformat(),"summary":summary,"rows":rows}
 
 @app.get('/api/financeiro/coletas/v79')
 @login_required
 def financial_cash_v79_api():
     if not _has_access('finance.collection'): return jsonify({"ok":False,"error":"Sem permissão."}),403
-    month=(request.args.get('month') or datetime.now().strftime('%Y-%m')).strip()
-    try: year,mon=[int(x) for x in month.split('-')[:2]]
-    except Exception: year,mon=datetime.now().year,datetime.now().month
-    schedules={x.terminal:x for x in FinancialCashSchedule.query.filter(FinancialCashSchedule.active.is_(True)).all()}
-    official=_v79_cash_base(); terminals=[x['terminal'] for x in official]
-    start=date(year,mon,1); import calendar; end=date(year,mon,calendar.monthrange(year,mon)[1])
-    collections=FinancialCashCollection.query.filter(FinancialCashCollection.terminal.in_(terminals),FinancialCashCollection.collection_date>=start,FinancialCashCollection.collection_date<=end).order_by(FinancialCashCollection.end_at).all() if terminals else []
-    by_terminal={}
-    for x in collections: by_terminal.setdefault(x.terminal,[]).append(x)
-    rows=[];planned_all=[]
-    for a in official:
-        t=a['terminal']; sch=schedules.get(t); events=by_terminal.get(t,[])
-        planned=_v79_planned_dates(sch,year,mon) if sch else []
-        event_by_date={x.collection_date.isoformat():x for x in events}
-        occurrences=[]
-        for p in planned:
-            ev=event_by_date.get(p['date']); status='PROGRAMADA'; diff=None
-            if ev:
-                dec=None if ev.declared_amount is None else float(ev.declared_amount); ap=None if ev.processed_amount is None else float(ev.processed_amount)
-                diff=round(ap-dec,2) if dec is not None and ap is not None else None
-                status='REALIZADA_COM_DIVERGENCIA' if diff is not None and abs(diff)>=0.01 else ('AGUARDANDO_APURACAO' if ap is None else 'REALIZADA_NO_PRAZO')
-            elif date.fromisoformat(p['date'])<date.today(): status='NAO_REALIZADA'
-            occurrences.append({**p,"status":status,"event_id":ev.id if ev else None,"time":ev.end_at.strftime('%H:%M') if ev else '',"declared_amount":None if not ev or ev.declared_amount is None else round(float(ev.declared_amount),2),"processed_amount":None if not ev or ev.processed_amount is None else round(float(ev.processed_amount),2),"difference":diff,"note":(ev.monitoring_note or '') if ev else ''})
-            planned_all.append((t,occurrences[-1]))
-        extra=[]
-        planned_dates={x['date'] for x in planned}
-        for ev in events:
-            if ev.collection_date.isoformat() not in planned_dates:
-                dec=None if ev.declared_amount is None else float(ev.declared_amount);ap=None if ev.processed_amount is None else float(ev.processed_amount);diff=round(ap-dec,2) if dec is not None and ap is not None else None
-                extra.append({"date":ev.collection_date.isoformat(),"status":"COLETA_EXTRA","event_id":ev.id,"time":ev.end_at.strftime('%H:%M'),"declared_amount":dec,"processed_amount":ap,"difference":diff,"note":ev.processed_media_type or ''})
-        all_ev=sorted(events,key=lambda x:x.end_at);last=all_ev[-1] if all_ev else None
-        next_occ=next((o for o in occurrences if date.fromisoformat(o['date'])>=date.today() and o['status'] in ('PROGRAMADA','AGUARDANDO_APURACAO')),None)
-        rows.append({"terminal":t,"company":a.get('company') or '',"line":a.get('line') or '',"station":a.get('locality') or '',"model":a.get('model') or '',"products":a.get('products') or '',"transactions":a.get('transactions') or '',"bag_type":sch.bag_type if sch else '',"schedule":_v79_schedule_text(sch) if sch else 'Sem programação',"branch":sch.branch if sch else '',"address":sch.collection_address if sch else '',"has_schedule":bool(sch),"planned":occurrences,"extra":extra,"next_collection":next_occ,"last_collection":None if not last else {"date":last.collection_date.isoformat(),"time":last.end_at.strftime('%H:%M'),"declared_amount":last.declared_amount,"processed_amount":last.processed_amount,"difference":None if last.declared_amount is None or last.processed_amount is None else round(float(last.processed_amount)-float(last.declared_amount),2),"note":last.monitoring_note or ""}})
-    summary={"official_total":602,"cash_card_total":len(official),"scheduled_atms":sum(1 for x in rows if x['has_schedule']),"without_schedule":sum(1 for x in rows if not x['has_schedule']),"planned":len(planned_all),"done":sum(1 for _,o in planned_all if o['status'].startswith('REALIZADA')),"missing":sum(1 for _,o in planned_all if o['status']=='NAO_REALIZADA'),"divergences":sum(1 for _,o in planned_all if o['status']=='REALIZADA_COM_DIVERGENCIA'),"awaiting":sum(1 for _,o in planned_all if o['status']=='AGUARDANDO_APURACAO')}
-    return jsonify({"ok":True,"release":APP_RELEASE,"month":f'{year:04d}-{mon:02d}',"summary":summary,"rows":rows})
+    try:
+        start=date.fromisoformat((request.args.get("start") or "").strip()); end=date.fromisoformat((request.args.get("end") or "").strip())
+    except Exception:
+        month=(request.args.get("month") or datetime.now().strftime("%Y-%m")).strip()
+        try: y,m=[int(x) for x in month.split("-")[:2]]
+        except Exception: y,m=datetime.now().year,datetime.now().month
+        import calendar; start=date(y,m,1); end=date(y,m,calendar.monthrange(y,m)[1])
+    if end<start or (end-start).days>366: return jsonify({"ok":False,"error":"Período inválido. Selecione até 366 dias."}),400
+    return jsonify(_v792_cash_payload(start,end))
+
+@app.patch('/api/financeiro/coletas/v79/event')
+@login_required
+def financial_cash_v79_event_edit():
+    if not (_has_access('finance.edit') or _has_access('finance.collection')): return jsonify({"ok":False,"error":"Sem permissão."}),403
+    d=request.get_json(silent=True) or {}; terminal=str(d.get("terminal") or "").strip()
+    try: original=date.fromisoformat(str(d.get("original_date") or d.get("date") or "")[:10])
+    except Exception: return jsonify({"ok":False,"error":"Data original inválida."}),400
+    try: scheduled=date.fromisoformat(str(d.get("date") or "")[:10])
+    except Exception: scheduled=original
+    tm=str(d.get("time") or "").strip()[:5]
+    status=str(d.get("status") or "").strip().upper()
+    note=str(d.get("note") or "").strip()
+    event_id=int(d.get("event_id") or 0)
+    ev=db.session.get(FinancialCashCollection,event_id) if event_id else None
+    if ev:
+        if terminal and ev.terminal!=terminal: return jsonify({"ok":False,"error":"ATM não corresponde ao evento."}),400
+        ev.collection_date=scheduled
+        if tm:
+            try: hh,mm=[int(x) for x in tm.split(":")]; ev.end_at=datetime.combine(scheduled,datetime.strptime(f"{hh:02d}:{mm:02d}","%H:%M").time())
+            except Exception: return jsonify({"ok":False,"error":"Hora inválida."}),400
+        for key,attr in (("declared_amount","declared_amount"),("processed_amount","processed_amount")):
+            if key in d: setattr(ev,attr,None if d.get(key) in (None,"") else float(d.get(key)))
+        ev.monitoring_note=note
+        if "denominations" in d:
+            den=d.get("denominations") or []
+            clean=[]
+            for x in den:
+                try:
+                    value=float(x.get("value")); qty=int(x.get("quantity") or 0); family=str(x.get("family") or "Nova")
+                    if value>0 and qty>=0: clean.append({"value":value,"family":family,"quantity":qty})
+                except Exception: pass
+            ev.denomination_json=json.dumps(clean,ensure_ascii=False)
+        db.session.add(AuditEvent(event_type="COLETA_VALORES_EDITADA",user_id=session.get("user_id"),entity_type="financial_cash_collection",entity_id=str(ev.id),detail=json.dumps({"terminal":ev.terminal,"date":scheduled.isoformat()},ensure_ascii=False)))
+    else:
+        ov=FinancialCashPlanOverride.query.filter_by(terminal=terminal,original_date=original).first()
+        if not ov: ov=FinancialCashPlanOverride(terminal=terminal,original_date=original,scheduled_date=scheduled); db.session.add(ov)
+        ov.scheduled_date=scheduled; ov.scheduled_time=tm or None; ov.status=status or ("REAGENDADA" if scheduled!=original else "PENDENTE_COLETA"); ov.note=note; ov.updated_by=session.get("user_id"); ov.updated_at=datetime.utcnow()
+        db.session.add(AuditEvent(event_type="COLETA_VALORES_REAGENDADA",user_id=session.get("user_id"),entity_type="financial_cash_schedule",entity_id=terminal,detail=json.dumps({"original_date":original.isoformat(),"scheduled_date":scheduled.isoformat(),"status":ov.status,"note":note},ensure_ascii=False)))
+    db.session.commit(); return jsonify({"ok":True})
+
+@app.get('/api/financeiro/coletas/v79/event/<int:event_id>')
+@login_required
+def financial_cash_v79_event_detail(event_id):
+    if not _has_access('finance.collection'): return jsonify({"ok":False,"error":"Sem permissão."}),403
+    ev=db.session.get(FinancialCashCollection,event_id)
+    if not ev: return jsonify({"ok":False,"error":"Coleta não encontrada."}),404
+    try: den=json.loads(ev.denomination_json or "[]")
+    except Exception: den=[]
+    return jsonify({"ok":True,"event":{"id":ev.id,"terminal":ev.terminal,"date":ev.collection_date.isoformat(),"time":ev.end_at.strftime("%H:%M"),"declared_amount":ev.declared_amount,"processed_amount":ev.processed_amount,"note":ev.monitoring_note or "","denominations":den}})
 
 @app.get('/api/financeiro/coletas/v79/export.xlsx')
 @login_required
 def financial_cash_v79_export():
     if not _has_access('finance.collection'): abort(403)
-    # Reaproveita o payload já calculado e aplica exatamente os filtros recebidos.
-    month=(request.args.get('month') or datetime.now().strftime('%Y-%m')).strip()
-    # cálculo direto para manter a exportação independente do frontend.
-    try: year,mon=[int(x) for x in month.split('-')[:2]]
-    except Exception: year,mon=datetime.now().year,datetime.now().month
-    schedules={x.terminal:x for x in FinancialCashSchedule.query.filter(FinancialCashSchedule.active.is_(True)).all()}
-    rows=_v79_cash_base()
-    company=(request.args.get('company') or '').strip();line=(request.args.get('line') or '').strip();station=(request.args.get('station') or '').strip();terminal=(request.args.get('terminal') or '').strip();status=(request.args.get('status') or '').strip()
-    if company: rows=[x for x in rows if str(x.get('company') or '')==company]
-    if line: rows=[x for x in rows if str(x.get('line') or '')==line]
-    if station: rows=[x for x in rows if str(x.get('locality') or '')==station]
-    if terminal: rows=[x for x in rows if str(x.get('terminal') or '')==terminal]
-    wb=Workbook();ws=wb.active;ws.title='Monitoramento';headers=['Operadora','Linha','Estação','ATM','Programação','Data prevista','Hora','Declarado','Apurado','Diferença (Apurado - Declarado)','Status','Observação'];ws.append(headers)
+    try: start=date.fromisoformat(request.args.get("start")); end=date.fromisoformat(request.args.get("end"))
+    except Exception: start=date.today().replace(day=1); end=date.today()
+    payload=_v792_cash_payload(start,end); rows=payload["rows"]
+    company=(request.args.get("company") or "").strip(); line=(request.args.get("line") or "").strip(); station=(request.args.get("station") or "").strip(); terminal=(request.args.get("terminal") or "").strip(); status=(request.args.get("status") or "").strip(); programming=(request.args.get("programming") or "").strip(); difference=(request.args.get("difference") or "").strip()
+    if company: rows=[x for x in rows if x["company"]==company]
+    if line: rows=[x for x in rows if x["line"]==line]
+    if station: rows=[x for x in rows if x["station"]==station]
+    if terminal: rows=[x for x in rows if x["terminal"]==terminal]
+    if programming: rows=[x for x in rows if programming in (x.get("weekly_days") or []) or programming in [str(v) for v in (x.get("month_days") or [])]]
+    wb=Workbook(); ws=wb.active; ws.title="Monitoramento"
+    ws.append(["Status","Operadora","Linha","Estação","ATM","Programação","Data prevista","Data realizada","Hora","Declarado","Apurado","Diferença","Próxima previsão","Observação"])
     for a in rows:
-        sch=schedules.get(a['terminal']);planned=_v79_planned_dates(sch,year,mon) if sch else []
-        events=FinancialCashCollection.query.filter(FinancialCashCollection.terminal==a['terminal'],FinancialCashCollection.collection_date>=date(year,mon,1)).all()
-        em={x.collection_date.isoformat():x for x in events}
-        if not planned and not status:
-            ws.append([a.get('company'),a.get('line'),a.get('locality'),a['terminal'],'Sem programação','','','','','','SEM_PROGRAMACAO',''])
-        for p in planned:
-            ev=em.get(p['date']);dec=None if not ev or ev.declared_amount is None else float(ev.declared_amount);ap=None if not ev or ev.processed_amount is None else float(ev.processed_amount);diff=round(ap-dec,2) if dec is not None and ap is not None else None
-            st='PROGRAMADA' if not ev else ('REALIZADA_COM_DIVERGENCIA' if diff is not None and abs(diff)>=0.01 else ('AGUARDANDO_APURACAO' if ap is None else 'REALIZADA_NO_PRAZO'))
-            if not ev and date.fromisoformat(p['date'])<date.today(): st='NAO_REALIZADA'
-            if status and st!=status: continue
-            ws.append([a.get('company'),a.get('line'),a.get('locality'),a['terminal'],_v79_schedule_text(sch),p['date'],ev.end_at.strftime('%H:%M') if ev else '',dec,ap,diff,st,ev.monitoring_note if ev else ('Ajustada por feriado: '+p.get('holiday','') if p.get('holiday_adjusted') else '')])
-    ws2=wb.create_sheet('Programação');ws2.append(['Operadora','Linha','Estação','ATM','Produto','Transaciona','BAG','Modelo','Programação','Filial','Endereço'])
-    for a in rows:
-        sch=schedules.get(a['terminal']);ws2.append([a.get('company'),a.get('line'),a.get('locality'),a['terminal'],a.get('products'),a.get('transactions'),sch.bag_type if sch else '',sch.model if sch else a.get('model'),_v79_schedule_text(sch) if sch else 'Sem programação',sch.branch if sch else '',sch.collection_address if sch else ''])
+        occs=a.get("planned") or []
+        if not occs and not status: ws.append(["SEM_PROGRAMACAO",a["company"],a["line"],a["station"],a["terminal"],a["schedule"],"","","","","","","",""])
+        for o in occs:
+            if status and o["status"]!=status: continue
+            dv=o.get("difference")
+            if difference=="ZERO" and (dv is None or abs(dv)>=.01): continue
+            if difference=="POS" and (dv is None or dv<=0): continue
+            if difference=="NEG" and (dv is None or dv>=0): continue
+            ws.append([o["status"],a["company"],a["line"],a["station"],a["terminal"],a["schedule"],o.get("scheduled_original") or o["date"],o["date"] if o.get("event_id") else "",o.get("time") or "",o.get("declared_amount"),o.get("processed_amount"),dv,o.get("next_prediction") or "",o.get("note") or ""])
+    ws2=wb.create_sheet("Programação"); ws2.append(["Operadora","Linha","Estação","ATM","Produto","Transaciona","BAG","Modelo","Programação","Filial","Endereço"])
+    for a in rows: ws2.append([a["company"],a["line"],a["station"],a["terminal"],a["products"],a["transactions"],a["bag_type"],a["model"],a["schedule"],a["branch"],a["address"]])
     for sh in wb.worksheets:
-        sh.freeze_panes='A2';sh.auto_filter.ref=sh.dimensions
-        for cell in sh[1]: cell.font=Font(bold=True,color='FFFFFF');cell.fill=PatternFill('solid',fgColor='1F4E78');cell.alignment=Alignment(horizontal='center')
-        for col in range(1,sh.max_column+1): sh.column_dimensions[get_column_letter(col)].width=min(38,max(12,max(len(str(sh.cell(r,col).value or '')) for r in range(1,min(sh.max_row,200)+1))+2))
-    out=io.BytesIO();wb.save(out);out.seek(0)
-    return send_file(out,as_attachment=True,download_name=f'coletas_v79_{month}.xlsx',mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        sh.freeze_panes="A2"; sh.auto_filter.ref=sh.dimensions
+        for cell in sh[1]: cell.font=Font(bold=True,color="FFFFFF"); cell.fill=PatternFill("solid",fgColor="1F4E78"); cell.alignment=Alignment(horizontal="center")
+        for col in range(1,sh.max_column+1): sh.column_dimensions[get_column_letter(col)].width=min(38,max(12,max(len(str(sh.cell(r,col).value or "")) for r in range(1,min(sh.max_row,300)+1))+2))
+    out=io.BytesIO(); wb.save(out); out.seek(0)
+    return send_file(out,as_attachment=True,download_name=f"coletas_v79_2_{start.isoformat()}_{end.isoformat()}.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 @app.get("/api/financeiro/apuracao/coletas")
 @login_required
