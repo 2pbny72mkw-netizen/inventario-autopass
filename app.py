@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V79.2"
+APP_RELEASE = "V79.3"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -12951,6 +12951,8 @@ def _v79_seed_cash_module():
                 if item.get('transport_charge') is not None: row.transport_charge=float(item.get('transport_charge') or 0)
             if not SchemaMigration.query.filter_by(version='V79.2-001').first():
                 db.session.add(SchemaMigration(version='V79.2-001',description='Coleta de Valores: período livre, edição/reagendamento, composição opcional de cédulas e histórico TBForte JAN-AGO/2026'))
+            if not SchemaMigration.query.filter_by(version='V79.3-001').first():
+                db.session.add(SchemaMigration(version='V79.3-001',description='Coleta de Valores: paginação visual de 10 linhas e consolidação financeira/cédulas nos Big Numbers'))
         except Exception:
             app.logger.exception("V79.2: falha ao carregar histórico TBForte JAN-AGO/2026")
     if not SchemaMigration.query.filter_by(version='V79-001').first():
@@ -13001,10 +13003,16 @@ def _v792_cash_payload(start,end):
             dec=None if not ev or ev.declared_amount is None else round(float(ev.declared_amount),2)
             ap=None if not ev or ev.processed_amount is None else round(float(ev.processed_amount),2)
             diff=round(ap-dec,2) if dec is not None and ap is not None else None
+            denominations=[]
+            if ev:
+                try: denominations=json.loads(ev.denomination_json or "[]")
+                except Exception: denominations=[]
+            den_count=sum(int(x.get("quantity") or 0) for x in denominations if isinstance(x,dict))
+            den_value=round(sum(float(x.get("value") or 0)*int(x.get("quantity") or 0) for x in denominations if isinstance(x,dict)),2)
             nxt=next((f for f in future if date.fromisoformat(f["date"])>pd),None)
             occurrences.append({**p,"date":effective,"scheduled_original":p["date"],"status":status,"override_id":ov.id if ov else None,
                 "event_id":ev.id if ev else None,"time":(ev.end_at.strftime("%H:%M") if ev else (ov.scheduled_time if ov else "")),
-                "declared_amount":dec,"processed_amount":ap,"difference":diff,"note":((ev.monitoring_note or "") if ev else (ov.note or "" if ov else "")),
+                "declared_amount":dec,"processed_amount":ap,"difference":diff,"denomination_count":den_count,"denomination_value":den_value,"denominations":denominations,"note":((ev.monitoring_note or "") if ev else (ov.note or "" if ov else "")),
                 "next_prediction":nxt["date"] if nxt else None})
             planned_all.append((t,occurrences[-1]))
         planned_dates={o["date"] for o in occurrences}; extra=[]
@@ -13119,7 +13127,7 @@ def financial_cash_v79_export():
         for cell in sh[1]: cell.font=Font(bold=True,color="FFFFFF"); cell.fill=PatternFill("solid",fgColor="1F4E78"); cell.alignment=Alignment(horizontal="center")
         for col in range(1,sh.max_column+1): sh.column_dimensions[get_column_letter(col)].width=min(38,max(12,max(len(str(sh.cell(r,col).value or "")) for r in range(1,min(sh.max_row,300)+1))+2))
     out=io.BytesIO(); wb.save(out); out.seek(0)
-    return send_file(out,as_attachment=True,download_name=f"coletas_v79_2_{start.isoformat()}_{end.isoformat()}.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    return send_file(out,as_attachment=True,download_name=f"coletas_v79_3_{start.isoformat()}_{end.isoformat()}.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 @app.get("/api/financeiro/apuracao/coletas")
 @login_required
