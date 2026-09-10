@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V78.9.1"
+APP_RELEASE = "V78.9.2"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -307,6 +307,18 @@ class User(db.Model):
     rg = db.Column(db.String(30), index=True)
 
 
+class ArrowLocation(db.Model):
+    __tablename__ = "arrow_locations"
+    id = db.Column(db.Integer, primary_key=True)
+    kind = db.Column(db.String(30), nullable=False, default="LOCALIDADE", index=True)
+    name = db.Column(db.String(220), nullable=False, index=True)
+    code = db.Column(db.String(30), index=True)
+    address = db.Column(db.String(600))
+    active = db.Column(db.Boolean, nullable=False, default=True, index=True)
+    created_by = db.Column(db.Integer, db.ForeignKey("users.id"))
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    __table_args__ = (UniqueConstraint("code", name="uq_arrow_location_code"),)
+
 class ArrowActivity(db.Model):
     __tablename__ = "arrow_activities"
     id = db.Column(db.Integer, primary_key=True)
@@ -317,6 +329,7 @@ class ArrowActivity(db.Model):
     title = db.Column(db.String(220), nullable=False)
     operator = db.Column(db.String(20), nullable=False, default="OUTROS", index=True)  # METRO/CPTM/MOTIVA/OUTROS
     location_id = db.Column(db.Integer, db.ForeignKey("locations.id"), index=True)
+    arrow_location_id = db.Column(db.Integer, db.ForeignKey("arrow_locations.id"), index=True)
     technician_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
     status = db.Column(db.String(30), nullable=False, default="PLANEJADA", index=True)
     remote = db.Column(db.Boolean, nullable=False, default=False)
@@ -7242,12 +7255,7 @@ def users_page():
     # não em RH / Usuários.
     active_q = User.query.filter(User.archived_at.is_(None), User.role != "customer")
     archived_q = User.query.filter(User.archived_at.isnot(None), User.role != "customer")
-    if session.get("role") != "manager" and not _has_access("users.scope.all"):
-        me=db.session.get(User,session.get("user_id"))
-        if me and (me.company or "").strip():
-            company=(me.company or "").strip().lower()
-            active_q=active_q.filter(func.lower(func.coalesce(User.company,""))==company)
-            archived_q=archived_q.filter(func.lower(func.coalesce(User.company,""))==company)
+    # V78.9.2 — users.view concede visão do cadastro completo; ações continuam governadas por permissões específicas.
     active_users = active_q.order_by(User.active.desc(), User.name).all()
     archived_users = archived_q.order_by(User.archived_at.desc(), User.name).all()
     return render_template(
@@ -11734,17 +11742,20 @@ def _garage_payload(force=False):
 @app.get('/troca-chips-garagem')
 @login_required
 def garage_chip_page():
+    if not _has_access('implantation.garage'):abort(403)
     return render_template('garage_chip_swap.html',app_release=APP_RELEASE)
 
 @app.get('/api/garage-chip-swaps')
 @login_required
 def garage_chip_list_api():
+    if not _has_access('implantation.garage'):abort(403)
     rows=_garage_payload(); company=(request.args.get('company') or '').strip(); ck=_garage_company_key(company); rows=[x for x in rows if not ck or _garage_company_key(x.get('company'))==ck]; total=len(rows); done=sum(x['status']=='CONCLUÍDA' for x in rows); prog=sum(x['status']=='EM ANDAMENTO' for x in rows)
     return jsonify({'ok':True,'rows':rows,'summary':{'total':total,'concluded':done,'in_progress':prog,'pending':total-done-prog,'percent':round(done*100/total,1) if total else 0}})
 
 @app.post('/api/garage-chip-swaps/<int:base_id>')
-@field_required
+@login_required
 def garage_chip_save_api(base_id):
+    if not _has_access('implantation.garage'):abort(403)
     if _activity_request_too_large(): return jsonify({"ok":False,"error":f"Envio excede {_ACTIVITY_REQUEST_MAX_MB} MB. Envie menos fotos por vez."}),413
     b=db.session.get(GarageChipBase,base_id)
     if not b:return jsonify({'ok':False,'error':'Terminal não encontrado na base.'}),404
@@ -11769,6 +11780,7 @@ def garage_chip_save_api(base_id):
 @app.get('/api/garage-chip-swaps/dashboard')
 @login_required
 def garage_chip_dashboard_api():
+    if not (_has_access('implantation.garage') or _has_access('implantation.dashboard')):abort(403)
     rows=_garage_payload(); total=len(rows); done=sum(x['status']=='CONCLUÍDA' for x in rows); prog=sum(x['status']=='EM ANDAMENTO' for x in rows)
     by_company={}; by_tech={}; by_model={}; by_status={}; by_result={}
     for x in rows:
@@ -12971,13 +12983,13 @@ def financial_export_xlsx():
     if comps:q=q.filter(FinancialMonthlyCost.competence.in_(comps))
     if center!='ALL':q=q.filter_by(cost_center=center)
     rows=q.order_by(FinancialMonthlyCost.competence,FinancialMonthlyCost.id).all(); sups={x.id:x.name for x in FinancialSupplier.query.all()}
-    wb=Workbook(); ws=wb.active;ws.title='Lançamentos';ws.append(['Competência','Centro de Custo','ID Centro de Custo','Fornecedor','Serviço','Projeto','Realizado','Forecast','Produto','Rateio %','Valor Rateado'])
+    wb=Workbook(); ws=wb.active;ws.title='Lançamentos';ws.append(['Competência','Centro de Custo','ID Centro de Custo','Fornecedor','Serviço','Projeto','NF / Documento','Realizado','Forecast','Produto','Rateio %','Valor Rateado'])
     for x in rows:
         alloc=json.loads(x.allocation_json or '{}')
         pairs=alloc.items() if product=='ALL' else [(product,alloc.get(product,0))]
         for pr,pct in pairs:
             if not pct: continue
-            ws.append([x.competence,x.cost_center,getattr(x,'cost_center_id',None) or _fin_cost_center_id_for_key(x.cost_center),sups.get(x.supplier_id,''),x.service_text or '',x.project or '',x.amount,x.forecast_amount,pr,pct,round(x.amount*float(pct)/100,2)])
+            ws.append([x.competence,x.cost_center,getattr(x,'cost_center_id',None) or _fin_cost_center_id_for_key(x.cost_center),sups.get(x.supplier_id,''),x.service_text or '',x.project or '',x.invoice_number or '',x.amount,x.forecast_amount,pr,pct,round(x.amount*float(pct)/100,2)])
     bio=io.BytesIO();wb.save(bio);bio.seek(0);return send_file(bio,as_attachment=True,download_name='dashboard_financeiro_v55_2.xlsx',mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 @app.get("/api/panoramas/export.xlsx")
@@ -13826,16 +13838,19 @@ def v73_apt_page():
     companies=sorted({x.company for x in AptRecord.query.filter(AptRecord.company.isnot(None)).all() if x.company});lines=sorted({x.line for x in AptRecord.query.filter(AptRecord.line.isnot(None)).all() if x.line})
     users=User.query.filter(User.active.is_(True)).order_by(User.name).all()
     apt_users=[{"id":u.id,"name":u.name,"company":u.company or "","job_title":u.job_title or "","username":u.username} for u in users if u.role not in ('customer',)]
-    return render_template("apt_v73.html",items=data,summary=summary,total=len(data),companies=companies,lines=lines,apt_users=apt_users,filters={"q":q,"validity":validity,"process":process,"active":active,"company":company,"line":line,"nr10":nr10,"nr35":nr35,"aso":aso,"integration":integration},app_release=APP_RELEASE)
+    apt_lines=sorted({x.line for x in Location.query.all() if x.line and (str(x.line).strip().startswith('04') or str(x.line).strip().startswith('05'))}) or ['04 - AMARELA','05 - LILÁS']
+    return render_template("apt_v73.html",items=data,summary=summary,total=len(data),companies=companies,lines=lines,apt_users=apt_users,apt_lines=apt_lines,filters={"q":q,"validity":validity,"process":process,"active":active,"company":company,"line":line,"nr10":nr10,"nr35":nr35,"aso":aso,"integration":integration},app_release=APP_RELEASE)
 
 @app.post('/api/rh/apt/create')
 @login_required
 def v735_apt_create():
     if not _has_access('teams.apt'):abort(403)
     d=request.get_json(silent=True) or {};uid=d.get('user_id');u=db.session.get(User,int(uid)) if uid else None
-    name=(d.get('collaborator_name') or (u.name if u else '') or '').strip();apt=(d.get('apt_number') or '').strip()
-    if not name or not apt:return jsonify({'ok':False,'error':'Informe colaborador e número da APT.'}),400
-    x=AptRecord(user_id=u.id if u else None,collaborator_name=name,company=(d.get('company') or (u.company if u else '') or '').strip(),line=(d.get('line') or '').strip(),apt_number=apt,process_status=(d.get('process_status') or 'AGUARDANDO').strip().upper(),active=True)
+    if not u:return jsonify({'ok':False,'error':'Selecione um colaborador existente no Cadastro de Usuários.'}),400
+    name=(u.name or '').strip();apt=(d.get('apt_number') or '').strip();line=(d.get('line') or '').strip()
+    allowed_lines={x.line for x in Location.query.all() if x.line and (str(x.line).strip().startswith('04') or str(x.line).strip().startswith('05'))} or {'04 - AMARELA','05 - LILÁS'}
+    if not apt or line not in allowed_lines:return jsonify({'ok':False,'error':'Informe o número da APT e selecione uma linha que exige APT.'}),400
+    x=AptRecord(user_id=u.id,collaborator_name=name,company=(u.company or '').strip(),line=line,apt_number=apt,process_status=(d.get('process_status') or 'AGUARDANDO').strip().upper(),active=True)
     for fld in ('valid_until','nr10_valid_until','nr35_valid_until','aso_scheduled_at','aso_valid_until','integration_scheduled_at','integration_valid_until'):setattr(x,fld,_apt_date(d.get(fld)))
     x.notes=(d.get('notes') or '').strip();db.session.add(x);db.session.commit();return jsonify({'ok':True,'id':x.id})
 
@@ -13883,7 +13898,10 @@ def v731_apt_update(rid):
     if not _has_access("teams.apt"):abort(403)
     x=db.session.get(AptRecord,rid) or abort(404);d=request.get_json(silent=True) or {}
     uid=d.get('user_id');u=db.session.get(User,int(uid)) if uid else None
-    x.collaborator_name=(d.get("collaborator_name") or (u.name if u else x.collaborator_name)).strip();x.company=(d.get("company") or (u.company if u else '') or "").strip();x.line=(d.get("line") or "").strip();x.apt_number=(d.get("apt_number") or x.apt_number).strip();x.process_status=(d.get("process_status") or x.process_status or "AGUARDANDO").strip().upper();x.notes=(d.get("notes") or "").strip()
+    if not u:return jsonify({"ok":False,"error":"Selecione um colaborador existente no Cadastro de Usuários."}),400
+    line=(d.get("line") or "").strip();allowed_lines={z.line for z in Location.query.all() if z.line and (str(z.line).strip().startswith('04') or str(z.line).strip().startswith('05'))} or {'04 - AMARELA','05 - LILÁS'}
+    if line not in allowed_lines:return jsonify({"ok":False,"error":"Selecione uma linha que exige APT."}),400
+    x.user_id=u.id;x.collaborator_name=u.name.strip();x.company=(u.company or "").strip();x.line=line;x.apt_number=(d.get("apt_number") or x.apt_number).strip();x.process_status=(d.get("process_status") or x.process_status or "AGUARDANDO").strip().upper();x.notes=(d.get("notes") or "").strip()
     for fld in ('valid_until','nr10_valid_until','nr35_valid_until','aso_scheduled_at','aso_valid_until','integration_scheduled_at','integration_valid_until'):setattr(x,fld,_apt_date(d.get(fld)))
     if u:x.user_id=u.id
     db.session.commit();return jsonify({"ok":True})
@@ -14042,8 +14060,25 @@ def v75_arrow():
     if not _has_access("arrow.view"):abort(403)
     techs=User.query.filter(User.archived_at.is_(None),User.active.is_(True),User.role.in_(["technician","technician_implantation"])).order_by(User.name).all()
     locs=Location.query.order_by(Location.company,Location.line,Location.location).all()
+    arrow_locs=ArrowLocation.query.filter_by(active=True).order_by(ArrowLocation.name).all()
     mats=MaterialCatalogItem.query.filter_by(active=True).order_by(MaterialCatalogItem.description).all()
-    return render_template("arrow_v75.html",app_release=APP_RELEASE,technicians=techs,locations=locs,materials=mats)
+    return render_template("arrow_v75.html",app_release=APP_RELEASE,technicians=techs,locations=locs,arrow_locations=arrow_locs,materials=mats)
+
+@app.get("/api/arrow/localidades")
+@login_required
+def v7892_arrow_locations_api():
+    if not _has_access("arrow.view"):abort(403)
+    rows=ArrowLocation.query.filter_by(active=True).order_by(ArrowLocation.name).all()
+    return jsonify({'ok':True,'rows':[{'id':x.id,'kind':x.kind,'name':x.name,'code':x.code or '', 'address':x.address or ''} for x in rows]})
+
+@app.post("/api/arrow/localidades")
+@login_required
+def v7892_arrow_location_create_api():
+    if not _has_access("arrow.manage"):abort(403)
+    d=request.get_json(silent=True) or {};name=(d.get('name') or '').strip();code=(d.get('code') or '').strip().upper();address=(d.get('address') or '').strip()
+    if not name:return jsonify({'ok':False,'error':'Informe o nome da localidade.'}),400
+    if code and ArrowLocation.query.filter(func.upper(ArrowLocation.code)==code).first():return jsonify({'ok':False,'error':'Já existe uma localidade com esta sigla.'}),409
+    x=ArrowLocation(kind=(d.get('kind') or 'LOCALIDADE').strip().upper()[:30],name=name,code=code or None,address=address,created_by=session.get('user_id'));db.session.add(x);db.session.commit();return jsonify({'ok':True,'id':x.id,'name':x.name,'code':x.code or '', 'address':x.address or ''})
 
 def _v75_arrow_eligibility(u,operator):
     operator=(operator or "OUTROS").upper()
@@ -14065,7 +14100,7 @@ def v75_arrow_eligibility_api(uid):
 def v75_arrow_list_api():
     if not _has_access("arrow.view"):abort(403)
     q=ArrowActivity.query
-    d=(request.args.get('date') or '').strip();date_from=(request.args.get('from') or '').strip();date_to=(request.args.get('to') or '').strip();status=(request.args.get('status') or '').strip().upper();tech=request.args.get('technician_id',type=int);operator=(request.args.get('operator') or '').strip().upper();priority=(request.args.get('priority') or '').strip().upper();location_id=request.args.get('location_id',type=int)
+    d=(request.args.get('date') or '').strip();date_from=(request.args.get('from') or '').strip();date_to=(request.args.get('to') or '').strip();status=(request.args.get('status') or '').strip().upper();tech=request.args.get('technician_id',type=int);operator=(request.args.get('operator') or '').strip().upper();priority=(request.args.get('priority') or '').strip().upper();location_id=request.args.get('location_id',type=int);arrow_location_id=request.args.get('arrow_location_id',type=int)
     if d:
         try:q=q.filter_by(activity_date=date.fromisoformat(d))
         except:pass
@@ -14080,11 +14115,12 @@ def v75_arrow_list_api():
     if operator:q=q.filter_by(operator=operator)
     if priority:q=q.filter_by(priority=priority)
     if location_id:q=q.filter_by(location_id=location_id)
-    rows=q.order_by(ArrowActivity.activity_date.desc(),ArrowActivity.id.desc()).limit(500).all();uids={x.technician_id for x in rows};lids={x.location_id for x in rows if x.location_id};uu={u.id:u for u in User.query.filter(User.id.in_(uids)).all()} if uids else {};ll={x.id:x for x in Location.query.filter(Location.id.in_(lids)).all()} if lids else {}
+    if arrow_location_id:q=q.filter_by(arrow_location_id=arrow_location_id)
+    rows=q.order_by(ArrowActivity.activity_date.desc(),ArrowActivity.id.desc()).limit(500).all();uids={x.technician_id for x in rows};lids={x.location_id for x in rows if x.location_id};alids={x.arrow_location_id for x in rows if getattr(x,'arrow_location_id',None)};uu={u.id:u for u in User.query.filter(User.id.in_(uids)).all()} if uids else {};ll={x.id:x for x in Location.query.filter(Location.id.in_(lids)).all()} if lids else {};aa={x.id:x for x in ArrowLocation.query.filter(ArrowLocation.id.in_(alids)).all()} if alids else {}
     out=[]
     for x in rows:
-        u=uu.get(x.technician_id);loc=ll.get(x.location_id);eligible,reason=_v75_arrow_eligibility(u,x.operator) if u else (False,'Colaborador não encontrado')
-        out.append({'id':x.id,'date':x.activity_date.isoformat(),'start_time':x.start_time or '','end_time':x.end_time or '','priority':x.priority or 'NORMAL','title':x.title,'operator':x.operator,'technician_id':x.technician_id,'technician':u.name if u else '—','location_id':x.location_id,'location':loc.location if loc else '—','line':loc.line if loc else '','company':loc.company if loc else '','status':x.status,'remote':x.remote,'teamviewer_id':x.teamviewer_id or '','notes':x.notes or '','eligible':eligible,'eligibility_reason':reason})
+        u=uu.get(x.technician_id);loc=ll.get(x.location_id);aloc=aa.get(getattr(x,'arrow_location_id',None));eligible,reason=_v75_arrow_eligibility(u,x.operator) if u else (False,'Colaborador não encontrado')
+        out.append({'id':x.id,'date':x.activity_date.isoformat(),'start_time':x.start_time or '','end_time':x.end_time or '','priority':x.priority or 'NORMAL','title':x.title,'operator':x.operator,'technician_id':x.technician_id,'technician':u.name if u else '—','location_id':x.location_id,'arrow_location_id':getattr(x,'arrow_location_id',None),'location':(aloc.name if aloc else (loc.location if loc else '—')),'line':('GARAGEM' if aloc else (loc.line if loc else '')),'company':('OUTROS' if aloc else (loc.company if loc else '')),'location_code':(aloc.code if aloc else ''),'address':(aloc.address if aloc else ''),'status':x.status,'remote':x.remote,'teamviewer_id':x.teamviewer_id or '','notes':x.notes or '','eligible':eligible,'eligibility_reason':reason})
     return jsonify({'ok':True,'rows':out})
 
 @app.post("/api/arrow/activities")
@@ -14102,7 +14138,10 @@ def v75_arrow_create_api():
     title=(d.get('title') or '').strip()
     if not title:return jsonify({'ok':False,'error':'Informe a atividade.'}),400
     locid=int(d.get('location_id')) if str(d.get('location_id') or '').isdigit() else None
-    x=ArrowActivity(activity_date=wd,start_time=(d.get('start_time') or '').strip()[:5] or None,end_time=(d.get('end_time') or '').strip()[:5] or None,priority=(d.get('priority') or 'NORMAL').strip().upper()[:20],title=title,operator=op,location_id=locid,technician_id=u.id,status='PLANEJADA',remote=bool(d.get('remote')),teamviewer_id=(d.get('teamviewer_id') or '').strip(),notes=(d.get('notes') or '').strip(),created_by=session['user_id']);db.session.add(x);db.session.commit();return jsonify({'ok':True,'id':x.id})
+    alocid=int(d.get('arrow_location_id')) if str(d.get('arrow_location_id') or '').isdigit() else None
+    if op=='OUTROS' and not alocid:return jsonify({'ok':False,'error':'Selecione uma localidade cadastrada para OUTROS.'}),400
+    if op!='OUTROS' and not locid:return jsonify({'ok':False,'error':'Selecione linha e estação/localidade.'}),400
+    x=ArrowActivity(activity_date=wd,start_time=(d.get('start_time') or '').strip()[:5] or None,end_time=(d.get('end_time') or '').strip()[:5] or None,priority=(d.get('priority') or 'NORMAL').strip().upper()[:20],title=title,operator=op,location_id=locid,arrow_location_id=alocid,technician_id=u.id,status='PLANEJADA',remote=bool(d.get('remote')),teamviewer_id=(d.get('teamviewer_id') or '').strip(),notes=(d.get('notes') or '').strip(),created_by=session['user_id']);db.session.add(x);db.session.commit();return jsonify({'ok':True,'id':x.id})
 
 @app.post("/api/arrow/activities/<int:aid>/editar")
 @login_required
@@ -14122,6 +14161,7 @@ def v76_arrow_edit_api(aid):
     for key in ("title","notes","teamviewer_id"):
         if key in d:setattr(x,key,(d.get(key) or "").strip())
     if "location_id" in d:x.location_id=int(d.get("location_id")) if str(d.get("location_id") or "").isdigit() else None
+    if "arrow_location_id" in d:x.arrow_location_id=int(d.get("arrow_location_id")) if str(d.get("arrow_location_id") or "").isdigit() else None
     if "start_time" in d:x.start_time=(d.get("start_time") or "").strip()[:5] or None
     if "end_time" in d:x.end_time=(d.get("end_time") or "").strip()[:5] or None
     if "priority" in d:x.priority=(d.get("priority") or "NORMAL").strip().upper()[:20]
@@ -16109,6 +16149,26 @@ with app.app_context():
         if changed:db.session.commit();_chip_swap_payload_cache['at']=0
     except Exception:
         db.session.rollback();app.logger.exception('V73: falha ao sincronizar localidades Recarga/TDI')
+    # V78.9.2 — cadastro estruturado de localidades Arrow + 27 garagens iniciais.
+    try:
+        db.metadata.create_all(bind=db.engine,tables=[ArrowLocation.__table__],checkfirst=True)
+        insp=db.inspect(db.engine)
+        if insp.has_table('arrow_activities'):
+            cols={c['name'] for c in insp.get_columns('arrow_activities')}
+            if 'arrow_location_id' not in cols:
+                with db.engine.begin() as conn:conn.execute(text("ALTER TABLE arrow_activities ADD COLUMN arrow_location_id INTEGER"))
+        garages=[
+('ATT','Alto do Tiete','Rua Adolfo Lutz 590, Mogi das Cruzes - SP - Brasil'),('BFB','Benfica Barueri','Avenida Jose Siqueira, 427 - Barueri - SP - Brasil'),('BFI','Benfica Itapevi','Avenida Claudionor Bruno, 681, Itapevi - SP - Brasil'),('BFJ','Benfica Jandira','Rua Dos Mellos, 125, Jandira - SP - Brasil'),('ETC','ETT','Estrada de Cabreuva, 160, Carapicuiba - SP - Brasil'),('GTT','Guarulhos Transporte','R. Dep. Ulisses Guimarães, 330, Guarulhos - SP - Brasil'),('JCM','Jacarei Matriz','AVENIDA FRANCISCO RODRIGUES FILHO 01500 - Mogi Das Cruzes'),('MCE','Viação Miracatiba','Estrada Mary Angels Vieira de Souza, 605, Embu-Guaçu - SP - Brasil'),('MCJ','Viação Miracatiba','R. João Ferreira Domingues, 308 - Centro, Juquitiba - SP, 06950-000'),('MCM','Viação Miracatiba','Estrada Joao Rodrigues de Moraes, 1488, Itapecerica da Serra - SP - Brasil'),('MTS','Moratense','Rua Antonio Vieira C Filho, 781, Francisco Morato - SP - Brasil'),('OSF','Viação Osasco Filial','Avenida Sul Americana, 323, Carapicuíba - SP - Brasil'),('OSM','Viação Osasco','Avenida Valter boveri 501, JD novo Osasco'),('PJR','Pirajussara','Rua Rotary, 600, Embu das Artes - SP - Brasil'),('PMG','Passaro Marrom','Av. Ordem e Progresso, 1135 - Jardim das Laranjeiras, São Paulo - SP, 02518-100'),('PMI','Passaro Marrom','Rua josé Bueno, 45, Santa Isabel - SP - Brasil'),('PMM','Passaro Marrom','Av. Francisco Rodrigues Filho, 1500, Mogi das Cruzes - SP - Brasil'),('PMS','Passaro Marrom','RUA MAL. DEODORO, 262, Suzano - SP - Brasil'),('RFZ','Radial Ferraz','R. Godofredo Osório Novaes, 450 - Vila Central, Ferraz de Vasconcelos - SP, 08531-170'),('TBT','TipBus Vipol','RUA PIRACICABA, 635, Itaquaquecetuba - SP - Brasil'),('TDT','TransDutra','Rua Raposo Tavares, 201, Arujá - SP - Brasil'),('TLM','Talisma','Av. Jean Lieutaud, 663, Rio Grande da Serra - SP, 09450-000'),('UBF','Urubunpuga','Rua Estrela D\'Alva, 45, Santana de Parnaíba - SP - Brasil'),('UBM','Urubunpuga','Avenida Presidente Médici, 1340, Osasco - SP - Brasil'),('VAJ','Viacao Aruja','Estrada Arujá Santa Isabel, 4801, Arujá - SP - Brasil'),('VGL','Vila Galvao','Av. José Brumatti, 2446, Guarulhos - SP - Brasil'),('VGM','Vila Galvão','Rodovia Presidente Dutra, Km 223 - 8174, Guarulhos - SP - Brasil')]
+        for code,name,address in garages:
+            row=ArrowLocation.query.filter(func.upper(ArrowLocation.code)==code).first()
+            if not row:db.session.add(ArrowLocation(kind='GARAGEM',name=name,code=code,address=address,created_by=None))
+            else:row.name=name;row.address=address;row.active=True
+        if not SchemaMigration.query.filter_by(version='V78.9.2-001').first():db.session.add(SchemaMigration(version='V78.9.2-001',description='Arrow: localidades estruturadas + 27 garagens; APT vinculado ao usuário; permissões Garagem'))
+        db.session.commit()
+    except Exception:
+        try:db.session.rollback()
+        except Exception:pass
+        app.logger.exception('V78.9.2: falha na migração Arrow/localidades')
     # V76 — notificações críticas + agenda Arrow 7/30 dias. Migração aditiva/idempotente.
     try:
         db.metadata.create_all(bind=db.engine,tables=[V76Notification.__table__],checkfirst=True)
