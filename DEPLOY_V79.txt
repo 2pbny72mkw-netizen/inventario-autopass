@@ -1,0 +1,4 @@
+V79 — Coleta de Valores
+Aplicar sobre V78.9.3.
+Arquivos alterados/adicionados: app.py, templates/financial_cash_collection.html, static/cash_collection_v79.js, data/v79_cash_seed.json, README_V79.md.
+Após deploy, abrir Financeiro > Coleta de Valores e validar: base 256 dinheiro+cartão; 256 com programação; ATM 11051 Tucuruvi terça-feira; monitoramento setembro/2026; exportação Excel com filtros.
