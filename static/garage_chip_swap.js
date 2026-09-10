@@ -109,8 +109,8 @@ async function save(e){
   btn.disabled=true;
   try{
     const r=await fetch('/api/garage-chip-swaps/'+f.dataset.id,{method:'POST',body:fd});
-    const j=await r.json();
-    if(!r.ok) throw Error(j.error||'Falha');
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok) throw Error(j.error||`Falha ao gravar (HTTP ${r.status}).`);
     msg.textContent='Troca registrada.';
     await load();
   }catch(e){msg.textContent=e.message}
