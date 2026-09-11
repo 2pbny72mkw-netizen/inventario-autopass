@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V79.5 REV1"
+APP_RELEASE = "V79.5 REV2"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -14660,16 +14660,11 @@ def v7892_arrow_location_create_api():
     x=ArrowLocation(kind=(d.get('kind') or 'LOCALIDADE').strip().upper()[:30],name=name,code=code or None,address=address,created_by=session.get('user_id'));db.session.add(x);db.session.commit();return jsonify({'ok':True,'id':x.id,'name':x.name,'code':x.code or '', 'address':x.address or ''})
 
 def _v75_arrow_eligibility(u,operator):
-    operator=(operator or "OUTROS").upper()
-    if operator=="METRO": ok=bool(u.access_metro);reason="Acesso Metrô não habilitado no perfil."
-    elif operator=="CPTM": ok=bool(u.access_cptm);reason="Acesso CPTM não habilitado no perfil."
-    elif operator=="MOTIVA":
-        # V79.5 — a APT deixa de ser obrigatória na alocação inicial da Arrow.
-        # Mantemos o indicador de acesso Motiva; validade da APT permanece disponível
-        # para acompanhamento de RH/governança, mas não bloqueia a criação/edição.
-        ok=bool(u.access_motiva_apt);reason="Acesso Motiva não habilitado no perfil."
-    else: ok=True;reason=""
-    return ok,reason
+    # V79.5 REV2 — Arrow é planejamento operacional e não é bloqueado por
+    # APT nem pelos indicadores de acesso Metrô/CPTM/Motiva do colaborador.
+    # Esses controles permanecem no RH/Cadastro para governança e podem ser
+    # consultados pela API, mas não impedem criar ou editar uma atividade.
+    return True,""
 
 @app.get("/api/arrow/eligibilidade/<int:uid>")
 @login_required
@@ -15094,8 +15089,11 @@ def _builtin_dashboard_menu_items():
         row=saved.get(item['key']); visible=True if row is None else bool(row.visible); order=(idx*10 if row is None else row.order_index)
         try: allowed=json.loads(row.allowed_roles_json or '[]') if row else list(item.get('roles') or [])
         except Exception: allowed=list(item.get('roles') or [])
-        if not visible: continue
         permission=BUILTIN_DASHBOARD_PERMISSIONS.get(item['key'], 'dashboard.general')
+        # V79.5 REV2 — Dashboard Bobinas obedece exclusivamente à Matriz de
+        # Permissões. Metadados legados de perfil/visibilidade não podem ocultá-lo
+        # de um usuário que possua field.bobbins_dashboard.
+        if item['key'] != 'bobbin-dashboard' and not visible: continue
         if not _has_access(permission): continue
         out.append({**item,'order':order,'allowed_roles':allowed,'permission':permission})
     return sorted(out,key=lambda x:(x['order'],x['label']))
