@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V79.4"
+APP_RELEASE = "V79.4 REV2"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -17324,6 +17324,8 @@ def engineering_bom_save_api():
     else:
         code=_eng_norm(d.get("product_code"));name=_eng_norm(d.get("product_name"));pncm=_eng_norm(d.get("product_ncm"))
     if kind=="PRODUTO" and not master:return jsonify({"ok":False,"error":"Selecione um produto do Cadastro Mestre de Itens."}),400
+    if kind=="PRODUTO" and master and not str(master.internal_part_number or "").strip().startswith(("00.01","00.03")):
+        return jsonify({"ok":False,"error":"BOM N0 permitida somente para itens do Cadastro Mestre com código iniciado por 00.01 ou 00.03."}),400
     if not code or not name:return jsonify({"ok":False,"error":"Código e descrição são obrigatórios."}),400
     if EngineeringBom.query.filter(func.lower(EngineeringBom.product_code)==code.lower(),func.lower(EngineeringBom.revision)==rev.lower()).first():return jsonify({"ok":False,"error":"Revisão já existente."}),409
     try:q=float(d.get("quantity_reference") or 1)
