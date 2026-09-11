@@ -1,0 +1,8 @@
+V79.5 — ARQUIVOS ALTERADOS
+- app.py
+- users.html
+- templates/arrow_v75.html
+- templates/about.html
+- README_V79_5.md
+
+Deploy sobre a V79.4 REV2 em produção. Não substituir banco nem dados. A migração V79.5-001 é aditiva e idempotente.

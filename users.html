@@ -62,8 +62,22 @@
           <select name="work_schedule_type"><option value="12x36">12x36</option><option value="5x2">5x2</option></select>
         </div>
         <div class="fieldExtended scheduleField">
-          <label>Horário</label>
-          <input name="work_shift" value="05:00-17:00" placeholder="05:00-17:00">
+          <label>Início da jornada</label>
+          <input name="work_start_time" type="time" value="05:00">
+        </div>
+        <div class="fieldExtended scheduleField">
+          <label>Fim da jornada</label>
+          <input name="work_end_time" type="time" value="17:00">
+        </div>
+        <div class="fieldExtended scheduleField">
+          <label>Início da refeição</label>
+          <input name="meal_start_time" type="time">
+          <small>Referência flexível. Não bloqueia a jornada.</small>
+        </div>
+        <div class="fieldExtended scheduleField">
+          <label>Fim da refeição</label>
+          <input name="meal_end_time" type="time">
+          <small>Opcional e flexível.</small>
         </div>
         <div class="fieldExtended scheduleField anchorField">
           <label>Data de referência da escala</label>
@@ -261,9 +275,23 @@
                     <label>Escala</label>
                     <select name="work_schedule_type"><option value="12x36" {% if (u.work_schedule_type or '12x36') == '12x36' %}selected{% endif %}>12x36</option><option value="5x2" {% if u.work_schedule_type == '5x2' %}selected{% endif %}>5x2</option></select>
                   </div>
+                  {% set legacy_times = (u.work_shift or '05:00-17:00').replace(' ','').split('-') %}
                   <div class="editExtended scheduleField">
-                    <label>Horário</label>
-                    <input name="work_shift" value="{{ u.work_shift or '05:00-17:00' }}">
+                    <label>Início da jornada</label>
+                    <input name="work_start_time" type="time" value="{{ u.work_start_time or (legacy_times[0] if legacy_times|length > 0 else '05:00') }}">
+                  </div>
+                  <div class="editExtended scheduleField">
+                    <label>Fim da jornada</label>
+                    <input name="work_end_time" type="time" value="{{ u.work_end_time or (legacy_times[-1] if legacy_times|length > 1 else '17:00') }}">
+                  </div>
+                  <div class="editExtended scheduleField">
+                    <label>Início da refeição</label>
+                    <input name="meal_start_time" type="time" value="{{ u.meal_start_time or '' }}">
+                    <small>Referência flexível. Não bloqueia a jornada.</small>
+                  </div>
+                  <div class="editExtended scheduleField">
+                    <label>Fim da refeição</label>
+                    <input name="meal_end_time" type="time" value="{{ u.meal_end_time or '' }}">
                   </div>
                   <div class="editExtended scheduleField anchorField">
                     <label>Data referência</label>

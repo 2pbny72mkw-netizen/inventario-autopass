@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V79.4 REV2"
+APP_RELEASE = "V79.5"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -282,7 +282,12 @@ class User(db.Model):
     archived_at = db.Column(db.DateTime)
     company = db.Column(db.String(180))
     work_schedule_type = db.Column(db.String(30))
+    # V79.5 — jornada estruturada. work_shift permanece como campo legado/compatibilidade.
     work_shift = db.Column(db.String(30))
+    work_start_time = db.Column(db.String(5))
+    work_end_time = db.Column(db.String(5))
+    meal_start_time = db.Column(db.String(5))
+    meal_end_time = db.Column(db.String(5))
     work_anchor_date = db.Column(db.Date)
     work_anchor_status = db.Column(db.String(20))
     job_title = db.Column(db.String(120))
@@ -1956,7 +1961,7 @@ ACCESS_GROUPS = {
         "engineering.items.view","engineering.items.manage","engineering.bom.view","engineering.bom.manage","engineering.import","engineering.pricing.view","engineering.pricing.manage"
     )),
     "portal": ("Portal do Cliente", ("portal.appointments","portal.receive","portal.manage")),
-    "arrow": ("Arrow", ("arrow.view","arrow.manage","arrow.delete","arrow.dashboard","arrow.remote")),
+    "arrow": ("Arrow", ("arrow.view","arrow.manage","arrow.edit","arrow.delete","arrow.dashboard","arrow.remote")),
     "about_versions": ("Sobre / Versões", ("about.versions",)),
 }
 ACCESS_MODULES = tuple(ACCESS_GROUPS.keys())
@@ -1964,7 +1969,7 @@ ACCESS_SUBMODULES = tuple(k for _g,(_label,children) in ACCESS_GROUPS.items() fo
 ACCESS_ALL = set(ACCESS_MODULES) | set(ACCESS_SUBMODULES)
 ACCESS_LABELS = {
  "dashboard.general":"Dashboard Geral",
- "field.dashboard":"Dashboard Field","field.inventory":"Inventário / Lançamento","field.calls":"Chamados","field.preventive":"Solicitação Preventiva ATM","field.equipment":"Equipamentos","field.evidence":"Evidências","field.panorama":"Visão Panorâmica","field.chip_recarga":"Troca de Chips – Recarga","field.firmware_pos_cptm":"Atualização de Firmware POS – CPTM","field.bobbins":"Atividade Bobinas","field.bobbins_dashboard":"Dashboard de Bobinas / Insumos","field.stock_manage":"Alterar estoque consolidado / armários / bobinas",
+ "field.dashboard":"Dashboard Field","field.inventory":"Inventário / Lançamento","field.calls":"Chamados","field.preventive":"Solicitação Preventiva ATM","field.equipment":"Equipamentos","field.evidence":"Evidências","field.panorama":"Visão Panorâmica","field.chip_recarga":"Troca de Chips – Recarga","field.firmware_pos_cptm":"Atualização de Firmware POS – CPTM","field.bobbins":"Atividade Bobinas","field.bobbins_dashboard":"Visualizar Dashboard Bobinas","field.stock_manage":"Alterar estoque consolidado / armários / bobinas",
  "implantation.dashboard":"Dashboard Implantação","implantation.visits":"Visita a Campo / Relatório de Visita","implantation.reports":"Relatórios / Visitas recentes","implantation.emv":"Troca de Chips EMV – Trilhos","implantation.garage":"Troca de Chips Garagem",
  "teams.map":"Mapa operacional","teams.today":"Operação de Hoje","teams.schedule":"Escala por dias","teams.manage":"Gestão de equipes / escala","teams.export":"Exportar dados","teams.apt":"APT / Validades",
  "users.view":"Visualizar usuários","users.config.view":"Visualizar configurações de usuários","users.config.manage":"Gerenciar configurações de usuários","users.create":"Criar usuário","users.edit":"Editar usuário","users.activate":"Ativar / Desativar","users.delete":"Excluir / Arquivar","users.password":"Redefinir senha","users.export":"Exportar Excel","users.import":"Importar Excel de configurações","users.roles.manage":"Atribuir perfis administrativos / sensíveis","users.scope.all":"Administrar usuários de todas as empresas",
@@ -1973,7 +1978,7 @@ ACCESS_LABELS = {
  "materials.my_documents":"Meus documentos / Minha carga","materials.request":"Solicitar material","materials.catalog.view":"Visualizar catálogo","materials.catalog.manage":"Cadastrar / editar / inativar materiais","materials.kits.manage":"Gerenciar kits","materials.delivery.create":"Criar e enviar entregas","materials.delivery.manage":"Gerenciar aceites / correções","materials.dossier.view":"Dossiê dos colaboradores","materials.access_lists.view":"Listas de acesso Metrô / CPTM","materials.access_lists.manage":"Gerar / validar listas de acesso",
  "engineering.items.view":"Visualizar cadastro de itens","engineering.items.manage":"Cadastrar / editar itens","engineering.bom.view":"Visualizar estruturas BOM","engineering.bom.manage":"Criar / revisar BOM","engineering.import":"Importar planilhas de Engenharia","engineering.pricing.view":"Visualizar formação de preço","engineering.pricing.manage":"Criar / editar estudos de preço",
  "portal.appointments":"Criar / consultar agendamentos","portal.receive":"Receber agendamentos","portal.manage":"Administrar Portal do Cliente",
- "arrow.view":"Visualizar Arrow","arrow.manage":"Gerenciar Arrow / alocações","arrow.delete":"Excluir atividades Arrow","arrow.dashboard":"Dashboard Arrow","arrow.remote":"TeamViewer / Atendimento Remoto",
+ "arrow.view":"Visualizar Arrow","arrow.manage":"Gerenciar Arrow / alocações","arrow.edit":"Editar atividade Arrow","arrow.delete":"Excluir atividade Arrow","arrow.dashboard":"Dashboard Arrow","arrow.remote":"TeamViewer / Atendimento Remoto",
  "about.versions":"Histórico / Versões",
 }
 
@@ -1989,7 +1994,7 @@ def _expand_legacy_access(values):
 def _default_access_for_role(role):
     defaults={
       "manager":set(ACCESS_SUBMODULES),
-      "manager_field":{"engineering.items.view","engineering.bom.view","engineering.pricing.view","materials.my_documents","materials.request","materials.catalog.view","materials.catalog.manage","materials.kits.manage","materials.delivery.create","materials.delivery.manage","materials.dossier.view","dashboard.general","field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.firmware_pos_cptm","field.bobbins","field.bobbins_dashboard","field.stock_manage","implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage","teams.map","teams.today","teams.schedule","teams.manage","teams.export","teams.apt","finance.dashboard","management.calls","management.360","management.notifications","management.diagnostics","management.gps_history","management.work_authorizations","portal.receive","portal.manage","arrow.view","arrow.manage","arrow.delete","arrow.dashboard","arrow.remote","materials.access_lists.view","materials.access_lists.manage","about.versions"},
+      "manager_field":{"engineering.items.view","engineering.bom.view","engineering.pricing.view","materials.my_documents","materials.request","materials.catalog.view","materials.catalog.manage","materials.kits.manage","materials.delivery.create","materials.delivery.manage","materials.dossier.view","dashboard.general","field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.firmware_pos_cptm","field.bobbins","field.bobbins_dashboard","field.stock_manage","implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage","teams.map","teams.today","teams.schedule","teams.manage","teams.export","teams.apt","finance.dashboard","management.calls","management.360","management.notifications","management.diagnostics","management.gps_history","management.work_authorizations","portal.receive","portal.manage","arrow.view","arrow.manage","arrow.edit","arrow.delete","arrow.dashboard","arrow.remote","materials.access_lists.view","materials.access_lists.manage","about.versions"},
       "technician":{"materials.my_documents","materials.request","field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.firmware_pos_cptm","field.bobbins","about.versions"},
       "technician_implantation":{"materials.my_documents","materials.request","field.inventory","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.firmware_pos_cptm","field.bobbins","implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage","about.versions"},
       "consultation":{"dashboard.general","field.dashboard","field.inventory","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.firmware_pos_cptm","field.bobbins_dashboard","teams.map","teams.today","teams.schedule","about.versions"},
@@ -2312,6 +2317,30 @@ def _v72_parse_shift(value):
     h1,m1,h2,m2 = map(int,m.groups())
     return (max(0,min(23,h1)),max(0,min(59,m1)),max(0,min(23,h2)),max(0,min(59,m2)))
 
+# V79.5 — cadastro de jornada estruturado. A refeição é referência flexível e
+# não participa do bloqueio de acesso/jornada.
+def _v795_time_value(value, fallback=""):
+    value=(value or "").strip()
+    return value if re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d",value) else fallback
+
+def _v795_legacy_schedule_parts(user=None, raw_shift=None):
+    raw=(raw_shift if raw_shift is not None else (getattr(user,"work_shift",None) if user else "")) or ""
+    times=re.findall(r"(?:[01]?\d|2[0-3]):[0-5]\d",raw)
+    if len(times)>=4:
+        return times[0].zfill(5),times[3].zfill(5),times[1].zfill(5),times[2].zfill(5)
+    if len(times)>=2:
+        return times[0].zfill(5),times[1].zfill(5),"",""
+    return "05:00","17:00","",""
+
+def _v795_schedule_from_form(form,user=None):
+    ls,le,lms,lme=_v795_legacy_schedule_parts(user)
+    start=_v795_time_value(form.get("work_start_time"),getattr(user,"work_start_time",None) or ls)
+    end=_v795_time_value(form.get("work_end_time"),getattr(user,"work_end_time",None) or le)
+    meal_start=_v795_time_value(form.get("meal_start_time"),getattr(user,"meal_start_time",None) or lms)
+    meal_end=_v795_time_value(form.get("meal_end_time"),getattr(user,"meal_end_time",None) or lme)
+    # Refeição é opcional/flexível; aceita ambos vazios. Se apenas um lado vier, preserva o informado.
+    return start,end,meal_start,meal_end,f"{start}-{end}"
+
 def _v72_profile_for_user(user):
     if not user:
         return None
@@ -2324,7 +2353,7 @@ def _v72_profile_for_user(user):
     p = TempProfile()
     p.active = bool(user.active)
     p.schedule_type = user.work_schedule_type or "12x36"
-    p.shift = user.work_shift or "05:00-17:00"
+    p.shift = user.work_shift or f"{getattr(user, 'work_start_time', None) or '05:00'}-{getattr(user, 'work_end_time', None) or '17:00'}"
     anchor = user.work_anchor_date or datetime.now(V72_TZ).date()
     p.anchor_date = anchor if normalize(user.work_anchor_status or "TRABALHA") != "FOLGA" else anchor - timedelta(days=1)
     return p
@@ -7221,11 +7250,11 @@ def v741_users_config_export():
         if me and (me.company or "").strip(): users_q=users_q.filter(func.lower(User.company)==(me.company or "").strip().lower())
         if me and (me.company or "").strip():users_q=users_q.filter(func.lower(func.coalesce(User.company,""))==(me.company or "").strip().lower())
     rows=users_q.order_by(User.name).all();wb=Workbook();ws=wb.active;ws.title="COLABORADORES_CONFIG"
-    fixed=["user_id","Código","Usuário","Nome","Empresa","Perfil","Cargo","CPF","RG","Locais de atuação","Ativo","Acesso Metrô","Acesso CPTM","Acesso Motiva (APT)","GPS obrigatório","Histórico GPS","Controle Jornada","Escala","Horário","Admissão","Desligamento"]
+    fixed=["user_id","Código","Usuário","Nome","Empresa","Perfil","Cargo","CPF","RG","Locais de atuação","Ativo","Acesso Metrô","Acesso CPTM","Acesso Motiva (APT)","GPS obrigatório","Histórico GPS","Controle Jornada","Escala","Início jornada","Fim jornada","Início refeição","Fim refeição","Admissão","Desligamento"]
     perms=list(ACCESS_SUBMODULES);headers=fixed+[f"PERM | {ACCESS_LABELS.get(p,p)}" for p in perms]
     ws.append(headers)
     for u in rows:
-        acc=_user_access_set(u); vals=[u.id,u.user_code or "",u.username,u.name,u.company or "",_v75_role_label(u.role),u.job_title or "",u.cpf or "",u.rg or "",", ".join(json.loads(u.operating_locations_json or "[]")),"SIM" if u.active else "NÃO","SIM" if u.access_metro else "NÃO","SIM" if u.access_cptm else "NÃO","SIM" if u.access_motiva_apt else "NÃO","SIM" if u.gps_required else "NÃO","SIM" if u.gps_history_enabled else "NÃO","SIM" if u.journey_control_enabled else "NÃO",u.work_schedule_type or "",u.work_shift or "",u.admission_date,u.termination_date]+["SIM" if p in acc else "NÃO" for p in perms];ws.append(vals)
+        acc=_user_access_set(u); vals=[u.id,u.user_code or "",u.username,u.name,u.company or "",_v75_role_label(u.role),u.job_title or "",u.cpf or "",u.rg or "",", ".join(json.loads(u.operating_locations_json or "[]")),"SIM" if u.active else "NÃO","SIM" if u.access_metro else "NÃO","SIM" if u.access_cptm else "NÃO","SIM" if u.access_motiva_apt else "NÃO","SIM" if u.gps_required else "NÃO","SIM" if u.gps_history_enabled else "NÃO","SIM" if u.journey_control_enabled else "NÃO",u.work_schedule_type or "",u.work_start_time or _v795_legacy_schedule_parts(u)[0],u.work_end_time or _v795_legacy_schedule_parts(u)[1],u.meal_start_time or _v795_legacy_schedule_parts(u)[2],u.meal_end_time or _v795_legacy_schedule_parts(u)[3],u.admission_date,u.termination_date]+["SIM" if p in acc else "NÃO" for p in perms];ws.append(vals)
     for cell in ws[1]:cell.font=Font(bold=True,color="FFFFFF");cell.fill=PatternFill("solid",fgColor="1F4E78");cell.alignment=Alignment(horizontal="center",vertical="center",wrap_text=True)
     ws.freeze_panes="A2";ws.auto_filter.ref=ws.dimensions
     for i in range(1,len(headers)+1):ws.column_dimensions[get_column_letter(i)].width=18 if i>5 else 16
@@ -7273,6 +7302,19 @@ def _v741_read_user_config(raw,apply=False):
             raw=str(row[idx["Locais de atuação"]]);allowed={"METRO","CPTM","L4","L5","OUTROS"};newloc=[x.strip().upper() for x in re.split(r"[,;]",raw) if x.strip().upper() in allowed];oldloc=json.loads(u.operating_locations_json or "[]")
             if oldloc!=newloc:local.append(("Locais de atuação",", ".join(oldloc) or "—",", ".join(newloc) or "—"))
             if apply:u.operating_locations_json=json.dumps(newloc,ensure_ascii=False)
+        # V79.5 — horários estruturados; refeição é referência flexível.
+        schedule_cols=(("Início jornada","work_start_time"),("Fim jornada","work_end_time"),("Início refeição","meal_start_time"),("Fim refeição","meal_end_time"))
+        schedule_changed=False
+        for h,attr in schedule_cols:
+            if h not in idx or row[idx[h]] in (None,""):continue
+            new=_v795_time_value(str(row[idx[h]]).strip(),"")
+            if not new:errors.append(f"Linha {rn} · {h}: horário inválido");continue
+            old=str(getattr(u,attr,None) or "")
+            if old!=new:local.append((h,old or "—",new));schedule_changed=True
+            if apply:setattr(u,attr,new)
+        if apply and schedule_changed:
+            st=u.work_start_time or _v795_legacy_schedule_parts(u)[0];en=u.work_end_time or _v795_legacy_schedule_parts(u)[1]
+            u.work_shift=f"{st}-{en}"
         # permissões: só altera colunas explicitamente SIM/NÃO; vazio preserva
         acc=set(_user_access_set(u)); acc_changed=False
         for h,p in perm_by_header.items():
@@ -7405,7 +7447,7 @@ def create_user():
     gps_history_enabled = request.form.get("gps_history_enabled") == "1"
     journey_control_enabled = request.form.get("journey_control_enabled") == "1"
     work_schedule_type = request.form.get("work_schedule_type", "12x36").strip() or "12x36"
-    work_shift = request.form.get("work_shift", "05:00-17:00").strip() or "05:00-17:00"
+    work_start_time,work_end_time,meal_start_time,meal_end_time,work_shift = _v795_schedule_from_form(request.form)
     work_anchor_status = request.form.get("work_anchor_status", "TRABALHA").strip() or "TRABALHA"
     work_anchor_date_raw = request.form.get("work_anchor_date", "").strip()
     try:
@@ -7468,6 +7510,10 @@ def create_user():
         access_metro=access_metro, access_cptm=access_cptm, access_motiva_apt=access_motiva_apt, cpf=(request.form.get("cpf") or "").strip() or None, rg=(request.form.get("rg") or "").strip() or None,
         work_schedule_type=work_schedule_type if role in ("technician", "technician_implantation", "manager_field") else None,
         work_shift=work_shift if role in ("technician", "technician_implantation", "manager_field") else None,
+        work_start_time=work_start_time if role in ("technician", "technician_implantation", "manager_field") else None,
+        work_end_time=work_end_time if role in ("technician", "technician_implantation", "manager_field") else None,
+        meal_start_time=meal_start_time if role in ("technician", "technician_implantation", "manager_field") else None,
+        meal_end_time=meal_end_time if role in ("technician", "technician_implantation", "manager_field") else None,
         work_anchor_date=work_anchor_date if role in ("technician", "technician_implantation", "manager_field") and work_schedule_type == "12x36" else None,
         work_anchor_status=work_anchor_status if role in ("technician", "technician_implantation", "manager_field") and work_schedule_type == "12x36" else None,
         access_json=(system_profile.access_json if system_profile else json.dumps(_parse_access_form(role), ensure_ascii=False)),
@@ -7614,7 +7660,7 @@ def edit_user(user_id):
     gps_history_enabled = request.form.get("gps_history_enabled") == "1"
     journey_control_enabled = request.form.get("journey_control_enabled") == "1"
     work_schedule_type = request.form.get("work_schedule_type", user.work_schedule_type or "12x36").strip() or "12x36"
-    work_shift = request.form.get("work_shift", user.work_shift or "05:00-17:00").strip() or "05:00-17:00"
+    work_start_time,work_end_time,meal_start_time,meal_end_time,work_shift = _v795_schedule_from_form(request.form,user)
     work_anchor_status = request.form.get("work_anchor_status", user.work_anchor_status or "TRABALHA").strip() or "TRABALHA"
     work_anchor_date_raw = request.form.get("work_anchor_date", "").strip()
     try:
@@ -7744,11 +7790,19 @@ def edit_user(user_id):
     if role in ("technician", "technician_implantation", "manager_field"):
         user.work_schedule_type = work_schedule_type
         user.work_shift = work_shift
+        user.work_start_time = work_start_time
+        user.work_end_time = work_end_time
+        user.meal_start_time = meal_start_time or None
+        user.meal_end_time = meal_end_time or None
         user.work_anchor_date = work_anchor_date if work_schedule_type == "12x36" else None
         user.work_anchor_status = work_anchor_status if work_schedule_type == "12x36" else None
     else:
         user.work_schedule_type = None
         user.work_shift = None
+        user.work_start_time = None
+        user.work_end_time = None
+        user.meal_start_time = None
+        user.meal_end_time = None
         user.work_anchor_date = None
         user.work_anchor_status = None
 
@@ -14565,7 +14619,7 @@ def v75_arrow():
     arrow_locs=ArrowLocation.query.filter_by(active=True).order_by(ArrowLocation.name).all()
     mats=MaterialCatalogItem.query.filter_by(active=True).order_by(MaterialCatalogItem.description).all()
     tech_companies=sorted({(u.company or '').strip() for u in techs if (u.company or '').strip()},key=lambda x:normalize(x))
-    current=db.session.get(User,session.get('user_id'));return render_template("arrow_v75.html",app_release=APP_RELEASE,technicians=techs,technician_companies=tech_companies,locations=locs,arrow_locations=arrow_locs,materials=mats,current_user_id=session.get('user_id'),current_username=(current.username if current else ''),can_manage=_has_access('arrow.manage'),can_delete=_has_access('arrow.delete') or _has_access('arrow.manage'))
+    current=db.session.get(User,session.get('user_id'));return render_template("arrow_v75.html",app_release=APP_RELEASE,technicians=techs,technician_companies=tech_companies,locations=locs,arrow_locations=arrow_locs,materials=mats,current_user_id=session.get('user_id'),current_username=(current.username if current else ''),can_manage=_has_access('arrow.manage'),can_edit=_has_access('arrow.edit'),can_delete=_has_access('arrow.delete'))
 
 @app.get("/api/arrow/localidades")
 @login_required
@@ -14587,7 +14641,11 @@ def _v75_arrow_eligibility(u,operator):
     operator=(operator or "OUTROS").upper()
     if operator=="METRO": ok=bool(u.access_metro);reason="Acesso Metrô não habilitado no perfil."
     elif operator=="CPTM": ok=bool(u.access_cptm);reason="Acesso CPTM não habilitado no perfil."
-    elif operator=="MOTIVA": ok=bool(u.access_motiva_apt and _v741_has_valid_apt(u.id));reason="Acesso Motiva/APT não está regular."
+    elif operator=="MOTIVA":
+        # V79.5 — a APT deixa de ser obrigatória na alocação inicial da Arrow.
+        # Mantemos o indicador de acesso Motiva; validade da APT permanece disponível
+        # para acompanhamento de RH/governança, mas não bloqueia a criação/edição.
+        ok=bool(u.access_motiva_apt);reason="Acesso Motiva não habilitado no perfil."
     else: ok=True;reason=""
     return ok,reason
 
@@ -14599,16 +14657,13 @@ def v75_arrow_eligibility_api(uid):
     return jsonify({'ok':True,'eligible':ok,'reason':reason,'operator':op,'access':{'metro':bool(u.access_metro),'cptm':bool(u.access_cptm),'motiva_apt':bool(u.access_motiva_apt),'apt_valid':_v741_has_valid_apt(u.id)}})
 
 def _v7893_arrow_can_edit(activity):
-    if not _has_access("arrow.manage"):return False
-    user=db.session.get(User,session.get("user_id"))
-    if user and user.role in ("technician","technician_implantation") and activity.technician_id!=user.id:return False
-    return True
+    # V79.5 — edição é governada exclusivamente pela permissão específica.
+    # ADM continua integral via _has_access(); nenhum nome de perfil interfere.
+    return _has_access("arrow.edit")
 
 def _v7893_arrow_can_delete(activity):
-    if not (_has_access("arrow.delete") or _has_access("arrow.manage")):return False
-    user=db.session.get(User,session.get("user_id"))
-    if user and user.role in ("technician","technician_implantation") and activity.technician_id!=user.id:return False
-    return True
+    # Exclusão é independente da edição/gestão.
+    return _has_access("arrow.delete")
 
 def _v7893_arrow_location_label(activity):
     if getattr(activity,'arrow_location_id',None):
@@ -16917,6 +16972,46 @@ with app.app_context():
                     if col not in cols: conn.execute(text(f'ALTER TABLE apt_records ADD COLUMN {col} {typ}'))
     except Exception:
         app.logger.exception('Falha na migração aditiva V73.5 apt_records')
+
+    # V79.5 — jornada estruturada + nova permissão de edição Arrow.
+    try:
+        insp=db.inspect(db.engine)
+        if insp.has_table('users'):
+            cols={c['name'] for c in insp.get_columns('users')}
+            with db.engine.begin() as conn:
+                if 'work_start_time' not in cols: conn.execute(text("ALTER TABLE users ADD COLUMN work_start_time VARCHAR(5)"))
+                if 'work_end_time' not in cols: conn.execute(text("ALTER TABLE users ADD COLUMN work_end_time VARCHAR(5)"))
+                if 'meal_start_time' not in cols: conn.execute(text("ALTER TABLE users ADD COLUMN meal_start_time VARCHAR(5)"))
+                if 'meal_end_time' not in cols: conn.execute(text("ALTER TABLE users ADD COLUMN meal_end_time VARCHAR(5)"))
+            # Migra somente campos vazios; work_shift legado continua preservado para compatibilidade.
+            for u in User.query.all():
+                if u.role not in ("technician","technician_implantation","manager_field") and not (u.work_schedule_type or u.work_shift):
+                    continue
+                ls,le,lms,lme=_v795_legacy_schedule_parts(u)
+                if not u.work_start_time:u.work_start_time=ls
+                if not u.work_end_time:u.work_end_time=le
+                if not u.meal_start_time and lms:u.meal_start_time=lms
+                if not u.meal_end_time and lme:u.meal_end_time=lme
+                if u.work_start_time and u.work_end_time:u.work_shift=f"{u.work_start_time}-{u.work_end_time}"
+        # Preserva quem já podia editar via arrow.manage: adiciona arrow.edit uma única vez
+        # aos perfis configuráveis e acessos individuais, sem alterar exclusão.
+        if not SchemaMigration.query.filter_by(version='V79.5-001').first():
+            for p in SystemProfile.query.all():
+                try:acc=set(json.loads(p.access_json or '[]'))
+                except:acc=set()
+                if 'arrow.manage' in acc and 'arrow.edit' not in acc:
+                    acc.add('arrow.edit');p.access_json=json.dumps(sorted(acc),ensure_ascii=False)
+            for u in User.query.filter(User.system_profile_id.is_(None)).all():
+                try:acc=set(json.loads(u.access_json or '[]'))
+                except:acc=set()
+                if 'arrow.manage' in acc and 'arrow.edit' not in acc:
+                    acc.add('arrow.edit');u.access_json=json.dumps(sorted(acc),ensure_ascii=False)
+            db.session.add(SchemaMigration(version='V79.5-001',description='Jornada estruturada; permissão Editar atividade Arrow; Dashboard Bobinas na matriz; APT não bloqueia alocação inicial Arrow'))
+        db.session.commit()
+    except Exception:
+        try:db.session.rollback()
+        except Exception:pass
+        app.logger.exception('V79.5: falha na migração de jornada/permissões Arrow')
 
     # V72 — parâmetros individuais de histórico GPS e controle de jornada.
     try:
