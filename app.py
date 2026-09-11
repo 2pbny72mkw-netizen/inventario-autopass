@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V79.5"
+APP_RELEASE = "V79.5 REV1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -14388,9 +14388,31 @@ def v73_apt_page():
         if nr35 and n35!=nr35:continue
         if aso and asost!=aso:continue
         if integration and inst!=integration:continue
-        data.append({"row":x,"validity_status":vs,"days":days,"nr10_status":n10,"nr35_status":n35,"aso_status":asost,"integration_status":inst})
+        data.append({"row":x,"validity_status":vs,"days":days,"nr10_status":n10,"nr35_status":n35,"aso_status":asost,"integration_status":inst,"missing_apt":False})
+
+    # V79.5 REV1 — a tela de APT passa a ser colaborador-cêntrica também.
+    # Antes, a listagem nascia somente de AptRecord; por isso uma empresa podia
+    # exibir apenas os colaboradores que já tinham APT cadastrada. Agora, quando
+    # não há filtros específicos de documento/linha/inativos, os colaboradores
+    # ativos do Cadastro de Usuários sem APT aparecem como "SEM APT".
+    show_missing=(active in ('active','all') and not line and not process and not nr10 and not nr35 and not aso and not integration and (not validity or validity=='SEM VALIDADE'))
+    if show_missing:
+        represented_user_ids={x["row"].user_id for x in data if getattr(x["row"],"user_id",None)}
+        uq=User.query.filter(User.active.is_(True), User.role!='customer')
+        if company:uq=uq.filter(User.company==company)
+        if q:
+            uq=uq.filter(or_(User.name.ilike(f"%{q}%"),User.company.ilike(f"%{q}%"),User.username.ilike(f"%{q}%")))
+        for u in uq.order_by(User.name).all():
+            if u.id in represented_user_ids:continue
+            # Se existe qualquer APT ativa vinculada ao usuário fora do recorte
+            # atual, não cria linha sintética duplicada.
+            if AptRecord.query.filter_by(user_id=u.id,active=True).first():continue
+            data.append({"row":u,"validity_status":"SEM VALIDADE","days":None,"nr10_status":"SEM DATA","nr35_status":"SEM DATA","aso_status":"SEM DATA","integration_status":"SEM DATA","missing_apt":True})
+        data.sort(key=lambda z: normalize((z["row"].name if z.get("missing_apt") else z["row"].collaborator_name) or ''))
+
     summary={k:sum(1 for x in data if x["validity_status"]==k) for k in ("VENCIDA","ATÉ 15 DIAS","ATÉ 30 DIAS","ATÉ 40 DIAS","REGULAR","SEM VALIDADE")}
-    companies=sorted({x.company for x in AptRecord.query.filter(AptRecord.company.isnot(None)).all() if x.company});lines=sorted({x.line for x in AptRecord.query.filter(AptRecord.line.isnot(None)).all() if x.line})
+    # Empresas vêm do cadastro mestre de usuários + registros históricos de APT.
+    companies=sorted(({x.company for x in AptRecord.query.filter(AptRecord.company.isnot(None)).all() if x.company} | {u.company for u in User.query.filter(User.active.is_(True),User.company.isnot(None)).all() if u.company}),key=lambda x:normalize(x));lines=sorted({x.line for x in AptRecord.query.filter(AptRecord.line.isnot(None)).all() if x.line})
     users=User.query.filter(User.active.is_(True)).order_by(User.name).all()
     apt_users=[{"id":u.id,"name":u.name,"company":u.company or "","job_title":u.job_title or "","username":u.username} for u in users if u.role not in ('customer',)]
     apt_user_companies=sorted({x['company'] for x in apt_users if x['company']},key=lambda x:normalize(x))
