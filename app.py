@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V80 REV4"
+APP_RELEASE = "V80 REV5"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -807,6 +807,15 @@ class FinancialCashCollection(db.Model):
     processed_media_type = db.Column(db.String(40))
     processing_charge = db.Column(db.Float)
     monitoring_note = db.Column(db.Text)
+    # V80 REV5: governança do fechamento para não quebrar ciclos por registros apenas informativos.
+    cycle_excluded = db.Column(db.Boolean, nullable=False, default=False, index=True)
+    cycle_exclusion_reason = db.Column(db.Text)
+    cycle_excluded_by = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
+    cycle_excluded_at = db.Column(db.DateTime)
+    soft_deleted = db.Column(db.Boolean, nullable=False, default=False, index=True)
+    soft_delete_reason = db.Column(db.Text)
+    soft_deleted_by = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
+    soft_deleted_at = db.Column(db.DateTime)
     denomination_json = db.Column(db.Text, nullable=False, default="[]")
     transport_charge = db.Column(db.Float)
     source_file = db.Column(db.String(255))
@@ -12237,7 +12246,10 @@ def migrate_financial_v524_columns():
         commands.extend(sup_commands)
         # V56-B: dados físicos do processamento TBForte para análise de numerário/cédulas.
         cash_cols={c["name"] for c in inspector.get_columns("financial_cash_collections")} if "financial_cash_collections" in inspector.get_table_names() else set()
-        for col,sql in (("processed_note_count","INTEGER"),("processed_media_type","VARCHAR(40)"),("processing_charge","FLOAT"),("monitoring_note","TEXT"),("denomination_json","TEXT NOT NULL DEFAULT '[]'"),("transport_charge","FLOAT")):
+        for col,sql in (("processed_note_count","INTEGER"),("processed_media_type","VARCHAR(40)"),("processing_charge","FLOAT"),("monitoring_note","TEXT"),
+                        ("cycle_excluded","BOOLEAN NOT NULL DEFAULT FALSE"),("cycle_exclusion_reason","TEXT"),("cycle_excluded_by","INTEGER"),("cycle_excluded_at","TIMESTAMP"),
+                        ("soft_deleted","BOOLEAN NOT NULL DEFAULT FALSE"),("soft_delete_reason","TEXT"),("soft_deleted_by","INTEGER"),("soft_deleted_at","TIMESTAMP"),
+                        ("denomination_json","TEXT NOT NULL DEFAULT '[]'"),("transport_charge","FLOAT")):
             if col not in cash_cols: commands.append(f"ALTER TABLE financial_cash_collections ADD COLUMN {col} {sql}")
         # Índices de leitura pesada observados na Telemetria V60.
         tables=set(inspector.get_table_names())
@@ -13119,6 +13131,8 @@ def _v79_seed_cash_module():
                 db.session.add(SchemaMigration(version='V80-001',description='Monitoramento Inteligente: análises de divergências e ocorrências, gráficos Dash 2.0 e preparação da conciliação por ciclo'))
             if not SchemaMigration.query.filter_by(version='V80REV1-001').first():
                 db.session.add(SchemaMigration(version='V80REV1-001',description='Coleta de Valores: importação incremental R0050, última carga, filtros/ordenação da programação e planejamento de auditores por localidade/data'))
+            if not SchemaMigration.query.filter_by(version='V80REV5-001').first():
+                db.session.add(SchemaMigration(version='V80REV5-001',description='Coleta de Valores: cadeia de fechamentos válidos, observações não cortam ciclo, desconsideração e exclusão lógica auditável'))
         except Exception:
             app.logger.exception("V79.2: falha ao carregar histórico TBForte JAN-AGO/2026")
     if not SchemaMigration.query.filter_by(version='V79-001').first():
@@ -13221,13 +13235,29 @@ def _v804_tx_statuses(raw=None, default=None):
         if st in allowed and st not in out: out.append(st)
     return out
 
+def _v805_is_valid_closure(ev):
+    """Somente um fechamento/slip real delimita ciclo. Registro informativo não pode cortar a janela."""
+    return bool(ev and ev.end_at and not bool(getattr(ev,"soft_deleted",False)) and not bool(getattr(ev,"cycle_excluded",False)) and ev.declared_amount is not None)
+
+def _v805_prev_closure(ev):
+    if not ev or not ev.terminal or not ev.end_at: return None
+    return FinancialCashCollection.query.filter(
+        FinancialCashCollection.terminal==ev.terminal,
+        FinancialCashCollection.end_at<ev.end_at,
+        FinancialCashCollection.declared_amount.isnot(None),
+        func.coalesce(FinancialCashCollection.cycle_excluded,False).is_(False),
+        func.coalesce(FinancialCashCollection.soft_deleted,False).is_(False)
+    ).order_by(FinancialCashCollection.end_at.desc()).first()
+
 def _v802_event_cycle_summary(ev, calc_statuses=None):
-    """Resumo do ciclo encerrado por uma coleta: coleta anterior < transações <= coleta atual."""
+    """Resumo do ciclo encerrado por um fechamento válido: fechamento anterior < transações <= fechamento atual."""
     if not ev or not ev.terminal or not ev.end_at:
         return None
-    prev=FinancialCashCollection.query.filter(FinancialCashCollection.terminal==ev.terminal,FinancialCashCollection.end_at<ev.end_at).order_by(FinancialCashCollection.end_at.desc()).first()
+    if not _v805_is_valid_closure(ev):
+        return {"available":False,"reason":"NAO_FECHAMENTO_VALIDO","cycle_valid":False}
+    prev=_v805_prev_closure(ev)
     if not prev:
-        return {"available":False,"reason":"SEM_COLETA_ANTERIOR"}
+        return {"available":False,"reason":"SEM_FECHAMENTO_ANTERIOR","cycle_valid":True}
     statuses=list(calc_statuses if calc_statuses is not None else ["A","V"])
     base=db.session.query(func.count(FinancialATMTransaction.id),func.coalesce(func.sum(func.coalesce(FinancialATMTransaction.received_value,FinancialATMTransaction.value)),0)).filter(
         FinancialATMTransaction.terminal==ev.terminal,FinancialATMTransaction.transaction_at>prev.end_at,FinancialATMTransaction.transaction_at<=ev.end_at
@@ -13239,7 +13269,7 @@ def _v802_event_cycle_summary(ev, calc_statuses=None):
         q=(0,0)
     count=int(q[0] or 0); total=round(float(q[1] or 0),2)
     declared=None if ev.declared_amount is None else round(float(ev.declared_amount),2)
-    return {"available":True,"initial_id":prev.id,"final_id":ev.id,"initial_at":prev.end_at.isoformat(),"final_at":ev.end_at.isoformat(),"transaction_count":count,"transaction_sum":total,"difference_tx_declared":None if declared is None else round(total-declared,2),"calc_statuses":statuses}
+    return {"available":True,"cycle_valid":True,"initial_id":prev.id,"final_id":ev.id,"initial_at":prev.end_at.isoformat(),"final_at":ev.end_at.isoformat(),"transaction_count":count,"transaction_sum":total,"difference_tx_declared":None if declared is None else round(total-declared,2),"calc_statuses":statuses}
 
 def _v792_cash_payload(start,end,calc_statuses=None):
     schedules={x.terminal:x for x in FinancialCashSchedule.query.filter(FinancialCashSchedule.active.is_(True)).all()}
@@ -13247,9 +13277,9 @@ def _v792_cash_payload(start,end,calc_statuses=None):
     daily_reports=FinancialCashDailyReport.query.filter(FinancialCashDailyReport.terminal.in_(terminals),FinancialCashDailyReport.report_date>=start,FinancialCashDailyReport.report_date<=end).order_by(FinancialCashDailyReport.report_date).all() if terminals else []
     recent_reports=FinancialCashDailyReport.query.filter(FinancialCashDailyReport.terminal.in_(terminals),FinancialCashDailyReport.report_date>=date.today()-timedelta(days=30)).order_by(FinancialCashDailyReport.report_date).all() if terminals else []
     report_map={(x.terminal,x.report_date.isoformat()):x for x in daily_reports}
-    latest_dates=dict(db.session.query(FinancialCashCollection.terminal,func.max(FinancialCashCollection.collection_date)).filter(FinancialCashCollection.terminal.in_(terminals)).group_by(FinancialCashCollection.terminal).all()) if terminals else {}
+    latest_dates=dict(db.session.query(FinancialCashCollection.terminal,func.max(FinancialCashCollection.collection_date)).filter(FinancialCashCollection.terminal.in_(terminals),func.coalesce(FinancialCashCollection.soft_deleted,False).is_(False)).group_by(FinancialCashCollection.terminal).all()) if terminals else {}
     failed_counts=dict(db.session.query(FinancialCashDailyReport.terminal,func.count(FinancialCashDailyReport.id)).filter(FinancialCashDailyReport.terminal.in_(terminals),FinancialCashDailyReport.result_status=='NAO_RECOLHIDO',FinancialCashDailyReport.report_date>=date.today()-timedelta(days=30)).group_by(FinancialCashDailyReport.terminal).all()) if terminals else {}
-    collections=FinancialCashCollection.query.filter(FinancialCashCollection.terminal.in_(terminals),FinancialCashCollection.collection_date>=start,FinancialCashCollection.collection_date<=end).order_by(FinancialCashCollection.end_at).all() if terminals else []
+    collections=FinancialCashCollection.query.filter(FinancialCashCollection.terminal.in_(terminals),FinancialCashCollection.collection_date>=start,FinancialCashCollection.collection_date<=end,func.coalesce(FinancialCashCollection.soft_deleted,False).is_(False)).order_by(FinancialCashCollection.end_at).all() if terminals else []
     by_terminal={}
     for x in collections: by_terminal.setdefault(x.terminal,[]).append(x)
     overrides=FinancialCashPlanOverride.query.filter(FinancialCashPlanOverride.terminal.in_(terminals),FinancialCashPlanOverride.original_date<=end,FinancialCashPlanOverride.scheduled_date>=start).all() if terminals else []
@@ -13285,7 +13315,7 @@ def _v792_cash_payload(start,end,calc_statuses=None):
                 "event_id":ev.id if ev else None,"time":(ev.end_at.strftime("%H:%M") if ev else (ov.scheduled_time if ov else "")),
                 "declared_amount":dec,"processed_amount":ap,"difference":diff,"denomination_count":den_count,"denomination_value":den_value,"denominations":denominations,"note":((ev.monitoring_note or "") if ev else ((report.note or "") if report else (ov.note or "" if ov else ""))),
                 "gtv":((ev.gtv or "") if ev else ((report.gtv or "") if report else "")),"daily_report_id":report.id if report else None,"provider_status":report.provider_status if report else "","occurrence":report.occurrence if report else "",
-                "next_prediction":nxt["date"] if nxt else None,"transaction_cycle":_v802_event_cycle_summary(ev,calc_statuses) if ev else None})
+                "next_prediction":nxt["date"] if nxt else None,"cycle_valid":_v805_is_valid_closure(ev) if ev else False,"cycle_excluded":bool(getattr(ev,"cycle_excluded",False)) if ev else False,"transaction_cycle":_v802_event_cycle_summary(ev,calc_statuses) if ev else None})
             planned_all.append((t,occurrences[-1]))
         planned_dates={o["date"] for o in occurrences}; extra=[]
         for ev in events:
@@ -13293,7 +13323,7 @@ def _v792_cash_payload(start,end,calc_statuses=None):
             dec=None if ev.declared_amount is None else float(ev.declared_amount); ap=None if ev.processed_amount is None else float(ev.processed_amount)
             diff=round(ap-dec,2) if dec is not None and ap is not None else None
             extra_next=next((f for f in future if date.fromisoformat(f["date"])>ev.collection_date),None)
-            extra.append({"date":ev.collection_date.isoformat(),"original_date":ev.collection_date.isoformat(),"status":"COLETA_EXTRA","event_id":ev.id,"time":ev.end_at.strftime("%H:%M"),"declared_amount":dec,"processed_amount":ap,"difference":diff,"note":ev.monitoring_note or ev.processed_media_type or "","next_prediction":extra_next["date"] if extra_next else None,"transaction_cycle":_v802_event_cycle_summary(ev,calc_statuses)})
+            extra.append({"date":ev.collection_date.isoformat(),"original_date":ev.collection_date.isoformat(),"status":"COLETA_EXTRA","event_id":ev.id,"time":ev.end_at.strftime("%H:%M"),"declared_amount":dec,"processed_amount":ap,"difference":diff,"note":ev.monitoring_note or ev.processed_media_type or "","next_prediction":extra_next["date"] if extra_next else None,"cycle_valid":_v805_is_valid_closure(ev),"cycle_excluded":bool(getattr(ev,"cycle_excluded",False)),"transaction_cycle":_v802_event_cycle_summary(ev,calc_statuses)})
         for report in daily_reports:
             if report.terminal!=t or report.report_date.isoformat() in planned_dates: continue
             extra_next=next((f for f in future if date.fromisoformat(f["date"])>report.report_date),None)
@@ -13684,8 +13714,28 @@ def financial_cash_reconciliation_collections():
     if not _has_access("finance.apuracao"): return jsonify({"ok":False,"error":"Sem permissão."}),403
     terminal=_fin_terminal(request.args.get("terminal"));
     if not terminal:return jsonify({"ok":True,"rows":[]})
-    rows=FinancialCashCollection.query.filter_by(terminal=terminal).order_by(FinancialCashCollection.end_at).all()
+    rows=FinancialCashCollection.query.filter(FinancialCashCollection.terminal==terminal,func.coalesce(FinancialCashCollection.soft_deleted,False).is_(False)).order_by(FinancialCashCollection.end_at).all()
     return jsonify({"ok":True,"rows":[{"id":x.id,"terminal":x.terminal,"date":x.end_at.isoformat(),"date_label":x.end_at.strftime("%d/%m/%y %H:%M"),"recollected_amount":round(float(x.collected_amount or 0),2),"collected_amount":round(float(x.collected_amount or 0),2),"declared_amount":None if x.declared_amount is None else round(float(x.declared_amount),2),"processed_amount":None if x.processed_amount is None else round(float(x.processed_amount),2),"processed_note_count":getattr(x,"processed_note_count",None),"processed_media_type":getattr(x,"processed_media_type",None) or "","point_name":x.point_name or "","gtv":x.gtv or ""} for x in rows]})
+
+@app.post("/api/financeiro/coletas/v80/evento/<int:event_id>/acao")
+@login_required
+def financial_cash_v805_event_action(event_id):
+    if not _has_access("finance.collection"):
+        return jsonify({"ok":False,"error":"Sem permissão."}),403
+    ev=db.session.get(FinancialCashCollection,event_id)
+    if not ev: return jsonify({"ok":False,"error":"Registro não encontrado."}),404
+    data=request.get_json(silent=True) or {}; action=str(data.get("action") or "").strip().lower(); reason=str(data.get("reason") or "").strip()[:1000]
+    uid=session.get("user_id"); now=datetime.utcnow()
+    if action=="exclude_cycle":
+        ev.cycle_excluded=True; ev.cycle_exclusion_reason=reason or "Desconsiderado manualmente como fechamento"; ev.cycle_excluded_by=uid; ev.cycle_excluded_at=now
+    elif action=="restore_cycle":
+        ev.cycle_excluded=False; ev.cycle_exclusion_reason=None; ev.cycle_excluded_by=None; ev.cycle_excluded_at=None
+    elif action=="delete":
+        ev.soft_deleted=True; ev.soft_delete_reason=reason or "Exclusão lógica pelo Monitoramento"; ev.soft_deleted_by=uid; ev.soft_deleted_at=now
+    else:
+        return jsonify({"ok":False,"error":"Ação inválida."}),400
+    db.session.add(ev); db.session.commit()
+    return jsonify({"ok":True,"event_id":ev.id,"action":action,"message":"Registro atualizado. Os ciclos seguintes serão recalculados usando apenas fechamentos válidos."})
 
 @app.get("/api/financeiro/coletas/v80/ciclo/<int:event_id>")
 @login_required
@@ -13693,9 +13743,10 @@ def financial_cash_v802_cycle_detail(event_id):
     if not (_has_access("finance.collection") or _has_access("finance.apuracao")):
         return jsonify({"ok":False,"error":"Sem permissão."}),403
     b=db.session.get(FinancialCashCollection,event_id)
-    if not b: return jsonify({"ok":False,"error":"Coleta não encontrada."}),404
-    a=FinancialCashCollection.query.filter(FinancialCashCollection.terminal==b.terminal,FinancialCashCollection.end_at<b.end_at).order_by(FinancialCashCollection.end_at.desc()).first()
-    if not a: return jsonify({"ok":False,"error":"Não existe coleta anterior para formar o ciclo."}),400
+    if not b or bool(getattr(b,"soft_deleted",False)): return jsonify({"ok":False,"error":"Coleta não encontrada."}),404
+    if not _v805_is_valid_closure(b): return jsonify({"ok":False,"error":"Este registro não é um fechamento válido e não delimita ciclo transacional."}),400
+    a=_v805_prev_closure(b)
+    if not a: return jsonify({"ok":False,"error":"Não existe fechamento válido anterior para formar o ciclo."}),400
     q_all=FinancialATMTransaction.query.filter(FinancialATMTransaction.terminal==b.terminal,FinancialATMTransaction.transaction_at>a.end_at,FinancialATMTransaction.transaction_at<=b.end_at)
     calc_statuses=_v804_tx_statuses(request.args.get("calc_statuses") if "calc_statuses" in request.args else None)
     txs=q_all.order_by(FinancialATMTransaction.transaction_at).all()
@@ -13730,7 +13781,7 @@ def financial_cash_v802_cycle_detail(event_id):
     # V80 REV4: o modal herda os status selecionados no Monitoramento principal.
     available_statuses=sorted({(x.status or "—").strip().upper() or "—" for x in txs})
     default_calc_statuses=[x for x in calc_statuses if x in available_statuses]
-    return jsonify({"ok":True,"available_statuses":available_statuses,"default_calc_statuses":default_calc_statuses,"terminal":b.terminal,"initial":{"id":a.id,"at":a.end_at.isoformat(),"label":a.end_at.strftime("%d/%m/%Y %H:%M")},"final":{"id":b.id,"at":b.end_at.isoformat(),"label":b.end_at.strftime("%d/%m/%Y %H:%M")},"transaction_count":len(valid_txs),"all_transaction_count":len(txs),"transaction_sum":tx_sum,"declared_amount":declared,"processed_amount":processed,"difference_tx_declared":None if declared is None else round(tx_sum-declared,2),"difference_declared_processed":None if declared is None or processed is None else round(processed-declared,2),"difference_tx_processed":None if processed is None else round(processed-tx_sum,2),"denominations":denoms,"all_denominations":all_denoms,"note_count":note_qty,"note_amount":note_amount,"status_breakdown":[{"status":st or "—","count":int(n),"amount":round(float(v or 0),2)} for st,n,v in status_rows],"products":[{**z,"amount":round(z["amount"],2)} for z in sorted(products.values(),key=lambda z:z["amount"],reverse=True)],"transactions":details,"transactions_truncated":len(txs)>2000,"insights":[x.replace(",","X").replace(".",",").replace("X",".") for x in insight],"rule":"Ciclo: transação > fechamento anterior e <= fechamento atual. Na V80 REV4 os status de cálculo são herdados do Monitoramento principal e podem ser refinados no modal."})
+    return jsonify({"ok":True,"available_statuses":available_statuses,"default_calc_statuses":default_calc_statuses,"terminal":b.terminal,"initial":{"id":a.id,"at":a.end_at.isoformat(),"label":a.end_at.strftime("%d/%m/%Y %H:%M")},"final":{"id":b.id,"at":b.end_at.isoformat(),"label":b.end_at.strftime("%d/%m/%Y %H:%M")},"transaction_count":len(valid_txs),"all_transaction_count":len(txs),"transaction_sum":tx_sum,"declared_amount":declared,"processed_amount":processed,"difference_tx_declared":None if declared is None else round(tx_sum-declared,2),"difference_declared_processed":None if declared is None or processed is None else round(processed-declared,2),"difference_tx_processed":None if processed is None else round(processed-tx_sum,2),"denominations":denoms,"all_denominations":all_denoms,"note_count":note_qty,"note_amount":note_amount,"status_breakdown":[{"status":st or "—","count":int(n),"amount":round(float(v or 0),2)} for st,n,v in status_rows],"products":[{**z,"amount":round(z["amount"],2)} for z in sorted(products.values(),key=lambda z:z["amount"],reverse=True)],"transactions":details,"transactions_truncated":len(txs)>2000,"insights":[x.replace(",","X").replace(".",",").replace("X",".") for x in insight],"rule":"Ciclo: transação > fechamento válido anterior e <= fechamento válido atual. Registros apenas informativos, desconsiderados ou excluídos não cortam a janela. Os status de cálculo são herdados do Monitoramento principal e podem ser refinados no modal."})
 
 @app.get("/api/financeiro/apuracao/calcular")
 @login_required
