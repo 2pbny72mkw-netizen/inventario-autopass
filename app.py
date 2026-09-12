@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V79.5 REV3"
+APP_RELEASE = "V80"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -13028,6 +13028,8 @@ def _v79_seed_cash_module():
                 db.session.add(SchemaMigration(version='V79.3-001',description='Coleta de Valores: paginação visual de 10 linhas e consolidação financeira/cédulas nos Big Numbers'))
             if not SchemaMigration.query.filter_by(version='V79.4-001').first():
                 db.session.add(SchemaMigration(version='V79.4-001',description='Coleta de Valores: Dash 2.0, edição compacta por ATM, reporte diário colado e fila de criticidade'))
+            if not SchemaMigration.query.filter_by(version='V80-001').first():
+                db.session.add(SchemaMigration(version='V80-001',description='Monitoramento Inteligente: análises de divergências e ocorrências, gráficos Dash 2.0 e preparação da conciliação por ciclo'))
         except Exception:
             app.logger.exception("V79.2: falha ao carregar histórico TBForte JAN-AGO/2026")
     if not SchemaMigration.query.filter_by(version='V79-001').first():
@@ -13291,6 +13293,163 @@ def financial_cash_v794_daily_import():
             ov.status='PENDENTE_COLETA'; ov.note=x['note']; ov.updated_by=session.get('user_id'); ov.updated_at=datetime.utcnow()
     db.session.add(AuditEvent(event_type='COLETA_REPORTE_DIARIO_IMPORTADO',user_id=session.get('user_id'),entity_type='financial_cash_daily_reports',entity_id=str(imported),detail=json.dumps({'imported':imported,'skipped':skipped,'unmatched':len(unmatched)},ensure_ascii=False)))
     db.session.commit(); return jsonify({"ok":True,"imported":imported,"skipped":skipped,"unmatched":unmatched})
+
+# V80 — Monitoramento Inteligente da Coleta de Valores.
+# Os cálculos quantitativos são determinísticos. A camada "IA" interpreta os
+# indicadores e observações sem alterar os dados financeiros de origem.
+def _v80_occurrence_category(note, occurrence="", status=""):
+    t=_v794_norm_text(" ".join([str(note or ""),str(occurrence or ""),str(status or "")]))
+    if any(x in t for x in ("FECHADURA","CHAVE QUEBR","CHAVE PRESA","PORTA DO COFRE","ABERTURA DO COFRE","COFRE TRAV","NAO ABRE COFRE")):
+        return "Fechadura / cofre"
+    if any(x in t for x in ("SEM SUPORTE","FALTA DE SUPORTE","AGUARDANDO SUPORTE","NAO TEVE SUPORTE","SEM APOIO")):
+        return "Falta de suporte"
+    if any(x in t for x in ("NAO RECOLH","NAO COLET","IMPRODUT","COLETA NAO REALIZ")):
+        return "Coleta não realizada"
+    if any(x in t for x in ("BAG","LACRE","MALOTE")):
+        return "BAG / lacre"
+    if any(x in t for x in ("MANUTEN","ATM INDISP","EQUIPAMENTO INDISP","FORA DE OPERAC")):
+        return "ATM / manutenção"
+    if any(x in t for x in ("ACESSO","CONTRASENHA","CONTRA SENHA","SEM CONTATO","PORTAL","AUTORIZA")):
+        return "Acesso / autorização"
+    if any(x in t for x in ("TBFORTE","TB FORTE","TRANSPORTADORA","CARRO FORTE")):
+        return "Transportadora"
+    if any(x in t for x in ("REAGEND","REMARC")):
+        return "Reagendamento"
+    return "Outros"
+
+def _v80_filter_payload(start,end,args):
+    payload=_v792_cash_payload(start,end)
+    company=(args.get('company') or '').strip(); line=(args.get('line') or '').strip(); station=(args.get('station') or '').strip()
+    terminal=(args.get('terminal') or '').strip(); status=(args.get('status') or '').strip(); programming=(args.get('programming') or '').strip(); difference=(args.get('difference') or '').strip()
+    assets=[]
+    for a in payload.get('rows') or []:
+        if company and a.get('company')!=company: continue
+        if line and a.get('line')!=line: continue
+        if station and a.get('station')!=station: continue
+        if terminal and terminal not in str(a.get('terminal') or ''): continue
+        if programming and programming not in (a.get('weekly_days') or []) and programming not in [str(v) for v in (a.get('month_days') or [])]: continue
+        assets.append(a)
+    flat=[]
+    for a in assets:
+        if not a.get('has_schedule'):
+            flat.append({**a,'status':'SEM_PROGRAMACAO','date':'','difference':None,'declared_amount':None,'processed_amount':None,'note':''})
+        for o in (a.get('planned') or []): flat.append({**a,**o})
+        for o in (a.get('extra') or []): flat.append({**a,**o})
+    if status=='scheduled': flat=[x for x in flat if x.get('has_schedule')]
+    elif status=='done': flat=[x for x in flat if str(x.get('status') or '').startswith('REALIZADA')]
+    elif status=='critical': flat=[x for x in flat if x.get('criticality')=='CRITICA']
+    elif status=='high': flat=[x for x in flat if x.get('criticality')=='ALTA']
+    elif status=='recurrent': flat=[x for x in flat if int(x.get('failed_count') or 0)>=2]
+    elif status=='maintenance': flat=[x for x in flat if x.get('criticality_reason')=='MANUTENCAO']
+    elif status: flat=[x for x in flat if x.get('status')==status]
+    if difference=='ZERO': flat=[x for x in flat if x.get('difference') is not None and abs(float(x.get('difference') or 0))<.01]
+    elif difference=='POS': flat=[x for x in flat if x.get('difference') is not None and float(x.get('difference') or 0)>0]
+    elif difference=='NEG': flat=[x for x in flat if x.get('difference') is not None and float(x.get('difference') or 0)<0]
+    return payload,assets,flat
+
+def _v80_group_sum(rows,key,value_key='difference',absolute=False,limit=12):
+    out={}
+    for x in rows:
+        k=str(x.get(key) or 'Não informado')
+        v=x.get(value_key)
+        if v is None: continue
+        v=float(v); out[k]=out.get(k,0)+(abs(v) if absolute else v)
+    return [{'label':k,'value':round(v,2)} for k,v in sorted(out.items(),key=lambda kv:abs(kv[1]),reverse=True)[:limit]]
+
+def _v80_count_group(rows,key,limit=12):
+    out={}
+    for x in rows:
+        k=str(x.get(key) or 'Não informado'); out[k]=out.get(k,0)+1
+    return [{'label':k,'value':v} for k,v in sorted(out.items(),key=lambda kv:(-kv[1],kv[0]))[:limit]]
+
+@app.get('/api/financeiro/coletas/v80/analise')
+@login_required
+def financial_cash_v80_analysis():
+    if not _has_access('finance.collection'): return jsonify({'ok':False,'error':'Sem permissão.'}),403
+    try:
+        start=date.fromisoformat(request.args.get('start')); end=date.fromisoformat(request.args.get('end'))
+    except Exception:
+        start=date.today().replace(day=1); end=date.today()
+    if end<start: return jsonify({'ok':False,'error':'Período inválido.'}),400
+    mode=(request.args.get('mode') or 'divergences').strip().lower()
+    payload,assets,flat=_v80_filter_payload(start,end,request.args)
+    collected=[x for x in flat if x.get('event_id') or x.get('daily_report_id') or str(x.get('status') or '').startswith('REALIZADA') or x.get('status') in ('COLETA_EXTRA','NAO_REALIZADA','PENDENTE_COLETA','REAGENDADA')]
+    financial=[x for x in collected if x.get('declared_amount') is not None and x.get('processed_amount') is not None]
+    neg=[x for x in financial if float(x.get('difference') or 0)<-.005]
+    pos=[x for x in financial if float(x.get('difference') or 0)>.005]
+    zero=[x for x in financial if abs(float(x.get('difference') or 0))<=.005]
+    no_value=[x for x in collected if x.get('declared_amount') is None or x.get('processed_amount') is None]
+    declared=round(sum(float(x.get('declared_amount') or 0) for x in financial),2)
+    processed=round(sum(float(x.get('processed_amount') or 0) for x in financial),2)
+    net=round(sum(float(x.get('difference') or 0) for x in financial),2)
+    abs_total=round(sum(abs(float(x.get('difference') or 0)) for x in financial),2)
+    neg_sorted=sorted(neg,key=lambda x:float(x.get('difference') or 0))
+    pos_sorted=sorted(pos,key=lambda x:float(x.get('difference') or 0),reverse=True)
+    def compact(x):
+        dec=x.get('declared_amount'); dv=x.get('difference'); pct=None
+        if dec not in (None,0): pct=round(float(dv or 0)/float(dec)*100,2)
+        return {'terminal':x.get('terminal'),'company':x.get('company'),'line':x.get('line'),'station':x.get('station'),'date':x.get('date'),'declared_amount':dec,'processed_amount':x.get('processed_amount'),'difference':dv,'difference_pct':pct,'note':x.get('note') or '','status':x.get('status') or ''}
+    note_rows=[]; seen=set()
+    for x in collected:
+        note=(x.get('note') or '').strip(); occ=(x.get('occurrence') or '').strip()
+        if not note and not occ: continue
+        sig=(str(x.get('terminal')),str(x.get('date')),note,occ)
+        if sig in seen: continue
+        seen.add(sig); cat=_v80_occurrence_category(note,occ,x.get('status'))
+        note_rows.append({**compact(x),'category':cat,'occurrence':occ})
+    cat_counts={}
+    for x in note_rows: cat_counts[x['category']]=cat_counts.get(x['category'],0)+1
+    categories=[{'label':k,'value':v} for k,v in sorted(cat_counts.items(),key=lambda kv:(-kv[1],kv[0]))]
+    lock_rows=[x for x in note_rows if x['category']=='Fechadura / cofre']
+    lock_locations=_v80_count_group(lock_rows,'station',20)
+    trend={}
+    for x in financial:
+        k=x.get('date') or ''; z=trend.setdefault(k,{'date':k,'difference':0.0,'count':0}); z['difference']+=float(x.get('difference') or 0); z['count']+=1
+    trend_rows=[{'label':k,'value':round(v['difference'],2),'count':v['count']} for k,v in sorted(trend.items()) if k]
+    insights=[]
+    if mode.startswith('occ'):
+        insights.append(f"Foram identificadas {len(note_rows)} ocorrência(s) textual(is) no recorte atual, distribuídas em {len(categories)} categoria(s).")
+        if categories: insights.append(f"A causa mais frequente é {categories[0]['label']} ({categories[0]['value']} ocorrência(s)).")
+        if lock_rows and lock_locations:
+            top=lock_locations[0]; insights.append(f"Falhas de fechadura/cofre aparecem em {len(lock_rows)} registro(s); {top['label']} concentra {top['value']} ocorrência(s).")
+        recurrent={}
+        for x in note_rows: recurrent[x['terminal']]=recurrent.get(x['terminal'],0)+1
+        rr=sorted(recurrent.items(),key=lambda kv:-kv[1])
+        if rr and rr[0][1]>1: insights.append(f"ATM {rr[0][0]} é o mais recorrente nas observações, com {rr[0][1]} registro(s).")
+        if not note_rows: insights.append('Não há observações suficientes no filtro atual para classificar causas operacionais.')
+    else:
+        insights.append(f"O recorte contém {len(collected)} coleta(s)/ocorrência(s), sendo {len(financial)} com declarado e apurado disponíveis para confronto.")
+        insights.append(f"Entre as conciliáveis: {len(neg)} negativa(s), {len(zero)} zerada(s) e {len(pos)} positiva(s).")
+        if neg_sorted:
+            w=neg_sorted[0]; val=f"{abs(float(w.get('difference') or 0)):,.2f}".replace(',','X').replace('.',',').replace('X','.')
+            insights.append(f"Maior diferença negativa: ATM {w.get('terminal')} · {w.get('station') or 'sem localidade'} · R$ {val}.")
+        if abs_total:
+            av=f"{abs_total:,.2f}".replace(',','X').replace('.',',').replace('X','.'); nv=f"{net:,.2f}".replace(',','X').replace('.',',').replace('X','.')
+            insights.append(f"A movimentação absoluta das divergências é de R$ {av}; o saldo líquido Apurado − Declarado é R$ {nv}.")
+        if len(neg)>1:
+            st={}
+            for x in neg: st[x.get('station') or 'Não informado']=st.get(x.get('station') or 'Não informado',0)+abs(float(x.get('difference') or 0))
+            sk=sorted(st.items(),key=lambda kv:-kv[1])
+            if sk:
+                vv=f"{sk[0][1]:,.2f}".replace(',','X').replace('.',',').replace('X','.')
+                insights.append(f"Maior concentração de perdas por localidade: {sk[0][0]}, com R$ {vv} em diferenças negativas.")
+        if not financial: insights.append('Não há coletas com Declarado e Apurado simultaneamente preenchidos neste filtro.')
+    return jsonify({
+        'ok':True,'release':APP_RELEASE,'mode':mode,'period':{'start':start.isoformat(),'end':end.isoformat()},
+        'filters':{k:(request.args.get(k) or '') for k in ('company','line','station','terminal','status','programming','difference')},
+        'summary':{'records':len(flat),'collections':len(collected),'financial':len(financial),'negative':len(neg),'zero':len(zero),'positive':len(pos),'without_value':len(no_value),'declared':declared,'processed':processed,'net_difference':net,'absolute_difference':abs_total,'observations':len(note_rows),'lock_failures':len(lock_rows)},
+        'insights':insights,
+        'charts':{
+            'difference_distribution':[{'label':'Negativas','value':len(neg)},{'label':'Zeradas','value':len(zero)},{'label':'Positivas','value':len(pos)},{'label':'Sem valor','value':len(no_value)}],
+            'negative_top':[{'label':f"ATM {x.get('terminal')} · {x.get('station') or '—'}",'value':round(abs(float(x.get('difference') or 0)),2),'raw':round(float(x.get('difference') or 0),2)} for x in neg_sorted[:10]],
+            'positive_top':[{'label':f"ATM {x.get('terminal')} · {x.get('station') or '—'}",'value':round(float(x.get('difference') or 0),2)} for x in pos_sorted[:10]],
+            'by_company':_v80_group_sum(financial,'company',absolute=True),'by_line':_v80_group_sum(financial,'line',absolute=True),'by_station':_v80_group_sum(financial,'station',absolute=True),'trend':trend_rows,
+            'occurrence_categories':categories,'lock_locations':lock_locations,
+        },
+        'negative_rows':[compact(x) for x in neg_sorted[:50]],'occurrence_rows':note_rows[:100],
+        'methodology':{'financial':'Cálculos realizados pelo backend. Diferença = Apurado − Declarado.','occurrences':'Classificação por regras textuais auditáveis aplicada às observações do recorte filtrado.','cycle':'A conciliação de transações existente permanece baseada em janelas entre duas coletas/slips consecutivos. A regra final de dinheiro recebido será validada quando a nova base de transações for importada.'}
+    })
+
 
 @app.get('/api/financeiro/coletas/v79/export.xlsx')
 @login_required

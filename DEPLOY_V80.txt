@@ -1,0 +1,21 @@
+V80 — MONITORAMENTO INTELIGENTE / COLETA DE VALORES
+
+Aplicar estes arquivos SOBRE o projeto completo atualmente em produção, preservando os demais arquivos e o banco.
+
+1. app.py
+2. templates/financial_cash_collection.html
+3. templates/about.html
+4. templates/base.html
+5. templates/field_dashboard.html
+6. static/cash_collection_v79.js
+
+A V80 já incorpora a correção de navegação de Dashboard Bobinas da V79.5 REV4.
+Não excluir/recriar banco. Não substituir o projeto completo somente por este pacote ENXUTA.
+
+Validação pós-deploy:
+- Sobre deve exibir V80.
+- Financeiro > Coleta de Valores > Monitoramento deve mostrar os dois botões:
+  * Análise IA · Divergências
+  * Análise IA · Ocorrências
+- As análises devem mudar ao alterar os filtros do Monitoramento.
+- Usuário com permissão Visualizar Dashboard Bobinas deve continuar recebendo os atalhos REV4.
