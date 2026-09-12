@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V80 REV1"
+APP_RELEASE = "V80 REV2"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -880,6 +880,14 @@ class FinancialATMTransaction(db.Model):
     voucher_number = db.Column(db.String(100))
     status_desc = db.Column(db.String(220))
     source_collection_code = db.Column(db.String(80))
+    # V80 REV2: composição de cédulas trazida pelo R0050.
+    note_2 = db.Column(db.Integer)
+    note_5 = db.Column(db.Integer)
+    note_10 = db.Column(db.Integer)
+    note_20 = db.Column(db.Integer)
+    note_50 = db.Column(db.Integer)
+    note_100 = db.Column(db.Integer)
+    note_200 = db.Column(db.Integer)
     cpm_id = db.Column(db.String(60))
     source_file = db.Column(db.String(255))
     source_hash = db.Column(db.String(64), nullable=False, unique=True, index=True)
@@ -12235,7 +12243,8 @@ def migrate_financial_v524_columns():
         tables=set(inspector.get_table_names())
         if "financial_atm_transactions" in tables:
             tx_cols={c["name"] for c in inspector.get_columns("financial_atm_transactions")}
-            for col,sql in (("received_value","FLOAT"),("external_tx_id","VARCHAR(80)"),("product_type","VARCHAR(80)"),("product_name","VARCHAR(180)"),("voucher_generated","VARCHAR(20)"),("voucher_number","VARCHAR(100)"),("status_desc","VARCHAR(220)"),("source_collection_code","VARCHAR(80)")):
+            for col,sql in (("received_value","FLOAT"),("external_tx_id","VARCHAR(80)"),("product_type","VARCHAR(80)"),("product_name","VARCHAR(180)"),("voucher_generated","VARCHAR(20)"),("voucher_number","VARCHAR(100)"),("status_desc","VARCHAR(220)"),("source_collection_code","VARCHAR(80)"),
+                            ("note_2","INTEGER"),("note_5","INTEGER"),("note_10","INTEGER"),("note_20","INTEGER"),("note_50","INTEGER"),("note_100","INTEGER"),("note_200","INTEGER")):
                 if col not in tx_cols: commands.append(f"ALTER TABLE financial_atm_transactions ADD COLUMN {col} {sql}")
             commands.extend([
                 "CREATE INDEX IF NOT EXISTS ix_fin_tx_imported_at ON financial_atm_transactions (imported_at)",
@@ -12782,7 +12791,7 @@ def _fin_upsert_transaction_batch(mappings):
     hashes=[x["source_hash"] for x in mappings]
     existing={x.source_hash:x for x in FinancialATMTransaction.query.filter(FinancialATMTransaction.source_hash.in_(hashes)).all()}
     fresh=[]; updated=0
-    update_fields=("terminal","transaction_at","status","value","received_value","external_tx_id","product_type","product_name","voucher_generated","voucher_number","status_desc","source_collection_code","cpm_id","source_file","imported_by","imported_at")
+    update_fields=("terminal","transaction_at","status","value","received_value","external_tx_id","product_type","product_name","voucher_generated","voucher_number","status_desc","source_collection_code","note_2","note_5","note_10","note_20","note_50","note_100","note_200","cpm_id","source_file","imported_by","imported_at")
     for item in mappings:
         row=existing.get(item["source_hash"])
         if row:
@@ -12830,6 +12839,10 @@ def _fin_import_transactions_wb(wb, filename, user_id, job_id=None):
                       "product_type":str(gv(row,"TIPO_PRODUTO") or "").strip() or None,"product_name":str(gv(row,"PRODUTO") or "").strip() or None,
                       "voucher_generated":str(gv(row,"VOUCHER_GERADO") or "").strip() or None,"voucher_number":str(gv(row,"VOUCHER_NUMBER") or "").strip() or None,
                       "status_desc":str(gv(row,"STATUS DESC") or "").strip() or None,"source_collection_code":str(gv(row,"CODIGO COLETA") or "").strip() or None,
+                      "note_2":int(_fin_parse_amount(gv(row,"NOTA_2")) or 0),"note_5":int(_fin_parse_amount(gv(row,"NOTA_5")) or 0),
+                      "note_10":int(_fin_parse_amount(gv(row,"NOTA_10")) or 0),"note_20":int(_fin_parse_amount(gv(row,"NOTA_20")) or 0),
+                      "note_50":int(_fin_parse_amount(gv(row,"NOTA_50")) or 0),"note_100":int(_fin_parse_amount(gv(row,"NOTA_100")) or 0),
+                      "note_200":int(_fin_parse_amount(gv(row,"NOTA_200")) or 0),
                       "cpm_id":cpm or None,"source_file":filename,"source_hash":sh,"imported_by":user_id,"imported_at":datetime.utcnow()}
             else:
                 terminal=_fin_terminal(gv(row,"ATM")); dt=gv(row,"CTM_DATETIME_TZ")
@@ -13195,6 +13208,20 @@ def _v794_criticality(days_since_last,failed_count,reason=""):
     if score>=2: return "ATENCAO",score
     return "NORMAL",score
 
+def _v802_event_cycle_summary(ev):
+    """Resumo do ciclo encerrado por uma coleta: coleta anterior < transações <= coleta atual."""
+    if not ev or not ev.terminal or not ev.end_at:
+        return None
+    prev=FinancialCashCollection.query.filter(FinancialCashCollection.terminal==ev.terminal,FinancialCashCollection.end_at<ev.end_at).order_by(FinancialCashCollection.end_at.desc()).first()
+    if not prev:
+        return {"available":False,"reason":"SEM_COLETA_ANTERIOR"}
+    q=db.session.query(func.count(FinancialATMTransaction.id),func.coalesce(func.sum(func.coalesce(FinancialATMTransaction.received_value,FinancialATMTransaction.value)),0)).filter(
+        FinancialATMTransaction.terminal==ev.terminal,FinancialATMTransaction.transaction_at>prev.end_at,FinancialATMTransaction.transaction_at<=ev.end_at,FinancialATMTransaction.status.in_(["V","A"])
+    ).first()
+    count=int(q[0] or 0); total=round(float(q[1] or 0),2)
+    declared=None if ev.declared_amount is None else round(float(ev.declared_amount),2)
+    return {"available":True,"initial_id":prev.id,"final_id":ev.id,"initial_at":prev.end_at.isoformat(),"final_at":ev.end_at.isoformat(),"transaction_count":count,"transaction_sum":total,"difference_tx_declared":None if declared is None else round(total-declared,2)}
+
 def _v792_cash_payload(start,end):
     schedules={x.terminal:x for x in FinancialCashSchedule.query.filter(FinancialCashSchedule.active.is_(True)).all()}
     official=_v79_cash_base(); terminals=[x["terminal"] for x in official]
@@ -13239,7 +13266,7 @@ def _v792_cash_payload(start,end):
                 "event_id":ev.id if ev else None,"time":(ev.end_at.strftime("%H:%M") if ev else (ov.scheduled_time if ov else "")),
                 "declared_amount":dec,"processed_amount":ap,"difference":diff,"denomination_count":den_count,"denomination_value":den_value,"denominations":denominations,"note":((ev.monitoring_note or "") if ev else ((report.note or "") if report else (ov.note or "" if ov else ""))),
                 "gtv":((ev.gtv or "") if ev else ((report.gtv or "") if report else "")),"daily_report_id":report.id if report else None,"provider_status":report.provider_status if report else "","occurrence":report.occurrence if report else "",
-                "next_prediction":nxt["date"] if nxt else None})
+                "next_prediction":nxt["date"] if nxt else None,"transaction_cycle":_v802_event_cycle_summary(ev) if ev else None})
             planned_all.append((t,occurrences[-1]))
         planned_dates={o["date"] for o in occurrences}; extra=[]
         for ev in events:
@@ -13247,7 +13274,7 @@ def _v792_cash_payload(start,end):
             dec=None if ev.declared_amount is None else float(ev.declared_amount); ap=None if ev.processed_amount is None else float(ev.processed_amount)
             diff=round(ap-dec,2) if dec is not None and ap is not None else None
             extra_next=next((f for f in future if date.fromisoformat(f["date"])>ev.collection_date),None)
-            extra.append({"date":ev.collection_date.isoformat(),"original_date":ev.collection_date.isoformat(),"status":"COLETA_EXTRA","event_id":ev.id,"time":ev.end_at.strftime("%H:%M"),"declared_amount":dec,"processed_amount":ap,"difference":diff,"note":ev.monitoring_note or ev.processed_media_type or "","next_prediction":extra_next["date"] if extra_next else None})
+            extra.append({"date":ev.collection_date.isoformat(),"original_date":ev.collection_date.isoformat(),"status":"COLETA_EXTRA","event_id":ev.id,"time":ev.end_at.strftime("%H:%M"),"declared_amount":dec,"processed_amount":ap,"difference":diff,"note":ev.monitoring_note or ev.processed_media_type or "","next_prediction":extra_next["date"] if extra_next else None,"transaction_cycle":_v802_event_cycle_summary(ev)})
         for report in daily_reports:
             if report.terminal!=t or report.report_date.isoformat() in planned_dates: continue
             extra_next=next((f for f in future if date.fromisoformat(f["date"])>report.report_date),None)
@@ -13638,6 +13665,48 @@ def financial_cash_reconciliation_collections():
     rows=FinancialCashCollection.query.filter_by(terminal=terminal).order_by(FinancialCashCollection.end_at).all()
     return jsonify({"ok":True,"rows":[{"id":x.id,"terminal":x.terminal,"date":x.end_at.isoformat(),"date_label":x.end_at.strftime("%d/%m/%y %H:%M"),"recollected_amount":round(float(x.collected_amount or 0),2),"collected_amount":round(float(x.collected_amount or 0),2),"declared_amount":None if x.declared_amount is None else round(float(x.declared_amount),2),"processed_amount":None if x.processed_amount is None else round(float(x.processed_amount),2),"processed_note_count":getattr(x,"processed_note_count",None),"processed_media_type":getattr(x,"processed_media_type",None) or "","point_name":x.point_name or "","gtv":x.gtv or ""} for x in rows]})
 
+@app.get("/api/financeiro/coletas/v80/ciclo/<int:event_id>")
+@login_required
+def financial_cash_v802_cycle_detail(event_id):
+    if not (_has_access("finance.collection") or _has_access("finance.apuracao")):
+        return jsonify({"ok":False,"error":"Sem permissão."}),403
+    b=db.session.get(FinancialCashCollection,event_id)
+    if not b: return jsonify({"ok":False,"error":"Coleta não encontrada."}),404
+    a=FinancialCashCollection.query.filter(FinancialCashCollection.terminal==b.terminal,FinancialCashCollection.end_at<b.end_at).order_by(FinancialCashCollection.end_at.desc()).first()
+    if not a: return jsonify({"ok":False,"error":"Não existe coleta anterior para formar o ciclo."}),400
+    q_all=FinancialATMTransaction.query.filter(FinancialATMTransaction.terminal==b.terminal,FinancialATMTransaction.transaction_at>a.end_at,FinancialATMTransaction.transaction_at<=b.end_at)
+    valid=q_all.filter(FinancialATMTransaction.status.in_(["V","A"]))
+    txs=q_all.order_by(FinancialATMTransaction.transaction_at).all()
+    valid_txs=[x for x in txs if (x.status or "") in ("V","A")]
+    tx_sum=round(sum(float((x.received_value if x.received_value is not None else x.value) or 0) for x in valid_txs),2)
+    declared=None if b.declared_amount is None else round(float(b.declared_amount),2); processed=None if b.processed_amount is None else round(float(b.processed_amount),2)
+    denoms=[]
+    for value,attr in ((2,"note_2"),(5,"note_5"),(10,"note_10"),(20,"note_20"),(50,"note_50"),(100,"note_100"),(200,"note_200")):
+        qty=sum(int(getattr(x,attr,0) or 0) for x in valid_txs)
+        denoms.append({"value":value,"quantity":qty,"amount":round(value*qty,2)})
+    all_denoms=[]
+    for value,attr in ((2,"note_2"),(5,"note_5"),(10,"note_10"),(20,"note_20"),(50,"note_50"),(100,"note_100"),(200,"note_200")):
+        qty=sum(int(getattr(x,attr,0) or 0) for x in txs)
+        all_denoms.append({"value":value,"quantity":qty,"amount":round(value*qty,2)})
+    status_rows=db.session.query(FinancialATMTransaction.status,func.count(FinancialATMTransaction.id),func.coalesce(func.sum(func.coalesce(FinancialATMTransaction.received_value,FinancialATMTransaction.value)),0)).filter(FinancialATMTransaction.terminal==b.terminal,FinancialATMTransaction.transaction_at>a.end_at,FinancialATMTransaction.transaction_at<=b.end_at).group_by(FinancialATMTransaction.status).all()
+    products={}
+    for x in txs:
+        k=(x.product_type or x.product_name or "Sem produto").strip() or "Sem produto"
+        z=products.setdefault(k,{"product":k,"count":0,"amount":0.0}); z["count"]+=1; z["amount"]+=float((x.received_value if x.received_value is not None else x.value) or 0)
+    details=[]
+    for x in txs[:2000]:
+        details.append({"at":x.transaction_at.isoformat(),"status":x.status or "","status_desc":x.status_desc or "","value":round(float(x.value or 0),2),"received_value":round(float((x.received_value if x.received_value is not None else x.value) or 0),2),"product_type":x.product_type or "","product":x.product_name or "","voucher_generated":x.voucher_generated or "","voucher_number":x.voucher_number or "","external_tx_id":x.external_tx_id or "","denominations":{str(v):int(getattr(x,a,0) or 0) for v,a in ((2,"note_2"),(5,"note_5"),(10,"note_10"),(20,"note_20"),(50,"note_50"),(100,"note_100"),(200,"note_200"))}})
+    note_qty=sum(x["quantity"] for x in denoms); note_amount=round(sum(x["amount"] for x in denoms),2)
+    insight=[]
+    if declared is not None:
+        d=round(tx_sum-declared,2); insight.append("Transações e filipeta coincidem no ciclo." if abs(d)<.01 else f"Transações x filipeta apresentam diferença de R$ {d:,.2f}.")
+    if processed is not None and declared is not None:
+        d=round(processed-declared,2); insight.append("Filipeta e apurado coincidem." if abs(d)<.01 else f"Filipeta x apurado apresentam diferença de R$ {d:,.2f}.")
+    if note_qty:
+        ranked=sorted([x for x in denoms if x["quantity"]],key=lambda x:x["amount"],reverse=True)
+        if ranked: insight.append(f"A cédula de R$ {ranked[0]['value']:.0f} concentra o maior valor no ciclo: R$ {ranked[0]['amount']:,.2f} em {ranked[0]['quantity']} nota(s).")
+    return jsonify({"ok":True,"terminal":b.terminal,"initial":{"id":a.id,"at":a.end_at.isoformat(),"label":a.end_at.strftime("%d/%m/%Y %H:%M")},"final":{"id":b.id,"at":b.end_at.isoformat(),"label":b.end_at.strftime("%d/%m/%Y %H:%M")},"transaction_count":len(valid_txs),"all_transaction_count":len(txs),"transaction_sum":tx_sum,"declared_amount":declared,"processed_amount":processed,"difference_tx_declared":None if declared is None else round(tx_sum-declared,2),"difference_declared_processed":None if declared is None or processed is None else round(processed-declared,2),"difference_tx_processed":None if processed is None else round(processed-tx_sum,2),"denominations":denoms,"all_denominations":all_denoms,"note_count":note_qty,"note_amount":note_amount,"status_breakdown":[{"status":st or "—","count":int(n),"amount":round(float(v or 0),2)} for st,n,v in status_rows],"products":[{**z,"amount":round(z["amount"],2)} for z in sorted(products.values(),key=lambda z:z["amount"],reverse=True)],"transactions":details,"transactions_truncated":len(txs)>2000,"insights":[x.replace(",","X").replace(".",",").replace("X",".") for x in insight],"rule":"Ciclo: transação > fechamento anterior e <= fechamento atual. Totais conciliados usam status A/V; o modal também exibe todos os status para auditoria."})
+
 @app.get("/api/financeiro/apuracao/calcular")
 @login_required
 def financial_cash_reconciliation_calculate():
@@ -13665,7 +13734,7 @@ def financial_cash_reconciliation_calculate():
     if tx_count: observations.append(f"{tx_count:,} transação(ões), considerando somente status V + A; ticket médio R$ {avg_ticket:,.2f}.".replace(",","X").replace(".",",").replace("X","."))
     if note_count: observations.append(f"TBForte processou {note_count:,} cédula(s) vinculadas à coleta final.".replace(",","."))
     details=base.order_by(FinancialATMTransaction.transaction_at).limit(500).all()
-    return jsonify({"ok":True,"terminal":terminal,"initial":{"id":a.id,"at":a.end_at.isoformat(),"label":a.end_at.strftime("%d/%m/%Y %H:%M"),"amount":None if a.processed_amount is None else round(float(a.processed_amount),2),"processed_amount":None if a.processed_amount is None else round(float(a.processed_amount),2),"declared_amount":None if a.declared_amount is None else round(float(a.declared_amount),2),"recollected_amount":round(float(a.collected_amount or 0),2)},"final":{"id":b.id,"at":b.end_at.isoformat(),"label":b.end_at.strftime("%d/%m/%Y %H:%M"),"amount":None if processed is None else round(processed,2),"processed_amount":None if processed is None else round(processed,2),"declared_amount":None if declared is None else round(declared,2),"recollected_amount":round(recollected,2),"processed_note_count":note_count,"processed_media_type":getattr(b,"processed_media_type",None) or "","processing_charge":round(float(getattr(b,"processing_charge",0) or 0),2)},"transaction_count":tx_count,"transaction_sum":round(tx_sum,2),"all_status_count":tx_count,"recollected_amount":round(recollected,2),"collected_amount":round(recollected,2),"declared_amount":None if declared is None else round(declared,2),"processed_amount":None if processed is None else round(processed,2),"processed_note_count":note_count,"difference":diff_tx_ap,"difference_pct":pct_tx_ap,"difference_tx_apurado":diff_tx_ap,"difference_tx_declarado":diff_tx_dec,"difference_apurado_declarado":diff_ap_dec,"duration_hours":round(duration_hours,2),"duration_days":round(duration_days,2),"average_ticket":avg_ticket,"average_per_day":avg_day,"average_value_per_processed_note":avg_note,"status":"CONCILIADO" if diff_tx_ap is not None and abs(diff_tx_ap)<0.01 else "DIVERGENCIA","diagnosis":diagnosis,"diagnosis_text":diagnosis_text,"observations":observations,"status_breakdown":[{"status":st or "—","count":int(n),"amount":round(float(v or 0),2)} for st,n,v in status_rows],"transactions":[{"at":x.transaction_at.isoformat(),"label":x.transaction_at.strftime("%d/%m/%Y %H:%M:%S"),"status":x.status or "","value":round(float((x.received_value if x.received_value is not None else x.value) or 0),2),"nominal_value":round(float(x.value or 0),2),"received_value":None if x.received_value is None else round(float(x.received_value),2),"product_type":x.product_type or "","product":x.product_name or "","voucher_generated":x.voucher_generated or ""} for x in details],"transactions_truncated":tx_count>500,"rule":"Valor das Transações considera somente status V + A; após o horário final da coleta inicial e até o horário final da coleta final"})
+    return jsonify({"ok":True,"terminal":terminal,"initial":{"id":a.id,"at":a.end_at.isoformat(),"label":a.end_at.strftime("%d/%m/%Y %H:%M"),"amount":None if a.processed_amount is None else round(float(a.processed_amount),2),"processed_amount":None if a.processed_amount is None else round(float(a.processed_amount),2),"declared_amount":None if a.declared_amount is None else round(float(a.declared_amount),2),"recollected_amount":round(float(a.collected_amount or 0),2)},"final":{"id":b.id,"at":b.end_at.isoformat(),"label":b.end_at.strftime("%d/%m/%Y %H:%M"),"amount":None if processed is None else round(processed,2),"processed_amount":None if processed is None else round(processed,2),"declared_amount":None if declared is None else round(declared,2),"recollected_amount":round(recollected,2),"processed_note_count":note_count,"processed_media_type":getattr(b,"processed_media_type",None) or "","processing_charge":round(float(getattr(b,"processing_charge",0) or 0),2)},"transaction_count":tx_count,"transaction_sum":round(tx_sum,2),"all_status_count":tx_count,"recollected_amount":round(recollected,2),"collected_amount":round(recollected,2),"declared_amount":None if declared is None else round(declared,2),"processed_amount":None if processed is None else round(processed,2),"processed_note_count":note_count,"difference":diff_tx_ap,"difference_pct":pct_tx_ap,"difference_tx_apurado":diff_tx_ap,"difference_tx_declarado":diff_tx_dec,"difference_apurado_declarado":diff_ap_dec,"duration_hours":round(duration_hours,2),"duration_days":round(duration_days,2),"average_ticket":avg_ticket,"average_per_day":avg_day,"average_value_per_processed_note":avg_note,"status":"CONCILIADO" if diff_tx_ap is not None and abs(diff_tx_ap)<0.01 else "DIVERGENCIA","diagnosis":diagnosis,"diagnosis_text":diagnosis_text,"observations":observations,"status_breakdown":[{"status":st or "—","count":int(n),"amount":round(float(v or 0),2)} for st,n,v in status_rows],"transactions":[{"at":x.transaction_at.isoformat(),"label":x.transaction_at.strftime("%d/%m/%Y %H:%M:%S"),"status":x.status or "","value":round(float((x.received_value if x.received_value is not None else x.value) or 0),2),"nominal_value":round(float(x.value or 0),2),"received_value":None if x.received_value is None else round(float(x.received_value),2),"product_type":x.product_type or "","product":x.product_name or "","voucher_generated":x.voucher_generated or "","denominations":{str(v):int(getattr(x,a,0) or 0) for v,a in ((2,"note_2"),(5,"note_5"),(10,"note_10"),(20,"note_20"),(50,"note_50"),(100,"note_100"),(200,"note_200"))}} for x in details],"transactions_truncated":tx_count>500,"rule":"Valor das Transações considera somente status V + A; após o horário final da coleta inicial e até o horário final da coleta final"})
 
 @app.get("/api/financeiro/apuracao/calcular-multiplos")
 @login_required

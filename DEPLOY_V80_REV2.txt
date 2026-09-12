@@ -1,0 +1,22 @@
+V80 REV2 — DEPLOY ENXUTO
+
+1. Sobrepor os arquivos deste ZIP ao projeto completo atualmente em produção.
+2. Não substituir o projeto inteiro somente por este pacote ENXUTO.
+3. Reiniciar/redeployar o serviço para executar a migração aditiva das novas colunas de cédulas.
+4. Confirmar no sistema que a versão exibida é V80 REV2.
+5. Após o deploy, REIMPORTAR UMA VEZ o relatório R0050 atual.
+   - A reimportação NÃO duplica as transações existentes.
+   - Ela atualiza/enriquece os registros já conhecidos com nota_2, nota_5, nota_10, nota_20, nota_50, nota_100 e nota_200.
+6. Validar um ciclo conhecido, por exemplo ATM 32852:
+   - fechamento anterior 01/09/2026 11:56;
+   - fechamento atual 10/09/2026 12:00;
+   - coluna Transações deve usar somente o intervalo > 01/09 11:56 e <= 10/09 12:00;
+   - clicar no valor de Transações para abrir o detalhe do ciclo e a composição de cédulas.
+
+Arquivos alterados:
+- app.py
+- templates/financial_cash_collection.html
+- templates/about.html
+- static/cash_collection_v79.js
+- README_V80_REV2.md
+- DEPLOY_V80_REV2.txt
