@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V80 REV7"
+APP_RELEASE = "V80 REV8"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -13154,6 +13154,7 @@ def _v79_seed_cash_module():
                 db.session.add(SchemaMigration(version='V80REV6-001',description='Coleta de Valores: fechamento sistêmico R0050 prioritário, fonte visual Sistema/Manual, última coleta e controle Recolher no topo'))
             if not SchemaMigration.query.filter_by(version='V80REV7-001').first():
                 db.session.add(SchemaMigration(version='V80REV7-001',description='Coleta de Valores: Data Coleta/Código Coleta R0050 oficial por ATM+data, BAG no Monitoramento e tabela em largura ampliada'))
+                db.session.add(SchemaMigration(version='V80REV8-001',description='Coleta de Valores: descoberta automática de fechamentos extras diretamente no R0050 e cadeia cronológica por ATM'))
         except Exception:
             app.logger.exception("V79.2: falha ao carregar histórico TBForte JAN-AGO/2026")
     if not SchemaMigration.query.filter_by(version='V79-001').first():
@@ -13259,6 +13260,53 @@ def _v804_tx_statuses(raw=None, default=None):
 def _v805_is_valid_closure(ev):
     """Somente um fechamento/slip real delimita ciclo. Registro informativo não pode cortar a janela."""
     return bool(ev and ev.end_at and not bool(getattr(ev,"soft_deleted",False)) and not bool(getattr(ev,"cycle_excluded",False)) and ev.declared_amount is not None)
+
+def _v808_system_closures(terminal, start_date=None, end_date=None):
+    """V80 REV8: descobre fechamentos diretamente no R0050 por Código Coleta + Data Coleta.
+    Não depende de existir previamente um FinancialCashCollection no Monitoramento.
+    """
+    if not terminal: return []
+    q=db.session.query(FinancialATMTransaction.source_collection_at,FinancialATMTransaction.source_collection_code).filter(
+        FinancialATMTransaction.terminal==terminal,
+        FinancialATMTransaction.source_collection_at.isnot(None)
+    )
+    if start_date:
+        q=q.filter(FinancialATMTransaction.source_collection_at>=datetime.combine(start_date,datetime.min.time()))
+    if end_date:
+        q=q.filter(FinancialATMTransaction.source_collection_at<datetime.combine(end_date+timedelta(days=1),datetime.min.time()))
+    uniq={}
+    for at,code in q.distinct().all():
+        if not at: continue
+        code=str(code or '').strip()
+        # Código Coleta é a identidade preferencial; Data Coleta diferencia eventual código vazio/repetido.
+        key=(code,at)
+        uniq[key]={"at":at,"collection_code":code,"source":"R0050"}
+    return sorted(uniq.values(),key=lambda x:x["at"])
+
+def _v808_system_cycle_summary(terminal, final_info, calc_statuses=None):
+    """Calcula um ciclo descoberto pelo R0050, mesmo sem lançamento manual correspondente."""
+    if not terminal or not final_info or not final_info.get("at"): return None
+    all_closures=_v808_system_closures(terminal)
+    prev=None
+    for c in all_closures:
+        if c["at"]<final_info["at"]: prev=c
+        elif c["at"]>=final_info["at"]: break
+    if not prev:
+        return {"available":False,"reason":"SEM_FECHAMENTO_ANTERIOR","cycle_valid":True,"final_source":"R0050"}
+    statuses=list(calc_statuses if calc_statuses is not None else ["A","V"])
+    base=db.session.query(func.count(FinancialATMTransaction.id),func.coalesce(func.sum(func.coalesce(FinancialATMTransaction.received_value,FinancialATMTransaction.value)),0)).filter(
+        FinancialATMTransaction.terminal==terminal,
+        FinancialATMTransaction.transaction_at>prev["at"],
+        FinancialATMTransaction.transaction_at<=final_info["at"]
+    )
+    if statuses: q=base.filter(FinancialATMTransaction.status.in_(statuses)).first()
+    else: q=(0,0)
+    return {"available":True,"cycle_valid":True,"initial_id":None,"final_id":None,
+        "initial_at":prev["at"].isoformat(),"final_at":final_info["at"].isoformat(),
+        "initial_source":"R0050","final_source":"R0050",
+        "initial_collection_code":prev.get("collection_code") or "","final_collection_code":final_info.get("collection_code") or "",
+        "transaction_count":int(q[0] or 0),"transaction_sum":round(float(q[1] or 0),2),
+        "difference_tx_declared":None,"calc_statuses":statuses}
 
 def _v806_system_closure_info(ev):
     """V80 REV7: Data Coleta/Código Coleta do R0050 é a fonte oficial do fechamento.
@@ -13410,6 +13458,26 @@ def _v792_cash_payload(start,end,calc_statuses=None):
             closure_info=_v806_closure_info(ev) if _v805_is_valid_closure(ev) else None
             realized_at=(closure_info or {}).get("at") if closure_info else ev.end_at
             extra.append({"date":ev.collection_date.isoformat(),"original_date":ev.collection_date.isoformat(),"status":"COLETA_EXTRA","event_id":ev.id,"time":realized_at.strftime("%H:%M"),"realized_date":realized_at.date().isoformat(),"closure_source":(closure_info or {}).get("source") if closure_info else None,"closure_collection_code":(closure_info or {}).get("collection_code") or "","manual_time":ev.end_at.strftime("%H:%M"),"manual_realized_date":ev.collection_date.isoformat(),"declared_amount":dec,"processed_amount":ap,"difference":diff,"note":ev.monitoring_note or ev.processed_media_type or "","next_prediction":extra_next["date"] if extra_next else None,"cycle_valid":_v805_is_valid_closure(ev),"cycle_excluded":bool(getattr(ev,"cycle_excluded",False)),"transaction_cycle":cycle_summary})
+        # V80 REV8: o R0050 também descobre fechamentos que não existiam na programação/monitoramento.
+        # Ex.: coleta extra intermediária detectada por Código Coleta + Data Coleta.
+        known_system=set()
+        for ev in events:
+            info=_v806_closure_info(ev) if _v805_is_valid_closure(ev) else None
+            if info and info.get("source")=="R0050": known_system.add((info.get("collection_code") or "",info["at"]))
+        for sysc in _v808_system_closures(t,start,end):
+            ident=(sysc.get("collection_code") or "",sysc["at"])
+            if ident in known_system: continue
+            # Se já há ocorrência R0050 na mesma data/código, não duplica visualmente.
+            if any((z.get("closure_collection_code") or "")==ident[0] and z.get("realized_date")==sysc["at"].date().isoformat() for z in occurrences+extra): continue
+            extra_next=next((f for f in future if date.fromisoformat(f["date"])>sysc["at"].date()),None)
+            cycle_summary=_v808_system_cycle_summary(t,sysc,calc_statuses)
+            extra.append({"date":sysc["at"].date().isoformat(),"original_date":sysc["at"].date().isoformat(),
+                "status":"COLETA_EXTRA_R0050","event_id":None,"system_closure":True,
+                "time":sysc["at"].strftime("%H:%M:%S"),"realized_date":sysc["at"].date().isoformat(),
+                "closure_source":"R0050","closure_collection_code":sysc.get("collection_code") or "",
+                "manual_time":"","manual_realized_date":None,"declared_amount":None,"processed_amount":None,"difference":None,
+                "note":"Fechamento detectado automaticamente no R0050","next_prediction":extra_next["date"] if extra_next else None,
+                "cycle_valid":True,"cycle_excluded":False,"transaction_cycle":cycle_summary})
         for report in daily_reports:
             if report.terminal!=t or report.report_date.isoformat() in planned_dates: continue
             extra_next=next((f for f in future if date.fromisoformat(f["date"])>report.report_date),None)
