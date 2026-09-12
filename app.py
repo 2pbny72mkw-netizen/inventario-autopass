@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V80 REV2"
+APP_RELEASE = "V80 REV3"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -13705,7 +13705,10 @@ def financial_cash_v802_cycle_detail(event_id):
     if note_qty:
         ranked=sorted([x for x in denoms if x["quantity"]],key=lambda x:x["amount"],reverse=True)
         if ranked: insight.append(f"A cédula de R$ {ranked[0]['value']:.0f} concentra o maior valor no ciclo: R$ {ranked[0]['amount']:,.2f} em {ranked[0]['quantity']} nota(s).")
-    return jsonify({"ok":True,"terminal":b.terminal,"initial":{"id":a.id,"at":a.end_at.isoformat(),"label":a.end_at.strftime("%d/%m/%Y %H:%M")},"final":{"id":b.id,"at":b.end_at.isoformat(),"label":b.end_at.strftime("%d/%m/%Y %H:%M")},"transaction_count":len(valid_txs),"all_transaction_count":len(txs),"transaction_sum":tx_sum,"declared_amount":declared,"processed_amount":processed,"difference_tx_declared":None if declared is None else round(tx_sum-declared,2),"difference_declared_processed":None if declared is None or processed is None else round(processed-declared,2),"difference_tx_processed":None if processed is None else round(processed-tx_sum,2),"denominations":denoms,"all_denominations":all_denoms,"note_count":note_qty,"note_amount":note_amount,"status_breakdown":[{"status":st or "—","count":int(n),"amount":round(float(v or 0),2)} for st,n,v in status_rows],"products":[{**z,"amount":round(z["amount"],2)} for z in sorted(products.values(),key=lambda z:z["amount"],reverse=True)],"transactions":details,"transactions_truncated":len(txs)>2000,"insights":[x.replace(",","X").replace(".",",").replace("X",".") for x in insight],"rule":"Ciclo: transação > fechamento anterior e <= fechamento atual. Totais conciliados usam status A/V; o modal também exibe todos os status para auditoria."})
+    # V80 REV3: o frontend pode recalcular visualização e conciliação por status sem nova consulta.
+    available_statuses=sorted({(x.status or "—").strip().upper() or "—" for x in txs})
+    default_calc_statuses=[x for x in ("A","V") if x in available_statuses]
+    return jsonify({"ok":True,"available_statuses":available_statuses,"default_calc_statuses":default_calc_statuses,"terminal":b.terminal,"initial":{"id":a.id,"at":a.end_at.isoformat(),"label":a.end_at.strftime("%d/%m/%Y %H:%M")},"final":{"id":b.id,"at":b.end_at.isoformat(),"label":b.end_at.strftime("%d/%m/%Y %H:%M")},"transaction_count":len(valid_txs),"all_transaction_count":len(txs),"transaction_sum":tx_sum,"declared_amount":declared,"processed_amount":processed,"difference_tx_declared":None if declared is None else round(tx_sum-declared,2),"difference_declared_processed":None if declared is None or processed is None else round(processed-declared,2),"difference_tx_processed":None if processed is None else round(processed-tx_sum,2),"denominations":denoms,"all_denominations":all_denoms,"note_count":note_qty,"note_amount":note_amount,"status_breakdown":[{"status":st or "—","count":int(n),"amount":round(float(v or 0),2)} for st,n,v in status_rows],"products":[{**z,"amount":round(z["amount"],2)} for z in sorted(products.values(),key=lambda z:z["amount"],reverse=True)],"transactions":details,"transactions_truncated":len(txs)>2000,"insights":[x.replace(",","X").replace(".",",").replace("X",".") for x in insight],"rule":"Ciclo: transação > fechamento anterior e <= fechamento atual. Na V80 REV3 os status considerados no cálculo podem ser selecionados no modal; padrão preservado: A/V."})
 
 @app.get("/api/financeiro/apuracao/calcular")
 @login_required

@@ -1,0 +1,2 @@
+V80 REV3 ENXUTA
+Sobrepor estes arquivos no projeto completo em produção. Fazer backup antes do deploy. Após reiniciar, validar um ciclo conhecido e os filtros A/V/I/VOUCHER/W/O.
