@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V80 REV5"
+APP_RELEASE = "V80 REV6"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -889,6 +889,10 @@ class FinancialATMTransaction(db.Model):
     voucher_number = db.Column(db.String(100))
     status_desc = db.Column(db.String(220))
     source_collection_code = db.Column(db.String(80))
+    # V80 REV6: referências sistêmicas do R0050 para delimitar o fechamento real.
+    source_collection_at = db.Column(db.DateTime, index=True)
+    service_open_at = db.Column(db.DateTime)
+    service_close_at = db.Column(db.DateTime)
     # V80 REV2: composição de cédulas trazida pelo R0050.
     note_2 = db.Column(db.Integer)
     note_5 = db.Column(db.Integer)
@@ -12255,13 +12259,14 @@ def migrate_financial_v524_columns():
         tables=set(inspector.get_table_names())
         if "financial_atm_transactions" in tables:
             tx_cols={c["name"] for c in inspector.get_columns("financial_atm_transactions")}
-            for col,sql in (("received_value","FLOAT"),("external_tx_id","VARCHAR(80)"),("product_type","VARCHAR(80)"),("product_name","VARCHAR(180)"),("voucher_generated","VARCHAR(20)"),("voucher_number","VARCHAR(100)"),("status_desc","VARCHAR(220)"),("source_collection_code","VARCHAR(80)"),
+            for col,sql in (("received_value","FLOAT"),("external_tx_id","VARCHAR(80)"),("product_type","VARCHAR(80)"),("product_name","VARCHAR(180)"),("voucher_generated","VARCHAR(20)"),("voucher_number","VARCHAR(100)"),("status_desc","VARCHAR(220)"),("source_collection_code","VARCHAR(80)"),("source_collection_at","TIMESTAMP"),("service_open_at","TIMESTAMP"),("service_close_at","TIMESTAMP"),
                             ("note_2","INTEGER"),("note_5","INTEGER"),("note_10","INTEGER"),("note_20","INTEGER"),("note_50","INTEGER"),("note_100","INTEGER"),("note_200","INTEGER")):
                 if col not in tx_cols: commands.append(f"ALTER TABLE financial_atm_transactions ADD COLUMN {col} {sql}")
             commands.extend([
                 "CREATE INDEX IF NOT EXISTS ix_fin_tx_imported_at ON financial_atm_transactions (imported_at)",
                 "CREATE INDEX IF NOT EXISTS ix_fin_tx_source_file ON financial_atm_transactions (source_file)",
                 "CREATE INDEX IF NOT EXISTS ix_fin_tx_external_id ON financial_atm_transactions (external_tx_id)",
+                "CREATE INDEX IF NOT EXISTS ix_fin_tx_collection_at ON financial_atm_transactions (terminal, source_collection_at)",
             ])
         commands.extend([
             "CREATE INDEX IF NOT EXISTS ix_fin_monthly_supplier_comp ON financial_monthly_costs (supplier_id, competence)",
@@ -12803,7 +12808,7 @@ def _fin_upsert_transaction_batch(mappings):
     hashes=[x["source_hash"] for x in mappings]
     existing={x.source_hash:x for x in FinancialATMTransaction.query.filter(FinancialATMTransaction.source_hash.in_(hashes)).all()}
     fresh=[]; updated=0
-    update_fields=("terminal","transaction_at","status","value","received_value","external_tx_id","product_type","product_name","voucher_generated","voucher_number","status_desc","source_collection_code","note_2","note_5","note_10","note_20","note_50","note_100","note_200","cpm_id","source_file","imported_by","imported_at")
+    update_fields=("terminal","transaction_at","status","value","received_value","external_tx_id","product_type","product_name","voucher_generated","voucher_number","status_desc","source_collection_code","source_collection_at","service_open_at","service_close_at","note_2","note_5","note_10","note_20","note_50","note_100","note_200","cpm_id","source_file","imported_by","imported_at")
     for item in mappings:
         row=existing.get(item["source_hash"])
         if row:
@@ -12814,6 +12819,15 @@ def _fin_upsert_transaction_batch(mappings):
             fresh.append(item)
     inserted=_fin_bulk_ignore(FinancialATMTransaction,fresh,chunk=1000) if fresh else 0
     return inserted,updated
+
+def _fin_parse_datetime_any(value):
+    if isinstance(value, datetime): return value
+    raw=str(value or "").strip()
+    if not raw: return None
+    for fmt in ("%d/%m/%Y %H:%M:%S","%d/%m/%Y %H:%M","%Y-%m-%d %H:%M:%S","%Y-%m-%dT%H:%M:%S"):
+        try: return datetime.strptime(raw,fmt)
+        except Exception: pass
+    return None
 
 def _fin_import_transactions_wb(wb, filename, user_id, job_id=None):
     ws=wb[wb.sheetnames[0]]; header=next(ws.iter_rows(min_row=1,max_row=1,values_only=True)); headers={str(v or "").strip().upper():i for i,v in enumerate(header)}
@@ -12851,6 +12865,9 @@ def _fin_import_transactions_wb(wb, filename, user_id, job_id=None):
                       "product_type":str(gv(row,"TIPO_PRODUTO") or "").strip() or None,"product_name":str(gv(row,"PRODUTO") or "").strip() or None,
                       "voucher_generated":str(gv(row,"VOUCHER_GERADO") or "").strip() or None,"voucher_number":str(gv(row,"VOUCHER_NUMBER") or "").strip() or None,
                       "status_desc":str(gv(row,"STATUS DESC") or "").strip() or None,"source_collection_code":str(gv(row,"CODIGO COLETA") or "").strip() or None,
+                      "source_collection_at":_fin_parse_datetime_any(gv(row,"DATA COLETA")),
+                      "service_open_at":_fin_parse_datetime_any(gv(row,"ABERTURA_SERVICO")),
+                      "service_close_at":_fin_parse_datetime_any(gv(row,"FECHAMENTO_SERVICO")),
                       "note_2":int(_fin_parse_amount(gv(row,"NOTA_2")) or 0),"note_5":int(_fin_parse_amount(gv(row,"NOTA_5")) or 0),
                       "note_10":int(_fin_parse_amount(gv(row,"NOTA_10")) or 0),"note_20":int(_fin_parse_amount(gv(row,"NOTA_20")) or 0),
                       "note_50":int(_fin_parse_amount(gv(row,"NOTA_50")) or 0),"note_100":int(_fin_parse_amount(gv(row,"NOTA_100")) or 0),
@@ -13133,6 +13150,8 @@ def _v79_seed_cash_module():
                 db.session.add(SchemaMigration(version='V80REV1-001',description='Coleta de Valores: importação incremental R0050, última carga, filtros/ordenação da programação e planejamento de auditores por localidade/data'))
             if not SchemaMigration.query.filter_by(version='V80REV5-001').first():
                 db.session.add(SchemaMigration(version='V80REV5-001',description='Coleta de Valores: cadeia de fechamentos válidos, observações não cortam ciclo, desconsideração e exclusão lógica auditável'))
+            if not SchemaMigration.query.filter_by(version='V80REV6-001').first():
+                db.session.add(SchemaMigration(version='V80REV6-001',description='Coleta de Valores: fechamento sistêmico R0050 prioritário, fonte visual Sistema/Manual, última coleta e controle Recolher no topo'))
         except Exception:
             app.logger.exception("V79.2: falha ao carregar histórico TBForte JAN-AGO/2026")
     if not SchemaMigration.query.filter_by(version='V79-001').first():
@@ -13239,37 +13258,83 @@ def _v805_is_valid_closure(ev):
     """Somente um fechamento/slip real delimita ciclo. Registro informativo não pode cortar a janela."""
     return bool(ev and ev.end_at and not bool(getattr(ev,"soft_deleted",False)) and not bool(getattr(ev,"cycle_excluded",False)) and ev.declared_amount is not None)
 
-def _v805_prev_closure(ev):
-    if not ev or not ev.terminal or not ev.end_at: return None
-    return FinancialCashCollection.query.filter(
+def _v806_system_closure_info(ev):
+    """Localiza no R0050 o fechamento sistêmico (Data Coleta) mais compatível com o evento manual."""
+    if not ev or not ev.terminal or not ev.collection_date: return None
+    day_start=datetime.combine(ev.collection_date,datetime.min.time())
+    day_end=day_start+timedelta(days=1)
+    rows=db.session.query(
+        FinancialATMTransaction.source_collection_at,
+        FinancialATMTransaction.source_collection_code
+    ).filter(
+        FinancialATMTransaction.terminal==ev.terminal,
+        FinancialATMTransaction.source_collection_at.isnot(None),
+        FinancialATMTransaction.source_collection_at>=day_start,
+        FinancialATMTransaction.source_collection_at<day_end
+    ).distinct().all()
+    if not rows: return None
+    manual=ev.end_at or day_start
+    best=min(rows,key=lambda r:abs(((r[0] or manual)-manual).total_seconds()))
+    at=best[0]
+    if not at: return None
+    # Evita vincular uma coleta de outro turno/dia por erro de cadastro manual.
+    if abs((at-manual).total_seconds())>18*3600: return None
+    return {"at":at,"source":"R0050","collection_code":str(best[1] or ""),"manual_at":manual,"diff_minutes":round((at-manual).total_seconds()/60,1)}
+
+def _v806_closure_info(ev):
+    if not _v805_is_valid_closure(ev): return None
+    sysinfo=_v806_system_closure_info(ev)
+    if sysinfo: return sysinfo
+    return {"at":ev.end_at,"source":"MANUAL","collection_code":"","manual_at":ev.end_at,"diff_minutes":0.0}
+
+def _v806_prev_closure_info(ev):
+    current=_v806_closure_info(ev)
+    if not current: return None,None
+    candidates=FinancialCashCollection.query.filter(
         FinancialCashCollection.terminal==ev.terminal,
-        FinancialCashCollection.end_at<ev.end_at,
+        FinancialCashCollection.id!=ev.id,
+        FinancialCashCollection.collection_date<=current["at"].date(),
         FinancialCashCollection.declared_amount.isnot(None),
         func.coalesce(FinancialCashCollection.cycle_excluded,False).is_(False),
         func.coalesce(FinancialCashCollection.soft_deleted,False).is_(False)
-    ).order_by(FinancialCashCollection.end_at.desc()).first()
+    ).order_by(FinancialCashCollection.collection_date.desc(),FinancialCashCollection.end_at.desc()).limit(25).all()
+    ranked=[]
+    for item in candidates:
+        info=_v806_closure_info(item)
+        if info and info["at"]<current["at"]: ranked.append((info["at"],item,info))
+    if not ranked: return None,None
+    ranked.sort(key=lambda x:x[0],reverse=True)
+    return ranked[0][1],ranked[0][2]
+
+def _v805_prev_closure(ev):
+    prev,_=_v806_prev_closure_info(ev)
+    return prev
 
 def _v802_event_cycle_summary(ev, calc_statuses=None):
-    """Resumo do ciclo encerrado por um fechamento válido: fechamento anterior < transações <= fechamento atual."""
-    if not ev or not ev.terminal or not ev.end_at:
-        return None
+    """Resumo do ciclo: fechamento sistêmico R0050 quando disponível; manual apenas como fallback."""
+    if not ev or not ev.terminal or not ev.end_at: return None
     if not _v805_is_valid_closure(ev):
         return {"available":False,"reason":"NAO_FECHAMENTO_VALIDO","cycle_valid":False}
-    prev=_v805_prev_closure(ev)
-    if not prev:
-        return {"available":False,"reason":"SEM_FECHAMENTO_ANTERIOR","cycle_valid":True}
+    final_info=_v806_closure_info(ev)
+    prev,initial_info=_v806_prev_closure_info(ev)
+    if not prev or not initial_info or not final_info:
+        return {"available":False,"reason":"SEM_FECHAMENTO_ANTERIOR","cycle_valid":True,"final_source":(final_info or {}).get("source","MANUAL")}
     statuses=list(calc_statuses if calc_statuses is not None else ["A","V"])
     base=db.session.query(func.count(FinancialATMTransaction.id),func.coalesce(func.sum(func.coalesce(FinancialATMTransaction.received_value,FinancialATMTransaction.value)),0)).filter(
-        FinancialATMTransaction.terminal==ev.terminal,FinancialATMTransaction.transaction_at>prev.end_at,FinancialATMTransaction.transaction_at<=ev.end_at
+        FinancialATMTransaction.terminal==ev.terminal,FinancialATMTransaction.transaction_at>initial_info["at"],FinancialATMTransaction.transaction_at<=final_info["at"]
     )
     if statuses:
-        base=base.filter(FinancialATMTransaction.status.in_(statuses))
-        q=base.first()
-    else:
-        q=(0,0)
+        base=base.filter(FinancialATMTransaction.status.in_(statuses)); q=base.first()
+    else: q=(0,0)
     count=int(q[0] or 0); total=round(float(q[1] or 0),2)
     declared=None if ev.declared_amount is None else round(float(ev.declared_amount),2)
-    return {"available":True,"cycle_valid":True,"initial_id":prev.id,"final_id":ev.id,"initial_at":prev.end_at.isoformat(),"final_at":ev.end_at.isoformat(),"transaction_count":count,"transaction_sum":total,"difference_tx_declared":None if declared is None else round(total-declared,2),"calc_statuses":statuses}
+    return {"available":True,"cycle_valid":True,"initial_id":prev.id,"final_id":ev.id,
+            "initial_at":initial_info["at"].isoformat(),"final_at":final_info["at"].isoformat(),
+            "initial_source":initial_info["source"],"final_source":final_info["source"],
+            "initial_collection_code":initial_info.get("collection_code") or "","final_collection_code":final_info.get("collection_code") or "",
+            "manual_final_at":ev.end_at.isoformat(),"final_diff_minutes":final_info.get("diff_minutes",0),
+            "transaction_count":count,"transaction_sum":total,
+            "difference_tx_declared":None if declared is None else round(total-declared,2),"calc_statuses":statuses}
 
 def _v792_cash_payload(start,end,calc_statuses=None):
     schedules={x.terminal:x for x in FinancialCashSchedule.query.filter(FinancialCashSchedule.active.is_(True)).all()}
@@ -13311,11 +13376,15 @@ def _v792_cash_payload(start,end,calc_statuses=None):
             den_count=sum(int(x.get("quantity") or 0) for x in denominations if isinstance(x,dict))
             den_value=round(sum(float(x.get("value") or 0)*int(x.get("quantity") or 0) for x in denominations if isinstance(x,dict)),2)
             nxt=next((f for f in future if date.fromisoformat(f["date"])>pd),None)
+            cycle_summary=_v802_event_cycle_summary(ev,calc_statuses) if ev else None
+            closure_info=_v806_closure_info(ev) if ev and _v805_is_valid_closure(ev) else None
+            realized_at=(closure_info or {}).get("at") if closure_info else (ev.end_at if ev else None)
             occurrences.append({**p,"date":effective,"scheduled_original":p["date"],"status":status,"override_id":ov.id if ov else None,
-                "event_id":ev.id if ev else None,"time":(ev.end_at.strftime("%H:%M") if ev else (ov.scheduled_time if ov else "")),
+                "event_id":ev.id if ev else None,"time":(realized_at.strftime("%H:%M") if realized_at else (ov.scheduled_time if ov else "")),
+                "realized_date":realized_at.date().isoformat() if realized_at else None,"closure_source":(closure_info or {}).get("source") if closure_info else None,"closure_collection_code":(closure_info or {}).get("collection_code") or "","manual_time":ev.end_at.strftime("%H:%M") if ev else "","manual_realized_date":ev.collection_date.isoformat() if ev else None,
                 "declared_amount":dec,"processed_amount":ap,"difference":diff,"denomination_count":den_count,"denomination_value":den_value,"denominations":denominations,"note":((ev.monitoring_note or "") if ev else ((report.note or "") if report else (ov.note or "" if ov else ""))),
                 "gtv":((ev.gtv or "") if ev else ((report.gtv or "") if report else "")),"daily_report_id":report.id if report else None,"provider_status":report.provider_status if report else "","occurrence":report.occurrence if report else "",
-                "next_prediction":nxt["date"] if nxt else None,"cycle_valid":_v805_is_valid_closure(ev) if ev else False,"cycle_excluded":bool(getattr(ev,"cycle_excluded",False)) if ev else False,"transaction_cycle":_v802_event_cycle_summary(ev,calc_statuses) if ev else None})
+                "next_prediction":nxt["date"] if nxt else None,"cycle_valid":_v805_is_valid_closure(ev) if ev else False,"cycle_excluded":bool(getattr(ev,"cycle_excluded",False)) if ev else False,"transaction_cycle":cycle_summary})
             planned_all.append((t,occurrences[-1]))
         planned_dates={o["date"] for o in occurrences}; extra=[]
         for ev in events:
@@ -13323,7 +13392,10 @@ def _v792_cash_payload(start,end,calc_statuses=None):
             dec=None if ev.declared_amount is None else float(ev.declared_amount); ap=None if ev.processed_amount is None else float(ev.processed_amount)
             diff=round(ap-dec,2) if dec is not None and ap is not None else None
             extra_next=next((f for f in future if date.fromisoformat(f["date"])>ev.collection_date),None)
-            extra.append({"date":ev.collection_date.isoformat(),"original_date":ev.collection_date.isoformat(),"status":"COLETA_EXTRA","event_id":ev.id,"time":ev.end_at.strftime("%H:%M"),"declared_amount":dec,"processed_amount":ap,"difference":diff,"note":ev.monitoring_note or ev.processed_media_type or "","next_prediction":extra_next["date"] if extra_next else None,"cycle_valid":_v805_is_valid_closure(ev),"cycle_excluded":bool(getattr(ev,"cycle_excluded",False)),"transaction_cycle":_v802_event_cycle_summary(ev,calc_statuses)})
+            cycle_summary=_v802_event_cycle_summary(ev,calc_statuses)
+            closure_info=_v806_closure_info(ev) if _v805_is_valid_closure(ev) else None
+            realized_at=(closure_info or {}).get("at") if closure_info else ev.end_at
+            extra.append({"date":ev.collection_date.isoformat(),"original_date":ev.collection_date.isoformat(),"status":"COLETA_EXTRA","event_id":ev.id,"time":realized_at.strftime("%H:%M"),"realized_date":realized_at.date().isoformat(),"closure_source":(closure_info or {}).get("source") if closure_info else None,"closure_collection_code":(closure_info or {}).get("collection_code") or "","manual_time":ev.end_at.strftime("%H:%M"),"manual_realized_date":ev.collection_date.isoformat(),"declared_amount":dec,"processed_amount":ap,"difference":diff,"note":ev.monitoring_note or ev.processed_media_type or "","next_prediction":extra_next["date"] if extra_next else None,"cycle_valid":_v805_is_valid_closure(ev),"cycle_excluded":bool(getattr(ev,"cycle_excluded",False)),"transaction_cycle":cycle_summary})
         for report in daily_reports:
             if report.terminal!=t or report.report_date.isoformat() in planned_dates: continue
             extra_next=next((f for f in future if date.fromisoformat(f["date"])>report.report_date),None)
@@ -13745,9 +13817,10 @@ def financial_cash_v802_cycle_detail(event_id):
     b=db.session.get(FinancialCashCollection,event_id)
     if not b or bool(getattr(b,"soft_deleted",False)): return jsonify({"ok":False,"error":"Coleta não encontrada."}),404
     if not _v805_is_valid_closure(b): return jsonify({"ok":False,"error":"Este registro não é um fechamento válido e não delimita ciclo transacional."}),400
-    a=_v805_prev_closure(b)
-    if not a: return jsonify({"ok":False,"error":"Não existe fechamento válido anterior para formar o ciclo."}),400
-    q_all=FinancialATMTransaction.query.filter(FinancialATMTransaction.terminal==b.terminal,FinancialATMTransaction.transaction_at>a.end_at,FinancialATMTransaction.transaction_at<=b.end_at)
+    final_info=_v806_closure_info(b)
+    a,initial_info=_v806_prev_closure_info(b)
+    if not a or not initial_info or not final_info: return jsonify({"ok":False,"error":"Não existe fechamento válido anterior para formar o ciclo."}),400
+    q_all=FinancialATMTransaction.query.filter(FinancialATMTransaction.terminal==b.terminal,FinancialATMTransaction.transaction_at>initial_info["at"],FinancialATMTransaction.transaction_at<=final_info["at"])
     calc_statuses=_v804_tx_statuses(request.args.get("calc_statuses") if "calc_statuses" in request.args else None)
     txs=q_all.order_by(FinancialATMTransaction.transaction_at).all()
     valid_txs=[x for x in txs if (x.status or "").strip().upper() in set(calc_statuses)]
@@ -13761,7 +13834,7 @@ def financial_cash_v802_cycle_detail(event_id):
     for value,attr in ((2,"note_2"),(5,"note_5"),(10,"note_10"),(20,"note_20"),(50,"note_50"),(100,"note_100"),(200,"note_200")):
         qty=sum(int(getattr(x,attr,0) or 0) for x in txs)
         all_denoms.append({"value":value,"quantity":qty,"amount":round(value*qty,2)})
-    status_rows=db.session.query(FinancialATMTransaction.status,func.count(FinancialATMTransaction.id),func.coalesce(func.sum(func.coalesce(FinancialATMTransaction.received_value,FinancialATMTransaction.value)),0)).filter(FinancialATMTransaction.terminal==b.terminal,FinancialATMTransaction.transaction_at>a.end_at,FinancialATMTransaction.transaction_at<=b.end_at).group_by(FinancialATMTransaction.status).all()
+    status_rows=db.session.query(FinancialATMTransaction.status,func.count(FinancialATMTransaction.id),func.coalesce(func.sum(func.coalesce(FinancialATMTransaction.received_value,FinancialATMTransaction.value)),0)).filter(FinancialATMTransaction.terminal==b.terminal,FinancialATMTransaction.transaction_at>initial_info["at"],FinancialATMTransaction.transaction_at<=final_info["at"]).group_by(FinancialATMTransaction.status).all()
     products={}
     for x in txs:
         k=(x.product_type or x.product_name or "Sem produto").strip() or "Sem produto"
@@ -13781,7 +13854,7 @@ def financial_cash_v802_cycle_detail(event_id):
     # V80 REV4: o modal herda os status selecionados no Monitoramento principal.
     available_statuses=sorted({(x.status or "—").strip().upper() or "—" for x in txs})
     default_calc_statuses=[x for x in calc_statuses if x in available_statuses]
-    return jsonify({"ok":True,"available_statuses":available_statuses,"default_calc_statuses":default_calc_statuses,"terminal":b.terminal,"initial":{"id":a.id,"at":a.end_at.isoformat(),"label":a.end_at.strftime("%d/%m/%Y %H:%M")},"final":{"id":b.id,"at":b.end_at.isoformat(),"label":b.end_at.strftime("%d/%m/%Y %H:%M")},"transaction_count":len(valid_txs),"all_transaction_count":len(txs),"transaction_sum":tx_sum,"declared_amount":declared,"processed_amount":processed,"difference_tx_declared":None if declared is None else round(tx_sum-declared,2),"difference_declared_processed":None if declared is None or processed is None else round(processed-declared,2),"difference_tx_processed":None if processed is None else round(processed-tx_sum,2),"denominations":denoms,"all_denominations":all_denoms,"note_count":note_qty,"note_amount":note_amount,"status_breakdown":[{"status":st or "—","count":int(n),"amount":round(float(v or 0),2)} for st,n,v in status_rows],"products":[{**z,"amount":round(z["amount"],2)} for z in sorted(products.values(),key=lambda z:z["amount"],reverse=True)],"transactions":details,"transactions_truncated":len(txs)>2000,"insights":[x.replace(",","X").replace(".",",").replace("X",".") for x in insight],"rule":"Ciclo: transação > fechamento válido anterior e <= fechamento válido atual. Registros apenas informativos, desconsiderados ou excluídos não cortam a janela. Os status de cálculo são herdados do Monitoramento principal e podem ser refinados no modal."})
+    return jsonify({"ok":True,"available_statuses":available_statuses,"default_calc_statuses":default_calc_statuses,"terminal":b.terminal,"initial":{"id":a.id,"at":initial_info["at"].isoformat(),"label":initial_info["at"].strftime("%d/%m/%Y %H:%M"),"source":initial_info["source"],"collection_code":initial_info.get("collection_code") or ""},"final":{"id":b.id,"at":final_info["at"].isoformat(),"label":final_info["at"].strftime("%d/%m/%Y %H:%M"),"source":final_info["source"],"collection_code":final_info.get("collection_code") or "","manual_at":b.end_at.isoformat(),"manual_label":b.end_at.strftime("%d/%m/%Y %H:%M"),"diff_minutes":final_info.get("diff_minutes",0)},"transaction_count":len(valid_txs),"all_transaction_count":len(txs),"transaction_sum":tx_sum,"declared_amount":declared,"processed_amount":processed,"difference_tx_declared":None if declared is None else round(tx_sum-declared,2),"difference_declared_processed":None if declared is None or processed is None else round(processed-declared,2),"difference_tx_processed":None if processed is None else round(processed-tx_sum,2),"denominations":denoms,"all_denominations":all_denoms,"note_count":note_qty,"note_amount":note_amount,"status_breakdown":[{"status":st or "—","count":int(n),"amount":round(float(v or 0),2)} for st,n,v in status_rows],"products":[{**z,"amount":round(z["amount"],2)} for z in sorted(products.values(),key=lambda z:z["amount"],reverse=True)],"transactions":details,"transactions_truncated":len(txs)>2000,"insights":[x.replace(",","X").replace(".",",").replace("X",".") for x in insight],"rule":"Ciclo: transação > fechamento anterior e <= fechamento atual. Quando Data Coleta do R0050 está disponível ela prevalece; o horário manual é apenas fallback. Registros informativos, desconsiderados ou excluídos não cortam a janela."})
 
 @app.get("/api/financeiro/apuracao/calcular")
 @login_required

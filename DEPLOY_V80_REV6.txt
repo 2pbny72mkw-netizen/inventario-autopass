@@ -1,0 +1,7 @@
+V80 REV6 — CHECKLIST
+1. Sobrepor os arquivos do pacote ENXUTA no projeto completo em produção.
+2. Fazer deploy normalmente no Render.
+3. Confirmar no sistema: V80 REV6.
+4. Reimportar uma vez o arquivo R0050 atual para preencher Data Coleta/Codigo Coleta nos registros existentes. O upsert evita duplicidade.
+5. Validar ATM 32852: Última coleta 01/09/2026 11:56 (R0050) -> fechamento 10/09/2026 09:08 (R0050), 385 transações e R$ 9.768,00 com A+VOUCHER.
+6. Confirmar distinção visual R0050 x MANUAL e o botão Recolher/Mostrar mais acima da tabela.
