@@ -1,0 +1,7 @@
+V80 REV4 ENXUTA
+1. Fazer backup/deploy do projeto atual.
+2. Sobrepor app.py, templates/financial_cash_collection.html, templates/about.html e static/cash_collection_v79.js.
+3. Reiniciar a aplicação.
+4. Confirmar release V80 REV4.
+5. No Monitoramento, validar A + VOUCHER como seleção inicial.
+6. Validar ordenação de Dif. T × D e clique no Big Number Divergências T × D.
