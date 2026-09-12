@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V80 REV6"
+APP_RELEASE = "V80 REV7"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -13152,6 +13152,8 @@ def _v79_seed_cash_module():
                 db.session.add(SchemaMigration(version='V80REV5-001',description='Coleta de Valores: cadeia de fechamentos válidos, observações não cortam ciclo, desconsideração e exclusão lógica auditável'))
             if not SchemaMigration.query.filter_by(version='V80REV6-001').first():
                 db.session.add(SchemaMigration(version='V80REV6-001',description='Coleta de Valores: fechamento sistêmico R0050 prioritário, fonte visual Sistema/Manual, última coleta e controle Recolher no topo'))
+            if not SchemaMigration.query.filter_by(version='V80REV7-001').first():
+                db.session.add(SchemaMigration(version='V80REV7-001',description='Coleta de Valores: Data Coleta/Código Coleta R0050 oficial por ATM+data, BAG no Monitoramento e tabela em largura ampliada'))
         except Exception:
             app.logger.exception("V79.2: falha ao carregar histórico TBForte JAN-AGO/2026")
     if not SchemaMigration.query.filter_by(version='V79-001').first():
@@ -13259,27 +13261,39 @@ def _v805_is_valid_closure(ev):
     return bool(ev and ev.end_at and not bool(getattr(ev,"soft_deleted",False)) and not bool(getattr(ev,"cycle_excluded",False)) and ev.declared_amount is not None)
 
 def _v806_system_closure_info(ev):
-    """Localiza no R0050 o fechamento sistêmico (Data Coleta) mais compatível com o evento manual."""
-    if not ev or not ev.terminal or not ev.collection_date: return None
-    day_start=datetime.combine(ev.collection_date,datetime.min.time())
-    day_end=day_start+timedelta(days=1)
-    rows=db.session.query(
-        FinancialATMTransaction.source_collection_at,
-        FinancialATMTransaction.source_collection_code
-    ).filter(
-        FinancialATMTransaction.terminal==ev.terminal,
-        FinancialATMTransaction.source_collection_at.isnot(None),
-        FinancialATMTransaction.source_collection_at>=day_start,
-        FinancialATMTransaction.source_collection_at<day_end
-    ).distinct().all()
+    """V80 REV7: Data Coleta/Código Coleta do R0050 é a fonte oficial do fechamento.
+    A associação é feita por ATM + data da coleta, sem exigir coincidência do horário manual.
+    O horário manual serve apenas para desempatar quando houver mais de um fechamento sistêmico no mesmo dia.
+    """
+    if not ev or not ev.terminal: return None
+    candidate_dates=[]
+    if ev.collection_date: candidate_dates.append(ev.collection_date)
+    if ev.end_at and ev.end_at.date() not in candidate_dates: candidate_dates.append(ev.end_at.date())
+    if not candidate_dates: return None
+    manual=ev.end_at or datetime.combine(candidate_dates[0],datetime.min.time())
+    rows=[]
+    for d in candidate_dates:
+        day_start=datetime.combine(d,datetime.min.time()); day_end=day_start+timedelta(days=1)
+        rows.extend(db.session.query(
+            FinancialATMTransaction.source_collection_at,
+            FinancialATMTransaction.source_collection_code
+        ).filter(
+            FinancialATMTransaction.terminal==ev.terminal,
+            FinancialATMTransaction.source_collection_at.isnot(None),
+            FinancialATMTransaction.source_collection_at>=day_start,
+            FinancialATMTransaction.source_collection_at<day_end
+        ).distinct().all())
+    # deduplica pela identidade sistêmica da coleta, pois o R0050 repete Código/Data em várias transações
+    uniq={}
+    for at,code in rows:
+        if not at: continue
+        key=(str(code or '').strip(), at)
+        uniq[key]=(at,str(code or '').strip())
+    rows=list(uniq.values())
     if not rows: return None
-    manual=ev.end_at or day_start
-    best=min(rows,key=lambda r:abs(((r[0] or manual)-manual).total_seconds()))
-    at=best[0]
-    if not at: return None
-    # Evita vincular uma coleta de outro turno/dia por erro de cadastro manual.
-    if abs((at-manual).total_seconds())>18*3600: return None
-    return {"at":at,"source":"R0050","collection_code":str(best[1] or ""),"manual_at":manual,"diff_minutes":round((at-manual).total_seconds()/60,1)}
+    best=min(rows,key=lambda r:abs((r[0]-manual).total_seconds()))
+    at,code=best
+    return {"at":at,"source":"R0050","collection_code":code,"manual_at":manual,"diff_minutes":round((at-manual).total_seconds()/60,1),"system_candidates":len(rows)}
 
 def _v806_closure_info(ev):
     if not _v805_is_valid_closure(ev): return None
