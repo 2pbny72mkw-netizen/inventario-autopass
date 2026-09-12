@@ -1,0 +1,18 @@
+V80 REV1 — DEPLOY ENXUTO
+
+1. Fazer backup/snapshot do banco antes do deploy.
+2. Sobrepor os arquivos deste ZIP no projeto completo atual.
+3. Não substituir o projeto completo somente pelo pacote ENXUTO.
+4. Fazer deploy/restart normal no Render.
+5. Confirmar em Sobre: V80 REV1.
+6. Em Coleta de Valores > Programação:
+   - testar filtros Operadora/Linha/Estação/ATM/Programação;
+   - testar 3 estados da ordenação de cabeçalho.
+7. Em Monitoramento:
+   - conferir card de última importação;
+   - importar o R0050 atual;
+   - aguardar conclusão da carga em segundo plano;
+   - validar data/hora, arquivo, total armazenado e data máxima das transações.
+8. Testar Planejamento de Auditoria no período selecionado.
+9. Validar ATM 32852/Tatuapé: uma coleta extra não deve retirar a próxima terça-feira da agenda recorrente.
+10. Validar conciliação existente: transações ativas V/A passam a usar Valor Recebido quando presente; registros legados continuam usando Valor.
