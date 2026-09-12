@@ -1,0 +1,10 @@
+V80 REV9 — DEPLOY ENXUTO
+
+1. Sobrepor estes arquivos ao projeto completo atualmente em produção.
+2. Não substituir o projeto inteiro apenas por este ZIP enxuto.
+3. Fazer deploy/restart normal no Render.
+4. Confirmar que o sistema mostra V80 REV9.
+5. Testar importação do R0050 CSV e XLSX.
+6. Reimportar um arquivo conhecido e confirmar ausência de duplicação.
+7. Abrir Monitoramento e validar ciclos da ATM 50054 e 11056.
+8. Após uso real, exportar Telemetria e comparar o endpoint /api/financeiro/coletas/v79 com a REV8.

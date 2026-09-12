@@ -42,7 +42,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V80 REV8"
+APP_RELEASE = "V80 REV9"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -12895,6 +12895,71 @@ def _fin_import_transactions_wb(wb, filename, user_id, job_id=None):
     persisted=db.session.query(func.count(FinancialATMTransaction.id)).filter(FinancialATMTransaction.source_file==filename).scalar() or 0
     return {"kind":"TRANSACOES","layout":"R0050" if is_r0050 else "LEGADO","rows_read":total,"transactions":int(persisted),"inserted":int(inserted_total),"updated":int(updated_total),"duplicates":max(0,total-errors-inserted_total),"errors":errors}
 
+
+def _fin_import_transactions_csv(path, filename, user_id, job_id=None):
+    """V80 REV9: importação streaming do R0050 em CSV, usando a mesma deduplicação/upsert do XLSX."""
+    import csv as _csv
+    file_path=Path(path)
+    # Contagem rápida de linhas para progresso sem carregar o CSV em memória.
+    total_rows=0
+    try:
+        with file_path.open('rb') as fh:
+            total_rows=max(0,sum(chunk.count(b'\n') for chunk in iter(lambda:fh.read(1024*1024),b''))-1)
+    except Exception:
+        total_rows=0
+    out=[]; errors=0; total=0; inserted_total=0; updated_total=0; started=time.monotonic()
+    def publish():
+        if not job_id: return
+        elapsed=max(0.001,time.monotonic()-started); rate=total/elapsed
+        pct=(total/max(total_rows,1))*88.0 if total_rows else 0
+        eta=max(0,(total_rows-total)/rate) if total_rows and rate>0 else None
+        _fin_job_update(job_id,stage='TRANSACOES_CSV',rows_total=total_rows,rows_processed=total,rows_inserted=inserted_total,rows_errors=errors,rows_per_second=round(rate,1),eta_seconds=None if eta is None else int(eta),heartbeat_at=datetime.utcnow().isoformat()+'Z',progress=min(94,5+int(pct)),message=f"CSV: {total:,} de {total_rows:,} linhas processadas".replace(',','.'))
+    with file_path.open('r',encoding='utf-8-sig',errors='replace',newline='') as fh:
+        sample=fh.read(8192); fh.seek(0)
+        try: dialect=_csv.Sniffer().sniff(sample,delimiters=';,\t')
+        except Exception: dialect=_csv.excel; dialect.delimiter=';'
+        reader=_csv.DictReader(fh,dialect=dialect)
+        headers={str(x or '').strip().upper() for x in (reader.fieldnames or [])}
+        required={'COD_ATM','DATA_HORA_TRANS','VALOR','VALOR_RECEBIDO','STATUS'}
+        if not required.issubset(headers):
+            raise ValueError('CSV de transações não reconhecido. O R0050 deve conter cod_atm, data_hora_trans, valor, valor_recebido e status.')
+        for rawrow in reader:
+            total+=1
+            try:
+                row={str(k or '').strip().upper():v for k,v in (rawrow or {}).items()}
+                gv=lambda key: row.get(key.upper())
+                terminal=_fin_terminal(gv('COD_ATM')); dt=_fin_parse_datetime_any(gv('DATA_HORA_TRANS'))
+                if not dt:
+                    d=_fin_parse_date(gv('DATA_TRANS')); dt=_fin_dt(d,gv('HORA_TRANS'))
+                if not terminal or not dt:
+                    if total%5000==0: publish()
+                    continue
+                external=str(gv('IDTRN') or '').strip(); status=_fin_tx_status(gv('STATUS'))
+                value=_fin_parse_amount(gv('VALOR')); received=_fin_parse_amount(gv('VALOR_RECEBIDO'))
+                cpm=external or str(gv('CPM_ID') or '').strip()
+                sh=_fin_hash('TX-R0050',terminal,external or dt.isoformat())
+                item={'terminal':terminal,'transaction_at':dt,'status':status,'value':value,'received_value':received,'external_tx_id':external or None,
+                      'product_type':str(gv('TIPO_PRODUTO') or '').strip() or None,'product_name':str(gv('PRODUTO') or '').strip() or None,
+                      'voucher_generated':str(gv('VOUCHER_GERADO') or '').strip() or None,'voucher_number':str(gv('VOUCHER_NUMBER') or '').strip() or None,
+                      'status_desc':str(gv('STATUS DESC') or '').strip() or None,'source_collection_code':str(gv('CODIGO COLETA') or '').strip() or None,
+                      'source_collection_at':_fin_parse_datetime_any(gv('DATA COLETA')),
+                      'service_open_at':_fin_parse_datetime_any(gv('ABERTURA_SERVICO')),'service_close_at':_fin_parse_datetime_any(gv('FECHAMENTO_SERVICO')),
+                      'note_2':int(_fin_parse_amount(gv('NOTA_2')) or 0),'note_5':int(_fin_parse_amount(gv('NOTA_5')) or 0),
+                      'note_10':int(_fin_parse_amount(gv('NOTA_10')) or 0),'note_20':int(_fin_parse_amount(gv('NOTA_20')) or 0),
+                      'note_50':int(_fin_parse_amount(gv('NOTA_50')) or 0),'note_100':int(_fin_parse_amount(gv('NOTA_100')) or 0),'note_200':int(_fin_parse_amount(gv('NOTA_200')) or 0),
+                      'cpm_id':cpm or None,'source_file':filename,'source_hash':sh,'imported_by':user_id,'imported_at':datetime.utcnow()}
+                out.append(item)
+                if len(out)>=3000:
+                    ins,upd=_fin_upsert_transaction_batch(out); inserted_total+=ins; updated_total+=upd; db.session.commit(); out=[]; publish()
+            except Exception:
+                errors+=1
+                if total%5000==0: publish()
+    if out:
+        ins,upd=_fin_upsert_transaction_batch(out); inserted_total+=ins; updated_total+=upd; db.session.commit()
+    publish()
+    persisted=db.session.query(func.count(FinancialATMTransaction.id)).filter(FinancialATMTransaction.source_file==filename).scalar() or 0
+    return {'kind':'TRANSACOES','layout':'R0050-CSV','rows_read':total,'transactions':int(persisted),'inserted':int(inserted_total),'updated':int(updated_total),'duplicates':max(0,total-errors-inserted_total),'errors':errors}
+
 @app.get("/financeiro/apuracao")
 @login_required
 def financial_cash_reconciliation_page():
@@ -12911,14 +12976,18 @@ def _financial_import_worker(job_id, paths, filenames, user_id):
             for idx,(path,filename) in enumerate(zip(paths,filenames),start=1):
                 base_pct=int((idx-1)/max(total_files,1)*90)+5
                 _fin_job_update(job_id,current_file=idx,current_filename=filename,progress=base_pct,stage="LENDO_ARQUIVO",message=f"Lendo {filename}",heartbeat_at=datetime.utcnow().isoformat()+"Z")
-                wb=load_workbook(path,read_only=True,data_only=True)
-                upper=[x.upper() for x in wb.sheetnames]
-                if any(x.startswith("TRANSPORTE") for x in upper):
-                    result=_fin_import_tbf_wb(wb,filename,user_id)
+                if str(filename).lower().endswith('.csv'):
+                    result=_fin_import_transactions_csv(path,filename,user_id,job_id=job_id)
                 else:
-                    result=_fin_import_transactions_wb(wb,filename,user_id,job_id=job_id)
+                    wb=load_workbook(path,read_only=True,data_only=True)
+                    upper=[x.upper() for x in wb.sheetnames]
+                    if any(x.startswith("TRANSPORTE") for x in upper):
+                        result=_fin_import_tbf_wb(wb,filename,user_id)
+                    else:
+                        result=_fin_import_transactions_wb(wb,filename,user_id,job_id=job_id)
+                    wb.close()
                 result["source_file"]=filename
-                wb.close(); db.session.commit(); results.append(result)
+                db.session.commit(); results.append(result)
                 _fin_job_update(job_id,results=results,progress=min(95,int(idx/max(total_files,1)*90)+5),message=f"{filename} concluído")
             db.session.add(AuditEvent(user_id=user_id,event_type="FIN_APURACAO_IMPORT",entity_type="financial_cash_reconciliation",entity_id=str(len(paths)),detail=json.dumps(results,ensure_ascii=False)[:4000])); db.session.commit()
             tx_count=db.session.query(func.count(FinancialATMTransaction.id)).scalar() or 0
@@ -12940,12 +13009,14 @@ def financial_cash_reconciliation_import():
         return jsonify({"ok":False,"error":"Sem permissão."}),403
     uploaded=request.files.getlist("files") or ([request.files.get("file")] if request.files.get("file") else [])
     uploaded=[f for f in uploaded if f and f.filename]
-    if not uploaded:return jsonify({"ok":False,"error":"Selecione uma ou mais planilhas Excel."}),400
+    if not uploaded:return jsonify({"ok":False,"error":"Selecione um ou mais arquivos CSV/XLSX."}),400
     job_id=uuid.uuid4().hex
     paths=[]; names=[]
     try:
         for i,f in enumerate(uploaded,1):
             name=secure_filename(f.filename) or f"arquivo_{i}.xlsx"
+            if not name.lower().endswith((".xlsx",".xlsm",".csv")):
+                raise ValueError("Formato não suportado. Use CSV, XLSX ou XLSM.")
             path=FIN_IMPORT_DIR / f"{job_id}_{i}_{name}"
             f.save(path); paths.append(str(path)); names.append(name)
         with FIN_IMPORT_LOCK:
@@ -13155,6 +13226,7 @@ def _v79_seed_cash_module():
             if not SchemaMigration.query.filter_by(version='V80REV7-001').first():
                 db.session.add(SchemaMigration(version='V80REV7-001',description='Coleta de Valores: Data Coleta/Código Coleta R0050 oficial por ATM+data, BAG no Monitoramento e tabela em largura ampliada'))
                 db.session.add(SchemaMigration(version='V80REV8-001',description='Coleta de Valores: descoberta automática de fechamentos extras diretamente no R0050 e cadeia cronológica por ATM'))
+                db.session.add(SchemaMigration(version='V80REV9-001',description='Coleta de Valores: importação R0050 CSV/XLSX e otimização em lote dos fechamentos/ciclos para eliminar consultas N+1'))
         except Exception:
             app.logger.exception("V79.2: falha ao carregar histórico TBForte JAN-AGO/2026")
     if not SchemaMigration.query.filter_by(version='V79-001').first():
@@ -13398,9 +13470,118 @@ def _v802_event_cycle_summary(ev, calc_statuses=None):
             "transaction_count":count,"transaction_sum":total,
             "difference_tx_declared":None if declared is None else round(total-declared,2),"calc_statuses":statuses}
 
+
+def _v809_prefetch_cycle_data(terminals,start,end,calc_statuses):
+    """V80 REV9: pré-carrega fechamentos e agregados do R0050 em lote.
+    Evita consultas N+1 por ATM/ocorrência no Monitoramento.
+    """
+    if not terminals:
+        return {'closures_by_terminal':{},'closures_by_day':{},'aggregates':{}}
+    lo=datetime.combine(start-timedelta(days=370),datetime.min.time())
+    hi=datetime.combine(end+timedelta(days=1),datetime.min.time())
+    closure_rows=db.session.query(
+        FinancialATMTransaction.terminal,
+        FinancialATMTransaction.source_collection_at,
+        FinancialATMTransaction.source_collection_code
+    ).filter(
+        FinancialATMTransaction.terminal.in_(terminals),
+        FinancialATMTransaction.source_collection_at.isnot(None),
+        FinancialATMTransaction.source_collection_at>=lo,
+        FinancialATMTransaction.source_collection_at<hi
+    ).group_by(
+        FinancialATMTransaction.terminal,
+        FinancialATMTransaction.source_collection_at,
+        FinancialATMTransaction.source_collection_code
+    ).order_by(FinancialATMTransaction.terminal,FinancialATMTransaction.source_collection_at).all()
+    by_terminal={}; by_day={}
+    for terminal,at,code in closure_rows:
+        if not at: continue
+        item={'at':at,'collection_code':str(code or '').strip(),'source':'R0050'}
+        by_terminal.setdefault(terminal,[]).append(item)
+        by_day.setdefault((terminal,at.date()),[]).append(item)
+    aggregates={}
+    statuses=list(calc_statuses or [])
+    if statuses:
+        agg_rows=db.session.query(
+            FinancialATMTransaction.terminal,
+            FinancialATMTransaction.source_collection_at,
+            FinancialATMTransaction.source_collection_code,
+            func.count(FinancialATMTransaction.id),
+            func.coalesce(func.sum(func.coalesce(FinancialATMTransaction.received_value,FinancialATMTransaction.value)),0)
+        ).filter(
+            FinancialATMTransaction.terminal.in_(terminals),
+            FinancialATMTransaction.source_collection_at.isnot(None),
+            FinancialATMTransaction.source_collection_at>=lo,
+            FinancialATMTransaction.source_collection_at<hi,
+            FinancialATMTransaction.status.in_(statuses)
+        ).group_by(
+            FinancialATMTransaction.terminal,
+            FinancialATMTransaction.source_collection_at,
+            FinancialATMTransaction.source_collection_code
+        ).all()
+        for terminal,at,code,count_,amount in agg_rows:
+            aggregates[(terminal,at,str(code or '').strip())]=(int(count_ or 0),round(float(amount or 0),2))
+    return {'closures_by_terminal':by_terminal,'closures_by_day':by_day,'aggregates':aggregates}
+
 def _v792_cash_payload(start,end,calc_statuses=None):
     schedules={x.terminal:x for x in FinancialCashSchedule.query.filter(FinancialCashSchedule.active.is_(True)).all()}
     official=_v79_cash_base(); terminals=[x["terminal"] for x in official]
+    # V80 REV9: duas consultas em lote substituem milhares de consultas por ocorrência.
+    _cycle_prefetch=_v809_prefetch_cycle_data(terminals,start,end,calc_statuses if calc_statuses is not None else ["A","V"])
+    _sys_by_terminal=_cycle_prefetch["closures_by_terminal"]; _sys_by_day=_cycle_prefetch["closures_by_day"]; _sys_agg=_cycle_prefetch["aggregates"]
+    _closure_events=FinancialCashCollection.query.filter(FinancialCashCollection.terminal.in_(terminals),FinancialCashCollection.collection_date>=start-timedelta(days=370),FinancialCashCollection.collection_date<=end,FinancialCashCollection.declared_amount.isnot(None),func.coalesce(FinancialCashCollection.cycle_excluded,False).is_(False),func.coalesce(FinancialCashCollection.soft_deleted,False).is_(False)).order_by(FinancialCashCollection.terminal,FinancialCashCollection.end_at).all() if terminals else []
+    _closure_events_by_terminal={}
+    for _ev in _closure_events: _closure_events_by_terminal.setdefault(_ev.terminal,[]).append(_ev)
+    _closure_info_cache={}
+    def _fast_closure_info(_ev):
+        if not _ev or not _v805_is_valid_closure(_ev): return None
+        if _ev.id in _closure_info_cache: return _closure_info_cache[_ev.id]
+        _manual=_ev.end_at; _cands=[]
+        if _ev.collection_date: _cands.extend(_sys_by_day.get((_ev.terminal,_ev.collection_date),[]))
+        if _ev.end_at and (not _ev.collection_date or _ev.end_at.date()!=_ev.collection_date): _cands.extend(_sys_by_day.get((_ev.terminal,_ev.end_at.date()),[]))
+        if _cands:
+            _best=min(_cands,key=lambda z:abs((z["at"]-_manual).total_seconds()))
+            _info={**_best,"manual_at":_manual,"diff_minutes":round((_best["at"]-_manual).total_seconds()/60,1)}
+        else: _info={"at":_manual,"source":"MANUAL","collection_code":"","manual_at":_manual,"diff_minutes":0.0}
+        _closure_info_cache[_ev.id]=_info; return _info
+    _timeline={}
+    for _t in terminals:
+        _items=[dict(x,event_id=None) for x in _sys_by_terminal.get(_t,[])]
+        for _ev in _closure_events_by_terminal.get(_t,[]):
+            _info=_fast_closure_info(_ev)
+            if _info and _info.get("source")!="R0050": _items.append({**_info,"event_id":_ev.id})
+        _uniq={}
+        for _x in _items:
+            _k=(_x["at"],_x.get("collection_code") or "")
+            if _k not in _uniq or _x.get("source")=="R0050": _uniq[_k]=_x
+        _timeline[_t]=sorted(_uniq.values(),key=lambda z:z["at"])
+    def _fast_prev_info(_terminal,_final_at):
+        _prev=None
+        for _x in _timeline.get(_terminal,[]):
+            if _x["at"]<_final_at: _prev=_x
+            else: break
+        return _prev
+    def _fast_interval_agg(_terminal,_start_at,_end_at):
+        _statuses=list(calc_statuses if calc_statuses is not None else ["A","V"])
+        if not _statuses: return (0,0.0)
+        _q=db.session.query(func.count(FinancialATMTransaction.id),func.coalesce(func.sum(func.coalesce(FinancialATMTransaction.received_value,FinancialATMTransaction.value)),0)).filter(FinancialATMTransaction.terminal==_terminal,FinancialATMTransaction.transaction_at>_start_at,FinancialATMTransaction.transaction_at<=_end_at,FinancialATMTransaction.status.in_(_statuses)).first()
+        return int(_q[0] or 0),round(float(_q[1] or 0),2)
+    def _fast_cycle_summary(_ev):
+        if not _ev or not _v805_is_valid_closure(_ev): return {"available":False,"reason":"NAO_FECHAMENTO_VALIDO","cycle_valid":False}
+        _final=_fast_closure_info(_ev); _prev=_fast_prev_info(_ev.terminal,_final["at"]) if _final else None
+        if not _final or not _prev: return {"available":False,"reason":"SEM_FECHAMENTO_ANTERIOR","cycle_valid":True,"final_source":(_final or {}).get("source","MANUAL")}
+        _statuses=list(calc_statuses if calc_statuses is not None else ["A","V"])
+        if _final.get("source")=="R0050" and _prev.get("source")=="R0050":
+            _count,_total=_sys_agg.get((_ev.terminal,_final["at"],_final.get("collection_code") or ""),(0,0.0))
+        else: _count,_total=_fast_interval_agg(_ev.terminal,_prev["at"],_final["at"])
+        _decl=None if _ev.declared_amount is None else round(float(_ev.declared_amount),2)
+        return {"available":True,"cycle_valid":True,"initial_id":_prev.get("event_id"),"final_id":_ev.id,"initial_at":_prev["at"].isoformat(),"final_at":_final["at"].isoformat(),"initial_source":_prev.get("source"),"final_source":_final.get("source"),"initial_collection_code":_prev.get("collection_code") or "","final_collection_code":_final.get("collection_code") or "","manual_final_at":_ev.end_at.isoformat(),"final_diff_minutes":_final.get("diff_minutes",0),"transaction_count":int(_count),"transaction_sum":round(float(_total),2),"difference_tx_declared":None if _decl is None else round(float(_total)-_decl,2),"calc_statuses":_statuses}
+    def _fast_system_cycle_summary(_terminal,_final):
+        _prev=_fast_prev_info(_terminal,_final["at"]); _statuses=list(calc_statuses if calc_statuses is not None else ["A","V"])
+        if not _prev: return {"available":False,"reason":"SEM_FECHAMENTO_ANTERIOR","cycle_valid":True,"final_source":"R0050"}
+        if _prev.get("source")=="R0050": _count,_total=_sys_agg.get((_terminal,_final["at"],_final.get("collection_code") or ""),(0,0.0))
+        else: _count,_total=_fast_interval_agg(_terminal,_prev["at"],_final["at"])
+        return {"available":True,"cycle_valid":True,"initial_id":_prev.get("event_id"),"final_id":None,"initial_at":_prev["at"].isoformat(),"final_at":_final["at"].isoformat(),"initial_source":_prev.get("source"),"final_source":"R0050","initial_collection_code":_prev.get("collection_code") or "","final_collection_code":_final.get("collection_code") or "","transaction_count":int(_count),"transaction_sum":round(float(_total),2),"difference_tx_declared":None,"calc_statuses":_statuses}
     daily_reports=FinancialCashDailyReport.query.filter(FinancialCashDailyReport.terminal.in_(terminals),FinancialCashDailyReport.report_date>=start,FinancialCashDailyReport.report_date<=end).order_by(FinancialCashDailyReport.report_date).all() if terminals else []
     recent_reports=FinancialCashDailyReport.query.filter(FinancialCashDailyReport.terminal.in_(terminals),FinancialCashDailyReport.report_date>=date.today()-timedelta(days=30)).order_by(FinancialCashDailyReport.report_date).all() if terminals else []
     report_map={(x.terminal,x.report_date.isoformat()):x for x in daily_reports}
@@ -13438,8 +13619,8 @@ def _v792_cash_payload(start,end,calc_statuses=None):
             den_count=sum(int(x.get("quantity") or 0) for x in denominations if isinstance(x,dict))
             den_value=round(sum(float(x.get("value") or 0)*int(x.get("quantity") or 0) for x in denominations if isinstance(x,dict)),2)
             nxt=next((f for f in future if date.fromisoformat(f["date"])>pd),None)
-            cycle_summary=_v802_event_cycle_summary(ev,calc_statuses) if ev else None
-            closure_info=_v806_closure_info(ev) if ev and _v805_is_valid_closure(ev) else None
+            cycle_summary=_fast_cycle_summary(ev) if ev else None
+            closure_info=_fast_closure_info(ev) if ev and _v805_is_valid_closure(ev) else None
             realized_at=(closure_info or {}).get("at") if closure_info else (ev.end_at if ev else None)
             occurrences.append({**p,"date":effective,"scheduled_original":p["date"],"status":status,"override_id":ov.id if ov else None,
                 "event_id":ev.id if ev else None,"time":(realized_at.strftime("%H:%M") if realized_at else (ov.scheduled_time if ov else "")),
@@ -13454,23 +13635,23 @@ def _v792_cash_payload(start,end,calc_statuses=None):
             dec=None if ev.declared_amount is None else float(ev.declared_amount); ap=None if ev.processed_amount is None else float(ev.processed_amount)
             diff=round(ap-dec,2) if dec is not None and ap is not None else None
             extra_next=next((f for f in future if date.fromisoformat(f["date"])>ev.collection_date),None)
-            cycle_summary=_v802_event_cycle_summary(ev,calc_statuses)
-            closure_info=_v806_closure_info(ev) if _v805_is_valid_closure(ev) else None
+            cycle_summary=_fast_cycle_summary(ev)
+            closure_info=_fast_closure_info(ev) if _v805_is_valid_closure(ev) else None
             realized_at=(closure_info or {}).get("at") if closure_info else ev.end_at
             extra.append({"date":ev.collection_date.isoformat(),"original_date":ev.collection_date.isoformat(),"status":"COLETA_EXTRA","event_id":ev.id,"time":realized_at.strftime("%H:%M"),"realized_date":realized_at.date().isoformat(),"closure_source":(closure_info or {}).get("source") if closure_info else None,"closure_collection_code":(closure_info or {}).get("collection_code") or "","manual_time":ev.end_at.strftime("%H:%M"),"manual_realized_date":ev.collection_date.isoformat(),"declared_amount":dec,"processed_amount":ap,"difference":diff,"note":ev.monitoring_note or ev.processed_media_type or "","next_prediction":extra_next["date"] if extra_next else None,"cycle_valid":_v805_is_valid_closure(ev),"cycle_excluded":bool(getattr(ev,"cycle_excluded",False)),"transaction_cycle":cycle_summary})
         # V80 REV8: o R0050 também descobre fechamentos que não existiam na programação/monitoramento.
         # Ex.: coleta extra intermediária detectada por Código Coleta + Data Coleta.
         known_system=set()
         for ev in events:
-            info=_v806_closure_info(ev) if _v805_is_valid_closure(ev) else None
+            info=_fast_closure_info(ev) if _v805_is_valid_closure(ev) else None
             if info and info.get("source")=="R0050": known_system.add((info.get("collection_code") or "",info["at"]))
-        for sysc in _v808_system_closures(t,start,end):
+        for sysc in [x for x in _sys_by_terminal.get(t,[]) if start<=x["at"].date()<=end]:
             ident=(sysc.get("collection_code") or "",sysc["at"])
             if ident in known_system: continue
             # Se já há ocorrência R0050 na mesma data/código, não duplica visualmente.
             if any((z.get("closure_collection_code") or "")==ident[0] and z.get("realized_date")==sysc["at"].date().isoformat() for z in occurrences+extra): continue
             extra_next=next((f for f in future if date.fromisoformat(f["date"])>sysc["at"].date()),None)
-            cycle_summary=_v808_system_cycle_summary(t,sysc,calc_statuses)
+            cycle_summary=_fast_system_cycle_summary(t,sysc)
             extra.append({"date":sysc["at"].date().isoformat(),"original_date":sysc["at"].date().isoformat(),
                 "status":"COLETA_EXTRA_R0050","event_id":None,"system_closure":True,
                 "time":sysc["at"].strftime("%H:%M:%S"),"realized_date":sysc["at"].date().isoformat(),
@@ -13520,9 +13701,8 @@ def financial_cash_v79_api():
 def financial_cash_v80_transactions_status():
     if not (_has_access('finance.collection') or _has_access('finance.apuracao')):
         return jsonify({"ok":False,"error":"Sem permissão."}),403
-    total=int(db.session.query(func.count(FinancialATMTransaction.id)).scalar() or 0)
-    latest_import_at=db.session.query(func.max(FinancialATMTransaction.imported_at)).scalar()
-    latest_tx_at=db.session.query(func.max(FinancialATMTransaction.transaction_at)).scalar()
+    _stats=db.session.query(func.count(FinancialATMTransaction.id),func.max(FinancialATMTransaction.imported_at),func.max(FinancialATMTransaction.transaction_at)).first()
+    total=int((_stats or (0,None,None))[0] or 0); latest_import_at=(_stats or (0,None,None))[1]; latest_tx_at=(_stats or (0,None,None))[2]
     latest_file=""; imported_by_name=""
     if latest_import_at:
         row=db.session.query(FinancialATMTransaction.source_file,FinancialATMTransaction.imported_by).filter(FinancialATMTransaction.imported_at==latest_import_at).first()
