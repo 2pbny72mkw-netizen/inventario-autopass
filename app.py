@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V80 REV12"
+APP_RELEASE = "V80 REV12.1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -14116,15 +14116,51 @@ def _v8011_rows_from_upload(file_storage):
         parsed.append({'terminal':term,'date':day,'point':point,'gtv':gtv,'declared':declared,'processed':processed,'difference':diff,'base':str(cell('base') or '').strip(),'municipality':str(cell('municipality') or '').strip(),'service':str(cell('service') or '').strip()})
     return name,parsed
 
-@app.post('/api/financeiro/coletas/v80/tbforte/import')
-@login_required
-def financial_cash_v8011_tbforte_import():
-    if not (_has_access('finance.monitoring') or _has_access('finance.apuracao')): return jsonify({'ok':False,'error':'Sem permissão para importar apurações.'}),403
-    f=request.files.get('file')
-    if not f:return jsonify({'ok':False,'error':'Selecione o relatório TBForte em CSV ou XLSX.'}),400
-    try:source_name,rows=_v8011_rows_from_upload(f)
-    except Exception as exc:return jsonify({'ok':False,'error':str(exc)}),400
-    if not rows:return jsonify({'ok':False,'error':'Nenhuma apuração válida encontrada no arquivo.'}),400
+def _v80121_rows_from_paste(text):
+    """Interpreta o texto copiado do relatório TBForte, inclusive tabela Markdown/HTML convertida em texto."""
+    text=(text or '').replace('\r','')
+    if not text.strip(): raise ValueError('Cole o relatório TBForte antes de interpretar.')
+    lines=[x.strip() for x in text.split('\n') if x.strip()]
+    records=[]; current=None; pending_diff=None
+    date_re=re.compile(r'\b(\d{2}/\d{2}/\d{4})\b')
+    atm_re=re.compile(r'\bATM\s*[-:]?\s*(\d{4,8})\b',re.I)
+    gtv_re=re.compile(r'\b(\d{6,10}-\d)\b')
+    amount_re=re.compile(r'(?<!\d)(-?\d{1,3}(?:\.\d{3})*,\d{2}|-?\d+,\d{2})(?!\d)')
+    def finish():
+        nonlocal current
+        if current and current.get('terminal') and current.get('date') and (current.get('declared') is not None or current.get('processed') is not None):
+            records.append(current)
+        current=None
+    for line in lines:
+        # ignora separadores markdown
+        if re.fullmatch(r'[|:\-\s]+',line): continue
+        dm=date_re.search(line); am=atm_re.search(line)
+        if dm and am:
+            finish()
+            g=gtv_re.search(line)
+            # Nome/localidade fica como evidência textual integral; associação é ATM+data(+GTV)
+            current={'terminal':am.group(1),'date':_v8011_date(dm.group(1)),'point':line.replace('|',' ').strip(),
+                     'gtv':g.group(1) if g else '','declared':None,'processed':None,'difference':None,
+                     'base':'','municipality':'','service':'Recolhimento' if 'recolhimento' in line.lower() else ''}
+            pending_diff=None
+            continue
+        if current:
+            nums=amount_re.findall(line)
+            # linha isolada entre identificação e valores = diferença do relatório
+            if len(nums)==1 and '|' not in line:
+                pending_diff=_v8011_amount(nums[0]); current['difference']=pending_diff; continue
+            # linha de valores: no report colado, os dois primeiros valores são Declarado e Apurado
+            if len(nums)>=2:
+                current['declared']=_v8011_amount(nums[0]); current['processed']=_v8011_amount(nums[1])
+                if current.get('difference') is None and current['declared'] is not None and current['processed'] is not None:
+                    current['difference']=current['declared']-current['processed']
+                finish()
+    finish()
+    if not records:
+        raise ValueError('Não foi possível identificar apurações no texto. Cole o conteúdo completo do report, incluindo Data, ATM, GTV e os valores Declarado/Apurado.')
+    return records
+
+def _v80121_apply_tbforte_rows(source_name, rows):
     terminals=sorted({x['terminal'] for x in rows}); days=sorted({x['date'] for x in rows})
     existing=FinancialCashCollection.query.filter(FinancialCashCollection.terminal.in_(terminals),FinancialCashCollection.collection_date>=min(days),FinancialCashCollection.collection_date<=max(days),FinancialCashCollection.soft_deleted.is_(False)).all()
     by_td={}
@@ -14167,7 +14203,33 @@ def financial_cash_v8011_tbforte_import():
         details.append({'terminal':item['terminal'],'date':item['date'].isoformat(),'gtv':item['gtv'],'declared':item['declared'],'processed':item['processed'],'event_id':target.id})
     db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='FIN_TBFORTE_APURACAO_IMPORTED',entity_type='financial_cash_collection',entity_id=source_name[:80],detail=json.dumps({'file':source_name,'rows':len(rows),'updated':updated,'created':created,'unchanged':unchanged,'unmatched':unmatched[:100]},ensure_ascii=False)))
     db.session.commit()
-    return jsonify({'ok':True,'file':source_name,'rows':len(rows),'updated':updated,'created':created,'unchanged':unchanged,'unmatched':unmatched,'matched':len(details)})
+    return {'ok':True,'file':source_name,'rows':len(rows),'updated':updated,'created':created,'unchanged':unchanged,'unmatched':unmatched,'matched':len(details)}
+
+@app.post('/api/financeiro/coletas/v80/tbforte/import')
+@login_required
+def financial_cash_v8011_tbforte_import():
+    if not (_has_access('finance.monitoring') or _has_access('finance.apuracao')): return jsonify({'ok':False,'error':'Sem permissão para importar apurações.'}),403
+    f=request.files.get('file')
+    if not f:return jsonify({'ok':False,'error':'Selecione o relatório TBForte em CSV ou XLSX.'}),400
+    try:source_name,rows=_v8011_rows_from_upload(f)
+    except Exception as exc:return jsonify({'ok':False,'error':str(exc)}),400
+    if not rows:return jsonify({'ok':False,'error':'Nenhuma apuração válida encontrada no arquivo.'}),400
+    try:return jsonify(_v80121_apply_tbforte_rows(source_name,rows))
+    except Exception as exc:
+        db.session.rollback(); return jsonify({'ok':False,'error':str(exc)}),400
+
+@app.post('/api/financeiro/coletas/v80/tbforte/colar')
+@login_required
+def financial_cash_v80121_tbforte_paste():
+    if not (_has_access('finance.monitoring') or _has_access('finance.apuracao')): return jsonify({'ok':False,'error':'Sem permissão para importar apurações.'}),403
+    data=request.get_json(silent=True) or {}; text=data.get('text') or ''
+    try: rows=_v80121_rows_from_paste(text)
+    except Exception as exc:return jsonify({'ok':False,'error':str(exc)}),400
+    if data.get('preview'):
+        return jsonify({'ok':True,'rows':len(rows),'preview':[{'date':x['date'].isoformat(),'terminal':x['terminal'],'gtv':x['gtv'],'declared':x['declared'],'processed':x['processed'],'difference':x['difference'],'point':x['point']} for x in rows[:100]]})
+    try:return jsonify(_v80121_apply_tbforte_rows('Report_TBForte_colado',rows))
+    except Exception as exc:
+        db.session.rollback(); return jsonify({'ok':False,'error':str(exc)}),400
 
 @app.get('/api/financeiro/coletas/v79/export.xlsx')
 @login_required
