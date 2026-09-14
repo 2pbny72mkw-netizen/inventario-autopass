@@ -1,0 +1,4 @@
+V80 REV12
+Deploy completo baseado na V80 REV11.2.
+Correção: Transações ATM agora utiliza Colar Report de Transações em vez de seletor de planilha/CSV.
+Arquivos funcionais alterados: app.py, templates/about.html, templates/financial_cash_collection.html, static/cash_collection_v79.js.
