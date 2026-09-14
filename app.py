@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V80 REV11.1"
+APP_RELEASE = "V80 REV11.2"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -1979,7 +1979,7 @@ ACCESS_GROUPS = {
         "users.view","users.config.view","users.config.manage","users.create","users.edit","users.activate","users.delete","users.password","users.export","users.import","users.roles.manage","users.scope.all"
     )),
     "finance": ("Financeiro", (
-        "finance.support","finance.collection","finance.apuracao","finance.assistance","finance.implantation","finance.entries","finance.suppliers","finance.import","finance.edit","finance.delete"
+        "finance.support","finance.collection","finance.monitoring","finance.apuracao","finance.assistance","finance.implantation","finance.entries","finance.suppliers","finance.import","finance.edit","finance.delete"
     )),
     "finance_dashboard": ("Dashboard Financeira", ("finance.dashboard",)),
     "management": ("Gestão", (
@@ -2004,7 +2004,7 @@ ACCESS_LABELS = {
  "implantation.dashboard":"Dashboard Implantação","implantation.visits":"Visita a Campo / Relatório de Visita","implantation.reports":"Relatórios / Visitas recentes","implantation.emv":"Troca de Chips EMV – Trilhos","implantation.garage":"Troca de Chips Garagem",
  "teams.map":"Mapa operacional","teams.today":"Operação de Hoje","teams.schedule":"Escala por dias","teams.manage":"Gestão de equipes / escala","teams.export":"Exportar dados","teams.apt":"APT / Validades",
  "users.view":"Visualizar usuários","users.config.view":"Visualizar configurações de usuários","users.config.manage":"Gerenciar configurações de usuários","users.create":"Criar usuário","users.edit":"Editar usuário","users.activate":"Ativar / Desativar","users.delete":"Excluir / Arquivar","users.password":"Redefinir senha","users.export":"Exportar Excel","users.import":"Importar Excel de configurações","users.roles.manage":"Atribuir perfis administrativos / sensíveis","users.scope.all":"Administrar usuários de todas as empresas",
- "finance.dashboard":"Dashboard Financeira","finance.support":"Suporte a Campo","finance.collection":"Coleta de Valores","finance.apuracao":"Apuração de Numerário","finance.assistance":"Assistência Técnica","finance.implantation":"Implantação de Hardware","finance.entries":"Lançamentos","finance.suppliers":"Empresas / Fornecedores","finance.import":"Importar planilha","finance.edit":"Editar lançamentos","finance.delete":"Excluir lançamentos",
+ "finance.dashboard":"Dashboard Financeira","finance.support":"Suporte a Campo","finance.collection":"Coleta de Valores","finance.monitoring":"Monitoramento de Coletas","finance.apuracao":"Apuração de Numerário","finance.assistance":"Assistência Técnica","finance.implantation":"Implantação de Hardware","finance.entries":"Lançamentos","finance.suppliers":"Empresas / Fornecedores","finance.import":"Importar planilha","finance.edit":"Editar lançamentos","finance.delete":"Excluir lançamentos",
  "management.calls":"Chamados","management.360":"Central 360","management.notifications":"Notificações","management.diagnostics":"Diagnóstico","management.health":"Saúde da Plataforma","management.settings":"Configurações","management.dashboard_config":"Configuração de Dashboards","management.profiles":"Perfis & Permissões","management.gps_history":"Histórico GPS por estações","management.work_authorizations":"Autorizações de jornada","management.links":"Resumo dos Links","management.external_locations":"Localidades externas",
  "materials.my_documents":"Meus documentos / Minha carga","materials.request":"Solicitar material","materials.catalog.view":"Visualizar catálogo","materials.catalog.manage":"Cadastrar / editar / inativar materiais","materials.kits.manage":"Gerenciar kits","materials.delivery.create":"Criar e enviar entregas","materials.delivery.manage":"Gerenciar aceites / correções","materials.dossier.view":"Dossiê dos colaboradores","materials.access_lists.view":"Listas de acesso Metrô / CPTM","materials.access_lists.manage":"Gerar / validar listas de acesso",
  "engineering.items.view":"Visualizar cadastro de itens","engineering.items.manage":"Cadastrar / editar itens","engineering.bom.view":"Visualizar estruturas BOM","engineering.bom.manage":"Criar / revisar BOM","engineering.import":"Importar planilhas de Engenharia","engineering.pricing.view":"Visualizar formação de preço","engineering.pricing.manage":"Criar / editar estudos de preço",
@@ -2032,7 +2032,7 @@ def _default_access_for_role(role):
       "hr":{"materials.catalog.view","materials.dossier.view","teams.map","teams.today","teams.schedule","teams.manage","teams.export","teams.apt","users.view","users.config.view","users.config.manage","users.create","users.edit","users.activate","users.password","users.export","users.import","materials.access_lists.view","materials.access_lists.manage","about.versions"},
       "dispatcher":{"dashboard.general","field.calls","field.chip_recarga","field.firmware_pos_cptm","teams.map","teams.today","teams.schedule","management.calls","about.versions"},
       "customer":{"portal.appointments"},
-      "atm_financial_admin":{"finance.dashboard","finance.support","finance.collection","finance.apuracao","finance.assistance","finance.implantation","finance.entries","finance.suppliers","finance.import","finance.edit","finance.delete","about.versions"},
+      "atm_financial_admin":{"finance.dashboard","finance.support","finance.collection","finance.monitoring","finance.apuracao","finance.assistance","finance.implantation","finance.entries","finance.suppliers","finance.import","finance.edit","finance.delete","about.versions"},
     }
     return defaults.get(role,set())
 
@@ -12345,14 +12345,14 @@ def financial_assistance_page():
 @app.get("/financeiro/suporte-campo/coleta-valores")
 @login_required
 def financial_cash_collection_page():
-    if not _has_access("finance.collection"):
+    if not _finance_collection_monitor_access():
         return redirect(url_for("dashboard_landing"))
     return render_template("financial_cash_collection.html", app_release=APP_RELEASE, monitor_mode=False)
 
 @app.get("/financeiro/monitoramento-coletas")
 @login_required
 def financial_cash_monitor_page():
-    if not _has_access("finance.collection"):
+    if not _has_access("finance.monitoring"):
         return redirect(url_for("dashboard_landing"))
     return render_template("financial_cash_collection.html", app_release=APP_RELEASE, monitor_mode=True)
 
@@ -13688,10 +13688,13 @@ def _v792_cash_payload(start,end,calc_statuses=None):
         "critical":sum(1 for x in rows if x.get("criticality")=="CRITICA"),"high":sum(1 for x in rows if x.get("criticality")=="ALTA"),"recurrent":sum(1 for x in rows if x.get("failed_count",0)>=2),"maintenance":sum(1 for x in rows if x.get("criticality_reason")=="MANUTENCAO")}
     return {"ok":True,"release":APP_RELEASE,"start":start.isoformat(),"end":end.isoformat(),"summary":summary,"rows":rows}
 
+def _finance_collection_monitor_access():
+    return _has_access('finance.collection') or _has_access('finance.monitoring')
+
 @app.get('/api/financeiro/coletas/v79')
 @login_required
 def financial_cash_v79_api():
-    if not _has_access('finance.collection'): return jsonify({"ok":False,"error":"Sem permissão."}),403
+    if not _finance_collection_monitor_access(): return jsonify({"ok":False,"error":"Sem permissão."}),403
     try:
         start=date.fromisoformat((request.args.get("start") or "").strip()); end=date.fromisoformat((request.args.get("end") or "").strip())
     except Exception:
@@ -13708,7 +13711,7 @@ def financial_cash_v79_api():
 @app.get('/api/financeiro/coletas/v80/transacoes/status')
 @login_required
 def financial_cash_v80_transactions_status():
-    if not (_has_access('finance.collection') or _has_access('finance.apuracao')):
+    if not (_finance_collection_monitor_access() or _has_access('finance.apuracao')):
         return jsonify({"ok":False,"error":"Sem permissão."}),403
     _stats=db.session.query(func.count(FinancialATMTransaction.id),func.max(FinancialATMTransaction.imported_at),func.max(FinancialATMTransaction.transaction_at)).first()
     total=int((_stats or (0,None,None))[0] or 0); latest_import_at=(_stats or (0,None,None))[1]; latest_tx_at=(_stats or (0,None,None))[2]
@@ -13733,7 +13736,7 @@ def financial_cash_v80_transactions_status():
 @app.get('/api/financeiro/coletas/v80/planejamento-auditoria')
 @login_required
 def financial_cash_v80_staff_planning():
-    if not _has_access('finance.collection'): return jsonify({"ok":False,"error":"Sem permissão."}),403
+    if not _finance_collection_monitor_access(): return jsonify({"ok":False,"error":"Sem permissão."}),403
     try:
         start=date.fromisoformat((request.args.get('start') or '').strip()); end=date.fromisoformat((request.args.get('end') or '').strip())
     except Exception: return jsonify({"ok":False,"error":"Informe data inicial e final."}),400
@@ -13773,7 +13776,7 @@ def financial_cash_v80_staff_planning():
 @app.patch('/api/financeiro/coletas/v79/event')
 @login_required
 def financial_cash_v79_event_edit():
-    if not (_has_access('finance.edit') or _has_access('finance.collection')): return jsonify({"ok":False,"error":"Sem permissão."}),403
+    if not (_has_access('finance.edit') or _finance_collection_monitor_access()): return jsonify({"ok":False,"error":"Sem permissão."}),403
     d=request.get_json(silent=True) or {}; terminal=str(d.get("terminal") or "").strip()
     try: original=date.fromisoformat(str(d.get("original_date") or d.get("date") or "")[:10])
     except Exception: return jsonify({"ok":False,"error":"Data original inválida."}),400
@@ -13822,7 +13825,7 @@ def financial_cash_v79_event_edit():
 @app.get('/api/financeiro/coletas/v79/event/<int:event_id>')
 @login_required
 def financial_cash_v79_event_detail(event_id):
-    if not _has_access('finance.collection'): return jsonify({"ok":False,"error":"Sem permissão."}),403
+    if not _finance_collection_monitor_access(): return jsonify({"ok":False,"error":"Sem permissão."}),403
     ev=db.session.get(FinancialCashCollection,event_id)
     if not ev: return jsonify({"ok":False,"error":"Coleta não encontrada."}),404
     try: den=json.loads(ev.denomination_json or "[]")
@@ -13832,7 +13835,7 @@ def financial_cash_v79_event_detail(event_id):
 @app.post('/api/financeiro/coletas/v79/reporte-diario/preview')
 @login_required
 def financial_cash_v794_daily_preview():
-    if not _has_access('finance.collection'): return jsonify({"ok":False,"error":"Sem permissão."}),403
+    if not _finance_collection_monitor_access(): return jsonify({"ok":False,"error":"Sem permissão."}),403
     d=request.get_json(silent=True) or {}; rows=_v794_parse_daily_report(d.get('text') or '')
     official={x['terminal']:x for x in _v79_cash_base()}; out=[]
     for x in rows:
@@ -13843,7 +13846,7 @@ def financial_cash_v794_daily_preview():
 @app.post('/api/financeiro/coletas/v79/reporte-diario/import')
 @login_required
 def financial_cash_v794_daily_import():
-    if not (_has_access('finance.edit') or _has_access('finance.collection')): return jsonify({"ok":False,"error":"Sem permissão."}),403
+    if not (_has_access('finance.edit') or _finance_collection_monitor_access()): return jsonify({"ok":False,"error":"Sem permissão."}),403
     d=request.get_json(silent=True) or {}; rows=_v794_parse_daily_report(d.get('text') or '')
     official={x['terminal']:x for x in _v79_cash_base()}; imported=0; skipped=0; unmatched=[]
     for x in rows:
@@ -13931,7 +13934,7 @@ def _v80_count_group(rows,key,limit=12):
 @app.get('/api/financeiro/coletas/v80/analise')
 @login_required
 def financial_cash_v80_analysis():
-    if not _has_access('finance.collection'): return jsonify({'ok':False,'error':'Sem permissão.'}),403
+    if not _finance_collection_monitor_access(): return jsonify({'ok':False,'error':'Sem permissão.'}),403
     try:
         start=date.fromisoformat(request.args.get('start')); end=date.fromisoformat(request.args.get('end'))
     except Exception:
@@ -14116,7 +14119,7 @@ def _v8011_rows_from_upload(file_storage):
 @app.post('/api/financeiro/coletas/v80/tbforte/import')
 @login_required
 def financial_cash_v8011_tbforte_import():
-    if not _has_access('finance.apuracao'): return jsonify({'ok':False,'error':'Sem permissão para importar apurações.'}),403
+    if not (_has_access('finance.monitoring') or _has_access('finance.apuracao')): return jsonify({'ok':False,'error':'Sem permissão para importar apurações.'}),403
     f=request.files.get('file')
     if not f:return jsonify({'ok':False,'error':'Selecione o relatório TBForte em CSV ou XLSX.'}),400
     try:source_name,rows=_v8011_rows_from_upload(f)
@@ -14169,7 +14172,7 @@ def financial_cash_v8011_tbforte_import():
 @app.get('/api/financeiro/coletas/v79/export.xlsx')
 @login_required
 def financial_cash_v79_export():
-    if not _has_access('finance.collection'): abort(403)
+    if not _finance_collection_monitor_access(): abort(403)
     try: start=date.fromisoformat(request.args.get("start")); end=date.fromisoformat(request.args.get("end"))
     except Exception: start=date.today().replace(day=1); end=date.today()
     payload=_v792_cash_payload(start,end); rows=payload["rows"]
@@ -14212,7 +14215,7 @@ def financial_cash_reconciliation_collections():
 @app.post("/api/financeiro/coletas/v80/evento/<int:event_id>/acao")
 @login_required
 def financial_cash_v805_event_action(event_id):
-    if not _has_access("finance.collection"):
+    if not _finance_collection_monitor_access():
         return jsonify({"ok":False,"error":"Sem permissão."}),403
     ev=db.session.get(FinancialCashCollection,event_id)
     if not ev: return jsonify({"ok":False,"error":"Registro não encontrado."}),404
@@ -14232,7 +14235,7 @@ def financial_cash_v805_event_action(event_id):
 @app.get("/api/financeiro/coletas/v80/ciclo/<int:event_id>")
 @login_required
 def financial_cash_v802_cycle_detail(event_id):
-    if not (_has_access("finance.collection") or _has_access("finance.apuracao")):
+    if not (_finance_collection_monitor_access() or _has_access("finance.apuracao")):
         return jsonify({"ok":False,"error":"Sem permissão."}),403
     b=db.session.get(FinancialCashCollection,event_id)
     if not b or bool(getattr(b,"soft_deleted",False)): return jsonify({"ok":False,"error":"Coleta não encontrada."}),404
@@ -17973,6 +17976,26 @@ with app.app_context():
         try:db.session.rollback()
         except Exception:pass
         app.logger.exception('V79.5: falha na migração de jornada/permissões Arrow')
+
+    # V80 REV11.2 — permissão independente Monitoramento de Coletas.
+    try:
+        if not SchemaMigration.query.filter_by(version='V80REV11.2-001').first():
+            for p in SystemProfile.query.all():
+                try: acc=set(json.loads(p.access_json or '[]'))
+                except: acc=set()
+                if 'finance.collection' in acc and 'finance.monitoring' not in acc:
+                    acc.add('finance.monitoring'); p.access_json=json.dumps(sorted(acc),ensure_ascii=False)
+            for u in User.query.filter(User.system_profile_id.is_(None)).all():
+                try: acc=set(json.loads(u.access_json or '[]'))
+                except: acc=set()
+                if 'finance.collection' in acc and 'finance.monitoring' not in acc:
+                    acc.add('finance.monitoring'); u.access_json=json.dumps(sorted(acc),ensure_ascii=False)
+            db.session.add(SchemaMigration(version='V80REV11.2-001',description='Permissão independente finance.monitoring; preserva acesso de quem já possuía Coleta de Valores'))
+            db.session.commit()
+    except Exception:
+        try: db.session.rollback()
+        except Exception: pass
+        app.logger.exception('V80 REV11.2: falha na migração da permissão finance.monitoring')
 
     # V72 — parâmetros individuais de histórico GPS e controle de jornada.
     try:
