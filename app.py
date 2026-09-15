@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V80 REV12.1"
+APP_RELEASE = "V81"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -859,6 +859,33 @@ class FinancialCashDailyReport(db.Model):
     source_hash = db.Column(db.String(64), nullable=False, unique=True, index=True)
     imported_by = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
     imported_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+class FinancialCashMonitoringGroup(db.Model):
+    __tablename__ = "financial_cash_monitoring_groups"
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(180), nullable=False, unique=True, index=True)
+    description = db.Column(db.Text)
+    active = db.Column(db.Boolean, nullable=False, default=True, index=True)
+    started_at = db.Column(db.Date, nullable=False, default=date.today)
+    ended_at = db.Column(db.Date)
+    created_by = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+class FinancialCashMonitoringMember(db.Model):
+    __tablename__ = "financial_cash_monitoring_members"
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey("financial_cash_monitoring_groups.id"), nullable=False, index=True)
+    terminal = db.Column(db.String(40), nullable=False, index=True)
+    reason = db.Column(db.String(240))
+    note = db.Column(db.Text)
+    active = db.Column(db.Boolean, nullable=False, default=True, index=True)
+    started_at = db.Column(db.Date, nullable=False, default=date.today)
+    ended_at = db.Column(db.Date)
+    created_by = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    __table_args__ = (db.UniqueConstraint("group_id","terminal",name="uq_cash_monitor_group_terminal"),)
 
 class FinancialCashPlanOverride(db.Model):
     __tablename__ = "financial_cash_plan_overrides"
@@ -12258,6 +12285,7 @@ def migrate_financial_v524_columns():
             if col not in cash_cols: commands.append(f"ALTER TABLE financial_cash_collections ADD COLUMN {col} {sql}")
         # Índices de leitura pesada observados na Telemetria V60.
         tables=set(inspector.get_table_names())
+        db.metadata.create_all(bind=db.engine,tables=[FinancialCashMonitoringGroup.__table__,FinancialCashMonitoringMember.__table__],checkfirst=True)
         if "financial_atm_transactions" in tables:
             tx_cols={c["name"] for c in inspector.get_columns("financial_atm_transactions")}
             for col,sql in (("received_value","FLOAT"),("external_tx_id","VARCHAR(80)"),("product_type","VARCHAR(80)"),("product_name","VARCHAR(180)"),("voucher_generated","VARCHAR(20)"),("voucher_number","VARCHAR(100)"),("status_desc","VARCHAR(220)"),("source_collection_code","VARCHAR(80)"),("source_collection_at","TIMESTAMP"),("service_open_at","TIMESTAMP"),("service_close_at","TIMESTAMP"),
@@ -14230,6 +14258,93 @@ def financial_cash_v80121_tbforte_paste():
     try:return jsonify(_v80121_apply_tbforte_rows('Report_TBForte_colado',rows))
     except Exception as exc:
         db.session.rollback(); return jsonify({'ok':False,'error':str(exc)}),400
+
+
+# V81 — qualidade das fontes, monitoramento em campo e filtro inteligente.
+def _v81_source_health(start=None,end=None):
+    start=start or date.today().replace(day=1); end=end or date.today()
+    r0050=db.session.query(func.max(FinancialATMTransaction.source_collection_at)).scalar()
+    daily=db.session.query(func.max(FinancialCashDailyReport.report_date)).scalar()
+    tb=db.session.query(func.max(FinancialCashCollection.collection_date)).filter(FinancialCashCollection.processed_amount.isnot(None),func.coalesce(FinancialCashCollection.soft_deleted,False).is_(False)).scalar()
+    dates=[x for x in (daily,tb,(r0050.date() if r0050 else None)) if x]
+    conciliable=min(dates) if len(dates)==3 else None
+    return {'r0050':r0050.isoformat() if r0050 else None,'realized':daily.isoformat() if daily else None,'tbforte':tb.isoformat() if tb else None,'conciliable_until':conciliable.isoformat() if conciliable else None,'complete_sources':len(dates)==3}
+
+@app.get('/api/financeiro/coletas/v81/saude-fontes')
+@login_required
+def financial_cash_v81_source_health():
+    if not _finance_collection_monitor_access(): return jsonify({'ok':False,'error':'Sem permissão.'}),403
+    try: start=date.fromisoformat(request.args.get('start')); end=date.fromisoformat(request.args.get('end'))
+    except Exception: start=date.today().replace(day=1); end=date.today()
+    h=_v81_source_health(start,end)
+    # completude individual no período: realizado -> R0050 no dia -> TB Forte apurada
+    realized=FinancialCashDailyReport.query.filter(FinancialCashDailyReport.report_date>=start,FinancialCashDailyReport.report_date<=end,FinancialCashDailyReport.result_status=='RECOLHIDO').all()
+    total=len(realized); r_ok=t_ok=complete=0; missing=[]
+    for x in realized:
+        rq=FinancialATMTransaction.query.filter(FinancialATMTransaction.terminal==x.terminal,func.date(FinancialATMTransaction.source_collection_at)==x.report_date).first()
+        tq=FinancialCashCollection.query.filter(FinancialCashCollection.terminal==x.terminal,FinancialCashCollection.collection_date==x.report_date,FinancialCashCollection.processed_amount.isnot(None),func.coalesce(FinancialCashCollection.soft_deleted,False).is_(False)).first()
+        r_ok+=bool(rq); t_ok+=bool(tq); complete+=bool(rq and tq)
+        if not (rq and tq): missing.append({'terminal':x.terminal,'date':x.report_date.isoformat(),'r0050':bool(rq),'tbforte':bool(tq)})
+    h.update({'period':{'start':start.isoformat(),'end':end.isoformat()},'realized_cycles':total,'with_r0050':r_ok,'with_tbforte':t_ok,'complete_cycles':complete,'completeness_pct':round(complete*100/max(1,total),1),'missing':missing[:100]})
+    return jsonify({'ok':True,'release':APP_RELEASE,**h})
+
+@app.route('/api/financeiro/coletas/v81/monitoramento-campo',methods=['GET','POST'])
+@login_required
+def financial_cash_v81_field_monitoring():
+    if not _finance_collection_monitor_access(): return jsonify({'ok':False,'error':'Sem permissão.'}),403
+    if request.method=='GET':
+        groups=FinancialCashMonitoringGroup.query.order_by(FinancialCashMonitoringGroup.active.desc(),FinancialCashMonitoringGroup.started_at.desc()).all()
+        members=FinancialCashMonitoringMember.query.order_by(FinancialCashMonitoringMember.active.desc(),FinancialCashMonitoringMember.terminal).all()
+        by={}
+        for m in members: by.setdefault(m.group_id,[]).append({'id':m.id,'terminal':m.terminal,'reason':m.reason or '','note':m.note or '','active':bool(m.active),'started_at':m.started_at.isoformat() if m.started_at else None,'ended_at':m.ended_at.isoformat() if m.ended_at else None})
+        return jsonify({'ok':True,'groups':[{'id':g.id,'name':g.name,'description':g.description or '','active':bool(g.active),'started_at':g.started_at.isoformat() if g.started_at else None,'ended_at':g.ended_at.isoformat() if g.ended_at else None,'members':by.get(g.id,[])} for g in groups]})
+    d=request.get_json(silent=True) or {}; action=(d.get('action') or 'create_group').strip()
+    if action=='create_group':
+        name=(d.get('name') or '').strip()
+        if not name:return jsonify({'ok':False,'error':'Informe o nome do grupo.'}),400
+        g=FinancialCashMonitoringGroup(name=name,description=(d.get('description') or '').strip(),started_at=_v8011_date(d.get('started_at')) or date.today(),created_by=session.get('user_id'));db.session.add(g);db.session.commit();return jsonify({'ok':True,'id':g.id})
+    gid=int(d.get('group_id') or 0); g=db.session.get(FinancialCashMonitoringGroup,gid)
+    if not g:return jsonify({'ok':False,'error':'Grupo não encontrado.'}),404
+    if action=='add_members':
+        ids=[]
+        for x in re.findall(r'\d{4,8}',str(d.get('terminals') or '')):
+            if x not in ids: ids.append(x)
+        official={str(x['terminal']) for x in _v79_cash_base()}; valid=[x for x in ids if x in official]; invalid=[x for x in ids if x not in official]; added=existing=0
+        for terminal in valid:
+            m=FinancialCashMonitoringMember.query.filter_by(group_id=gid,terminal=terminal).first()
+            if m: m.active=True;m.ended_at=None;m.updated_at=datetime.utcnow();existing+=1
+            else: db.session.add(FinancialCashMonitoringMember(group_id=gid,terminal=terminal,reason=(d.get('reason') or '').strip(),started_at=date.today(),created_by=session.get('user_id')));added+=1
+        db.session.commit();return jsonify({'ok':True,'informed':len(ids),'valid':len(valid),'added':added,'existing':existing,'invalid':invalid})
+    if action=='end_member':
+        m=db.session.get(FinancialCashMonitoringMember,int(d.get('member_id') or 0))
+        if not m or m.group_id!=gid:return jsonify({'ok':False,'error':'ATM não encontrada no grupo.'}),404
+        m.active=False;m.ended_at=date.today();m.updated_at=datetime.utcnow();db.session.commit();return jsonify({'ok':True})
+    if action=='end_group':
+        g.active=False;g.ended_at=date.today();g.updated_at=datetime.utcnow();FinancialCashMonitoringMember.query.filter_by(group_id=gid,active=True).update({'active':False,'ended_at':date.today(),'updated_at':datetime.utcnow()});db.session.commit();return jsonify({'ok':True})
+    return jsonify({'ok':False,'error':'Ação inválida.'}),400
+
+@app.post('/api/financeiro/coletas/v81/filtro-inteligente')
+@login_required
+def financial_cash_v81_smart_filter():
+    if not _finance_collection_monitor_access(): return jsonify({'ok':False,'error':'Sem permissão.'}),403
+    d=request.get_json(silent=True) or {}; q=unicodedata.normalize('NFKD',str(d.get('query') or '')).encode('ascii','ignore').decode('ascii').lower()
+    filters={}; sort=None; analysis='filter'; explanation=[]
+    if 'negativ' in q: filters['difference']='NEG'; explanation.append('diferença negativa')
+    elif 'positiv' in q: filters['difference']='POS'; explanation.append('diferença positiva')
+    if 'diverg' in q: filters['status']='REALIZADA_COM_DIVERGENCIA'; explanation.append('com divergência')
+    if 'aguard' in q and ('tb' in q or 'apur' in q): filters['status']='AGUARDANDO_APURACAO'; explanation.append('aguardando apuração')
+    if 'nao realizada' in q or 'nao colet' in q: filters['status']='NAO_REALIZADA'; explanation.append('não realizada')
+    if 'sem coleta' in q or 'mais tempo' in q or 'atras' in q: sort='last_collection_at:asc'; explanation.append('maior tempo sem coleta primeiro')
+    if 'critic' in q or 'prioriz' in q: analysis='criticality'; sort='criticality:desc'; explanation.append('prioridade por criticidade')
+    if 'metro' in q and 'via' not in q: filters['company']='METRÔ'; explanation.append('operadora Metrô')
+    if 'cptm' in q: filters['company']='CPTM'; explanation.append('operadora CPTM')
+    group=None
+    if 'monitoramento' in q or 'em campo' in q:
+        active=FinancialCashMonitoringGroup.query.filter_by(active=True).order_by(FinancialCashMonitoringGroup.started_at.desc()).first()
+        if active:
+            group={'id':active.id,'name':active.name,'terminals':[m.terminal for m in FinancialCashMonitoringMember.query.filter_by(group_id=active.id,active=True).all()]}; explanation.append('grupo de monitoramento em campo ativo')
+    health=_v81_source_health()
+    return jsonify({'ok':True,'query':d.get('query') or '','filters':filters,'sort':sort,'analysis':analysis,'monitoring_group':group,'explanation':explanation,'source_health':health,'warning':None if health.get('complete_sources') else 'As três fontes ainda não possuem cobertura completa; o resultado deve ser tratado como parcial.'})
 
 @app.get('/api/financeiro/coletas/v79/export.xlsx')
 @login_required
