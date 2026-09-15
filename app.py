@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V81"
+APP_RELEASE = "V81 REV1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -4406,8 +4406,8 @@ def inventory_equipment_dashboard_api(family):
         return jsonify({"ok":False,"error":"Família de dashboard inválida."}),404
 
     family_types={"pos":{"POS"},"validator-tdi":{"VALIDADOR","TDI"},"block":{"BLOQUEIO"}}[family]
-    filters={k:(request.args.get(k) or "").strip() for k in ("company","line","locality","model","status","subtype")}
-    filters["subtype"]=filters["subtype"].upper()
+    filters={k:[v.strip() for v in request.args.getlist(k) for v in str(v).split(",") if v.strip()] for k in ("company","line","locality","model","status","subtype")}
+    filters["subtype"]=[v.upper() for v in filters["subtype"]]
 
     base_rows=[]
     source_assets = _v732_recarga_tdi_assets() if family=="validator-tdi" else BaseAsset.query.all()
@@ -4460,9 +4460,9 @@ def inventory_equipment_dashboard_api(family):
 
     def fld(k): return "type" if k=="subtype" else k
     def match(r,skip=None):
-        for k,v in filters.items():
-            if k==skip or not v: continue
-            if str(r.get(fld(k)) or "").strip()!=v: return False
+        for k,values in filters.items():
+            if k==skip or not values: continue
+            if str(r.get(fld(k)) or "").strip() not in values: return False
         return True
     rows=[r for r in base_rows if match(r)]
 
@@ -14264,7 +14264,7 @@ def financial_cash_v80121_tbforte_paste():
 def _v81_source_health(start=None,end=None):
     start=start or date.today().replace(day=1); end=end or date.today()
     r0050=db.session.query(func.max(FinancialATMTransaction.source_collection_at)).scalar()
-    daily=db.session.query(func.max(FinancialCashDailyReport.report_date)).scalar()
+    daily=db.session.query(func.max(FinancialCashDailyReport.report_date)).filter(FinancialCashDailyReport.report_date<=date.today()).scalar()
     tb=db.session.query(func.max(FinancialCashCollection.collection_date)).filter(FinancialCashCollection.processed_amount.isnot(None),func.coalesce(FinancialCashCollection.soft_deleted,False).is_(False)).scalar()
     dates=[x for x in (daily,tb,(r0050.date() if r0050 else None)) if x]
     conciliable=min(dates) if len(dates)==3 else None
@@ -14278,7 +14278,7 @@ def financial_cash_v81_source_health():
     except Exception: start=date.today().replace(day=1); end=date.today()
     h=_v81_source_health(start,end)
     # completude individual no período: realizado -> R0050 no dia -> TB Forte apurada
-    realized=FinancialCashDailyReport.query.filter(FinancialCashDailyReport.report_date>=start,FinancialCashDailyReport.report_date<=end,FinancialCashDailyReport.result_status=='RECOLHIDO').all()
+    realized=FinancialCashDailyReport.query.filter(FinancialCashDailyReport.report_date>=start,FinancialCashDailyReport.report_date<=min(end,date.today()),FinancialCashDailyReport.result_status=='RECOLHIDO').all()
     total=len(realized); r_ok=t_ok=complete=0; missing=[]
     for x in realized:
         rq=FinancialATMTransaction.query.filter(FinancialATMTransaction.terminal==x.terminal,func.date(FinancialATMTransaction.source_collection_at)==x.report_date).first()
@@ -14327,24 +14327,35 @@ def financial_cash_v81_field_monitoring():
 @login_required
 def financial_cash_v81_smart_filter():
     if not _finance_collection_monitor_access(): return jsonify({'ok':False,'error':'Sem permissão.'}),403
-    d=request.get_json(silent=True) or {}; q=unicodedata.normalize('NFKD',str(d.get('query') or '')).encode('ascii','ignore').decode('ascii').lower()
-    filters={}; sort=None; analysis='filter'; explanation=[]
-    if 'negativ' in q: filters['difference']='NEG'; explanation.append('diferença negativa')
-    elif 'positiv' in q: filters['difference']='POS'; explanation.append('diferença positiva')
-    if 'diverg' in q: filters['status']='REALIZADA_COM_DIVERGENCIA'; explanation.append('com divergência')
-    if 'aguard' in q and ('tb' in q or 'apur' in q): filters['status']='AGUARDANDO_APURACAO'; explanation.append('aguardando apuração')
-    if 'nao realizada' in q or 'nao colet' in q: filters['status']='NAO_REALIZADA'; explanation.append('não realizada')
-    if 'sem coleta' in q or 'mais tempo' in q or 'atras' in q: sort='last_collection_at:asc'; explanation.append('maior tempo sem coleta primeiro')
-    if 'critic' in q or 'prioriz' in q: analysis='criticality'; sort='criticality:desc'; explanation.append('prioridade por criticidade')
-    if 'metro' in q and 'via' not in q: filters['company']='METRÔ'; explanation.append('operadora Metrô')
-    if 'cptm' in q: filters['company']='CPTM'; explanation.append('operadora CPTM')
+    d=request.get_json(silent=True) or {}; raw=str(d.get('query') or '').strip(); q=unicodedata.normalize('NFKD',raw).encode('ascii','ignore').decode('ascii').lower()
+    filters={}; sort=None; analysis='filter'; explanation=[]; metric=None; recognized=False
+    # Métrica da diferença é explícita: T×A, T×D ou A×D.
+    if ('transa' in q or 'r0050' in q or 'r050' in q) and ('apur' in q or 'tb forte' in q or 'tbforte' in q):
+        metric='TX_APURADO'; sort='tx_processed_abs:desc'; explanation.append('Transações × Apurado (T × A)'); recognized=True
+    elif ('transa' in q or 'r0050' in q or 'r050' in q) and ('declar' in q):
+        metric='TX_DECLARADO'; sort='tx_declared_abs:desc'; explanation.append('Transações × Declarado (T × D)'); recognized=True
+    elif ('apur' in q) and ('declar' in q):
+        metric='APURADO_DECLARADO'; sort='processed_declared_abs:desc'; explanation.append('Apurado × Declarado (A × D)'); recognized=True
+    if 'negativ' in q: filters['difference_sign']='NEG'; explanation.append('somente negativas'); recognized=True
+    elif 'positiv' in q: filters['difference_sign']='POS'; explanation.append('somente positivas'); recognized=True
+    elif 'zerad' in q or 'igual a zero' in q: filters['difference_sign']='ZERO'; explanation.append('somente zeradas'); recognized=True
+    if 'diverg' in q: explanation.append('com divergência'); recognized=True
+    if 'aguard' in q and ('tb' in q or 'apur' in q): filters['status']='AGUARDANDO_APURACAO'; explanation.append('aguardando apuração TB Forte'); recognized=True
+    if 'nao realizada' in q or 'nao colet' in q: filters['status']='NAO_REALIZADA'; explanation.append('coleta não realizada'); recognized=True
+    if 'sem coleta' in q or 'mais tempo' in q or 'atras' in q: sort='last_collection_at:asc'; explanation.append('maior tempo sem coleta primeiro'); recognized=True
+    if 'critic' in q or 'prioriz' in q: analysis='criticality'; sort='criticality:desc'; explanation.append('prioridade por criticidade'); recognized=True
+    companies=[]
+    if 'metro' in q and 'via metro' not in q: companies.append('METRÔ')
+    if 'cptm' in q: companies.append('CPTM')
+    if companies: filters['companies']=companies; explanation.append('operadora '+ ' + '.join(companies)); recognized=True
     group=None
     if 'monitoramento' in q or 'em campo' in q:
         active=FinancialCashMonitoringGroup.query.filter_by(active=True).order_by(FinancialCashMonitoringGroup.started_at.desc()).first()
-        if active:
-            group={'id':active.id,'name':active.name,'terminals':[m.terminal for m in FinancialCashMonitoringMember.query.filter_by(group_id=active.id,active=True).all()]}; explanation.append('grupo de monitoramento em campo ativo')
+        if active: group={'id':active.id,'name':active.name,'terminals':[m.terminal for m in FinancialCashMonitoringMember.query.filter_by(group_id=active.id,active=True).all()]}; explanation.append('monitoramento em campo ativo'); recognized=True
     health=_v81_source_health()
-    return jsonify({'ok':True,'query':d.get('query') or '','filters':filters,'sort':sort,'analysis':analysis,'monitoring_group':group,'explanation':explanation,'source_health':health,'warning':None if health.get('complete_sources') else 'As três fontes ainda não possuem cobertura completa; o resultado deve ser tratado como parcial.'})
+    if not recognized:
+        return jsonify({'ok':True,'recognized':False,'query':raw,'filters':{},'metric':None,'sort':None,'analysis':'none','explanation':[], 'source_health':health,'warning':'Não consegui determinar a análise. Nenhum filtro foi alterado.'})
+    return jsonify({'ok':True,'recognized':True,'query':raw,'filters':filters,'metric':metric,'sort':sort,'analysis':analysis,'monitoring_group':group,'explanation':explanation,'source_health':health,'warning':None if health.get('complete_sources') else 'As três fontes ainda não possuem cobertura completa; resultado parcial.'})
 
 @app.get('/api/financeiro/coletas/v79/export.xlsx')
 @login_required
