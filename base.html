@@ -1,0 +1,153 @@
+
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{% block title %}Sistema de Gestão{% endblock %}</title>
+<link rel="stylesheet" href="{{url_for('static',filename='app.css')}}?v=v77-9-3">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#17345d">
+{% block head %}{% endblock %}
+</head>
+<body>
+{% if session.get('user_id') %}
+<header class="topbar">
+  <div class="wrap nav">
+    <div class="brand">
+      <img src="{{url_for('static',filename='autopass-logo.png')}}" alt="Autopass">
+      <div class="brandtext">
+        <b>Sistema de Gestão</b>
+        <small>{{session.get('name')}} • {{ {'manager':'Gestor','technician':'Técnico Field','technician_implantation':'Técnico Implantação','manager_field':'Gestor Field','consultation':'Consulta','hr':'RH','dispatcher':'Dispatcher','atm_financial_admin':'ADM Financeiro'}.get(session.get('role'),'Usuário') }}</small>
+      </div>
+    </div>
+    <button type="button" class="mobileNavToggle" id="mobileNavToggle" aria-label="Abrir menu">☰</button>
+    <nav class="mainNavV424" id="mainNavV424">
+      {% if can_view('dashboard') or can_view('field.dashboard') or can_view('implantation.dashboard') or can_view('finance.dashboard') %}<a href="/gerencial">Dashboard</a>{% endif %}
+      {# V79.5 REV4 — atalho explícito: a permissão efetiva deve produzir navegação visível, independentemente do dropdown Field. #}
+      {% if can_view('field.bobbins_dashboard') %}<a href="/dashboard/bobinas" class="navBobbinDashboard">Dashboard Bobinas</a>{% endif %}
+      {% if can_view('field') %}
+      <div class="navDrop"><button type="button" class="navDropBtn">Field ▾</button><div class="navDropMenu">
+        {% if can_view('field.bobbins_dashboard') %}<a href="/dashboard/bobinas"><b>Dashboard Bobinas</b></a>{% endif %}
+        {% if can_view('field.inventory') %}<a href="/tecnico">Inventário</a>{% endif %}
+        {% if can_view('field.calls') %}<a href="/trabalho">Chamados</a>{% endif %}
+        {% if can_view('field.preventive') %}<a href="/preventivas">Preventiva ATM</a>{% endif %}
+        {% if can_view('field.equipment') %}<a href="/patrimonio">Equipamentos</a>{% endif %}
+        {% if can_view('field.evidence') %}<a href="/evidencias-campo">Evidências</a>{% endif %}
+        {% if can_view('field.panorama') %}<a href="/visao-panoramica">Visão Panorâmica</a>{% endif %}
+        {% if can_view('field.chip_recarga') %}<a href="/troca-chips">Troca de Chips Recarga</a>{% endif %}{% if can_view('field.atm_mapping') %}<a href="/field/mapeamento-atm"><b>Mapeamento ATM</b></a>{% endif %}{% if can_view('field.bobbins') %}<a href="/field/bobinas">Bobinas</a><a href="/field/estoque">Estoque Field</a>{% endif %}{% if can_view('field.firmware_pos_cptm') %}<a href="/firmware-pos-cptm">Atualização Firmware POS - CPTM</a>{% endif %}
+      </div></div>{% endif %}
+      {% if can_view('implantation') %}
+      <div class="navDrop"><button type="button" class="navDropBtn">Implantação de Hardware ▾</button><div class="navDropMenu">
+        {% if can_view('implantation.visits') or can_view('implantation.reports') %}<a href="/implantacao-hardware">Visitas / Relatórios</a>{% endif %}
+        {% if can_view('implantation.emv') %}<a href="/troca-chips-emv">Troca de Chips EMV - Trilhos</a>{% endif %}{% if can_view('implantation.garage') %}<a href="/troca-chips-garagem">Troca de Chips Garagem</a>{% endif %}
+      </div></div>{% endif %}
+      {% if can_view('teams') or can_view('users') %}
+      <div class="navDrop"><button type="button" class="navDropBtn">RH ▾</button><div class="navDropMenu">
+        {% if can_view('teams') %}<a href="/equipes">Equipes</a>{% endif %}{% if can_view('teams.apt') %}<a href="/rh/apt">APT</a>{% endif %}{% if can_view('users.view') %}<a href="/usuarios">Usuários</a>{% endif %}
+      </div></div>{% endif %}
+      {% if can_view('portal') %}<div class="navDrop"><button type="button" class="navDropBtn">Portal do Cliente ▾</button><div class="navDropMenu">{% if can_view('portal.appointments') %}<a href="/portal-cliente">Agendamentos</a>{% endif %}{% if can_view('portal.receive') or can_view('portal.manage') %}<a href="/portal-cliente">Recebimentos</a>{% endif %}{% if can_view('portal.manage') %}<a href="/portal-cliente/gestao-agendamentos">Gestão de Agendamentos</a><a href="/portal-cliente/cadastro-clientes">Cadastro de Clientes</a>{% endif %}</div></div>{% endif %}{% set _role = (current_user.role if current_user is defined and current_user else '')|lower %}
+{% if can_view('engineering') or _role in ['admin','adm','administrator','manager','gestor'] %}
+<div class="navDrop"><button type="button" class="navDropBtn">Engenharia ▾</button><div class="navDropMenu"><a href="/engenharia#itens">Cadastro de Itens</a><a href="/engenharia#bom">Estruturas BOM</a><a href="/engenharia#preco">Preço de Venda / Locação</a><a href="/engenharia#revisoes">Revisões</a><a href="/engenharia#codificacao">Codificação</a></div></div>
+{% endif %}{% if can_view('materials') %}<div class="navDrop"><button type="button" class="navDropBtn">Documentos & Materiais ▾</button><div class="navDropMenu"><a href="/documentos-materiais">Dossiê & Materiais <span id="materialPending" hidden></span></a>{% if can_view('materials.dossier.view') %}<a href="/documentos-materiais/raio-x">Raio-X dos Colaboradores</a>{% endif %}</div></div>{% endif %}{% if can_view('management') %}<div class="navDrop"><button type="button" class="navDropBtn">Gestão ▾</button><div class="navDropMenu">{% if can_view('teams.today') %}<a href="/central-operacional">Central Operacional</a>{% endif %}{% if can_view('management.360') %}<a href="/inteligencia-operacional">Inteligência Operacional</a>{% endif %}{% if can_view('management.calls') %}<a href="/topdesk">Chamados</a>{% endif %}{% if can_view('management.360') %}<a href="/gestao-360">Central 360</a>{% endif %}{% if can_view('management.notifications') %}<a href="/notificacoes" id="notificationBell">Notificações <span id="notificationCount" hidden>0</span></a>{% endif %}{% if can_view('management.diagnostics') %}<a href="/diagnostico">Diagnóstico</a>{% endif %}{% if can_view('management.settings') %}<a href="/configuracoes">Configurações</a>{% endif %}{% if can_view('management.external_locations') %}<a href="/gestao/localidades-externas">Localidades Externas</a>{% endif %}{% if can_view('management.links') %}<a href="/gestao/resumo-links">Resumo dos Links</a>{% endif %}{% if can_view('management.gps_history') or can_view('management.work_authorizations') %}<a href="/gestao/rastreabilidade-jornada">Rastreabilidade & Jornada <span id="workAuthPending" hidden style="background:#c62828;color:#fff;border-radius:999px;padding:2px 7px;font-weight:900"></span></a>{% endif %}{% if session.get('role') == 'manager' or can_view('management.profiles') %}<a href="/perfis">Perfis & Permissões</a>{% endif %}{% if session.get('role') == 'manager' or can_view('management.dashboard_config') %}<a href="/gestao/configuracao-dashboards">Configuração de Dashboards</a>{% endif %}{% if session.get('role') == 'manager' %}<a href="/configuracoes/dashboards">Construtor de Dashboards</a>{% endif %}{% if can_view('management.health') %}<a href="/saude-plataforma">Saúde da Plataforma</a>{% endif %}{% for d in custom_dashboards|default([]) %}<a href="/dashboards/{{ d.slug }}">{{ d.name }}</a>{% endfor %}{% if custom_dashboards|default([])|selectattr('tv_enabled')|list|length %}<a href="/modo-tv/dashboards">Modo TV Dashboards</a>{% endif %}</div></div>{% endif %}{% if session.get('role') in ('manager','manager_field','technician','technician_implantation') %}<button type="button" id="installPwa" class="navInstall" hidden>Instalar App</button>{% endif %}{% if can_view('finance') or can_view('finance_dashboard') %}<div class="navDrop"><button type="button" class="navDropBtn">Financeiro ▾</button><div class="navDropMenu">{% if can_view('finance.entries') or can_view('finance.support') or can_view('finance.suppliers') %}<a href="/financeiro/lancamentos">Lançamentos</a>{% endif %}{% if can_view('finance.collection') %}<a href="/financeiro/coleta-valores">Coleta de Valores</a>{% endif %}{% if can_view('finance.monitoring') %}<a href="/financeiro/monitoramento-coletas"><b>Monitoramento de Coletas</b></a>{% endif %}{% if can_view('finance.apuracao') %}<a href="/financeiro/apuracao">Apuração</a>{% endif %}</div></div>{% endif %}{% if can_view('arrow.view') or can_view('arrow.manage') or can_view('arrow.dashboard') or can_view('arrow.remote') %}<div class="navDrop"><button type="button" class="navDropBtn">Arrow ▾</button><div class="navDropMenu">{% if can_view('arrow.view') %}<a href="/arrow#agenda">Agenda</a><a href="/arrow?mine=1#minhas">Minhas atividades</a>{% if not can_view('management.notifications') %}<a href="/notificacoes" id="notificationBell">Notificações <span id="notificationCount" hidden>0</span></a>{% endif %}{% endif %}{% if can_view('arrow.manage') %}<a href="/arrow#gestao">Atividades / Alocações</a>{% endif %}{% if can_view('arrow.dashboard') %}<a href="/arrow#dashboard">Dashboard Arrow</a>{% endif %}{% if can_view('arrow.remote') %}<a href="/arrow#remoto">Atendimento Remoto / TeamViewer</a>{% endif %}</div></div>{% endif %}<a href="/meu-perfil" class="navProfile navRightStart">Meu Perfil</a>{% if can_view('about.versions') %}<a href="/sobre">Sobre</a>{% endif %}
+      <a href="/logout">Sair</a>
+    </nav>
+  </div>
+</header>
+{% endif %}
+<div id="globalImportBanner" class="globalImportBanner" hidden><div><b id="globalImportTitle">Importação TopDesk em andamento</b><span id="globalImportText">Processando...</span></div><div class="globalImportTrack"><i id="globalImportBar"></i></div><a href="/topdesk">Acompanhar</a></div>
+<style>
+/* HOTFIX3.1 · corrige empilhamento do menu sobre o conteúdo + mantém Atividade 2.0 */
+main.wrap{max-width:100%;overflow-x:hidden}
+.topbar{position:relative;z-index:10000;overflow:visible!important}
+.topbar .wrap,.topbar .nav,.mainNavV424,.navDrop{overflow:visible!important}
+.navDrop{position:relative;z-index:10010}
+.navDropMenu{z-index:10020!important}
+main.wrap{position:relative;z-index:1}
+.activityNav{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin:0 0 12px}.activityNav a,.activityNav button{min-height:38px;padding:8px 13px;border:1px solid #cbd5e1;border-radius:10px;text-decoration:none;font-weight:800;background:#fff;color:#17345d}.activityNav a.active{background:#17345d;color:#fff;border-color:#17345d}.pageHead,.dashHero{padding-top:4px}.pageHead h1,.dashHero h1{margin-bottom:4px}.card,.tableWrap{min-width:0}.tableWrap{max-width:100%;overflow:auto}@media(max-width:700px){.activityNav{justify-content:flex-start}.activityNav a{flex:1 1 auto;text-align:center}.kpis,.v424Kpis{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
+/* V69.3 menu: dropdown sempre acima do conteúdo, sem scroll interno */
+@media(min-width:761px){.topbar{position:relative!important;z-index:50000!important;overflow:visible!important}.topbar .wrap,.topbar .nav,.mainNavV424,.navDrop{overflow:visible!important}.navDropMenu{z-index:50010!important;max-height:none!important;overflow:visible!important;overscroll-behavior:auto!important}.navDropMenu::-webkit-scrollbar{display:none!important}}
+</style>
+<main class="wrap">
+{% with msgs=get_flashed_messages(with_categories=true) %}{% for cat,m in msgs %}<div class="alert v73flash {{cat if cat in ['success','error','warning','info'] else ('success' if 'sucesso' in m|lower or 'atualizado' in m|lower or 'salva' in m|lower else 'error')}}">{{m}}</div>{% endfor %}{% endwith %}
+{% block content %}{% endblock %}
+</main>
+{% block scripts %}{% endblock %}
+<script>
+// V50 — PWA instalável com cache seguro somente para recursos estáticos e fallback de navegação.
+let v50InstallPrompt=null;
+window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();v50InstallPrompt=e;const b=document.getElementById('installPwa');if(b)b.hidden=false;});
+document.getElementById('installPwa')?.addEventListener('click',async()=>{if(!v50InstallPrompt)return;v50InstallPrompt.prompt();await v50InstallPrompt.userChoice;v50InstallPrompt=null;document.getElementById('installPwa').hidden=true;});
+if('serviceWorker' in navigator && (location.protocol==='https:' || location.hostname==='localhost')){
+  window.addEventListener('load',async()=>{
+    try{
+      const reg=await navigator.serviceWorker.register('/sw.js?v=v73-6-2',{scope:'/',updateViaCache:'none'});
+      await reg.update();
+    }catch(err){console.warn('Falha ao atualizar Service Worker',err);}
+  },{once:true});
+}
+async function v50LoadNotifications(){const badge=document.getElementById('notificationCount');if(!badge)return;try{const d=await fetch('/api/v76/notificacoes?unread=1',{cache:'no-store'}).then(r=>r.json());const n=Number(d.unread||0);badge.textContent=n;badge.hidden=!(n>0);const bell=document.getElementById('notificationBell');if(bell){bell.onclick=e=>{e.preventDefault();location.href='/notificacoes';};}}catch(_e){}}
+v50LoadNotifications();
+(async function loadWorkAuthPending(){const b=document.getElementById('workAuthPending');if(!b)return;try{const d=await fetch('/api/gestao/autorizacoes-jornada/count',{cache:'no-store'}).then(r=>r.json());if(d.count>0){b.textContent=d.count;b.hidden=false;document.title='🔴 ('+d.count+') '+document.title}else b.hidden=true}catch(_e){}})();
+(async()=>{const b=document.getElementById('materialPending');if(!b)return;try{const d=await fetch('/api/materials/pending-count').then(r=>r.json());if(d.count>0){b.textContent='('+d.count+' pendente'+(d.count>1?'s':'')+')';b.hidden=false}}catch(_e){}})();
+// V56-A.2: polling TopDesk singleton, adaptativo e suspenso quando a aba não está visível.
+(function(){
+  const KEY='__autopassTopdeskImportPoll';
+  if(window[KEY]?.timer){clearTimeout(window[KEY].timer);}
+  const state=window[KEY]={timer:null,inflight:false,stopped:false,lastActive:false};
+  const ACTIVE_MS=10000, IDLE_MS=60000, HIDDEN_MS=60000;
+  async function poll(){
+    if(state.stopped||state.inflight)return;
+    if(document.visibilityState==='hidden'){schedule(HIDDEN_MS);return;}
+    const box=document.getElementById('globalImportBanner');
+    if(!box){schedule(IDLE_MS);return;}
+    state.inflight=true;
+    let next=IDLE_MS;
+    try{
+      const r=await fetch('/api/topdesk/import/active',{cache:'no-store',headers:{'X-Autopass-Poll':'topdesk-import'}});
+      const d=await r.json();
+      state.lastActive=!!d.active;
+      if(!d.active){box.hidden=true;next=IDLE_MS;}
+      else{
+        const j=d.job||{},pct=Math.max(0,Math.min(100,+j.progress||0));
+        box.hidden=false;
+        document.getElementById('globalImportTitle').textContent='Importação TopDesk · '+pct+'%';
+        document.getElementById('globalImportText').textContent=`${(+j.processed||0).toLocaleString('pt-BR')} / ${(+j.total||0).toLocaleString('pt-BR')} · ${j.phase||'Processando'}`;
+        document.getElementById('globalImportBar').style.width=pct+'%';
+        next=ACTIVE_MS;
+      }
+    }catch(_e){next=IDLE_MS;}
+    finally{state.inflight=false;schedule(next);}
+  }
+  function schedule(ms){if(state.stopped)return;clearTimeout(state.timer);state.timer=setTimeout(poll,ms);}
+  document.addEventListener('visibilitychange',()=>{clearTimeout(state.timer);schedule(document.visibilityState==='visible'?500:HIDDEN_MS);});
+  window.addEventListener('pagehide',()=>{state.stopped=true;clearTimeout(state.timer);},{once:true});
+  schedule(500);
+})();
+</script>
+
+{% if session.get('role') in ('technician','technician_implantation','manager_field') %}
+<script src="{{ url_for('static', filename='session_gps.js') }}?v=v73-5" defer></script>
+<script src="{{ url_for('static', filename='journey_guard_v72.js') }}?v=v73-1" defer></script>
+{% endif %}
+<script>
+(function(){
+ function addImplantRole(){document.querySelectorAll('select[name="role"]').forEach(function(s){if(![...s.options].some(o=>o.value==='technician_implantation')){const o=document.createElement('option');o.value='technician_implantation';o.textContent='Técnico Implantação';const tech=[...s.options].find(x=>x.value==='technician');if(tech&&tech.nextSibling)s.insertBefore(o,tech.nextSibling);else s.appendChild(o);}})}
+ document.addEventListener('DOMContentLoaded',addImplantRole); setTimeout(addImplantRole,300);
+})();
+</script>
+<script>
+// V50.4: Dashboard Implantação é navegação dedicada, nunca painel de atividade.
+document.querySelectorAll('a[href="/dashboard/implantacao"]').forEach(a=>{a.addEventListener('click',e=>{e.preventDefault();window.location.assign('/dashboard/implantacao');},{capture:true});});
+</script>
+
+<script>
+// V69 consolidada: menu principal mobile compacto.
+document.getElementById('mobileNavToggle')?.addEventListener('click',function(){document.getElementById('mainNavV424')?.classList.toggle('mobileOpen');});
+document.addEventListener('click',function(e){const n=document.getElementById('mainNavV424'),b=document.getElementById('mobileNavToggle');if(!n||!b||!n.classList.contains('mobileOpen'))return;if(!n.contains(e.target)&&!b.contains(e.target))n.classList.remove('mobileOpen');});
+
+// V56-A.1: dropdowns móveis por toque (inclui RH).
+document.addEventListener('click',function(e){const b=e.target.closest('.navDropBtn');if(!b)return;if(window.matchMedia('(max-width:760px)').matches){e.preventDefault();const d=b.closest('.navDrop');document.querySelectorAll('.navDrop.open').forEach(x=>{if(x!==d)x.classList.remove('open')});d.classList.toggle('open');}});
+</script>
+</body>
+</html>
