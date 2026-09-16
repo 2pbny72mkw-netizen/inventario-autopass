@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V82.7"
+APP_RELEASE = "V82.8"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -14042,10 +14042,21 @@ def _v815_is_line17(line):
     txt=(line or '').upper().replace('–','-').replace('—','-')
     return bool(re.search(r'(^|\D)17(\D|$)',txt)) or 'OURO' in txt
 
-def _v815_reprogram_suggestion(start, end):
+def _v815_reprogram_suggestion(start, end, strategy="CONSERVADORA", history_n=3, reference_value=5000.0):
     payload=_v792_cash_payload(start,end)
     rows=[x for x in (payload.get('rows') or []) if x.get('has_schedule')]
     schedules={x.terminal:x for x in FinancialCashSchedule.query.filter_by(active=True).all()}
+    strategy=(strategy or 'CONSERVADORA').strip().upper(); history_n=2 if int(history_n or 3)==2 else 3; reference_value=max(0.0,float(reference_value or 5000.0))
+    # V82.8: média das últimas 2/3 coletas válidas por ATM. Prioriza valor apurado, depois declarado e coletado.
+    terminal_history={}
+    terminal_ids={str(x.get('terminal') or '') for x in rows if x.get('terminal')}
+    if terminal_ids:
+        hist=FinancialCashCollection.query.filter(FinancialCashCollection.terminal.in_(terminal_ids),FinancialCashCollection.soft_deleted.is_(False),FinancialCashCollection.cycle_excluded.is_(False)).order_by(FinancialCashCollection.terminal,FinancialCashCollection.collection_date.desc(),FinancialCashCollection.end_at.desc()).all()
+        for c in hist:
+            arr=terminal_history.setdefault(str(c.terminal),[])
+            if len(arr)>=history_n: continue
+            value=c.processed_amount if c.processed_amount is not None else (c.declared_amount if c.declared_amount is not None else c.collected_amount)
+            if value is not None: arr.append(float(value))
     groups={}
     for x in rows:
         station=(x.get('station') or 'Sem localidade').strip()
@@ -14098,8 +14109,16 @@ def _v815_reprogram_suggestion(start, end):
         for t in g['terminals']:
             sch=schedules.get(t)
             current_by_terminal[t]=_v79_schedule_text(sch) if sch else '—'
-        changes.append({'station':g['station'],'terminals':g['terminals'],'atm_count':len(g['terminals']),'companies':sorted(g['companies']),'lines':sorted(g['lines']),'expected_value':round(g['expected_value'],2),'current':' | '.join(sorted(set(current))) or '—','current_by_terminal':current_by_terminal,'mode':g['mode'],'suggested_day':g['suggested_day'],'suggested':('Manter 2x/mês' if g['mode']=='KEEP_LINE17' else f"Semanal · {names[g['suggested_day']]}")})
-    return {'ok':True,'release':APP_RELEASE,'start':start.isoformat(),'end':end.isoformat(),'rule':'Linha 17/Ouro permanece 2x/mês. Demais localidades ficam semanais entre terça e sexta. Todos os ATMs da mesma localidade são agrupados, independentemente da operadora. Balanceamento: 60% valor esperado, 25% localidades/equipe e 15% quantidade de ATMs.','value_source':'Média histórica de coleta armazenada na programação (average_collection).','days':[{'code':d,'label':names[d],'expected_value':round(loads[d]['value'],2),'localities':loads[d]['localities'],'atms':loads[d]['atms']} for d in weekdays],'changes':changes,'summary':{'weekly_localities':sum(1 for x in changes if x['mode']!='KEEP_LINE17'),'line17_localities':sum(1 for x in changes if x['mode']=='KEEP_LINE17'),'reprogrammed_localities':sum(1 for x in changes if x['mode']=='REPROGRAM'),'atms_affected':sum(x['atm_count'] for x in changes if x['mode']=='REPROGRAM'),'expected_weekly_value':round(sum(x['expected_value'] for x in changes if x['mode']!='KEEP_LINE17'),2)}}
+        terminal_plan={}
+        second_day={'TER':'QUI','QUA':'SEX','QUI':'TER','SEX':'TER'}
+        for t in g['terminals']:
+            vals=terminal_history.get(str(t),[])[:history_n]; avg=(sum(vals)/len(vals)) if vals else None
+            days=[] if g['mode']=='KEEP_LINE17' else [g['suggested_day']]
+            aggressive=bool(strategy=='AGRESSIVA' and g['mode']!='KEEP_LINE17' and avg is not None and avg>reference_value)
+            if aggressive: days=[g['suggested_day'],second_day[g['suggested_day']]]
+            terminal_plan[str(t)]={'history_values':vals,'history_count':len(vals),'history_average':round(avg,2) if avg is not None else None,'frequency_per_week':2 if aggressive else (0 if g['mode']=='KEEP_LINE17' else 1),'suggested_days':days,'reason':(f'Média das últimas {len(vals)} coletas acima de R$ {reference_value:,.2f}' if aggressive else ('Linha 17/Ouro: regra específica' if g['mode']=='KEEP_LINE17' else 'Coleta semanal conservadora'))}
+        changes.append({'station':g['station'],'terminals':g['terminals'],'atm_count':len(g['terminals']),'companies':sorted(g['companies']),'lines':sorted(g['lines']),'expected_value':round(g['expected_value'],2),'current':' | '.join(sorted(set(current))) or '—','current_by_terminal':current_by_terminal,'mode':g['mode'],'suggested_day':g['suggested_day'],'terminal_plan':terminal_plan,'high_value_atms':sum(1 for z in terminal_plan.values() if z['frequency_per_week']==2),'suggested':('Manter 2x/mês' if g['mode']=='KEEP_LINE17' else f"Semanal · {names[g['suggested_day']]}")})
+    return {'ok':True,'release':APP_RELEASE,'start':start.isoformat(),'end':end.isoformat(),'rule':'Linha 17/Ouro permanece 2x/mês. Demais localidades ficam semanais entre terça e sexta. Todos os ATMs da mesma localidade são agrupados, independentemente da operadora. Balanceamento: 60% valor esperado, 25% localidades/equipe e 15% quantidade de ATMs.','value_source':'V82.8: estratégia agressiva usa a média das últimas 2/3 coletas válidas por ATM (apurado → declarado → coletado).','strategy':strategy,'history_n':history_n,'reference_value':reference_value,'days':[{'code':d,'label':names[d],'expected_value':round(loads[d]['value'],2),'localities':loads[d]['localities'],'atms':loads[d]['atms']} for d in weekdays],'changes':changes,'summary':{'weekly_localities':sum(1 for x in changes if x['mode']!='KEEP_LINE17'),'line17_localities':sum(1 for x in changes if x['mode']=='KEEP_LINE17'),'reprogrammed_localities':sum(1 for x in changes if x['mode']=='REPROGRAM'),'atms_affected':sum(x['atm_count'] for x in changes if x['mode']=='REPROGRAM'),'expected_weekly_value':round(sum(x['expected_value'] for x in changes if x['mode']!='KEEP_LINE17'),2)}}
 
 @app.get('/api/financeiro/coletas/v81/reprogramacao-sugerida')
 @login_required
@@ -14109,7 +14128,7 @@ def financial_cash_v815_reprogram_suggestion():
         start=date.fromisoformat((request.args.get('start') or '').strip()); end=date.fromisoformat((request.args.get('end') or '').strip())
     except Exception: return jsonify({'ok':False,'error':'Informe data inicial e final.'}),400
     if end<start or (end-start).days>120: return jsonify({'ok':False,'error':'Período inválido.'}),400
-    return jsonify(_v815_reprogram_suggestion(start,end))
+    return jsonify(_v815_reprogram_suggestion(start,end,request.args.get('strategy') or 'CONSERVADORA',request.args.get('history_n') or 3,request.args.get('reference_value') or 5000))
 
 def _v816_proposal_table():
     db.metadata.create_all(bind=db.engine,tables=[FinancialCashReprogramProposal.__table__],checkfirst=True)
@@ -14201,8 +14220,9 @@ def financial_cash_v816_proposal_activate(pid):
             sch=FinancialCashSchedule.query.filter_by(terminal=str(terminal),active=True).first()
             if not sch:continue
             before={'weekly_days':json.loads(sch.weekly_days_json or '[]'),'month_days':json.loads(sch.month_days_json or '[]')}
-            sch.weekly_days_json=json.dumps([day]);sch.month_days_json='[]';sch.total_month=4;sch.updated_at=datetime.utcnow();changed+=1
-            db.session.add(AuditEvent(event_type='COLETA_REPROGRAMACAO_V816_ATIVADA',user_id=session.get('user_id'),entity_type='financial_cash_schedule',entity_id=str(terminal),detail=json.dumps({'proposal_id':p.id,'effective_date':p.effective_date.isoformat(),'before':before,'after':{'weekly_days':[day],'month_days':[]}},ensure_ascii=False)))
+            plan=(g.get('terminal_plan') or {}).get(str(terminal)) or {}; days=plan.get('suggested_days') or [day];days=[z for z in days if z in ('TER','QUA','QUI','SEX')] or [day]
+            sch.weekly_days_json=json.dumps(days);sch.month_days_json='[]';sch.total_month=8 if len(days)>1 else 4;sch.updated_at=datetime.utcnow();changed+=1
+            db.session.add(AuditEvent(event_type='COLETA_REPROGRAMACAO_V828_ATIVADA',user_id=session.get('user_id'),entity_type='financial_cash_schedule',entity_id=str(terminal),detail=json.dumps({'proposal_id':p.id,'effective_date':p.effective_date.isoformat(),'before':before,'after':{'weekly_days':days,'month_days':[]},'reason':plan.get('reason')},ensure_ascii=False)))
     p.status='ACTIVE';p.activated_at=datetime.utcnow();p.updated_at=datetime.utcnow();db.session.commit();return jsonify({'ok':True,'changed':changed,'message':f'Programação #{p.id} tornou-se vigente. {changed} ATM(s) atualizada(s).'})
 
 @app.get('/api/financeiro/coletas/v81/reprogramacao-propostas/<int:pid>/exportar')
@@ -16119,7 +16139,7 @@ def v731_apt_update(rid):
     x=db.session.get(AptRecord,rid) or abort(404);d=request.get_json(silent=True) or {}
     uid=d.get('user_id');u=db.session.get(User,int(uid)) if uid else None
     if not u:return jsonify({"ok":False,"error":"Selecione um colaborador existente no Cadastro de Usuários."}),400
-    line=(d.get("line") or "").strip();allowed_lines={z.line for z in Location.query.all() if z.line and (str(z.line).strip().startswith('04') or str(z.line).strip().startswith('05'))} or {'04 - AMARELA','05 - LILÁS'}
+    line=(d.get("line") or "").strip();allowed_lines=set(_v7893_apt_required_lines())
     if line not in allowed_lines:return jsonify({"ok":False,"error":"Selecione uma linha que exige APT."}),400
     x.user_id=u.id;x.collaborator_name=u.name.strip();x.company=(u.company or "").strip();x.line=line;x.apt_number=(d.get("apt_number") or x.apt_number).strip();x.process_status=(d.get("process_status") or x.process_status or "AGUARDANDO").strip().upper();x.notes=(d.get("notes") or "").strip()
     for fld in ('valid_until','nr10_valid_until','nr35_valid_until','aso_scheduled_at','aso_valid_until','integration_scheduled_at','integration_valid_until'):setattr(x,fld,_apt_date(d.get(fld)))
@@ -16131,6 +16151,16 @@ def v731_apt_update(rid):
 def v731_apt_toggle(rid):
     if not _has_access("teams.apt"):abort(403)
     x=db.session.get(AptRecord,rid) or abort(404);x.active=not x.active;db.session.commit();return jsonify({"ok":True,"active":x.active})
+
+@app.delete("/api/rh/apt/<int:rid>")
+@login_required
+def v828_apt_delete(rid):
+    if not _has_access("teams.apt"):abort(403)
+    x=db.session.get(AptRecord,rid) or abort(404)
+    detail={"user_id":x.user_id,"line":x.line,"apt_number":x.apt_number}
+    # Exclusão administrativa do registro; demais PT/APT do mesmo usuário são preservadas.
+    db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='APT_RECORD_DELETED',entity_type='apt_record',entity_id=str(x.id),detail=json.dumps(detail,ensure_ascii=False)))
+    db.session.delete(x);db.session.commit();return jsonify({"ok":True})
 
 @app.post("/api/rh/apt/<int:rid>/pdf")
 @login_required
@@ -20541,7 +20571,7 @@ def v82_atm_mapping_list():
         for mid,cnt in db.session.query(AtmMappingPhoto.mapping_id,func.count(AtmMappingPhoto.id)).filter(AtmMappingPhoto.mapping_id.in_([x.id for x in maps.values()])).group_by(AtmMappingPhoto.mapping_id).all():photos[mid]=cnt
     rows=[]
     for a in _v82_cash_atms():
-        m=maps.get(a['atm_id']); complete=bool(m and m.has_holes is not None and m.physical_access in ('INTERNO','EXTERNO') and m.rear_safe_door is not None and m.bill_acceptor in ('UBA-PRO','I-VIZION','SPECTRAL') and (m.has_holes is False or m.holes_sealed is not None) and photos.get(m.id,0)>0); rows.append({**a,'status':'CONCLUIDO' if complete else 'PENDENTE','mapping_id':m.id if m else None,'has_holes':m.has_holes if m else None,'holes_sealed':m.holes_sealed if m else None,'physical_access':m.physical_access if m else None,'rear_safe_door':m.rear_safe_door if m else None,'bill_acceptor':m.bill_acceptor if m else None,'notes':m.notes if m else '','technician':users.get(m.technician_id,'') if m else '','updated_at':m.updated_at.isoformat()+'Z' if m else None,'photos':photos.get(m.id,0) if m else 0})
+        m=maps.get(a['atm_id']); complete=bool(m and m.has_holes is not None and m.physical_access in ('INTERNO','EXTERNO') and m.rear_safe_door is not None and m.bill_acceptor in ('UBA-PRO','I-VIZION','SPECTRAL') and (m.has_holes is False or m.holes_sealed is not None) and photos.get(m.id,0)>0); rows.append({**a,'status':((m.status if m and m.status in ('PENDENTE','EM_ANDAMENTO','CONCLUIDO') else ('CONCLUIDO' if complete else 'PENDENTE')) if m else 'PENDENTE'),'mapping_id':m.id if m else None,'has_holes':m.has_holes if m else None,'holes_sealed':m.holes_sealed if m else None,'physical_access':m.physical_access if m else None,'rear_safe_door':m.rear_safe_door if m else None,'bill_acceptor':m.bill_acceptor if m else None,'notes':m.notes if m else '','technician':users.get(m.technician_id,'') if m else '','updated_at':m.updated_at.isoformat()+'Z' if m else None,'photos':photos.get(m.id,0) if m else 0})
     summary={'total':len(rows),'done':sum(x['status']=='CONCLUIDO' for x in rows),'pending':sum(x['status']=='PENDENTE' for x in rows),'internal':sum(x['physical_access']=='INTERNO' for x in rows),'external':sum(x['physical_access']=='EXTERNO' for x in rows),'holes':sum(x['has_holes'] is True for x in rows),'unsealed':sum(x['has_holes'] is True and x['holes_sealed'] is False for x in rows),'with_photos':sum((x.get('photos') or 0)>0 for x in rows),'rear_safe_door_yes':sum(x.get('rear_safe_door') is True for x in rows),'rear_safe_door_no':sum(x.get('rear_safe_door') is False for x in rows),'acceptor_uba_pro':sum(x.get('bill_acceptor')=='UBA-PRO' for x in rows),'acceptor_i_vizion':sum(x.get('bill_acceptor')=='I-VIZION' for x in rows),'acceptor_spectral':sum(x.get('bill_acceptor')=='SPECTRAL' for x in rows)}
     summary['progress_pct']=round((summary['done']/summary['total']*100),1) if summary['total'] else 0
     # Dashboard 2.0: evolução dos mapeamentos e progresso por operadora.
@@ -20582,6 +20612,16 @@ def v82_atm_mapping_save():
         db.session.add(AtmMappingPhoto(mapping_id=m.id,storage_key=stored,original_name=safe,content_type=f.mimetype or 'image/jpeg'))
     db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='ATM_MAPPING_SAVED',entity_type='atm_mapping',entity_id=str(m.id),detail=json.dumps({'atm_id':atm,'has_holes':m.has_holes,'holes_sealed':m.holes_sealed,'physical_access':access,'rear_safe_door':m.rear_safe_door,'bill_acceptor':m.bill_acceptor,'photos_added':len(files)},ensure_ascii=False)));db.session.commit()
     return jsonify({'ok':True,'mapping_id':m.id,'photos_added':len(files),'release':APP_RELEASE})
+
+
+@app.post('/api/mapeamento-atm/<int:mapping_id>/status-admin')
+@login_required
+def v828_atm_mapping_admin_status(mapping_id):
+    if (session.get('role') or '').strip().lower() not in ('manager','admin','adm','administrator') and not _has_access('field.atm_mapping_manage'): return jsonify({'ok':False,'error':'Alteração de status restrita ao ADM/Gestor autorizado.'}),403
+    m=db.session.get(AtmMapping,mapping_id) or abort(404);d=request.get_json(silent=True) or {};new=(d.get('status') or '').strip().upper();reason=(d.get('reason') or '').strip()
+    if new not in ('PENDENTE','EM_ANDAMENTO','CONCLUIDO'):return jsonify({'ok':False,'error':'Status inválido.'}),400
+    if not reason:return jsonify({'ok':False,'error':'Informe a justificativa da alteração administrativa.'}),400
+    old=m.status;m.status=new;m.updated_at=datetime.utcnow();db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='ATM_MAPPING_STATUS_ADMIN',entity_type='atm_mapping',entity_id=str(m.id),detail=json.dumps({'atm_id':m.atm_id,'before':old,'after':new,'reason':reason},ensure_ascii=False)));db.session.commit();return jsonify({'ok':True,'before':old,'status':new})
 
 @app.get('/api/mapeamento-atm/foto/<int:photo_id>')
 @login_required
