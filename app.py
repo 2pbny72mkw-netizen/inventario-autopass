@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V82.6"
+APP_RELEASE = "V82.7"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -20634,7 +20634,7 @@ def v824_atm_mapping_export_pptx():
     prs=Presentation(); prs.slide_width=Inches(13.333); prs.slide_height=Inches(7.5)
     def tb(sl,x,y,w,h,text,size=18,bold=False):
         box=sl.shapes.add_textbox(Inches(x),Inches(y),Inches(w),Inches(h)); p=box.text_frame.paragraphs[0]; p.text=str(text); p.font.size=Pt(size); p.font.bold=bold; p.font.name='Arial'; p.font.color.rgb=RGBColor(23,52,93); return box
-    sl=prs.slides.add_slide(prs.slide_layouts[6]); tb(sl,.65,.65,12,.55,'Mapeamento ATM — Relatório executivo',28,True); tb(sl,.65,1.35,12,.35,f'V82.6 · Gerado em {datetime.now().strftime("%d/%m/%Y %H:%M")}',12)
+    sl=prs.slides.add_slide(prs.slide_layouts[6]); tb(sl,.65,.65,12,.55,'Mapeamento ATM — Relatório executivo',28,True); tb(sl,.65,1.35,12,.35,f'V82.7 · Gerado em {datetime.now().strftime("%d/%m/%Y %H:%M")}',12)
     vals=[('ATMs no recorte',total),('Concluídas',done),('Pendentes',pending),('Avanço',f'{round(done/total*100,1) if total else 0}%'),('Acesso interno',internal),('Acesso externo',external),('Com furos',holes),('Furos não tampados',unsealed),('Porta cofre traseira: Sim',rear_yes),('Porta cofre traseira: Não',rear_no),('Aceitador UBA-PRO',uba),('Aceitador I-VIZION',ivizion),('Aceitador SPECTRAL',spectral)]
     for i,(lab,val) in enumerate(vals):
         x=.65+(i%5)*2.45; y=2.15+(i//5)*1.45; tb(sl,x,y,2.2,.3,lab,10,True); tb(sl,x,y+.35,2.2,.55,val,23,True)
