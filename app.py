@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V82.8"
+APP_RELEASE = "V82.9"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -14047,7 +14047,7 @@ def _v815_reprogram_suggestion(start, end, strategy="CONSERVADORA", history_n=3,
     rows=[x for x in (payload.get('rows') or []) if x.get('has_schedule')]
     schedules={x.terminal:x for x in FinancialCashSchedule.query.filter_by(active=True).all()}
     strategy=(strategy or 'CONSERVADORA').strip().upper(); history_n=2 if int(history_n or 3)==2 else 3; reference_value=max(0.0,float(reference_value or 5000.0))
-    # V82.8: média das últimas 2/3 coletas válidas por ATM. Prioriza valor apurado, depois declarado e coletado.
+    # V82.9: média estrita das últimas 2/3 coletas com Valor Apurado por ATM. Sem fallback e sem transformar ausente em zero.
     terminal_history={}
     terminal_ids={str(x.get('terminal') or '') for x in rows if x.get('terminal')}
     if terminal_ids:
@@ -14055,7 +14055,7 @@ def _v815_reprogram_suggestion(start, end, strategy="CONSERVADORA", history_n=3,
         for c in hist:
             arr=terminal_history.setdefault(str(c.terminal),[])
             if len(arr)>=history_n: continue
-            value=c.processed_amount if c.processed_amount is not None else (c.declared_amount if c.declared_amount is not None else c.collected_amount)
+            value=c.processed_amount
             if value is not None: arr.append(float(value))
     groups={}
     for x in rows:
@@ -14118,7 +14118,7 @@ def _v815_reprogram_suggestion(start, end, strategy="CONSERVADORA", history_n=3,
             if aggressive: days=[g['suggested_day'],second_day[g['suggested_day']]]
             terminal_plan[str(t)]={'history_values':vals,'history_count':len(vals),'history_average':round(avg,2) if avg is not None else None,'frequency_per_week':2 if aggressive else (0 if g['mode']=='KEEP_LINE17' else 1),'suggested_days':days,'reason':(f'Média das últimas {len(vals)} coletas acima de R$ {reference_value:,.2f}' if aggressive else ('Linha 17/Ouro: regra específica' if g['mode']=='KEEP_LINE17' else 'Coleta semanal conservadora'))}
         changes.append({'station':g['station'],'terminals':g['terminals'],'atm_count':len(g['terminals']),'companies':sorted(g['companies']),'lines':sorted(g['lines']),'expected_value':round(g['expected_value'],2),'current':' | '.join(sorted(set(current))) or '—','current_by_terminal':current_by_terminal,'mode':g['mode'],'suggested_day':g['suggested_day'],'terminal_plan':terminal_plan,'high_value_atms':sum(1 for z in terminal_plan.values() if z['frequency_per_week']==2),'suggested':('Manter 2x/mês' if g['mode']=='KEEP_LINE17' else f"Semanal · {names[g['suggested_day']]}")})
-    return {'ok':True,'release':APP_RELEASE,'start':start.isoformat(),'end':end.isoformat(),'rule':'Linha 17/Ouro permanece 2x/mês. Demais localidades ficam semanais entre terça e sexta. Todos os ATMs da mesma localidade são agrupados, independentemente da operadora. Balanceamento: 60% valor esperado, 25% localidades/equipe e 15% quantidade de ATMs.','value_source':'V82.8: estratégia agressiva usa a média das últimas 2/3 coletas válidas por ATM (apurado → declarado → coletado).','strategy':strategy,'history_n':history_n,'reference_value':reference_value,'days':[{'code':d,'label':names[d],'expected_value':round(loads[d]['value'],2),'localities':loads[d]['localities'],'atms':loads[d]['atms']} for d in weekdays],'changes':changes,'summary':{'weekly_localities':sum(1 for x in changes if x['mode']!='KEEP_LINE17'),'line17_localities':sum(1 for x in changes if x['mode']=='KEEP_LINE17'),'reprogrammed_localities':sum(1 for x in changes if x['mode']=='REPROGRAM'),'atms_affected':sum(x['atm_count'] for x in changes if x['mode']=='REPROGRAM'),'expected_weekly_value':round(sum(x['expected_value'] for x in changes if x['mode']!='KEEP_LINE17'),2)}}
+    return {'ok':True,'release':APP_RELEASE,'start':start.isoformat(),'end':end.isoformat(),'rule':'Linha 17/Ouro permanece 2x/mês. Demais localidades ficam semanais entre terça e sexta. Todos os ATMs da mesma localidade são agrupados, independentemente da operadora. Balanceamento: 60% valor esperado, 25% localidades/equipe e 15% quantidade de ATMs.','value_source':'V82.9: estratégia agressiva usa exclusivamente o Valor Apurado das últimas 2/3 coletas com apuração disponível; registros sem apurado são desconsiderados.','strategy':strategy,'history_n':history_n,'reference_value':reference_value,'days':[{'code':d,'label':names[d],'expected_value':round(loads[d]['value'],2),'localities':loads[d]['localities'],'atms':loads[d]['atms']} for d in weekdays],'changes':changes,'summary':{'weekly_localities':sum(1 for x in changes if x['mode']!='KEEP_LINE17'),'line17_localities':sum(1 for x in changes if x['mode']=='KEEP_LINE17'),'reprogrammed_localities':sum(1 for x in changes if x['mode']=='REPROGRAM'),'atms_affected':sum(x['atm_count'] for x in changes if x['mode']=='REPROGRAM'),'expected_weekly_value':round(sum(x['expected_value'] for x in changes if x['mode']!='KEEP_LINE17'),2)}}
 
 @app.get('/api/financeiro/coletas/v81/reprogramacao-sugerida')
 @login_required
@@ -14128,7 +14128,7 @@ def financial_cash_v815_reprogram_suggestion():
         start=date.fromisoformat((request.args.get('start') or '').strip()); end=date.fromisoformat((request.args.get('end') or '').strip())
     except Exception: return jsonify({'ok':False,'error':'Informe data inicial e final.'}),400
     if end<start or (end-start).days>120: return jsonify({'ok':False,'error':'Período inválido.'}),400
-    return jsonify(_v815_reprogram_suggestion(start,end,request.args.get('strategy') or 'CONSERVADORA',request.args.get('history_n') or 3,request.args.get('reference_value') or 5000))
+    result=_v815_reprogram_suggestion(start,end,request.args.get('strategy') or 'CONSERVADORA',request.args.get('history_n') or 3,request.args.get('reference_value') or 5000);result['can_activate']=_current_user_is_superadmin();return jsonify(result)
 
 def _v816_proposal_table():
     db.metadata.create_all(bind=db.engine,tables=[FinancialCashReprogramProposal.__table__],checkfirst=True)
@@ -14185,7 +14185,7 @@ def financial_cash_v817_proposal_get(pid):
     _v816_proposal_table();p=db.session.get(FinancialCashReprogramProposal,pid)
     if not p:return jsonify({'ok':False,'error':'Proposta não encontrada.'}),404
     data=json.loads(p.payload_json or '{}')
-    return jsonify({'ok':True,'proposal':{'id':p.id,'title':p.title,'status':p.status,'start_date':p.start_date.isoformat(),'end_date':p.end_date.isoformat(),'effective_date':p.effective_date.isoformat(),'observation':p.observation or '','changes':data.get('changes') or [],'rule':data.get('rule') or ''}})
+    return jsonify({'ok':True,'proposal':{'id':p.id,'title':p.title,'status':p.status,'start_date':p.start_date.isoformat(),'end_date':p.end_date.isoformat(),'effective_date':p.effective_date.isoformat(),'observation':p.observation or '','changes':data.get('changes') or [],'rule':data.get('rule') or '','can_activate':_current_user_is_superadmin()}})
 
 @app.delete('/api/financeiro/coletas/v81/reprogramacao-propostas/<int:pid>')
 @login_required
@@ -14208,7 +14208,7 @@ def financial_cash_v816_proposal_approve(pid):
 @app.post('/api/financeiro/coletas/v81/reprogramacao-propostas/<int:pid>/ativar')
 @login_required
 def financial_cash_v816_proposal_activate(pid):
-    if not (_has_access('finance.edit') or _finance_collection_monitor_access()): return jsonify({'ok':False,'error':'Sem permissão.'}),403
+    if not _current_user_is_superadmin(): return jsonify({'ok':False,'error':'Somente o ADM pode tornar uma programação vigente.'}),403
     _v816_proposal_table();p=db.session.get(FinancialCashReprogramProposal,pid)
     if not p or p.status!='APPROVED':return jsonify({'ok':False,'error':'A proposta precisa estar aprovada.'}),409
     data=json.loads(p.payload_json or '{}');changed=0
