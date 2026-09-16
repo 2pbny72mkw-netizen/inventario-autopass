@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V82.1"
+APP_RELEASE = "V82.2"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -2149,7 +2149,9 @@ def _user_access_set(user=None):
 
 def _has_access(permission):
     if not session.get("user_id"): return False
-    if session.get("role")=="manager": return True
+    # V82.2 — ADM/Gestor administrativo sempre possui acesso integral.
+    # Demais perfis continuam exclusivamente sob a Matriz de Permissões.
+    if (session.get("role") or "").strip().lower() in {"manager", "admin", "adm", "administrator", "gestor"}: return True
     access=_user_access_set()
     if permission in ACCESS_GROUPS:
         return permission in access or any(x in access for x in ACCESS_GROUPS[permission][1])
