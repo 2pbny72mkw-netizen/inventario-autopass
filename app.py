@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V82.13"
+APP_RELEASE = "V82.14"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -14329,20 +14329,20 @@ def financial_cash_v816_proposal_export(pid):
     if not _finance_collection_monitor_access(): return jsonify({'ok':False,'error':'Sem permissão.'}),403
     _v816_proposal_table();p=db.session.get(FinancialCashReprogramProposal,pid)
     if not p:return jsonify({'ok':False,'error':'Proposta não encontrada.'}),404
-    data=json.loads(p.payload_json or '{}');wb=Workbook();ws=wb.active;ws.title='Programação Oficial';ws.append(['PROGRAMAÇÃO DE COLETAS','Vigência',p.effective_date.strftime('%d/%m/%Y'),'Status',p.status,'Observação',p.observation or '']);ws.append([]);headers=['Localidade','ATM','Operadora(s)','Linha(s)','Programação atual','Programação sugerida','Houve mudança?','Vigência','Valor esperado da localidade'];ws.append(headers)
+    data=json.loads(p.payload_json or '{}');wb=Workbook();ws=wb.active;ws.title='Programação Oficial';ws.append(['PROGRAMAÇÃO DE COLETAS','Vigência',p.effective_date.strftime('%d/%m/%Y'),'Status',p.status,'Observação',p.observation or '']);ws.append([]);headers=['Localidade','ATM','Operadora(s)','Linha(s)','Programação atual','Frequência sugerida','1º dia','2º dia','Média apurada','Histórico usado','Motivo','Houve mudança?','Vigência','Valor esperado da localidade'];ws.append(headers)
     for c in ws[3]:c.font=Font(bold=True)
     day_names={'TER':'Terça','QUA':'Quarta','QUI':'Quinta','SEX':'Sexta'}
     for g in data.get('changes') or []:
-        suggested='Manter programação atual' if g.get('mode')=='KEEP_LINE17' else 'Semanal · '+day_names.get(g.get('suggested_day'),'')
-        curmap=g.get('current_by_terminal') or {}
+        curmap=g.get('current_by_terminal') or {}; plans=g.get('terminal_plan') or {}
         for t in g.get('terminals') or []:
-            current=curmap.get(str(t)) or g.get('current') or '—'
-            changed='NÃO' if g.get('mode') in ('KEEP_LINE17','KEEP_WEEKLY') else 'SIM'
-            # Se a proposta semanal coincide textualmente com o dia vigente, não sinaliza mudança.
-            if g.get('mode')!='KEEP_LINE17' and day_names.get(g.get('suggested_day'),'').lower() in str(current).lower() and ('seman' in str(current).lower() or str(current).strip().lower()==day_names.get(g.get('suggested_day'),'').lower()): changed='NÃO'
-            ws.append([g.get('station'),t,' + '.join(g.get('companies') or []),' + '.join(g.get('lines') or []),current,suggested,changed,p.effective_date.strftime('%d/%m/%Y'),g.get('expected_value') or 0])
-    for i,w in enumerate([28,16,26,24,28,28,16,16,24],1):ws.column_dimensions[get_column_letter(i)].width=w
-    ws.auto_filter.ref=f'A3:I{ws.max_row}'
+            current=curmap.get(str(t)) or g.get('current') or '—'; plan=plans.get(str(t)) or {}
+            days=[z for z in (plan.get('suggested_days') or ([] if g.get('mode')=='KEEP_LINE17' else [g.get('suggested_day')])) if z in day_names]
+            freq='2x/mês' if g.get('mode')=='KEEP_LINE17' else ('2x/semana' if len(days)>1 else '1x/semana')
+            changed='NÃO' if g.get('mode')=='KEEP_LINE17' else ('SIM' if len(days)>1 or g.get('mode')=='REPROGRAM' else 'NÃO')
+            if len(days)==1 and day_names.get(days[0],'').lower() in str(current).lower() and ('seman' in str(current).lower() or str(current).strip().lower()==day_names.get(days[0],'').lower()): changed='NÃO'
+            ws.append([g.get('station'),t,' + '.join(g.get('companies') or []),' + '.join(g.get('lines') or []),current,freq,day_names.get(days[0],'—') if days else '—',day_names.get(days[1],'—') if len(days)>1 else '—',plan.get('history_average'),plan.get('history_count') or 0,plan.get('reason') or '',changed,p.effective_date.strftime('%d/%m/%Y'),g.get('expected_value') or 0])
+    for i,w in enumerate([28,16,26,24,28,18,14,14,18,14,42,16,16,24],1):ws.column_dimensions[get_column_letter(i)].width=w
+    ws.auto_filter.ref=f'A3:N{ws.max_row}'
     out=io.BytesIO();wb.save(out);out.seek(0);return send_file(out,as_attachment=True,download_name=f'programacao_coletas_proposta_{p.id}_vigencia_{p.effective_date.isoformat()}.xlsx',mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 @app.post('/api/financeiro/coletas/v81/reprogramacao-sugerida/aplicar')
@@ -14353,15 +14353,15 @@ def financial_cash_v815_reprogram_apply():
     try:
         start=date.fromisoformat(str(d.get('start') or '')[:10]); end=date.fromisoformat(str(d.get('end') or '')[:10])
     except Exception: return jsonify({'ok':False,'error':'Período inválido.'}),400
-    suggestion=_v815_reprogram_suggestion(start,end); changed=0
+    suggestion=_v815_reprogram_suggestion(start,end,d.get('strategy') or 'CONSERVADORA',d.get('history_n') or 3,d.get('reference_value') or 5000); changed=0
     for g in suggestion.get('changes') or []:
-        if g.get('mode')!='REPROGRAM' or g.get('suggested_day') not in ('TER','QUA','QUI','SEX'): continue
+        if g.get('mode')=='KEEP_LINE17' or g.get('suggested_day') not in ('TER','QUA','QUI','SEX'): continue
         for terminal in g.get('terminals') or []:
             sch=FinancialCashSchedule.query.filter_by(terminal=terminal,active=True).first()
             if not sch: continue
-            before={'weekly_days':json.loads(sch.weekly_days_json or '[]'),'month_days':json.loads(sch.month_days_json or '[]')}
-            sch.weekly_days_json=json.dumps([g['suggested_day']],ensure_ascii=False); sch.month_days_json='[]'; sch.total_month=4; sch.updated_at=datetime.utcnow(); changed+=1
-            db.session.add(AuditEvent(event_type='COLETA_REPROGRAMACAO_V815',user_id=session.get('user_id'),entity_type='financial_cash_schedule',entity_id=terminal,detail=json.dumps({'station':g.get('station'),'before':before,'after':{'weekly_days':[g['suggested_day']],'month_days':[]},'expected_value':g.get('expected_value')},ensure_ascii=False)))
+            before={'weekly_days':json.loads(sch.weekly_days_json or '[]'),'month_days':json.loads(sch.month_days_json or '[]')}; plan=(g.get('terminal_plan') or {}).get(str(terminal)) or {}; days=[z for z in (plan.get('suggested_days') or [g['suggested_day']]) if z in ('TER','QUA','QUI','SEX')] or [g['suggested_day']]
+            sch.weekly_days_json=json.dumps(days,ensure_ascii=False); sch.month_days_json='[]'; sch.total_month=8 if len(days)>1 else 4; sch.updated_at=datetime.utcnow(); changed+=1
+            db.session.add(AuditEvent(event_type='COLETA_REPROGRAMACAO_V814',user_id=session.get('user_id'),entity_type='financial_cash_schedule',entity_id=terminal,detail=json.dumps({'station':g.get('station'),'before':before,'after':{'weekly_days':days,'month_days':[]},'expected_value':g.get('expected_value'),'reason':plan.get('reason')},ensure_ascii=False)))
     db.session.commit()
     return jsonify({'ok':True,'changed':changed,'message':f'{changed} ATM(s) reprogramada(s). Linha 17/Ouro foi preservada.'})
 
