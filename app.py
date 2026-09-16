@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V81.4"
+APP_RELEASE = "V81.6"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -840,6 +840,22 @@ class FinancialCashSchedule(db.Model):
     source_file = db.Column(db.String(255))
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+class FinancialCashReprogramProposal(db.Model):
+    __tablename__ = "financial_cash_reprogram_proposals"
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(180), nullable=False)
+    status = db.Column(db.String(30), nullable=False, default="DRAFT", index=True)
+    start_date = db.Column(db.Date, nullable=False)
+    end_date = db.Column(db.Date, nullable=False)
+    effective_date = db.Column(db.Date, nullable=False, index=True)
+    payload_json = db.Column(db.Text, nullable=False, default="{}")
+    created_by = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
+    approved_by = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    approved_at = db.Column(db.DateTime)
+    activated_at = db.Column(db.DateTime)
 
 class FinancialCashDailyReport(db.Model):
     __tablename__ = "financial_cash_daily_reports"
@@ -13805,6 +13821,170 @@ def financial_cash_v80_staff_planning():
     peak=max((x['auditors'] for x in out),default=0)
     peak_days=[x['date'] for x in out if x['auditors']==peak and peak>0]
     return jsonify({"ok":True,"start":start.isoformat(),"end":end.isoformat(),"rule":"1 auditor por localidade/dia; extras e reagendamentos são adicionados à demanda sem alterar a agenda-base recorrente.","summary":{"days":len(out),"collections":sum(x['collections'] for x in out),"localities":sum(x['localities'] for x in out),"peak_auditors":peak,"peak_days":peak_days},"days":out})
+
+
+# V81.5 — sugestão de reprogramação semanal balanceada por localidade, valor e equipe.
+def _v815_is_line17(line):
+    txt=(line or '').upper().replace('–','-').replace('—','-')
+    return bool(re.search(r'(^|\D)17(\D|$)',txt)) or 'OURO' in txt
+
+def _v815_reprogram_suggestion(start, end):
+    payload=_v792_cash_payload(start,end)
+    rows=[x for x in (payload.get('rows') or []) if x.get('has_schedule')]
+    schedules={x.terminal:x for x in FinancialCashSchedule.query.filter_by(active=True).all()}
+    groups={}
+    for x in rows:
+        station=(x.get('station') or 'Sem localidade').strip()
+        key=station.upper()
+        g=groups.setdefault(key,{'station':station,'terminals':[],'companies':set(),'lines':set(),'expected_value':0.0,'line17':True,'existing_weekly':set()})
+        g['terminals'].append(str(x.get('terminal') or ''))
+        if x.get('company'): g['companies'].add(x.get('company'))
+        if x.get('line'): g['lines'].add(x.get('line'))
+        g['line17']=g['line17'] and _v815_is_line17(x.get('line'))
+        sch=schedules.get(str(x.get('terminal') or ''))
+        if sch:
+            g['expected_value']+=max(0.0,float(sch.average_collection or 0))
+            try: g['existing_weekly'].update(json.loads(sch.weekly_days_json or '[]'))
+            except Exception: pass
+    weekdays=['TER','QUA','QUI','SEX']; names={'TER':'Terça','QUA':'Quarta','QUI':'Quinta','SEX':'Sexta'}
+    loads={d:{'value':0.0,'localities':0,'atms':0} for d in weekdays}
+    proposed=[]
+    # Linha 17/Ouro é exceção: preserva a agenda atual (duas vezes/mês).
+    for g in groups.values():
+        if g['line17']:
+            proposed.append({**g,'mode':'KEEP_LINE17','suggested_day':None})
+    # Localidades já semanais ficam no dia atual quando há um único dia válido; entram primeiro na carga.
+    candidates=[]
+    for g in groups.values():
+        if g['line17']: continue
+        valid=[d for d in weekdays if d in g['existing_weekly']]
+        if len(valid)==1:
+            d=valid[0]; loads[d]['value']+=g['expected_value']; loads[d]['localities']+=1; loads[d]['atms']+=len(g['terminals'])
+            proposed.append({**g,'mode':'KEEP_WEEKLY','suggested_day':d})
+        else: candidates.append(g)
+    # Maiores valores primeiro. Para cada localidade, escolhe o dia que melhor equilibra valor, visitas e ATMs.
+    candidates.sort(key=lambda g:(g['expected_value'],len(g['terminals'])),reverse=True)
+    total_value=sum(g['expected_value'] for g in groups.values() if not g['line17']) or 1.0
+    total_locs=max(1,sum(1 for g in groups.values() if not g['line17']))
+    total_atms=max(1,sum(len(g['terminals']) for g in groups.values() if not g['line17']))
+    for g in candidates:
+        def score(d):
+            z=loads[d]
+            return ((z['value']+g['expected_value'])/(total_value/4.0+1e-9))*0.60 + ((z['localities']+1)/(total_locs/4.0+1e-9))*0.25 + ((z['atms']+len(g['terminals']))/(total_atms/4.0+1e-9))*0.15
+        d=min(weekdays,key=lambda x:(score(x),loads[x]['localities'],loads[x]['value']))
+        loads[d]['value']+=g['expected_value']; loads[d]['localities']+=1; loads[d]['atms']+=len(g['terminals'])
+        proposed.append({**g,'mode':'REPROGRAM','suggested_day':d})
+    changes=[]
+    for g in sorted(proposed,key=lambda x:(x['mode']=='KEEP_LINE17',x['station'])):
+        current=[]
+        for t in g['terminals']:
+            sch=schedules.get(t)
+            if sch: current.append(_v79_schedule_text(sch))
+        changes.append({'station':g['station'],'terminals':g['terminals'],'atm_count':len(g['terminals']),'companies':sorted(g['companies']),'lines':sorted(g['lines']),'expected_value':round(g['expected_value'],2),'current':' | '.join(sorted(set(current))) or '—','mode':g['mode'],'suggested_day':g['suggested_day'],'suggested':('Manter 2x/mês' if g['mode']=='KEEP_LINE17' else f"Semanal · {names[g['suggested_day']]}")})
+    return {'ok':True,'release':APP_RELEASE,'start':start.isoformat(),'end':end.isoformat(),'rule':'Linha 17/Ouro permanece 2x/mês. Demais localidades ficam semanais entre terça e sexta. Todos os ATMs da mesma localidade são agrupados, independentemente da operadora. Balanceamento: 60% valor esperado, 25% localidades/equipe e 15% quantidade de ATMs.','value_source':'Média histórica de coleta armazenada na programação (average_collection).','days':[{'code':d,'label':names[d],'expected_value':round(loads[d]['value'],2),'localities':loads[d]['localities'],'atms':loads[d]['atms']} for d in weekdays],'changes':changes,'summary':{'weekly_localities':sum(1 for x in changes if x['mode']!='KEEP_LINE17'),'line17_localities':sum(1 for x in changes if x['mode']=='KEEP_LINE17'),'reprogrammed_localities':sum(1 for x in changes if x['mode']=='REPROGRAM'),'atms_affected':sum(x['atm_count'] for x in changes if x['mode']=='REPROGRAM'),'expected_weekly_value':round(sum(x['expected_value'] for x in changes if x['mode']!='KEEP_LINE17'),2)}}
+
+@app.get('/api/financeiro/coletas/v81/reprogramacao-sugerida')
+@login_required
+def financial_cash_v815_reprogram_suggestion():
+    if not _finance_collection_monitor_access(): return jsonify({'ok':False,'error':'Sem permissão.'}),403
+    try:
+        start=date.fromisoformat((request.args.get('start') or '').strip()); end=date.fromisoformat((request.args.get('end') or '').strip())
+    except Exception: return jsonify({'ok':False,'error':'Informe data inicial e final.'}),400
+    if end<start or (end-start).days>120: return jsonify({'ok':False,'error':'Período inválido.'}),400
+    return jsonify(_v815_reprogram_suggestion(start,end))
+
+def _v816_proposal_table():
+    db.metadata.create_all(bind=db.engine,tables=[FinancialCashReprogramProposal.__table__],checkfirst=True)
+
+def _v816_clean_changes(changes):
+    out=[]
+    for x in changes or []:
+        if not isinstance(x,dict): continue
+        day=(x.get('suggested_day') or '').upper()
+        mode=x.get('mode') or ('KEEP_LINE17' if day=='' else 'REPROGRAM')
+        if mode!='KEEP_LINE17' and day not in ('TER','QUA','QUI','SEX'): continue
+        out.append({k:x.get(k) for k in ('station','terminals','atm_count','companies','lines','expected_value','current','mode','suggested_day','suggested')})
+    return out
+
+@app.post('/api/financeiro/coletas/v81/reprogramacao-propostas')
+@login_required
+def financial_cash_v816_proposal_save():
+    if not (_has_access('finance.edit') or _finance_collection_monitor_access()): return jsonify({'ok':False,'error':'Sem permissão.'}),403
+    _v816_proposal_table(); d=request.get_json(silent=True) or {}
+    try:
+        start=date.fromisoformat(str(d.get('start') or '')[:10]); end=date.fromisoformat(str(d.get('end') or '')[:10]); effective=date.fromisoformat(str(d.get('effective_date') or '')[:10])
+    except Exception:return jsonify({'ok':False,'error':'Informe período e data de vigência.'}),400
+    changes=_v816_clean_changes(d.get('changes'))
+    if not changes:return jsonify({'ok':False,'error':'A proposta não possui localidades válidas.'}),400
+    pid=int(d.get('id') or 0); p=db.session.get(FinancialCashReprogramProposal,pid) if pid else None
+    if p and p.status not in ('DRAFT','APPROVED'): return jsonify({'ok':False,'error':'Programação vigente não pode ser editada.'}),409
+    if not p:p=FinancialCashReprogramProposal(title=d.get('title') or f'Reprogramação {effective.strftime("%d/%m/%Y")}',start_date=start,end_date=end,effective_date=effective,created_by=session.get('user_id'))
+    p.title=(d.get('title') or p.title)[:180];p.start_date=start;p.end_date=end;p.effective_date=effective;p.payload_json=json.dumps({'changes':changes,'rule':d.get('rule') or ''},ensure_ascii=False);p.updated_at=datetime.utcnow()
+    if p.status=='APPROVED': p.status='DRAFT';p.approved_at=None;p.approved_by=None
+    db.session.add(p);db.session.flush();db.session.add(AuditEvent(event_type='COLETA_REPROGRAMACAO_PROPOSTA_SALVA',user_id=session.get('user_id'),entity_type='financial_cash_reprogram_proposal',entity_id=str(p.id),detail=json.dumps({'effective_date':effective.isoformat(),'localities':len(changes)},ensure_ascii=False)));db.session.commit()
+    return jsonify({'ok':True,'id':p.id,'status':p.status,'message':f'Proposta #{p.id} salva para vigência em {effective.strftime("%d/%m/%Y")}.'})
+
+@app.post('/api/financeiro/coletas/v81/reprogramacao-propostas/<int:pid>/aprovar')
+@login_required
+def financial_cash_v816_proposal_approve(pid):
+    if not (_has_access('finance.edit') or _finance_collection_monitor_access()): return jsonify({'ok':False,'error':'Sem permissão.'}),403
+    _v816_proposal_table();p=db.session.get(FinancialCashReprogramProposal,pid)
+    if not p:return jsonify({'ok':False,'error':'Proposta não encontrada.'}),404
+    p.status='APPROVED';p.approved_by=session.get('user_id');p.approved_at=datetime.utcnow();p.updated_at=datetime.utcnow();db.session.add(AuditEvent(event_type='COLETA_REPROGRAMACAO_APROVADA',user_id=session.get('user_id'),entity_type='financial_cash_reprogram_proposal',entity_id=str(p.id),detail=json.dumps({'effective_date':p.effective_date.isoformat()},ensure_ascii=False)));db.session.commit();return jsonify({'ok':True,'status':p.status,'message':'Programação aprovada. A agenda vigente ainda não foi alterada.'})
+
+@app.post('/api/financeiro/coletas/v81/reprogramacao-propostas/<int:pid>/ativar')
+@login_required
+def financial_cash_v816_proposal_activate(pid):
+    if not (_has_access('finance.edit') or _finance_collection_monitor_access()): return jsonify({'ok':False,'error':'Sem permissão.'}),403
+    _v816_proposal_table();p=db.session.get(FinancialCashReprogramProposal,pid)
+    if not p or p.status!='APPROVED':return jsonify({'ok':False,'error':'A proposta precisa estar aprovada.'}),409
+    data=json.loads(p.payload_json or '{}');changed=0
+    for g in data.get('changes') or []:
+        if g.get('mode')=='KEEP_LINE17':continue
+        day=g.get('suggested_day');
+        if day not in ('TER','QUA','QUI','SEX'):continue
+        for terminal in g.get('terminals') or []:
+            sch=FinancialCashSchedule.query.filter_by(terminal=str(terminal),active=True).first()
+            if not sch:continue
+            before={'weekly_days':json.loads(sch.weekly_days_json or '[]'),'month_days':json.loads(sch.month_days_json or '[]')}
+            sch.weekly_days_json=json.dumps([day]);sch.month_days_json='[]';sch.total_month=4;sch.updated_at=datetime.utcnow();changed+=1
+            db.session.add(AuditEvent(event_type='COLETA_REPROGRAMACAO_V816_ATIVADA',user_id=session.get('user_id'),entity_type='financial_cash_schedule',entity_id=str(terminal),detail=json.dumps({'proposal_id':p.id,'effective_date':p.effective_date.isoformat(),'before':before,'after':{'weekly_days':[day],'month_days':[]}},ensure_ascii=False)))
+    p.status='ACTIVE';p.activated_at=datetime.utcnow();p.updated_at=datetime.utcnow();db.session.commit();return jsonify({'ok':True,'changed':changed,'message':f'Programação #{p.id} tornou-se vigente. {changed} ATM(s) atualizada(s).'})
+
+@app.get('/api/financeiro/coletas/v81/reprogramacao-propostas/<int:pid>/exportar')
+@login_required
+def financial_cash_v816_proposal_export(pid):
+    if not _finance_collection_monitor_access(): return jsonify({'ok':False,'error':'Sem permissão.'}),403
+    _v816_proposal_table();p=db.session.get(FinancialCashReprogramProposal,pid)
+    if not p:return jsonify({'ok':False,'error':'Proposta não encontrada.'}),404
+    data=json.loads(p.payload_json or '{}');wb=Workbook();ws=wb.active;ws.title='Programação Oficial';ws.append(['PROGRAMAÇÃO DE COLETAS','Vigência',p.effective_date.strftime('%d/%m/%Y'),'Status',p.status]);ws.append([]);headers=['Localidade','ATM','Operadora(s)','Linha(s)','Frequência','Dia','Vigência','Valor esperado da localidade'];ws.append(headers)
+    for c in ws[3]:c.font=Font(bold=True)
+    for g in data.get('changes') or []:
+        freq='2x/mês - mantida' if g.get('mode')=='KEEP_LINE17' else 'Semanal'
+        day='Agenda atual' if g.get('mode')=='KEEP_LINE17' else {'TER':'Terça','QUA':'Quarta','QUI':'Quinta','SEX':'Sexta'}.get(g.get('suggested_day'),'')
+        for t in g.get('terminals') or []:ws.append([g.get('station'),t,' + '.join(g.get('companies') or []),' + '.join(g.get('lines') or []),freq,day,p.effective_date.strftime('%d/%m/%Y'),g.get('expected_value') or 0])
+    for i,w in enumerate([28,16,26,24,20,16,16,24],1):ws.column_dimensions[get_column_letter(i)].width=w
+    out=io.BytesIO();wb.save(out);out.seek(0);return send_file(out,as_attachment=True,download_name=f'programacao_coletas_proposta_{p.id}_vigencia_{p.effective_date.isoformat()}.xlsx',mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+@app.post('/api/financeiro/coletas/v81/reprogramacao-sugerida/aplicar')
+@login_required
+def financial_cash_v815_reprogram_apply():
+    if not (_has_access('finance.edit') or _finance_collection_monitor_access()): return jsonify({'ok':False,'error':'Sem permissão para alterar programação.'}),403
+    d=request.get_json(silent=True) or {}
+    try:
+        start=date.fromisoformat(str(d.get('start') or '')[:10]); end=date.fromisoformat(str(d.get('end') or '')[:10])
+    except Exception: return jsonify({'ok':False,'error':'Período inválido.'}),400
+    suggestion=_v815_reprogram_suggestion(start,end); changed=0
+    for g in suggestion.get('changes') or []:
+        if g.get('mode')!='REPROGRAM' or g.get('suggested_day') not in ('TER','QUA','QUI','SEX'): continue
+        for terminal in g.get('terminals') or []:
+            sch=FinancialCashSchedule.query.filter_by(terminal=terminal,active=True).first()
+            if not sch: continue
+            before={'weekly_days':json.loads(sch.weekly_days_json or '[]'),'month_days':json.loads(sch.month_days_json or '[]')}
+            sch.weekly_days_json=json.dumps([g['suggested_day']],ensure_ascii=False); sch.month_days_json='[]'; sch.total_month=4; sch.updated_at=datetime.utcnow(); changed+=1
+            db.session.add(AuditEvent(event_type='COLETA_REPROGRAMACAO_V815',user_id=session.get('user_id'),entity_type='financial_cash_schedule',entity_id=terminal,detail=json.dumps({'station':g.get('station'),'before':before,'after':{'weekly_days':[g['suggested_day']],'month_days':[]},'expected_value':g.get('expected_value')},ensure_ascii=False)))
+    db.session.commit()
+    return jsonify({'ok':True,'changed':changed,'message':f'{changed} ATM(s) reprogramada(s). Linha 17/Ouro foi preservada.'})
 
 @app.patch('/api/financeiro/coletas/v79/event')
 @login_required
