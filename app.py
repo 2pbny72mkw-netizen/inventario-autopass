@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V82.9"
+APP_RELEASE = "V82.11"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -13870,8 +13870,27 @@ def _v792_cash_payload(start,end,calc_statuses=None):
         t=a["terminal"]; sch=schedules.get(t); events=by_terminal.get(t,[])
         planned=_v792_dates_range(sch,start,end) if sch else []
         future=_v792_dates_range(sch,start,horizon) if sch else []
+        # V82.10: quando uma mesma ATM/data possui registros importados complementares,
+        # escolhe para o ciclo o registro mais completo em vez do primeiro encontrado.
+        # Isso permite que reimportações/TBForte preencham Declarado/Apurado/GTV retroativamente.
         event_by_date={}
-        for x in events: event_by_date.setdefault(x.collection_date.isoformat(),x)
+        def _event_completeness(x):
+            return (4 if x.processed_amount is not None else 0)+(3 if x.declared_amount is not None else 0)+(2 if (x.gtv or '').strip() else 0)+(1 if x.end_at else 0)
+        event_siblings={}
+        for x in events:
+            k=x.collection_date.isoformat(); event_siblings.setdefault(k,[]).append(x); prev=event_by_date.get(k)
+            # prioriza completude e, em empate, registro que tenha fechamento sistêmico utilizável
+            score=_event_completeness(x)+(2 if _v805_is_valid_closure(x) else 0)
+            pscore=_event_completeness(prev)+(2 if prev is not None and _v805_is_valid_closure(prev) else 0) if prev is not None else -1
+            if prev is None or score>pscore: event_by_date[k]=x
+        def _complementary_value(day, attr, preferred=None):
+            if preferred is not None:
+                v=getattr(preferred,attr,None)
+                if v is not None and (not isinstance(v,str) or v.strip()): return v
+            for z in sorted(event_siblings.get(day,[]),key=_event_completeness,reverse=True):
+                v=getattr(z,attr,None)
+                if v is not None and (not isinstance(v,str) or v.strip()): return v
+            return None
         occurrences=[]
         for idx,p in enumerate(planned):
             original=p["original_date"]; ov=omap.get((t,original))
@@ -13881,8 +13900,11 @@ def _v792_cash_payload(start,end,calc_statuses=None):
             pd=date.fromisoformat(effective); status=_v792_occurrence_status(ev,pd,ov)
             if report and not ev:
                 status="NAO_REALIZADA" if report.result_status=="NAO_RECOLHIDO" else "REALIZADA_REPORTE"
-            dec=None if not ev or ev.declared_amount is None else round(float(ev.declared_amount),2)
-            ap=None if not ev or ev.processed_amount is None else round(float(ev.processed_amount),2)
+            _daykey=(ev.collection_date.isoformat() if ev else effective)
+            _dec_raw=_complementary_value(_daykey,'declared_amount',ev)
+            _ap_raw=_complementary_value(_daykey,'processed_amount',ev)
+            dec=None if _dec_raw is None else round(float(_dec_raw),2)
+            ap=None if _ap_raw is None else round(float(_ap_raw),2)
             diff=round(ap-dec,2) if dec is not None and ap is not None else None
             denominations=[]
             if ev:
@@ -13897,8 +13919,8 @@ def _v792_cash_payload(start,end,calc_statuses=None):
             occurrences.append({**p,"date":effective,"scheduled_original":p["date"],"status":status,"override_id":ov.id if ov else None,
                 "event_id":ev.id if ev else None,"time":(realized_at.strftime("%H:%M") if realized_at else (ov.scheduled_time if ov else "")),
                 "realized_date":realized_at.date().isoformat() if realized_at else None,"closure_source":(closure_info or {}).get("source") if closure_info else None,"closure_collection_code":(closure_info or {}).get("collection_code") or "","manual_time":ev.end_at.strftime("%H:%M") if ev else "","manual_realized_date":ev.collection_date.isoformat() if ev else None,
-                "declared_amount":dec,"processed_amount":ap,"difference":diff,"denomination_count":den_count,"denomination_value":den_value,"denominations":denominations,"note":((ev.monitoring_note or "") if ev else ((report.note or "") if report else (ov.note or "" if ov else ""))),
-                "gtv":((ev.gtv or "") if ev else ((report.gtv or "") if report else "")),"daily_report_id":report.id if report else None,"provider_status":report.provider_status if report else "","occurrence":report.occurrence if report else "",
+                "declared_amount":dec,"processed_amount":ap,"difference":diff,"denomination_count":den_count,"denomination_value":den_value,"denominations":denominations,"note":((_complementary_value(_daykey,'monitoring_note',ev) or "") if ev else ((report.note or "") if report else (ov.note or "" if ov else ""))),
+                "gtv":((_complementary_value(_daykey,'gtv',ev) or "") if ev else ((report.gtv or "") if report else "")),"daily_report_id":report.id if report else None,"provider_status":report.provider_status if report else "","occurrence":report.occurrence if report else "",
                 "next_prediction":nxt["date"] if nxt else None,"cycle_valid":_v805_is_valid_closure(ev) if ev else False,"cycle_excluded":bool(getattr(ev,"cycle_excluded",False)) if ev else False,"transaction_cycle":cycle_summary})
             planned_all.append((t,occurrences[-1]))
         planned_dates={o["date"] for o in occurrences}; extra=[]
@@ -14118,6 +14140,17 @@ def _v815_reprogram_suggestion(start, end, strategy="CONSERVADORA", history_n=3,
             if aggressive: days=[g['suggested_day'],second_day[g['suggested_day']]]
             terminal_plan[str(t)]={'history_values':vals,'history_count':len(vals),'history_average':round(avg,2) if avg is not None else None,'frequency_per_week':2 if aggressive else (0 if g['mode']=='KEEP_LINE17' else 1),'suggested_days':days,'reason':(f'Média das últimas {len(vals)} coletas acima de R$ {reference_value:,.2f}' if aggressive else ('Linha 17/Ouro: regra específica' if g['mode']=='KEEP_LINE17' else 'Coleta semanal conservadora'))}
         changes.append({'station':g['station'],'terminals':g['terminals'],'atm_count':len(g['terminals']),'companies':sorted(g['companies']),'lines':sorted(g['lines']),'expected_value':round(g['expected_value'],2),'current':' | '.join(sorted(set(current))) or '—','current_by_terminal':current_by_terminal,'mode':g['mode'],'suggested_day':g['suggested_day'],'terminal_plan':terminal_plan,'high_value_atms':sum(1 for z in terminal_plan.values() if z['frequency_per_week']==2),'suggested':('Manter 2x/mês' if g['mode']=='KEEP_LINE17' else f"Semanal · {names[g['suggested_day']]}")})
+    # V82.10: o mapa/carga diária contabiliza as ocorrências reais. ATM 2x/semana
+    # entra no dia principal e também no segundo dia sugerido.
+    occurrence_loads={d:{'value':0.0,'localities':set(),'atms':0} for d in weekdays}
+    for g in changes:
+        if g['mode']=='KEEP_LINE17': continue
+        per_atm=(float(g.get('expected_value') or 0)/max(1,int(g.get('atm_count') or 1)))
+        for t,plan in (g.get('terminal_plan') or {}).items():
+            for d in (plan.get('suggested_days') or [g.get('suggested_day')]):
+                if d not in occurrence_loads: continue
+                occurrence_loads[d]['value']+=per_atm; occurrence_loads[d]['localities'].add(g['station']); occurrence_loads[d]['atms']+=1
+    loads={d:{'value':occurrence_loads[d]['value'],'localities':len(occurrence_loads[d]['localities']),'atms':occurrence_loads[d]['atms']} for d in weekdays}
     return {'ok':True,'release':APP_RELEASE,'start':start.isoformat(),'end':end.isoformat(),'rule':'Linha 17/Ouro permanece 2x/mês. Demais localidades ficam semanais entre terça e sexta. Todos os ATMs da mesma localidade são agrupados, independentemente da operadora. Balanceamento: 60% valor esperado, 25% localidades/equipe e 15% quantidade de ATMs.','value_source':'V82.9: estratégia agressiva usa exclusivamente o Valor Apurado das últimas 2/3 coletas com apuração disponível; registros sem apurado são desconsiderados.','strategy':strategy,'history_n':history_n,'reference_value':reference_value,'days':[{'code':d,'label':names[d],'expected_value':round(loads[d]['value'],2),'localities':loads[d]['localities'],'atms':loads[d]['atms']} for d in weekdays],'changes':changes,'summary':{'weekly_localities':sum(1 for x in changes if x['mode']!='KEEP_LINE17'),'line17_localities':sum(1 for x in changes if x['mode']=='KEEP_LINE17'),'reprogrammed_localities':sum(1 for x in changes if x['mode']=='REPROGRAM'),'atms_affected':sum(x['atm_count'] for x in changes if x['mode']=='REPROGRAM'),'expected_weekly_value':round(sum(x['expected_value'] for x in changes if x['mode']!='KEEP_LINE17'),2)}}
 
 @app.get('/api/financeiro/coletas/v81/reprogramacao-sugerida')
@@ -14149,7 +14182,7 @@ def _v816_clean_changes(changes):
         day=(x.get('suggested_day') or '').upper()
         mode=x.get('mode') or ('KEEP_LINE17' if day=='' else 'REPROGRAM')
         if mode!='KEEP_LINE17' and day not in ('TER','QUA','QUI','SEX'): continue
-        out.append({k:x.get(k) for k in ('station','terminals','atm_count','companies','lines','expected_value','current','current_by_terminal','mode','suggested_day','suggested')})
+        out.append({k:x.get(k) for k in ('station','terminals','atm_count','companies','lines','expected_value','current','current_by_terminal','mode','suggested_day','suggested','terminal_plan','high_value_atms')})
     return out
 
 @app.post('/api/financeiro/coletas/v81/reprogramacao-propostas')
@@ -20551,10 +20584,25 @@ def _v82_cash_atms():
         if bool(a.get('stock')):continue
         aid=_v773_atm_id(a); c=cmap.get(_v773_norm_atm_id(a.get('id_top') or aid)) or {}; tx=str(c.get('TRANSACIONA') or a.get('transactions') or '').upper()
         if 'DINHEIRO' not in tx:continue
-        raw_model=str(c.get('TIPO ATM') or a.get('model') or '').strip().upper().replace(' ', '')
-        model='MKNEO' if raw_model in ('MKNEO','MKNEOATM') else ('MK' if raw_model=='MK' else (raw_model or 'NÃO INFORMADO'))
-        out.append({'atm_id':aid,'company':str(a.get('company') or ''),'line':str(a.get('line') or ''),'station':str(a.get('locality') or ''),'model':model,'transactions':str(c.get('TRANSACIONA') or '')})
+        # V82.11: modelo pode existir com nomes/colunas diferentes entre base mestre e complemento.
+        model_candidates=[c.get('TIPO ATM'),c.get('MODELO'),c.get('TIPO'),a.get('model'),a.get('modelo'),a.get('type'),a.get('tipo_atm')]
+        raw_model=next((str(v).strip() for v in model_candidates if v is not None and str(v).strip()),'')
+        norm_model=''.join(ch for ch in raw_model.upper() if ch.isalnum())
+        if 'MKNEO' in norm_model: model='MKNEO'
+        elif norm_model=='MK' or norm_model.startswith('MKATM'): model='MK'
+        else: model=(raw_model.upper() or 'NÃO INFORMADO')
+        out.append({'atm_id':aid,'company':str(a.get('company') or ''),'line':str(a.get('line') or ''),'station':str(a.get('locality') or ''),'model':model,'model_raw':raw_model,'transactions':str(c.get('TRANSACIONA') or a.get('transactions') or '')})
     return out
+
+@app.get('/api/mapeamento-atm/diagnostico-modelos')
+@login_required
+def v8211_mapping_model_diagnostic():
+    if not (_has_access('field.atm_mapping') or _has_access('field.atm_mapping_manage')): abort(403)
+    rows=_v82_cash_atms(); by={}
+    for x in rows:
+        k=x.get('model') or 'NÃO INFORMADO'; by[k]=by.get(k,0)+1
+    samples=[{'atm_id':x['atm_id'],'company':x['company'],'line':x['line'],'station':x['station'],'model_raw':x.get('model_raw') or '', 'model':x['model']} for x in rows if x['model'] in ('MKNEO','NÃO INFORMADO')][:100]
+    return jsonify({'ok':True,'total':len(rows),'models':by,'samples':samples,'release':APP_RELEASE})
 
 @app.get('/field/mapeamento-atm')
 @login_required
