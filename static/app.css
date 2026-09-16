@@ -1823,3 +1823,13 @@ body.mapFullscreenOpen .topbar{z-index:20!important;}
 
 /* V79.5 REV2 — Histórico recente: itens novos ocupam toda a largura. */
 .aboutHistoryCompact .versionItem>.history-item{grid-column:1/-1;width:100%;min-width:0;line-height:1.45;white-space:normal;word-break:normal;overflow-wrap:break-word}
+
+/* V81.8 — Engenharia: modal de item e categoria sincronizada com Tipo */
+.engModalCard{overflow:hidden!important;display:flex;flex-direction:column;max-height:min(90vh,860px)!important;padding:0!important}
+.engModalCard>h3{flex:0 0 auto;margin:0;padding:20px 56px 14px 22px;background:#fff;border-bottom:1px solid #e1e8ef}
+#engModalBody{overflow:auto;min-height:0;padding:18px 22px 0;overscroll-behavior:contain}
+.engClose{z-index:3;top:12px!important;right:14px!important}
+#itemF input[name="category"][readonly]{background:#f2f6f9;color:#40566a;cursor:not-allowed}
+.engItemActions{position:sticky;bottom:0;z-index:2;display:flex;justify-content:flex-end;gap:10px;background:#fff;padding:14px 0 18px;margin-top:4px;border-top:1px solid #e1e8ef;box-shadow:0 -8px 16px rgba(255,255,255,.92)}
+.engItemActions button{min-width:120px}
+@media(max-width:768px){.engModalCard{width:96vw!important;max-height:94vh!important}.engModalCard>h3{padding-left:16px}.engModalCard #engModalBody{padding-left:16px;padding-right:16px}.engItemActions{grid-column:auto;position:sticky}.engItemActions button{flex:1}}
