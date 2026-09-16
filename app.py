@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V81.10"
+APP_RELEASE = "V81.11"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -5519,28 +5519,60 @@ def diagnostics_api():
 @app.get("/api/diagnostico/armazenamento")
 @login_required
 def diagnostics_storage_api():
-    """V81.10: inventário somente leitura de evidências e consumo local por módulo."""
+    """V81.11: mede R2 por módulo sem excluir evidências."""
     if not _has_access("management.diagnostics"): return jsonify({"ok":False,"error":"Sem permissão."}),403
-    modules=[]
-    for label, model in [
-        ("Troca de Chips – Recarga", ChipSwapPhoto),("Troca de Chips EMV", EmvChipSwapPhoto),
-        ("Visão Panorâmica", PanoramaPhoto),("Implantação / Relatórios de Visita", HardwareFieldVisitPhoto),
-        ("Firmware POS CPTM", PosFirmwareCptmPhoto),("Garagem / Chips", GarageChipPhoto),("Bobinas ATM", AtmBobbinPhoto)]:
-        try: count=model.query.count()
-        except Exception: count=0
-        modules.append({"module":label,"records":int(count or 0),"local_bytes":0,"local_files":0})
-    # Tamanho físico local: mede uma única vez e informa separadamente; objetos R2 não são baixados para medição.
-    total_files=0; total_bytes=0
-    try:
-        for x in UPLOAD_DIR.rglob('*'):
-            if x.is_file():
-                total_files+=1
-                try: total_bytes+=x.stat().st_size
-                except Exception: pass
-    except Exception: pass
-    return jsonify({"ok":True,"release":APP_RELEASE,"read_only":True,"r2_enabled":bool(_r2_available()),
-        "local":{"files":total_files,"bytes":total_bytes},"modules":modules,
-        "note":"Diagnóstico somente leitura. Nenhum arquivo é excluído nesta versão. Tamanho de objetos remotos R2 não é inferido sem metadado confiável."})
+    specs=[
+        ("Troca de Chips – Recarga", ChipSwapPhoto, "stored_name"),
+        ("Troca de Chips EMV", EmvChipSwapPhoto, "stored_name"),
+        ("Visão Panorâmica", PanoramaPhoto, "stored_name"),
+        ("Implantação / Relatórios de Visita", HardwareFieldVisitPhoto, "stored_name"),
+        ("Firmware POS CPTM", PosFirmwareCptmPhoto, "stored_name"),
+        ("Garagem / Chips", GarageChipPhoto, "stored_name"),
+        ("Bobinas ATM", AtmBobbinPhoto, "storage_key")]
+    modules=[]; referenced={}
+    for label, model, field in specs:
+        try:
+            vals=[v[0] for v in db.session.query(getattr(model,field)).filter(getattr(model,field).isnot(None)).all() if v[0]]
+        except Exception:
+            db.session.rollback(); vals=[]
+        keys=[]
+        for raw in vals:
+            key=str(raw)
+            if key.startswith('r2__'): key=key[4:]
+            if key.startswith('local:'): continue
+            keys.append(key); referenced.setdefault(key,[]).append(label)
+        modules.append({"module":label,"records":len(vals),"keys":keys,"r2_files":0,"r2_bytes":0,"missing_r2":0})
+
+    r2={"enabled":bool(_r2_available()),"objects":0,"bytes":0,"unreferenced_objects":0,"unreferenced_bytes":0,"complete":True,"note":None}
+    sizes={}
+    if r2["enabled"]:
+        try:
+            client=r2_client(); token=None; pages=0
+            while True:
+                kw={"Bucket":os.environ["R2_BUCKET_NAME"],"MaxKeys":1000}
+                if token: kw["ContinuationToken"]=token
+                resp=client.list_objects_v2(**kw); pages+=1
+                for obj in resp.get("Contents",[]):
+                    key=str(obj.get("Key") or ''); sz=int(obj.get("Size") or 0)
+                    if key: sizes[key]=sz; r2["objects"]+=1; r2["bytes"]+=sz
+                if not resp.get("IsTruncated"): break
+                token=resp.get("NextContinuationToken")
+                if not token or pages>=100:
+                    r2["complete"]=False; r2["note"]="Leitura limitada às primeiras 100.000 mídias."; break
+        except Exception as exc:
+            r2["note"]=f"R2 indisponível para medição: {str(exc)[:160]}"
+    else: r2["note"]="R2 não configurado nesta instância."
+    for m in modules:
+        for key in m.pop("keys"):
+            if key in sizes: m["r2_files"]+=1; m["r2_bytes"]+=sizes[key]
+            elif r2["enabled"]: m["missing_r2"]+=1
+    if sizes:
+        unref=[(k,v) for k,v in sizes.items() if k not in referenced]
+        r2["unreferenced_objects"]=len(unref); r2["unreferenced_bytes"]=sum(v for _,v in unref)
+    local=_local_storage_snapshot()
+    return jsonify({"ok":True,"release":APP_RELEASE,"read_only":True,"r2":r2,
+        "local":{"files":local.get("files",0),"bytes":local.get("total_bytes",0)},"modules":modules,
+        "note":"V81.11 é somente leitura. A medição usa os metadados dos objetos do R2; nenhum arquivo é baixado ou excluído."})
 
 @app.get("/sobre")
 @login_required
@@ -15303,42 +15335,39 @@ def _panorama_payload():
 @app.get("/api/panoramas/diagnostico")
 @login_required
 def panorama_diagnostic_api():
-    """V81.10: explica, sem alterar dados, por que cada localidade está em cada status."""
+    """V81.11: cruza status atual com evidências e aliases, sem alterar dados."""
     if not (_has_access("field.panorama") or _has_access("management.diagnostics")):
         return jsonify({"ok":False,"error":"Sem permissão."}),403
-    rows=_panorama_payload()
-    out=[]
+    rows=_panorama_payload(); out=[]
     for r in rows:
-        points=r.get("points") or []
-        with_photos=sum(1 for x in points if x.get("photos"))
-        without_photos=max(0,len(points)-with_photos)
+        points=r.get("points") or []; with_photos=sum(1 for x in points if x.get("photos")); without_photos=max(0,len(points)-with_photos)
+        photos=[]
+        for pt in points:
+            for ph in (pt.get("photos") or []):
+                photos.append({"photo_id":ph.get("id"),"point":pt.get("name"),"source_location_id":pt.get("source_location_id"),
+                    "original_name":ph.get("name"),"stored_name":ph.get("stored_name"),"created_at":ph.get("created_at")})
+        photos.sort(key=lambda x:x.get("created_at") or '', reverse=True)
         reasons=[]
-        if r.get("status_override"):
-            reasons.append("Status definido manualmente (override).")
-        if not points:
-            reasons.append("Nenhum ponto panorâmico cadastrado.")
-        elif without_photos:
-            reasons.append(f"{without_photos} ponto(s) sem foto; status automático não pode ser concluído.")
-        elif r.get("auto_status")=="CONCLUÍDA":
-            reasons.append("Todos os pontos cadastrados possuem ao menos uma foto.")
-        if (r.get("alias_count") or 1)>1:
-            reasons.append(f"{r.get('alias_count')} registros/aliases consolidados nesta localidade.")
+        if r.get("status_override"): reasons.append("Status definido manualmente (override).")
+        if not points: reasons.append("Nenhum ponto panorâmico cadastrado.")
+        elif without_photos: reasons.append(f"{without_photos} ponto(s) sem foto; status automático não pode ser concluído.")
+        elif r.get("auto_status")=="CONCLUÍDA": reasons.append("Todos os pontos cadastrados possuem ao menos uma foto.")
+        if (r.get("alias_count") or 1)>1: reasons.append(f"{r.get('alias_count')} registros/aliases consolidados nesta localidade.")
         mismatch=bool(r.get("status_override") and r.get("status")!=r.get("auto_status"))
-        out.append({
-            "id":r.get("id"),"company":r.get("company"),"line":r.get("line"),"location":r.get("location"),
-            "status":r.get("status"),"auto_status":r.get("auto_status"),"override":bool(r.get("status_override")),
-            "mismatch":mismatch,"points":len(points),"points_with_photos":with_photos,"points_without_photos":without_photos,
-            "photos":r.get("photo_count") or 0,"aliases":r.get("alias_count") or 1,
-            "reason":" ".join(reasons) or "Status calculado normalmente."
-        })
-    summary={
-        "total":len(out),"concluded":sum(1 for x in out if x["status"]=="CONCLUÍDA"),
-        "auto_concluded":sum(1 for x in out if x["auto_status"]=="CONCLUÍDA"),
-        "pending":sum(1 for x in out if x["status"]=="PENDENTE"),
-        "in_progress":sum(1 for x in out if x["status"]=="EM ANDAMENTO"),
-        "overrides":sum(1 for x in out if x["override"]),"mismatches":sum(1 for x in out if x["mismatch"]),
-        "with_aliases":sum(1 for x in out if x["aliases"]>1)
-    }
+        out.append({"id":r.get("id"),"company":r.get("company"),"line":r.get("line"),"location":r.get("location"),
+            "status":r.get("status"),"auto_status":r.get("auto_status"),"override":bool(r.get("status_override")),"mismatch":mismatch,
+            "points":len(points),"points_with_photos":with_photos,"points_without_photos":without_photos,"photos":len(photos),
+            "photos_in_aliases":sum(1 for x in photos if x.get("source_location_id")!=r.get("id")),
+            "aliases":r.get("alias_count") or 1,"alias_location_ids":r.get("alias_location_ids") or [r.get("id")],
+            "last_evidence_at":photos[0].get("created_at") if photos else None,"evidence_details":photos[:25],
+            "reason":" ".join(reasons) or "Status calculado normalmente."})
+    summary={"total":len(out),"concluded":sum(1 for x in out if x["status"]=="CONCLUÍDA"),
+        "auto_concluded":sum(1 for x in out if x["auto_status"]=="CONCLUÍDA"),"pending":sum(1 for x in out if x["status"]=="PENDENTE"),
+        "in_progress":sum(1 for x in out if x["status"]=="EM ANDAMENTO"),"overrides":sum(1 for x in out if x["override"]),
+        "mismatches":sum(1 for x in out if x["mismatch"]),"with_aliases":sum(1 for x in out if x["aliases"]>1),
+        "evidence_records":sum(x["photos"] for x in out),"pending_with_evidence":sum(1 for x in out if x["status"]=="PENDENTE" and x["photos"]>0),
+        "evidence_in_pending":sum(x["photos"] for x in out if x["status"]=="PENDENTE"),
+        "photos_in_aliases":sum(x["photos_in_aliases"] for x in out)}
     return jsonify({"ok":True,"release":APP_RELEASE,"summary":summary,"locations":out})
 
 @app.get("/api/panoramas")
