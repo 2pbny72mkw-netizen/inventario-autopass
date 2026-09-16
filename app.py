@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V81.12"
+APP_RELEASE = "V82"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -965,6 +965,35 @@ class PerformanceMetric(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
     __table_args__ = (Index("ix_perf_created_route", "created_at", "route"),)
+
+# V82 — Mapeamento ATM (atividade Field)
+class AtmMapping(db.Model):
+    __tablename__ = "atm_mappings"
+    id = db.Column(db.Integer, primary_key=True)
+    atm_id = db.Column(db.String(60), nullable=False, unique=True, index=True)
+    company = db.Column(db.String(120), nullable=False, index=True)
+    line = db.Column(db.String(120), nullable=False, index=True)
+    station = db.Column(db.String(180), nullable=False, index=True)
+    has_holes = db.Column(db.Boolean)
+    holes_sealed = db.Column(db.Boolean)
+    physical_access = db.Column(db.String(20), index=True)  # INTERNO / EXTERNO
+    notes = db.Column(db.Text)
+    technician_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    latitude = db.Column(db.Float)
+    longitude = db.Column(db.Float)
+    gps_accuracy = db.Column(db.Float)
+    status = db.Column(db.String(20), nullable=False, default="CONCLUIDO", index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+class AtmMappingPhoto(db.Model):
+    __tablename__ = "atm_mapping_photos"
+    id = db.Column(db.Integer, primary_key=True)
+    mapping_id = db.Column(db.Integer, db.ForeignKey("atm_mappings.id", ondelete="CASCADE"), nullable=False, index=True)
+    storage_key = db.Column(db.String(800), nullable=False)
+    original_name = db.Column(db.String(260))
+    content_type = db.Column(db.String(120))
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
 
 # V77 — Controle de Bobinas ATM / Bobinômetro
 class AtmBobbinStationStock(db.Model):
@@ -2011,7 +2040,7 @@ def login_required(fn):
 ACCESS_GROUPS = {
     "dashboard": ("Dashboard Geral", ("dashboard.general",)),
     "field": ("Field", (
-        "field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.firmware_pos_cptm","field.bobbins","field.bobbins_dashboard","field.stock_manage"
+        "field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.firmware_pos_cptm","field.bobbins","field.bobbins_dashboard","field.stock_manage","field.atm_mapping","field.atm_mapping_manage"
     )),
     "implantation": ("Implantação de Hardware", (
         "implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage"
@@ -2044,7 +2073,7 @@ ACCESS_SUBMODULES = tuple(k for _g,(_label,children) in ACCESS_GROUPS.items() fo
 ACCESS_ALL = set(ACCESS_MODULES) | set(ACCESS_SUBMODULES)
 ACCESS_LABELS = {
  "dashboard.general":"Dashboard Geral",
- "field.dashboard":"Dashboard Field","field.inventory":"Inventário / Lançamento","field.calls":"Chamados","field.preventive":"Solicitação Preventiva ATM","field.equipment":"Equipamentos","field.evidence":"Evidências","field.panorama":"Visão Panorâmica","field.chip_recarga":"Troca de Chips – Recarga","field.firmware_pos_cptm":"Atualização de Firmware POS – CPTM","field.bobbins":"Atividade Bobinas","field.bobbins_dashboard":"Visualizar Dashboard Bobinas","field.stock_manage":"Alterar estoque consolidado / armários / bobinas",
+ "field.dashboard":"Dashboard Field","field.inventory":"Inventário / Lançamento","field.calls":"Chamados","field.preventive":"Solicitação Preventiva ATM","field.equipment":"Equipamentos","field.evidence":"Evidências","field.panorama":"Visão Panorâmica","field.chip_recarga":"Troca de Chips – Recarga","field.firmware_pos_cptm":"Atualização de Firmware POS – CPTM","field.bobbins":"Atividade Bobinas","field.bobbins_dashboard":"Visualizar Dashboard Bobinas","field.stock_manage":"Alterar estoque consolidado / armários / bobinas","field.atm_mapping":"Mapeamento ATM","field.atm_mapping_manage":"Gerenciar Mapeamento ATM",
  "implantation.dashboard":"Dashboard Implantação","implantation.visits":"Visita a Campo / Relatório de Visita","implantation.reports":"Relatórios / Visitas recentes","implantation.emv":"Troca de Chips EMV – Trilhos","implantation.garage":"Troca de Chips Garagem",
  "teams.map":"Mapa operacional","teams.today":"Operação de Hoje","teams.schedule":"Escala por dias","teams.manage":"Gestão de equipes / escala","teams.export":"Exportar dados","teams.apt":"APT / Validades",
  "users.view":"Visualizar usuários","users.config.view":"Visualizar configurações de usuários","users.config.manage":"Gerenciar configurações de usuários","users.create":"Criar usuário","users.edit":"Editar usuário","users.activate":"Ativar / Desativar","users.delete":"Excluir / Arquivar","users.password":"Redefinir senha","users.export":"Exportar Excel","users.import":"Importar Excel de configurações","users.roles.manage":"Atribuir perfis administrativos / sensíveis","users.scope.all":"Administrar usuários de todas as empresas",
@@ -2069,7 +2098,7 @@ def _expand_legacy_access(values):
 def _default_access_for_role(role):
     defaults={
       "manager":set(ACCESS_SUBMODULES),
-      "manager_field":{"engineering.items.view","engineering.bom.view","engineering.pricing.view","materials.my_documents","materials.request","materials.catalog.view","materials.catalog.manage","materials.kits.manage","materials.delivery.create","materials.delivery.manage","materials.dossier.view","dashboard.general","field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.firmware_pos_cptm","field.bobbins","field.bobbins_dashboard","field.stock_manage","implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage","teams.map","teams.today","teams.schedule","teams.manage","teams.export","teams.apt","finance.dashboard","management.calls","management.360","management.notifications","management.diagnostics","management.gps_history","management.work_authorizations","portal.receive","portal.manage","arrow.view","arrow.manage","arrow.edit","arrow.delete","arrow.dashboard","arrow.remote","materials.access_lists.view","materials.access_lists.manage","about.versions"},
+      "manager_field":{"engineering.items.view","engineering.bom.view","engineering.pricing.view","materials.my_documents","materials.request","materials.catalog.view","materials.catalog.manage","materials.kits.manage","materials.delivery.create","materials.delivery.manage","materials.dossier.view","dashboard.general","field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.firmware_pos_cptm","field.bobbins","field.bobbins_dashboard","field.stock_manage","field.atm_mapping","field.atm_mapping_manage","implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage","teams.map","teams.today","teams.schedule","teams.manage","teams.export","teams.apt","finance.dashboard","management.calls","management.360","management.notifications","management.diagnostics","management.gps_history","management.work_authorizations","portal.receive","portal.manage","arrow.view","arrow.manage","arrow.edit","arrow.delete","arrow.dashboard","arrow.remote","materials.access_lists.view","materials.access_lists.manage","about.versions"},
       "technician":{"materials.my_documents","materials.request","field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.firmware_pos_cptm","field.bobbins","about.versions"},
       "technician_implantation":{"materials.my_documents","materials.request","field.inventory","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.firmware_pos_cptm","field.bobbins","implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage","about.versions"},
       "consultation":{"dashboard.general","field.dashboard","field.inventory","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.firmware_pos_cptm","field.bobbins_dashboard","teams.map","teams.today","teams.schedule","about.versions"},
@@ -18478,7 +18507,7 @@ with app.app_context():
         app.logger.exception('V76.2: falha ao persistir configurações operacionais')
     # V77/V77.1 — Controle de Bobinas ATM / Bobinômetro.
     try:
-        db.metadata.create_all(bind=db.engine,tables=[AtmBobbinStationStock.__table__,AtmBobbinReading.__table__,AtmBobbinAtmStock.__table__,AtmBobbinUnlocatedReserve.__table__,AtmBobbinPhoto.__table__,AtmBobbinImportBatch.__table__,AtmBobbinImportDivergence.__table__,FieldStockPoint.__table__,FieldStockItem.__table__,FieldStockBalance.__table__,FieldStockMovement.__table__,FieldTechnicianLoad.__table__,FieldStockIncident.__table__,FieldLoadRegularization.__table__],checkfirst=True)
+        db.metadata.create_all(bind=db.engine,tables=[AtmMapping.__table__,AtmMappingPhoto.__table__,AtmBobbinStationStock.__table__,AtmBobbinReading.__table__,AtmBobbinAtmStock.__table__,AtmBobbinUnlocatedReserve.__table__,AtmBobbinPhoto.__table__,AtmBobbinImportBatch.__table__,AtmBobbinImportDivergence.__table__,FieldStockPoint.__table__,FieldStockItem.__table__,FieldStockBalance.__table__,FieldStockMovement.__table__,FieldTechnicianLoad.__table__,FieldStockIncident.__table__,FieldLoadRegularization.__table__],checkfirst=True)
         if not SchemaMigration.query.filter_by(version='V77-001').first():
             db.session.add(SchemaMigration(version='V77-001',description='Atividade Bobinas + Dashboard de Bobinas/Insumos + histórico de leituras, trocas e reservas'))
             db.session.commit()
@@ -20372,6 +20401,125 @@ def v7781_bobbin_technician_history():
     by_tech=[{'technician_id':r['technician_id'],'technician':r['technician'],'records':r['records'],'atms':len(r['atms']),'stations':len(r['stations']),'replacements':r['replacements'],'readings':r['readings']} for r in by.values()]
     by_tech.sort(key=lambda r:(-r['records'],(r['technician'] or '').casefold()))
     return jsonify({'ok':True,'date':day.isoformat(),'technicians':techs,'summary':summary,'by_technician':by_tech,'rows':out,'movements':movement_rows,'release':APP_RELEASE})
+
+# -----------------------------------------------------------------------------
+# V82 — desempenho de Bobinas + Mapeamento ATM
+# -----------------------------------------------------------------------------
+def _v82_local_day(dt):
+    if not dt:return None
+    return dt.replace(tzinfo=ZoneInfo('UTC')).astimezone(V72_TZ).date()
+
+def _v82_bobbin_performance(days=7, technician_id=0, activity='TROCA'):
+    activity=str(activity or 'TROCA').upper(); days=max(1,min(90,int(days or 7))); today=datetime.now(V72_TZ).date(); first=today-timedelta(days=days-1)
+    start=datetime.combine(first,datetime.min.time(),tzinfo=V72_TZ).astimezone(ZoneInfo('UTC')).replace(tzinfo=None)
+    end=datetime.combine(today+timedelta(days=1),datetime.min.time(),tzinfo=V72_TZ).astimezone(ZoneInfo('UTC')).replace(tzinfo=None)
+    all_bobbin_rows=AtmBobbinReading.query.filter(AtmBobbinReading.created_at>=start,AtmBobbinReading.created_at<end).all()
+    rows=[r for r in all_bobbin_rows if bool(r.bobbin_replaced)]
+    distribution=[]
+    if activity=='DISTRIBUICAO':
+        distribution=(FieldStockMovement.query.join(FieldStockItem,FieldStockItem.id==FieldStockMovement.item_id).filter(FieldStockMovement.created_at>=start,FieldStockMovement.created_at<end,func.upper(FieldStockItem.description).like('%BOBINA%'),FieldStockMovement.movement_type=='RETIRADA_DISTRIBUICAO').all())
+    # Universo elegível: usuários ativos que têm permissão Bobinas ou que já registraram Bobinas no recorte/histórico.
+    active=User.query.filter(User.active.is_(True),User.archived_at.is_(None)).all(); ids={r.technician_id for r in rows if r.technician_id}|{r.technician_id for r in distribution if r.technician_id}
+    eligible=[]
+    for u in active:
+        try: acc=set(json.loads(u.access_json or '[]'))
+        except Exception: acc=set()
+        if u.role=='manager' or 'field' in acc or 'field.bobbins' in acc or u.id in ids: eligible.append(u)
+    names={u.id:u.name for u in eligible}; stats={u.id:{'technician_id':u.id,'technician':u.name,'replacements':0,'days':set(),'atms':set(),'stations':set()} for u in eligible}
+    # Dias ativos = dias com qualquer registro na atividade Bobinas, não apenas dias em que houve troca.
+    for r in all_bobbin_rows:
+        if r.technician_id in stats:stats[r.technician_id]['days'].add(_v82_local_day(r.created_at))
+    source_rows=distribution if activity=='DISTRIBUICAO' else rows
+    for r in source_rows:
+        if r.technician_id not in stats: stats[r.technician_id]={'technician_id':r.technician_id,'technician':names.get(r.technician_id,'Técnico'),'replacements':0,'days':set(),'atms':set(),'stations':set()}
+        x=stats[r.technician_id];x['replacements']+=(float(r.qty or 0) if activity=='DISTRIBUICAO' else 1);x['days'].add(_v82_local_day(r.created_at));
+        if activity!='DISTRIBUICAO':x['atms'].add(str(r.atm_id or ''));x['stations'].add((r.company,r.line,r.station))
+    productive=[x for x in stats.values() if x['replacements']>0]; total=sum(float(r.qty or 0) for r in distribution) if activity=='DISTRIBUICAO' else len(rows); team_active_days=sum(len(x['days']) for x in productive); team_daily=(total/team_active_days) if team_active_days else 0
+    out=[]
+    for x in stats.values():
+        active_days=len(x['days']); avg=x['replacements']/active_days if active_days else 0; idx=(avg/team_daily*100) if team_daily else 0
+        out.append({'technician_id':x['technician_id'],'technician':x['technician'],'replacements':x['replacements'],'share_pct':round(x['replacements']/total*100,1) if total else 0,'active_days':active_days,'avg_day':round(avg,2),'index_vs_team':round(idx,1),'atms':len(x['atms']),'stations':len(x['stations'])})
+    out.sort(key=lambda x:(-x['replacements'],-x['avg_day'],(x['technician'] or '').casefold()));
+    for i,x in enumerate(out,1):x['position']=i
+    return {'activity':activity,'unit':'bobinas distribuídas' if activity=='DISTRIBUICAO' else 'trocas','days':days,'start':first.isoformat(),'end':today.isoformat(),'total_replacements':total,'team_avg_day':round(team_daily,2),'technicians_with_replacement':sum(x['replacements']>0 for x in out),'technicians_without_replacement':sum(x['replacements']==0 for x in out),'ranking':out}
+
+@app.get('/api/bobinas/desempenho')
+@login_required
+def v82_bobbin_performance():
+    if not _has_access('field.bobbins_dashboard'):abort(403)
+    return jsonify({'ok':True,**_v82_bobbin_performance(request.args.get('days') or 7,activity=request.args.get('activity') or 'TROCA'),'release':APP_RELEASE})
+
+@app.get('/api/bobinas/meu-desempenho')
+@login_required
+def v82_bobbin_my_performance():
+    if not _has_access('field.bobbins'):abort(403)
+    cur=_v82_bobbin_performance(request.args.get('days') or 7); me=next((x for x in cur['ranking'] if x['technician_id']==session.get('user_id')),None) or {'replacements':0,'active_days':0,'avg_day':0,'index_vs_team':0,'atms':0}
+    # Privacidade: não retorna nomes, posições ou métricas individuais de terceiros.
+    return jsonify({'ok':True,'days':cur['days'],'start':cur['start'],'end':cur['end'],'team_avg_day':cur['team_avg_day'],'me':{k:me[k] for k in ('replacements','active_days','avg_day','index_vs_team','atms')},'release':APP_RELEASE})
+
+def _v82_cash_atms():
+    official=_v773_official_atm_rows()
+    try: comp=json.loads((DATA_DIR/'atm_complement_20260820.json').read_text(encoding='utf-8'))
+    except Exception: comp=[]
+    cmap={_v773_norm_atm_id(x.get('ID TOP')):x for x in comp if _v773_norm_atm_id(x.get('ID TOP'))}
+    out=[]
+    for a in official:
+        if bool(a.get('stock')):continue
+        aid=_v773_atm_id(a); c=cmap.get(_v773_norm_atm_id(a.get('id_top') or aid)) or {}; tx=str(c.get('TRANSACIONA') or a.get('transactions') or '').upper()
+        if 'DINHEIRO' not in tx:continue
+        out.append({'atm_id':aid,'company':str(a.get('company') or ''),'line':str(a.get('line') or ''),'station':str(a.get('locality') or ''),'transactions':str(c.get('TRANSACIONA') or '')})
+    return out
+
+@app.get('/field/mapeamento-atm')
+@login_required
+def v82_atm_mapping_page():
+    if not _has_access('field.atm_mapping'):abort(403)
+    return render_template('atm_mapping_v82.html',app_release=APP_RELEASE)
+
+@app.get('/api/mapeamento-atm')
+@login_required
+def v82_atm_mapping_list():
+    if not (_has_access('field.atm_mapping') or _has_access('field.atm_mapping_manage')):abort(403)
+    maps={x.atm_id:x for x in AtmMapping.query.all()}; users={u.id:u.name for u in User.query.filter(User.id.in_({x.technician_id for x in maps.values()})).all()} if maps else {}; photos={}
+    if maps:
+        for mid,cnt in db.session.query(AtmMappingPhoto.mapping_id,func.count(AtmMappingPhoto.id)).filter(AtmMappingPhoto.mapping_id.in_([x.id for x in maps.values()])).group_by(AtmMappingPhoto.mapping_id).all():photos[mid]=cnt
+    rows=[]
+    for a in _v82_cash_atms():
+        m=maps.get(a['atm_id']); rows.append({**a,'status':'CONCLUIDO' if m else 'PENDENTE','mapping_id':m.id if m else None,'has_holes':m.has_holes if m else None,'holes_sealed':m.holes_sealed if m else None,'physical_access':m.physical_access if m else None,'notes':m.notes if m else '','technician':users.get(m.technician_id,'') if m else '','updated_at':m.updated_at.isoformat()+'Z' if m else None,'photos':photos.get(m.id,0) if m else 0})
+    return jsonify({'ok':True,'phase':'ATMS_COM_VENDA_EM_DINHEIRO','rows':rows,'summary':{'total':len(rows),'done':sum(x['status']=='CONCLUIDO' for x in rows),'pending':sum(x['status']=='PENDENTE' for x in rows),'internal':sum(x['physical_access']=='INTERNO' for x in rows),'external':sum(x['physical_access']=='EXTERNO' for x in rows),'holes':sum(x['has_holes'] is True for x in rows),'unsealed':sum(x['has_holes'] is True and x['holes_sealed'] is False for x in rows)},'release':APP_RELEASE})
+
+@app.post('/api/mapeamento-atm')
+@login_required
+def v82_atm_mapping_save():
+    if not _has_access('field.atm_mapping'):abort(403)
+    if _activity_request_too_large():return jsonify({'ok':False,'error':'Arquivos excedem o limite permitido.'}),413
+    atm=(request.form.get('atm_id') or '').strip(); official={x['atm_id']:x for x in _v82_cash_atms()}; a=official.get(atm)
+    if not a:return jsonify({'ok':False,'error':'Nesta fase, selecione uma ATM oficial com venda em dinheiro.'}),409
+    holes=(request.form.get('has_holes') or '').upper(); sealed=(request.form.get('holes_sealed') or '').upper(); access=(request.form.get('physical_access') or '').upper()
+    if holes not in ('SIM','NAO') or access not in ('INTERNO','EXTERNO'):return jsonify({'ok':False,'error':'Responda furos e localização física.'}),400
+    if holes=='SIM' and sealed not in ('SIM','NAO'):return jsonify({'ok':False,'error':'Informe se os furos estão tampados.'}),400
+    files=[f for f in request.files.getlist('photos') if f and f.filename]
+    if not files:return jsonify({'ok':False,'error':'Anexe ao menos uma foto da ATM ou da localização.'}),400
+    m=AtmMapping.query.filter_by(atm_id=atm).first() or AtmMapping(atm_id=atm,company=a['company'],line=a['line'],station=a['station'],technician_id=session['user_id'])
+    m.company=a['company'];m.line=a['line'];m.station=a['station'];m.has_holes=(holes=='SIM');m.holes_sealed=(sealed=='SIM') if holes=='SIM' else None;m.physical_access=access;m.notes=(request.form.get('notes') or '').strip();m.technician_id=session['user_id'];m.status='CONCLUIDO';m.updated_at=datetime.utcnow()
+    for fld in ('latitude','longitude','gps_accuracy'):
+        try:setattr(m,fld,float(request.form.get(fld)))
+        except Exception:pass
+    db.session.add(m);db.session.flush()
+    for f in files:
+        safe=secure_filename(f.filename) or 'foto.jpg'; stored=_store_uploaded_file(f,'atm_mapping',f'{uuid.uuid4().hex}_{safe}',f.mimetype or 'image/jpeg')
+        db.session.add(AtmMappingPhoto(mapping_id=m.id,storage_key=stored,original_name=safe,content_type=f.mimetype or 'image/jpeg'))
+    db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='ATM_MAPPING_SAVED',entity_type='atm_mapping',entity_id=str(m.id),detail=json.dumps({'atm_id':atm,'has_holes':m.has_holes,'holes_sealed':m.holes_sealed,'physical_access':access,'photos_added':len(files)},ensure_ascii=False)));db.session.commit()
+    return jsonify({'ok':True,'mapping_id':m.id,'photos_added':len(files),'release':APP_RELEASE})
+
+@app.get('/api/mapeamento-atm/foto/<int:photo_id>')
+@login_required
+def v82_atm_mapping_photo(photo_id):
+    if not (_has_access('field.atm_mapping') or _has_access('field.atm_mapping_manage')):abort(403)
+    ph=AtmMappingPhoto.query.get_or_404(photo_id)
+    if ph.storage_key.startswith('r2__'):
+        return redirect(r2_client().generate_presigned_url('get_object',Params={'Bucket':os.environ['R2_BUCKET_NAME'],'Key':ph.storage_key[4:]},ExpiresIn=300))
+    return send_from_directory(UPLOAD_DIR,ph.storage_key,mimetype=ph.content_type)
 
 @app.get('/api/bobinas/export.xlsx')
 @login_required
