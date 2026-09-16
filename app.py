@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V81.7"
+APP_RELEASE = "V81.8"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -18669,7 +18669,12 @@ def engineering_item_save_api():
     if not iid and cg and co and ct:
         x.code_group=cg;x.code_origin=co;x.code_type=ct
         m=re.search(r"(\d{5})$",code);x.code_sequence=int(m.group(1)) if m else None
-    x.description_en=_eng_norm(d.get("description_en"));x.manufacturer=_eng_norm(d.get("manufacturer"));x.category=_eng_norm(d.get("category"));x.ncm=_eng_norm(d.get("ncm"))
+    x.description_en=_eng_norm(d.get("description_en"));x.manufacturer=_eng_norm(d.get("manufacturer"))
+    category=_eng_norm(d.get("category"))
+    if ct:
+        type_rule=EngineeringCodeRule.query.filter_by(dimension="TIPO",code=ct,active=True).first()
+        if type_rule: category=_eng_norm(type_rule.description)
+    x.category=category;x.ncm=_eng_norm(d.get("ncm"))
     x.unit=_eng_norm(d.get("unit")) or "UN";x.default_origin=(_eng_norm(d.get("default_origin")) or "NACIONAL").upper()
     x.default_supplier=_eng_norm(d.get("default_supplier"));x.supplier_part_number=_eng_norm(d.get("supplier_part_number"));x.default_currency=(_eng_norm(d.get("default_currency")) or "BRL").upper()
     try:x.reference_unit_cost=max(float(str(d.get("reference_unit_cost") or 0).replace(",",".")),0)
