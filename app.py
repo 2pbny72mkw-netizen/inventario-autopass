@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V82.12"
+APP_RELEASE = "V82.13"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -7283,8 +7283,15 @@ def system_profile_save(pid):
     if base not in ('none','technician','technician_implantation','manager_field','consultation','dispatcher','hr','atm_financial_admin'): base='none'
     if name: p.name=name
     p.base_role=base; p.active=request.form.get('active')=='1'
-    p.access_json=json.dumps([x for x in request.form.getlist('access') if x in ACCESS_SUBMODULES],ensure_ascii=False)
-    db.session.commit(); flash('Perfil atualizado.'); return redirect('/perfis')
+    requested=sorted({x for x in request.form.getlist('access') if x in ACCESS_SUBMODULES})
+    p.access_json=json.dumps(requested,ensure_ascii=False)
+    try:
+        db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='SYSTEM_PROFILE_PERMISSIONS_CHANGE',entity_type='system_profile',entity_id=str(p.id),detail=f"{p.name} · {len(requested)} permissões"))
+        db.session.commit(); db.session.expire(p); persisted=sorted(json.loads(p.access_json or '[]'))
+        if persisted!=requested: raise RuntimeError('A matriz gravada não corresponde à seleção enviada.')
+    except Exception as e:
+        db.session.rollback(); flash(f'Não foi possível salvar o perfil: {e}'); return redirect('/perfis')
+    flash('Perfil atualizado e confirmado no banco.'); return redirect('/perfis')
 
 @app.post('/perfis/<int:pid>/excluir')
 @login_required
@@ -7540,18 +7547,59 @@ def _v741_parse_yesno(v):
     raise ValueError(f"Valor inválido: {v}. Use SIM, NÃO ou vazio.")
 
 def _v741_read_user_config(raw,apply=False):
-    wb=load_workbook(io.BytesIO(raw),data_only=True);ws=wb["COLABORADORES_CONFIG"] if "COLABORADORES_CONFIG" in wb.sheetnames else wb.active
-    headers=[str(c.value or "").strip() for c in ws[1]];idx={h:i for i,h in enumerate(headers)}
-    if "user_id" not in idx:raise ValueError("Coluna user_id não encontrada.")
+    """V82.13 — importa tanto o modelo técnico COLABORADORES_CONFIG quanto
+    o Excel de 'Usuários e acessos' exportado pela tela de usuários.
+    Identificação: user_id -> Código/user_code -> Login/Usuário.
+    Nunca cria usuário durante esta importação.
+    """
+    wb=load_workbook(io.BytesIO(raw),data_only=True)
+    ws=wb["COLABORADORES_CONFIG"] if "COLABORADORES_CONFIG" in wb.sheetnames else (wb["Usuários e acessos"] if "Usuários e acessos" in wb.sheetnames else wb.active)
+    headers=[str(c.value or "").strip() for c in ws[1]]
+    idx={h:i for i,h in enumerate(headers) if h}
+    # Compatibilidade com os dois formatos de exportação existentes.
+    id_headers=[h for h in ("user_id","Código","Login","Usuário") if h in idx]
+    if not id_headers:
+        raise ValueError("Planilha sem identificador de usuário. Use user_id, Código ou Login.")
+
+    # Modelo técnico usa 'PERM | <rótulo>'; exportação da tela usa '<grupo> > <rótulo>'.
     perm_by_header={f"PERM | {ACCESS_LABELS.get(p,p)}":p for p in ACCESS_SUBMODULES}
+    for h in headers:
+        if " > " in h:
+            label=h.split(" > ",1)[1].strip()
+            matches=[p for p in ACCESS_SUBMODULES if ACCESS_LABELS.get(p,p)==label]
+            if len(matches)==1: perm_by_header[h]=matches[0]
+
+    def resolve_user(row,rn):
+        # 1) ID interno, quando existir.
+        if "user_id" in idx:
+            raw_id=row[idx["user_id"]] if idx["user_id"]<len(row) else None
+            if raw_id not in (None,""):
+                try:
+                    u=db.session.get(User,int(raw_id))
+                    if u:return u,None
+                except Exception: pass
+                return None,f"Linha {rn}: user_id {raw_id} não encontrado"
+        # 2) Código funcional exportado (user_code), não confundir com id interno.
+        if "Código" in idx:
+            code=row[idx["Código"]] if idx["Código"]<len(row) else None
+            if code not in (None,""):
+                u=User.query.filter(func.upper(func.coalesce(User.user_code,""))==str(code).strip().upper()).first()
+                if u:return u,None
+        # 3) Login é chave segura de fallback para códigos vazios/legados.
+        for h in ("Login","Usuário"):
+            if h in idx:
+                login=row[idx[h]] if idx[h]<len(row) else None
+                if login not in (None,""):
+                    u=User.query.filter(func.lower(User.username)==str(login).strip().lower()).first()
+                    if u:return u,None
+        return None,f"Linha {rn}: não foi possível correlacionar o usuário por ID, Código ou Login"
+
     changes=[];errors=[];touched=0
     for rn,row in enumerate(ws.iter_rows(min_row=2,values_only=True),2):
-        uid=row[idx["user_id"]] if idx["user_id"]<len(row) else None
-        if uid in (None,""):continue
-        try:uid=int(uid)
-        except:errors.append(f"Linha {rn}: user_id inválido");continue
-        u=db.session.get(User,uid)
-        if not u:errors.append(f"Linha {rn}: user_id {uid} não encontrado");continue
+        if not any(v not in (None,"") for v in row):continue
+        u,err=resolve_user(row,rn)
+        if not u:
+            errors.append(err);continue
         if not _hr_target_allowed(u):errors.append(f"Linha {rn}: usuário fora do escopo permitido ao seu perfil");continue
         local=[]
         fields={"Acesso Metrô":"access_metro","Acesso CPTM":"access_cptm","Acesso Motiva (APT)":"access_motiva_apt","GPS obrigatório":"gps_required","Histórico GPS":"gps_history_enabled","Controle Jornada":"journey_control_enabled","Ativo":"active"}
@@ -7561,18 +7609,17 @@ def _v741_read_user_config(raw,apply=False):
             except ValueError as e:errors.append(f"Linha {rn} · {h}: {e}");continue
             if new is None:continue
             old=bool(getattr(u,attr,False))
-            if old!=new:local.append((h,"SIM" if old else "NÃO","SIM" if new else "NÃO"));
+            if old!=new:local.append((h,"SIM" if old else "NÃO","SIM" if new else "NÃO"))
             if apply:setattr(u,attr,new)
         for h,attr in (("CPF","cpf"),("RG","rg")):
             if h in idx and row[idx[h]] not in (None,""):
                 new=str(row[idx[h]]).strip();old=str(getattr(u,attr) or "")
-                if old!=new:local.append((h,old or "—",new));
+                if old!=new:local.append((h,old or "—",new))
                 if apply:setattr(u,attr,new or None)
         if "Locais de atuação" in idx and row[idx["Locais de atuação"]] not in (None,""):
-            raw=str(row[idx["Locais de atuação"]]);allowed={"METRO","CPTM","L4","L5","OUTROS"};newloc=[x.strip().upper() for x in re.split(r"[,;]",raw) if x.strip().upper() in allowed];oldloc=json.loads(u.operating_locations_json or "[]")
+            rawloc=str(row[idx["Locais de atuação"]]);allowed={"METRO","CPTM","L4","L5","OUTROS"};newloc=[x.strip().upper() for x in re.split(r"[,;]",rawloc) if x.strip().upper() in allowed];oldloc=json.loads(u.operating_locations_json or "[]")
             if oldloc!=newloc:local.append(("Locais de atuação",", ".join(oldloc) or "—",", ".join(newloc) or "—"))
             if apply:u.operating_locations_json=json.dumps(newloc,ensure_ascii=False)
-        # V79.5 — horários estruturados; refeição é referência flexível.
         schedule_cols=(("Início jornada","work_start_time"),("Fim jornada","work_end_time"),("Início refeição","meal_start_time"),("Fim refeição","meal_end_time"))
         schedule_changed=False
         for h,attr in schedule_cols:
@@ -7585,19 +7632,22 @@ def _v741_read_user_config(raw,apply=False):
         if apply and schedule_changed:
             st=u.work_start_time or _v795_legacy_schedule_parts(u)[0];en=u.work_end_time or _v795_legacy_schedule_parts(u)[1]
             u.work_shift=f"{st}-{en}"
-        # permissões: só altera colunas explicitamente SIM/NÃO; vazio preserva
-        acc=set(_user_access_set(u)); acc_changed=False
-        for h,p in perm_by_header.items():
+        acc=set(_user_access_set(u));acc_changed=False
+        for h,pcode in perm_by_header.items():
             if h not in idx:continue
             try:new=_v741_parse_yesno(row[idx[h]])
             except ValueError as e:errors.append(f"Linha {rn} · {h}: {e}");continue
             if new is None:continue
-            old=p in acc
+            old=pcode in acc
             if old!=new:local.append((h,"SIM" if old else "NÃO","SIM" if new else "NÃO"));acc_changed=True
             if apply:
-                if new:acc.add(p)
-                else:acc.discard(p)
-        if apply and acc_changed:u.system_profile_id=None;u.access_json=json.dumps(sorted(acc),ensure_ascii=False)
+                if new:acc.add(pcode)
+                else:acc.discard(pcode)
+        if apply and acc_changed:
+            # A importação é configuração individual: desvincula perfil configurável para
+            # não ter as alterações imediatamente sobrescritas pelo perfil vinculado.
+            u.system_profile_id=None
+            u.access_json=json.dumps(sorted(acc),ensure_ascii=False)
         if local:
             touched+=1;changes.extend([{"user_id":u.id,"name":u.name,"field":a,"old":b,"new":c} for a,b,c in local])
             if apply:
@@ -7615,10 +7665,22 @@ def v741_users_config_import():
         if request.form.get("confirm_token"):
             token=secure_filename(request.form.get("confirm_token"));path=UPLOAD_DIR/f"user-config-{token}.xlsx"
             if not path.exists():flash("Prévia expirada. Envie a planilha novamente.");return redirect(request.path)
-            raw=path.read_bytes();result=_v741_read_user_config(raw,apply=True);db.session.add(AuditEvent(user_id=session["user_id"],event_type="USER_CONFIG_IMPORT",entity_type="users",entity_id="bulk",detail=f"{result['touched']} usuários alterados · {len(result['changes'])} mudanças"));db.session.commit();path.unlink(missing_ok=True);flash(f"Importação aplicada: {result['touched']} usuário(s) alterado(s).");return redirect("/usuarios")
+            raw=path.read_bytes()
+            try:
+                result=_v741_read_user_config(raw,apply=True)
+                db.session.add(AuditEvent(user_id=session["user_id"],event_type="USER_CONFIG_IMPORT",entity_type="users",entity_id="bulk",detail=f"{result['touched']} usuários alterados · {len(result['changes'])} mudanças"))
+                db.session.commit()
+            except Exception as e:
+                db.session.rollback();flash(f"Não foi possível importar a planilha: {e}");return redirect(request.path)
+            path.unlink(missing_ok=True);flash(f"Importação aplicada: {result['touched']} usuário(s) alterado(s)." + (f" {len(result['errors'])} linha(s) com aviso." if result['errors'] else ""));return redirect("/usuarios")
         f=request.files.get("file")
         if not f or not f.filename:flash("Selecione o arquivo Excel.");return redirect(request.path)
-        raw=f.read();preview=_v741_read_user_config(raw,apply=False);token=uuid.uuid4().hex; (UPLOAD_DIR/f"user-config-{token}.xlsx").write_bytes(raw)
+        raw=f.read()
+        try:
+            preview=_v741_read_user_config(raw,apply=False)
+        except Exception as e:
+            flash(f"Planilha não reconhecida: {e}");return redirect(request.path)
+        token=uuid.uuid4().hex; (UPLOAD_DIR/f"user-config-{token}.xlsx").write_bytes(raw)
     return render_template("users_import_v741.html",preview=preview,token=token,app_release=APP_RELEASE)
 
 @app.route("/usuarios")
@@ -8054,8 +8116,11 @@ def edit_user(user_id):
     # ser bloqueado pela escala. GPS operacional/histórico continuam disponíveis.
     user.journey_control_enabled = journey_control_enabled if role == "technician" else False
     if system_profile:
+        # Perfil configurável é a fonte de verdade enquanto estiver vinculado.
         user.access_json = system_profile.access_json
-    elif session.get("role") == "manager":
+    elif _current_user_is_superadmin() or _has_access("users.config.manage"):
+        # V82.13 — não amarrar edição da matriz ao nome do perfil do operador.
+        # Quem possui a permissão de gerenciar configurações pode persistir a matriz individual.
         user.access_json = json.dumps(_parse_access_form(role), ensure_ascii=False)
     if role in ("technician", "technician_implantation", "manager_field"):
         user.work_schedule_type = work_schedule_type
