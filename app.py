@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V82"
+APP_RELEASE = "V82.1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -797,7 +797,7 @@ class FinancialCashCollection(db.Model):
     collection_date = db.Column(db.Date, nullable=False, index=True)
     start_at = db.Column(db.DateTime, index=True)
     end_at = db.Column(db.DateTime, nullable=False, index=True)
-    collected_amount = db.Column(db.Float, nullable=False, default=0)
+    collected_amount = db.Column(db.Float, nullable=True)
     gtv = db.Column(db.String(60), index=True)
     route = db.Column(db.String(40))
     municipality = db.Column(db.String(120))
@@ -12960,11 +12960,18 @@ def _fin_hash(*parts):
     return hashlib.sha256("|".join(str(x or "").strip() for x in parts).encode("utf-8","ignore")).hexdigest()
 
 def _fin_bulk_ignore(model, mappings, chunk=2000):
+    """Insert idempotente por source_hash, inclusive sob importações concorrentes."""
     if not mappings:return 0
+    # V82.1: elimina repetidos dentro do próprio arquivo/lote antes de chegar ao banco.
+    unique=[]; seen=set()
+    for item in mappings:
+        sh=item.get("source_hash")
+        if not sh or sh in seen: continue
+        seen.add(sh); unique.append(item)
     inserted=0
     dialect=db.engine.dialect.name
-    for start in range(0,len(mappings),chunk):
-        part=mappings[start:start+chunk]
+    for start in range(0,len(unique),chunk):
+        part=unique[start:start+chunk]
         if dialect=="postgresql":
             from sqlalchemy.dialects.postgresql import insert as pg_insert
             stmt=pg_insert(model.__table__).values(part).on_conflict_do_nothing(index_elements=["source_hash"])
@@ -12980,6 +12987,22 @@ def _fin_bulk_ignore(model, mappings, chunk=2000):
             if fresh: db.session.bulk_insert_mappings(model,fresh); inserted+=len(fresh)
     return inserted
 
+def _fin_optional_number(value):
+    """Preserva ausência como NULL; zero só permanece zero quando veio explicitamente da fonte."""
+    if value is None:return None
+    if isinstance(value,str):
+        raw=value.strip()
+        if not raw:return None
+        raw=raw.replace('R$','').replace(' ','')
+        if ',' in raw: raw=raw.replace('.','').replace(',','.')
+        try:return float(raw)
+        except:return None
+    try:
+        # NaN de planilhas também representa ausência.
+        number=float(value)
+        return None if number != number else number
+    except:return None
+
 def _fin_import_tbf_wb(wb, filename, user_id):
     result={"kind":"TBFORTE","collections":0,"processed_updated":0,"errors":0}
     transport=[ws for ws in wb.worksheets if ws.title.upper().startswith("TRANSPORTE")]
@@ -12994,7 +13017,7 @@ def _fin_import_tbf_wb(wb, filename, user_id):
                 point=str(gv(row,"PONTO ATENDIMENTO") or "").strip(); terminal=_fin_terminal(gv(row,"TERMINAL"),point)
                 d=_fin_parse_date(gv(row,"DATA")); start_at=_fin_dt(d,gv(row,"Hora inicial")); end_at=_fin_dt(d,gv(row,"Hora final"))
                 if not terminal or not d or not end_at: continue
-                gtv=_fin_gtv(gv(row,"GTV")); amount=float(gv(row,"Valor RECOLHIDO") or 0)
+                gtv=_fin_gtv(gv(row,"GTV")); amount=_fin_optional_number(gv(row,"Valor RECOLHIDO"))
                 sh=_fin_hash("COL",terminal,end_at.isoformat(),gtv,amount)
                 rows.append({"terminal":terminal,"point_name":point,"collection_date":d,"start_at":start_at,"end_at":end_at,"collected_amount":amount,"gtv":gtv or None,"route":str(gv(row,"Rota") or "").strip() or None,"municipality":str(gv(row,"MUNICÍPIO") or "").strip() or None,"source_file":filename,"source_hash":sh,"imported_by":user_id,"imported_at":datetime.utcnow()})
             except Exception: result["errors"]+=1
@@ -13012,7 +13035,7 @@ def _fin_import_tbf_wb(wb, filename, user_id):
                 if not candidates and terminal:
                     pd=_fin_parse_date(gv(row,"Data do Processamento")); candidates=FinancialCashCollection.query.filter_by(terminal=terminal,collection_date=pd).all() if pd else []
                 if not candidates: continue
-                declared=float(gv(row,"Valor Declarado (R$)") or 0); processed=float(gv(row,"Valor Apurado (R$)") or 0); pd=_fin_parse_date(gv(row,"Data do Processamento"))
+                declared=_fin_optional_number(gv(row,"Valor Declarado (R$)")); processed=_fin_optional_number(gv(row,"Valor Apurado (R$)")); pd=_fin_parse_date(gv(row,"Data do Processamento"))
                 media=str(gv(row,"MOEDA OU CEDULA") or "").strip()
                 try: qty_processed=int(float(gv(row,"Qtde Process") or 0))
                 except: qty_processed=0
@@ -18667,6 +18690,20 @@ with app.app_context():
         try: db.session.rollback()
         except Exception: pass
         app.logger.exception('V80 REV11.2: falha na migração da permissão finance.monitoring')
+
+    # V82.1 — financeiro: ausência de valor recolhido deve permanecer NULL.
+    try:
+        if not SchemaMigration.query.filter_by(version='V82.1-001').first():
+            insp=db.inspect(db.engine)
+            if insp.has_table('financial_cash_collections') and db.engine.dialect.name=='postgresql':
+                with db.engine.begin() as conn:
+                    conn.execute(text('ALTER TABLE financial_cash_collections ALTER COLUMN collected_amount DROP NOT NULL'))
+            db.session.add(SchemaMigration(version='V82.1-001',description='Importação financeira idempotente e preservação de valores ausentes como NULL'))
+            db.session.commit()
+    except Exception:
+        try: db.session.rollback()
+        except Exception: pass
+        app.logger.exception('V82.1: falha na migração financeiro NULL/idempotência')
 
     # V72 — parâmetros individuais de histórico GPS e controle de jornada.
     try:
