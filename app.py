@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V82.14"
+APP_RELEASE = "V82.15"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -14203,8 +14203,19 @@ def _v815_reprogram_suggestion(start, end, strategy="CONSERVADORA", history_n=3,
             days=[] if g['mode']=='KEEP_LINE17' else [g['suggested_day']]
             aggressive=bool(strategy=='AGRESSIVA' and g['mode']!='KEEP_LINE17' and avg is not None and avg>reference_value)
             if aggressive: days=[g['suggested_day'],second_day[g['suggested_day']]]
-            terminal_plan[str(t)]={'history_values':vals,'history_count':len(vals),'history_average':round(avg,2) if avg is not None else None,'frequency_per_week':2 if aggressive else (0 if g['mode']=='KEEP_LINE17' else 1),'suggested_days':days,'reason':(f'Média das últimas {len(vals)} coletas acima de R$ {reference_value:,.2f}' if aggressive else ('Linha 17/Ouro: regra específica' if g['mode']=='KEEP_LINE17' else 'Coleta semanal conservadora'))}
-        changes.append({'station':g['station'],'terminals':g['terminals'],'atm_count':len(g['terminals']),'companies':sorted(g['companies']),'lines':sorted(g['lines']),'expected_value':round(g['expected_value'],2),'current':' | '.join(sorted(set(current))) or '—','current_by_terminal':current_by_terminal,'mode':g['mode'],'suggested_day':g['suggested_day'],'terminal_plan':terminal_plan,'high_value_atms':sum(1 for z in terminal_plan.values() if z['frequency_per_week']==2),'suggested':('Manter 2x/mês' if g['mode']=='KEEP_LINE17' else f"Semanal · {names[g['suggested_day']]}")})
+            terminal_plan[str(t)]={'history_values':vals,'history_count':len(vals),'history_average':round(avg,2) if avg is not None else None,'frequency_per_week':2 if aggressive else (0 if g['mode']=='KEEP_LINE17' else 1),'suggested_days':days,'reason':(f'Média das últimas {len(vals)} coletas acima de R$ {reference_value:,.2f}' if aggressive else ('Linha 17/Ouro: regra específica' if g['mode']=='KEEP_LINE17' else 'Coleta semanal conservadora')),'value_trigger':aggressive}
+        # V82.15: consolidação logística por localidade. Se ao menos uma ATM dispara a
+        # segunda visita pelo Valor Apurado, todas as ATMs elegíveis da mesma localidade
+        # acompanham a coleta, preservando a origem analítica do gatilho.
+        trigger_atms=sum(1 for z in terminal_plan.values() if z.get('value_trigger'))
+        if strategy=='AGRESSIVA' and g['mode']!='KEEP_LINE17' and trigger_atms:
+            shared_days=[g['suggested_day'],second_day[g['suggested_day']]]
+            for plan in terminal_plan.values():
+                if not plan.get('value_trigger'):
+                    plan['frequency_per_week']=2
+                    plan['suggested_days']=list(shared_days)
+                    plan['reason']='Aproveitamento de coleta na mesma localidade'
+        changes.append({'station':g['station'],'terminals':g['terminals'],'atm_count':len(g['terminals']),'companies':sorted(g['companies']),'lines':sorted(g['lines']),'expected_value':round(g['expected_value'],2),'current':' | '.join(sorted(set(current))) or '—','current_by_terminal':current_by_terminal,'mode':g['mode'],'suggested_day':g['suggested_day'],'terminal_plan':terminal_plan,'trigger_atms':trigger_atms,'high_value_atms':sum(1 for z in terminal_plan.values() if z['frequency_per_week']==2),'suggested':('Manter 2x/mês' if g['mode']=='KEEP_LINE17' else f"Semanal · {names[g['suggested_day']]}")})
     # V82.10: o mapa/carga diária contabiliza as ocorrências reais. ATM 2x/semana
     # entra no dia principal e também no segundo dia sugerido.
     occurrence_loads={d:{'value':0.0,'localities':set(),'atms':0} for d in weekdays}
@@ -14216,7 +14227,7 @@ def _v815_reprogram_suggestion(start, end, strategy="CONSERVADORA", history_n=3,
                 if d not in occurrence_loads: continue
                 occurrence_loads[d]['value']+=per_atm; occurrence_loads[d]['localities'].add(g['station']); occurrence_loads[d]['atms']+=1
     loads={d:{'value':occurrence_loads[d]['value'],'localities':len(occurrence_loads[d]['localities']),'atms':occurrence_loads[d]['atms']} for d in weekdays}
-    return {'ok':True,'release':APP_RELEASE,'start':start.isoformat(),'end':end.isoformat(),'rule':'Linha 17/Ouro permanece 2x/mês. Demais localidades ficam semanais entre terça e sexta. Todos os ATMs da mesma localidade são agrupados, independentemente da operadora. Balanceamento: 60% valor esperado, 25% localidades/equipe e 15% quantidade de ATMs.','value_source':'V82.9: estratégia agressiva usa exclusivamente o Valor Apurado das últimas 2/3 coletas com apuração disponível; registros sem apurado são desconsiderados.','strategy':strategy,'history_n':history_n,'reference_value':reference_value,'days':[{'code':d,'label':names[d],'expected_value':round(loads[d]['value'],2),'localities':loads[d]['localities'],'atms':loads[d]['atms']} for d in weekdays],'changes':changes,'summary':{'weekly_localities':sum(1 for x in changes if x['mode']!='KEEP_LINE17'),'line17_localities':sum(1 for x in changes if x['mode']=='KEEP_LINE17'),'reprogrammed_localities':sum(1 for x in changes if x['mode']=='REPROGRAM'),'atms_affected':sum(x['atm_count'] for x in changes if x['mode']=='REPROGRAM'),'expected_weekly_value':round(sum(x['expected_value'] for x in changes if x['mode']!='KEEP_LINE17'),2)}}
+    return {'ok':True,'release':APP_RELEASE,'start':start.isoformat(),'end':end.isoformat(),'rule':'Linha 17/Ouro permanece 2x/mês. Demais localidades ficam semanais entre terça e sexta. Todos os ATMs da mesma localidade são agrupados, independentemente da operadora. Balanceamento: 60% valor esperado, 25% localidades/equipe e 15% quantidade de ATMs.','value_source':'V82.15: estratégia agressiva usa exclusivamente o Valor Apurado das últimas 2/3 coletas com apuração disponível; se uma ATM disparar 2x/semana, as demais ATMs elegíveis da mesma localidade acompanham a segunda visita por aproveitamento logístico; registros sem apurado não geram gatilho e não viram zero.','strategy':strategy,'history_n':history_n,'reference_value':reference_value,'days':[{'code':d,'label':names[d],'expected_value':round(loads[d]['value'],2),'localities':loads[d]['localities'],'atms':loads[d]['atms']} for d in weekdays],'changes':changes,'summary':{'weekly_localities':sum(1 for x in changes if x['mode']!='KEEP_LINE17'),'line17_localities':sum(1 for x in changes if x['mode']=='KEEP_LINE17'),'reprogrammed_localities':sum(1 for x in changes if x['mode']=='REPROGRAM'),'atms_affected':sum(x['atm_count'] for x in changes if x['mode']=='REPROGRAM'),'expected_weekly_value':round(sum(x['expected_value'] for x in changes if x['mode']!='KEEP_LINE17'),2)}}
 
 @app.get('/api/financeiro/coletas/v81/reprogramacao-sugerida')
 @login_required
@@ -14247,7 +14258,7 @@ def _v816_clean_changes(changes):
         day=(x.get('suggested_day') or '').upper()
         mode=x.get('mode') or ('KEEP_LINE17' if day=='' else 'REPROGRAM')
         if mode!='KEEP_LINE17' and day not in ('TER','QUA','QUI','SEX'): continue
-        out.append({k:x.get(k) for k in ('station','terminals','atm_count','companies','lines','expected_value','current','current_by_terminal','mode','suggested_day','suggested','terminal_plan','high_value_atms')})
+        out.append({k:x.get(k) for k in ('station','terminals','atm_count','companies','lines','expected_value','current','current_by_terminal','mode','suggested_day','suggested','terminal_plan','trigger_atms','high_value_atms')})
     return out
 
 @app.post('/api/financeiro/coletas/v81/reprogramacao-propostas')
