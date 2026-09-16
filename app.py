@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V82.11"
+APP_RELEASE = "V82.12"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -16114,18 +16114,71 @@ def v73_apt_page():
     apt_lines=_v7893_apt_required_lines()
     return render_template("apt_v73.html",items=data,summary=summary,total=len(data),companies=companies,lines=lines,apt_users=apt_users,apt_user_companies=apt_user_companies,apt_lines=apt_lines,filters={"q":q,"validity":validity,"process":process,"active":active,"company":company,"line":line,"nr10":nr10,"nr35":nr35,"aso":aso,"integration":integration},app_release=APP_RELEASE)
 
+def _v8212_apt_canonical_line(raw):
+    """Aceita variações de 4/5/8/9 e devolve a descrição configurada na APT."""
+    text=str(raw or '').strip()
+    if not text:return None
+    allowed=_v7893_apt_required_lines()
+    if text in allowed:return text
+    m=re.search(r'(?<!\\d)0?([4589])(?!\\d)', text)
+    if not m:return None
+    num=int(m.group(1))
+    for candidate in allowed:
+        cm=re.search(r'(?<!\\d)0?([4589])(?!\\d)', str(candidate))
+        if cm and int(cm.group(1))==num:return candidate
+    return None
+
+def _v8212_apt_shared_fields(user_id, exclude_id=None):
+    """NR/ASO/integração são dados do colaborador e são herdados da APT ativa mais recente."""
+    if not user_id:return {}
+    q=AptRecord.query.filter(AptRecord.user_id==int(user_id), AptRecord.active.is_(True))
+    if exclude_id:q=q.filter(AptRecord.id!=int(exclude_id))
+    rows=q.order_by(AptRecord.updated_at.desc() if hasattr(AptRecord,'updated_at') else AptRecord.id.desc()).all()
+    fields=('nr10_valid_until','nr35_valid_until','aso_scheduled_at','aso_valid_until','integration_scheduled_at','integration_valid_until')
+    out={}
+    for fld in fields:
+        for row in rows:
+            value=getattr(row,fld,None)
+            if value is not None:
+                out[fld]=value;break
+    return out
+
+def _v8212_apply_shared_apt_fields(record, payload, user_id, inherit=True):
+    shared=_v8212_apt_shared_fields(user_id, getattr(record,'id',None)) if inherit else {}
+    for fld in ('nr10_valid_until','nr35_valid_until','aso_scheduled_at','aso_valid_until','integration_scheduled_at','integration_valid_until'):
+        raw=payload.get(fld)
+        # Nova PT: se o colaborador já tem valor ativo, ele prevalece; não exige recadastro.
+        value=shared.get(fld) if inherit and shared.get(fld) is not None else _apt_date(raw)
+        setattr(record,fld,value)
+
+@app.get('/api/rh/apt/user/<int:user_id>/shared')
+@login_required
+def v8212_apt_user_shared(user_id):
+    if not _has_access('teams.apt'):abort(403)
+    u=db.session.get(User,user_id) or abort(404)
+    shared=_v8212_apt_shared_fields(user_id)
+    return jsonify({'ok':True,'user_id':u.id,'name':u.name,'company':u.company or '',
+      **{k:(v.isoformat() if v else None) for k,v in shared.items()}})
+
 @app.post('/api/rh/apt/create')
 @login_required
 def v735_apt_create():
     if not _has_access('teams.apt'):abort(403)
     d=request.get_json(silent=True) or {};uid=d.get('user_id');u=db.session.get(User,int(uid)) if uid else None
     if not u:return jsonify({'ok':False,'error':'Selecione um colaborador existente no Cadastro de Usuários.'}),400
-    name=(u.name or '').strip();apt=(d.get('apt_number') or '').strip();line=(d.get('line') or '').strip()
-    allowed_lines=set(_v7893_apt_required_lines())
-    if not apt or line not in allowed_lines:return jsonify({'ok':False,'error':'Informe o número da APT e selecione uma linha que exige APT.'}),400
+    name=(u.name or '').strip();apt=(d.get('apt_number') or '').strip();line=_v8212_apt_canonical_line(d.get('line'))
+    if not apt:return jsonify({'ok':False,'error':'Informe o número da PT/APT.'}),400
+    if not line:return jsonify({'ok':False,'error':'Selecione uma das linhas que exigem APT: 4, 5, 8 ou 9.'}),400
     x=AptRecord(user_id=u.id,collaborator_name=name,company=(u.company or '').strip(),line=line,apt_number=apt,process_status=(d.get('process_status') or 'AGUARDANDO').strip().upper(),active=True)
-    for fld in ('valid_until','nr10_valid_until','nr35_valid_until','aso_scheduled_at','aso_valid_until','integration_scheduled_at','integration_valid_until'):setattr(x,fld,_apt_date(d.get(fld)))
-    x.notes=(d.get('notes') or '').strip();db.session.add(x);db.session.commit();return jsonify({'ok':True,'id':x.id})
+    x.valid_until=_apt_date(d.get('valid_until'))
+    _v8212_apply_shared_apt_fields(x,d,u.id,inherit=True)
+    x.notes=(d.get('notes') or '').strip();db.session.add(x)
+    try:
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback();app.logger.exception('V82.12: falha ao salvar nova PT/APT')
+        return jsonify({'ok':False,'error':f'Não foi possível salvar a PT/APT: {exc}'}),400
+    return jsonify({'ok':True,'id':x.id})
 
 @app.post("/api/rh/apt/import")
 @login_required
@@ -16172,10 +16225,14 @@ def v731_apt_update(rid):
     x=db.session.get(AptRecord,rid) or abort(404);d=request.get_json(silent=True) or {}
     uid=d.get('user_id');u=db.session.get(User,int(uid)) if uid else None
     if not u:return jsonify({"ok":False,"error":"Selecione um colaborador existente no Cadastro de Usuários."}),400
-    line=(d.get("line") or "").strip();allowed_lines=set(_v7893_apt_required_lines())
-    if line not in allowed_lines:return jsonify({"ok":False,"error":"Selecione uma linha que exige APT."}),400
-    x.user_id=u.id;x.collaborator_name=u.name.strip();x.company=(u.company or "").strip();x.line=line;x.apt_number=(d.get("apt_number") or x.apt_number).strip();x.process_status=(d.get("process_status") or x.process_status or "AGUARDANDO").strip().upper();x.notes=(d.get("notes") or "").strip()
-    for fld in ('valid_until','nr10_valid_until','nr35_valid_until','aso_scheduled_at','aso_valid_until','integration_scheduled_at','integration_valid_until'):setattr(x,fld,_apt_date(d.get(fld)))
+    line=_v8212_apt_canonical_line(d.get('line'))
+    if not line:return jsonify({'ok':False,'error':'Selecione uma das linhas que exigem APT: 4, 5, 8 ou 9.'}),400
+    apt=(d.get('apt_number') or '').strip()
+    if not apt:return jsonify({'ok':False,'error':'Informe o número da PT/APT.'}),400
+    x.user_id=u.id;x.collaborator_name=u.name.strip();x.company=(u.company or '').strip();x.line=line;x.apt_number=apt;x.process_status=(d.get('process_status') or x.process_status or 'AGUARDANDO').strip().upper();x.notes=(d.get('notes') or '').strip()
+    x.valid_until=_apt_date(d.get('valid_until'))
+    # Em edição explícita, os dados compartilhados podem ser atualizados e passam a ser a referência do colaborador.
+    for fld in ('nr10_valid_until','nr35_valid_until','aso_scheduled_at','aso_valid_until','integration_scheduled_at','integration_valid_until'):setattr(x,fld,_apt_date(d.get(fld)))
     if u:x.user_id=u.id
     db.session.commit();return jsonify({"ok":True})
 
