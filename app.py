@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V81.11"
+APP_RELEASE = "V81.12"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -5573,6 +5573,105 @@ def diagnostics_storage_api():
     return jsonify({"ok":True,"release":APP_RELEASE,"read_only":True,"r2":r2,
         "local":{"files":local.get("files",0),"bytes":local.get("total_bytes",0)},"modules":modules,
         "note":"V81.11 é somente leitura. A medição usa os metadados dos objetos do R2; nenhum arquivo é baixado ou excluído."})
+
+
+@app.get("/api/diagnostico/armazenamento/v812")
+@login_required
+def diagnostics_storage_v812_api():
+    """V81.12: classifica objetos R2 não mapeados, somente leitura."""
+    if not _has_access("management.diagnostics"):
+        return jsonify({"ok":False,"error":"Sem permissão."}),403
+    specs=[
+        ("Troca de Chips – Recarga", ChipSwapPhoto, "stored_name"),
+        ("Troca de Chips EMV", EmvChipSwapPhoto, "stored_name"),
+        ("Visão Panorâmica", PanoramaPhoto, "stored_name"),
+        ("Implantação / Relatórios de Visita", HardwareFieldVisitPhoto, "stored_name"),
+        ("Firmware POS CPTM", PosFirmwareCptmPhoto, "stored_name"),
+        ("Garagem / Chips", GarageChipPhoto, "stored_name"),
+        ("Bobinas ATM", AtmBobbinPhoto, "storage_key")]
+    referenced=set()
+    for _,model,field in specs:
+        try:
+            vals=db.session.query(getattr(model,field)).filter(getattr(model,field).isnot(None)).all()
+            for (raw,) in vals:
+                if not raw: continue
+                key=str(raw)
+                if key.startswith('r2__'): key=key[4:]
+                if not key.startswith('local:'): referenced.add(key)
+        except Exception: db.session.rollback()
+    prefix_map={
+        'panorama':'Visão Panorâmica','chip_swap':'Troca de Chips – Recarga','chip-swaps':'Troca de Chips – Recarga',
+        'emv':'Troca de Chips EMV','garage':'Garagem / Chips','hardware':'Implantação / Relatórios de Visita',
+        'field_visit':'Implantação / Relatórios de Visita','pos_firmware':'Firmware POS CPTM','bobbin':'Bobinas ATM'}
+    groups={}; samples={}; total=0; total_bytes=0
+    if _r2_available():
+        try:
+            client=r2_client(); token=None; pages=0
+            while True:
+                kw={"Bucket":os.environ["R2_BUCKET_NAME"],"MaxKeys":1000}
+                if token: kw['ContinuationToken']=token
+                resp=client.list_objects_v2(**kw); pages+=1
+                for obj in resp.get('Contents',[]):
+                    key=str(obj.get('Key') or ''); sz=int(obj.get('Size') or 0)
+                    if not key or key in referenced: continue
+                    total+=1; total_bytes+=sz
+                    prefix=key.split('/',1)[0].lower() if '/' in key else '(raiz)'
+                    mapped=next((label for pfx,label in prefix_map.items() if prefix.startswith(pfx)),None)
+                    cls='Módulo reconhecível, referência ausente' if mapped else 'Não classificado — requer análise'
+                    gkey=(prefix,mapped or '—',cls)
+                    g=groups.setdefault(gkey,{'prefix':prefix,'module_hint':mapped or '—','classification':cls,'objects':0,'bytes':0})
+                    g['objects']+=1; g['bytes']+=sz
+                    samples.setdefault(gkey,[])
+                    if len(samples[gkey])<5: samples[gkey].append(key)
+                if not resp.get('IsTruncated'): break
+                token=resp.get('NextContinuationToken')
+                if not token or pages>=100: break
+        except Exception as exc:
+            return jsonify({'ok':False,'error':f'Falha ao classificar R2: {str(exc)[:180]}'}),500
+    rows=[]
+    for k,g in groups.items():
+        g['samples']=samples.get(k,[]); rows.append(g)
+    rows.sort(key=lambda x:x['bytes'],reverse=True)
+    return jsonify({'ok':True,'release':APP_RELEASE,'read_only':True,'objects':total,'bytes':total_bytes,'groups':rows,
+                    'note':'Somente leitura. Nenhum objeto do R2 foi alterado ou excluído.'})
+
+@app.get("/api/panoramas/diagnostico/v812")
+@login_required
+def panorama_diagnostic_v812_api():
+    """V81.12: rastreia PanoramaPhoto diretamente no banco até ponto/localidade e aliases."""
+    if not (_has_access("field.panorama") or _has_access("management.diagnostics")):
+        return jsonify({"ok":False,"error":"Sem permissão."}),403
+    locations={x.id:x for x in Location.query.all()}
+    points={x.id:x for x in PanoramaPoint.query.all()}
+    photos=PanoramaPhoto.query.order_by(PanoramaPhoto.created_at.desc(),PanoramaPhoto.id.desc()).all()
+    payload=_panorama_payload()
+    canonical_by_id={}
+    status_by_canonical={}
+    for r in payload:
+        for lid in (r.get('alias_location_ids') or [r.get('id')]): canonical_by_id[lid]=r
+        status_by_canonical[r.get('id')]=r.get('status')
+    evidence=[]; orphan_point=0; orphan_location=0; pending_evidence=set(); linked=0
+    for ph in photos:
+        pt=points.get(ph.point_id); loc=locations.get(pt.location_id) if pt else None
+        can=canonical_by_id.get(loc.id) if loc else None
+        if not pt: orphan_point+=1
+        elif not loc: orphan_location+=1
+        else: linked+=1
+        status=can.get('status') if can else None
+        if status=='PENDENTE' and can: pending_evidence.add(can.get('id'))
+        stored=str(ph.stored_name or '')
+        key=stored[4:] if stored.startswith('r2__') else stored
+        evidence.append({'photo_id':ph.id,'point_id':ph.point_id,'point_name':pt.point_name if pt else '—',
+            'source_location_id':loc.id if loc else None,'company':loc.company if loc else '—','line':loc.line if loc else '—',
+            'source_location':loc.location if loc else '—','canonical_location_id':can.get('id') if can else None,
+            'canonical_location':can.get('location') if can else '—','canonical_status':status or 'SEM VÍNCULO',
+            'is_alias':bool(can and loc and loc.id!=can.get('id')),'stored_name':stored,'r2_key':key,
+            'original_name':ph.original_name,'created_at':ph.created_at.isoformat() if ph.created_at else None})
+    return jsonify({'ok':True,'release':APP_RELEASE,'read_only':True,
+        'summary':{'photos_db':len(photos),'linked_to_point_location':linked,'orphan_point':orphan_point,'orphan_location':orphan_location,
+                   'canonical_locations_with_evidence':len({x['canonical_location_id'] for x in evidence if x['canonical_location_id']}),
+                   'pending_locations_with_evidence':len(pending_evidence),'photos_via_alias':sum(1 for x in evidence if x['is_alias'])},
+        'evidence':evidence,'note':'Rastreamento direto das evidências; nenhum registro foi alterado.'})
 
 @app.get("/sobre")
 @login_required
