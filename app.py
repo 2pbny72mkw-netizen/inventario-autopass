@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V81.9"
+APP_RELEASE = "V81.10"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -5507,7 +5507,7 @@ def diagnostics_api():
     events=AuditEvent.query.order_by(AuditEvent.created_at.desc()).limit(150).all()
     user_ids={e.user_id for e in events if e.user_id}
     users={u.id:u.name for u in User.query.filter(User.id.in_(user_ids)).all()} if user_ids else {}
-    media={"local_files":0,"local_bytes":0,"chip_photos":ChipSwapPhoto.query.count(),"emv_photos":EmvChipSwapPhoto.query.count(),"panorama_photos":PanoramaPointPhoto.query.count() if 'PanoramaPointPhoto' in globals() else 0,"r2_enabled":bool(_r2_available())}
+    media={"local_files":0,"local_bytes":0,"chip_photos":ChipSwapPhoto.query.count(),"emv_photos":EmvChipSwapPhoto.query.count(),"panorama_photos":PanoramaPhoto.query.count() if 'PanoramaPhoto' in globals() else 0,"r2_enabled":bool(_r2_available())}
     try:
         local=[x for x in UPLOAD_DIR.rglob('*') if x.is_file()]; media["local_files"]=len(local); media["local_bytes"]=sum(x.stat().st_size for x in local)
     except Exception: pass
@@ -5515,6 +5515,32 @@ def diagnostics_api():
         "database":{"users":User.query.count(),"inventory":Inventory.query.count(),"field_visits":HardwareFieldVisit.query.count(),"audit_events":AuditEvent.query.count(),"topdesk_tickets":TopDeskTicket.query.count()},
         "media":media,
         "events":[{"id":e.id,"created_at":e.created_at.isoformat() if e.created_at else None,"user":users.get(e.user_id,"Sistema"),"event_type":e.event_type,"entity_type":e.entity_type,"entity_id":e.entity_id or "","detail":e.detail or ""} for e in events]})
+
+@app.get("/api/diagnostico/armazenamento")
+@login_required
+def diagnostics_storage_api():
+    """V81.10: inventário somente leitura de evidências e consumo local por módulo."""
+    if not _has_access("management.diagnostics"): return jsonify({"ok":False,"error":"Sem permissão."}),403
+    modules=[]
+    for label, model in [
+        ("Troca de Chips – Recarga", ChipSwapPhoto),("Troca de Chips EMV", EmvChipSwapPhoto),
+        ("Visão Panorâmica", PanoramaPhoto),("Implantação / Relatórios de Visita", HardwareFieldVisitPhoto),
+        ("Firmware POS CPTM", PosFirmwareCptmPhoto),("Garagem / Chips", GarageChipPhoto),("Bobinas ATM", AtmBobbinPhoto)]:
+        try: count=model.query.count()
+        except Exception: count=0
+        modules.append({"module":label,"records":int(count or 0),"local_bytes":0,"local_files":0})
+    # Tamanho físico local: mede uma única vez e informa separadamente; objetos R2 não são baixados para medição.
+    total_files=0; total_bytes=0
+    try:
+        for x in UPLOAD_DIR.rglob('*'):
+            if x.is_file():
+                total_files+=1
+                try: total_bytes+=x.stat().st_size
+                except Exception: pass
+    except Exception: pass
+    return jsonify({"ok":True,"release":APP_RELEASE,"read_only":True,"r2_enabled":bool(_r2_available()),
+        "local":{"files":total_files,"bytes":total_bytes},"modules":modules,
+        "note":"Diagnóstico somente leitura. Nenhum arquivo é excluído nesta versão. Tamanho de objetos remotos R2 não é inferido sem metadado confiável."})
 
 @app.get("/sobre")
 @login_required
@@ -15273,6 +15299,47 @@ def _panorama_payload():
 
     rows.sort(key=lambda x:(_v771_norm(x.get('company')),_panorama_line_key(x.get('line')),_panorama_station_key(x.get('location'))))
     return rows
+
+@app.get("/api/panoramas/diagnostico")
+@login_required
+def panorama_diagnostic_api():
+    """V81.10: explica, sem alterar dados, por que cada localidade está em cada status."""
+    if not (_has_access("field.panorama") or _has_access("management.diagnostics")):
+        return jsonify({"ok":False,"error":"Sem permissão."}),403
+    rows=_panorama_payload()
+    out=[]
+    for r in rows:
+        points=r.get("points") or []
+        with_photos=sum(1 for x in points if x.get("photos"))
+        without_photos=max(0,len(points)-with_photos)
+        reasons=[]
+        if r.get("status_override"):
+            reasons.append("Status definido manualmente (override).")
+        if not points:
+            reasons.append("Nenhum ponto panorâmico cadastrado.")
+        elif without_photos:
+            reasons.append(f"{without_photos} ponto(s) sem foto; status automático não pode ser concluído.")
+        elif r.get("auto_status")=="CONCLUÍDA":
+            reasons.append("Todos os pontos cadastrados possuem ao menos uma foto.")
+        if (r.get("alias_count") or 1)>1:
+            reasons.append(f"{r.get('alias_count')} registros/aliases consolidados nesta localidade.")
+        mismatch=bool(r.get("status_override") and r.get("status")!=r.get("auto_status"))
+        out.append({
+            "id":r.get("id"),"company":r.get("company"),"line":r.get("line"),"location":r.get("location"),
+            "status":r.get("status"),"auto_status":r.get("auto_status"),"override":bool(r.get("status_override")),
+            "mismatch":mismatch,"points":len(points),"points_with_photos":with_photos,"points_without_photos":without_photos,
+            "photos":r.get("photo_count") or 0,"aliases":r.get("alias_count") or 1,
+            "reason":" ".join(reasons) or "Status calculado normalmente."
+        })
+    summary={
+        "total":len(out),"concluded":sum(1 for x in out if x["status"]=="CONCLUÍDA"),
+        "auto_concluded":sum(1 for x in out if x["auto_status"]=="CONCLUÍDA"),
+        "pending":sum(1 for x in out if x["status"]=="PENDENTE"),
+        "in_progress":sum(1 for x in out if x["status"]=="EM ANDAMENTO"),
+        "overrides":sum(1 for x in out if x["override"]),"mismatches":sum(1 for x in out if x["mismatch"]),
+        "with_aliases":sum(1 for x in out if x["aliases"]>1)
+    }
+    return jsonify({"ok":True,"release":APP_RELEASE,"summary":summary,"locations":out})
 
 @app.get("/api/panoramas")
 @login_required
