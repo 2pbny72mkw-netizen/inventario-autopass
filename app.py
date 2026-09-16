@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V81.2"
+APP_RELEASE = "V81.4"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -4555,10 +4555,15 @@ def inventory_atm_dashboard_api():
         _raw_model=str(_a.get("model") or "").strip().upper()
         _a["model_raw"]=_raw_model
         _a["model"]=_raw_model if _raw_model in valid_atm_models else "Modelo não identificado"
-    filters={k:(request.args.get(k) or "").strip() for k in ("company","line","locality","model","contract","product","transactions","ownership","status")}
+    # V81.3 — filtros ATM aceitam múltiplos valores por dimensão (OR dentro da dimensão; AND entre dimensões).
+    _filter_keys=("company","line","locality","model","contract","product","transactions","ownership","status")
+    filters={k:[v.strip() for v in request.args.getlist(k) if v and v.strip()] for k in _filter_keys}
+    # Compatibilidade com clientes que enviem valores separados por vírgula.
+    for k in _filter_keys:
+        if len(filters[k])==1 and "," in filters[k][0]: filters[k]=[v.strip() for v in filters[k][0].split(",") if v.strip()]
     teamviewer_missing=(request.args.get("teamviewer_missing") or "").strip() in ("1","true","TRUE","sim","SIM")
     field_map={"company":"company","line":"line","locality":"locality","model":"model","contract":"contract","product":"product","transactions":"transactions","ownership":"ownership","status":"status"}
-    rows=[x for x in all_rows if all(not filters[k] or str(x.get(field_map[k],""))==filters[k] for k in filters)]
+    rows=[x for x in all_rows if all(not filters[k] or str(x.get(field_map[k],"")).strip() in filters[k] for k in filters)]
     if teamviewer_missing:
         rows=[x for x in rows if not str(x.get("teamviewer_id") or "").strip()]
     def agg(attr):
@@ -4575,10 +4580,10 @@ def inventory_atm_dashboard_api():
             if teamviewer_missing and str(a.get("teamviewer_id") or "").strip():
                 continue
             ok=True
-            for k,v in filters.items():
-                if k==filter_key or not v:
+            for k,values in filters.items():
+                if k==filter_key or not values:
                     continue
-                if str(a.get(field_map[k],"")).strip()!=v:
+                if str(a.get(field_map[k],"")).strip() not in values:
                     ok=False; break
             if ok:
                 val=str(a.get(attr) or "").strip()
@@ -14270,19 +14275,45 @@ def _v81_source_health(start=None,end=None):
     conciliable=min(dates) if len(dates)==3 else None
     return {'r0050':r0050.isoformat() if r0050 else None,'realized':daily.isoformat() if daily else None,'tbforte':tb.isoformat() if tb else None,'conciliable_until':conciliable.isoformat() if conciliable else None,'complete_sources':len(dates)==3}
 
+# V81.4 PERFORMANCE — cache curto para saúde das fontes.
+# Evita repetir agregações pesadas a cada refresh/filtro; importações continuam sendo a fonte de verdade.
+_V814_SOURCE_HEALTH_CACHE = {}
+def _v814_cached_source_health(start=None, end=None, ttl_seconds=60):
+    now=datetime.utcnow(); key=(start.isoformat() if start else '', end.isoformat() if end else '')
+    hit=_V814_SOURCE_HEALTH_CACHE.get(key)
+    if hit and (now-hit['at']).total_seconds() < ttl_seconds:
+        return dict(hit['data'])
+    data=_v81_source_health(start,end) if start and end else _v81_source_health()
+    _V814_SOURCE_HEALTH_CACHE[key]={'at':now,'data':dict(data)}
+    return data
+
 @app.get('/api/financeiro/coletas/v81/saude-fontes')
 @login_required
 def financial_cash_v81_source_health():
     if not _finance_collection_monitor_access(): return jsonify({'ok':False,'error':'Sem permissão.'}),403
     try: start=date.fromisoformat(request.args.get('start')); end=date.fromisoformat(request.args.get('end'))
     except Exception: start=date.today().replace(day=1); end=date.today()
-    h=_v81_source_health(start,end)
+    h=_v814_cached_source_health(start,end)
     # completude individual no período: realizado -> R0050 no dia -> TB Forte apurada
     realized=FinancialCashDailyReport.query.filter(FinancialCashDailyReport.report_date>=start,FinancialCashDailyReport.report_date<=min(end,date.today()),FinancialCashDailyReport.result_status=='RECOLHIDO').all()
+    # V81.3 PERFORMANCE — elimina N+1: duas consultas em lote substituem até 2 queries por coleta realizada.
+    keys={(str(x.terminal),x.report_date) for x in realized}
+    terminals=sorted({k[0] for k in keys})
+    r_keys=set(); t_keys=set()
+    if terminals:
+        r_rows=db.session.query(FinancialATMTransaction.terminal,func.date(FinancialATMTransaction.source_collection_at)).filter(
+            FinancialATMTransaction.terminal.in_(terminals),FinancialATMTransaction.source_collection_at>=datetime.combine(start,datetime.min.time()),
+            FinancialATMTransaction.source_collection_at<datetime.combine(min(end,date.today())+timedelta(days=1),datetime.min.time())
+        ).group_by(FinancialATMTransaction.terminal,func.date(FinancialATMTransaction.source_collection_at)).all()
+        r_keys={(str(t),d) for t,d in r_rows}
+        t_rows=db.session.query(FinancialCashCollection.terminal,FinancialCashCollection.collection_date).filter(
+            FinancialCashCollection.terminal.in_(terminals),FinancialCashCollection.collection_date>=start,FinancialCashCollection.collection_date<=min(end,date.today()),
+            FinancialCashCollection.processed_amount.isnot(None),func.coalesce(FinancialCashCollection.soft_deleted,False).is_(False)
+        ).group_by(FinancialCashCollection.terminal,FinancialCashCollection.collection_date).all()
+        t_keys={(str(t),d) for t,d in t_rows}
     total=len(realized); r_ok=t_ok=complete=0; missing=[]
     for x in realized:
-        rq=FinancialATMTransaction.query.filter(FinancialATMTransaction.terminal==x.terminal,func.date(FinancialATMTransaction.source_collection_at)==x.report_date).first()
-        tq=FinancialCashCollection.query.filter(FinancialCashCollection.terminal==x.terminal,FinancialCashCollection.collection_date==x.report_date,FinancialCashCollection.processed_amount.isnot(None),func.coalesce(FinancialCashCollection.soft_deleted,False).is_(False)).first()
+        key=(str(x.terminal),x.report_date); rq=key in r_keys; tq=key in t_keys
         r_ok+=bool(rq); t_ok+=bool(tq); complete+=bool(rq and tq)
         if not (rq and tq): missing.append({'terminal':x.terminal,'date':x.report_date.isoformat(),'r0050':bool(rq),'tbforte':bool(tq)})
     h.update({'period':{'start':start.isoformat(),'end':end.isoformat()},'realized_cycles':total,'with_r0050':r_ok,'with_tbforte':t_ok,'complete_cycles':complete,'completeness_pct':round(complete*100/max(1,total),1),'missing':missing[:100]})
@@ -14352,7 +14383,7 @@ def financial_cash_v81_smart_filter():
     if 'monitoramento' in q or 'em campo' in q:
         active=FinancialCashMonitoringGroup.query.filter_by(active=True).order_by(FinancialCashMonitoringGroup.started_at.desc()).first()
         if active: group={'id':active.id,'name':active.name,'terminals':[m.terminal for m in FinancialCashMonitoringMember.query.filter_by(group_id=active.id,active=True).all()]}; explanation.append('monitoramento em campo ativo'); recognized=True
-    health=_v81_source_health()
+    health=_v814_cached_source_health()
     if not recognized:
         return jsonify({'ok':True,'recognized':False,'query':raw,'filters':{},'metric':None,'sort':None,'analysis':'none','explanation':[], 'source_health':health,'warning':'Não consegui determinar a análise. Nenhum filtro foi alterado.'})
     return jsonify({'ok':True,'recognized':True,'query':raw,'filters':filters,'metric':metric,'sort':sort,'analysis':analysis,'monitoring_group':group,'explanation':explanation,'source_health':health,'warning':None if health.get('complete_sources') else 'As três fontes ainda não possuem cobertura completa; resultado parcial.'})
