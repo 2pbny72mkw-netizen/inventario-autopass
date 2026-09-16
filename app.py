@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V82.2"
+APP_RELEASE = "V82.6"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -977,6 +977,8 @@ class AtmMapping(db.Model):
     has_holes = db.Column(db.Boolean)
     holes_sealed = db.Column(db.Boolean)
     physical_access = db.Column(db.String(20), index=True)  # INTERNO / EXTERNO
+    rear_safe_door = db.Column(db.Boolean)  # porta de cofre traseira: SIM / NAO
+    bill_acceptor = db.Column(db.String(20), index=True)  # UBA-PRO / I-VIZION / SPECTRAL
     notes = db.Column(db.Text)
     technician_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
     latitude = db.Column(db.Float)
@@ -18533,6 +18535,19 @@ with app.app_context():
     # V77/V77.1 — Controle de Bobinas ATM / Bobinômetro.
     try:
         db.metadata.create_all(bind=db.engine,tables=[AtmMapping.__table__,AtmMappingPhoto.__table__,AtmBobbinStationStock.__table__,AtmBobbinReading.__table__,AtmBobbinAtmStock.__table__,AtmBobbinUnlocatedReserve.__table__,AtmBobbinPhoto.__table__,AtmBobbinImportBatch.__table__,AtmBobbinImportDivergence.__table__,FieldStockPoint.__table__,FieldStockItem.__table__,FieldStockBalance.__table__,FieldStockMovement.__table__,FieldTechnicianLoad.__table__,FieldStockIncident.__table__,FieldLoadRegularization.__table__],checkfirst=True)
+        # V82.5 — nova pergunta obrigatória no Mapeamento ATM.
+        atm_mapping_cols={c['name'] for c in inspect(db.engine).get_columns('atm_mappings')}
+        if 'rear_safe_door' not in atm_mapping_cols:
+            with db.engine.begin() as conn: conn.execute(text('ALTER TABLE atm_mappings ADD COLUMN rear_safe_door BOOLEAN'))
+        if not SchemaMigration.query.filter_by(version='V82.5-001').first():
+            db.session.add(SchemaMigration(version='V82.5-001',description='Mapeamento ATM: campo obrigatório Possui porta de cofre traseira (Sim/Não), com tabela e exportações'))
+        # V82.6 — aceitador de cédulas obrigatório no Mapeamento ATM.
+        atm_mapping_cols={c['name'] for c in inspect(db.engine).get_columns('atm_mappings')}
+        if 'bill_acceptor' not in atm_mapping_cols:
+            with db.engine.begin() as conn: conn.execute(text('ALTER TABLE atm_mappings ADD COLUMN bill_acceptor VARCHAR(20)'))
+        if not SchemaMigration.query.filter_by(version='V82.6-001').first():
+            db.session.add(SchemaMigration(version='V82.6-001',description='Mapeamento ATM: combo obrigatório Aceitador (UBA-PRO, I-VIZION ou SPECTRAL)'))
+            db.session.commit()
         if not SchemaMigration.query.filter_by(version='V77-001').first():
             db.session.add(SchemaMigration(version='V77-001',description='Atividade Bobinas + Dashboard de Bobinas/Insumos + histórico de leituras, trocas e reservas'))
             db.session.commit()
@@ -20506,7 +20521,9 @@ def _v82_cash_atms():
         if bool(a.get('stock')):continue
         aid=_v773_atm_id(a); c=cmap.get(_v773_norm_atm_id(a.get('id_top') or aid)) or {}; tx=str(c.get('TRANSACIONA') or a.get('transactions') or '').upper()
         if 'DINHEIRO' not in tx:continue
-        out.append({'atm_id':aid,'company':str(a.get('company') or ''),'line':str(a.get('line') or ''),'station':str(a.get('locality') or ''),'transactions':str(c.get('TRANSACIONA') or '')})
+        raw_model=str(c.get('TIPO ATM') or a.get('model') or '').strip().upper().replace(' ', '')
+        model='MKNEO' if raw_model in ('MKNEO','MKNEOATM') else ('MK' if raw_model=='MK' else (raw_model or 'NÃO INFORMADO'))
+        out.append({'atm_id':aid,'company':str(a.get('company') or ''),'line':str(a.get('line') or ''),'station':str(a.get('locality') or ''),'model':model,'transactions':str(c.get('TRANSACIONA') or '')})
     return out
 
 @app.get('/field/mapeamento-atm')
@@ -20524,8 +20541,21 @@ def v82_atm_mapping_list():
         for mid,cnt in db.session.query(AtmMappingPhoto.mapping_id,func.count(AtmMappingPhoto.id)).filter(AtmMappingPhoto.mapping_id.in_([x.id for x in maps.values()])).group_by(AtmMappingPhoto.mapping_id).all():photos[mid]=cnt
     rows=[]
     for a in _v82_cash_atms():
-        m=maps.get(a['atm_id']); rows.append({**a,'status':'CONCLUIDO' if m else 'PENDENTE','mapping_id':m.id if m else None,'has_holes':m.has_holes if m else None,'holes_sealed':m.holes_sealed if m else None,'physical_access':m.physical_access if m else None,'notes':m.notes if m else '','technician':users.get(m.technician_id,'') if m else '','updated_at':m.updated_at.isoformat()+'Z' if m else None,'photos':photos.get(m.id,0) if m else 0})
-    return jsonify({'ok':True,'phase':'ATMS_COM_VENDA_EM_DINHEIRO','rows':rows,'summary':{'total':len(rows),'done':sum(x['status']=='CONCLUIDO' for x in rows),'pending':sum(x['status']=='PENDENTE' for x in rows),'internal':sum(x['physical_access']=='INTERNO' for x in rows),'external':sum(x['physical_access']=='EXTERNO' for x in rows),'holes':sum(x['has_holes'] is True for x in rows),'unsealed':sum(x['has_holes'] is True and x['holes_sealed'] is False for x in rows)},'release':APP_RELEASE})
+        m=maps.get(a['atm_id']); complete=bool(m and m.has_holes is not None and m.physical_access in ('INTERNO','EXTERNO') and m.rear_safe_door is not None and m.bill_acceptor in ('UBA-PRO','I-VIZION','SPECTRAL') and (m.has_holes is False or m.holes_sealed is not None) and photos.get(m.id,0)>0); rows.append({**a,'status':'CONCLUIDO' if complete else 'PENDENTE','mapping_id':m.id if m else None,'has_holes':m.has_holes if m else None,'holes_sealed':m.holes_sealed if m else None,'physical_access':m.physical_access if m else None,'rear_safe_door':m.rear_safe_door if m else None,'bill_acceptor':m.bill_acceptor if m else None,'notes':m.notes if m else '','technician':users.get(m.technician_id,'') if m else '','updated_at':m.updated_at.isoformat()+'Z' if m else None,'photos':photos.get(m.id,0) if m else 0})
+    summary={'total':len(rows),'done':sum(x['status']=='CONCLUIDO' for x in rows),'pending':sum(x['status']=='PENDENTE' for x in rows),'internal':sum(x['physical_access']=='INTERNO' for x in rows),'external':sum(x['physical_access']=='EXTERNO' for x in rows),'holes':sum(x['has_holes'] is True for x in rows),'unsealed':sum(x['has_holes'] is True and x['holes_sealed'] is False for x in rows),'with_photos':sum((x.get('photos') or 0)>0 for x in rows),'rear_safe_door_yes':sum(x.get('rear_safe_door') is True for x in rows),'rear_safe_door_no':sum(x.get('rear_safe_door') is False for x in rows),'acceptor_uba_pro':sum(x.get('bill_acceptor')=='UBA-PRO' for x in rows),'acceptor_i_vizion':sum(x.get('bill_acceptor')=='I-VIZION' for x in rows),'acceptor_spectral':sum(x.get('bill_acceptor')=='SPECTRAL' for x in rows)}
+    summary['progress_pct']=round((summary['done']/summary['total']*100),1) if summary['total'] else 0
+    # Dashboard 2.0: evolução dos mapeamentos e progresso por operadora.
+    daily={}
+    for m in maps.values():
+        if m.updated_at:
+            key=_v82_local_day(m.updated_at).isoformat();daily[key]=daily.get(key,0)+1
+    summary['evolution']=[{'date':k,'mapped':daily[k]} for k in sorted(daily)[-14:]]
+    by_company={}
+    for x in rows:
+        r=by_company.setdefault(x['company'] or 'Não informada',{'company':x['company'] or 'Não informada','total':0,'done':0})
+        r['total']+=1;r['done']+=1 if x['status']=='CONCLUIDO' else 0
+    summary['by_company']=sorted([{**r,'progress_pct':round(r['done']/r['total']*100,1) if r['total'] else 0} for r in by_company.values()],key=lambda x:(-x['total'],x['company']))
+    return jsonify({'ok':True,'phase':'ATMS_COM_VENDA_EM_DINHEIRO','rows':rows,'summary':summary,'release':APP_RELEASE})
 
 @app.post('/api/mapeamento-atm')
 @login_required
@@ -20534,13 +20564,15 @@ def v82_atm_mapping_save():
     if _activity_request_too_large():return jsonify({'ok':False,'error':'Arquivos excedem o limite permitido.'}),413
     atm=(request.form.get('atm_id') or '').strip(); official={x['atm_id']:x for x in _v82_cash_atms()}; a=official.get(atm)
     if not a:return jsonify({'ok':False,'error':'Nesta fase, selecione uma ATM oficial com venda em dinheiro.'}),409
-    holes=(request.form.get('has_holes') or '').upper(); sealed=(request.form.get('holes_sealed') or '').upper(); access=(request.form.get('physical_access') or '').upper()
-    if holes not in ('SIM','NAO') or access not in ('INTERNO','EXTERNO'):return jsonify({'ok':False,'error':'Responda furos e localização física.'}),400
+    holes=(request.form.get('has_holes') or '').upper(); sealed=(request.form.get('holes_sealed') or '').upper(); access=(request.form.get('physical_access') or '').upper(); rear=(request.form.get('rear_safe_door') or '').upper(); acceptor=(request.form.get('bill_acceptor') or '').strip().upper()
+    if holes not in ('SIM','NAO') or access not in ('INTERNO','EXTERNO') or rear not in ('SIM','NAO') or acceptor not in ('UBA-PRO','I-VIZION','SPECTRAL'):return jsonify({'ok':False,'error':'Responda furos, localização física, porta de cofre traseira e escolha um Aceitador.'}),400
     if holes=='SIM' and sealed not in ('SIM','NAO'):return jsonify({'ok':False,'error':'Informe se os furos estão tampados.'}),400
     files=[f for f in request.files.getlist('photos') if f and f.filename]
-    if not files:return jsonify({'ok':False,'error':'Anexe ao menos uma foto da ATM ou da localização.'}),400
-    m=AtmMapping.query.filter_by(atm_id=atm).first() or AtmMapping(atm_id=atm,company=a['company'],line=a['line'],station=a['station'],technician_id=session['user_id'])
-    m.company=a['company'];m.line=a['line'];m.station=a['station'];m.has_holes=(holes=='SIM');m.holes_sealed=(sealed=='SIM') if holes=='SIM' else None;m.physical_access=access;m.notes=(request.form.get('notes') or '').strip();m.technician_id=session['user_id'];m.status='CONCLUIDO';m.updated_at=datetime.utcnow()
+    existing=AtmMapping.query.filter_by(atm_id=atm).first()
+    existing_photo_count=AtmMappingPhoto.query.filter_by(mapping_id=existing.id).count() if existing else 0
+    if not files and existing_photo_count<1:return jsonify({'ok':False,'error':'Anexe ao menos uma foto da ATM ou da localização.'}),400
+    m=existing or AtmMapping(atm_id=atm,company=a['company'],line=a['line'],station=a['station'],technician_id=session['user_id'])
+    m.company=a['company'];m.line=a['line'];m.station=a['station'];m.has_holes=(holes=='SIM');m.holes_sealed=(sealed=='SIM') if holes=='SIM' else None;m.physical_access=access;m.rear_safe_door=(rear=='SIM');m.bill_acceptor=acceptor;m.notes=(request.form.get('notes') or '').strip();m.technician_id=session['user_id'];m.status='CONCLUIDO';m.updated_at=datetime.utcnow()
     for fld in ('latitude','longitude','gps_accuracy'):
         try:setattr(m,fld,float(request.form.get(fld)))
         except Exception:pass
@@ -20548,7 +20580,7 @@ def v82_atm_mapping_save():
     for f in files:
         safe=secure_filename(f.filename) or 'foto.jpg'; stored=_store_uploaded_file(f,'atm_mapping',f'{uuid.uuid4().hex}_{safe}',f.mimetype or 'image/jpeg')
         db.session.add(AtmMappingPhoto(mapping_id=m.id,storage_key=stored,original_name=safe,content_type=f.mimetype or 'image/jpeg'))
-    db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='ATM_MAPPING_SAVED',entity_type='atm_mapping',entity_id=str(m.id),detail=json.dumps({'atm_id':atm,'has_holes':m.has_holes,'holes_sealed':m.holes_sealed,'physical_access':access,'photos_added':len(files)},ensure_ascii=False)));db.session.commit()
+    db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='ATM_MAPPING_SAVED',entity_type='atm_mapping',entity_id=str(m.id),detail=json.dumps({'atm_id':atm,'has_holes':m.has_holes,'holes_sealed':m.holes_sealed,'physical_access':access,'rear_safe_door':m.rear_safe_door,'bill_acceptor':m.bill_acceptor,'photos_added':len(files)},ensure_ascii=False)));db.session.commit()
     return jsonify({'ok':True,'mapping_id':m.id,'photos_added':len(files),'release':APP_RELEASE})
 
 @app.get('/api/mapeamento-atm/foto/<int:photo_id>')
@@ -20559,6 +20591,72 @@ def v82_atm_mapping_photo(photo_id):
     if ph.storage_key.startswith('r2__'):
         return redirect(r2_client().generate_presigned_url('get_object',Params={'Bucket':os.environ['R2_BUCKET_NAME'],'Key':ph.storage_key[4:]},ExpiresIn=300))
     return send_from_directory(UPLOAD_DIR,ph.storage_key,mimetype=ph.content_type)
+
+
+def _v824_mapping_export_rows():
+    maps={x.atm_id:x for x in AtmMapping.query.all()}
+    mids=[m.id for m in maps.values()]
+    photo_counts={}
+    if mids:
+        for mid,cnt in db.session.query(AtmMappingPhoto.mapping_id,func.count(AtmMappingPhoto.id)).filter(AtmMappingPhoto.mapping_id.in_(mids)).group_by(AtmMappingPhoto.mapping_id).all(): photo_counts[mid]=cnt
+    ids={m.technician_id for m in maps.values()}; names={u.id:u.name for u in User.query.filter(User.id.in_(ids)).all()} if ids else {}
+    out=[]
+    for a in _v82_cash_atms():
+        m=maps.get(a['atm_id']); complete=bool(m and m.has_holes is not None and m.physical_access in ('INTERNO','EXTERNO') and m.rear_safe_door is not None and m.bill_acceptor in ('UBA-PRO','I-VIZION','SPECTRAL') and (m.has_holes is False or m.holes_sealed is not None) and photo_counts.get(m.id,0)>0); row={**a,'status':'CONCLUIDO' if complete else 'PENDENTE','has_holes':m.has_holes if m else None,'holes_sealed':m.holes_sealed if m else None,'physical_access':m.physical_access if m else None,'rear_safe_door':m.rear_safe_door if m else None,'bill_acceptor':m.bill_acceptor if m else None,'notes':m.notes if m else '','technician':names.get(m.technician_id,'') if m else '','updated_at':m.updated_at if m else None,'photos':photo_counts.get(m.id,0) if m else 0,'mapping_id':m.id if m else None}
+        out.append(row)
+    company=(request.args.get('company') or '').strip(); line=(request.args.get('line') or '').strip(); station=(request.args.get('station') or '').strip(); model=(request.args.get('model') or '').strip().upper(); status=(request.args.get('status') or '').strip().upper(); rear=(request.args.get('rear_safe_door') or '').strip().upper(); acceptor=(request.args.get('bill_acceptor') or '').strip().upper()
+    return [x for x in out if (not company or x['company']==company) and (not line or x['line']==line) and (not station or x['station']==station) and (not model or x['model']==model) and (not status or x['status']==status) and (not rear or (rear=='SIM' and x.get('rear_safe_door') is True) or (rear=='NAO' and x.get('rear_safe_door') is False)) and (not acceptor or x.get('bill_acceptor')==acceptor)]
+
+@app.get('/api/mapeamento-atm/export.xlsx')
+@login_required
+def v824_atm_mapping_export_xlsx():
+    if not (_has_access('field.atm_mapping') or _has_access('field.atm_mapping_manage')): abort(403)
+    rows=_v824_mapping_export_rows(); wb=Workbook(); ws=wb.active; ws.title='Mapeamento ATM'
+    ws.append(['Operadora','Linha','Estação','ATM','Modelo','Status','Acesso físico','Possui furos','Furos tampados','Porta de cofre traseira','Aceitador','Fotos','Técnico','Data/Hora','Observação'])
+    for x in rows:
+        access={'INTERNO':'1 - Acesso interno - dentro dos portões','EXTERNO':'2 - Acesso externo - fora dos portões'}.get(x['physical_access'],'')
+        ws.append([x['company'],x['line'],x['station'],x['atm_id'],'MKNeo' if x['model']=='MKNEO' else x['model'],'Concluído' if x['status']=='CONCLUIDO' else 'Pendente',access,'' if x['has_holes'] is None else ('Sim' if x['has_holes'] else 'Não'),'' if x['has_holes'] is not True else ('Sim' if x['holes_sealed'] else 'Não'),'' if x.get('rear_safe_door') is None else ('Sim' if x['rear_safe_door'] else 'Não'),x.get('bill_acceptor') or '',x['photos'],x['technician'],x['updated_at'],x['notes']])
+    for c in ws[1]: c.font=Font(bold=True,color='FFFFFF'); c.fill=PatternFill('solid',fgColor='315F93'); c.alignment=Alignment(horizontal='center')
+    ws.freeze_panes='A2'; ws.auto_filter.ref=ws.dimensions
+    for col in ws.columns: ws.column_dimensions[get_column_letter(col[0].column)].width=min(48,max(12,max(len(str(c.value or '')) for c in col)+2))
+    bio=io.BytesIO(); wb.save(bio); bio.seek(0)
+    return send_file(bio,as_attachment=True,download_name=f"mapeamento_atm_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+@app.get('/api/mapeamento-atm/export.pptx')
+@login_required
+def v824_atm_mapping_export_pptx():
+    if not (_has_access('field.atm_mapping') or _has_access('field.atm_mapping_manage')): abort(403)
+    from pptx import Presentation
+    from pptx.util import Inches,Pt
+    from pptx.dml.color import RGBColor
+    from pptx.enum.text import PP_ALIGN
+    rows=_v824_mapping_export_rows(); total=len(rows); done=sum(x['status']=='CONCLUIDO' for x in rows); pending=total-done; internal=sum(x['physical_access']=='INTERNO' for x in rows); external=sum(x['physical_access']=='EXTERNO' for x in rows); holes=sum(x['has_holes'] is True for x in rows); unsealed=sum(x['has_holes'] is True and x['holes_sealed'] is False for x in rows); rear_yes=sum(x.get('rear_safe_door') is True for x in rows); rear_no=sum(x.get('rear_safe_door') is False for x in rows); uba=sum(x.get('bill_acceptor')=='UBA-PRO' for x in rows); ivizion=sum(x.get('bill_acceptor')=='I-VIZION' for x in rows); spectral=sum(x.get('bill_acceptor')=='SPECTRAL' for x in rows)
+    prs=Presentation(); prs.slide_width=Inches(13.333); prs.slide_height=Inches(7.5)
+    def tb(sl,x,y,w,h,text,size=18,bold=False):
+        box=sl.shapes.add_textbox(Inches(x),Inches(y),Inches(w),Inches(h)); p=box.text_frame.paragraphs[0]; p.text=str(text); p.font.size=Pt(size); p.font.bold=bold; p.font.name='Arial'; p.font.color.rgb=RGBColor(23,52,93); return box
+    sl=prs.slides.add_slide(prs.slide_layouts[6]); tb(sl,.65,.65,12,.55,'Mapeamento ATM — Relatório executivo',28,True); tb(sl,.65,1.35,12,.35,f'V82.6 · Gerado em {datetime.now().strftime("%d/%m/%Y %H:%M")}',12)
+    vals=[('ATMs no recorte',total),('Concluídas',done),('Pendentes',pending),('Avanço',f'{round(done/total*100,1) if total else 0}%'),('Acesso interno',internal),('Acesso externo',external),('Com furos',holes),('Furos não tampados',unsealed),('Porta cofre traseira: Sim',rear_yes),('Porta cofre traseira: Não',rear_no),('Aceitador UBA-PRO',uba),('Aceitador I-VIZION',ivizion),('Aceitador SPECTRAL',spectral)]
+    for i,(lab,val) in enumerate(vals):
+        x=.65+(i%5)*2.45; y=2.15+(i//5)*1.45; tb(sl,x,y,2.2,.3,lab,10,True); tb(sl,x,y+.35,2.2,.55,val,23,True)
+    # resumo por operadora
+    sl=prs.slides.add_slide(prs.slide_layouts[6]); tb(sl,.65,.5,12,.5,'Progresso por operadora',24,True)
+    agg={}
+    for x in rows:
+        a=agg.setdefault(x['company'] or 'Não informada',[0,0]); a[0]+=1; a[1]+=1 if x['status']=='CONCLUIDO' else 0
+    y=1.35
+    for company,(ct,cd) in sorted(agg.items()):
+        tb(sl,.8,y,4,.3,company,13,True); tb(sl,5.0,y,2,.3,f'{cd}/{ct}',13); tb(sl,7.0,y,2,.3,f'{round(cd/ct*100,1) if ct else 0}%',13); y+=.48
+        if y>6.8: break
+    # situações críticas
+    crit=[x for x in rows if x['has_holes'] is True and x['holes_sealed'] is False]
+    sl=prs.slides.add_slide(prs.slide_layouts[6]); tb(sl,.65,.5,12,.5,'ATMs com furos não tampados',24,True); y=1.25
+    if not crit: tb(sl,.8,y,11,.4,'Nenhuma ATM no recorte atual.',14)
+    else:
+        tb(sl,.8,y,11,.3,'Operadora · Linha · Estação · ATM · Modelo · Técnico',11,True); y+=.42
+        for x in crit[:18]:
+            tb(sl,.8,y,11.7,.28,f"{x['company']} · {x['line']} · {x['station']} · {x['atm_id']} · {'MKNeo' if x['model']=='MKNEO' else x['model']} · {x['technician'] or '—'}",10); y+=.3
+    bio=io.BytesIO(); prs.save(bio); bio.seek(0)
+    return send_file(bio,as_attachment=True,download_name=f"mapeamento_atm_{datetime.now().strftime('%Y%m%d_%H%M')}.pptx",mimetype='application/vnd.openxmlformats-officedocument.presentationml.presentation')
 
 @app.get('/api/bobinas/export.xlsx')
 @login_required
