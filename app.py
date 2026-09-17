@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V82.15"
+APP_RELEASE = "V82.16"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -15519,7 +15519,7 @@ def panorama_page():
     if not _has_access("field.panorama"): abort(403)
     if not _has_access("field.panorama"):
         return redirect(_v789_landing_for_user())
-    return render_template("panorama.html")
+    return render_template("panorama.html", panorama_admin=_current_user_is_superadmin())
 
 
 def _panorama_payload():
@@ -15743,6 +15743,9 @@ def panorama_upload_api(location_id):
 @app.post("/api/panoramas/import-whatsapp")
 @manager_required
 def panorama_import_whatsapp_api():
+    # V82.16: importação em lote de evidências é uma função administrativa exclusiva.
+    if not _current_user_is_superadmin():
+        return jsonify({"ok":False,"error":"Somente o ADM pode importar ZIP do WhatsApp."}),403
     zf=request.files.get("zip")
     if not zf or not zf.filename.lower().endswith(".zip"):
         return jsonify({"ok":False,"error":"Selecione um arquivo ZIP exportado do WhatsApp."}),400
