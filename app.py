@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V82.22"
+APP_RELEASE = "V82.23"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -14122,10 +14122,11 @@ def _v792_cash_payload(start,end,calc_statuses=None):
             nxt=next((f for f in future if date.fromisoformat(f["date"])>pd),None)
             cycle_summary=_fast_cycle_summary(ev) if ev else None
             closure_info=_fast_closure_info(ev) if ev and _v805_is_valid_closure(ev) else None
-            realized_at=(closure_info or {}).get("at") if closure_info else (ev.end_at if ev else None)
+            # Evento TBForte informativo sem R0050 não possui hora real: exibe a data da apuração, mas não inventa 00:00.
+            realized_at=(closure_info or {}).get("at") if closure_info else (ev.end_at if ev and not bool(getattr(ev,"cycle_excluded",False)) else None)
             occurrences.append({**p,"date":effective,"scheduled_original":p["date"],"status":status,"override_id":ov.id if ov else None,
                 "event_id":ev.id if ev else None,"time":(realized_at.strftime("%H:%M") if realized_at else (ov.scheduled_time if ov else "")),
-                "realized_date":realized_at.date().isoformat() if realized_at else None,"closure_source":(closure_info or {}).get("source") if closure_info else None,"closure_collection_code":(closure_info or {}).get("collection_code") or "","manual_time":ev.end_at.strftime("%H:%M") if ev else "","manual_realized_date":ev.collection_date.isoformat() if ev else None,
+                "realized_date":realized_at.date().isoformat() if realized_at else (ev.collection_date.isoformat() if ev and ev.processed_amount is not None else None),"closure_source":(closure_info or {}).get("source") if closure_info else ("TBFORTE" if ev and bool(getattr(ev,"cycle_excluded",False)) and ev.processed_amount is not None else None),"closure_collection_code":(closure_info or {}).get("collection_code") or "","manual_time":ev.end_at.strftime("%H:%M") if ev and not bool(getattr(ev,"cycle_excluded",False)) else "","manual_realized_date":ev.collection_date.isoformat() if ev else None,
                 "declared_amount":dec,"processed_amount":ap,"difference":diff,"denomination_count":den_count,"denomination_value":den_value,"denominations":denominations,"note":((_complementary_value(_daykey,'monitoring_note',ev) or "") if ev else ((report.note or "") if report else (ov.note or "" if ov else ""))),
                 "gtv":((_complementary_value(_daykey,'gtv',ev) or "") if ev else ((report.gtv or "") if report else "")),"daily_report_id":report.id if report else None,"provider_status":report.provider_status if report else "","occurrence":report.occurrence if report else "",
                 "next_prediction":nxt["date"] if nxt else None,"cycle_valid":_v805_is_valid_closure(ev) if ev else False,"cycle_excluded":bool(getattr(ev,"cycle_excluded",False)) if ev else False,"transaction_cycle":cycle_summary})
@@ -14936,8 +14937,25 @@ def _v80121_apply_tbforte_rows(source_name, rows):
                     target=FinancialCashCollection(terminal=item['terminal'],point_name=item['point'] or (asset.locality if asset else ''),collection_date=item['date'],start_at=at,end_at=at,collected_amount=0,gtv=item['gtv'],municipality=item['municipality'],declared_amount=item['declared'],processed_amount=item['processed'],processed_at=datetime.utcnow(),monitoring_note='Apuração importada TBForte · fechamento R0050',source_file=source_name,source_hash=sig,imported_by=session.get('user_id'))
                     db.session.add(target);db.session.flush();created+=1;created_target=True;by_td.setdefault(key,[]).append(target)
             else:
-                unmatched.append({'terminal':item['terminal'],'date':item['date'].isoformat(),'gtv':item['gtv'],'declared':item['declared'],'processed':item['processed'],'reason':'Sem fechamento do Monitoramento/R0050 na data'})
-                continue
+                # V82.23: a apuração TBForte é uma fonte independente do R0050.
+                # Se ainda não houver fechamento transacional na data, preserva Declarado/Apurado/GTV
+                # em um evento informativo. cycle_excluded=True impede que esse registro, sem hora real,
+                # corte a janela transacional. Quando o R0050 chegar, a conciliação pode ser completada.
+                sig=hashlib.sha256(f"V82.23|TBFORTE_PENDING_R0050|{item['terminal']}|{item['date'].isoformat()}|{item['gtv']}|{item['declared']}|{item['processed']}".encode()).hexdigest()
+                target=FinancialCashCollection.query.filter_by(source_hash=sig).first()
+                if target is None:
+                    asset=assets.get(item['terminal'])
+                    placeholder_at=datetime.combine(item['date'],datetime.min.time())
+                    target=FinancialCashCollection(
+                        terminal=item['terminal'],point_name=item['point'] or (asset.locality if asset else ''),
+                        collection_date=item['date'],start_at=placeholder_at,end_at=placeholder_at,
+                        collected_amount=None,gtv=item['gtv'],municipality=item['municipality'],
+                        declared_amount=item['declared'],processed_amount=item['processed'],processed_at=datetime.utcnow(),
+                        monitoring_note='Apuração importada TBForte · aguardando correlação com fechamento R0050',
+                        cycle_excluded=True,cycle_exclusion_reason='Registro informativo TBForte sem horário/fechamento R0050',
+                        source_file=source_name,source_hash=sig,imported_by=session.get('user_id'))
+                    db.session.add(target);db.session.flush();created+=1;created_target=True;by_td.setdefault(key,[]).append(target)
+                details.append({'terminal':item['terminal'],'date':item['date'].isoformat(),'gtv':item['gtv'],'declared':item['declared'],'processed':item['processed'],'event_id':target.id,'pending_r0050':True})
         before={'declared':target.declared_amount,'processed':target.processed_amount,'gtv':target.gtv}
         changed=False
         if item['declared'] is not None and (target.declared_amount is None or abs(float(target.declared_amount)-item['declared'])>=.005):target.declared_amount=item['declared'];changed=True
