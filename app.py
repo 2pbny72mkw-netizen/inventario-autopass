@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V82.18"
+APP_RELEASE = "V82.19"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -14260,7 +14260,7 @@ def _v815_reprogram_suggestion(start, end, strategy="CONSERVADORA", history_n=3,
             sch=schedules.get(t)
             current_by_terminal[t]=_v79_schedule_text(sch) if sch else '—'
         terminal_plan={}
-        second_day={'TER':'QUI','QUA':'SEX','QUI':'TER','SEX':'TER'}
+        second_day={'TER':'QUI','QUA':'SEX','QUI':'TER','SEX':'QUA'}
         for t in g['terminals']:
             vals=terminal_history.get(str(t),[])[:history_n]; avg=(sum(vals)/len(vals)) if vals else None
             days=[] if g['mode']=='KEEP_LINE17' else [g['suggested_day']]
@@ -14290,7 +14290,7 @@ def _v815_reprogram_suggestion(start, end, strategy="CONSERVADORA", history_n=3,
                 if d not in occurrence_loads: continue
                 occurrence_loads[d]['value']+=per_atm; occurrence_loads[d]['localities'].add(g['station']); occurrence_loads[d]['atms']+=1
     loads={d:{'value':occurrence_loads[d]['value'],'localities':len(occurrence_loads[d]['localities']),'atms':occurrence_loads[d]['atms']} for d in weekdays}
-    return {'ok':True,'release':APP_RELEASE,'start':start.isoformat(),'end':end.isoformat(),'rule':'Linha 17/Ouro permanece 2x/mês. Demais localidades ficam semanais entre terça e sexta. Todos os ATMs da mesma localidade são agrupados, independentemente da operadora. Balanceamento: 60% valor esperado, 25% localidades/equipe e 15% quantidade de ATMs.','value_source':'V82.15: estratégia agressiva usa exclusivamente o Valor Apurado das últimas 2/3 coletas com apuração disponível; se uma ATM disparar 2x/semana, as demais ATMs elegíveis da mesma localidade acompanham a segunda visita por aproveitamento logístico; registros sem apurado não geram gatilho e não viram zero.','strategy':strategy,'history_n':history_n,'reference_value':reference_value,'days':[{'code':d,'label':names[d],'expected_value':round(loads[d]['value'],2),'localities':loads[d]['localities'],'atms':loads[d]['atms']} for d in weekdays],'changes':changes,'summary':{'weekly_localities':sum(1 for x in changes if x['mode']!='KEEP_LINE17'),'line17_localities':sum(1 for x in changes if x['mode']=='KEEP_LINE17'),'reprogrammed_localities':sum(1 for x in changes if x['mode']=='REPROGRAM'),'atms_affected':sum(x['atm_count'] for x in changes if x['mode']=='REPROGRAM'),'expected_weekly_value':round(sum(x['expected_value'] for x in changes if x['mode']!='KEEP_LINE17'),2)}}
+    return {'ok':True,'release':APP_RELEASE,'start':start.isoformat(),'end':end.isoformat(),'rule':'Linha 17/Ouro permanece 2x/mês. Demais localidades ficam semanais entre terça e sexta. Todos os ATMs da mesma localidade são agrupados, independentemente da operadora. Balanceamento: 60% valor esperado, 25% localidades/equipe e 15% quantidade de ATMs.','value_source':'V82.19: regra de pares 2x/semana TER→QUI, QUA→SEX, QUI→TER e SEX→QUA. Estratégia agressiva usa exclusivamente o Valor Apurado;  estratégia agressiva usa exclusivamente o Valor Apurado das últimas 2/3 coletas com apuração disponível; se uma ATM disparar 2x/semana, as demais ATMs elegíveis da mesma localidade acompanham a segunda visita por aproveitamento logístico; registros sem apurado não geram gatilho e não viram zero.','strategy':strategy,'history_n':history_n,'reference_value':reference_value,'days':[{'code':d,'label':names[d],'expected_value':round(loads[d]['value'],2),'localities':loads[d]['localities'],'atms':loads[d]['atms']} for d in weekdays],'changes':changes,'summary':{'weekly_localities':sum(1 for x in changes if x['mode']!='KEEP_LINE17'),'line17_localities':sum(1 for x in changes if x['mode']=='KEEP_LINE17'),'reprogrammed_localities':sum(1 for x in changes if x['mode']=='REPROGRAM'),'atms_affected':sum(x['atm_count'] for x in changes if x['mode']=='REPROGRAM'),'expected_weekly_value':round(sum(x['expected_value'] for x in changes if x['mode']!='KEEP_LINE17'),2)}}
 
 @app.get('/api/financeiro/coletas/v81/reprogramacao-sugerida')
 @login_required
