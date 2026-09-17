@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V82.20"
+APP_RELEASE = "V82.22"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -12696,20 +12696,32 @@ def petty_cash_page():
     if not (_has_access("finance.petty_cash.view") or _has_access("finance.petty_cash.manage")): abort(403)
     return render_template("financial_petty_cash.html",app_release=APP_RELEASE)
 
+def _petty_cash_is_adm():
+    return (session.get('role') or '').strip().lower() in ('manager','admin','adm','administrator') or _current_user_is_superadmin()
+
+def _petty_cash_summary(c):
+    es=PettyCashEntry.query.filter_by(petty_cash_id=c.id).all()
+    incoming=sum(float(x.amount or 0) for x in es if x.entry_type=='ENTRADA')
+    spent=sum(float(x.amount or 0) for x in es if x.entry_type=='DESPESA')
+    missing=sum(1 for x in es if x.entry_type=='DESPESA' and not x.receipt_key)
+    u=db.session.get(User,c.responsible_id)
+    return {'id':c.id,'control_number':f'CX-{c.received_date.year}-{c.id:04d}','responsible_id':c.responsible_id,'responsible':u.name if u else f'#{c.responsible_id}','department':c.department or '','purpose':c.purpose or '','received_date':c.received_date.isoformat(),'opening_amount':float(c.opening_amount or 0),'payment_method':c.payment_method or '','status':c.status,'incoming':incoming,'spent':spent,'balance':float(c.opening_amount or 0)+incoming-spent,'missing_receipts':missing,'can_admin':_petty_cash_is_adm()}
+
 @app.route("/api/financeiro/caixinha",methods=["GET","POST"])
 @login_required
 def petty_cash_api():
     if request.method=="GET":
         if not (_has_access("finance.petty_cash.view") or _has_access("finance.petty_cash.manage")): abort(403)
-        rows=PettyCash.query.order_by(PettyCash.received_date.desc(),PettyCash.id.desc()).all(); out=[]
-        for c in rows:
-            es=PettyCashEntry.query.filter_by(petty_cash_id=c.id).all(); incoming=sum(float(x.amount or 0) for x in es if x.entry_type=='ENTRADA'); spent=sum(float(x.amount or 0) for x in es if x.entry_type=='DESPESA'); missing=sum(1 for x in es if x.entry_type=='DESPESA' and not x.receipt_key)
-            out.append({'id':c.id,'responsible_id':c.responsible_id,'department':c.department or '','purpose':c.purpose or '','received_date':c.received_date.isoformat(),'opening_amount':c.opening_amount,'payment_method':c.payment_method or '','status':c.status,'incoming':incoming,'spent':spent,'balance':float(c.opening_amount or 0)+incoming-spent,'missing_receipts':missing})
-        return jsonify({'ok':True,'rows':out,'release':APP_RELEASE})
+        rows=PettyCash.query.order_by(PettyCash.received_date.desc(),PettyCash.id.desc()).all()
+        return jsonify({'ok':True,'rows':[_petty_cash_summary(c) for c in rows],'release':APP_RELEASE,'can_admin':_petty_cash_is_adm()})
     if not _has_access("finance.petty_cash.manage"): abort(403)
-    d=request.get_json(silent=True) or {}; rd=date.fromisoformat(d.get('received_date')); amount=float(d.get('opening_amount') or 0)
+    d=request.get_json(silent=True) or {}
+    try: rd=date.fromisoformat(d.get('received_date')); amount=float(d.get('opening_amount') or 0)
+    except Exception: return jsonify({'ok':False,'error':'Data/valor inválido.'}),400
+    if amount<=0:return jsonify({'ok':False,'error':'Informe um valor recebido maior que zero.'}),400
     c=PettyCash(responsible_id=int(d.get('responsible_id') or session['user_id']),department=(d.get('department') or '').strip(),purpose=(d.get('purpose') or '').strip(),received_date=rd,opening_amount=amount,payment_method=(d.get('payment_method') or 'DINHEIRO').strip(),notes=(d.get('notes') or '').strip(),created_by=session['user_id'])
-    db.session.add(c);db.session.commit();return jsonify({'ok':True,'id':c.id})
+    db.session.add(c);db.session.flush();db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='PETTY_CASH_OPENED',entity_type='petty_cash',entity_id=str(c.id),detail=json.dumps({'amount':amount,'received_date':rd.isoformat()},ensure_ascii=False)));db.session.commit()
+    return jsonify({'ok':True,'id':c.id,'control_number':f'CX-{rd.year}-{c.id:04d}'})
 
 @app.route("/api/financeiro/caixinha/<int:cid>/movimentos",methods=["GET","POST"])
 @login_required
@@ -12718,27 +12730,94 @@ def petty_cash_entries_api(cid):
     if request.method=='GET':
         if not (_has_access("finance.petty_cash.view") or _has_access("finance.petty_cash.manage")): abort(403)
         es=PettyCashEntry.query.filter_by(petty_cash_id=cid).order_by(PettyCashEntry.entry_date,PettyCashEntry.id).all()
-        return jsonify({'ok':True,'rows':[{'id':x.id,'date':x.entry_date.isoformat(),'type':x.entry_type,'supplier':x.supplier or '','category':x.category or '','description':x.description or '','cost_center':x.cost_center or '','amount':x.amount,'payment_method':x.payment_method or '','notes':x.notes or '','has_receipt':bool(x.receipt_key)} for x in es]})
+        rows=[{'id':x.id,'date':x.entry_date.isoformat(),'type':x.entry_type,'supplier':x.supplier or '','category':x.category or '','description':x.description or '','cost_center':x.cost_center or '','amount':float(x.amount or 0),'payment_method':x.payment_method or '','notes':x.notes or '','has_receipt':bool(x.receipt_key),'receipt_name':x.receipt_name or '','receipt_url':f'/api/financeiro/caixinha/movimentos/{x.id}/comprovante' if x.receipt_key else ''} for x in es]
+        return jsonify({'ok':True,'cash':_petty_cash_summary(c),'rows':rows,'locked':c.status=='APROVADO','can_edit':c.status!='APROVADO' or _petty_cash_is_adm(),'can_admin':_petty_cash_is_adm()})
     if not _has_access("finance.petty_cash.manage"):abort(403)
-    d=request.form; typ=(d.get('entry_type') or 'DESPESA').upper(); amount=float(d.get('amount') or 0)
+    if c.status=='APROVADO' and not _petty_cash_is_adm():return jsonify({'ok':False,'error':'Caixinha aprovado: somente ADM pode alterar.'}),403
+    d=request.form; typ=(d.get('entry_type') or 'DESPESA').upper()
+    try: amount=float(d.get('amount') or 0); entry_date=date.fromisoformat(d.get('entry_date'))
+    except Exception:return jsonify({'ok':False,'error':'Data/valor inválido.'}),400
     if typ not in ('DESPESA','ENTRADA') or amount<=0:return jsonify({'ok':False,'error':'Tipo/valor inválido.'}),400
-    x=PettyCashEntry(petty_cash_id=cid,entry_date=date.fromisoformat(d.get('entry_date')),entry_type=typ,supplier=(d.get('supplier') or '').strip(),category=(d.get('category') or '').strip(),description=(d.get('description') or '').strip(),cost_center=(d.get('cost_center') or '').strip(),amount=amount,payment_method=(d.get('payment_method') or '').strip(),notes=(d.get('notes') or '').strip(),created_by=session['user_id'])
+    x=PettyCashEntry(petty_cash_id=cid,entry_date=entry_date,entry_type=typ,supplier=(d.get('supplier') or '').strip(),category=(d.get('category') or '').strip(),description=(d.get('description') or '').strip(),cost_center=(d.get('cost_center') or '').strip(),amount=amount,payment_method=(d.get('payment_method') or '').strip(),notes=(d.get('notes') or '').strip(),created_by=session['user_id'])
     f=request.files.get('receipt')
     if f and f.filename:
         safe=secure_filename(f.filename);x.receipt_key=_store_uploaded_file(f,'petty_cash',f'{uuid.uuid4().hex}_{safe}',f.mimetype);x.receipt_name=safe;x.receipt_type=f.mimetype
-    db.session.add(x);c.updated_at=datetime.utcnow();db.session.commit();return jsonify({'ok':True,'id':x.id})
+    db.session.add(x);c.updated_at=datetime.utcnow();db.session.flush();db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='PETTY_CASH_ENTRY_CREATED',entity_type='petty_cash',entity_id=str(cid),detail=json.dumps({'entry_id':x.id,'type':typ,'amount':amount},ensure_ascii=False)));db.session.commit();return jsonify({'ok':True,'id':x.id})
+
+@app.route('/api/financeiro/caixinha/movimentos/<int:eid>',methods=['PUT','DELETE'])
+@login_required
+def petty_cash_entry_change(eid):
+    x=db.session.get(PettyCashEntry,eid) or abort(404);c=db.session.get(PettyCash,x.petty_cash_id) or abort(404)
+    if not _has_access('finance.petty_cash.manage'):abort(403)
+    if c.status=='APROVADO' and not _petty_cash_is_adm():return jsonify({'ok':False,'error':'Caixinha aprovado: somente ADM pode alterar.'}),403
+    if request.method=='DELETE':
+        before={'id':x.id,'type':x.entry_type,'amount':x.amount,'description':x.description or ''};key=x.receipt_key
+        if key:
+            try:
+                if key.startswith('r2__') and _r2_available():r2_client().delete_object(Bucket=os.environ['R2_BUCKET_NAME'],Key=key[4:])
+                elif not key.startswith('r2__'):
+                    q=UPLOAD_DIR/key
+                    if q.exists():q.unlink()
+            except Exception:app.logger.exception('Falha ao excluir comprovante caixinha %s',eid)
+        db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='PETTY_CASH_ENTRY_DELETED',entity_type='petty_cash',entity_id=str(c.id),detail=json.dumps(before,ensure_ascii=False)));db.session.delete(x);c.updated_at=datetime.utcnow();db.session.commit();return jsonify({'ok':True})
+    d=request.form
+    before={'date':x.entry_date.isoformat(),'type':x.entry_type,'supplier':x.supplier or '','category':x.category or '','description':x.description or '','cost_center':x.cost_center or '','amount':x.amount,'payment_method':x.payment_method or '','notes':x.notes or ''}
+    try:x.entry_date=date.fromisoformat(d.get('entry_date'));x.amount=float(d.get('amount') or 0)
+    except Exception:return jsonify({'ok':False,'error':'Data/valor inválido.'}),400
+    x.entry_type=(d.get('entry_type') or 'DESPESA').upper();x.supplier=(d.get('supplier') or '').strip();x.category=(d.get('category') or '').strip();x.description=(d.get('description') or '').strip();x.cost_center=(d.get('cost_center') or '').strip();x.payment_method=(d.get('payment_method') or '').strip();x.notes=(d.get('notes') or '').strip()
+    if x.entry_type not in ('DESPESA','ENTRADA') or x.amount<=0:return jsonify({'ok':False,'error':'Tipo/valor inválido.'}),400
+    f=request.files.get('receipt')
+    if f and f.filename:
+        safe=secure_filename(f.filename);x.receipt_key=_store_uploaded_file(f,'petty_cash',f'{uuid.uuid4().hex}_{safe}',f.mimetype);x.receipt_name=safe;x.receipt_type=f.mimetype
+    reason=(d.get('reason') or '').strip()
+    if c.status=='APROVADO' and not reason:return jsonify({'ok':False,'error':'Após aprovação, ADM deve informar justificativa da alteração.'}),400
+    c.updated_at=datetime.utcnow();db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='PETTY_CASH_ENTRY_EDITED',entity_type='petty_cash',entity_id=str(c.id),detail=json.dumps({'entry_id':x.id,'before':before,'reason':reason},ensure_ascii=False)));db.session.commit();return jsonify({'ok':True})
+
+@app.get('/api/financeiro/caixinha/movimentos/<int:eid>/comprovante')
+@login_required
+def petty_cash_receipt(eid):
+    if not (_has_access('finance.petty_cash.view') or _has_access('finance.petty_cash.manage')):abort(403)
+    x=db.session.get(PettyCashEntry,eid) or abort(404)
+    if not x.receipt_key:abort(404)
+    if x.receipt_key.startswith('r2__'):return redirect(r2_client().generate_presigned_url('get_object',Params={'Bucket':os.environ['R2_BUCKET_NAME'],'Key':x.receipt_key[4:]},ExpiresIn=300))
+    return send_from_directory(UPLOAD_DIR,x.receipt_key,mimetype=x.receipt_type or 'application/octet-stream')
+
+@app.post('/api/financeiro/caixinha/<int:cid>/enviar-aprovacao')
+@login_required
+def petty_cash_submit(cid):
+    c=db.session.get(PettyCash,cid) or abort(404)
+    if not _has_access('finance.petty_cash.manage'):abort(403)
+    if c.status=='APROVADO':return jsonify({'ok':False,'error':'Caixinha já aprovado.'}),409
+    c.status='AGUARDANDO_ADM';c.updated_at=datetime.utcnow();db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='PETTY_CASH_SUBMITTED',entity_type='petty_cash',entity_id=str(c.id),detail='{}'));db.session.commit();return jsonify({'ok':True,'status':c.status})
+
+@app.post('/api/financeiro/caixinha/<int:cid>/aprovar')
+@login_required
+def petty_cash_approve(cid):
+    c=db.session.get(PettyCash,cid) or abort(404)
+    if not _petty_cash_is_adm():return jsonify({'ok':False,'error':'Aprovação final restrita ao ADM.'}),403
+    c.status='APROVADO';c.updated_at=datetime.utcnow();db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='PETTY_CASH_APPROVED',entity_type='petty_cash',entity_id=str(c.id),detail='{}'));db.session.commit();return jsonify({'ok':True,'status':c.status})
+
+@app.get('/api/financeiro/caixinha/<int:cid>/export.xlsx')
+@login_required
+def petty_cash_excel(cid):
+    if not (_has_access('finance.petty_cash.view') or _has_access('finance.petty_cash.manage')):abort(403)
+    c=db.session.get(PettyCash,cid) or abort(404);es=PettyCashEntry.query.filter_by(petty_cash_id=cid).order_by(PettyCashEntry.entry_date,PettyCashEntry.id).all();sm=_petty_cash_summary(c)
+    wb=Workbook();ws=wb.active;ws.title='Prestação de contas';ws.append(['CAIXINHA',sm['control_number']]);ws.append(['Recebimento',c.received_date.strftime('%d/%m/%Y')]);ws.append(['Responsável',sm['responsible']]);ws.append(['Departamento',c.department or '']);ws.append(['Finalidade',c.purpose or '']);ws.append(['Valor recebido',float(c.opening_amount or 0)]);ws.append(['Entradas',sm['incoming']]);ws.append(['Gastos',sm['spent']]);ws.append(['Saldo',sm['balance']]);ws.append([]);ws.append(['Data','Tipo','Fornecedor','Categoria','Descrição','Centro de custo / Projeto','Forma de pagamento','Valor','Comprovante','Observação'])
+    for x in es:ws.append([x.entry_date.strftime('%d/%m/%Y'),x.entry_type,x.supplier or '',x.category or '',x.description or '',x.cost_center or '',x.payment_method or '',float(x.amount or 0),'Sim' if x.receipt_key else 'Não',x.notes or ''])
+    for cell in ws[11]:cell.font=Font(bold=True);cell.fill=PatternFill('solid',fgColor='D9EAF7')
+    for col in range(1,11):ws.column_dimensions[get_column_letter(col)].width=max(14,min(38,max((len(str(ws.cell(r,col).value or '')) for r in range(1,ws.max_row+1)),default=12)+2))
+    out=io.BytesIO();wb.save(out);out.seek(0);return send_file(out,as_attachment=True,download_name=f"{sm['control_number']}.xlsx",mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 @app.get('/api/financeiro/caixinha/<int:cid>/prestacao.pdf')
 @login_required
 def petty_cash_pdf(cid):
     if not (_has_access('finance.petty_cash.view') or _has_access('finance.petty_cash.manage')):abort(403)
-    c=db.session.get(PettyCash,cid) or abort(404); es=PettyCashEntry.query.filter_by(petty_cash_id=cid).order_by(PettyCashEntry.entry_date,PettyCashEntry.id).all(); u=db.session.get(User,c.responsible_id)
-    incoming=sum(float(x.amount or 0) for x in es if x.entry_type=='ENTRADA'); spent=sum(float(x.amount or 0) for x in es if x.entry_type=='DESPESA'); balance=float(c.opening_amount or 0)+incoming-spent
+    c=db.session.get(PettyCash,cid) or abort(404);es=PettyCashEntry.query.filter_by(petty_cash_id=cid).order_by(PettyCashEntry.entry_date,PettyCashEntry.id).all();u=db.session.get(User,c.responsible_id);sm=_petty_cash_summary(c)
     from reportlab.lib.pagesizes import A4; from reportlab.platypus import SimpleDocTemplate,Paragraph,Spacer,Table,TableStyle; from reportlab.lib.styles import getSampleStyleSheet; from reportlab.lib import colors
-    bio=io.BytesIO(); doc=SimpleDocTemplate(bio,pagesize=A4); st=getSampleStyleSheet(); story=[Paragraph('PRESTAÇÃO DE CONTAS – CAIXINHA',st['Title']),Spacer(1,10),Paragraph(f'Responsável: {(u.name if u else c.responsible_id)} | Departamento: {c.department or "-"}',st['Normal']),Paragraph(f'Recebimento: {c.received_date.strftime("%d/%m/%Y")} | Valor inicial: R$ {c.opening_amount:,.2f} | Entradas: R$ {incoming:,.2f} | Gastos: R$ {spent:,.2f} | Saldo: R$ {balance:,.2f}',st['Normal']),Spacer(1,10)]
+    bio=io.BytesIO();doc=SimpleDocTemplate(bio,pagesize=A4);st=getSampleStyleSheet();story=[Paragraph(f"PRESTAÇÃO DE CONTAS – {sm['control_number']}",st['Title']),Spacer(1,10),Paragraph(f'Responsável: {(u.name if u else c.responsible_id)} | Departamento: {c.department or "-"} | Status: {c.status}',st['Normal']),Paragraph(f'Recebimento: {c.received_date.strftime("%d/%m/%Y")} | Valor inicial: R$ {c.opening_amount:,.2f} | Entradas: R$ {sm["incoming"]:,.2f} | Gastos: R$ {sm["spent"]:,.2f} | Saldo: R$ {sm["balance"]:,.2f}',st['Normal']),Spacer(1,10)]
     data=[['Data','Tipo','Fornecedor','Categoria','Descrição','Valor','Comprov.']]+[[x.entry_date.strftime('%d/%m/%Y'),x.entry_type,x.supplier or '',x.category or '',x.description or '',f'R$ {x.amount:,.2f}','Sim' if x.receipt_key else 'Não'] for x in es]
     t=Table(data,repeatRows=1,colWidths=[55,55,75,65,150,65,50]);t.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#1F4E78')),('TEXTCOLOR',(0,0),(-1,0),colors.white),('FONTSIZE',(0,0),(-1,-1),7),('GRID',(0,0),(-1,-1),.25,colors.grey),('VALIGN',(0,0),(-1,-1),'TOP')]));story.append(t);doc.build(story);bio.seek(0)
-    return send_file(bio,as_attachment=True,download_name=f'prestacao_caixinha_{cid}.pdf',mimetype='application/pdf')
+    return send_file(bio,as_attachment=True,download_name=f"prestacao_{sm['control_number']}.pdf",mimetype='application/pdf')
 
 @app.get("/api/v56a/performance")
 @login_required
@@ -16248,6 +16327,29 @@ def v73_apt_page():
             if AptRecord.query.filter_by(user_id=u.id,active=True).first():continue
             data.append({"row":u,"validity_status":"SEM VALIDADE","days":None,"nr10_status":"SEM DATA","nr35_status":"SEM DATA","aso_status":"SEM DATA","integration_status":"SEM DATA","missing_apt":True})
         data.sort(key=lambda z: normalize((z["row"].name if z.get("missing_apt") else z["row"].collaborator_name) or ''))
+
+    # V82.22 — visualização colaborador-cêntrica: mantém todas as APTs/PTs do mesmo
+    # colaborador juntas e informa ao template quais células compartilhadas devem
+    # ocupar o grupo inteiro (nome/empresa e documentos de vigência comuns).
+    def _apt_group_key(z):
+        row=z["row"]
+        if z.get("missing_apt"):
+            return ("U", getattr(row,"id",0))
+        uid=getattr(row,"user_id",None)
+        return ("U",uid) if uid else ("N",normalize(getattr(row,"collaborator_name","") or ""),normalize(getattr(row,"company","") or ""))
+    def _apt_sort_key(z):
+        row=z["row"]
+        name=(getattr(row,"name","") if z.get("missing_apt") else getattr(row,"collaborator_name","")) or ""
+        company=getattr(row,"company","") or ""
+        line="" if z.get("missing_apt") else (getattr(row,"line","") or "")
+        valid=date.max if z.get("missing_apt") or not getattr(row,"valid_until",None) else row.valid_until
+        return (normalize(name),normalize(company),normalize(line),valid)
+    data.sort(key=_apt_sort_key)
+    group_counts={}
+    for z in data: group_counts[_apt_group_key(z)]=group_counts.get(_apt_group_key(z),0)+1
+    seen_groups=set()
+    for z in data:
+        g=_apt_group_key(z); z["group_first"]=g not in seen_groups; z["group_size"]=group_counts[g]; seen_groups.add(g)
 
     summary={k:sum(1 for x in data if x["validity_status"]==k) for k in ("VENCIDA","ATÉ 15 DIAS","ATÉ 30 DIAS","ATÉ 40 DIAS","REGULAR","SEM VALIDADE")}
     # Empresas vêm do cadastro mestre de usuários + registros históricos de APT.
@@ -20885,6 +20987,28 @@ def v82_atm_mapping_photo(photo_id):
     if ph.storage_key.startswith('r2__'):
         return redirect(r2_client().generate_presigned_url('get_object',Params={'Bucket':os.environ['R2_BUCKET_NAME'],'Key':ph.storage_key[4:]},ExpiresIn=300))
     return send_from_directory(UPLOAD_DIR,ph.storage_key,mimetype=ph.content_type)
+
+@app.delete('/api/mapeamento-atm/foto/<int:photo_id>')
+@login_required
+def v8221_atm_mapping_photo_delete(photo_id):
+    if not (_has_access('field.atm_mapping_manage') or _current_user_is_superadmin()): abort(403)
+    ph=AtmMappingPhoto.query.get_or_404(photo_id)
+    m=db.session.get(AtmMapping,ph.mapping_id) or abort(404)
+    total=AtmMappingPhoto.query.filter_by(mapping_id=m.id).count()
+    if m.status=='CONCLUIDO' and total<=1:
+        return jsonify({'ok':False,'error':'Mapeamento concluído deve manter pelo menos uma evidência fotográfica. Altere o status antes de excluir a última foto.'}),409
+    key=ph.storage_key
+    try:
+        if key.startswith('r2__') and _r2_available(): r2_client().delete_object(Bucket=os.environ['R2_BUCKET_NAME'],Key=key[4:])
+        elif not key.startswith('r2__'):
+            q=UPLOAD_DIR/key
+            if q.exists(): q.unlink()
+    except Exception:
+        app.logger.exception('Falha ao excluir evidência do Mapeamento ATM %s',photo_id)
+        return jsonify({'ok':False,'error':'Não foi possível excluir o arquivo da evidência.'}),500
+    db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='ATM_MAPPING_PHOTO_DELETED',entity_type='atm_mapping',entity_id=str(m.id),detail=json.dumps({'atm_id':m.atm_id,'photo_id':ph.id,'name':ph.original_name or ''},ensure_ascii=False)))
+    db.session.delete(ph);m.updated_at=datetime.utcnow();db.session.commit()
+    return jsonify({'ok':True,'photos_total':max(0,total-1)})
 
 
 def _v824_mapping_export_rows():
