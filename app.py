@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V82.23"
+APP_RELEASE = "V82.24"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -14103,6 +14103,19 @@ def _v792_cash_payload(start,end,calc_statuses=None):
             original=p["original_date"]; ov=omap.get((t,original))
             effective=ov.scheduled_date.isoformat() if ov else p["date"]
             ev=event_by_date.get(effective) or event_by_date.get(p["date"])
+            # V82.24: a data exibida pelo report TBForte pode ficar um dia antes/depois da
+            # programação operacional. Se não houver evento no dia programado, associa somente
+            # um registro informativo TBForte (sem fechamento R0050) da janela ±1 dia. Assim
+            # Declarado/Apurado/GTV aparecem na ocorrência sem inventar hora transacional.
+            if ev is None:
+                _pd0=date.fromisoformat(effective)
+                _near=[]
+                for _delta in (-1,1):
+                    _dk=(_pd0+timedelta(days=_delta)).isoformat()
+                    for _z in event_siblings.get(_dk,[]):
+                        if bool(getattr(_z,'cycle_excluded',False)) and 'TBForte' in str(getattr(_z,'monitoring_note','') or '') and (_z.declared_amount is not None or _z.processed_amount is not None):
+                            _near.append((_delta,_z))
+                if len(_near)==1: ev=_near[0][1]
             report=report_map.get((t,effective)) or report_map.get((t,p["date"]))
             pd=date.fromisoformat(effective); status=_v792_occurrence_status(ev,pd,ov)
             if report and not ev:
@@ -14131,9 +14144,9 @@ def _v792_cash_payload(start,end,calc_statuses=None):
                 "gtv":((_complementary_value(_daykey,'gtv',ev) or "") if ev else ((report.gtv or "") if report else "")),"daily_report_id":report.id if report else None,"provider_status":report.provider_status if report else "","occurrence":report.occurrence if report else "",
                 "next_prediction":nxt["date"] if nxt else None,"cycle_valid":_v805_is_valid_closure(ev) if ev else False,"cycle_excluded":bool(getattr(ev,"cycle_excluded",False)) if ev else False,"transaction_cycle":cycle_summary})
             planned_all.append((t,occurrences[-1]))
-        planned_dates={o["date"] for o in occurrences}; extra=[]
+        planned_dates={o["date"] for o in occurrences}; attached_event_ids={o.get("event_id") for o in occurrences if o.get("event_id")}; extra=[]
         for ev in events:
-            if ev.collection_date.isoformat() in planned_dates: continue
+            if ev.id in attached_event_ids or ev.collection_date.isoformat() in planned_dates: continue
             dec=None if ev.declared_amount is None else float(ev.declared_amount); ap=None if ev.processed_amount is None else float(ev.processed_amount)
             diff=round(ap-dec,2) if dec is not None and ap is not None else None
             extra_next=next((f for f in future if date.fromisoformat(f["date"])>ev.collection_date),None)
