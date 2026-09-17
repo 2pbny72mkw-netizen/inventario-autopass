@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V82.26"
+APP_RELEASE = "V82.27"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -1011,6 +1011,18 @@ class PettyCashEntry(db.Model):
     receipt_key=db.Column(db.String(800)); receipt_name=db.Column(db.String(260)); receipt_type=db.Column(db.String(120)); created_by=db.Column(db.Integer,db.ForeignKey("users.id"),nullable=False); created_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow)
 
 # V77 — Controle de Bobinas ATM / Bobinômetro
+class BobbinDeliverySchedule(db.Model):
+    __tablename__ = "bobbin_delivery_schedules"
+    id = db.Column(db.Integer, primary_key=True)
+    location = db.Column(db.String(220), nullable=False, index=True)
+    delivery_date = db.Column(db.Date, nullable=False, index=True)
+    status = db.Column(db.String(30), nullable=False, default="PROGRAMADO", index=True)
+    boxes_qty = db.Column(db.Integer, nullable=False, default=0)
+    notes = db.Column(db.Text)
+    created_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+
 class AtmBobbinStationStock(db.Model):
     __tablename__ = "atm_bobbin_station_stock"
     id = db.Column(db.Integer, primary_key=True)
@@ -20278,7 +20290,7 @@ def _v771_parse_import(upload):
                     elif pct not in (None,''):
                         warnings.append(f'{ws.title}!{get_column_letter(c+2)}{rnum}: percentual inválido para ATM {aid}')
                 c+=2
-    # Armários: 1 caixa = 6 bobinas. Aceita espaços/acentuação no nome da aba.
+    # Armários: conversão por caixa configurável (padrão operacional atual = 6). Aceita espaços/acentuação no nome da aba.
     cabinet_sheet=next((name for name in wb.sheetnames if _v771_norm(str(name).strip()) in ('ARMARIOS','ARMARIO')),None)
     if cabinet_sheet:
         ws=wb[cabinet_sheet];rows=ws.iter_rows(values_only=True)
@@ -20294,7 +20306,7 @@ def _v771_parse_import(upload):
             if boxes<0 or loose<0:continue
             if boxes==0 and loose==0 and _v771_norm(label) in ('QUANTIDADETOTAL','TOTAL'):continue
             resolved=_v772_resolve_stock_location(label)
-            cabinets.append({'label':label,'company':resolved['company'],'line':resolved['line'],'station':resolved['station'],'boxes':boxes,'loose':loose,'bobbins':boxes*6+loose})
+            box_size=max(1,int(app.config.get('BOBBIN_ROLLS_PER_BOX',6)));cabinets.append({'label':label,'company':resolved['company'],'line':resolved['line'],'station':resolved['station'],'boxes':boxes,'loose':loose,'bobbins':boxes*box_size+loose})
     # deduplica leituras por ATM: a última ocorrência na planilha é o retrato usado
     dedup={}
     for x in readings:dedup[x['atm_id']]=x
@@ -20364,7 +20376,7 @@ def v771_bobbin_cabinets_import_compat():
     item=_v771_stock_item('Bobina ATM','UN');n=0
     for x in data['cabinets']:
         point=_v771_stock_point(f"Armário {x['label']}",'ARMARIO',x['company'],x['line'],x['station']);bal=_v771_balance(point,item);bal.qty_good=x['bobbins'];bal.qty_bad=0;bal.updated_by=session['user_id'];bal.updated_at=datetime.utcnow();n+=1
-    db.session.commit();return jsonify({'ok':True,'cabinets':n,'bobbins':sum(x['bobbins'] for x in data['cabinets']),'rule':'1 caixa = 6 bobinas','release':APP_RELEASE})
+    db.session.commit();return jsonify({'ok':True,'cabinets':n,'bobbins':sum(x['bobbins'] for x in data['cabinets']),'rule':f"1 caixa = {max(1,int(app.config.get('BOBBIN_ROLLS_PER_BOX',6)))} bobinas",'release':APP_RELEASE})
 
 @app.post('/api/bobinas/conciliar')
 @login_required
@@ -20434,6 +20446,34 @@ def v7793_bobbin_admin_adjustment():
     except Exception:
         db.session.rollback(); app.logger.exception('V77.9.3: ajuste administrativo de bobina')
         return jsonify({'ok':False,'error':'Não foi possível salvar o ajuste administrativo.'}),500
+
+@app.get('/api/bobinas/entregas')
+@login_required
+def v8227_bobbin_deliveries_list():
+    if not _has_access('field.bobbins_dashboard'): abort(403)
+    status=(request.args.get('status') or '').strip().upper()
+    q=BobbinDeliverySchedule.query
+    if status in ('PROGRAMADO','EM_ANDAMENTO','ENTREGUE'): q=q.filter(BobbinDeliverySchedule.status==status)
+    rows=q.order_by(BobbinDeliverySchedule.delivery_date.desc(),BobbinDeliverySchedule.id.desc()).all()
+    return jsonify({'ok':True,'release':APP_RELEASE,'rows':[{'id':x.id,'location':x.location,'delivery_date':x.delivery_date.isoformat(),'status':x.status,'boxes_qty':int(x.boxes_qty or 0),'notes':x.notes or '','created_at':x.created_at.isoformat()+'Z'} for x in rows]})
+
+@app.post('/api/bobinas/entregas')
+@login_required
+def v8227_bobbin_deliveries_save():
+    if not _has_access('field.stock_manage'): abort(403)
+    d=request.get_json(silent=True) or {}; location=(d.get('location') or '').strip(); status=(d.get('status') or 'PROGRAMADO').strip().upper()
+    if status not in ('PROGRAMADO','EM_ANDAMENTO','ENTREGUE'): return jsonify({'ok':False,'error':'Status inválido.'}),400
+    try: delivery_date=date.fromisoformat(str(d.get('delivery_date') or '')); boxes=max(0,int(d.get('boxes_qty') or 0))
+    except Exception: return jsonify({'ok':False,'error':'Informe data e quantidade em caixas válidas.'}),400
+    if not location:return jsonify({'ok':False,'error':'Informe a Localidade/CD.'}),400
+    obj=None
+    if d.get('id'):
+        obj=db.session.get(BobbinDeliverySchedule,int(d['id']))
+    if not obj:
+        obj=BobbinDeliverySchedule(created_by=session['user_id']);db.session.add(obj)
+    obj.location=location;obj.delivery_date=delivery_date;obj.status=status;obj.boxes_qty=boxes;obj.notes=(d.get('notes') or '').strip();obj.updated_at=datetime.utcnow()
+    db.session.flush();db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='BOBINAS_ENTREGA_PROGRAMADA',entity_type='bobbin_delivery_schedule',entity_id=str(obj.id),detail=json.dumps({'location':location,'delivery_date':delivery_date.isoformat(),'status':status,'boxes_qty':boxes},ensure_ascii=False)));db.session.commit()
+    return jsonify({'ok':True,'id':obj.id,'status':obj.status})
 
 @app.get('/api/bobinas/dashboard')
 @login_required
@@ -20518,9 +20558,6 @@ def v77_bobbins_dashboard_api():
     bobitem=FieldStockItem.query.filter(func.lower(FieldStockItem.description)=='bobina atm').first() or FieldStockItem.query.filter(func.lower(FieldStockItem.description).like('%bobina%')).first();cabinet_bobbins=0;in_distribution=0;cabinet_count=0;open_incidents=FieldStockIncident.query.filter_by(status='ABERTA').count()
     if bobitem:
         cabinet_points=FieldStockPoint.query.filter(FieldStockPoint.active.is_(True),FieldStockPoint.point_type.in_(['ARMARIO','ESTOQUE','CD'])).all()
-        if company:cabinet_points=[x for x in cabinet_points if (x.company or '')==company]
-        if line:cabinet_points=[x for x in cabinet_points if (x.line or '')==line]
-        if station:cabinet_points=[x for x in cabinet_points if (x.station or '')==station]
         cabinet_ids=[x.id for x in cabinet_points];cabinet_count=len(cabinet_ids)
         if cabinet_ids:cabinet_bobbins=sum(float(x.qty_good or 0) for x in FieldStockBalance.query.filter(FieldStockBalance.item_id==bobitem.id,FieldStockBalance.point_id.in_(cabinet_ids)).all())
         in_distribution=sum(float(x.qty or 0) for x in FieldTechnicianLoad.query.filter_by(item_id=bobitem.id).all())
@@ -20529,9 +20566,6 @@ def v77_bobbins_dashboard_api():
     cabinet_rows=[]
     if bobitem:
         cps=FieldStockPoint.query.filter(FieldStockPoint.active.is_(True),FieldStockPoint.point_type.in_(['ARMARIO','ESTOQUE','CD'])).order_by(FieldStockPoint.line,FieldStockPoint.station,FieldStockPoint.name).all()
-        if company:cps=[x for x in cps if (x.company or '')==company]
-        if line:cps=[x for x in cps if (x.line or '')==line]
-        if station:cps=[x for x in cps if (x.station or '')==station]
         cp_ids=[x.id for x in cps]
         balance_by_point={}
         if cp_ids:
@@ -20577,7 +20611,7 @@ def v77_bobbins_dashboard_api():
         photo_by_reading={x.reading_id:x for x in AtmBobbinPhoto.query.filter(AtmBobbinPhoto.reading_id.in_(reading_ids)).order_by(AtmBobbinPhoto.id.desc()).all()}
     rows_json=[_v771_bobbin_json(x,names,stock_by_key,photo_by_reading,now) for x in latest]
     history_json=[_v771_bobbin_json(x,names,stock_by_key,photo_by_reading,now) for x in allrows[:500]]
-    return jsonify({'ok':True,'release':APP_RELEASE,'source':'BASE_OFICIAL_ATM_602','can_stock_manage':_has_access('field.stock_manage'),'summary':summary,'rows':rows_json,'history':history_json,'stocks':[{'company':x.company,'line':x.line,'station':x.station,'atm_id':x.atm_id,'reserve_qty':x.reserve_qty,'updated_at':x.updated_at.isoformat()+'Z' if x.updated_at else None} for x in stockrows],'unlocated':[{'company':x.company,'line':x.line,'station':x.station,'imported_qty':x.imported_qty,'current_qty':x.current_qty,'status':x.status,'source_sheet':x.source_sheet,'last_inventory_at':x.last_inventory_at.isoformat()+'Z' if x.last_inventory_at else None} for x in unlocated],'stations':station_rows,'operators':operator_rows,'cabinets_detail':cabinet_rows,'missing_atms':missing_atms,'support_reserve_target':450,'support_reserve_unit':'BOBINAS','photo_retention_days':_v771_photo_retention_days()})
+    return jsonify({'ok':True,'release':APP_RELEASE,'source':'BASE_OFICIAL_ATM_602','can_stock_manage':_has_access('field.stock_manage'),'summary':summary,'rows':rows_json,'history':history_json,'stocks':[{'company':x.company,'line':x.line,'station':x.station,'atm_id':x.atm_id,'reserve_qty':x.reserve_qty,'updated_at':x.updated_at.isoformat()+'Z' if x.updated_at else None} for x in stockrows],'unlocated':[{'company':x.company,'line':x.line,'station':x.station,'imported_qty':x.imported_qty,'current_qty':x.current_qty,'status':x.status,'source_sheet':x.source_sheet,'last_inventory_at':x.last_inventory_at.isoformat()+'Z' if x.last_inventory_at else None} for x in unlocated],'stations':station_rows,'operators':operator_rows,'cabinets_detail':cabinet_rows,'box_size':max(1,int(app.config.get('BOBBIN_ROLLS_PER_BOX',6))),'missing_atms':missing_atms,'support_reserve_target':450,'support_reserve_unit':'BOBINAS','photo_retention_days':_v771_photo_retention_days()})
 
 # V77.1 — Estoque Field / armários e carga do técnico
 def _v771_stock_item(desc,unit='UN'):
