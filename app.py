@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V82.16"
+APP_RELEASE = "V82.18"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -996,6 +996,19 @@ class AtmMappingPhoto(db.Model):
     original_name = db.Column(db.String(260))
     content_type = db.Column(db.String(120))
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+# V82.18 — Financeiro / Caixinha
+class PettyCash(db.Model):
+    __tablename__ = "financial_petty_cash"
+    id=db.Column(db.Integer,primary_key=True); responsible_id=db.Column(db.Integer,db.ForeignKey("users.id"),nullable=False,index=True)
+    department=db.Column(db.String(120)); purpose=db.Column(db.String(300)); received_date=db.Column(db.Date,nullable=False,index=True); opening_amount=db.Column(db.Float,nullable=False,default=0)
+    payment_method=db.Column(db.String(40)); status=db.Column(db.String(30),nullable=False,default="ABERTO",index=True); notes=db.Column(db.Text)
+    created_by=db.Column(db.Integer,db.ForeignKey("users.id"),nullable=False); created_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow); updated_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow)
+class PettyCashEntry(db.Model):
+    __tablename__ = "financial_petty_cash_entries"
+    id=db.Column(db.Integer,primary_key=True); petty_cash_id=db.Column(db.Integer,db.ForeignKey("financial_petty_cash.id",ondelete="CASCADE"),nullable=False,index=True)
+    entry_date=db.Column(db.Date,nullable=False,index=True); entry_type=db.Column(db.String(20),nullable=False,default="DESPESA",index=True); supplier=db.Column(db.String(180)); category=db.Column(db.String(100)); description=db.Column(db.String(500)); cost_center=db.Column(db.String(160)); amount=db.Column(db.Float,nullable=False,default=0); payment_method=db.Column(db.String(40)); notes=db.Column(db.Text)
+    receipt_key=db.Column(db.String(800)); receipt_name=db.Column(db.String(260)); receipt_type=db.Column(db.String(120)); created_by=db.Column(db.Integer,db.ForeignKey("users.id"),nullable=False); created_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow)
 
 # V77 — Controle de Bobinas ATM / Bobinômetro
 class AtmBobbinStationStock(db.Model):
@@ -2054,7 +2067,7 @@ ACCESS_GROUPS = {
         "users.view","users.config.view","users.config.manage","users.create","users.edit","users.activate","users.delete","users.password","users.export","users.import","users.roles.manage","users.scope.all"
     )),
     "finance": ("Financeiro", (
-        "finance.support","finance.collection","finance.monitoring","finance.apuracao","finance.assistance","finance.implantation","finance.entries","finance.suppliers","finance.import","finance.edit","finance.delete"
+        "finance.support","finance.collection","finance.monitoring","finance.apuracao","finance.assistance","finance.implantation","finance.entries","finance.suppliers","finance.import","finance.edit","finance.delete","finance.petty_cash.view","finance.petty_cash.manage","finance.petty_cash.approve1","finance.petty_cash.approve2"
     )),
     "finance_dashboard": ("Dashboard Financeira", ("finance.dashboard",)),
     "management": ("Gestão", (
@@ -2079,7 +2092,7 @@ ACCESS_LABELS = {
  "implantation.dashboard":"Dashboard Implantação","implantation.visits":"Visita a Campo / Relatório de Visita","implantation.reports":"Relatórios / Visitas recentes","implantation.emv":"Troca de Chips EMV – Trilhos","implantation.garage":"Troca de Chips Garagem",
  "teams.map":"Mapa operacional","teams.today":"Operação de Hoje","teams.schedule":"Escala por dias","teams.manage":"Gestão de equipes / escala","teams.export":"Exportar dados","teams.apt":"APT / Validades",
  "users.view":"Visualizar usuários","users.config.view":"Visualizar configurações de usuários","users.config.manage":"Gerenciar configurações de usuários","users.create":"Criar usuário","users.edit":"Editar usuário","users.activate":"Ativar / Desativar","users.delete":"Excluir / Arquivar","users.password":"Redefinir senha","users.export":"Exportar Excel","users.import":"Importar Excel de configurações","users.roles.manage":"Atribuir perfis administrativos / sensíveis","users.scope.all":"Administrar usuários de todas as empresas",
- "finance.dashboard":"Dashboard Financeira","finance.support":"Suporte a Campo","finance.collection":"Coleta de Valores","finance.monitoring":"Monitoramento de Coletas","finance.apuracao":"Apuração de Numerário","finance.assistance":"Assistência Técnica","finance.implantation":"Implantação de Hardware","finance.entries":"Lançamentos","finance.suppliers":"Empresas / Fornecedores","finance.import":"Importar planilha","finance.edit":"Editar lançamentos","finance.delete":"Excluir lançamentos",
+ "finance.dashboard":"Dashboard Financeira","finance.support":"Suporte a Campo","finance.collection":"Coleta de Valores","finance.monitoring":"Monitoramento de Coletas","finance.apuracao":"Apuração de Numerário","finance.assistance":"Assistência Técnica","finance.implantation":"Implantação de Hardware","finance.entries":"Lançamentos","finance.suppliers":"Empresas / Fornecedores","finance.import":"Importar planilha","finance.edit":"Editar lançamentos","finance.delete":"Excluir lançamentos","finance.petty_cash.view":"Visualizar Caixinha","finance.petty_cash.manage":"Gerenciar Caixinha / despesas","finance.petty_cash.approve1":"Aprovar Caixinha - nível 1","finance.petty_cash.approve2":"Aprovar Caixinha - nível 2",
  "management.calls":"Chamados","management.360":"Central 360","management.notifications":"Notificações","management.diagnostics":"Diagnóstico","management.health":"Saúde da Plataforma","management.settings":"Configurações","management.dashboard_config":"Configuração de Dashboards","management.profiles":"Perfis & Permissões","management.gps_history":"Histórico GPS por estações","management.work_authorizations":"Autorizações de jornada","management.links":"Resumo dos Links","management.external_locations":"Localidades externas",
  "materials.my_documents":"Meus documentos / Minha carga","materials.request":"Solicitar material","materials.catalog.view":"Visualizar catálogo","materials.catalog.manage":"Cadastrar / editar / inativar materiais","materials.kits.manage":"Gerenciar kits","materials.delivery.create":"Criar e enviar entregas","materials.delivery.manage":"Gerenciar aceites / correções","materials.dossier.view":"Dossiê dos colaboradores","materials.access_lists.view":"Listas de acesso Metrô / CPTM","materials.access_lists.manage":"Gerar / validar listas de acesso",
  "engineering.items.view":"Visualizar cadastro de itens","engineering.items.manage":"Cadastrar / editar itens","engineering.bom.view":"Visualizar estruturas BOM","engineering.bom.manage":"Criar / revisar BOM","engineering.import":"Importar planilhas de Engenharia","engineering.pricing.view":"Visualizar formação de preço","engineering.pricing.manage":"Criar / editar estudos de preço",
@@ -2107,7 +2120,7 @@ def _default_access_for_role(role):
       "hr":{"materials.catalog.view","materials.dossier.view","teams.map","teams.today","teams.schedule","teams.manage","teams.export","teams.apt","users.view","users.config.view","users.config.manage","users.create","users.edit","users.activate","users.password","users.export","users.import","materials.access_lists.view","materials.access_lists.manage","about.versions"},
       "dispatcher":{"dashboard.general","field.calls","field.chip_recarga","field.firmware_pos_cptm","teams.map","teams.today","teams.schedule","management.calls","about.versions"},
       "customer":{"portal.appointments"},
-      "atm_financial_admin":{"finance.dashboard","finance.support","finance.collection","finance.monitoring","finance.apuracao","finance.assistance","finance.implantation","finance.entries","finance.suppliers","finance.import","finance.edit","finance.delete","about.versions"},
+      "atm_financial_admin":{"finance.dashboard","finance.support","finance.collection","finance.monitoring","finance.apuracao","finance.assistance","finance.implantation","finance.entries","finance.suppliers","finance.import","finance.edit","finance.delete","finance.petty_cash.view","finance.petty_cash.manage","finance.petty_cash.approve1","finance.petty_cash.approve2","about.versions"},
     }
     return defaults.get(role,set())
 
@@ -12677,6 +12690,56 @@ def financial_cost_management_embed():
         abort(403)
     return render_template("financial_cost_management.html", app_release=APP_RELEASE, embedded=True)
 
+@app.get("/financeiro/caixinha")
+@login_required
+def petty_cash_page():
+    if not (_has_access("finance.petty_cash.view") or _has_access("finance.petty_cash.manage")): abort(403)
+    return render_template("financial_petty_cash.html",app_release=APP_RELEASE)
+
+@app.route("/api/financeiro/caixinha",methods=["GET","POST"])
+@login_required
+def petty_cash_api():
+    if request.method=="GET":
+        if not (_has_access("finance.petty_cash.view") or _has_access("finance.petty_cash.manage")): abort(403)
+        rows=PettyCash.query.order_by(PettyCash.received_date.desc(),PettyCash.id.desc()).all(); out=[]
+        for c in rows:
+            es=PettyCashEntry.query.filter_by(petty_cash_id=c.id).all(); incoming=sum(float(x.amount or 0) for x in es if x.entry_type=='ENTRADA'); spent=sum(float(x.amount or 0) for x in es if x.entry_type=='DESPESA'); missing=sum(1 for x in es if x.entry_type=='DESPESA' and not x.receipt_key)
+            out.append({'id':c.id,'responsible_id':c.responsible_id,'department':c.department or '','purpose':c.purpose or '','received_date':c.received_date.isoformat(),'opening_amount':c.opening_amount,'payment_method':c.payment_method or '','status':c.status,'incoming':incoming,'spent':spent,'balance':float(c.opening_amount or 0)+incoming-spent,'missing_receipts':missing})
+        return jsonify({'ok':True,'rows':out,'release':APP_RELEASE})
+    if not _has_access("finance.petty_cash.manage"): abort(403)
+    d=request.get_json(silent=True) or {}; rd=date.fromisoformat(d.get('received_date')); amount=float(d.get('opening_amount') or 0)
+    c=PettyCash(responsible_id=int(d.get('responsible_id') or session['user_id']),department=(d.get('department') or '').strip(),purpose=(d.get('purpose') or '').strip(),received_date=rd,opening_amount=amount,payment_method=(d.get('payment_method') or 'DINHEIRO').strip(),notes=(d.get('notes') or '').strip(),created_by=session['user_id'])
+    db.session.add(c);db.session.commit();return jsonify({'ok':True,'id':c.id})
+
+@app.route("/api/financeiro/caixinha/<int:cid>/movimentos",methods=["GET","POST"])
+@login_required
+def petty_cash_entries_api(cid):
+    c=db.session.get(PettyCash,cid) or abort(404)
+    if request.method=='GET':
+        if not (_has_access("finance.petty_cash.view") or _has_access("finance.petty_cash.manage")): abort(403)
+        es=PettyCashEntry.query.filter_by(petty_cash_id=cid).order_by(PettyCashEntry.entry_date,PettyCashEntry.id).all()
+        return jsonify({'ok':True,'rows':[{'id':x.id,'date':x.entry_date.isoformat(),'type':x.entry_type,'supplier':x.supplier or '','category':x.category or '','description':x.description or '','cost_center':x.cost_center or '','amount':x.amount,'payment_method':x.payment_method or '','notes':x.notes or '','has_receipt':bool(x.receipt_key)} for x in es]})
+    if not _has_access("finance.petty_cash.manage"):abort(403)
+    d=request.form; typ=(d.get('entry_type') or 'DESPESA').upper(); amount=float(d.get('amount') or 0)
+    if typ not in ('DESPESA','ENTRADA') or amount<=0:return jsonify({'ok':False,'error':'Tipo/valor inválido.'}),400
+    x=PettyCashEntry(petty_cash_id=cid,entry_date=date.fromisoformat(d.get('entry_date')),entry_type=typ,supplier=(d.get('supplier') or '').strip(),category=(d.get('category') or '').strip(),description=(d.get('description') or '').strip(),cost_center=(d.get('cost_center') or '').strip(),amount=amount,payment_method=(d.get('payment_method') or '').strip(),notes=(d.get('notes') or '').strip(),created_by=session['user_id'])
+    f=request.files.get('receipt')
+    if f and f.filename:
+        safe=secure_filename(f.filename);x.receipt_key=_store_uploaded_file(f,'petty_cash',f'{uuid.uuid4().hex}_{safe}',f.mimetype);x.receipt_name=safe;x.receipt_type=f.mimetype
+    db.session.add(x);c.updated_at=datetime.utcnow();db.session.commit();return jsonify({'ok':True,'id':x.id})
+
+@app.get('/api/financeiro/caixinha/<int:cid>/prestacao.pdf')
+@login_required
+def petty_cash_pdf(cid):
+    if not (_has_access('finance.petty_cash.view') or _has_access('finance.petty_cash.manage')):abort(403)
+    c=db.session.get(PettyCash,cid) or abort(404); es=PettyCashEntry.query.filter_by(petty_cash_id=cid).order_by(PettyCashEntry.entry_date,PettyCashEntry.id).all(); u=db.session.get(User,c.responsible_id)
+    incoming=sum(float(x.amount or 0) for x in es if x.entry_type=='ENTRADA'); spent=sum(float(x.amount or 0) for x in es if x.entry_type=='DESPESA'); balance=float(c.opening_amount or 0)+incoming-spent
+    from reportlab.lib.pagesizes import A4; from reportlab.platypus import SimpleDocTemplate,Paragraph,Spacer,Table,TableStyle; from reportlab.lib.styles import getSampleStyleSheet; from reportlab.lib import colors
+    bio=io.BytesIO(); doc=SimpleDocTemplate(bio,pagesize=A4); st=getSampleStyleSheet(); story=[Paragraph('PRESTAÇÃO DE CONTAS – CAIXINHA',st['Title']),Spacer(1,10),Paragraph(f'Responsável: {(u.name if u else c.responsible_id)} | Departamento: {c.department or "-"}',st['Normal']),Paragraph(f'Recebimento: {c.received_date.strftime("%d/%m/%Y")} | Valor inicial: R$ {c.opening_amount:,.2f} | Entradas: R$ {incoming:,.2f} | Gastos: R$ {spent:,.2f} | Saldo: R$ {balance:,.2f}',st['Normal']),Spacer(1,10)]
+    data=[['Data','Tipo','Fornecedor','Categoria','Descrição','Valor','Comprov.']]+[[x.entry_date.strftime('%d/%m/%Y'),x.entry_type,x.supplier or '',x.category or '',x.description or '',f'R$ {x.amount:,.2f}','Sim' if x.receipt_key else 'Não'] for x in es]
+    t=Table(data,repeatRows=1,colWidths=[55,55,75,65,150,65,50]);t.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#1F4E78')),('TEXTCOLOR',(0,0),(-1,0),colors.white),('FONTSIZE',(0,0),(-1,-1),7),('GRID',(0,0),(-1,-1),.25,colors.grey),('VALIGN',(0,0),(-1,-1),'TOP')]));story.append(t);doc.build(story);bio.seek(0)
+    return send_file(bio,as_attachment=True,download_name=f'prestacao_caixinha_{cid}.pdf',mimetype='application/pdf')
+
 @app.get("/api/v56a/performance")
 @login_required
 def v56a_performance_status():
@@ -14972,17 +15035,18 @@ def financial_cash_v79_export():
     if terminal: rows=[x for x in rows if x["terminal"]==terminal]
     if programming: rows=[x for x in rows if programming in (x.get("weekly_days") or []) or programming in [str(v) for v in (x.get("month_days") or [])]]
     wb=Workbook(); ws=wb.active; ws.title="Monitoramento"
-    ws.append(["Status","Operadora","Linha","Estação","ATM","Programação","Data prevista","Data realizada","Hora","Declarado","Apurado","Diferença","Próxima previsão","Observação"])
+    ws.append(["Status","Operadora","Linha","Estação","ATM","BAG","Programação","Última coleta","Data prevista","Data realizada","Hora","Transações","Dif. T×A","Dif. T×D","Declarado","Apurado","Dif. A×D","Próxima previsão","Observação"])
     for a in rows:
         occs=a.get("planned") or []
-        if not occs and not status: ws.append(["SEM_PROGRAMACAO",a["company"],a["line"],a["station"],a["terminal"],a["schedule"],"","","","","","","",""])
+        if not occs and not status: ws.append(["SEM_PROGRAMACAO",a["company"],a["line"],a["station"],a["terminal"],a.get("bag_type") or "",a["schedule"],(a.get("last_collection") or {}).get("date") or "","","","","","","","","","","",""])
         for o in occs:
             if status and o["status"]!=status: continue
             dv=o.get("difference")
             if difference=="ZERO" and (dv is None or abs(dv)>=.01): continue
             if difference=="POS" and (dv is None or dv<=0): continue
             if difference=="NEG" and (dv is None or dv>=0): continue
-            ws.append([o["status"],a["company"],a["line"],a["station"],a["terminal"],a["schedule"],o.get("scheduled_original") or o["date"],o["date"] if o.get("event_id") else "",o.get("time") or "",o.get("declared_amount"),o.get("processed_amount"),dv,o.get("next_prediction") or "",o.get("note") or ""])
+            tc=o.get("transaction_cycle") or {}; tx=tc.get("transaction_sum") if tc.get("available") else None; txa=tc.get("difference_tx_processed") if tc.get("available") else None; txd=tc.get("difference_tx_declared") if tc.get("available") else None
+            ws.append([o["status"],a["company"],a["line"],a["station"],a["terminal"],a.get("bag_type") or "",a["schedule"],(a.get("last_collection") or {}).get("date") or "",o.get("scheduled_original") or o["date"],o.get("realized_date") or (o["date"] if o.get("event_id") else ""),o.get("time") or "",tx,txa,txd,o.get("declared_amount"),o.get("processed_amount"),dv,o.get("next_prediction") or "",o.get("note") or ""])
     ws2=wb.create_sheet("Programação"); ws2.append(["Operadora","Linha","Estação","ATM","Produto","Transaciona","BAG","Modelo","Programação","Filial","Endereço"])
     for a in rows: ws2.append([a["company"],a["line"],a["station"],a["terminal"],a["products"],a["transactions"],a["bag_type"],a["model"],a["schedule"],a["branch"],a["address"]])
     for sh in wb.worksheets:
@@ -15533,7 +15597,8 @@ def _panorama_payload():
         company=_v771_norm(getattr(loc,'company',''))
         line=_v771_norm(getattr(loc,'line',''))
         if company in ('METRO','CPTM'): return True
-        if 'VIA MOBILIDADE' in company and (line.startswith('08') or line.startswith('8') or line.startswith('09') or line.startswith('9')): return True
+        # V82.18: não esconder concessionárias por agrupamento histórico.
+        if any(k in company for k in ('VIA MOBILIDADE','VIAMOBILIDADE','VIAQUATRO','VIA QUATRO','CCR')): return True
         if line.startswith('17') or 'LINHA 17' in line: return True
         return False
 
@@ -20750,12 +20815,13 @@ def v82_atm_mapping_page():
 @login_required
 def v82_atm_mapping_list():
     if not (_has_access('field.atm_mapping') or _has_access('field.atm_mapping_manage')):abort(403)
-    maps={x.atm_id:x for x in AtmMapping.query.all()}; users={u.id:u.name for u in User.query.filter(User.id.in_({x.technician_id for x in maps.values()})).all()} if maps else {}; photos={}
+    maps={x.atm_id:x for x in AtmMapping.query.all()}; users={u.id:u.name for u in User.query.filter(User.id.in_({x.technician_id for x in maps.values()})).all()} if maps else {}; photos={}; photo_items={}
     if maps:
-        for mid,cnt in db.session.query(AtmMappingPhoto.mapping_id,func.count(AtmMappingPhoto.id)).filter(AtmMappingPhoto.mapping_id.in_([x.id for x in maps.values()])).group_by(AtmMappingPhoto.mapping_id).all():photos[mid]=cnt
+        for ph in AtmMappingPhoto.query.filter(AtmMappingPhoto.mapping_id.in_([x.id for x in maps.values()])).order_by(AtmMappingPhoto.created_at).all():
+            photos[ph.mapping_id]=photos.get(ph.mapping_id,0)+1; photo_items.setdefault(ph.mapping_id,[]).append({'id':ph.id,'name':ph.original_name or 'Evidência','url':f'/api/mapeamento-atm/foto/{ph.id}','created_at':ph.created_at.isoformat()+'Z' if ph.created_at else None})
     rows=[]
     for a in _v82_cash_atms():
-        m=maps.get(a['atm_id']); complete=bool(m and m.has_holes is not None and m.physical_access in ('INTERNO','EXTERNO') and m.rear_safe_door is not None and m.bill_acceptor in ('UBA-PRO','I-VIZION','SPECTRAL') and (m.has_holes is False or m.holes_sealed is not None) and photos.get(m.id,0)>0); rows.append({**a,'status':((m.status if m and m.status in ('PENDENTE','EM_ANDAMENTO','CONCLUIDO') else ('CONCLUIDO' if complete else 'PENDENTE')) if m else 'PENDENTE'),'mapping_id':m.id if m else None,'has_holes':m.has_holes if m else None,'holes_sealed':m.holes_sealed if m else None,'physical_access':m.physical_access if m else None,'rear_safe_door':m.rear_safe_door if m else None,'bill_acceptor':m.bill_acceptor if m else None,'notes':m.notes if m else '','technician':users.get(m.technician_id,'') if m else '','updated_at':m.updated_at.isoformat()+'Z' if m else None,'photos':photos.get(m.id,0) if m else 0})
+        m=maps.get(a['atm_id']); complete=bool(m and m.has_holes is not None and m.physical_access in ('INTERNO','EXTERNO') and m.rear_safe_door is not None and m.bill_acceptor in ('UBA-PRO','I-VIZION','SPECTRAL') and (m.has_holes is False or m.holes_sealed is not None) and photos.get(m.id,0)>0); rows.append({**a,'status':((m.status if m and m.status in ('PENDENTE','EM_ANDAMENTO','CONCLUIDO') else ('CONCLUIDO' if complete else 'PENDENTE')) if m else 'PENDENTE'),'mapping_id':m.id if m else None,'has_holes':m.has_holes if m else None,'holes_sealed':m.holes_sealed if m else None,'physical_access':m.physical_access if m else None,'rear_safe_door':m.rear_safe_door if m else None,'bill_acceptor':m.bill_acceptor if m else None,'notes':m.notes if m else '','technician':users.get(m.technician_id,'') if m else '','updated_at':m.updated_at.isoformat()+'Z' if m else None,'photos':photos.get(m.id,0) if m else 0,'photo_items':photo_items.get(m.id,[]) if m else []})
     summary={'total':len(rows),'done':sum(x['status']=='CONCLUIDO' for x in rows),'pending':sum(x['status']=='PENDENTE' for x in rows),'internal':sum(x['physical_access']=='INTERNO' for x in rows),'external':sum(x['physical_access']=='EXTERNO' for x in rows),'holes':sum(x['has_holes'] is True for x in rows),'unsealed':sum(x['has_holes'] is True and x['holes_sealed'] is False for x in rows),'with_photos':sum((x.get('photos') or 0)>0 for x in rows),'rear_safe_door_yes':sum(x.get('rear_safe_door') is True for x in rows),'rear_safe_door_no':sum(x.get('rear_safe_door') is False for x in rows),'acceptor_uba_pro':sum(x.get('bill_acceptor')=='UBA-PRO' for x in rows),'acceptor_i_vizion':sum(x.get('bill_acceptor')=='I-VIZION' for x in rows),'acceptor_spectral':sum(x.get('bill_acceptor')=='SPECTRAL' for x in rows)}
     summary['progress_pct']=round((summary['done']/summary['total']*100),1) if summary['total'] else 0
     # Dashboard 2.0: evolução dos mapeamentos e progresso por operadora.
@@ -20794,8 +20860,12 @@ def v82_atm_mapping_save():
     for f in files:
         safe=secure_filename(f.filename) or 'foto.jpg'; stored=_store_uploaded_file(f,'atm_mapping',f'{uuid.uuid4().hex}_{safe}',f.mimetype or 'image/jpeg')
         db.session.add(AtmMappingPhoto(mapping_id=m.id,storage_key=stored,original_name=safe,content_type=f.mimetype or 'image/jpeg'))
+    db.session.flush()
+    persisted_photos=AtmMappingPhoto.query.filter_by(mapping_id=m.id).count()
+    if persisted_photos < 1:
+        db.session.rollback(); return jsonify({'ok':False,'error':'Evidência fotográfica obrigatória: a foto não foi persistida. O mapeamento não foi concluído.'}),400
     db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='ATM_MAPPING_SAVED',entity_type='atm_mapping',entity_id=str(m.id),detail=json.dumps({'atm_id':atm,'has_holes':m.has_holes,'holes_sealed':m.holes_sealed,'physical_access':access,'rear_safe_door':m.rear_safe_door,'bill_acceptor':m.bill_acceptor,'photos_added':len(files)},ensure_ascii=False)));db.session.commit()
-    return jsonify({'ok':True,'mapping_id':m.id,'photos_added':len(files),'release':APP_RELEASE})
+    return jsonify({'ok':True,'mapping_id':m.id,'photos_added':len(files),'photos_total':persisted_photos,'release':APP_RELEASE})
 
 
 @app.post('/api/mapeamento-atm/<int:mapping_id>/status-admin')
