@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V82.30 REV2"
+APP_RELEASE = "V82.30 REV2.1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -14269,7 +14269,26 @@ def financial_cash_v79_api():
             stage="cache-copy"; payload=copy.deepcopy(cached[1])
         else:
             stage="payload"; payload=_v792_cash_payload(start,end,calc_statuses)
-            stage="cache-write"; _FIN_CASH_PAYLOAD_CACHE.clear(); _FIN_CASH_PAYLOAD_CACHE[cache_key]=(now,copy.deepcopy(payload))
+            # V82.30 REV2.1 — cache fail-safe: falha de cache nunca derruba o Monitoramento.
+            stage="cache-write"
+            try:
+                cached_payload=copy.deepcopy(payload)
+                _FIN_CASH_PAYLOAD_CACHE.clear()
+                _FIN_CASH_PAYLOAD_CACHE[cache_key]=(now,cached_payload)
+            except Exception as cache_exc:
+                # O payload calculado continua válido e será devolvido normalmente.
+                # Não faz rollback: cache é infraestrutura auxiliar, não transação de negócio.
+                app.logger.exception(
+                    "FIN_MONITOR_CACHE_WRITE_ERROR id=%s release=%s ms=%.1f sql_ms=%.1f queries=%s type=%s",
+                    diag_id,APP_RELEASE,(time.perf_counter()-started)*1000,
+                    float(getattr(g,"_perf_sql_ms",0) or 0),
+                    int(getattr(g,"_perf_query_count",0) or 0),type(cache_exc).__name__
+                )
+                try:
+                    _FIN_CASH_PAYLOAD_CACHE.clear()
+                except Exception:
+                    pass
+                stage="cache-bypass"
         stage="response"
         payload["transaction_calc_statuses"]=calc_statuses
         payload["diagnostic"]={"id":diag_id,"release":APP_RELEASE}
