@@ -23,3 +23,9 @@ Revisão funcional sobre a V82.30 REV2.1, preservando o hotfix do Monitoramento 
 - Monitoramento de Coletas com cache fail-safe da REV2.1.
 
 Release: `V82.30 REV3`
+
+## Hotfix adicional — 18/09/2026
+- Financeiro/TBForte: reforçada idempotência por `source_hash`; deduplicação no lote + `session.no_autoflush` + `ON CONFLICT DO NOTHING` no PostgreSQL.
+- Worker financeiro inicia com transação SQL limpa, evitando que uma falha anterior contamine a próxima importação.
+- Login: limpeza defensiva da sessão SQL antes da consulta do usuário e uma nova tentativa controlada em caso de falha transacional. Não há bypass de senha, jornada ou permissões.
+- Objetivo: impedir `UniqueViolation` de reimportação de coleta de derrubar a carga e evitar estado SQL abortado afetando autenticação.

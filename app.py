@@ -2712,7 +2712,15 @@ def login():
     if request.method == "POST":
         username = request.form.get("username", "").strip().lower()
         password = request.form.get("password", "")
-        user = User.query.filter(func.lower(User.username) == username, User.active.is_(True)).first()
+        # REV3 hotfix: autenticação não pode herdar uma transação SQL abortada por
+        # importadores/rotinas auxiliares. Não altera senha, jornada ou permissões.
+        try:
+            db.session.rollback()
+            user = User.query.filter(func.lower(User.username) == username, User.active.is_(True)).first()
+        except Exception:
+            db.session.rollback()
+            app.logger.exception("LOGIN: falha ao consultar usuário; sessão SQL reiniciada")
+            user = User.query.filter(func.lower(User.username) == username, User.active.is_(True)).first()
         if user and check_password_hash(user.password_hash, password):
             js = _v72_journey_status(user)
             if not js.get("allowed"):
@@ -13218,9 +13226,9 @@ def _fin_hash(*parts):
     return hashlib.sha256("|".join(str(x or "").strip() for x in parts).encode("utf-8","ignore")).hexdigest()
 
 def _fin_bulk_ignore(model, mappings, chunk=2000):
-    """Insert idempotente por source_hash, inclusive sob importações concorrentes."""
+    """Insert idempotente por source_hash, inclusive sob reimportação e concorrência."""
     if not mappings:return 0
-    # V82.1: elimina repetidos dentro do próprio arquivo/lote antes de chegar ao banco.
+    # REV3 hotfix: deduplica o próprio lote antes de qualquer operação de banco.
     unique=[]; seen=set()
     for item in mappings:
         sh=item.get("source_hash")
@@ -13228,21 +13236,24 @@ def _fin_bulk_ignore(model, mappings, chunk=2000):
         seen.add(sh); unique.append(item)
     inserted=0
     dialect=db.engine.dialect.name
-    for start in range(0,len(unique),chunk):
-        part=unique[start:start+chunk]
-        if dialect=="postgresql":
-            from sqlalchemy.dialects.postgresql import insert as pg_insert
-            stmt=pg_insert(model.__table__).values(part).on_conflict_do_nothing(index_elements=["source_hash"])
-            res=db.session.execute(stmt); inserted += max(0,res.rowcount or 0)
-        elif dialect=="sqlite":
-            from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-            stmt=sqlite_insert(model.__table__).values(part).on_conflict_do_nothing(index_elements=["source_hash"])
-            res=db.session.execute(stmt); inserted += max(0,res.rowcount or 0)
-        else:
-            hashes=[x["source_hash"] for x in part]
-            existing={x[0] for x in db.session.query(model.source_hash).filter(model.source_hash.in_(hashes)).all()}
-            fresh=[x for x in part if x["source_hash"] not in existing]
-            if fresh: db.session.bulk_insert_mappings(model,fresh); inserted+=len(fresh)
+    # Impede Query-invoked autoflush de tentar persistir objetos ORM pendentes antes
+    # da proteção ON CONFLICT. O UNIQUE do PostgreSQL continua sendo a última barreira.
+    with db.session.no_autoflush:
+        for start in range(0,len(unique),chunk):
+            part=unique[start:start+chunk]
+            if dialect=="postgresql":
+                from sqlalchemy.dialects.postgresql import insert as pg_insert
+                stmt=pg_insert(model.__table__).values(part).on_conflict_do_nothing(index_elements=["source_hash"])
+                res=db.session.execute(stmt); inserted += max(0,res.rowcount or 0)
+            elif dialect=="sqlite":
+                from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+                stmt=sqlite_insert(model.__table__).values(part).on_conflict_do_nothing(index_elements=["source_hash"])
+                res=db.session.execute(stmt); inserted += max(0,res.rowcount or 0)
+            else:
+                hashes=[x["source_hash"] for x in part]
+                existing={x[0] for x in db.session.query(model.source_hash).filter(model.source_hash.in_(hashes)).all()}
+                fresh=[x for x in part if x["source_hash"] not in existing]
+                if fresh: db.session.bulk_insert_mappings(model,fresh); inserted+=len(fresh)
     return inserted
 
 def _fin_optional_number(value):
@@ -13496,6 +13507,9 @@ def _financial_import_worker(job_id, paths, filenames, user_id):
     with app.app_context():
         results=[]
         try:
+            # REV3 hotfix: worker sempre inicia com transação limpa; evita estado
+            # residual de uma importação anterior contaminar o novo lote.
+            db.session.rollback()
             total_files=len(paths)
             _fin_job_update(job_id,status="PROCESSANDO",progress=2,message="Processamento iniciado",stage="PREPARANDO",current_file=1,total_files=total_files,rows_total=0,rows_processed=0,rows_inserted=0,rows_errors=0,rows_per_second=0,eta_seconds=None,heartbeat_at=datetime.utcnow().isoformat()+"Z")
             for idx,(path,filename) in enumerate(zip(paths,filenames),start=1):
