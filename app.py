@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V82.30 REV3"
+APP_RELEASE = "V82.31"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -2966,7 +2966,8 @@ def v72_session_status_api():
         "allowed":bool(state.get("allowed")),
         "reason":state.get("reason"),
         "valid_until":valid_until.isoformat() if valid_until else None,
-        "warning_minutes":int(_v72_settings().get("journey_warning_minutes",30) or 30)
+        "warning_minutes":int(_v72_settings().get("journey_warning_minutes",30) or 30),
+        "journey_control_enabled":bool(getattr(user,"journey_control_enabled",False)) if user else False
     })
 
 
