@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V82.27"
+APP_RELEASE = "V82.28"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -65,6 +65,19 @@ _expected_cache = {"at": 0.0, "data": None}
 _LOCATIONS_API_CACHE = {"light": {"at": 0.0, "payload": None}, "observed": {"at": 0.0, "payload": None}}
 _LOCATIONS_API_CACHE_TTL = int(os.getenv("LOCATIONS_API_CACHE_TTL", "900"))
 _LOCATIONS_API_CACHE_LOCK = threading.Lock()
+
+# V82.28 — caches curtos para reduzir CPU/serialização nas rotas mais acessadas.
+_CASH_ATMS_CACHE = {"at": 0.0, "rows": None}
+_CASH_ATMS_CACHE_TTL = int(os.getenv("CASH_ATMS_CACHE_TTL", "900"))
+_CASH_ATMS_CACHE_LOCK = threading.Lock()
+_ATM_MAPPING_API_CACHE = {"at": 0.0, "payload": None}
+_ATM_MAPPING_API_CACHE_TTL = int(os.getenv("ATM_MAPPING_API_CACHE_TTL", "60"))
+_ATM_MAPPING_API_CACHE_LOCK = threading.Lock()
+
+def _invalidate_atm_mapping_cache():
+    with _ATM_MAPPING_API_CACHE_LOCK:
+        _ATM_MAPPING_API_CACHE["at"] = 0.0
+        _ATM_MAPPING_API_CACHE["payload"] = None
 
 # V63 CORE 2.0 — parâmetros de desempenho não destrutivos.
 V63_JSON_GZIP_MIN_BYTES = int(os.getenv("JSON_GZIP_MIN_BYTES", "16384"))
@@ -5432,7 +5445,7 @@ def telemetry_summary_api():
             d["count"]+=1; d["sum"]+=float(x.duration_ms or 0); d["max"]=max(d["max"],float(x.duration_ms or 0)); d["errors"]+=1 if x.status_code>=500 else 0; d["vals"].append(float(x.duration_ms or 0)); d["sql_sum"]+=float(getattr(x,"sql_ms",0) or 0); d["queries"]+=int(getattr(x,"query_count",0) or 0)
         route_rows=[]
         for d in by.values():
-            route_rows.append({"route":d["route"],"count":d["count"],"avg_ms":round(d["sum"]/d["count"],1),"p95_ms":pct(d["vals"],.95),"max_ms":round(d["max"],1),"avg_sql_ms":round(d["sql_sum"]/d["count"],1),"avg_queries":round(d["queries"]/d["count"],1),"errors":d["errors"]})
+            route_rows.append({"route":d["route"],"count":d["count"],"avg_ms":round(d["sum"]/d["count"],1),"p95_ms":pct(d["vals"],.95),"p99_ms":pct(d["vals"],.99),"max_ms":round(d["max"],1),"avg_sql_ms":round(d["sql_sum"]/d["count"],1),"avg_queries":round(d["queries"]/d["count"],1),"slow_1s":sum(v>=1000 for v in d["vals"]),"slow_2s":sum(v>=2000 for v in d["vals"]),"slow_5s":sum(v>=5000 for v in d["vals"]),"errors":d["errors"]})
         route_rows.sort(key=lambda x:(x["p95_ms"],x["avg_ms"]),reverse=True)
         # série em blocos de 5 minutos
         buckets={}
@@ -5445,13 +5458,14 @@ def telemetry_summary_api():
         table_counts={
           "Transações ATM":FinancialATMTransaction.query.count(),"Coletas":FinancialCashCollection.query.count(),"Inventário":Inventory.query.count(),"Posições GPS":TechnicianPosition.query.count(),"Chamados":TopDeskTicket.query.count(),"Auditoria":AuditEvent.query.count()
         }
-        errors=sum(1 for x in rows if x.status_code>=500); avg=round(sum(vals)/len(vals),1) if vals else 0; p95=pct(vals,.95)
-        health="NORMAL" if p95<1500 and errors==0 else ("ATENÇÃO" if p95<3000 and errors<3 else "CRÍTICO")
+        errors=sum(1 for x in rows if x.status_code>=500); avg=round(sum(vals)/len(vals),1) if vals else 0; p95=pct(vals,.95); p99=pct(vals,.99)
+        slow_1s=sum(v>=1000 for v in vals); slow_2s=sum(v>=2000 for v in vals); slow_5s=sum(v>=5000 for v in vals)
+        health="CRÍTICO" if (p95>=5000 or slow_5s>0 or errors>=3) else ("ATENÇÃO" if (p95>=1500 or slow_2s>0 or errors>0) else "NORMAL")
         top5=[dict(x,app_ms=max(0,round(float(x.get("avg_ms") or 0)-float(x.get("avg_sql_ms") or 0),1))) for x in route_rows[:5]]
         with PANORAMA_EXPORT_LOCK:
             _jobs=list(PANORAMA_EXPORT_JOBS.values())
         storage={"database":_database_storage_snapshot(),"r2":_r2_storage_snapshot(),"local":_local_storage_snapshot(),"runtime":_process_memory_snapshot(),"jobs":{"active":sum(1 for j in _jobs if j.get("status") in ("FILA","PROCESSANDO")),"ready":sum(1 for j in _jobs if j.get("status")=="PRONTO"),"errors":sum(1 for j in _jobs if j.get("status")=="ERRO")}}
-        return jsonify({"ok":True,"release":APP_RELEASE,"generated_at":datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y %H:%M:%S"),"window_minutes":minutes,"health":health,"avg_ms":avg,"p95_ms":p95,"max_ms":round(max(vals),1) if vals else 0,"requests":len(rows),"errors_5xx":errors,"active_users_15m":int(active_users),"routes":route_rows[:20],"top5":top5,"timeline":timeline[-24:],"table_counts":table_counts,"storage":storage,"migrations":_v70_migration_snapshot(),"indexes":_v70_index_snapshot()})
+        return jsonify({"ok":True,"release":APP_RELEASE,"generated_at":datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y %H:%M:%S"),"window_minutes":minutes,"health":health,"avg_ms":avg,"p95_ms":p95,"p99_ms":p99,"slow_1s":slow_1s,"slow_2s":slow_2s,"slow_5s":slow_5s,"max_ms":round(max(vals),1) if vals else 0,"requests":len(rows),"errors_5xx":errors,"active_users_15m":int(active_users),"routes":route_rows[:20],"top5":top5,"timeline":timeline[-24:],"table_counts":table_counts,"storage":storage,"migrations":_v70_migration_snapshot(),"indexes":_v70_index_snapshot()})
     except Exception as exc:
         return jsonify({"ok":False,"error":str(exc)}),500
 
@@ -5493,6 +5507,10 @@ def telemetry_export_xlsx():
         ("Saúde", data.get("health")),
         ("Tempo médio (ms)", data.get("avg_ms")),
         ("P95 (ms)", data.get("p95_ms")),
+        ("P99 (ms)", data.get("p99_ms")),
+        ("Requests >= 1s", data.get("slow_1s")),
+        ("Requests >= 2s", data.get("slow_2s")),
+        ("Requests >= 5s", data.get("slow_5s")),
         ("Pico (ms)", data.get("max_ms")),
         ("Requisições medidas", data.get("requests")),
         ("Erros 5xx", data.get("errors_5xx")),
@@ -5530,11 +5548,11 @@ def telemetry_export_xlsx():
     for x in data.get("top5") or []: ws5.append([x.get("route"),x.get("p95_ms"),x.get("avg_ms"),x.get("avg_sql_ms"),x.get("app_ms"),x.get("avg_queries"),x.get("count"),x.get("errors")])
 
     wsr=wb.create_sheet("Raio-X rotas")
-    wsr.append(["Rota","Média ms","P95 ms","Máx ms","SQL médio ms","Queries/req","Chamadas","Erros 5xx","Diagnóstico"]); style_header(wsr)
+    wsr.append(["Rota","Média ms","P95 ms","P99 ms","Máx ms","SQL médio ms","Queries/req",">=1s",">=2s",">=5s","Chamadas","Erros 5xx","Diagnóstico"]); style_header(wsr)
     for x in data.get("routes") or []:
         p95=float(x.get("p95_ms") or 0)
         diag="CRÍTICO" if p95>5000 else ("LENTO" if p95>3000 else ("ATENÇÃO" if p95>1500 else "OK"))
-        wsr.append([x.get("route"),x.get("avg_ms"),x.get("p95_ms"),x.get("max_ms"),x.get("avg_sql_ms"),x.get("avg_queries"),x.get("count"),x.get("errors"),diag])
+        wsr.append([x.get("route"),x.get("avg_ms"),x.get("p95_ms"),x.get("p99_ms"),x.get("max_ms"),x.get("avg_sql_ms"),x.get("avg_queries"),x.get("slow_1s"),x.get("slow_2s"),x.get("slow_5s"),x.get("count"),x.get("errors"),diag])
 
     # Ajuste de largura para facilitar leitura e upload/análise posterior.
     for sh in wb.worksheets:
@@ -20943,25 +20961,35 @@ def v82_bobbin_my_performance():
     return jsonify({'ok':True,'days':cur['days'],'start':cur['start'],'end':cur['end'],'team_avg_day':cur['team_avg_day'],'me':{k:me[k] for k in ('replacements','active_days','avg_day','index_vs_team','atms')},'release':APP_RELEASE})
 
 def _v82_cash_atms():
-    official=_v773_official_atm_rows()
-    try: comp=json.loads((DATA_DIR/'atm_complement_20260820.json').read_text(encoding='utf-8'))
-    except Exception: comp=[]
-    cmap={_v773_norm_atm_id(x.get('ID TOP')):x for x in comp if _v773_norm_atm_id(x.get('ID TOP'))}
-    out=[]
-    for a in official:
-        if bool(a.get('stock')):continue
-        aid=_v773_atm_id(a); c=cmap.get(_v773_norm_atm_id(a.get('id_top') or aid)) or {}; tx=str(c.get('TRANSACIONA') or a.get('transactions') or '').upper()
-        if 'DINHEIRO' not in tx:continue
-        # V82.11: modelo pode existir com nomes/colunas diferentes entre base mestre e complemento.
-        model_candidates=[c.get('TIPO ATM'),c.get('MODELO'),c.get('TIPO'),a.get('model'),a.get('modelo'),a.get('type'),a.get('tipo_atm')]
-        raw_model=next((str(v).strip() for v in model_candidates if v is not None and str(v).strip()),'')
-        norm_model=''.join(ch for ch in raw_model.upper() if ch.isalnum())
-        if 'MKNEO' in norm_model: model='MKNEO'
-        elif norm_model=='MK' or norm_model.startswith('MKATM'): model='MK'
-        else: model=(raw_model.upper() or 'NÃO INFORMADO')
-        out.append({'atm_id':aid,'company':str(a.get('company') or ''),'line':str(a.get('line') or ''),'station':str(a.get('locality') or ''),'model':model,'model_raw':raw_model,'transactions':str(c.get('TRANSACIONA') or a.get('transactions') or '')})
-    return out
-
+    # V82.28: a base oficial/complemento muda raramente e era reconstruída a cada request.
+    now=time.time()
+    cached=_CASH_ATMS_CACHE.get("rows")
+    if cached is not None and now-float(_CASH_ATMS_CACHE.get("at") or 0) < _CASH_ATMS_CACHE_TTL:
+        return cached
+    with _CASH_ATMS_CACHE_LOCK:
+        now=time.time(); cached=_CASH_ATMS_CACHE.get("rows")
+        if cached is not None and now-float(_CASH_ATMS_CACHE.get("at") or 0) < _CASH_ATMS_CACHE_TTL:
+            return cached
+        official=_v773_official_atm_rows()
+        try: comp=json.loads((DATA_DIR/'atm_complement_20260820.json').read_text(encoding='utf-8'))
+        except Exception: comp=[]
+        cmap={_v773_norm_atm_id(x.get('ID TOP')):x for x in comp if _v773_norm_atm_id(x.get('ID TOP'))}
+        out=[]
+        for a in official:
+            if bool(a.get('stock')):continue
+            aid=_v773_atm_id(a); c=cmap.get(_v773_norm_atm_id(a.get('id_top') or aid)) or {}; tx=str(c.get('TRANSACIONA') or a.get('transactions') or '').upper()
+            if 'DINHEIRO' not in tx:continue
+            # V82.11: modelo pode existir com nomes/colunas diferentes entre base mestre e complemento.
+            model_candidates=[c.get('TIPO ATM'),c.get('MODELO'),c.get('TIPO'),a.get('model'),a.get('modelo'),a.get('type'),a.get('tipo_atm')]
+            raw_model=next((str(v).strip() for v in model_candidates if v is not None and str(v).strip()),'')
+            norm_model=''.join(ch for ch in raw_model.upper() if ch.isalnum())
+            if 'MKNEO' in norm_model: model='MKNEO'
+            elif norm_model=='MK' or norm_model.startswith('MKATM'): model='MK'
+            else: model=(raw_model.upper() or 'NÃO INFORMADO')
+            out.append({'atm_id':aid,'company':str(a.get('company') or ''),'line':str(a.get('line') or ''),'station':str(a.get('locality') or ''),'model':model,'model_raw':raw_model,'transactions':str(c.get('TRANSACIONA') or a.get('transactions') or '')})
+        _CASH_ATMS_CACHE["rows"]=out
+        _CASH_ATMS_CACHE["at"]=time.time()
+        return out
 @app.get('/api/mapeamento-atm/diagnostico-modelos')
 @login_required
 def v8211_mapping_model_diagnostic():
@@ -20982,6 +21010,9 @@ def v82_atm_mapping_page():
 @login_required
 def v82_atm_mapping_list():
     if not (_has_access('field.atm_mapping') or _has_access('field.atm_mapping_manage')):abort(403)
+    now=time.time(); cached=_ATM_MAPPING_API_CACHE.get('payload')
+    if cached is not None and now-float(_ATM_MAPPING_API_CACHE.get('at') or 0) < _ATM_MAPPING_API_CACHE_TTL:
+        resp=jsonify(cached); resp.headers['X-Autopass-Cache']='HIT'; return resp
     maps={x.atm_id:x for x in AtmMapping.query.all()}; users={u.id:u.name for u in User.query.filter(User.id.in_({x.technician_id for x in maps.values()})).all()} if maps else {}; photos={}; photo_items={}
     if maps:
         for ph in AtmMappingPhoto.query.filter(AtmMappingPhoto.mapping_id.in_([x.id for x in maps.values()])).order_by(AtmMappingPhoto.created_at).all():
@@ -21002,7 +21033,10 @@ def v82_atm_mapping_list():
         r=by_company.setdefault(x['company'] or 'Não informada',{'company':x['company'] or 'Não informada','total':0,'done':0})
         r['total']+=1;r['done']+=1 if x['status']=='CONCLUIDO' else 0
     summary['by_company']=sorted([{**r,'progress_pct':round(r['done']/r['total']*100,1) if r['total'] else 0} for r in by_company.values()],key=lambda x:(-x['total'],x['company']))
-    return jsonify({'ok':True,'phase':'ATMS_COM_VENDA_EM_DINHEIRO','rows':rows,'summary':summary,'release':APP_RELEASE})
+    payload={'ok':True,'phase':'ATMS_COM_VENDA_EM_DINHEIRO','rows':rows,'summary':summary,'release':APP_RELEASE}
+    with _ATM_MAPPING_API_CACHE_LOCK:
+        _ATM_MAPPING_API_CACHE['payload']=payload; _ATM_MAPPING_API_CACHE['at']=time.time()
+    resp=jsonify(payload); resp.headers['X-Autopass-Cache']='MISS'; return resp
 
 @app.post('/api/mapeamento-atm')
 @login_required
@@ -21031,7 +21065,7 @@ def v82_atm_mapping_save():
     persisted_photos=AtmMappingPhoto.query.filter_by(mapping_id=m.id).count()
     if persisted_photos < 1:
         db.session.rollback(); return jsonify({'ok':False,'error':'Evidência fotográfica obrigatória: a foto não foi persistida. O mapeamento não foi concluído.'}),400
-    db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='ATM_MAPPING_SAVED',entity_type='atm_mapping',entity_id=str(m.id),detail=json.dumps({'atm_id':atm,'has_holes':m.has_holes,'holes_sealed':m.holes_sealed,'physical_access':access,'rear_safe_door':m.rear_safe_door,'bill_acceptor':m.bill_acceptor,'photos_added':len(files)},ensure_ascii=False)));db.session.commit()
+    db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='ATM_MAPPING_SAVED',entity_type='atm_mapping',entity_id=str(m.id),detail=json.dumps({'atm_id':atm,'has_holes':m.has_holes,'holes_sealed':m.holes_sealed,'physical_access':access,'rear_safe_door':m.rear_safe_door,'bill_acceptor':m.bill_acceptor,'photos_added':len(files)},ensure_ascii=False)));db.session.commit();_invalidate_atm_mapping_cache()
     return jsonify({'ok':True,'mapping_id':m.id,'photos_added':len(files),'photos_total':persisted_photos,'release':APP_RELEASE})
 
 
@@ -21042,7 +21076,7 @@ def v828_atm_mapping_admin_status(mapping_id):
     m=db.session.get(AtmMapping,mapping_id) or abort(404);d=request.get_json(silent=True) or {};new=(d.get('status') or '').strip().upper();reason=(d.get('reason') or '').strip()
     if new not in ('PENDENTE','EM_ANDAMENTO','CONCLUIDO'):return jsonify({'ok':False,'error':'Status inválido.'}),400
     if not reason:return jsonify({'ok':False,'error':'Informe a justificativa da alteração administrativa.'}),400
-    old=m.status;m.status=new;m.updated_at=datetime.utcnow();db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='ATM_MAPPING_STATUS_ADMIN',entity_type='atm_mapping',entity_id=str(m.id),detail=json.dumps({'atm_id':m.atm_id,'before':old,'after':new,'reason':reason},ensure_ascii=False)));db.session.commit();return jsonify({'ok':True,'before':old,'status':new})
+    old=m.status;m.status=new;m.updated_at=datetime.utcnow();db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='ATM_MAPPING_STATUS_ADMIN',entity_type='atm_mapping',entity_id=str(m.id),detail=json.dumps({'atm_id':m.atm_id,'before':old,'after':new,'reason':reason},ensure_ascii=False)));db.session.commit();_invalidate_atm_mapping_cache();return jsonify({'ok':True,'before':old,'status':new})
 
 @app.get('/api/mapeamento-atm/foto/<int:photo_id>')
 @login_required
@@ -21072,7 +21106,7 @@ def v8221_atm_mapping_photo_delete(photo_id):
         app.logger.exception('Falha ao excluir evidência do Mapeamento ATM %s',photo_id)
         return jsonify({'ok':False,'error':'Não foi possível excluir o arquivo da evidência.'}),500
     db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='ATM_MAPPING_PHOTO_DELETED',entity_type='atm_mapping',entity_id=str(m.id),detail=json.dumps({'atm_id':m.atm_id,'photo_id':ph.id,'name':ph.original_name or ''},ensure_ascii=False)))
-    db.session.delete(ph);m.updated_at=datetime.utcnow();db.session.commit()
+    db.session.delete(ph);m.updated_at=datetime.utcnow();db.session.commit();_invalidate_atm_mapping_cache()
     return jsonify({'ok':True,'photos_total':max(0,total-1)})
 
 
