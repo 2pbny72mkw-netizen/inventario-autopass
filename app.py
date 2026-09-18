@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V82.30 REV1"
+APP_RELEASE = "V82.30 REV2"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -14247,23 +14247,40 @@ def _finance_collection_monitor_access():
 @app.get('/api/financeiro/coletas/v79')
 @login_required
 def financial_cash_v79_api():
-    if not _finance_collection_monitor_access(): return jsonify({"ok":False,"error":"Sem permissão."}),403
+    # V82.30 REV2 — diagnóstico controlado da rota crítica do Monitoramento.
+    # Não altera dados: apenas identifica a etapa da falha e devolve JSON mesmo em erro.
+    diag_id=uuid.uuid4().hex[:10].upper(); stage="access"; started=time.perf_counter()
     try:
-        start=date.fromisoformat((request.args.get("start") or "").strip()); end=date.fromisoformat((request.args.get("end") or "").strip())
-    except Exception:
-        month=(request.args.get("month") or datetime.now().strftime("%Y-%m")).strip()
-        try: y,m=[int(x) for x in month.split("-")[:2]]
-        except Exception: y,m=datetime.now().year,datetime.now().month
-        import calendar; start=date(y,m,1); end=date(y,m,calendar.monthrange(y,m)[1])
-    if end<start or (end-start).days>366: return jsonify({"ok":False,"error":"Período inválido. Selecione até 366 dias."}),400
-    calc_statuses=_v804_tx_statuses(request.args.get("calc_statuses") if "calc_statuses" in request.args else None)
-    cache_key=(start.isoformat(),end.isoformat(),tuple(calc_statuses)); now=time.time(); cached=_FIN_CASH_PAYLOAD_CACHE.get(cache_key)
-    if cached and now-cached[0] < _FIN_CASH_PAYLOAD_CACHE_TTL:
-        payload=copy.deepcopy(cached[1])
-    else:
-        payload=_v792_cash_payload(start,end,calc_statuses); _FIN_CASH_PAYLOAD_CACHE.clear(); _FIN_CASH_PAYLOAD_CACHE[cache_key]=(now,copy.deepcopy(payload))
-    payload["transaction_calc_statuses"]=calc_statuses
-    return jsonify(payload)
+        if not _finance_collection_monitor_access(): return jsonify({"ok":False,"error":"Sem permissão."}),403
+        stage="period"
+        try:
+            start=date.fromisoformat((request.args.get("start") or "").strip()); end=date.fromisoformat((request.args.get("end") or "").strip())
+        except Exception:
+            month=(request.args.get("month") or datetime.now().strftime("%Y-%m")).strip()
+            try: y,m=[int(x) for x in month.split("-")[:2]]
+            except Exception: y,m=datetime.now().year,datetime.now().month
+            import calendar; start=date(y,m,1); end=date(y,m,calendar.monthrange(y,m)[1])
+        if end<start or (end-start).days>366: return jsonify({"ok":False,"error":"Período inválido. Selecione até 366 dias."}),400
+        stage="statuses"
+        calc_statuses=_v804_tx_statuses(request.args.get("calc_statuses") if "calc_statuses" in request.args else None)
+        stage="cache-read"
+        cache_key=(start.isoformat(),end.isoformat(),tuple(calc_statuses)); now=time.time(); cached=_FIN_CASH_PAYLOAD_CACHE.get(cache_key)
+        if cached and now-cached[0] < _FIN_CASH_PAYLOAD_CACHE_TTL:
+            stage="cache-copy"; payload=copy.deepcopy(cached[1])
+        else:
+            stage="payload"; payload=_v792_cash_payload(start,end,calc_statuses)
+            stage="cache-write"; _FIN_CASH_PAYLOAD_CACHE.clear(); _FIN_CASH_PAYLOAD_CACHE[cache_key]=(now,copy.deepcopy(payload))
+        stage="response"
+        payload["transaction_calc_statuses"]=calc_statuses
+        payload["diagnostic"]={"id":diag_id,"release":APP_RELEASE}
+        response=jsonify(payload)
+        app.logger.info("FIN_MONITOR_OK id=%s stage=%s ms=%.1f sql_ms=%.1f queries=%s",diag_id,stage,(time.perf_counter()-started)*1000,float(getattr(g,"_perf_sql_ms",0) or 0),int(getattr(g,"_perf_query_count",0) or 0))
+        return response
+    except Exception as exc:
+        db.session.rollback()
+        elapsed=(time.perf_counter()-started)*1000
+        app.logger.exception("FIN_MONITOR_ERROR id=%s release=%s stage=%s ms=%.1f sql_ms=%.1f queries=%s args=%s",diag_id,APP_RELEASE,stage,elapsed,float(getattr(g,"_perf_sql_ms",0) or 0),int(getattr(g,"_perf_query_count",0) or 0),dict(request.args))
+        return jsonify({"ok":False,"error":"Falha ao carregar Monitoramento de Coletas.","diagnostic_id":diag_id,"stage":stage,"release":APP_RELEASE,"detail":str(exc)[:300]}),500
 
 @app.get('/api/financeiro/coletas/v80/transacoes/status')
 @login_required
