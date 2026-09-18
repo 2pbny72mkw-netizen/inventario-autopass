@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V82.28"
+APP_RELEASE = "V82.29"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -72,6 +72,8 @@ _CASH_ATMS_CACHE_TTL = int(os.getenv("CASH_ATMS_CACHE_TTL", "900"))
 _CASH_ATMS_CACHE_LOCK = threading.Lock()
 _ATM_MAPPING_API_CACHE = {"at": 0.0, "payload": None}
 _ATM_MAPPING_API_CACHE_TTL = int(os.getenv("ATM_MAPPING_API_CACHE_TTL", "60"))
+_FIN_CASH_PAYLOAD_CACHE = {}
+_FIN_CASH_PAYLOAD_CACHE_TTL = int(os.getenv("FIN_CASH_PAYLOAD_CACHE_TTL", "20"))
 _ATM_MAPPING_API_CACHE_LOCK = threading.Lock()
 
 def _invalidate_atm_mapping_cache():
@@ -1035,6 +1037,21 @@ class BobbinDeliverySchedule(db.Model):
     created_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+class BobbinDeliveryDetail(db.Model):
+    __tablename__ = "bobbin_delivery_details"
+    id = db.Column(db.Integer, primary_key=True)
+    delivery_id = db.Column(db.Integer, db.ForeignKey("bobbin_delivery_schedules.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    loose_qty = db.Column(db.Integer, nullable=False, default=0)
+
+class ArrowActivityExecution(db.Model):
+    __tablename__ = "arrow_activity_executions"
+    id = db.Column(db.Integer, primary_key=True)
+    activity_id = db.Column(db.Integer, db.ForeignKey("arrow_activities.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    action = db.Column(db.String(40), nullable=False, index=True)
+    observation = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
 
 class AtmBobbinStationStock(db.Model):
     __tablename__ = "atm_bobbin_station_stock"
@@ -12749,7 +12766,7 @@ def petty_cash_api():
     try: rd=date.fromisoformat(d.get('received_date')); amount=float(d.get('opening_amount') or 0)
     except Exception: return jsonify({'ok':False,'error':'Data/valor inválido.'}),400
     if amount<=0:return jsonify({'ok':False,'error':'Informe um valor recebido maior que zero.'}),400
-    c=PettyCash(responsible_id=int(d.get('responsible_id') or session['user_id']),department=(d.get('department') or '').strip(),purpose=(d.get('purpose') or '').strip(),received_date=rd,opening_amount=amount,payment_method=(d.get('payment_method') or 'DINHEIRO').strip(),notes=(d.get('notes') or '').strip(),created_by=session['user_id'])
+    c=PettyCash(responsible_id=int(d.get('responsible_id') or session['user_id']),department=(d.get('department') or '').strip(),purpose=(d.get('purpose') or '').strip(),received_date=rd,opening_amount=amount,payment_method='DINHEIRO',notes=(d.get('notes') or '').strip(),created_by=session['user_id'])
     db.session.add(c);db.session.flush();db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='PETTY_CASH_OPENED',entity_type='petty_cash',entity_id=str(c.id),detail=json.dumps({'amount':amount,'received_date':rd.isoformat()},ensure_ascii=False)));db.session.commit()
     return jsonify({'ok':True,'id':c.id,'control_number':f'CX-{rd.year}-{c.id:04d}'})
 
@@ -12768,7 +12785,7 @@ def petty_cash_entries_api(cid):
     try: amount=float(d.get('amount') or 0); entry_date=date.fromisoformat(d.get('entry_date'))
     except Exception:return jsonify({'ok':False,'error':'Data/valor inválido.'}),400
     if typ not in ('DESPESA','ENTRADA') or amount<=0:return jsonify({'ok':False,'error':'Tipo/valor inválido.'}),400
-    x=PettyCashEntry(petty_cash_id=cid,entry_date=entry_date,entry_type=typ,supplier=(d.get('supplier') or '').strip(),category=(d.get('category') or '').strip(),description=(d.get('description') or '').strip(),cost_center=(d.get('cost_center') or '').strip(),amount=amount,payment_method=(d.get('payment_method') or '').strip(),notes=(d.get('notes') or '').strip(),created_by=session['user_id'])
+    x=PettyCashEntry(petty_cash_id=cid,entry_date=entry_date,entry_type=typ,supplier=(d.get('supplier') or '').strip(),category=(d.get('category') or '').strip(),description=(d.get('description') or '').strip(),cost_center=(d.get('cost_center') or '').strip(),amount=amount,payment_method='DINHEIRO',notes=(d.get('notes') or '').strip(),created_by=session['user_id'])
     f=request.files.get('receipt')
     if f and f.filename:
         safe=secure_filename(f.filename);x.receipt_key=_store_uploaded_file(f,'petty_cash',f'{uuid.uuid4().hex}_{safe}',f.mimetype);x.receipt_name=safe;x.receipt_type=f.mimetype
@@ -12794,7 +12811,7 @@ def petty_cash_entry_change(eid):
     before={'date':x.entry_date.isoformat(),'type':x.entry_type,'supplier':x.supplier or '','category':x.category or '','description':x.description or '','cost_center':x.cost_center or '','amount':x.amount,'payment_method':x.payment_method or '','notes':x.notes or ''}
     try:x.entry_date=date.fromisoformat(d.get('entry_date'));x.amount=float(d.get('amount') or 0)
     except Exception:return jsonify({'ok':False,'error':'Data/valor inválido.'}),400
-    x.entry_type=(d.get('entry_type') or 'DESPESA').upper();x.supplier=(d.get('supplier') or '').strip();x.category=(d.get('category') or '').strip();x.description=(d.get('description') or '').strip();x.cost_center=(d.get('cost_center') or '').strip();x.payment_method=(d.get('payment_method') or '').strip();x.notes=(d.get('notes') or '').strip()
+    x.entry_type=(d.get('entry_type') or 'DESPESA').upper();x.supplier=(d.get('supplier') or '').strip();x.category=(d.get('category') or '').strip();x.description=(d.get('description') or '').strip();x.cost_center=(d.get('cost_center') or '').strip();x.payment_method='DINHEIRO';x.notes=(d.get('notes') or '').strip()
     if x.entry_type not in ('DESPESA','ENTRADA') or x.amount<=0:return jsonify({'ok':False,'error':'Tipo/valor inválido.'}),400
     f=request.files.get('receipt')
     if f and f.filename:
@@ -14240,7 +14257,11 @@ def financial_cash_v79_api():
         import calendar; start=date(y,m,1); end=date(y,m,calendar.monthrange(y,m)[1])
     if end<start or (end-start).days>366: return jsonify({"ok":False,"error":"Período inválido. Selecione até 366 dias."}),400
     calc_statuses=_v804_tx_statuses(request.args.get("calc_statuses") if "calc_statuses" in request.args else None)
-    payload=_v792_cash_payload(start,end,calc_statuses)
+    cache_key=(start.isoformat(),end.isoformat(),tuple(calc_statuses)); now=time.time(); cached=_FIN_CASH_PAYLOAD_CACHE.get(cache_key)
+    if cached and now-cached[0] < _FIN_CASH_PAYLOAD_CACHE_TTL:
+        payload=copy.deepcopy(cached[1])
+    else:
+        payload=_v792_cash_payload(start,end,calc_statuses); _FIN_CASH_PAYLOAD_CACHE.clear(); _FIN_CASH_PAYLOAD_CACHE[cache_key]=(now,copy.deepcopy(payload))
     payload["transaction_calc_statuses"]=calc_statuses
     return jsonify(payload)
 
@@ -16817,7 +16838,15 @@ def v75_arrow_create_api():
     alocid=int(d.get('arrow_location_id')) if str(d.get('arrow_location_id') or '').isdigit() else None
     if op=='OUTROS' and not alocid:return jsonify({'ok':False,'error':'Selecione uma localidade cadastrada para OUTROS.'}),400
     if op!='OUTROS' and not locid:return jsonify({'ok':False,'error':'Selecione linha e estação/localidade.'}),400
-    x=ArrowActivity(activity_date=wd,start_time=(d.get('start_time') or '').strip()[:5] or None,end_time=(d.get('end_time') or '').strip()[:5] or None,priority=(d.get('priority') or 'NORMAL').strip().upper()[:20],title=title,operator=op,location_id=locid,arrow_location_id=alocid,technician_id=u.id,status='PLANEJADA',remote=bool(d.get('remote')),teamviewer_id=(d.get('teamviewer_id') or '').strip(),notes=(d.get('notes') or '').strip(),created_by=session['user_id']);db.session.add(x);db.session.flush();loclabel=_v7893_arrow_location_label(x);when=wd.strftime('%d/%m/%Y')+((f" · {x.start_time}" if x.start_time else ''));_v7893_arrow_notify(x,'Nova atividade Arrow atribuída',f'{when} · {x.title} · {loclabel} · Prioridade {x.priority or "NORMAL"}');db.session.commit();return jsonify({'ok':True,'id':x.id})
+    x=ArrowActivity(activity_date=wd,start_time=(d.get('start_time') or '').strip()[:5] or None,end_time=(d.get('end_time') or '').strip()[:5] or None,priority=(d.get('priority') or 'NORMAL').strip().upper()[:20],title=title,operator=op,location_id=locid,arrow_location_id=alocid,technician_id=u.id,status='PLANEJADA',remote=bool(d.get('remote')),teamviewer_id=(d.get('teamviewer_id') or '').strip(),notes=(d.get('notes') or '').strip(),created_by=session['user_id']);db.session.add(x);db.session.flush();created_ids=[x.id];loclabel=_v7893_arrow_location_label(x);when=wd.strftime('%d/%m/%Y')+((f" · {x.start_time}" if x.start_time else ''));_v7893_arrow_notify(x,'Nova atividade Arrow atribuída',f'{when} · {x.title} · {loclabel} · Prioridade {x.priority or "NORMAL"}')
+    repeat_days=max(0,min(60,int(d.get('repeat_days') or 0))); business_only=bool(d.get('business_days',True))
+    cur=wd
+    for _ in range(repeat_days):
+        cur += timedelta(days=1)
+        if business_only:
+            while cur.weekday()>=5: cur += timedelta(days=1)
+        y=ArrowActivity(activity_date=cur,start_time=x.start_time,end_time=x.end_time,priority=x.priority,title=x.title,operator=x.operator,location_id=x.location_id,arrow_location_id=x.arrow_location_id,technician_id=x.technician_id,status='PLANEJADA',remote=x.remote,teamviewer_id=x.teamviewer_id,notes=x.notes,created_by=session['user_id']);db.session.add(y);db.session.flush();created_ids.append(y.id)
+    db.session.commit();return jsonify({'ok':True,'id':x.id,'created_ids':created_ids,'created_count':len(created_ids)})
 
 @app.post("/api/arrow/activities/<int:aid>/editar")
 @login_required
@@ -16856,12 +16885,16 @@ def v76_arrow_edit_api(aid):
 def v75_arrow_status_api(aid):
     x=db.session.get(ArrowActivity,aid) or abort(404)
     if x.deleted_at is not None:abort(404)
-    if not _v7893_arrow_can_edit(x):abort(403)
-    st=((request.get_json(silent=True) or {}).get('status') or '').upper()
+    own_activity = int(x.technician_id or 0) == int(session.get('user_id') or 0)
+    if not (_v7893_arrow_can_edit(x) or own_activity):abort(403)
+    payload=request.get_json(silent=True) or {}
+    st=(payload.get('status') or '').upper()
     if st not in ('PLANEJADA','EM ANDAMENTO','CONCLUÍDA','CANCELADA'):return jsonify({'ok':False,'error':'Status inválido.'}),400
     old=x.status;x.status=st
     if st=='CANCELADA' and old!='CANCELADA':_v7893_arrow_notify(x,'Atividade Arrow cancelada',f'{x.activity_date.strftime("%d/%m/%Y")} · {x.title} · {_v7893_arrow_location_label(x)}',severity='ATENCAO')
     elif st!=old:_v7893_arrow_notify(x,'Status da atividade Arrow alterado',f'{x.title} · {old or "—"} → {st}')
+    obs=(payload.get('observation') or '').strip()
+    db.session.add(ArrowActivityExecution(activity_id=x.id,user_id=session['user_id'],action=st,observation=obs))
     db.session.commit();return jsonify({'ok':True})
 
 @app.delete("/api/arrow/activities/<int:aid>")
@@ -18721,6 +18754,8 @@ try:
     with db.engine.begin() as conn:
         for sql in (
             "CREATE INDEX IF NOT EXISTS ix_fin_collection_terminal_end ON financial_cash_collections (terminal, end_at)",
+            "CREATE INDEX IF NOT EXISTS ix_fin_collection_active_date_terminal ON financial_cash_collections (collection_date, terminal) WHERE soft_deleted = false AND cycle_excluded = false",
+            "CREATE INDEX IF NOT EXISTS ix_fin_collection_terminal_processed ON financial_cash_collections (terminal, processed_at)",
             "CREATE INDEX IF NOT EXISTS ix_techpos_user_captured ON technician_positions (user_id, captured_at)",
             "CREATE INDEX IF NOT EXISTS ix_session_user_created ON session_events (user_id, created_at)",
             "CREATE INDEX IF NOT EXISTS ix_monthly_cost_center_comp ON financial_monthly_costs (cost_center, competence)",
@@ -20473,7 +20508,11 @@ def v8227_bobbin_deliveries_list():
     q=BobbinDeliverySchedule.query
     if status in ('PROGRAMADO','EM_ANDAMENTO','ENTREGUE'): q=q.filter(BobbinDeliverySchedule.status==status)
     rows=q.order_by(BobbinDeliverySchedule.delivery_date.desc(),BobbinDeliverySchedule.id.desc()).all()
-    return jsonify({'ok':True,'release':APP_RELEASE,'rows':[{'id':x.id,'location':x.location,'delivery_date':x.delivery_date.isoformat(),'status':x.status,'boxes_qty':int(x.boxes_qty or 0),'notes':x.notes or '','created_at':x.created_at.isoformat()+'Z'} for x in rows]})
+    ids=[x.id for x in rows]; details={d.delivery_id:d for d in BobbinDeliveryDetail.query.filter(BobbinDeliveryDetail.delivery_id.in_(ids)).all()} if ids else {}; box_size=max(1,int(app.config.get('BOBBIN_ROLLS_PER_BOX',6)))
+    payload=[]
+    for x in rows:
+        loose=int(getattr(details.get(x.id),'loose_qty',0) or 0); boxes=int(x.boxes_qty or 0); payload.append({'id':x.id,'location':x.location,'delivery_date':x.delivery_date.isoformat(),'status':x.status,'boxes_qty':boxes,'loose_qty':loose,'total_bobbins':boxes*box_size+loose,'notes':x.notes or '','created_at':x.created_at.isoformat()+'Z'})
+    return jsonify({'ok':True,'release':APP_RELEASE,'box_size':box_size,'rows':payload})
 
 @app.post('/api/bobinas/entregas')
 @login_required
@@ -20481,7 +20520,7 @@ def v8227_bobbin_deliveries_save():
     if not _has_access('field.stock_manage'): abort(403)
     d=request.get_json(silent=True) or {}; location=(d.get('location') or '').strip(); status=(d.get('status') or 'PROGRAMADO').strip().upper()
     if status not in ('PROGRAMADO','EM_ANDAMENTO','ENTREGUE'): return jsonify({'ok':False,'error':'Status inválido.'}),400
-    try: delivery_date=date.fromisoformat(str(d.get('delivery_date') or '')); boxes=max(0,int(d.get('boxes_qty') or 0))
+    try: delivery_date=date.fromisoformat(str(d.get('delivery_date') or '')); boxes=max(0,int(d.get('boxes_qty') or 0)); loose=max(0,int(d.get('loose_qty') or 0))
     except Exception: return jsonify({'ok':False,'error':'Informe data e quantidade em caixas válidas.'}),400
     if not location:return jsonify({'ok':False,'error':'Informe a Localidade/CD.'}),400
     obj=None
@@ -20490,7 +20529,10 @@ def v8227_bobbin_deliveries_save():
     if not obj:
         obj=BobbinDeliverySchedule(created_by=session['user_id']);db.session.add(obj)
     obj.location=location;obj.delivery_date=delivery_date;obj.status=status;obj.boxes_qty=boxes;obj.notes=(d.get('notes') or '').strip();obj.updated_at=datetime.utcnow()
-    db.session.flush();db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='BOBINAS_ENTREGA_PROGRAMADA',entity_type='bobbin_delivery_schedule',entity_id=str(obj.id),detail=json.dumps({'location':location,'delivery_date':delivery_date.isoformat(),'status':status,'boxes_qty':boxes},ensure_ascii=False)));db.session.commit()
+    db.session.flush();detail=BobbinDeliveryDetail.query.filter_by(delivery_id=obj.id).first()
+    if not detail: detail=BobbinDeliveryDetail(delivery_id=obj.id);db.session.add(detail)
+    detail.loose_qty=loose
+    db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='BOBINAS_ENTREGA_PROGRAMADA',entity_type='bobbin_delivery_schedule',entity_id=str(obj.id),detail=json.dumps({'location':location,'delivery_date':delivery_date.isoformat(),'status':status,'boxes_qty':boxes,'loose_qty':loose},ensure_ascii=False)));db.session.commit()
     return jsonify({'ok':True,'id':obj.id,'status':obj.status})
 
 @app.get('/api/bobinas/dashboard')
