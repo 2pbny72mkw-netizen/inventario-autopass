@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V82.30 REV2.1"
+APP_RELEASE = "V82.30 REV3"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -16800,9 +16800,15 @@ def v75_arrow_eligibility_api(uid):
     return jsonify({'ok':True,'eligible':ok,'reason':reason,'operator':op,'access':{'metro':bool(u.access_metro),'cptm':bool(u.access_cptm),'motiva_apt':bool(u.access_motiva_apt),'apt_valid':_v741_has_valid_apt(u.id)}})
 
 def _v7893_arrow_can_edit(activity):
-    # V79.5 — edição é governada exclusivamente pela permissão específica.
-    # ADM continua integral via _has_access(); nenhum nome de perfil interfere.
-    return _has_access("arrow.edit")
+    # V82.30 REV3 — planejamento e execução são responsabilidades distintas.
+    # O criador da atividade sempre pode manter o planejamento; usuários com
+    # a permissão específica arrow.edit (incluindo ADM) também podem editar.
+    uid = int(session.get("user_id") or 0)
+    return bool(_has_access("arrow.edit") or (uid and int(activity.created_by or 0) == uid))
+
+def _v8230r3_arrow_can_execute(activity):
+    uid = int(session.get("user_id") or 0)
+    return bool(uid and int(activity.technician_id or 0) == uid and activity.status not in ("CONCLUÍDA", "CANCELADA"))
 
 def _v7893_arrow_can_delete(activity):
     # Exclusão é independente da edição/gestão.
@@ -16853,7 +16859,7 @@ def v75_arrow_list_api():
     out=[]
     for x in rows:
         u=uu.get(x.technician_id);loc=ll.get(x.location_id);aloc=aa.get(getattr(x,'arrow_location_id',None));eligible,reason=_v75_arrow_eligibility(u,x.operator) if u else (False,'Colaborador não encontrado')
-        out.append({'id':x.id,'date':x.activity_date.isoformat(),'start_time':x.start_time or '','end_time':x.end_time or '','priority':x.priority or 'NORMAL','title':x.title,'operator':x.operator,'technician_id':x.technician_id,'technician':u.name if u else '—','technician_company':u.company if u else '','location_id':x.location_id,'arrow_location_id':getattr(x,'arrow_location_id',None),'location':(aloc.name if aloc else (loc.location if loc else '—')),'line':('GARAGEM' if aloc else (loc.line if loc else '')),'company':('OUTROS' if aloc else (loc.company if loc else '')),'location_code':(aloc.code if aloc else ''),'address':(aloc.address if aloc else ''),'status':x.status,'remote':x.remote,'teamviewer_id':x.teamviewer_id or '','notes':x.notes or '','eligible':eligible,'eligibility_reason':reason,'can_edit':_v7893_arrow_can_edit(x),'can_delete':_v7893_arrow_can_delete(x)})
+        out.append({'id':x.id,'date':x.activity_date.isoformat(),'start_time':x.start_time or '','end_time':x.end_time or '','priority':x.priority or 'NORMAL','title':x.title,'operator':x.operator,'technician_id':x.technician_id,'technician':u.name if u else '—','technician_company':u.company if u else '','location_id':x.location_id,'arrow_location_id':getattr(x,'arrow_location_id',None),'location':(aloc.name if aloc else (loc.location if loc else '—')),'line':('GARAGEM' if aloc else (loc.line if loc else '')),'company':('OUTROS' if aloc else (loc.company if loc else '')),'location_code':(aloc.code if aloc else ''),'address':(aloc.address if aloc else ''),'status':x.status,'remote':x.remote,'teamviewer_id':x.teamviewer_id or '','notes':x.notes or '','eligible':eligible,'eligibility_reason':reason,'created_by':x.created_by,'can_edit':_v7893_arrow_can_edit(x),'can_execute':_v8230r3_arrow_can_execute(x),'can_delete':_v7893_arrow_can_delete(x)})
     return jsonify({'ok':True,'rows':out,'current_user_id':session.get('user_id')})
 
 @app.post("/api/arrow/activities")
@@ -16916,22 +16922,44 @@ def v76_arrow_edit_api(aid):
         loclabel=_v7893_arrow_location_label(x);_v7893_arrow_notify(x,'Atividade Arrow atualizada',f'{x.activity_date.strftime("%d/%m/%Y")} · {x.title} · {loclabel} · Horário {x.start_time or "—"}–{x.end_time or "—"}')
     db.session.commit();return jsonify({"ok":True})
 
+@app.get("/api/arrow/activities/<int:aid>/execucoes")
+@login_required
+def v8230r3_arrow_execution_list_api(aid):
+    x=db.session.get(ArrowActivity,aid) or abort(404)
+    if x.deleted_at is not None:abort(404)
+    uid=int(session.get('user_id') or 0)
+    if not (_has_access("arrow.view") and (uid==int(x.technician_id or 0) or _v7893_arrow_can_edit(x))):abort(403)
+    rows=ArrowActivityExecution.query.filter_by(activity_id=x.id).order_by(ArrowActivityExecution.created_at.asc(),ArrowActivityExecution.id.asc()).all()
+    uids={r.user_id for r in rows}; users={u.id:u for u in User.query.filter(User.id.in_(uids)).all()} if uids else {}
+    return jsonify({'ok':True,'rows':[{'id':r.id,'action':r.action,'observation':r.observation or '','created_at':r.created_at.isoformat() if r.created_at else None,'user_id':r.user_id,'user':(users.get(r.user_id).name if users.get(r.user_id) else 'Usuário')} for r in rows]})
+
 @app.post("/api/arrow/activities/<int:aid>/status")
 @login_required
 def v75_arrow_status_api(aid):
     x=db.session.get(ArrowActivity,aid) or abort(404)
     if x.deleted_at is not None:abort(404)
-    own_activity = int(x.technician_id or 0) == int(session.get('user_id') or 0)
-    if not (_v7893_arrow_can_edit(x) or own_activity):abort(403)
     payload=request.get_json(silent=True) or {}
     st=(payload.get('status') or '').upper()
-    if st not in ('PLANEJADA','EM ANDAMENTO','CONCLUÍDA','CANCELADA'):return jsonify({'ok':False,'error':'Status inválido.'}),400
-    old=x.status;x.status=st
-    if st=='CANCELADA' and old!='CANCELADA':_v7893_arrow_notify(x,'Atividade Arrow cancelada',f'{x.activity_date.strftime("%d/%m/%Y")} · {x.title} · {_v7893_arrow_location_label(x)}',severity='ATENCAO')
-    elif st!=old:_v7893_arrow_notify(x,'Status da atividade Arrow alterado',f'{x.title} · {old or "—"} → {st}')
     obs=(payload.get('observation') or '').strip()
+    own_activity=int(x.technician_id or 0)==int(session.get('user_id') or 0)
+    planner=_v7893_arrow_can_edit(x)
+    if not (own_activity or planner):abort(403)
+    if own_activity and not planner:
+        # Técnico executa; não replaneja/cancela.
+        if st not in ('EM ANDAMENTO','CONCLUÍDA','IMPEDIMENTO'):return jsonify({'ok':False,'error':'Ação de execução inválida.'}),400
+        if x.status in ('CONCLUÍDA','CANCELADA'):return jsonify({'ok':False,'error':'Atividade encerrada. A execução está disponível somente para consulta.'}),409
+        if st=='EM ANDAMENTO' and x.status not in ('PLANEJADA','EM ANDAMENTO'):return jsonify({'ok':False,'error':'A atividade não pode ser iniciada neste status.'}),409
+        if st=='CONCLUÍDA' and x.status not in ('PLANEJADA','EM ANDAMENTO'):return jsonify({'ok':False,'error':'A atividade não pode ser concluída neste status.'}),409
+        if st=='IMPEDIMENTO' and not obs:return jsonify({'ok':False,'error':'Descreva o impedimento.'}),400
+    elif st not in ('PLANEJADA','EM ANDAMENTO','CONCLUÍDA','CANCELADA','IMPEDIMENTO'):
+        return jsonify({'ok':False,'error':'Status inválido.'}),400
+    old=x.status
+    # Impedimento é evento de execução e não substitui o status operacional.
+    if st!='IMPEDIMENTO':x.status=st
+    if st=='CANCELADA' and old!='CANCELADA':_v7893_arrow_notify(x,'Atividade Arrow cancelada',f'{x.activity_date.strftime("%d/%m/%Y")} · {x.title} · {_v7893_arrow_location_label(x)}',severity='ATENCAO')
+    elif st!='IMPEDIMENTO' and st!=old:_v7893_arrow_notify(x,'Status da atividade Arrow alterado',f'{x.title} · {old or "—"} → {st}')
     db.session.add(ArrowActivityExecution(activity_id=x.id,user_id=session['user_id'],action=st,observation=obs))
-    db.session.commit();return jsonify({'ok':True})
+    db.session.commit();return jsonify({'ok':True,'status':x.status,'action':st})
 
 @app.delete("/api/arrow/activities/<int:aid>")
 @login_required
