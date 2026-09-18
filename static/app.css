@@ -1839,3 +1839,6 @@ body.mapFullscreenOpen .topbar{z-index:20!important;}
 .dashDrillTableWrap{max-height:70vh!important;border:1px solid #dce7f1;border-radius:10px;background:#fff!important}
 .dashDrillTableWrap th{background:#eaf2fa!important;color:#17345d!important;font-weight:850!important}
 .dashDrillTableWrap td{background:#fff!important;color:#253b53!important}
+
+/* V82.29 REV1 drill-down */
+.dashDrillHandle{cursor:move;user-select:none}.dashDrillCard.dashDrillMax{position:fixed!important;inset:8px!important;width:auto!important;max-height:none!important;height:auto!important}.dashDrillCard.dashDrillMax .dashDrillTableWrap{max-height:calc(100vh - 170px)!important}
