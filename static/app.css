@@ -1833,3 +1833,9 @@ body.mapFullscreenOpen .topbar{z-index:20!important;}
 .engItemActions{position:sticky;bottom:0;z-index:2;display:flex;justify-content:flex-end;gap:10px;background:#fff;padding:14px 0 18px;margin-top:4px;border-top:1px solid #e1e8ef;box-shadow:0 -8px 16px rgba(255,255,255,.92)}
 .engItemActions button{min-width:120px}
 @media(max-width:768px){.engModalCard{width:96vw!important;max-height:94vh!important}.engModalCard>h3{padding-left:16px}.engModalCard #engModalBody{padding-left:16px;padding-right:16px}.engItemActions{grid-column:auto;position:sticky}.engItemActions button{flex:1}}
+/* V82.29 — Dashboard ATM 2.0: drill-down legível e amplo */
+.dashDrillCard{background:#fff!important;color:#132f4c!important;width:min(1560px,98vw)!important;max-height:92vh!important;border:1px solid #d6e2ee!important}
+.dashDrillCard h2,.dashDrillCard .eyebrow,.dashDrillCard p,.dashDrillCard td,.dashDrillCard th{opacity:1!important;color:#17345d!important}
+.dashDrillTableWrap{max-height:70vh!important;border:1px solid #dce7f1;border-radius:10px;background:#fff!important}
+.dashDrillTableWrap th{background:#eaf2fa!important;color:#17345d!important;font-weight:850!important}
+.dashDrillTableWrap td{background:#fff!important;color:#253b53!important}
