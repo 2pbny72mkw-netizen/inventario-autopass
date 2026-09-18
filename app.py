@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V82.29 REV1"
+APP_RELEASE = "V82.30"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -21189,33 +21189,73 @@ def v824_atm_mapping_export_pptx():
     from pptx.util import Inches,Pt
     from pptx.dml.color import RGBColor
     from pptx.enum.text import PP_ALIGN
-    rows=_v824_mapping_export_rows(); total=len(rows); done=sum(x['status']=='CONCLUIDO' for x in rows); pending=total-done; internal=sum(x['physical_access']=='INTERNO' for x in rows); external=sum(x['physical_access']=='EXTERNO' for x in rows); holes=sum(x['has_holes'] is True for x in rows); unsealed=sum(x['has_holes'] is True and x['holes_sealed'] is False for x in rows); rear_yes=sum(x.get('rear_safe_door') is True for x in rows); rear_no=sum(x.get('rear_safe_door') is False for x in rows); uba=sum(x.get('bill_acceptor')=='UBA-PRO' for x in rows); ivizion=sum(x.get('bill_acceptor')=='I-VIZION' for x in rows); spectral=sum(x.get('bill_acceptor')=='SPECTRAL' for x in rows)
+    from PIL import Image, ImageOps
+    rows=_v824_mapping_export_rows(); total=len(rows); done=sum(x['status']=='CONCLUIDO' for x in rows); pending=total-done
+    internal=sum(x['physical_access']=='INTERNO' for x in rows); external=sum(x['physical_access']=='EXTERNO' for x in rows); holes=sum(x['has_holes'] is True for x in rows); unsealed=sum(x['has_holes'] is True and x['holes_sealed'] is False for x in rows)
+    rear_yes=sum(x.get('rear_safe_door') is True for x in rows); rear_no=sum(x.get('rear_safe_door') is False for x in rows); uba=sum(x.get('bill_acceptor')=='UBA-PRO' for x in rows); ivizion=sum(x.get('bill_acceptor')=='I-VIZION' for x in rows); spectral=sum(x.get('bill_acceptor')=='SPECTRAL' for x in rows)
     prs=Presentation(); prs.slide_width=Inches(13.333); prs.slide_height=Inches(7.5)
-    def tb(sl,x,y,w,h,text,size=18,bold=False):
-        box=sl.shapes.add_textbox(Inches(x),Inches(y),Inches(w),Inches(h)); p=box.text_frame.paragraphs[0]; p.text=str(text); p.font.size=Pt(size); p.font.bold=bold; p.font.name='Arial'; p.font.color.rgb=RGBColor(23,52,93); return box
-    sl=prs.slides.add_slide(prs.slide_layouts[6]); tb(sl,.65,.65,12,.55,'Mapeamento ATM — Relatório executivo',28,True); tb(sl,.65,1.35,12,.35,f'V82.7 · Gerado em {datetime.now().strftime("%d/%m/%Y %H:%M")}',12)
-    vals=[('ATMs no recorte',total),('Concluídas',done),('Pendentes',pending),('Avanço',f'{round(done/total*100,1) if total else 0}%'),('Acesso interno',internal),('Acesso externo',external),('Com furos',holes),('Furos não tampados',unsealed),('Porta cofre traseira: Sim',rear_yes),('Porta cofre traseira: Não',rear_no),('Aceitador UBA-PRO',uba),('Aceitador I-VIZION',ivizion),('Aceitador SPECTRAL',spectral)]
-    for i,(lab,val) in enumerate(vals):
-        x=.65+(i%5)*2.45; y=2.15+(i//5)*1.45; tb(sl,x,y,2.2,.3,lab,10,True); tb(sl,x,y+.35,2.2,.55,val,23,True)
+    NAVY=RGBColor(23,52,93); BLUE=RGBColor(37,99,235); GREEN=RGBColor(22,163,74); RED=RGBColor(220,38,38); GRAY=RGBColor(100,116,139)
+    def tb(sl,x,y,w,h,text,size=18,bold=False,color=NAVY,align=None):
+        box=sl.shapes.add_textbox(Inches(x),Inches(y),Inches(w),Inches(h)); tf=box.text_frame; tf.clear(); tf.word_wrap=True
+        p=tf.paragraphs[0]; p.text=str(text); p.font.size=Pt(size); p.font.bold=bold; p.font.name='Arial'; p.font.color.rgb=color
+        if align is not None: p.alignment=align
+        return box
+    def val(v): return '—' if v is None else ('Sim' if v is True else 'Não' if v is False else str(v))
+    def photo_bytes(ph):
+        try:
+            if ph.storage_key.startswith('r2__') and _r2_available(): raw=r2_client().get_object(Bucket=os.environ['R2_BUCKET_NAME'],Key=ph.storage_key[4:])['Body'].read()
+            else:
+                fp=UPLOAD_DIR/ph.storage_key
+                if not fp.exists(): return None
+                raw=fp.read_bytes()
+            im=Image.open(io.BytesIO(raw)); im=ImageOps.exif_transpose(im).convert('RGB'); im.thumbnail((1280,960))
+            out=io.BytesIO(); im.save(out,format='JPEG',quality=72,optimize=True); out.seek(0); return out
+        except Exception: return None
+    # Capa / resumo
+    sl=prs.slides.add_slide(prs.slide_layouts[6]); tb(sl,.65,.55,12,.55,'Mapeamento ATM — Book de Evidências',28,True); tb(sl,.65,1.18,12,.35,f'V82.30 · Gerado em {datetime.now().strftime("%d/%m/%Y %H:%M")}',12,color=GRAY)
+    vals=[('ATMs no recorte',total),('Concluídas',done),('Pendentes',pending),('Avanço',f'{round(done/total*100,1) if total else 0}%'),('Acesso interno',internal),('Acesso externo',external),('Com furos',holes),('Furos não tampados',unsealed),('Cofre traseiro: Sim',rear_yes),('Cofre traseiro: Não',rear_no),('UBA-PRO',uba),('I-VIZION',ivizion),('SPECTRAL',spectral)]
+    for i,(lab,v) in enumerate(vals):
+        x=.65+(i%5)*2.45; y=1.85+(i//5)*1.45; tb(sl,x,y,2.2,.3,lab,10,True); tb(sl,x,y+.34,2.2,.55,v,23,True,color=GREEN if lab=='Concluídas' else RED if lab in ('Pendentes','Furos não tampados') else NAVY)
     # resumo por operadora
-    sl=prs.slides.add_slide(prs.slide_layouts[6]); tb(sl,.65,.5,12,.5,'Progresso por operadora',24,True)
     agg={}
     for x in rows:
         a=agg.setdefault(x['company'] or 'Não informada',[0,0]); a[0]+=1; a[1]+=1 if x['status']=='CONCLUIDO' else 0
-    y=1.35
+    sl=prs.slides.add_slide(prs.slide_layouts[6]); tb(sl,.65,.5,12,.5,'Progresso por operadora',24,True); y=1.25
     for company,(ct,cd) in sorted(agg.items()):
         tb(sl,.8,y,4,.3,company,13,True); tb(sl,5.0,y,2,.3,f'{cd}/{ct}',13); tb(sl,7.0,y,2,.3,f'{round(cd/ct*100,1) if ct else 0}%',13); y+=.48
-        if y>6.8: break
-    # situações críticas
-    crit=[x for x in rows if x['has_holes'] is True and x['holes_sealed'] is False]
-    sl=prs.slides.add_slide(prs.slide_layouts[6]); tb(sl,.65,.5,12,.5,'ATMs com furos não tampados',24,True); y=1.25
-    if not crit: tb(sl,.8,y,11,.4,'Nenhuma ATM no recorte atual.',14)
-    else:
-        tb(sl,.8,y,11,.3,'Operadora · Linha · Estação · ATM · Modelo · Técnico',11,True); y+=.42
-        for x in crit[:18]:
-            tb(sl,.8,y,11.7,.28,f"{x['company']} · {x['line']} · {x['station']} · {x['atm_id']} · {'MKNeo' if x['model']=='MKNEO' else x['model']} · {x['technician'] or '—'}",10); y+=.3
+    # Book: agrupa por localidade e cria resumo + ATM/fotos
+    groups={}
+    for x in rows: groups.setdefault((x.get('company') or '—',x.get('line') or '—',x.get('station') or '—'),[]).append(x)
+    for (company,line,station),items in sorted(groups.items(), key=lambda z:(z[0][0],z[0][1],z[0][2])):
+        sl=prs.slides.add_slide(prs.slide_layouts[6]); tb(sl,.65,.45,12,.45,f'{station}',25,True); tb(sl,.65,.95,12,.32,f'{company} · {line} · {len(items)} ATM(s)',12,color=GRAY)
+        headers=['ATM','Modelo','Status','Acesso','Furos','Tampados','Cofre traseiro','Aceitador','Fotos']
+        xs=[.65,2.45,3.45,4.55,5.75,6.65,7.65,9.15,10.65]; ws=[1.75,.95,1.05,1.15,.85,.95,1.45,1.45,.7]
+        for x0,w,h in zip(xs,ws,headers): tb(sl,x0,1.48,w,.3,h,9,True)
+        y=1.82
+        for r in items[:15]:
+            vals2=[r['atm_id'],'MKNeo' if r['model']=='MKNEO' else r['model'],'Concluído' if r['status']=='CONCLUIDO' else 'Pendente',{'INTERNO':'Interno','EXTERNO':'Externo'}.get(r['physical_access'],'—'),val(r['has_holes']),val(r['holes_sealed']) if r['has_holes'] else 'N/A',val(r.get('rear_safe_door')),r.get('bill_acceptor') or '—',r.get('photos',0)]
+            for x0,w,v in zip(xs,ws,vals2): tb(sl,x0,y,w,.26,v,8,False,color=RED if (v=='Pendente' or (x0==6.65 and v=='Não')) else NAVY)
+            y+=.31
+        if len(items)>15: tb(sl,.65,6.65,12,.25,f'+ {len(items)-15} ATM(s) detalhadas nas páginas seguintes.',9,color=GRAY)
+        for r in items:
+            if not r.get('mapping_id'): continue
+            photos=AtmMappingPhoto.query.filter_by(mapping_id=r['mapping_id']).order_by(AtmMappingPhoto.created_at).all()
+            chunks=[photos[i:i+4] for i in range(0,len(photos),4)] or [[]]
+            for ci,chunk in enumerate(chunks):
+                sl=prs.slides.add_slide(prs.slide_layouts[6]); tb(sl,.55,.35,12.2,.42,f'{station} · ATM {r["atm_id"]}',22,True); tb(sl,.55,.82,12.2,.28,f'{company} · {line} · {"MKNeo" if r["model"]=="MKNEO" else r["model"]} · Evidências {ci+1}/{len(chunks)}',10,color=GRAY)
+                info=f"Status: {'Concluído' if r['status']=='CONCLUIDO' else 'Pendente'}   |   Acesso: { {'INTERNO':'Interno','EXTERNO':'Externo'}.get(r['physical_access'],'—') }   |   Furos: {val(r['has_holes'])}   |   Tampados: {val(r['holes_sealed']) if r['has_holes'] else 'N/A'}   |   Cofre traseiro: {val(r.get('rear_safe_door'))}   |   Aceitador: {r.get('bill_acceptor') or '—'}"
+                tb(sl,.55,1.15,12.2,.42,info,10,True); tb(sl,.55,1.55,12.2,.28,f"Realizado por: {r.get('technician') or '—'}   ·   Data: {r['updated_at'].strftime('%d/%m/%Y %H:%M') if r.get('updated_at') else '—'}",10)
+                if r.get('notes'): tb(sl,.55,1.86,12.2,.42,f"Observação: {r['notes']}",9,color=GRAY)
+                positions=[(.55,2.35,6.0,2.15),(6.78,2.35,6.0,2.15),(.55,4.75,6.0,2.15),(6.78,4.75,6.0,2.15)]
+                if not chunk: tb(sl,.55,2.55,12,.4,'Sem fotografia anexada.',14,color=GRAY)
+                for ph,pos in zip(chunk,positions):
+                    bio=photo_bytes(ph)
+                    if bio:
+                        try: sl.shapes.add_picture(bio,Inches(pos[0]),Inches(pos[1]),width=Inches(pos[2]),height=Inches(pos[3]))
+                        except Exception: tb(sl,pos[0],pos[1],pos[2],.3,'Falha ao inserir evidência.',9,color=RED)
+                    else: tb(sl,pos[0],pos[1],pos[2],.3,'Evidência indisponível.',9,color=RED)
     bio=io.BytesIO(); prs.save(bio); bio.seek(0)
-    return send_file(bio,as_attachment=True,download_name=f"mapeamento_atm_{datetime.now().strftime('%Y%m%d_%H%M')}.pptx",mimetype='application/vnd.openxmlformats-officedocument.presentationml.presentation')
+    return send_file(bio,as_attachment=True,download_name=f"mapeamento_atm_book_{datetime.now().strftime('%Y%m%d_%H%M')}.pptx",mimetype='application/vnd.openxmlformats-officedocument.presentationml.presentation')
 
 @app.get('/api/bobinas/export.xlsx')
 @login_required
