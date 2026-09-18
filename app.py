@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V82.30"
+APP_RELEASE = "V82.30 REV1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -20500,6 +20500,61 @@ def v7793_bobbin_admin_adjustment():
         db.session.rollback(); app.logger.exception('V77.9.3: ajuste administrativo de bobina')
         return jsonify({'ok':False,'error':'Não foi possível salvar o ajuste administrativo.'}),500
 
+@app.post('/api/bobinas/estoques')
+@login_required
+def v82301_bobbin_stock_create():
+    if not _has_access('field.stock_manage'): abort(403)
+    d=request.get_json(silent=True) or {}; name=(d.get('name') or '').strip(); ptype=(d.get('point_type') or 'CD').strip().upper(); reason=(d.get('reason') or '').strip()
+    if not name or not reason: return jsonify({'ok':False,'error':'Localidade/CD e justificativa são obrigatórios.'}),400
+    if ptype not in ('ARMARIO','ESTOQUE','CD'): return jsonify({'ok':False,'error':'Tipo de estoque inválido.'}),400
+    try: qty=float(d.get('qty') or 0)
+    except Exception: return jsonify({'ok':False,'error':'Quantidade inválida.'}),400
+    if qty<0: return jsonify({'ok':False,'error':'Quantidade não pode ser negativa.'}),400
+    exists=FieldStockPoint.query.filter(func.lower(FieldStockPoint.name)==name.lower(),FieldStockPoint.active.is_(True)).first()
+    if exists: return jsonify({'ok':False,'error':'Já existe um estoque/localidade ativo com este nome.'}),409
+    item=FieldStockItem.query.filter(func.lower(FieldStockItem.description)=='bobina atm').first() or FieldStockItem.query.filter(func.lower(FieldStockItem.description).like('%bobina%')).first()
+    if not item: item=_v771_stock_item('Bobina ATM')
+    point=FieldStockPoint(name=name,point_type=ptype,company=(d.get('company') or '').strip() or None,line=(d.get('line') or '').strip() or None,station=(d.get('station') or '').strip() or None,active=True);db.session.add(point);db.session.flush()
+    bal=_v771_balance(point,item);bal.qty_good=qty;bal.updated_by=session['user_id'];bal.updated_at=datetime.utcnow()
+    db.session.add(FieldStockMovement(item_id=item.id,movement_type='CADASTRO_ESTOQUE',qty=qty,destination_point_id=point.id,technician_id=session['user_id'],destination_company=point.company,destination_line=point.line,destination_station=point.station,destination_asset=point.name,justification=reason,status='CONCLUIDO'))
+    db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='ESTOQUE_BOBINA_CRIADO',entity_type='field_stock_point',entity_id=str(point.id),detail=f'{point.name} | saldo inicial {qty} | {reason}'));db.session.commit()
+    return jsonify({'ok':True,'id':point.id})
+
+@app.put('/api/bobinas/estoques/<int:point_id>')
+@login_required
+def v82301_bobbin_stock_update(point_id):
+    if not _has_access('field.stock_manage'): abort(403)
+    point=db.session.get(FieldStockPoint,point_id)
+    if not point or not point.active: return jsonify({'ok':False,'error':'Estoque/localidade não encontrado.'}),404
+    d=request.get_json(silent=True) or {}; name=(d.get('name') or '').strip(); ptype=(d.get('point_type') or point.point_type or 'CD').strip().upper(); reason=(d.get('reason') or '').strip()
+    if not name or not reason: return jsonify({'ok':False,'error':'Localidade/CD e justificativa são obrigatórios.'}),400
+    if ptype not in ('ARMARIO','ESTOQUE','CD'): return jsonify({'ok':False,'error':'Tipo de estoque inválido.'}),400
+    dup=FieldStockPoint.query.filter(func.lower(FieldStockPoint.name)==name.lower(),FieldStockPoint.id!=point.id,FieldStockPoint.active.is_(True)).first()
+    if dup: return jsonify({'ok':False,'error':'Já existe outro estoque/localidade ativo com este nome.'}),409
+    try: qty=float(d.get('qty') or 0)
+    except Exception: return jsonify({'ok':False,'error':'Quantidade inválida.'}),400
+    if qty<0:return jsonify({'ok':False,'error':'Quantidade não pode ser negativa.'}),400
+    item=FieldStockItem.query.filter(func.lower(FieldStockItem.description)=='bobina atm').first() or FieldStockItem.query.filter(func.lower(FieldStockItem.description).like('%bobina%')).first()
+    if not item:return jsonify({'ok':False,'error':'Item Bobina não encontrado.'}),404
+    bal=_v771_balance(point,item);old_qty=float(bal.qty_good or 0);old_name=point.name
+    point.name=name;point.point_type=ptype;point.company=(d.get('company') or '').strip() or None;point.line=(d.get('line') or '').strip() or None;point.station=(d.get('station') or '').strip() or None
+    bal.qty_good=qty;bal.updated_by=session['user_id'];bal.updated_at=datetime.utcnow()
+    db.session.add(FieldStockMovement(item_id=item.id,movement_type='EDICAO_ESTOQUE',qty=qty-old_qty,source_point_id=point.id,destination_point_id=point.id,technician_id=session['user_id'],destination_company=point.company,destination_line=point.line,destination_station=point.station,destination_asset=point.name,justification=reason,status='CONCLUIDO'))
+    db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='ESTOQUE_BOBINA_EDITADO',entity_type='field_stock_point',entity_id=str(point.id),detail=f'{old_name}->{name} | {old_qty}->{qty} | {reason}'));db.session.commit()
+    return jsonify({'ok':True,'id':point.id})
+
+@app.delete('/api/bobinas/estoques/<int:point_id>')
+@login_required
+def v82301_bobbin_stock_delete(point_id):
+    if not _has_access('field.stock_manage'): abort(403)
+    point=db.session.get(FieldStockPoint,point_id)
+    if not point or not point.active:return jsonify({'ok':False,'error':'Estoque/localidade não encontrado.'}),404
+    d=request.get_json(silent=True) or {};reason=(d.get('reason') or '').strip()
+    if not reason:return jsonify({'ok':False,'error':'Justificativa obrigatória para excluir/inativar o estoque.'}),400
+    point.active=False
+    db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='ESTOQUE_BOBINA_EXCLUIDO',entity_type='field_stock_point',entity_id=str(point.id),detail=f'{point.name} | exclusão lógica; histórico preservado | {reason}'));db.session.commit()
+    return jsonify({'ok':True,'id':point.id,'history_preserved':True})
+
 @app.get('/api/bobinas/entregas')
 @login_required
 def v8227_bobbin_deliveries_list():
@@ -20632,7 +20687,7 @@ def v77_bobbins_dashboard_api():
             balance_by_point={x.point_id:x for x in FieldStockBalance.query.filter(FieldStockBalance.item_id==bobitem.id,FieldStockBalance.point_id.in_(cp_ids)).all()}
         for cp in cps:
             bal=balance_by_point.get(cp.id)
-            cabinet_rows.append({'id':cp.id,'name':cp.name,'company':cp.company or '', 'line':cp.line or '', 'station':cp.station or '', 'bobbins':int(float(bal.qty_good or 0)) if bal else 0, 'updated_at':bal.updated_at.isoformat()+'Z' if bal and bal.updated_at else None})
+            cabinet_rows.append({'id':cp.id,'name':cp.name,'point_type':cp.point_type or 'CD','company':cp.company or '', 'line':cp.line or '', 'station':cp.station or '', 'bobbins':int(float(bal.qty_good or 0)) if bal else 0, 'updated_at':bal.updated_at.isoformat()+'Z' if bal and bal.updated_at else None})
     # Estações partem da base oficial, inclusive quando ainda não existe leitura.
     station_summary={}
     for a in filtered_official:
@@ -21211,6 +21266,13 @@ def v824_atm_mapping_export_pptx():
             im=Image.open(io.BytesIO(raw)); im=ImageOps.exif_transpose(im).convert('RGB'); im.thumbnail((1280,960))
             out=io.BytesIO(); im.save(out,format='JPEG',quality=72,optimize=True); out.seek(0); return out
         except Exception: return None
+    def add_picture_contain(sl,bio,x,y,w,h):
+        # Mantém a proporção original da evidência; nunca força largura e altura simultaneamente.
+        bio.seek(0); im=Image.open(bio); iw,ih=im.size; bio.seek(0)
+        if not iw or not ih: return None
+        scale=min(w/float(iw),h/float(ih)); pw,ph=iw*scale,ih*scale
+        px=x+(w-pw)/2; py=y+(h-ph)/2
+        return sl.shapes.add_picture(bio,Inches(px),Inches(py),width=Inches(pw),height=Inches(ph))
     # Capa / resumo
     sl=prs.slides.add_slide(prs.slide_layouts[6]); tb(sl,.65,.55,12,.55,'Mapeamento ATM — Book de Evidências',28,True); tb(sl,.65,1.18,12,.35,f'V82.30 · Gerado em {datetime.now().strftime("%d/%m/%Y %H:%M")}',12,color=GRAY)
     vals=[('ATMs no recorte',total),('Concluídas',done),('Pendentes',pending),('Avanço',f'{round(done/total*100,1) if total else 0}%'),('Acesso interno',internal),('Acesso externo',external),('Com furos',holes),('Furos não tampados',unsealed),('Cofre traseiro: Sim',rear_yes),('Cofre traseiro: Não',rear_no),('UBA-PRO',uba),('I-VIZION',ivizion),('SPECTRAL',spectral)]
@@ -21251,7 +21313,7 @@ def v824_atm_mapping_export_pptx():
                 for ph,pos in zip(chunk,positions):
                     bio=photo_bytes(ph)
                     if bio:
-                        try: sl.shapes.add_picture(bio,Inches(pos[0]),Inches(pos[1]),width=Inches(pos[2]),height=Inches(pos[3]))
+                        try: add_picture_contain(sl,bio,pos[0],pos[1],pos[2],pos[3])
                         except Exception: tb(sl,pos[0],pos[1],pos[2],.3,'Falha ao inserir evidência.',9,color=RED)
                     else: tb(sl,pos[0],pos[1],pos[2],.3,'Evidência indisponível.',9,color=RED)
     bio=io.BytesIO(); prs.save(bio); bio.seek(0)
