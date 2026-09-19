@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V82.33"
+APP_RELEASE = "V82.34"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -3056,20 +3056,26 @@ def _v8233_mobile_token_from_request():
 
 
 def _v8233_mobile_current_user():
-    # Compatibilidade: navegador/PWA continua aceitando a sessão web existente.
-    uid=session.get('user_id')
-    if uid:
-        user=db.session.get(User,uid)
-        return user if user and user.active else None
+    # V82.34: a API mobile é isolada da sessão Web.
+    # Endpoints /api/mobile/v1/* aceitam exclusivamente Bearer token válido;
+    # cookies/sessão do navegador nunca são usados como fallback.
     raw=_v8233_mobile_token_from_request()
-    if not raw: return None
-    row=MobileSessionToken.query.filter_by(token_hash=_v8233_token_hash(raw),revoked_at=None).first()
-    if not row or row.expires_at <= datetime.utcnow(): return None
+    if not raw:
+        return None
+    row=MobileSessionToken.query.filter_by(
+        token_hash=_v8233_token_hash(raw),
+        revoked_at=None
+    ).first()
+    if not row or row.expires_at <= datetime.utcnow():
+        return None
     user=db.session.get(User,row.user_id)
-    if not user or not user.active: return None
+    if not user or not user.active:
+        return None
     row.last_used_at=datetime.utcnow()
-    try: db.session.commit()
-    except Exception: db.session.rollback()
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
     return user
 
 
@@ -21663,7 +21669,7 @@ def v824_atm_mapping_export_pptx():
         px=x+(w-pw)/2; py=y+(h-ph)/2
         return sl.shapes.add_picture(bio,Inches(px),Inches(py),width=Inches(pw),height=Inches(ph))
     # Capa / resumo
-    sl=prs.slides.add_slide(prs.slide_layouts[6]); tb(sl,.65,.55,12,.55,'Mapeamento ATM — Book de Evidências',28,True); tb(sl,.65,1.18,12,.35,f'V82.33 · Gerado em {datetime.now().strftime("%d/%m/%Y %H:%M")}',12,color=GRAY)
+    sl=prs.slides.add_slide(prs.slide_layouts[6]); tb(sl,.65,.55,12,.55,'Mapeamento ATM — Book de Evidências',28,True); tb(sl,.65,1.18,12,.35,f'{APP_RELEASE} · Gerado em {datetime.now().strftime("%d/%m/%Y %H:%M")}',12,color=GRAY)
     vals=[('ATMs no recorte',total),('Concluídas',done),('Pendentes',pending),('Avanço',f'{round(done/total*100,1) if total else 0}%'),('Acesso interno',internal),('Acesso externo',external),('Com furos',holes),('Furos não tampados',unsealed),('Cofre traseiro: Sim',rear_yes),('Cofre traseiro: Não',rear_no),('UBA-PRO',uba),('I-VIZION',ivizion),('SPECTRAL',spectral)]
     for i,(lab,v) in enumerate(vals):
         x=.65+(i%5)*2.45; y=1.85+(i//5)*1.45; tb(sl,x,y,2.2,.3,lab,10,True); tb(sl,x,y+.34,2.2,.55,v,23,True,color=GREEN if lab=='Concluídas' else RED if lab in ('Pendentes','Furos não tampados') else NAVY)
