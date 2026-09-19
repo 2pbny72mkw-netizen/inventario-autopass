@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V82.31"
+APP_RELEASE = "V82.31 REV1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -21331,7 +21331,8 @@ def v824_atm_mapping_export_pptx():
     NAVY=RGBColor(23,52,93); BLUE=RGBColor(37,99,235); GREEN=RGBColor(22,163,74); RED=RGBColor(220,38,38); GRAY=RGBColor(100,116,139)
     def tb(sl,x,y,w,h,text,size=18,bold=False,color=NAVY,align=None):
         box=sl.shapes.add_textbox(Inches(x),Inches(y),Inches(w),Inches(h)); tf=box.text_frame; tf.clear(); tf.word_wrap=True
-        p=tf.paragraphs[0]; p.text=str(text); p.font.size=Pt(size); p.font.bold=bold; p.font.name='Arial'; p.font.color.rgb=color
+        p=tf.paragraphs[0]; p.text=str(text)
+        run=p.runs[0]; run.font.size=Pt(size); run.font.bold=bold; run.font.name='Arial'; run.font.color.rgb=color
         if align is not None: p.alignment=align
         return box
     def val(v): return '—' if v is None else ('Sim' if v is True else 'Não' if v is False else str(v))
@@ -21353,7 +21354,7 @@ def v824_atm_mapping_export_pptx():
         px=x+(w-pw)/2; py=y+(h-ph)/2
         return sl.shapes.add_picture(bio,Inches(px),Inches(py),width=Inches(pw),height=Inches(ph))
     # Capa / resumo
-    sl=prs.slides.add_slide(prs.slide_layouts[6]); tb(sl,.65,.55,12,.55,'Mapeamento ATM — Book de Evidências',28,True); tb(sl,.65,1.18,12,.35,f'V82.30 · Gerado em {datetime.now().strftime("%d/%m/%Y %H:%M")}',12,color=GRAY)
+    sl=prs.slides.add_slide(prs.slide_layouts[6]); tb(sl,.65,.55,12,.55,'Mapeamento ATM — Book de Evidências',28,True); tb(sl,.65,1.18,12,.35,f'V82.31 REV1 · Gerado em {datetime.now().strftime("%d/%m/%Y %H:%M")}',12,color=GRAY)
     vals=[('ATMs no recorte',total),('Concluídas',done),('Pendentes',pending),('Avanço',f'{round(done/total*100,1) if total else 0}%'),('Acesso interno',internal),('Acesso externo',external),('Com furos',holes),('Furos não tampados',unsealed),('Cofre traseiro: Sim',rear_yes),('Cofre traseiro: Não',rear_no),('UBA-PRO',uba),('I-VIZION',ivizion),('SPECTRAL',spectral)]
     for i,(lab,v) in enumerate(vals):
         x=.65+(i%5)*2.45; y=1.85+(i//5)*1.45; tb(sl,x,y,2.2,.3,lab,10,True); tb(sl,x,y+.34,2.2,.55,v,23,True,color=GREEN if lab=='Concluídas' else RED if lab in ('Pendentes','Furos não tampados') else NAVY)
