@@ -3199,11 +3199,11 @@ def v8232_mobile_sync_events():
         if not isinstance(item,dict): rejected+=1; results.append({'ok':False,'error':'Evento inválido.'}); continue
         eid=str(item.get('event_id') or '').strip()[:80]; etype=str(item.get('event_type') or '').strip().upper()[:60]; captured=_v8232_parse_mobile_datetime(item.get('captured_at')); payload=item.get('payload') if isinstance(item.get('payload'),dict) else {}
         if not eid or not etype or not captured:
-            rejected+=1; results.append({'event_id':eid,'ok':False,'status':'REJEITADO','error':'event_id, event_type e captured_at são obrigatórios.'}); continue
+            rejected+=1; results.append({'event_id':eid,'event_type':etype,'ok':False,'status':'REJEITADO','error':'event_id, event_type e captured_at são obrigatórios.','retryable':False}); continue
         if eid in existing:
             old=existing[eid]
             if old.user_id!=user.id or old.device_id!=device_id:
-                rejected+=1; results.append({'event_id':eid,'ok':False,'status':'CONFLITO','error':'event_id já utilizado por outro contexto.'}); continue
+                rejected+=1; results.append({'event_id':eid,'event_type':etype,'activity_id':payload.get('activity_id') if etype=='ARROW_ACTION' else None,'action':payload.get('action') if etype=='ARROW_ACTION' else None,'ok':False,'status':'CONFLITO','error':'event_id já utilizado por outro contexto.','retryable':False}); continue
             duplicates+=1; results.append({'event_id':eid,'ok':True,'status':'DUPLICADO','server_id':old.id}); continue
         savepoint=db.session.begin_nested()
         row=MobileSyncEvent(event_id=eid,device_id=device_id,user_id=user.id,event_type=etype,captured_at=captured,received_at=now,payload_json=json.dumps(payload,ensure_ascii=False),status='RECEBIDO')
@@ -3250,7 +3250,7 @@ def v8232_mobile_sync_events():
                 row.status='PENDENTE'; row.error_message='Tipo reservado para evolução mobile.'
             db.session.flush(); savepoint.commit(); existing[eid]=row; accepted+=1; results.append({'event_id':eid,'ok':True,'status':row.status,'server_id':row.id})
         except Exception as exc:
-            savepoint.rollback(); rejected+=1; results.append({'event_id':eid,'ok':False,'status':'REJEITADO','error':str(exc)[:240]})
+            savepoint.rollback(); rejected+=1; results.append({'event_id':eid,'event_type':etype,'activity_id':payload.get('activity_id') if etype=='ARROW_ACTION' else None,'action':payload.get('action') if etype=='ARROW_ACTION' else None,'ok':False,'status':'REJEITADO','error':str(exc)[:240],'retryable':False})
     try: db.session.commit()
     except IntegrityError:
         db.session.rollback(); return jsonify({'ok':False,'error':'Conflito de sincronização. Reenvie o mesmo lote; event_id garante idempotência.'}),409

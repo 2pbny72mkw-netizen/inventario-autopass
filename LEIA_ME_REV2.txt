@@ -1,0 +1,1 @@
+V82.35 REV2: aplicar app.py sobre a V82.35 REV1. Diagnóstico por evento Arrow: activity_id, action, error, retryable=false. Testar em ambiente de homologação antes de produção.
