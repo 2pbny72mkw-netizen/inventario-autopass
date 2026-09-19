@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V82.31 REV1"
+APP_RELEASE = "V82.32"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -1375,6 +1375,36 @@ class TeamScheduleProfile(db.Model):
             return json.loads(self.lines_json or "[]")
         except Exception:
             return []
+
+
+class MobileDevice(db.Model):
+    """V82.32 — dispositivo Android autorizado/observado para sincronização de campo."""
+    __tablename__ = "mobile_devices"
+    id = db.Column(db.Integer, primary_key=True)
+    device_id = db.Column(db.String(120), nullable=False, unique=True, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    platform = db.Column(db.String(30), nullable=False, default="android")
+    app_version = db.Column(db.String(40))
+    device_name = db.Column(db.String(180))
+    active = db.Column(db.Boolean, nullable=False, default=True, index=True)
+    first_seen_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    last_seen_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+
+class MobileSyncEvent(db.Model):
+    """V82.32 — envelope idempotente de eventos capturados offline no aparelho."""
+    __tablename__ = "mobile_sync_events"
+    id = db.Column(db.Integer, primary_key=True)
+    event_id = db.Column(db.String(80), nullable=False, unique=True, index=True)
+    device_id = db.Column(db.String(120), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    event_type = db.Column(db.String(60), nullable=False, index=True)
+    captured_at = db.Column(db.DateTime, nullable=False, index=True)
+    received_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    payload_json = db.Column(db.Text, nullable=False, default="{}")
+    status = db.Column(db.String(30), nullable=False, default="RECEBIDO", index=True)
+    applied_at = db.Column(db.DateTime)
+    error_message = db.Column(db.String(600))
 
 
 class TechnicianPosition(db.Model):
@@ -2969,6 +2999,120 @@ def v72_session_status_api():
         "warning_minutes":int(_v72_settings().get("journey_warning_minutes",30) or 30),
         "journey_control_enabled":bool(getattr(user,"journey_control_enabled",False)) if user else False
     })
+
+
+def _v8232_parse_mobile_datetime(value):
+    """Converte timestamp ISO do aparelho para UTC naive, preservando o instante real da captura."""
+    raw=str(value or '').strip()
+    if not raw:
+        return None
+    try:
+        dt=datetime.fromisoformat(raw.replace('Z','+00:00'))
+        if dt.tzinfo is None:
+            # Mobile deve enviar offset; por compatibilidade, assume o fuso operacional de SP.
+            dt=dt.replace(tzinfo=V72_TZ)
+        return dt.astimezone(ZoneInfo('UTC')).replace(tzinfo=None)
+    except Exception:
+        return None
+
+
+def _v8232_touch_device(user, device_id, data=None):
+    data=data or {}
+    dev=MobileDevice.query.filter_by(device_id=device_id).first()
+    if dev and dev.user_id != user.id:
+        return None, 'Dispositivo já vinculado a outro usuário.'
+    if not dev:
+        dev=MobileDevice(device_id=device_id,user_id=user.id,platform=(str(data.get('platform') or 'android')[:30]),first_seen_at=datetime.utcnow())
+        db.session.add(dev)
+    dev.last_seen_at=datetime.utcnow(); dev.active=True
+    if data.get('app_version') is not None: dev.app_version=str(data.get('app_version') or '')[:40]
+    if data.get('device_name') is not None: dev.device_name=str(data.get('device_name') or '')[:180]
+    return dev, None
+
+
+@app.get('/api/mobile/v1/bootstrap')
+@login_required
+def v8232_mobile_bootstrap():
+    """Pacote mínimo para o cliente Android operar/cachear antes de perder conectividade."""
+    user=db.session.get(User,session.get('user_id'))
+    if not user or not user.active: return jsonify({'ok':False,'error':'Usuário inativo ou não encontrado.'}),403
+    access=sorted(_user_access_set(user))
+    state=_v72_journey_status(user)
+    activities=[]
+    try:
+        q=ArrowActivity.query.filter(ArrowActivity.technician_id==user.id).filter(ArrowActivity.status.notin_(['CANCELADA']))
+        for a in q.order_by(ArrowActivity.activity_date.desc()).limit(100).all():
+            activities.append({'id':a.id,'date':a.activity_date.isoformat() if a.activity_date else None,'title':a.title or '', 'status':a.status or '', 'start_time':a.start_time or '', 'end_time':a.end_time or '', 'location_id':a.location_id})
+    except Exception:
+        activities=[]
+    return jsonify({'ok':True,'api_version':'mobile-v1','server_time':datetime.utcnow().isoformat()+'Z','user':{'id':user.id,'name':user.name,'username':user.username,'company':user.company or '','role':user.role,'gps_required':bool(user.gps_required),'gps_history_enabled':bool(user.gps_history_enabled),'journey_control_enabled':bool(user.journey_control_enabled),'work_schedule_type':user.work_schedule_type or '','work_start_time':user.work_start_time or '','work_end_time':user.work_end_time or ''},'permissions':access,'journey':{'controlled':bool(state.get('controlled')),'allowed':bool(state.get('allowed')),'reason':state.get('reason'),'valid_until':state.get('valid_until').isoformat() if state.get('valid_until') else None},'activities':activities,'sync':{'accepted_event_types':['GPS_POSITION','HEARTBEAT'],'max_batch':100,'idempotency':'event_id','captured_at_required':True}})
+
+
+@app.post('/api/mobile/v1/sync/events')
+@login_required
+def v8232_mobile_sync_events():
+    """Recebe lote offline idempotente. Nesta fundação V82.32, GPS_POSITION já é aplicado ao histórico GPS."""
+    user=db.session.get(User,session.get('user_id'))
+    if not user or not user.active: return jsonify({'ok':False,'error':'Usuário inativo ou não encontrado.'}),403
+    data=request.get_json(silent=True) or {}; device_id=str(data.get('device_id') or '').strip()[:120]
+    events=data.get('events') or []
+    if not device_id: return jsonify({'ok':False,'error':'device_id obrigatório.'}),400
+    if not isinstance(events,list): return jsonify({'ok':False,'error':'events deve ser uma lista.'}),400
+    if len(events)>100: return jsonify({'ok':False,'error':'Máximo de 100 eventos por lote.'}),413
+    dev,err=_v8232_touch_device(user,device_id,data)
+    if err: db.session.rollback(); return jsonify({'ok':False,'error':err}),409
+    ids=[str(x.get('event_id') or '').strip()[:80] for x in events if isinstance(x,dict) and str(x.get('event_id') or '').strip()]
+    existing={x.event_id:x for x in MobileSyncEvent.query.filter(MobileSyncEvent.event_id.in_(ids)).all()} if ids else {}
+    results=[]; accepted=0; duplicates=0; rejected=0
+    now=datetime.utcnow()
+    for item in events:
+        if not isinstance(item,dict): rejected+=1; results.append({'ok':False,'error':'Evento inválido.'}); continue
+        eid=str(item.get('event_id') or '').strip()[:80]; etype=str(item.get('event_type') or '').strip().upper()[:60]; captured=_v8232_parse_mobile_datetime(item.get('captured_at')); payload=item.get('payload') if isinstance(item.get('payload'),dict) else {}
+        if not eid or not etype or not captured:
+            rejected+=1; results.append({'event_id':eid,'ok':False,'status':'REJEITADO','error':'event_id, event_type e captured_at são obrigatórios.'}); continue
+        if eid in existing:
+            old=existing[eid]
+            if old.user_id!=user.id or old.device_id!=device_id:
+                rejected+=1; results.append({'event_id':eid,'ok':False,'status':'CONFLITO','error':'event_id já utilizado por outro contexto.'}); continue
+            duplicates+=1; results.append({'event_id':eid,'ok':True,'status':'DUPLICADO','server_id':old.id}); continue
+        row=MobileSyncEvent(event_id=eid,device_id=device_id,user_id=user.id,event_type=etype,captured_at=captured,received_at=now,payload_json=json.dumps(payload,ensure_ascii=False),status='RECEBIDO')
+        db.session.add(row)
+        try:
+            if etype=='GPS_POSITION':
+                if not bool(user.gps_history_enabled):
+                    row.status='IGNORADO'; row.error_message='Histórico GPS desabilitado para o usuário.'
+                else:
+                    lat=float(payload.get('latitude')); lon=float(payload.get('longitude')); acc=float(payload.get('accuracy')) if payload.get('accuracy') is not None else None
+                    if not (-90<=lat<=90 and -180<=lon<=180): raise ValueError('Coordenadas fora do intervalo válido.')
+                    pos=TechnicianPosition(user_id=user.id,latitude=lat,longitude=lon,accuracy=acc,captured_at=captured,source='android_offline')
+                    db.session.add(pos); db.session.flush()
+                    try: _v7331_record_station_passage(user,lat,lon,acc,captured,previous_position=None)
+                    except Exception: app.logger.exception('V82.32: falha não bloqueante ao correlacionar estação do GPS mobile')
+                    row.status='APLICADO'; row.applied_at=datetime.utcnow()
+            elif etype=='HEARTBEAT':
+                row.status='APLICADO'; row.applied_at=datetime.utcnow()
+            else:
+                row.status='PENDENTE'; row.error_message='Tipo reservado para evolução mobile.'
+            db.session.flush(); existing[eid]=row; accepted+=1; results.append({'event_id':eid,'ok':True,'status':row.status,'server_id':row.id})
+        except Exception as exc:
+            row.status='REJEITADO'; row.error_message=str(exc)[:600]; rejected+=1; results.append({'event_id':eid,'ok':False,'status':'REJEITADO','error':str(exc)[:240]})
+    try: db.session.commit()
+    except IntegrityError:
+        db.session.rollback(); return jsonify({'ok':False,'error':'Conflito de sincronização. Reenvie o mesmo lote; event_id garante idempotência.'}),409
+    return jsonify({'ok':True,'device_id':device_id,'accepted':accepted,'duplicates':duplicates,'rejected':rejected,'results':results,'server_time':datetime.utcnow().isoformat()+'Z'})
+
+
+@app.get('/api/mobile/v1/sync/status')
+@login_required
+def v8232_mobile_sync_status():
+    user=db.session.get(User,session.get('user_id')); device_id=(request.args.get('device_id') or '').strip()
+    if not user: return jsonify({'ok':False,'error':'Usuário não encontrado.'}),404
+    q=MobileSyncEvent.query.filter_by(user_id=user.id)
+    if device_id: q=q.filter_by(device_id=device_id)
+    last=q.order_by(MobileSyncEvent.received_at.desc()).first()
+    pending=q.filter(MobileSyncEvent.status=='PENDENTE').count()
+    rejected=q.filter(MobileSyncEvent.status=='REJEITADO').count()
+    return jsonify({'ok':True,'device_id':device_id or None,'last_sync_at':last.received_at.isoformat()+'Z' if last else None,'last_event_id':last.event_id if last else None,'pending':pending,'rejected':rejected})
 
 
 @app.post("/api/tecnico/geofence-ping")
@@ -19263,6 +19407,17 @@ with app.app_context():
         except Exception: pass
         app.logger.exception('V82.1: falha na migração financeiro NULL/idempotência')
 
+    # V82.32 — fundação mobile/offline: dispositivos e envelope idempotente de sincronização.
+    try:
+        db.metadata.create_all(bind=db.engine,tables=[MobileDevice.__table__,MobileSyncEvent.__table__],checkfirst=True)
+        if not SchemaMigration.query.filter_by(version='V82.32-001').first():
+            db.session.add(SchemaMigration(version='V82.32-001',description='Fundação mobile: dispositivos, eventos offline idempotentes, bootstrap e sincronização GPS'))
+            db.session.commit()
+    except Exception:
+        try: db.session.rollback()
+        except Exception: pass
+        app.logger.exception('V82.32: falha na migração da fundação mobile/offline')
+
     # V72 — parâmetros individuais de histórico GPS e controle de jornada.
     try:
         insp=db.inspect(db.engine)
@@ -21336,16 +21491,35 @@ def v824_atm_mapping_export_pptx():
         if align is not None: p.alignment=align
         return box
     def val(v): return '—' if v is None else ('Sim' if v is True else 'Não' if v is False else str(v))
+    # V82.32 — cliente R2 exclusivo do exportador, com timeout curto e sem retries longos.
+    _ppt_r2=None
+    if _r2_available():
+        try:
+            import boto3
+            from botocore.config import Config
+            _ppt_r2=boto3.client('s3',endpoint_url=os.environ.get('R2_ENDPOINT_URL','').strip(),aws_access_key_id=os.environ.get('R2_ACCESS_KEY_ID','').strip(),aws_secret_access_key=os.environ.get('R2_SECRET_ACCESS_KEY','').strip(),region_name='auto',config=Config(connect_timeout=2,read_timeout=5,retries={'max_attempts':1,'mode':'standard'}))
+        except Exception:
+            app.logger.exception('V82.32: não foi possível preparar cliente R2 do exportador PPTX')
     def photo_bytes(ph):
         try:
-            if ph.storage_key.startswith('r2__') and _r2_available(): raw=r2_client().get_object(Bucket=os.environ['R2_BUCKET_NAME'],Key=ph.storage_key[4:])['Body'].read()
+            key=str(getattr(ph,'storage_key','') or '')
+            if key.startswith('r2__'):
+                if not _ppt_r2: return None
+                obj=_ppt_r2.get_object(Bucket=os.environ['R2_BUCKET_NAME'],Key=key[4:])
+                body=obj['Body']
+                try: raw=body.read()
+                finally:
+                    try: body.close()
+                    except Exception: pass
             else:
-                fp=UPLOAD_DIR/ph.storage_key
+                fp=UPLOAD_DIR/key
                 if not fp.exists(): return None
                 raw=fp.read_bytes()
             im=Image.open(io.BytesIO(raw)); im=ImageOps.exif_transpose(im).convert('RGB'); im.thumbnail((1280,960))
             out=io.BytesIO(); im.save(out,format='JPEG',quality=72,optimize=True); out.seek(0); return out
-        except Exception: return None
+        except Exception as exc:
+            app.logger.warning('V82.32: evidência %s indisponível no PPTX: %s',getattr(ph,'id',None),exc)
+            return None
     def add_picture_contain(sl,bio,x,y,w,h):
         # Mantém a proporção original da evidência; nunca força largura e altura simultaneamente.
         bio.seek(0); im=Image.open(bio); iw,ih=im.size; bio.seek(0)
@@ -21354,7 +21528,7 @@ def v824_atm_mapping_export_pptx():
         px=x+(w-pw)/2; py=y+(h-ph)/2
         return sl.shapes.add_picture(bio,Inches(px),Inches(py),width=Inches(pw),height=Inches(ph))
     # Capa / resumo
-    sl=prs.slides.add_slide(prs.slide_layouts[6]); tb(sl,.65,.55,12,.55,'Mapeamento ATM — Book de Evidências',28,True); tb(sl,.65,1.18,12,.35,f'V82.31 REV1 · Gerado em {datetime.now().strftime("%d/%m/%Y %H:%M")}',12,color=GRAY)
+    sl=prs.slides.add_slide(prs.slide_layouts[6]); tb(sl,.65,.55,12,.55,'Mapeamento ATM — Book de Evidências',28,True); tb(sl,.65,1.18,12,.35,f'V82.32 · Gerado em {datetime.now().strftime("%d/%m/%Y %H:%M")}',12,color=GRAY)
     vals=[('ATMs no recorte',total),('Concluídas',done),('Pendentes',pending),('Avanço',f'{round(done/total*100,1) if total else 0}%'),('Acesso interno',internal),('Acesso externo',external),('Com furos',holes),('Furos não tampados',unsealed),('Cofre traseiro: Sim',rear_yes),('Cofre traseiro: Não',rear_no),('UBA-PRO',uba),('I-VIZION',ivizion),('SPECTRAL',spectral)]
     for i,(lab,v) in enumerate(vals):
         x=.65+(i%5)*2.45; y=1.85+(i//5)*1.45; tb(sl,x,y,2.2,.3,lab,10,True); tb(sl,x,y+.34,2.2,.55,v,23,True,color=GREEN if lab=='Concluídas' else RED if lab in ('Pendentes','Furos não tampados') else NAVY)
