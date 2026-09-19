@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V82.35"
+APP_RELEASE = "V82.36"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -3205,6 +3205,7 @@ def v8232_mobile_sync_events():
             if old.user_id!=user.id or old.device_id!=device_id:
                 rejected+=1; results.append({'event_id':eid,'event_type':etype,'activity_id':payload.get('activity_id') if etype=='ARROW_ACTION' else None,'action':payload.get('action') if etype=='ARROW_ACTION' else None,'ok':False,'status':'CONFLITO','error':'event_id já utilizado por outro contexto.','retryable':False}); continue
             duplicates+=1; results.append({'event_id':eid,'ok':True,'status':'DUPLICADO','server_id':old.id}); continue
+        results_observation=None
         savepoint=db.session.begin_nested()
         row=MobileSyncEvent(event_id=eid,device_id=device_id,user_id=user.id,event_type=etype,captured_at=captured,received_at=now,payload_json=json.dumps(payload,ensure_ascii=False),status='RECEBIDO')
         db.session.add(row)
@@ -3242,13 +3243,15 @@ def v8232_mobile_sync_events():
                 if action=='CONCLUÍDA' and activity.status not in ('PLANEJADA','EM ANDAMENTO'):
                     raise ValueError('Status da atividade não permite conclusão.')
                 if action!='IMPEDIMENTO': activity.status=action
-                db.session.add(ArrowActivityExecution(activity_id=activity.id,user_id=user.id,action=action,observation=(f'[Android: {captured.isoformat()}Z] '+obs)[:4000],created_at=captured))
+                db.session.add(ArrowActivityExecution(activity_id=activity.id,user_id=user.id,action=action,observation=obs,created_at=captured))
                 row.status='APLICADO'; row.applied_at=datetime.utcnow()
+                db.session.flush()
+                results_observation=obs
             elif etype=='HEARTBEAT':
                 row.status='APLICADO'; row.applied_at=datetime.utcnow()
             else:
                 row.status='PENDENTE'; row.error_message='Tipo reservado para evolução mobile.'
-            db.session.flush(); savepoint.commit(); existing[eid]=row; accepted+=1; results.append({'event_id':eid,'ok':True,'status':row.status,'server_id':row.id})
+            db.session.flush(); savepoint.commit(); existing[eid]=row; accepted+=1; results.append({'event_id':eid,'ok':True,'status':row.status,'server_id':row.id,'observation_saved':results_observation if etype=='ARROW_ACTION' else None})
         except Exception as exc:
             savepoint.rollback(); rejected+=1; results.append({'event_id':eid,'event_type':etype,'activity_id':payload.get('activity_id') if etype=='ARROW_ACTION' else None,'action':payload.get('action') if etype=='ARROW_ACTION' else None,'ok':False,'status':'REJEITADO','error':str(exc)[:240],'retryable':False})
     try: db.session.commit()
