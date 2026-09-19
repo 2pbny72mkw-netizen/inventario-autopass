@@ -2750,21 +2750,51 @@ def index():
     return redirect(_v789_landing_for_user())
 
 
+def _authenticate_user_credentials(username, password):
+    """Autenticação única para Web e Mobile (V82.33 REV1).
+
+    Mantém username case-insensitive, senha case-sensitive e somente usuário ativo.
+    Centralizar aqui evita divergência entre /login e /api/mobile/v1/auth/login.
+    """
+    username = str(username or "").strip().lower()
+    password = str(password or "")
+    if not username or not password:
+        return None
+    try:
+        # Evita herdar uma transação abortada de uma operação anterior.
+        db.session.rollback()
+        user = User.query.filter(
+            func.lower(User.username) == username,
+            User.active.is_(True),
+        ).first()
+    except Exception:
+        db.session.rollback()
+        app.logger.exception("AUTH: falha ao consultar usuário; sessão SQL reiniciada")
+        user = User.query.filter(
+            func.lower(User.username) == username,
+            User.active.is_(True),
+        ).first()
+    if not user:
+        app.logger.warning("AUTH: usuário ativo não localizado para login normalizado=%r", username)
+        return None
+    try:
+        if not check_password_hash(user.password_hash, password):
+            app.logger.warning("AUTH: senha inválida para user_id=%s username=%r", user.id, user.username)
+            return None
+    except Exception:
+        app.logger.exception("AUTH: falha ao validar hash para user_id=%s", user.id)
+        return None
+    return user
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
         username = request.form.get("username", "").strip().lower()
         password = request.form.get("password", "")
-        # REV3 hotfix: autenticação não pode herdar uma transação SQL abortada por
-        # importadores/rotinas auxiliares. Não altera senha, jornada ou permissões.
-        try:
-            db.session.rollback()
-            user = User.query.filter(func.lower(User.username) == username, User.active.is_(True)).first()
-        except Exception:
-            db.session.rollback()
-            app.logger.exception("LOGIN: falha ao consultar usuário; sessão SQL reiniciada")
-            user = User.query.filter(func.lower(User.username) == username, User.active.is_(True)).first()
-        if user and check_password_hash(user.password_hash, password):
+        # V82.33 REV1: Web e Mobile compartilham exatamente a mesma autenticação.
+        user = _authenticate_user_credentials(username, password)
+        if user:
             js = _v72_journey_status(user)
             if not js.get("allowed"):
                 session.clear()
@@ -3060,13 +3090,10 @@ def v8233_mobile_login():
     device_id=str(data.get('device_id') or '').strip()[:120]
     if not username or not password or not device_id:
         return jsonify({'ok':False,'error':'username, password e device_id são obrigatórios.'}),400
-    try:
-        db.session.rollback()
-        user=User.query.filter(func.lower(User.username)==username,User.active.is_(True)).first()
-    except Exception:
-        db.session.rollback(); user=User.query.filter(func.lower(User.username)==username,User.active.is_(True)).first()
-    if not user or not check_password_hash(user.password_hash,password):
-        return jsonify({'ok':False,'error':'Usuário ou senha inválidos.'}),401
+    # V82.33 REV1: reutiliza a MESMA validação do login web.
+    user=_authenticate_user_credentials(username,password)
+    if not user:
+        return jsonify({'ok':False,'error':'Usuário ou senha inválidos.','code':'INVALID_CREDENTIALS'}),401
     journey=_v72_journey_status(user)
     if not journey.get('allowed'):
         return jsonify({'ok':False,'error':'Acesso fora da jornada requer autorização.','code':'OUTSIDE_JOURNEY','reason':journey.get('reason')}),403
