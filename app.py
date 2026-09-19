@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V82.34"
+APP_RELEASE = "V82.35"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -3175,7 +3175,7 @@ def v8232_mobile_bootstrap():
             activities.append({'id':a.id,'date':a.activity_date.isoformat() if a.activity_date else None,'title':a.title or '', 'status':a.status or '', 'start_time':a.start_time or '', 'end_time':a.end_time or '', 'location_id':a.location_id})
     except Exception:
         activities=[]
-    return jsonify({'ok':True,'api_version':'mobile-v1','server_time':datetime.utcnow().isoformat()+'Z','user':{'id':user.id,'name':user.name,'username':user.username,'company':user.company or '','role':user.role,'gps_required':bool(user.gps_required),'gps_history_enabled':bool(user.gps_history_enabled),'journey_control_enabled':bool(user.journey_control_enabled),'work_schedule_type':user.work_schedule_type or '','work_start_time':user.work_start_time or '','work_end_time':user.work_end_time or ''},'permissions':access,'journey':{'controlled':bool(state.get('controlled')),'allowed':bool(state.get('allowed')),'reason':state.get('reason'),'valid_until':state.get('valid_until').isoformat() if state.get('valid_until') else None},'activities':activities,'sync':{'accepted_event_types':['GPS_POSITION','HEARTBEAT'],'max_batch':100,'idempotency':'event_id','captured_at_required':True}})
+    return jsonify({'ok':True,'api_version':'mobile-v1','server_time':datetime.utcnow().isoformat()+'Z','user':{'id':user.id,'name':user.name,'username':user.username,'company':user.company or '','role':user.role,'gps_required':bool(user.gps_required),'gps_history_enabled':bool(user.gps_history_enabled),'journey_control_enabled':bool(user.journey_control_enabled),'work_schedule_type':user.work_schedule_type or '','work_start_time':user.work_start_time or '','work_end_time':user.work_end_time or ''},'permissions':access,'journey':{'controlled':bool(state.get('controlled')),'allowed':bool(state.get('allowed')),'reason':state.get('reason'),'valid_until':state.get('valid_until').isoformat() if state.get('valid_until') else None},'activities':activities,'sync':{'accepted_event_types':['GPS_POSITION','HEARTBEAT','ARROW_ACTION'],'max_batch':100,'idempotency':'event_id','captured_at_required':True}})
 
 
 @app.post('/api/mobile/v1/sync/events')
@@ -3205,6 +3205,7 @@ def v8232_mobile_sync_events():
             if old.user_id!=user.id or old.device_id!=device_id:
                 rejected+=1; results.append({'event_id':eid,'ok':False,'status':'CONFLITO','error':'event_id já utilizado por outro contexto.'}); continue
             duplicates+=1; results.append({'event_id':eid,'ok':True,'status':'DUPLICADO','server_id':old.id}); continue
+        savepoint=db.session.begin_nested()
         row=MobileSyncEvent(event_id=eid,device_id=device_id,user_id=user.id,event_type=etype,captured_at=captured,received_at=now,payload_json=json.dumps(payload,ensure_ascii=False),status='RECEBIDO')
         db.session.add(row)
         try:
@@ -3219,13 +3220,35 @@ def v8232_mobile_sync_events():
                     try: _v7331_record_station_passage(user,lat,lon,acc,captured,previous_position=None)
                     except Exception: app.logger.exception('V82.32: falha não bloqueante ao correlacionar estação do GPS mobile')
                     row.status='APLICADO'; row.applied_at=datetime.utcnow()
+            elif etype=='ARROW_ACTION':
+                aid=int(payload.get('activity_id') or 0)
+                action=str(payload.get('action') or '').strip().upper().replace('CONCLUIDA','CONCLUÍDA')
+                obs=str(payload.get('observation') or '').strip()[:4000]
+                if action not in ('EM ANDAMENTO','CONCLUÍDA','IMPEDIMENTO'):
+                    raise ValueError('Ação Arrow inválida.')
+                activity=db.session.get(ArrowActivity,aid)
+                if not activity or activity.deleted_at is not None or activity.technician_id!=user.id:
+                    raise ValueError('Atividade Arrow não atribuída ao usuário.')
+                if 'arrow.view' not in _user_access_set(user):
+                    raise ValueError('Permissão de consulta Arrow não concedida.')
+                if not _v72_journey_status(user).get('allowed'):
+                    raise ValueError('Jornada não autorizada no momento da sincronização; requer análise.')
+                if action=='IMPEDIMENTO' and not obs:
+                    raise ValueError('Informe o impedimento.')
+                if activity.status in ('CONCLUÍDA','CANCELADA'):
+                    raise ValueError('Atividade encerrada; conflito de sincronização.')
+                if action!='IMPEDIMENTO' and activity.status not in ('PLANEJADA','EM ANDAMENTO'):
+                    raise ValueError('Status da atividade não permite execução.')
+                if action!='IMPEDIMENTO': activity.status=action
+                db.session.add(ArrowActivityExecution(activity_id=activity.id,user_id=user.id,action=action,observation=(f'[Android: {captured.isoformat()}Z] '+obs)[:4000],created_at=captured))
+                row.status='APLICADO'; row.applied_at=datetime.utcnow()
             elif etype=='HEARTBEAT':
                 row.status='APLICADO'; row.applied_at=datetime.utcnow()
             else:
                 row.status='PENDENTE'; row.error_message='Tipo reservado para evolução mobile.'
-            db.session.flush(); existing[eid]=row; accepted+=1; results.append({'event_id':eid,'ok':True,'status':row.status,'server_id':row.id})
+            db.session.flush(); savepoint.commit(); existing[eid]=row; accepted+=1; results.append({'event_id':eid,'ok':True,'status':row.status,'server_id':row.id})
         except Exception as exc:
-            row.status='REJEITADO'; row.error_message=str(exc)[:600]; rejected+=1; results.append({'event_id':eid,'ok':False,'status':'REJEITADO','error':str(exc)[:240]})
+            savepoint.rollback(); rejected+=1; results.append({'event_id':eid,'ok':False,'status':'REJEITADO','error':str(exc)[:240]})
     try: db.session.commit()
     except IntegrityError:
         db.session.rollback(); return jsonify({'ok':False,'error':'Conflito de sincronização. Reenvie o mesmo lote; event_id garante idempotência.'}),409
