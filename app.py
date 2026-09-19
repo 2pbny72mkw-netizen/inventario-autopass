@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V82.32"
+APP_RELEASE = "V82.33"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -1389,6 +1389,19 @@ class MobileDevice(db.Model):
     active = db.Column(db.Boolean, nullable=False, default=True, index=True)
     first_seen_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     last_seen_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+
+class MobileSessionToken(db.Model):
+    """V82.33 — sessão própria do cliente Android; somente o hash do token é persistido."""
+    __tablename__ = "mobile_session_tokens"
+    id = db.Column(db.Integer, primary_key=True)
+    token_hash = db.Column(db.String(64), nullable=False, unique=True, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    device_id = db.Column(db.String(120), nullable=False, index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    last_used_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    expires_at = db.Column(db.DateTime, nullable=False, index=True)
+    revoked_at = db.Column(db.DateTime, index=True)
 
 
 class MobileSyncEvent(db.Model):
@@ -3001,6 +3014,90 @@ def v72_session_status_api():
     })
 
 
+def _v8233_token_hash(token):
+    return hashlib.sha256(str(token or '').encode('utf-8')).hexdigest()
+
+
+def _v8233_mobile_token_from_request():
+    auth=str(request.headers.get('Authorization') or '').strip()
+    if auth.lower().startswith('bearer '):
+        return auth[7:].strip()
+    return ''
+
+
+def _v8233_mobile_current_user():
+    # Compatibilidade: navegador/PWA continua aceitando a sessão web existente.
+    uid=session.get('user_id')
+    if uid:
+        user=db.session.get(User,uid)
+        return user if user and user.active else None
+    raw=_v8233_mobile_token_from_request()
+    if not raw: return None
+    row=MobileSessionToken.query.filter_by(token_hash=_v8233_token_hash(raw),revoked_at=None).first()
+    if not row or row.expires_at <= datetime.utcnow(): return None
+    user=db.session.get(User,row.user_id)
+    if not user or not user.active: return None
+    row.last_used_at=datetime.utcnow()
+    try: db.session.commit()
+    except Exception: db.session.rollback()
+    return user
+
+
+def mobile_auth_required(fn):
+    @wraps(fn)
+    def inner(*args,**kwargs):
+        user=_v8233_mobile_current_user()
+        if not user: return jsonify({'ok':False,'error':'Autenticação mobile necessária.'}),401
+        request.mobile_user=user
+        return fn(*args,**kwargs)
+    return inner
+
+
+@app.post('/api/mobile/v1/auth/login')
+def v8233_mobile_login():
+    data=request.get_json(silent=True) or {}
+    username=str(data.get('username') or '').strip().lower(); password=str(data.get('password') or '')
+    device_id=str(data.get('device_id') or '').strip()[:120]
+    if not username or not password or not device_id:
+        return jsonify({'ok':False,'error':'username, password e device_id são obrigatórios.'}),400
+    try:
+        db.session.rollback()
+        user=User.query.filter(func.lower(User.username)==username,User.active.is_(True)).first()
+    except Exception:
+        db.session.rollback(); user=User.query.filter(func.lower(User.username)==username,User.active.is_(True)).first()
+    if not user or not check_password_hash(user.password_hash,password):
+        return jsonify({'ok':False,'error':'Usuário ou senha inválidos.'}),401
+    journey=_v72_journey_status(user)
+    if not journey.get('allowed'):
+        return jsonify({'ok':False,'error':'Acesso fora da jornada requer autorização.','code':'OUTSIDE_JOURNEY','reason':journey.get('reason')}),403
+    dev,err=_v8232_touch_device(user,device_id,data)
+    if err: db.session.rollback(); return jsonify({'ok':False,'error':err}),409
+    # Revoga tokens anteriores do mesmo usuário/aparelho para limitar sessões órfãs.
+    now=datetime.utcnow()
+    MobileSessionToken.query.filter_by(user_id=user.id,device_id=device_id,revoked_at=None).update({'revoked_at':now})
+    raw=secrets.token_urlsafe(48); expires=now+timedelta(days=30)
+    db.session.add(MobileSessionToken(token_hash=_v8233_token_hash(raw),user_id=user.id,device_id=device_id,created_at=now,last_used_at=now,expires_at=expires))
+    db.session.commit()
+    return jsonify({'ok':True,'token':raw,'token_type':'Bearer','expires_at':expires.isoformat()+'Z','user':{'id':user.id,'name':user.name,'username':user.username},'api_version':'mobile-v1'})
+
+
+@app.post('/api/mobile/v1/auth/logout')
+@mobile_auth_required
+def v8233_mobile_logout():
+    raw=_v8233_mobile_token_from_request()
+    if raw:
+        row=MobileSessionToken.query.filter_by(token_hash=_v8233_token_hash(raw),revoked_at=None).first()
+        if row: row.revoked_at=datetime.utcnow(); db.session.commit()
+    return jsonify({'ok':True})
+
+
+@app.get('/api/mobile/v1/auth/me')
+@mobile_auth_required
+def v8233_mobile_me():
+    user=request.mobile_user
+    return jsonify({'ok':True,'user':{'id':user.id,'name':user.name,'username':user.username,'role':user.role,'company':user.company or ''},'permissions':sorted(_user_access_set(user)),'server_time':datetime.utcnow().isoformat()+'Z'})
+
+
 def _v8232_parse_mobile_datetime(value):
     """Converte timestamp ISO do aparelho para UTC naive, preservando o instante real da captura."""
     raw=str(value or '').strip()
@@ -3031,10 +3128,10 @@ def _v8232_touch_device(user, device_id, data=None):
 
 
 @app.get('/api/mobile/v1/bootstrap')
-@login_required
+@mobile_auth_required
 def v8232_mobile_bootstrap():
     """Pacote mínimo para o cliente Android operar/cachear antes de perder conectividade."""
-    user=db.session.get(User,session.get('user_id'))
+    user=request.mobile_user
     if not user or not user.active: return jsonify({'ok':False,'error':'Usuário inativo ou não encontrado.'}),403
     access=sorted(_user_access_set(user))
     state=_v72_journey_status(user)
@@ -3049,10 +3146,10 @@ def v8232_mobile_bootstrap():
 
 
 @app.post('/api/mobile/v1/sync/events')
-@login_required
+@mobile_auth_required
 def v8232_mobile_sync_events():
     """Recebe lote offline idempotente. Nesta fundação V82.32, GPS_POSITION já é aplicado ao histórico GPS."""
-    user=db.session.get(User,session.get('user_id'))
+    user=request.mobile_user
     if not user or not user.active: return jsonify({'ok':False,'error':'Usuário inativo ou não encontrado.'}),403
     data=request.get_json(silent=True) or {}; device_id=str(data.get('device_id') or '').strip()[:120]
     events=data.get('events') or []
@@ -3103,9 +3200,9 @@ def v8232_mobile_sync_events():
 
 
 @app.get('/api/mobile/v1/sync/status')
-@login_required
+@mobile_auth_required
 def v8232_mobile_sync_status():
-    user=db.session.get(User,session.get('user_id')); device_id=(request.args.get('device_id') or '').strip()
+    user=request.mobile_user; device_id=(request.args.get('device_id') or '').strip()
     if not user: return jsonify({'ok':False,'error':'Usuário não encontrado.'}),404
     q=MobileSyncEvent.query.filter_by(user_id=user.id)
     if device_id: q=q.filter_by(device_id=device_id)
@@ -19418,6 +19515,17 @@ with app.app_context():
         except Exception: pass
         app.logger.exception('V82.32: falha na migração da fundação mobile/offline')
 
+    # V82.33 — autenticação própria do Android, sem depender de cookie/sessão do navegador.
+    try:
+        db.metadata.create_all(bind=db.engine,tables=[MobileSessionToken.__table__],checkfirst=True)
+        if not SchemaMigration.query.filter_by(version='V82.33-001').first():
+            db.session.add(SchemaMigration(version='V82.33-001',description='Mobile Android A0.1: token Bearer por dispositivo e sessão mobile independente'))
+            db.session.commit()
+    except Exception:
+        try: db.session.rollback()
+        except Exception: pass
+        app.logger.exception('V82.33: falha na migração de autenticação mobile')
+
     # V72 — parâmetros individuais de histórico GPS e controle de jornada.
     try:
         insp=db.inspect(db.engine)
@@ -21528,7 +21636,7 @@ def v824_atm_mapping_export_pptx():
         px=x+(w-pw)/2; py=y+(h-ph)/2
         return sl.shapes.add_picture(bio,Inches(px),Inches(py),width=Inches(pw),height=Inches(ph))
     # Capa / resumo
-    sl=prs.slides.add_slide(prs.slide_layouts[6]); tb(sl,.65,.55,12,.55,'Mapeamento ATM — Book de Evidências',28,True); tb(sl,.65,1.18,12,.35,f'V82.32 · Gerado em {datetime.now().strftime("%d/%m/%Y %H:%M")}',12,color=GRAY)
+    sl=prs.slides.add_slide(prs.slide_layouts[6]); tb(sl,.65,.55,12,.55,'Mapeamento ATM — Book de Evidências',28,True); tb(sl,.65,1.18,12,.35,f'V82.33 · Gerado em {datetime.now().strftime("%d/%m/%Y %H:%M")}',12,color=GRAY)
     vals=[('ATMs no recorte',total),('Concluídas',done),('Pendentes',pending),('Avanço',f'{round(done/total*100,1) if total else 0}%'),('Acesso interno',internal),('Acesso externo',external),('Com furos',holes),('Furos não tampados',unsealed),('Cofre traseiro: Sim',rear_yes),('Cofre traseiro: Não',rear_no),('UBA-PRO',uba),('I-VIZION',ivizion),('SPECTRAL',spectral)]
     for i,(lab,v) in enumerate(vals):
         x=.65+(i%5)*2.45; y=1.85+(i//5)*1.45; tb(sl,x,y,2.2,.3,lab,10,True); tb(sl,x,y+.34,2.2,.55,v,23,True,color=GREEN if lab=='Concluídas' else RED if lab in ('Pendentes','Furos não tampados') else NAVY)
