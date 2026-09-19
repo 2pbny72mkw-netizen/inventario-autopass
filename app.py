@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V82.36"
+APP_RELEASE = "V83.0"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -3175,8 +3175,27 @@ def v8232_mobile_bootstrap():
             activities.append({'id':a.id,'date':a.activity_date.isoformat() if a.activity_date else None,'title':a.title or '', 'status':a.status or '', 'start_time':a.start_time or '', 'end_time':a.end_time or '', 'location_id':a.location_id,'can_execute':a.status in ('PLANEJADA','EM ANDAMENTO')})
     except Exception:
         activities=[]
-    return jsonify({'ok':True,'api_version':'mobile-v1-rev1','server_time':datetime.utcnow().isoformat()+'Z','user':{'id':user.id,'name':user.name,'username':user.username,'company':user.company or '','role':user.role,'gps_required':bool(user.gps_required),'gps_history_enabled':bool(user.gps_history_enabled),'journey_control_enabled':bool(user.journey_control_enabled),'work_schedule_type':user.work_schedule_type or '','work_start_time':user.work_start_time or '','work_end_time':user.work_end_time or ''},'permissions':access,'journey':{'controlled':bool(state.get('controlled')),'allowed':bool(state.get('allowed')),'reason':state.get('reason'),'valid_until':state.get('valid_until').isoformat() if state.get('valid_until') else None},'activities':activities,'sync':{'accepted_event_types':['GPS_POSITION','HEARTBEAT','ARROW_ACTION'],'max_batch':100,'idempotency':'event_id','captured_at_required':True}})
+    return jsonify({'ok':True,'api_version':'mobile-v1-rev1','server_time':datetime.utcnow().isoformat()+'Z','user':{'id':user.id,'name':user.name,'username':user.username,'company':user.company or '','role':user.role,'gps_required':bool(user.gps_required),'gps_history_enabled':bool(user.gps_history_enabled),'journey_control_enabled':bool(user.journey_control_enabled),'work_schedule_type':user.work_schedule_type or '','work_start_time':user.work_start_time or '','work_end_time':user.work_end_time or ''},'permissions':access,'journey':{'controlled':bool(state.get('controlled')),'allowed':bool(state.get('allowed')),'reason':state.get('reason'),'valid_until':state.get('valid_until').isoformat() if state.get('valid_until') else None},'activities':activities,'sync':{'accepted_event_types':['GPS_POSITION','HEARTBEAT','ARROW_ACTION','FIELD_ATTENDANCE'],'max_batch':100,'idempotency':'event_id','captured_at_required':True}})
 
+
+@app.get('/api/mobile/v1/field/atms')
+@mobile_auth_required
+def a10_field_atms():
+    """Read-only inventory; never create equipment from a mobile lookup."""
+    user=request.mobile_user
+    if not _user_access_set(user):
+        return jsonify({'ok':False,'error':'Sem permissões de consulta.'}),403
+    rows=AtmMapping.query.order_by(AtmMapping.station,AtmMapping.atm_id).limit(2000).all()
+    return jsonify({'ok':True,'atms':[{'atm_id':r.atm_id,'company':r.company,'line':r.line,'station':r.station} for r in rows]})
+
+@app.get('/api/mobile/v1/field/history')
+@mobile_auth_required
+def a10_field_history():
+    user=request.mobile_user
+    activities=ArrowActivity.query.filter_by(technician_id=user.id).filter(ArrowActivity.deleted_at.is_(None)).order_by(ArrowActivity.activity_date.desc()).limit(100).all()
+    ids=[a.id for a in activities]
+    executions=ArrowActivityExecution.query.filter(ArrowActivityExecution.activity_id.in_(ids),ArrowActivityExecution.user_id==user.id).order_by(ArrowActivityExecution.created_at.desc()).limit(300).all() if ids else []
+    return jsonify({'ok':True,'history':[{'activity_id':e.activity_id,'action':e.action,'observation':e.observation,'captured_at':e.created_at.isoformat()+'Z'} for e in executions]})
 
 @app.post('/api/mobile/v1/sync/events')
 @mobile_auth_required
@@ -3247,6 +3266,33 @@ def v8232_mobile_sync_events():
                 row.status='APLICADO'; row.applied_at=datetime.utcnow()
                 db.session.flush()
                 results_observation=obs
+            elif etype=='FIELD_ATTENDANCE':
+                aid=int(payload.get('activity_id') or 0)
+                atm_id=str(payload.get('atm_id') or '').strip()[:60]
+                note=str(payload.get('observation') or '').strip()[:4000]
+                activity=db.session.get(ArrowActivity,aid)
+                if not activity or activity.deleted_at is not None or activity.technician_id!=user.id:
+                    raise ValueError('Atividade não atribuída ao usuário.')
+                if 'arrow.view' not in _user_access_set(user):
+                    raise ValueError('Permissão Arrow não concedida.')
+                if not _v72_journey_status(user).get('allowed'):
+                    raise ValueError('Jornada não autorizada; requer análise.')
+                if not note: raise ValueError('Informe o atendimento.')
+                if atm_id and not AtmMapping.query.filter_by(atm_id=atm_id).first():
+                    raise ValueError('ATM não encontrada na base cadastrada.')
+                evidence=payload.get('evidence') or []
+                if not isinstance(evidence,list) or len(evidence)>3:
+                    raise ValueError('Limite de três evidências por atendimento.')
+                import base64
+                for item_photo in evidence:
+                    if not isinstance(item_photo,dict) or item_photo.get('mime') not in ('image/jpeg','image/png'):
+                        raise ValueError('Formato de evidência inválido.')
+                    raw=base64.b64decode(item_photo.get('data') or '',validate=True)
+                    if len(raw)>500000: raise ValueError('Evidência excede 500 KB.')
+                # The existing event envelope preserves evidence and metadata without schema changes.
+                # It is NOT a public media URL; access remains restricted to authorized server operators.
+                db.session.add(ArrowActivityExecution(activity_id=aid,user_id=user.id,action='ATENDIMENTO',observation=('ATM '+atm_id+' — ' if atm_id else '')+note,created_at=captured))
+                row.status='APLICADO'; row.applied_at=datetime.utcnow()
             elif etype=='HEARTBEAT':
                 row.status='APLICADO'; row.applied_at=datetime.utcnow()
             else:

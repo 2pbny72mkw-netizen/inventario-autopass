@@ -1,0 +1,7 @@
+{
+  "version": "V83.0",
+  "android": "A1.0",
+  "base": "V82.36 + Backend A1.0",
+  "scope": "Operação de Campo — backend compatível",
+  "status": "pré-homologação; Android A1.0 ainda sem captura de fotos e sem compilação APK validada"
+}
