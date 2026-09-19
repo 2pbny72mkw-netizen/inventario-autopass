@@ -3111,7 +3111,7 @@ def v8233_mobile_login():
     raw=secrets.token_urlsafe(48); expires=now+timedelta(days=30)
     db.session.add(MobileSessionToken(token_hash=_v8233_token_hash(raw),user_id=user.id,device_id=device_id,created_at=now,last_used_at=now,expires_at=expires))
     db.session.commit()
-    return jsonify({'ok':True,'token':raw,'token_type':'Bearer','expires_at':expires.isoformat()+'Z','user':{'id':user.id,'name':user.name,'username':user.username},'api_version':'mobile-v1'})
+    return jsonify({'ok':True,'token':raw,'token_type':'Bearer','expires_at':expires.isoformat()+'Z','user':{'id':user.id,'name':user.name,'username':user.username},'api_version':'mobile-v1-rev1'})
 
 
 @app.post('/api/mobile/v1/auth/logout')
@@ -3170,12 +3170,12 @@ def v8232_mobile_bootstrap():
     state=_v72_journey_status(user)
     activities=[]
     try:
-        q=ArrowActivity.query.filter(ArrowActivity.technician_id==user.id).filter(ArrowActivity.status.notin_(['CANCELADA']))
+        q=ArrowActivity.query.filter(ArrowActivity.technician_id==user.id, ArrowActivity.deleted_at.is_(None)).filter(ArrowActivity.status.notin_(['CANCELADA']))
         for a in q.order_by(ArrowActivity.activity_date.desc()).limit(100).all():
-            activities.append({'id':a.id,'date':a.activity_date.isoformat() if a.activity_date else None,'title':a.title or '', 'status':a.status or '', 'start_time':a.start_time or '', 'end_time':a.end_time or '', 'location_id':a.location_id})
+            activities.append({'id':a.id,'date':a.activity_date.isoformat() if a.activity_date else None,'title':a.title or '', 'status':a.status or '', 'start_time':a.start_time or '', 'end_time':a.end_time or '', 'location_id':a.location_id,'can_execute':a.status in ('PLANEJADA','EM ANDAMENTO')})
     except Exception:
         activities=[]
-    return jsonify({'ok':True,'api_version':'mobile-v1','server_time':datetime.utcnow().isoformat()+'Z','user':{'id':user.id,'name':user.name,'username':user.username,'company':user.company or '','role':user.role,'gps_required':bool(user.gps_required),'gps_history_enabled':bool(user.gps_history_enabled),'journey_control_enabled':bool(user.journey_control_enabled),'work_schedule_type':user.work_schedule_type or '','work_start_time':user.work_start_time or '','work_end_time':user.work_end_time or ''},'permissions':access,'journey':{'controlled':bool(state.get('controlled')),'allowed':bool(state.get('allowed')),'reason':state.get('reason'),'valid_until':state.get('valid_until').isoformat() if state.get('valid_until') else None},'activities':activities,'sync':{'accepted_event_types':['GPS_POSITION','HEARTBEAT','ARROW_ACTION'],'max_batch':100,'idempotency':'event_id','captured_at_required':True}})
+    return jsonify({'ok':True,'api_version':'mobile-v1-rev1','server_time':datetime.utcnow().isoformat()+'Z','user':{'id':user.id,'name':user.name,'username':user.username,'company':user.company or '','role':user.role,'gps_required':bool(user.gps_required),'gps_history_enabled':bool(user.gps_history_enabled),'journey_control_enabled':bool(user.journey_control_enabled),'work_schedule_type':user.work_schedule_type or '','work_start_time':user.work_start_time or '','work_end_time':user.work_end_time or ''},'permissions':access,'journey':{'controlled':bool(state.get('controlled')),'allowed':bool(state.get('allowed')),'reason':state.get('reason'),'valid_until':state.get('valid_until').isoformat() if state.get('valid_until') else None},'activities':activities,'sync':{'accepted_event_types':['GPS_POSITION','HEARTBEAT','ARROW_ACTION'],'max_batch':100,'idempotency':'event_id','captured_at_required':True}})
 
 
 @app.post('/api/mobile/v1/sync/events')
@@ -3237,8 +3237,10 @@ def v8232_mobile_sync_events():
                     raise ValueError('Informe o impedimento.')
                 if activity.status in ('CONCLUÍDA','CANCELADA'):
                     raise ValueError('Atividade encerrada; conflito de sincronização.')
-                if action!='IMPEDIMENTO' and activity.status not in ('PLANEJADA','EM ANDAMENTO'):
-                    raise ValueError('Status da atividade não permite execução.')
+                if action=='EM ANDAMENTO' and activity.status!='PLANEJADA':
+                    raise ValueError('Atividade já iniciada ou status incompatível.')
+                if action=='CONCLUÍDA' and activity.status not in ('PLANEJADA','EM ANDAMENTO'):
+                    raise ValueError('Status da atividade não permite conclusão.')
                 if action!='IMPEDIMENTO': activity.status=action
                 db.session.add(ArrowActivityExecution(activity_id=activity.id,user_id=user.id,action=action,observation=(f'[Android: {captured.isoformat()}Z] '+obs)[:4000],created_at=captured))
                 row.status='APLICADO'; row.applied_at=datetime.utcnow()
