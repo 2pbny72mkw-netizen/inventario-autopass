@@ -88,8 +88,14 @@
           <select name="work_schedule_type"><option value="12x36">12x36</option><option value="5x2">5x2</option></select>
         </div>
         <div class="fieldExtended scheduleField">
-          <label>Horário</label>
-          <input name="work_shift" value="05:00-17:00" placeholder="05:00-17:00">
+          <label>Horário inicial</label>
+          <input name="work_start_time" type="time" value="05:00" step="60">
+          <small>Selecione hora e minuto.</small>
+        </div>
+        <div class="fieldExtended scheduleField">
+          <label>Horário final</label>
+          <input name="work_end_time" type="time" value="17:00" step="60">
+          <small>Se for menor que o inicial, o término será considerado no dia seguinte.</small>
         </div>
         <div class="fieldExtended scheduleField anchorField">
           <label>Data de referência da escala</label>
@@ -315,8 +321,13 @@
                     <select name="work_schedule_type"><option value="12x36" {% if (u.work_schedule_type or '12x36') == '12x36' %}selected{% endif %}>12x36</option><option value="5x2" {% if u.work_schedule_type == '5x2' %}selected{% endif %}>5x2</option></select>
                   </div>
                   <div class="editExtended scheduleField">
-                    <label>Horário</label>
-                    <input name="work_shift" value="{{ u.work_shift or '05:00-17:00' }}">
+                    <label>Horário inicial</label>
+                    <input name="work_start_time" type="time" step="60" value="{{ u.work_start_time or (u.work_shift.split('-')[0] if u.work_shift and '-' in u.work_shift else '05:00') }}">
+                  </div>
+                  <div class="editExtended scheduleField">
+                    <label>Horário final</label>
+                    <input name="work_end_time" type="time" step="60" value="{{ u.work_end_time or (u.work_shift.split('-')[-1] if u.work_shift and '-' in u.work_shift else '17:00') }}">
+                    <small>Jornadas que atravessam a meia-noite são aceitas automaticamente.</small>
                   </div>
                   <div class="editExtended scheduleField anchorField">
                     <label>Data referência</label>
