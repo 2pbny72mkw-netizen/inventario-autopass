@@ -21816,6 +21816,10 @@ def v824_atm_mapping_export_pptx():
     from pptx.enum.text import PP_ALIGN
     from PIL import Image, ImageOps
     rows=_v824_mapping_export_rows(); total=len(rows); done=sum(x['status']=='CONCLUIDO' for x in rows); pending=total-done
+    export_atm = (request.args.get('atm') or '').strip()
+    if export_atm:
+        rows = [r for r in rows if str(r.get('atm_id') or '') == export_atm]
+        total = len(rows); done = sum(x['status']=='CONCLUIDO' for x in rows); pending = total-done
     internal=sum(x['physical_access']=='INTERNO' for x in rows); external=sum(x['physical_access']=='EXTERNO' for x in rows); holes=sum(x['has_holes'] is True for x in rows); unsealed=sum(x['has_holes'] is True and x['holes_sealed'] is False for x in rows)
     rear_yes=sum(x.get('rear_safe_door') is True for x in rows); rear_no=sum(x.get('rear_safe_door') is False for x in rows); uba=sum(x.get('bill_acceptor')=='UBA-PRO' for x in rows); ivizion=sum(x.get('bill_acceptor')=='I-VIZION' for x in rows); spectral=sum(x.get('bill_acceptor')=='SPECTRAL' for x in rows)
     prs=Presentation(); prs.slide_width=Inches(13.333); prs.slide_height=Inches(7.5)
@@ -21847,19 +21851,36 @@ def v824_atm_mapping_export_pptx():
                               max_pool_connections=4),
             )
         except Exception:
-            app.logger.exception('V84.3: R2 client unavailable for PPTX')
+            app.logger.exception('V84.3 REV1: R2 client unavailable for PPTX')
 
     def photo_bytes(ph):
         key = str(getattr(ph, 'storage_key', '') or '')
         atm_ref = getattr(ph, 'mapping_id', None)
         if not key:
-            app.logger.warning('V84.3: missing photo key mapping=%s photo=%s',
+            app.logger.warning('V84.3 REV1: missing photo key mapping=%s photo=%s',
                                atm_ref, getattr(ph, 'id', None))
             return None
         if key in _ppt_photo_cache:
             cached = _ppt_photo_cache[key]
             return io.BytesIO(cached) if cached else None
         started = time.monotonic()
+        # V84.3 REV1: reuse a smaller derivative on R2. The original is never overwritten.
+        import hashlib
+        derivative_key = 'pptx-optimized/v1/' + hashlib.sha256(key.encode('utf-8')).hexdigest() + '.jpg'
+        if key.startswith('r2__') and _ppt_r2:
+            try:
+                cached_obj = _ppt_r2.get_object(Bucket=os.environ['R2_BUCKET_NAME'], Key=derivative_key)
+                cached_body = cached_obj['Body']
+                try:
+                    cached_bytes = cached_body.read(2 * 1024 * 1024 + 1)
+                finally:
+                    cached_body.close()
+                if cached_bytes and len(cached_bytes) <= 2 * 1024 * 1024:
+                    _ppt_photo_cache[key] = cached_bytes
+                    return io.BytesIO(cached_bytes)
+            except Exception:
+                # Missing or temporarily unavailable derivative: attempt the original.
+                pass
         try:
             if key.startswith('r2__'):
                 if not _ppt_r2:
@@ -21881,15 +21902,27 @@ def v824_atm_mapping_export_pptx():
             if len(raw) > 20 * 1024 * 1024:
                 raise ValueError('photo exceeds 20 MiB')
             im = Image.open(io.BytesIO(raw))
-            im = ImageOps.exif_transpose(im).convert('RGB')
-            im.thumbnail((1280, 960))
+            # Draft at reduced decoder resolution for large JPEGs, avoiding a full-size decode.
+            im.draft('RGB', (1280, 960))
+            im = ImageOps.exif_transpose(im)
+            im.thumbnail((1280, 960), reducing_gap=3.0)
+            if im.mode != 'RGB':
+                im = im.convert('RGB')
             out = io.BytesIO()
-            im.save(out, format='JPEG', quality=72, optimize=True)
+            im.save(out, format='JPEG', quality=72, optimize=False)
             data = out.getvalue()
+            if key.startswith('r2__') and _ppt_r2:
+                try:
+                    _ppt_r2.put_object(Bucket=os.environ['R2_BUCKET_NAME'], Key=derivative_key,
+                                       Body=data, ContentType='image/jpeg',
+                                       Metadata={'source-sha256': hashlib.sha256(key.encode('utf-8')).hexdigest()})
+                except Exception as cache_exc:
+                    app.logger.warning('V84.3 REV1: derivative cache write failed mapping=%s photo=%s reason=%s',
+                                       atm_ref, getattr(ph, 'id', None), cache_exc)
             _ppt_photo_cache[key] = data
             return io.BytesIO(data)
         except Exception as exc:
-            app.logger.warning('V84.3: PPTX photo failed mapping=%s photo=%s elapsed=%.2fs reason=%s',
+            app.logger.warning('V84.3 REV1: PPTX photo failed mapping=%s photo=%s elapsed=%.2fs reason=%s',
                                atm_ref, getattr(ph, 'id', None),
                                time.monotonic() - started, exc)
             _ppt_photo_cache[key] = None
@@ -21946,12 +21979,12 @@ def v824_atm_mapping_export_pptx():
                             _ppt_photo_stats['included'] += 1
                         except Exception:
                             _ppt_photo_stats['failed'] += 1
-                            app.logger.exception('V84.3: failed to embed photo mapping=%s photo=%s', r['mapping_id'], ph.id)
+                            app.logger.exception('V84.3 REV1: failed to embed photo mapping=%s photo=%s', r['mapping_id'], ph.id)
                             tb(sl,pos[0],pos[1],pos[2],.3,'Falha ao inserir evidência.',9,color=RED)
                     else:
                         _ppt_photo_stats['failed'] += 1
                         tb(sl,pos[0],pos[1],pos[2],.3,'Evidência indisponível; consultar log da exportação.',9,color=RED)
-    app.logger.info('V84.3: PPTX evidence summary included=%s failed=%s', _ppt_photo_stats['included'], _ppt_photo_stats['failed'])
+    app.logger.info('V84.3 REV1: PPTX evidence summary included=%s failed=%s', _ppt_photo_stats['included'], _ppt_photo_stats['failed'])
     bio=io.BytesIO(); prs.save(bio); bio.seek(0)
     return send_file(bio,as_attachment=True,download_name=f"mapeamento_atm_book_{datetime.now().strftime('%Y%m%d_%H%M')}.pptx",mimetype='application/vnd.openxmlformats-officedocument.presentationml.presentation')
 
