@@ -16092,6 +16092,33 @@ def _generate_panorama_pptx(company,line,status,search,output_path,progress_cb=N
     from pptx.enum.shapes import MSO_SHAPE
     from PIL import Image
     rows=[x for x in _panorama_payload() if (not company or x.get("company")==company) and (not line or x.get("line")==line) and (not status or x.get("status")==status) and (not search or search in (x.get("location") or "").lower())]
+    # REV3: do not silently create a report with missing R2 evidence.
+    import hashlib
+    from botocore.exceptions import ClientError
+    if _r2_available():
+        import boto3
+        from botocore.config import Config
+        check_r2 = boto3.client('s3', endpoint_url=os.environ.get('R2_ENDPOINT_URL', '').strip(),
+            aws_access_key_id=os.environ.get('R2_ACCESS_KEY_ID', '').strip(),
+            aws_secret_access_key=os.environ.get('R2_SECRET_ACCESS_KEY', '').strip(),
+            region_name='auto', config=Config(connect_timeout=2, read_timeout=3,
+            retries={'total_max_attempts': 1}))
+        ids = [r['mapping_id'] for r in rows if r.get('mapping_id')]
+        pending_photos = []
+        if ids:
+            for ph in AtmMappingPhoto.query.filter(AtmMappingPhoto.mapping_id.in_(ids)).all():
+                key = str(ph.storage_key or '')
+                if not key.startswith('r2__'):
+                    pending_photos.append(ph.id)
+                    continue
+                derived = 'pptx-optimized/v1/' + hashlib.sha256(key.encode('utf-8')).hexdigest() + '.jpg'
+                try:
+                    check_r2.head_object(Bucket=os.environ['R2_BUCKET_NAME'], Key=derived)
+                except Exception:
+                    pending_photos.append(ph.id)
+        if pending_photos:
+            return jsonify({'ok': False, 'error': 'Há evidências sem cópia otimizada. Execute Otimizar todas as fotos antes de exportar.',
+                'pending_count': len(pending_photos), 'sample_photo_ids': pending_photos[:20]}), 409
     prs=Presentation(); prs.slide_width=Inches(13.333); prs.slide_height=Inches(7.5)
     navy=(18,52,93); teal=(51,190,190); dark=(25,38,58); light=(241,246,250)
     def textbox(slide,x,y,w,h,text,size=18,bold=False,rgb=dark,align=PP_ALIGN.LEFT):
@@ -21809,6 +21836,15 @@ def v824_atm_mapping_export_xlsx():
 # V84.3 REV2 — explicit, bounded pre-optimization of ATM evidence photos.
 # The endpoint processes a small batch per request; it does not launch a
 # background thread inside a Gunicorn worker or modify the original evidence.
+@app.get('/api/mapeamento-atm/photos/optimize-status')
+@login_required
+def v843_rev3_optimize_status():
+    if not (_has_access('field.atm_mapping') or _has_access('field.atm_mapping_manage')): abort(403)
+    ids = [r['mapping_id'] for r in _v824_mapping_export_rows() if r.get('mapping_id')]
+    total = AtmMappingPhoto.query.filter(AtmMappingPhoto.mapping_id.in_(ids)).count() if ids else 0
+    return jsonify({'ok': True, 'total': total, 'batch_size': 1,
+        'note': 'A contagem de fotos prontas é informada durante o processamento; originais preservadas.'})
+
 @app.post('/api/mapeamento-atm/photos/optimize-batch')
 @login_required
 def v843_rev2_optimize_mapping_photos():
@@ -21823,7 +21859,7 @@ def v843_rev2_optimize_mapping_photos():
         return jsonify({'ok': False, 'error': 'R2 indisponível'}), 503
     try:
         cursor = max(0, int(request.args.get('after_id', '0')))
-        limit = min(3, max(1, int(request.args.get('limit', '2'))))
+        limit = min(1, max(1, int(request.args.get('limit', '1'))))
     except ValueError:
         return jsonify({'ok': False, 'error': 'Parâmetros inválidos'}), 400
     import boto3
@@ -21964,52 +22000,10 @@ def v824_atm_mapping_export_pptx():
             except Exception:
                 # Missing or temporarily unavailable derivative: attempt the original.
                 pass
-        try:
-            if key.startswith('r2__'):
-                if not _ppt_r2:
-                    raise RuntimeError('R2 unavailable')
-                obj = _ppt_r2.get_object(
-                    Bucket=os.environ['R2_BUCKET_NAME'], Key=key[4:])
-                body = obj['Body']
-                try:
-                    raw = body.read(20 * 1024 * 1024 + 1)
-                finally:
-                    body.close()
-            else:
-                fp = UPLOAD_DIR / key
-                if not fp.is_file():
-                    raise FileNotFoundError(key)
-                if fp.stat().st_size > 20 * 1024 * 1024:
-                    raise ValueError('photo exceeds 20 MiB')
-                raw = fp.read_bytes()
-            if len(raw) > 20 * 1024 * 1024:
-                raise ValueError('photo exceeds 20 MiB')
-            im = Image.open(io.BytesIO(raw))
-            # Draft at reduced decoder resolution for large JPEGs, avoiding a full-size decode.
-            im.draft('RGB', (1280, 960))
-            im = ImageOps.exif_transpose(im)
-            im.thumbnail((1280, 960), reducing_gap=3.0)
-            if im.mode != 'RGB':
-                im = im.convert('RGB')
-            out = io.BytesIO()
-            im.save(out, format='JPEG', quality=72, optimize=False)
-            data = out.getvalue()
-            if key.startswith('r2__') and _ppt_r2:
-                try:
-                    _ppt_r2.put_object(Bucket=os.environ['R2_BUCKET_NAME'], Key=derivative_key,
-                                       Body=data, ContentType='image/jpeg',
-                                       Metadata={'source-sha256': hashlib.sha256(key.encode('utf-8')).hexdigest()})
-                except Exception as cache_exc:
-                    app.logger.warning('V84.3 REV1: derivative cache write failed mapping=%s photo=%s reason=%s',
-                                       atm_ref, getattr(ph, 'id', None), cache_exc)
-            _ppt_photo_cache[key] = data
-            return io.BytesIO(data)
-        except Exception as exc:
-            app.logger.warning('V84.3 REV1: PPTX photo failed mapping=%s photo=%s elapsed=%.2fs reason=%s',
-                               atm_ref, getattr(ph, 'id', None),
-                               time.monotonic() - started, exc)
-            _ppt_photo_cache[key] = None
-            return None
+        app.logger.warning('V84.3 REV3: derivative missing mapping=%s photo=%s key=%s',
+                           atm_ref, getattr(ph, 'id', None), derivative_key)
+        _ppt_photo_cache[key] = None
+        return None
     def add_picture_contain(sl,bio,x,y,w,h):
         # Mantém a proporção original da evidência; nunca força largura e altura simultaneamente.
         bio.seek(0); im=Image.open(bio); iw,ih=im.size; bio.seek(0)
