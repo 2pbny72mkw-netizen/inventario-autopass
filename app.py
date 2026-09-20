@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V84.1-dev"
+APP_RELEASE = "V83.2"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -21827,42 +21827,79 @@ def v824_atm_mapping_export_pptx():
         if align is not None: p.alignment=align
         return box
     def val(v): return '—' if v is None else ('Sim' if v is True else 'Não' if v is False else str(v))
-    # V82.32 — cliente R2 exclusivo do exportador, com timeout curto e sem retries longos.
-    _ppt_r2=None
+    # V84.2: bounded best-effort evidence loading. The book must not wait
+    # indefinitely for unavailable R2 objects. Original evidence is untouched.
+    import time
+    _ppt_started = time.monotonic()
+    _ppt_photo_budget_s = 18.0
+    _ppt_photo_max = 16
+    _ppt_photo_attempts = 0
+    _ppt_photo_cache = {}
+    _ppt_r2 = None
     if _r2_available():
         try:
             import boto3
             from botocore.config import Config
-            _ppt_r2=boto3.client('s3',endpoint_url=os.environ.get('R2_ENDPOINT_URL','').strip(),aws_access_key_id=os.environ.get('R2_ACCESS_KEY_ID','').strip(),aws_secret_access_key=os.environ.get('R2_SECRET_ACCESS_KEY','').strip(),region_name='auto',config=Config(connect_timeout=2,read_timeout=5,retries={'max_attempts':1,'mode':'standard'}))
+            _ppt_r2 = boto3.client(
+                's3', endpoint_url=os.environ.get('R2_ENDPOINT_URL', '').strip(),
+                aws_access_key_id=os.environ.get('R2_ACCESS_KEY_ID', '').strip(),
+                aws_secret_access_key=os.environ.get('R2_SECRET_ACCESS_KEY', '').strip(),
+                region_name='auto',
+                config=Config(connect_timeout=1, read_timeout=2,
+                              retries={'total_max_attempts': 1},
+                              max_pool_connections=2),
+            )
         except Exception:
-            app.logger.exception('V82.32: não foi possível preparar cliente R2 do exportador PPTX')
-    # V84.1: bounded evidence reads; never download unlimited image bodies.
-    _ppt_max_photo_bytes = 4 * 1024 * 1024
+            app.logger.exception('V84.2: R2 client unavailable for PPTX')
+
     def photo_bytes(ph):
+        nonlocal _ppt_photo_attempts
+        key = str(getattr(ph, 'storage_key', '') or '')
+        atm_ref = getattr(ph, 'mapping_id', None)
+        if not key:
+            return None
+        if key in _ppt_photo_cache:
+            cached = _ppt_photo_cache[key]
+            return io.BytesIO(cached) if cached else None
+        if (_ppt_photo_attempts >= _ppt_photo_max or
+                time.monotonic() - _ppt_started >= _ppt_photo_budget_s):
+            return None
+        _ppt_photo_attempts += 1
+        started = time.monotonic()
         try:
-            key=str(getattr(ph,'storage_key','') or '')
             if key.startswith('r2__'):
-                if not _ppt_r2: return None
-                obj=_ppt_r2.get_object(Bucket=os.environ['R2_BUCKET_NAME'],Key=key[4:])
-                if int(obj.get('ContentLength') or 0) > _ppt_max_photo_bytes:
-                    app.logger.warning('V84.1 PPTX: foto %s excede 4 MiB; omitida', getattr(ph,'id',None))
-                    obj['Body'].close()
+                if not _ppt_r2:
                     return None
-                body=obj['Body']
-                try: raw=body.read(_ppt_max_photo_bytes + 1)
+                obj = _ppt_r2.get_object(
+                    Bucket=os.environ['R2_BUCKET_NAME'], Key=key[4:])
+                body = obj['Body']
+                try:
+                    # Read at most 4 MiB + 1 byte; never buffer arbitrary originals.
+                    raw = body.read(4 * 1024 * 1024 + 1)
                 finally:
-                    try: body.close()
-                    except Exception: pass
+                    body.close()
             else:
-                fp=UPLOAD_DIR/key
-                if not fp.exists(): return None
-                if fp.stat().st_size > _ppt_max_photo_bytes: return None
-                with fp.open('rb') as handle: raw=handle.read(_ppt_max_photo_bytes + 1)
-            if len(raw) > _ppt_max_photo_bytes: return None
-            im=Image.open(io.BytesIO(raw)); im=ImageOps.exif_transpose(im).convert('RGB'); im.thumbnail((1280,960))
-            out=io.BytesIO(); im.save(out,format='JPEG',quality=72,optimize=True); out.seek(0); return out
+                fp = UPLOAD_DIR / key
+                if not fp.is_file() or fp.stat().st_size > 4 * 1024 * 1024:
+                    return None
+                raw = fp.read_bytes()
+            if len(raw) > 4 * 1024 * 1024:
+                app.logger.warning('V84.2: oversized PPTX photo mapping=%s photo=%s',
+                                   atm_ref, getattr(ph, 'id', None))
+                return None
+            im = Image.open(io.BytesIO(raw))
+            im = ImageOps.exif_transpose(im).convert('RGB')
+            im.thumbnail((1024, 768))
+            out = io.BytesIO()
+            im.save(out, format='JPEG', quality=68)
+            data = out.getvalue()
+            _ppt_photo_cache[key] = data
+            return io.BytesIO(data)
         except Exception as exc:
-            app.logger.warning('V84.1: evidência %s indisponível no PPTX: %s',getattr(ph,'id',None),exc)
+            app.logger.warning('V84.2: PPTX photo unavailable mapping=%s photo=%s elapsed=%.2fs: %s',
+                               atm_ref, getattr(ph, 'id', None),
+                               time.monotonic() - started, exc)
+            _ppt_photo_cache[key] = None
             return None
     def add_picture_contain(sl,bio,x,y,w,h):
         # Mantém a proporção original da evidência; nunca força largura e altura simultaneamente.
@@ -21913,7 +21950,7 @@ def v824_atm_mapping_export_pptx():
                     if bio:
                         try: add_picture_contain(sl,bio,pos[0],pos[1],pos[2],pos[3])
                         except Exception: tb(sl,pos[0],pos[1],pos[2],.3,'Falha ao inserir evidência.',9,color=RED)
-                    else: tb(sl,pos[0],pos[1],pos[2],.3,'Evidência indisponível.',9,color=RED)
+                    else: tb(sl,pos[0],pos[1],pos[2],.3,'Evidência não incluída (limite de exportação ou indisponível).',9,color=RED)
     bio=io.BytesIO(); prs.save(bio); bio.seek(0)
     return send_file(bio,as_attachment=True,download_name=f"mapeamento_atm_book_{datetime.now().strftime('%Y%m%d_%H%M')}.pptx",mimetype='application/vnd.openxmlformats-officedocument.presentationml.presentation')
 
