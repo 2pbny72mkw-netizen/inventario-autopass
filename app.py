@@ -3178,6 +3178,38 @@ def v8232_mobile_bootstrap():
     return jsonify({'ok':True,'api_version':'mobile-v1-rev1','server_time':datetime.utcnow().isoformat()+'Z','user':{'id':user.id,'name':user.name,'username':user.username,'company':user.company or '','role':user.role,'gps_required':bool(user.gps_required),'gps_history_enabled':bool(user.gps_history_enabled),'journey_control_enabled':bool(user.journey_control_enabled),'work_schedule_type':user.work_schedule_type or '','work_start_time':user.work_start_time or '','work_end_time':user.work_end_time or ''},'permissions':access,'journey':{'controlled':bool(state.get('controlled')),'allowed':bool(state.get('allowed')),'reason':state.get('reason'),'valid_until':state.get('valid_until').isoformat() if state.get('valid_until') else None},'activities':activities,'sync':{'accepted_event_types':['GPS_POSITION','HEARTBEAT','ARROW_ACTION','FIELD_ATTENDANCE'],'max_batch':100,'idempotency':'event_id','captured_at_required':True}})
 
 
+# V83.2: catalogo mobile derivado das permissoes efetivas de RH > Usuarios.
+# O catalogo nao concede acesso: cada operacao continua sujeita a validacao no servidor.
+_MOBILE_FIELD_CATALOG = (
+    ('field.dashboard', 'Dashboard Field'),
+    ('field.panorama', 'Visão Panorâmica'),
+    ('field.atm_mapping', 'Mapeamento ATM'),
+    ('field.chip_recarga', 'Troca de Chips – Recarga'),
+    ('field.firmware_pos_cptm', 'Atualização de Firmware POS – CPTM'),
+    ('field.preventive', 'Solicitação Preventiva ATM'),
+    ('field.bobbins', 'Atividade Bobinas'),
+    ('field.inventory', 'Inventário / Lançamento'),
+    ('field.calls', 'Chamados'),
+    ('field.equipment', 'Equipamentos'),
+    ('field.evidence', 'Evidências'),
+    ('field.bobbins_dashboard', 'Visualizar Dashboard Bobinas'),
+    ('field.stock_manage', 'Alterar estoque de bobinas'),
+    ('field.atm_mapping_manage', 'Gerenciar Mapeamento ATM'),
+)
+
+@app.get('/api/mobile/v1/field/catalog')
+@mobile_auth_required
+def v832_mobile_field_catalog():
+    user = request.mobile_user
+    if not user or not user.active:
+        return jsonify({'ok': False, 'error': 'Usuário inativo.'}), 403
+    access = _user_access_set(user)
+    return jsonify({'ok': True, 'items': [
+        {'permission': key, 'label': label, 'mobile_status': 'integration_pending'}
+        for key, label in _MOBILE_FIELD_CATALOG if key in access
+    ]})
+
+
 @app.get('/api/mobile/v1/field/atms')
 @mobile_auth_required
 def a10_field_atms():
