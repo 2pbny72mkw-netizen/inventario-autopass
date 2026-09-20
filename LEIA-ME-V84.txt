@@ -1,0 +1,1 @@
+V84 ENXUTA: copiar templates/base.html e static/mobile_v84.css sobre o projeto Web atual. Apenas apresentação responsiva compartilhada; não altera app.py, banco, endpoints nem permissões. Testar em homologação antes de produção.
