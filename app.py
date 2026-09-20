@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V83.2"
+APP_RELEASE = "V84.1-dev"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -21836,25 +21836,33 @@ def v824_atm_mapping_export_pptx():
             _ppt_r2=boto3.client('s3',endpoint_url=os.environ.get('R2_ENDPOINT_URL','').strip(),aws_access_key_id=os.environ.get('R2_ACCESS_KEY_ID','').strip(),aws_secret_access_key=os.environ.get('R2_SECRET_ACCESS_KEY','').strip(),region_name='auto',config=Config(connect_timeout=2,read_timeout=5,retries={'max_attempts':1,'mode':'standard'}))
         except Exception:
             app.logger.exception('V82.32: não foi possível preparar cliente R2 do exportador PPTX')
+    # V84.1: bounded evidence reads; never download unlimited image bodies.
+    _ppt_max_photo_bytes = 4 * 1024 * 1024
     def photo_bytes(ph):
         try:
             key=str(getattr(ph,'storage_key','') or '')
             if key.startswith('r2__'):
                 if not _ppt_r2: return None
                 obj=_ppt_r2.get_object(Bucket=os.environ['R2_BUCKET_NAME'],Key=key[4:])
+                if int(obj.get('ContentLength') or 0) > _ppt_max_photo_bytes:
+                    app.logger.warning('V84.1 PPTX: foto %s excede 4 MiB; omitida', getattr(ph,'id',None))
+                    obj['Body'].close()
+                    return None
                 body=obj['Body']
-                try: raw=body.read()
+                try: raw=body.read(_ppt_max_photo_bytes + 1)
                 finally:
                     try: body.close()
                     except Exception: pass
             else:
                 fp=UPLOAD_DIR/key
                 if not fp.exists(): return None
-                raw=fp.read_bytes()
+                if fp.stat().st_size > _ppt_max_photo_bytes: return None
+                with fp.open('rb') as handle: raw=handle.read(_ppt_max_photo_bytes + 1)
+            if len(raw) > _ppt_max_photo_bytes: return None
             im=Image.open(io.BytesIO(raw)); im=ImageOps.exif_transpose(im).convert('RGB'); im.thumbnail((1280,960))
             out=io.BytesIO(); im.save(out,format='JPEG',quality=72,optimize=True); out.seek(0); return out
         except Exception as exc:
-            app.logger.warning('V82.32: evidência %s indisponível no PPTX: %s',getattr(ph,'id',None),exc)
+            app.logger.warning('V84.1: evidência %s indisponível no PPTX: %s',getattr(ph,'id',None),exc)
             return None
     def add_picture_contain(sl,bio,x,y,w,h):
         # Mantém a proporção original da evidência; nunca força largura e altura simultaneamente.
