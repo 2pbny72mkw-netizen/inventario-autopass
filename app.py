@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V84.2"
+APP_RELEASE = "V84.3"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -21827,14 +21827,11 @@ def v824_atm_mapping_export_pptx():
         if align is not None: p.alignment=align
         return box
     def val(v): return '—' if v is None else ('Sim' if v is True else 'Não' if v is False else str(v))
-    # V84.2: bounded best-effort evidence loading. The book must not wait
-    # indefinitely for unavailable R2 objects. Original evidence is untouched.
+    # V84.3: no global image count/budget; each evidence has independent
+    # network and size limits. Original evidence remains unchanged.
     import time
-    _ppt_started = time.monotonic()
-    _ppt_photo_budget_s = 18.0
-    _ppt_photo_max = 16
-    _ppt_photo_attempts = 0
     _ppt_photo_cache = {}
+    _ppt_photo_stats = {'included': 0, 'failed': 0}
     _ppt_r2 = None
     if _r2_available():
         try:
@@ -21845,58 +21842,54 @@ def v824_atm_mapping_export_pptx():
                 aws_access_key_id=os.environ.get('R2_ACCESS_KEY_ID', '').strip(),
                 aws_secret_access_key=os.environ.get('R2_SECRET_ACCESS_KEY', '').strip(),
                 region_name='auto',
-                config=Config(connect_timeout=1, read_timeout=2,
+                config=Config(connect_timeout=2, read_timeout=3,
                               retries={'total_max_attempts': 1},
-                              max_pool_connections=2),
+                              max_pool_connections=4),
             )
         except Exception:
-            app.logger.exception('V84.2: R2 client unavailable for PPTX')
+            app.logger.exception('V84.3: R2 client unavailable for PPTX')
 
     def photo_bytes(ph):
-        nonlocal _ppt_photo_attempts
         key = str(getattr(ph, 'storage_key', '') or '')
         atm_ref = getattr(ph, 'mapping_id', None)
         if not key:
+            app.logger.warning('V84.3: missing photo key mapping=%s photo=%s',
+                               atm_ref, getattr(ph, 'id', None))
             return None
         if key in _ppt_photo_cache:
             cached = _ppt_photo_cache[key]
             return io.BytesIO(cached) if cached else None
-        if (_ppt_photo_attempts >= _ppt_photo_max or
-                time.monotonic() - _ppt_started >= _ppt_photo_budget_s):
-            return None
-        _ppt_photo_attempts += 1
         started = time.monotonic()
         try:
             if key.startswith('r2__'):
                 if not _ppt_r2:
-                    return None
+                    raise RuntimeError('R2 unavailable')
                 obj = _ppt_r2.get_object(
                     Bucket=os.environ['R2_BUCKET_NAME'], Key=key[4:])
                 body = obj['Body']
                 try:
-                    # Read at most 4 MiB + 1 byte; never buffer arbitrary originals.
-                    raw = body.read(4 * 1024 * 1024 + 1)
+                    raw = body.read(20 * 1024 * 1024 + 1)
                 finally:
                     body.close()
             else:
                 fp = UPLOAD_DIR / key
-                if not fp.is_file() or fp.stat().st_size > 4 * 1024 * 1024:
-                    return None
+                if not fp.is_file():
+                    raise FileNotFoundError(key)
+                if fp.stat().st_size > 20 * 1024 * 1024:
+                    raise ValueError('photo exceeds 20 MiB')
                 raw = fp.read_bytes()
-            if len(raw) > 4 * 1024 * 1024:
-                app.logger.warning('V84.2: oversized PPTX photo mapping=%s photo=%s',
-                                   atm_ref, getattr(ph, 'id', None))
-                return None
+            if len(raw) > 20 * 1024 * 1024:
+                raise ValueError('photo exceeds 20 MiB')
             im = Image.open(io.BytesIO(raw))
             im = ImageOps.exif_transpose(im).convert('RGB')
-            im.thumbnail((1024, 768))
+            im.thumbnail((1280, 960))
             out = io.BytesIO()
-            im.save(out, format='JPEG', quality=68)
+            im.save(out, format='JPEG', quality=72, optimize=True)
             data = out.getvalue()
             _ppt_photo_cache[key] = data
             return io.BytesIO(data)
         except Exception as exc:
-            app.logger.warning('V84.2: PPTX photo unavailable mapping=%s photo=%s elapsed=%.2fs: %s',
+            app.logger.warning('V84.3: PPTX photo failed mapping=%s photo=%s elapsed=%.2fs reason=%s',
                                atm_ref, getattr(ph, 'id', None),
                                time.monotonic() - started, exc)
             _ppt_photo_cache[key] = None
@@ -21948,9 +21941,17 @@ def v824_atm_mapping_export_pptx():
                 for ph,pos in zip(chunk,positions):
                     bio=photo_bytes(ph)
                     if bio:
-                        try: add_picture_contain(sl,bio,pos[0],pos[1],pos[2],pos[3])
-                        except Exception: tb(sl,pos[0],pos[1],pos[2],.3,'Falha ao inserir evidência.',9,color=RED)
-                    else: tb(sl,pos[0],pos[1],pos[2],.3,'Evidência não incluída (limite de exportação ou indisponível).',9,color=RED)
+                        try:
+                            add_picture_contain(sl,bio,pos[0],pos[1],pos[2],pos[3])
+                            _ppt_photo_stats['included'] += 1
+                        except Exception:
+                            _ppt_photo_stats['failed'] += 1
+                            app.logger.exception('V84.3: failed to embed photo mapping=%s photo=%s', r['mapping_id'], ph.id)
+                            tb(sl,pos[0],pos[1],pos[2],.3,'Falha ao inserir evidência.',9,color=RED)
+                    else:
+                        _ppt_photo_stats['failed'] += 1
+                        tb(sl,pos[0],pos[1],pos[2],.3,'Evidência indisponível; consultar log da exportação.',9,color=RED)
+    app.logger.info('V84.3: PPTX evidence summary included=%s failed=%s', _ppt_photo_stats['included'], _ppt_photo_stats['failed'])
     bio=io.BytesIO(); prs.save(bio); bio.seek(0)
     return send_file(bio,as_attachment=True,download_name=f"mapeamento_atm_book_{datetime.now().strftime('%Y%m%d_%H%M')}.pptx",mimetype='application/vnd.openxmlformats-officedocument.presentationml.presentation')
 
