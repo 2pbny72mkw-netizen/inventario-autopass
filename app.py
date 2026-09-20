@@ -3210,6 +3210,95 @@ def v832_mobile_field_catalog():
     ]})
 
 
+# Android A2.0: acesso Bobinas por token, sem utilizar cookie de sessão Web.
+@app.get('/api/mobile/v1/field/bobinas/options')
+@mobile_auth_required
+def a20_bobinas_options():
+    if 'field.bobbins' not in _user_access_set(request.mobile_user):
+        return jsonify({'ok':False,'error':'Sem permissão para Bobinas.'}),403
+    atms=_v772_master_atm_map()
+    return jsonify({'ok':True,'atms':[{'company':k[0],'line':k[1],'station':k[2],
+        'ids':sorted(v,key=lambda z:(len(str(z)),str(z)))} for k,v in sorted(atms.items())]})
+
+@app.get('/api/mobile/v1/field/bobinas/atm-status')
+@mobile_auth_required
+def a20_bobinas_status():
+    if 'field.bobbins' not in _user_access_set(request.mobile_user):
+        return jsonify({'ok':False,'error':'Sem permissão para Bobinas.'}),403
+    company=(request.args.get('company') or '').strip()
+    line=(request.args.get('line') or '').strip()
+    station=(request.args.get('station') or '').strip()
+    atm=(request.args.get('atm') or '').strip()
+    row=AtmBobbinReading.query.filter_by(company=company,line=line,station=station,atm_id=atm).order_by(AtmBobbinReading.created_at.desc()).first()
+    stock=_v771_stock(company,line,station,atm)
+    return jsonify({'ok':True,'last':_v771_bobbin_json(row) if row else None,
+                    'reserve_qty':int(stock.reserve_qty or 0) if stock else 0})
+
+@app.post('/api/mobile/v1/field/bobinas/registro')
+@mobile_auth_required
+def a20_bobinas_register():
+    user=request.mobile_user
+    if 'field.bobbins' not in _user_access_set(user):
+        return jsonify({'ok':False,'error':'Sem permissão para Bobinas.'}),403
+    if _activity_request_too_large():
+        return jsonify({'ok':False,'error':'Foto excede o limite permitido.'}),413
+    company=(request.form.get('company') or '').strip()
+    line=(request.form.get('line') or '').strip()
+    station=(request.form.get('station') or '').strip()
+    atm=(request.form.get('atm_id') or '').strip()
+    try: pct=int(request.form.get('percent_available'))
+    except (ValueError,TypeError):return jsonify({'ok':False,'error':'Informe o percentual.'}),400
+    if pct not in range(0,101,10):return jsonify({'ok':False,'error':'Percentual deve ser de 0 a 100 em passos de 10.'}),400
+    if not line or not station or not atm:return jsonify({'ok':False,'error':'Linha, estação e ATM obrigatórios.'}),400
+    official=_v773_official_index();master=official['by_id'].get(atm)
+    if official['rows']:
+        if not master:return jsonify({'ok':False,'error':'ATM fora da base oficial.'}),409
+        if bool(master.get('stock')):return jsonify({'ok':False,'error':'ATM classificada como estoque.'}),409
+        company=str(master.get('company') or company).strip()
+        line=str(master.get('line') or line).strip()
+        station=str(master.get('locality') or station).strip()
+    photo=request.files.get('photo')
+    if not photo or not photo.filename:return jsonify({'ok':False,'error':'Foto obrigatória.'}),400
+    replaced=str(request.form.get('bobbin_replaced') or '').lower() in ('1','true','yes','sim','on')
+    if replaced and pct!=100:return jsonify({'ok':False,'error':'Após troca, registre 100%.'}),400
+    try:reserve_qty=int(request.form.get('reserve_qty') or 0)
+    except (ValueError,TypeError):return jsonify({'ok':False,'error':'Quantidade de reservas inválida.'}),400
+    if reserve_qty<0:return jsonify({'ok':False,'error':'Reserva não pode ser negativa.'}),400
+    stock=_v771_stock(company,line,station,atm,True)
+    old_reserve=int(stock.reserve_qty or 0)
+    stock.reserve_qty=reserve_qty;stock.updated_by=user.id;stock.updated_at=datetime.utcnow()
+    db.session.add(stock)
+    lat=lon=acc=None;gps_at=None
+    try:
+        if request.form.get('latitude') not in (None,''):lat=float(request.form.get('latitude'))
+        if request.form.get('longitude') not in (None,''):lon=float(request.form.get('longitude'))
+        if request.form.get('gps_accuracy') not in (None,''):acc=float(request.form.get('gps_accuracy'))
+        raw_at=(request.form.get('gps_captured_at') or '').strip()
+        if raw_at:gps_at=datetime.fromisoformat(raw_at.replace('Z','+00:00')).replace(tzinfo=None)
+    except (ValueError,TypeError):lat=lon=acc=None;gps_at=None
+    if lat is None or lon is None:
+        pos=TechnicianPosition.query.filter_by(user_id=user.id).order_by(TechnicianPosition.captured_at.desc()).first()
+        if pos:lat=pos.latitude;lon=pos.longitude;acc=pos.accuracy;gps_at=pos.captured_at
+    distance=None;loc=_v772_location_match(company,line,station)
+    if loc and loc.reference_latitude is not None and loc.reference_longitude is not None and lat is not None and lon is not None:
+        distance=_v772_haversine_m(lat,lon,loc.reference_latitude,loc.reference_longitude)
+    row=AtmBobbinReading(company=company,line=line,station=station,atm_id=atm,
+        percent_available=pct,event_type='TROCA' if replaced else 'LEITURA',
+        bobbin_replaced=replaced,replacement_origin=None,reserve_delta=reserve_qty-old_reserve,
+        reserve_after=reserve_qty,notes=(request.form.get('notes') or '').strip(),
+        technician_id=user.id,latitude=lat,longitude=lon,gps_accuracy=acc,
+        gps_captured_at=gps_at,gps_distance_m=distance)
+    db.session.add(row);db.session.flush()
+    ext=Path(secure_filename(photo.filename)).suffix.lower() or '.jpg'
+    stored_name=f"bobina_{row.id}_{uuid.uuid4().hex[:10]}{ext}"
+    try:stored=_store_uploaded_file(photo,'bobinas',stored_name,photo.mimetype,max_mb=12)
+    except Exception as exc:db.session.rollback();return jsonify({'ok':False,'error':str(exc)}),400
+    db.session.add(AtmBobbinPhoto(reading_id=row.id,storage_key=stored,
+        original_name=secure_filename(photo.filename),content_type=photo.mimetype or 'image/jpeg',
+        expires_at=datetime.utcnow()+timedelta(days=_v771_photo_retention_days())))
+    db.session.commit();_v771_cleanup_photos()
+    return jsonify({'ok':True,'id':row.id,'reserve_after':reserve_qty})
+
 @app.get('/api/mobile/v1/field/atms')
 @mobile_auth_required
 def a10_field_atms():
