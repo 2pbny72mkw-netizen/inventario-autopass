@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V84.3"
+APP_RELEASE = "V84.3 REV2"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -21806,6 +21806,89 @@ def v824_atm_mapping_export_xlsx():
     bio=io.BytesIO(); wb.save(bio); bio.seek(0)
     return send_file(bio,as_attachment=True,download_name=f"mapeamento_atm_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
+# V84.3 REV2 — explicit, bounded pre-optimization of ATM evidence photos.
+# The endpoint processes a small batch per request; it does not launch a
+# background thread inside a Gunicorn worker or modify the original evidence.
+@app.post('/api/mapeamento-atm/photos/optimize-batch')
+@login_required
+def v843_rev2_optimize_mapping_photos():
+    if not (_has_access('field.atm_mapping') or _has_access('field.atm_mapping_manage')):
+        abort(403)
+    import hashlib
+    import time
+    from PIL import Image, ImageOps, UnidentifiedImageError
+    from botocore.config import Config
+    from botocore.exceptions import ClientError
+    if not _r2_available():
+        return jsonify({'ok': False, 'error': 'R2 indisponível'}), 503
+    try:
+        cursor = max(0, int(request.args.get('after_id', '0')))
+        limit = min(3, max(1, int(request.args.get('limit', '2'))))
+    except ValueError:
+        return jsonify({'ok': False, 'error': 'Parâmetros inválidos'}), 400
+    import boto3
+    r2 = boto3.client('s3', endpoint_url=os.environ.get('R2_ENDPOINT_URL', '').strip(),
+        aws_access_key_id=os.environ.get('R2_ACCESS_KEY_ID', '').strip(),
+        aws_secret_access_key=os.environ.get('R2_SECRET_ACCESS_KEY', '').strip(),
+        region_name='auto', config=Config(connect_timeout=2, read_timeout=3,
+        retries={'total_max_attempts': 1}, max_pool_connections=2))
+    bucket = os.environ['R2_BUCKET_NAME']
+    mapping_ids = [r['mapping_id'] for r in _v824_mapping_export_rows() if r.get('mapping_id')]
+    if not mapping_ids:
+        return jsonify({'ok': True, 'processed': 0, 'next_after_id': cursor, 'done': True, 'results': []})
+    photos = (AtmMappingPhoto.query.filter(AtmMappingPhoto.mapping_id.in_(mapping_ids),
+        AtmMappingPhoto.id > cursor).order_by(AtmMappingPhoto.id).limit(limit + 1).all())
+    batch = photos[:limit]
+    results = []
+    for ph in batch:
+        start = time.monotonic()
+        key = str(ph.storage_key or '')
+        item = {'photo_id': ph.id, 'mapping_id': ph.mapping_id}
+        if not key.startswith('r2__'):
+            item['status'] = 'not_r2'; results.append(item); continue
+        derived = 'pptx-optimized/v1/' + hashlib.sha256(key.encode('utf-8')).hexdigest() + '.jpg'
+        try:
+            try:
+                r2.head_object(Bucket=bucket, Key=derived)
+                item['status'] = 'cached'
+            except ClientError as exc:
+                code = str(exc.response.get('Error', {}).get('Code', ''))
+                if code not in ('404', 'NoSuchKey', 'NotFound'):
+                    raise
+                obj = r2.get_object(Bucket=bucket, Key=key[4:])
+                body = obj['Body']
+                try:
+                    raw = body.read(20 * 1024 * 1024 + 1)
+                finally:
+                    body.close()
+                if len(raw) > 20 * 1024 * 1024:
+                    raise ValueError('original exceeds 20 MiB')
+                with Image.open(io.BytesIO(raw)) as im:
+                    if im.width * im.height > 80_000_000:
+                        raise ValueError('image exceeds 80 megapixels')
+                    im.draft('RGB', (1280, 960))
+                    im = ImageOps.exif_transpose(im)
+                    im.thumbnail((1280, 960), reducing_gap=3.0)
+                    if im.mode != 'RGB':
+                        im = im.convert('RGB')
+                    out = io.BytesIO()
+                    im.save(out, 'JPEG', quality=72, optimize=False)
+                r2.put_object(Bucket=bucket, Key=derived, Body=out.getvalue(),
+                    ContentType='image/jpeg')
+                item['status'] = 'optimized'
+                item['optimized_bytes'] = out.tell()
+        except Exception as exc:
+            item['status'] = 'failed'
+            item['error'] = type(exc).__name__
+            app.logger.warning('V84.3 REV2 optimize failed mapping=%s photo=%s type=%s',
+                ph.mapping_id, ph.id, type(exc).__name__)
+        item['seconds'] = round(time.monotonic() - start, 2)
+        results.append(item)
+    return jsonify({'ok': True, 'processed': len(batch),
+        'next_after_id': batch[-1].id if batch else cursor,
+        'done': len(photos) <= limit,
+        'results': results})
+
 @app.get('/api/mapeamento-atm/export.pptx')
 @login_required
 def v824_atm_mapping_export_pptx():
@@ -21984,7 +22067,7 @@ def v824_atm_mapping_export_pptx():
                     else:
                         _ppt_photo_stats['failed'] += 1
                         tb(sl,pos[0],pos[1],pos[2],.3,'Evidência indisponível; consultar log da exportação.',9,color=RED)
-    app.logger.info('V84.3 REV1: PPTX evidence summary included=%s failed=%s', _ppt_photo_stats['included'], _ppt_photo_stats['failed'])
+    app.logger.info('V84.3 REV2: PPTX evidence summary included=%s failed=%s', _ppt_photo_stats['included'], _ppt_photo_stats['failed'])
     bio=io.BytesIO(); prs.save(bio); bio.seek(0)
     return send_file(bio,as_attachment=True,download_name=f"mapeamento_atm_book_{datetime.now().strftime('%Y%m%d_%H%M')}.pptx",mimetype='application/vnd.openxmlformats-officedocument.presentationml.presentation')
 
