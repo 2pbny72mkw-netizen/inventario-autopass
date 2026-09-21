@@ -21939,6 +21939,20 @@ def v824_atm_mapping_export_pptx():
     if export_atm:
         rows = [r for r in rows if str(r.get('atm_id') or '') == export_atm]
         total = len(rows); done = sum(x['status']=='CONCLUIDO' for x in rows); pending = total-done
+    # REV4: bounded export. No request may build the entire 255-ATM book.
+    try:
+        batch = int(request.args.get('batch', '1'))
+        batch_size = int(request.args.get('batch_size', '20'))
+    except (TypeError, ValueError):
+        return jsonify(error='Lote inválido.'), 400
+    if batch < 1 or batch_size < 1 or batch_size > 20:
+        return jsonify(error='Use lote >= 1 e até 20 ATMs por arquivo.'), 400
+    all_count = len(rows)
+    batch_count = max(1, (all_count + batch_size - 1) // batch_size)
+    if batch > batch_count:
+        return jsonify(error='Lote inexistente.', total_atms=all_count, total_batches=batch_count), 404
+    rows = rows[(batch-1)*batch_size:batch*batch_size]
+    total = len(rows); done = sum(x['status']=='CONCLUIDO' for x in rows); pending = total-done
     internal=sum(x['physical_access']=='INTERNO' for x in rows); external=sum(x['physical_access']=='EXTERNO' for x in rows); holes=sum(x['has_holes'] is True for x in rows); unsealed=sum(x['has_holes'] is True and x['holes_sealed'] is False for x in rows)
     rear_yes=sum(x.get('rear_safe_door') is True for x in rows); rear_no=sum(x.get('rear_safe_door') is False for x in rows); uba=sum(x.get('bill_acceptor')=='UBA-PRO' for x in rows); ivizion=sum(x.get('bill_acceptor')=='I-VIZION' for x in rows); spectral=sum(x.get('bill_acceptor')=='SPECTRAL' for x in rows)
     prs=Presentation(); prs.slide_width=Inches(13.333); prs.slide_height=Inches(7.5)
@@ -21953,7 +21967,7 @@ def v824_atm_mapping_export_pptx():
     # V84.3: no global image count/budget; each evidence has independent
     # network and size limits. Original evidence remains unchanged.
     import time
-    _ppt_photo_cache = {}
+    # REV4: no cross-slide bytes cache: pptx itself already holds embedded images.
     _ppt_photo_stats = {'included': 0, 'failed': 0}
     _ppt_r2 = None
     if _r2_available():
@@ -21979,9 +21993,6 @@ def v824_atm_mapping_export_pptx():
             app.logger.warning('V84.3 REV1: missing photo key mapping=%s photo=%s',
                                atm_ref, getattr(ph, 'id', None))
             return None
-        if key in _ppt_photo_cache:
-            cached = _ppt_photo_cache[key]
-            return io.BytesIO(cached) if cached else None
         started = time.monotonic()
         # V84.3 REV1: reuse a smaller derivative on R2. The original is never overwritten.
         import hashlib
@@ -21995,14 +22006,12 @@ def v824_atm_mapping_export_pptx():
                 finally:
                     cached_body.close()
                 if cached_bytes and len(cached_bytes) <= 2 * 1024 * 1024:
-                    _ppt_photo_cache[key] = cached_bytes
                     return io.BytesIO(cached_bytes)
             except Exception:
                 # Missing or temporarily unavailable derivative: attempt the original.
                 pass
         app.logger.warning('V84.3 REV3: derivative missing mapping=%s photo=%s key=%s',
                            atm_ref, getattr(ph, 'id', None), derivative_key)
-        _ppt_photo_cache[key] = None
         return None
     def add_picture_contain(sl,bio,x,y,w,h):
         # Mantém a proporção original da evidência; nunca força largura e altura simultaneamente.
@@ -22012,7 +22021,8 @@ def v824_atm_mapping_export_pptx():
         px=x+(w-pw)/2; py=y+(h-ph)/2
         return sl.shapes.add_picture(bio,Inches(px),Inches(py),width=Inches(pw),height=Inches(ph))
     # Capa / resumo
-    sl=prs.slides.add_slide(prs.slide_layouts[6]); tb(sl,.65,.55,12,.55,'Mapeamento ATM — Book de Evidências',28,True); tb(sl,.65,1.18,12,.35,f'{APP_RELEASE} · Gerado em {datetime.now().strftime("%d/%m/%Y %H:%M")}',12,color=GRAY)
+    app.logger.info('V84.3 REV4: export batch=%s/%s ATMs=%s', batch, batch_count, total)
+    sl=prs.slides.add_slide(prs.slide_layouts[6]); tb(sl,.65,.55,12,.55,'Mapeamento ATM — Book de Evidências',28,True); tb(sl,.65,1.18,12,.35,f'{APP_RELEASE} · Lote {batch}/{batch_count} · Gerado em {datetime.now().strftime("%d/%m/%Y %H:%M")}',12,color=GRAY)
     vals=[('ATMs no recorte',total),('Concluídas',done),('Pendentes',pending),('Avanço',f'{round(done/total*100,1) if total else 0}%'),('Acesso interno',internal),('Acesso externo',external),('Com furos',holes),('Furos não tampados',unsealed),('Cofre traseiro: Sim',rear_yes),('Cofre traseiro: Não',rear_no),('UBA-PRO',uba),('I-VIZION',ivizion),('SPECTRAL',spectral)]
     for i,(lab,v) in enumerate(vals):
         x=.65+(i%5)*2.45; y=1.85+(i//5)*1.45; tb(sl,x,y,2.2,.3,lab,10,True); tb(sl,x,y+.34,2.2,.55,v,23,True,color=GREEN if lab=='Concluídas' else RED if lab in ('Pendentes','Furos não tampados') else NAVY)
@@ -22062,8 +22072,11 @@ def v824_atm_mapping_export_pptx():
                         _ppt_photo_stats['failed'] += 1
                         tb(sl,pos[0],pos[1],pos[2],.3,'Evidência indisponível; consultar log da exportação.',9,color=RED)
     app.logger.info('V84.3 REV2: PPTX evidence summary included=%s failed=%s', _ppt_photo_stats['included'], _ppt_photo_stats['failed'])
+    if _ppt_photo_stats['failed']:
+        app.logger.error('V84.3 REV4: incomplete batch=%s failed=%s', batch, _ppt_photo_stats['failed'])
+        return jsonify(error='Lote incompleto: fotos otimizadas ausentes ou indisponíveis. Consulte o log.', batch=batch, failed_photos=_ppt_photo_stats['failed']), 409
     bio=io.BytesIO(); prs.save(bio); bio.seek(0)
-    return send_file(bio,as_attachment=True,download_name=f"mapeamento_atm_book_{datetime.now().strftime('%Y%m%d_%H%M')}.pptx",mimetype='application/vnd.openxmlformats-officedocument.presentationml.presentation')
+    return send_file(bio,as_attachment=True,download_name=f"mapeamento_atm_book_lote_{batch:02d}_de_{batch_count:02d}_{datetime.now().strftime('%Y%m%d_%H%M')}.pptx",mimetype='application/vnd.openxmlformats-officedocument.presentationml.presentation')
 
 @app.get('/api/bobinas/export.xlsx')
 @login_required
