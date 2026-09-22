@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V84.3 REV2"
+APP_RELEASE = "V85"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -15702,6 +15702,40 @@ def financial_cash_v81_smart_filter():
         return jsonify({'ok':True,'recognized':False,'query':raw,'filters':{},'metric':None,'sort':None,'analysis':'none','explanation':[], 'source_health':health,'warning':'Não consegui determinar a análise. Nenhum filtro foi alterado.'})
     return jsonify({'ok':True,'recognized':True,'query':raw,'filters':filters,'metric':metric,'sort':sort,'analysis':analysis,'monitoring_group':group,'explanation':explanation,'source_health':health,'warning':None if health.get('complete_sources') else 'As três fontes ainda não possuem cobertura completa; resultado parcial.'})
 
+# V85: exporta o mesmo recorte efetivamente exibido no Monitoramento, inclusive
+# filtros inteligentes, BAG, diferenças T×A/T×D/A×D, status e coletas extras.
+@app.post('/api/financeiro/coletas/v85/export-filtrado.xlsx')
+@login_required
+def financial_cash_v85_export_filtered():
+    if not _finance_collection_monitor_access(): abort(403)
+    data=request.get_json(silent=True) or {}
+    rows=data.get('rows')
+    if not isinstance(rows,list) or len(rows)>20000 or any(not isinstance(r,dict) for r in rows):
+        return jsonify({'ok':False,'error':'Recorte inválido para exportação.'}),400
+    # Evita fórmulas injetadas em planilhas e mantém números como números.
+    def safe(v):
+        if isinstance(v,(int,float)) and not isinstance(v,bool): return v
+        if v is None: return ''
+        if isinstance(v,(dict,list)): return ''
+        t=str(v)[:2000]
+        return "'"+t if t.lstrip().startswith(('=','+','-','@')) else t
+    wb=Workbook(); ws=wb.active;ws.title='Monitoramento filtrado'
+    ws.append(['Status','Operadora','Linha','Estação','ATM','BAG','Programação','Última coleta','Data prevista','Data realizada','Hora','Transações','Dif. T×A','Dif. T×D','Declarado','Apurado','Dif. A×D','Próxima previsão','Observação'])
+    for r in rows:
+        tc=r.get('transaction_cycle') or {}
+        if not isinstance(tc,dict): tc={}
+        lc=r.get('last_collection') or {}
+        if not isinstance(lc,dict): lc={}
+        vals=[r.get('status'),r.get('company'),r.get('line'),r.get('station'),r.get('terminal'),r.get('bag_type'),r.get('schedule'),lc.get('date'),r.get('scheduled_original') or r.get('date'),r.get('realized_date') or (r.get('date') if r.get('event_id') else ''),r.get('time'),tc.get('transaction_sum') if tc.get('available') else None,tc.get('difference_tx_processed') if tc.get('available') else None,tc.get('difference_tx_declared') if tc.get('available') else None,r.get('declared_amount'),r.get('processed_amount'),r.get('difference'),r.get('next_prediction'),r.get('note')]
+        ws.append([safe(v) for v in vals])
+    ws.freeze_panes='A2';ws.auto_filter.ref=ws.dimensions
+    for cell in ws[1]:
+        cell.font=Font(bold=True,color='FFFFFF');cell.fill=PatternFill('solid',fgColor='1F4E78');cell.alignment=Alignment(horizontal='center')
+    for col in range(1,ws.max_column+1):
+        ws.column_dimensions[get_column_letter(col)].width=min(38,max(12,max(len(str(ws.cell(r,col).value or '')) for r in range(1,min(ws.max_row,300)+1))+2))
+    out=io.BytesIO();wb.save(out);out.seek(0)
+    return send_file(out,as_attachment=True,download_name='coletas_V85_filtros.xlsx',mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
 @app.get('/api/financeiro/coletas/v79/export.xlsx')
 @login_required
 def financial_cash_v79_export():
@@ -17442,7 +17476,7 @@ def v8230r3_arrow_execution_list_api(aid):
     if not (_has_access("arrow.view") and (uid==int(x.technician_id or 0) or _v7893_arrow_can_edit(x))):abort(403)
     rows=ArrowActivityExecution.query.filter_by(activity_id=x.id).order_by(ArrowActivityExecution.created_at.asc(),ArrowActivityExecution.id.asc()).all()
     uids={r.user_id for r in rows}; users={u.id:u for u in User.query.filter(User.id.in_(uids)).all()} if uids else {}
-    return jsonify({'ok':True,'rows':[{'id':r.id,'action':r.action,'observation':r.observation or '','created_at':r.created_at.isoformat() if r.created_at else None,'user_id':r.user_id,'user':(users.get(r.user_id).name if users.get(r.user_id) else 'Usuário')} for r in rows]})
+    return jsonify({'ok':True,'rows':[{'id':r.id,'action':r.action,'observation':r.observation or '','created_at':r.created_at.isoformat()+'Z' if r.created_at else None,'user_id':r.user_id,'user':(users.get(r.user_id).name if users.get(r.user_id) else 'Usuário')} for r in rows]})
 
 @app.post("/api/arrow/activities/<int:aid>/status")
 @login_required
