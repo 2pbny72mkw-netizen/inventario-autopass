@@ -556,6 +556,19 @@ class CustomerAppointmentEquipment(db.Model):
     __table_args__=(UniqueConstraint("appointment_id","item_no",name="uq_customer_appt_item"),)
 
 
+# V85.9 — Eventos imutáveis de recebimento, devolução e ciência do cliente.
+class PortalEquipmentEvent(db.Model):
+    __tablename__ = 'portal_equipment_events'
+    id=db.Column(db.Integer,primary_key=True)
+    appointment_id=db.Column(db.Integer,db.ForeignKey('customer_appointments.id'),nullable=False,index=True)
+    equipment_id=db.Column(db.Integer,db.ForeignKey('customer_appointment_equipments.id'),index=True)
+    event_type=db.Column(db.String(40),nullable=False,index=True)
+    batch_code=db.Column(db.String(70),index=True)
+    actor_id=db.Column(db.Integer,db.ForeignKey('users.id'))
+    actor_name=db.Column(db.String(180))
+    created_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow)
+    detail=db.Column(db.Text)
+
 # V71 — Matriz Logística Leva e Traz / calendário operacional
 class LogisticsGarageRoute(db.Model):
     __tablename__ = "logistics_garage_routes"
@@ -19230,7 +19243,7 @@ def v71_program_appointment(aid):
     except Exception:return jsonify({'ok':False,'error':'Data inválida.'}),400
     if d and LogisticsBlockedDate.query.filter_by(blocked_date=d,active=True).first():return jsonify({'ok':False,'error':'A data está bloqueada no calendário operacional.'}),409
     a.programmed_date=d;a.scheduled_date=d or a.expected_date
-    if a.status not in ('RECEBIDO','RECEBIMENTO_PARCIAL','CONCLUIDO'):a.status='NA_PROGRAMACAO'
+    if a.status not in ('RECEBIDO','RECEBIMENTO_PARCIAL','CONCLUIDO','DEVOLVIDO','DEVOLUCAO_PARCIAL'):a.status='NA_PROGRAMACAO'
     db.session.add(AuditEvent(user_id=session['user_id'],event_type='V71_APPOINTMENT_PROGRAMMED',entity_type='customer_appointment',entity_id=str(a.id),detail=f'{a.code} · {d.isoformat() if d else "data padrão"}'))
     db.session.commit();return jsonify({'ok':True,'date':(a.programmed_date or a.expected_date).isoformat() if (a.programmed_date or a.expected_date) else ''})
 
@@ -19279,7 +19292,7 @@ def portal_appointments_list():
     rows=q.order_by(CustomerAppointment.created_at.desc()).limit(500).all(); out=[]
     for a in rows:
         items=CustomerAppointmentEquipment.query.filter_by(appointment_id=a.id).all()
-        out.append({'id':a.id,'code':a.code,'company':a.customer_company,'responsible':a.responsible_name,'scheduled_date':(a.programmed_date or a.expected_date or a.scheduled_date).isoformat() if (a.programmed_date or a.expected_date or a.scheduled_date) else '', 'request_date':(a.request_date or a.created_at.date()).isoformat(),'expected_date':a.expected_date.isoformat() if a.expected_date else '', 'programmed_date':a.programmed_date.isoformat() if a.programmed_date else '', 'alternate':bool(a.alternate_date_requested),'alternate_reason':a.alternate_reason or '', 'status':a.status,'created_at':a.created_at.isoformat(),'count':len(items),'received':sum(1 for x in items if x.received),'email_status':a.email_status or ''})
+        out.append({'id':a.id,'code':a.code,'company':a.customer_company,'responsible':a.responsible_name,'scheduled_date':(a.programmed_date or a.expected_date or a.scheduled_date).isoformat() if (a.programmed_date or a.expected_date or a.scheduled_date) else '', 'request_date':(a.request_date or a.created_at.date()).isoformat(),'expected_date':a.expected_date.isoformat() if a.expected_date else '', 'programmed_date':a.programmed_date.isoformat() if a.programmed_date else '', 'alternate':bool(a.alternate_date_requested),'alternate_reason':a.alternate_reason or '', 'status':a.status,'created_at':a.created_at.isoformat(),'count':len(items),'received':sum(1 for x in items if x.received),'returned':len({ev.equipment_id for ev in PortalEquipmentEvent.query.filter_by(appointment_id=a.id,event_type='DEVOLVIDO').all()}),'email_status':a.email_status or ''})
     return jsonify({'ok':True,'rows':out,'internal':_portal_internal()})
 
 @app.post('/api/portal/appointments')
@@ -19359,7 +19372,8 @@ def portal_appointment_detail(aid):
     latest_download={}
     for ev in download_events:
         latest_download.setdefault(ev.entity_id,ev)
-    return jsonify({'ok':True,'appointment':{'id':a.id,'code':a.code,'company':a.customer_company,'responsible':a.responsible_name,'date':(a.programmed_date or a.expected_date or a.scheduled_date).isoformat() if (a.programmed_date or a.expected_date or a.scheduled_date) else '', 'request_date':(a.request_date or a.created_at.date()).isoformat(),'expected_date':a.expected_date.isoformat() if a.expected_date else '', 'programmed_date':a.programmed_date.isoformat() if a.programmed_date else '', 'alternate':bool(a.alternate_date_requested),'alternate_reason':a.alternate_reason or '', 'notes':a.notes or '', 'status':a.status,'email_status':a.email_status or '', 'invoice_number':getattr(a,'invoice_number',None) or '', 'invoice_name':getattr(a,'invoice_original_name',None) or '', 'has_invoice':bool(getattr(a,'invoice_file',None))},'items':[{'id':x.id,'item_no':x.item_no,'protocol':_portal_equipment_code(a,x),'serial':x.serial_number,'equipment':x.equipment or '', 'version':x.version or '', 'eod':x.eod or '', 'defect':x.defect,'notes':x.notes or '', 'has_photo':bool(x.photo_file), 'photo_url':(f'/api/portal/equipments/{x.id}/photo' if x.photo_file else ''), 'received':x.received,'pdf_downloaded':str(x.id) in latest_download,'pdf_downloaded_at':latest_download[str(x.id)].created_at.replace(tzinfo=ZoneInfo('UTC')).astimezone(ZoneInfo('America/Sao_Paulo')).strftime('%d/%m/%Y %H:%M') if str(x.id) in latest_download else ''} for x in items]})
+    portal_events=PortalEquipmentEvent.query.filter_by(appointment_id=a.id).order_by(PortalEquipmentEvent.created_at.desc()).all()
+    return jsonify({'ok':True,'events':[{'type':e.event_type,'batch':e.batch_code,'equipment_id':e.equipment_id,'at':e.created_at.isoformat(),'actor':e.actor_name or ''} for e in portal_events],'appointment':{'id':a.id,'code':a.code,'company':a.customer_company,'responsible':a.responsible_name,'date':(a.programmed_date or a.expected_date or a.scheduled_date).isoformat() if (a.programmed_date or a.expected_date or a.scheduled_date) else '', 'request_date':(a.request_date or a.created_at.date()).isoformat(),'expected_date':a.expected_date.isoformat() if a.expected_date else '', 'programmed_date':a.programmed_date.isoformat() if a.programmed_date else '', 'alternate':bool(a.alternate_date_requested),'alternate_reason':a.alternate_reason or '', 'notes':a.notes or '', 'status':a.status,'email_status':a.email_status or '', 'invoice_number':getattr(a,'invoice_number',None) or '', 'invoice_name':getattr(a,'invoice_original_name',None) or '', 'has_invoice':bool(getattr(a,'invoice_file',None))},'items':[{'id':x.id,'item_no':x.item_no,'protocol':_portal_equipment_code(a,x),'serial':x.serial_number,'equipment':x.equipment or '', 'version':x.version or '', 'eod':x.eod or '', 'defect':x.defect,'notes':x.notes or '', 'has_photo':bool(x.photo_file), 'photo_url':(f'/api/portal/equipments/{x.id}/photo' if x.photo_file else ''), 'received':x.received,'returned':bool(PortalEquipmentEvent.query.filter_by(equipment_id=x.id,event_type='DEVOLVIDO').first()),'pdf_downloaded':str(x.id) in latest_download,'pdf_downloaded_at':latest_download[str(x.id)].created_at.replace(tzinfo=ZoneInfo('UTC')).astimezone(ZoneInfo('America/Sao_Paulo')).strftime('%d/%m/%Y %H:%M') if str(x.id) in latest_download else ''} for x in items]})
 
 @app.get('/api/portal/appointments/<int:aid>/pdf')
 @login_required
@@ -19374,12 +19388,14 @@ def _portal_safe_filename_part(value):
 
 
 def _portal_refresh_status(a):
+    # PDFs são documentos: baixá-los nunca conclui um agendamento.
     items=CustomerAppointmentEquipment.query.filter_by(appointment_id=a.id).all()
     if not items: return
     if all(x.received for x in items):
-        ids=[str(x.id) for x in items]
-        downloaded={r[0] for r in db.session.query(AuditEvent.entity_id).filter(AuditEvent.entity_type=='customer_appointment_equipment',AuditEvent.entity_id.in_(ids),AuditEvent.event_type.in_(['PORTAL_EQUIPMENT_PDF_DOWNLOADED','PORTAL_EQUIPMENT_PDF_DOWNLOADED_ALL'])).distinct().all()}
-        a.status='CONCLUIDO' if len(downloaded)==len(ids) else 'RECEBIDO'
+        returned={r[0] for r in db.session.query(PortalEquipmentEvent.equipment_id).filter_by(appointment_id=a.id,event_type='DEVOLVIDO').distinct().all()}
+        a.status='DEVOLVIDO' if len(returned)==len(items) else ('DEVOLUCAO_PARCIAL' if returned else 'RECEBIDO')
+    elif any(x.received for x in items):a.status='RECEBIMENTO_PARCIAL'
+
 
 def _portal_equipment_pdf_filename(a,x):
     return f"{_portal_equipment_code(a,x)}_SN-{_portal_safe_filename_part(x.serial_number)}.pdf"
@@ -19426,6 +19442,88 @@ def portal_equipment_receive(eid):
     if rec>=total: _portal_refresh_status(a)
     db.session.add(AuditEvent(user_id=session['user_id'],event_type='PORTAL_EQUIPMENT_RECEIVED',entity_type='customer_appointment',entity_id=str(a.id),detail=f'{a.code} · série {x.serial_number}'));db.session.commit();return jsonify({'ok':True,'status':a.status})
 
+# V85.9 — operações da Assistência, com controle de acesso e eventos por equipamento.
+def _portal_notify(a,kind,items):
+    cc=CustomerCompany.query.filter(func.lower(CustomerCompany.legal_name)==(a.customer_company or '').lower()).first()
+    to=(a.responsible_email or (cc.email if cc else '') or '').strip()
+    host=os.environ.get('SMTP_HOST','').strip();sender=(os.environ.get('SMTP_FROM') or os.environ.get('SMTP_USER') or '').strip()
+    if not (host and sender and to):return 'NAO_CONFIGURADO'
+    msg=EmailMessage();msg['From']=sender;msg['To']=to
+    msg['Subject']=f'{a.code} — {kind} de equipamentos'
+    listing='\n'.join(f'- {_portal_equipment_code(a,x)} | Série {x.serial_number}' for x in items)
+    msg.set_content(f'Agendamento: {a.code}\nEmpresa: {a.customer_company}\nEvento: {kind}\nEquipamentos:\n{listing}\n\nAcesse o Portal do Cliente para consultar e registrar ciência.')
+    try:
+        with smtplib.SMTP(host,int(os.environ.get('SMTP_PORT','587')),timeout=15) as srv:
+            if os.environ.get('SMTP_TLS','1')!='0':srv.starttls()
+            if os.environ.get('SMTP_USER'):srv.login(os.environ.get('SMTP_USER'),os.environ.get('SMTP_PASSWORD',''))
+            srv.send_message(msg)
+        return 'ENVIADO'
+    except Exception:
+        app.logger.exception('V85.9: falha ao notificar cliente %s',a.code)
+        return 'FALHA'
+
+@app.post('/api/portal/appointments/<int:aid>/confirm-schedule')
+@login_required
+def v859_confirm_schedule(aid):
+    if not _portal_internal():abort(403)
+    a=db.session.get(CustomerAppointment,aid)
+    if not a:abort(404)
+    if a.status in ('CANCELADO','DEVOLVIDO'):return jsonify({'error':'Agendamento encerrado.'}),409
+    a.status='AGENDADO';db.session.add(AuditEvent(user_id=session['user_id'],event_type='PORTAL_SCHEDULE_CONFIRMED',entity_type='customer_appointment',entity_id=str(a.id),detail=a.code))
+    db.session.commit();items=CustomerAppointmentEquipment.query.filter_by(appointment_id=aid).all()
+    return jsonify({'ok':True,'email_status':_portal_notify(a,'Confirmação do agendamento',items)})
+
+@app.post('/api/portal/appointments/<int:aid>/receive-batch')
+@login_required
+def v859_receive_batch(aid):
+    if not _portal_internal():abort(403)
+    a=db.session.get(CustomerAppointment,aid)
+    if not a:abort(404)
+    data=request.get_json(silent=True) or {};ids=data.get('equipment_ids') or []
+    if not isinstance(ids,list) or not ids:return jsonify({'error':'Selecione equipamentos.'}),400
+    items=CustomerAppointmentEquipment.query.filter(CustomerAppointmentEquipment.appointment_id==aid,CustomerAppointmentEquipment.id.in_(ids)).all()
+    if len(items)!=len(set(map(str,ids))):return jsonify({'error':'Equipamento fora do agendamento.'}),400
+    changed=[];batch='REC-'+datetime.utcnow().strftime('%Y%m%d%H%M%S')+'-'+str(aid)
+    for x in items:
+        if not x.received:
+            x.received=True;x.received_at=datetime.utcnow();x.received_by=session['user_id'];changed.append(x)
+            db.session.add(PortalEquipmentEvent(appointment_id=aid,equipment_id=x.id,event_type='RECEBIDO',batch_code=batch,actor_id=session['user_id']))
+    if not changed:return jsonify({'error':'Equipamentos já recebidos.'}),409
+    _portal_refresh_status(a);db.session.commit()
+    return jsonify({'ok':True,'status':a.status,'batch':batch,'email_status':_portal_notify(a,'Recebimento',changed)})
+
+@app.post('/api/portal/appointments/<int:aid>/return-batch')
+@login_required
+def v859_return_batch(aid):
+    if not _portal_internal():abort(403)
+    a=db.session.get(CustomerAppointment,aid)
+    if not a:abort(404)
+    data=request.get_json(silent=True) or {};ids=data.get('equipment_ids') or []
+    if not isinstance(ids,list) or not ids:return jsonify({'error':'Selecione equipamentos para devolver.'}),400
+    items=CustomerAppointmentEquipment.query.filter(CustomerAppointmentEquipment.appointment_id==aid,CustomerAppointmentEquipment.id.in_(ids)).all()
+    if len(items)!=len(set(map(str,ids))):return jsonify({'error':'Equipamento fora do agendamento.'}),400
+    already={r[0] for r in db.session.query(PortalEquipmentEvent.equipment_id).filter(PortalEquipmentEvent.appointment_id==aid,PortalEquipmentEvent.event_type=='DEVOLVIDO').all()}
+    if any(not x.received or x.id in already for x in items):return jsonify({'error':'Seleção contém equipamento não recebido ou já devolvido.'}),409
+    batch='DEV-'+datetime.utcnow().strftime('%Y%m%d%H%M%S')+'-'+str(aid)
+    for x in items:db.session.add(PortalEquipmentEvent(appointment_id=aid,equipment_id=x.id,event_type='DEVOLVIDO',batch_code=batch,actor_id=session['user_id']))
+    db.session.flush();_portal_refresh_status(a);db.session.commit()
+    return jsonify({'ok':True,'status':a.status,'batch':batch,'email_status':_portal_notify(a,'Devolução',items)})
+
+@app.post('/api/portal/appointments/<int:aid>/acknowledge')
+@login_required
+def v859_acknowledge(aid):
+    a=db.session.get(CustomerAppointment,aid)
+    if not a or not _portal_can_see(a):abort(404)
+    if _portal_internal():return jsonify({'error':'Ciência deve ser registrada pelo cliente.'}),403
+    data=request.get_json(silent=True) or {};batch=str(data.get('batch') or '')
+    if not batch:return jsonify({'error':'Informe o lote do evento.'}),400
+    events=PortalEquipmentEvent.query.filter_by(appointment_id=aid,batch_code=batch).all()
+    if not events:return jsonify({'error':'Lote não encontrado.'}),404
+    if any(e.event_type=='CIENCIA' for e in events):return jsonify({'error':'Ciência já registrada.'}),409
+    u=db.session.get(User,session['user_id'])
+    db.session.add(PortalEquipmentEvent(appointment_id=aid,event_type='CIENCIA',batch_code=batch,actor_id=session['user_id'],actor_name=getattr(u,'name',None),detail='Ciência do cliente sobre a relação do lote'))
+    db.session.commit();return jsonify({'ok':True})
+
 # V70 — Performance & Banco: migrações versionadas, aditivas e idempotentes.
 def _apply_v70_migrations():
     migrations=[
@@ -19458,6 +19556,7 @@ def _apply_v70_migrations():
 # V71 — schema aditivo da logística e programação de agendamentos.
 def _apply_v71_migrations():
     try:
+        db.metadata.create_all(bind=db.engine,tables=[PortalEquipmentEvent.__table__],checkfirst=True)
         db.metadata.create_all(bind=db.engine,tables=[LogisticsGarageRoute.__table__,LogisticsBlockedDate.__table__],checkfirst=True)
         insp=db.inspect(db.engine)
         if insp.has_table('customer_appointments'):
