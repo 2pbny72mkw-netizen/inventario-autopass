@@ -1,0 +1,10 @@
+V85.4 ENXUTA — HOMOLOGAÇÃO
+Base: inventario-autopass-main (4)(4).zip enviado pelo usuário.
+Copiar os arquivos do ZIP sobre a mesma estrutura de diretórios, preservando todo o restante.
+Arquivos: app.py, templates/base.html, templates/management_tasks_v854.html, static/management_tasks_v854.js.
+
+NOVO: Gestão de Tarefas no menu superior, permissão tasks.view na Matriz de Permissões; permissões tasks.create, tasks.edit, tasks.transfer e tasks.manage. Sem liberação automática para outros perfis. Criar tarefa, editar, transferir, status, filtros, Kanban, agenda, projetos, departamentos e trilha de eventos. As tabelas management_tasks_v854 e management_task_events_v854 são criadas pelo create_all existente na inicialização.
+
+FINANCEIRO: resumo do Monitoramento passa a escolher a coleta válida anterior, como o detalhe, sem considerar fechamento sistêmico intermediário não associado a coleta como limite da janela. Agregação de transações permanece no banco, sem carregar linhas completas em memória. Validar ATMs 32851 e 34451 contra PostgreSQL real. Não há validação de valores reais no ambiente de produção.
+
+LIMITES: geração automática de tarefas por coleta não realizada ainda não implementada; vínculo com coleta é manual via ID de origem/ATM. Sem sincronização Android. Não executar deploy direto em produção antes de homologação, backup e conferir permissões.

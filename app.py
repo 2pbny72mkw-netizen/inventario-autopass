@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.3"
+APP_RELEASE = "V85.4"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -281,6 +281,35 @@ def _v56b_perf_finish(response):
         pass
     return response
 
+
+
+# V85.4 - Gestão de Tarefas: vínculo único ao cadastro mestre de usuários.
+class ManagementTask(db.Model):
+    __tablename__ = 'management_tasks_v854'
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(220), nullable=False)
+    description = db.Column(db.Text, default='')
+    project = db.Column(db.String(120), default='')
+    department = db.Column(db.String(120), default='')
+    priority = db.Column(db.String(20), default='MEDIA')
+    status = db.Column(db.String(25), default='A_FAZER', nullable=False)
+    due_at = db.Column(db.DateTime)
+    created_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    assigned_to = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    atm_id = db.Column(db.String(40))
+    source_type = db.Column(db.String(60))
+    source_id = db.Column(db.String(100))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+class ManagementTaskEvent(db.Model):
+    __tablename__ = 'management_task_events_v854'
+    id = db.Column(db.Integer, primary_key=True)
+    task_id = db.Column(db.Integer, db.ForeignKey('management_tasks_v854.id'), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    action = db.Column(db.String(60), nullable=False)
+    detail = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
 class User(db.Model):
     __tablename__ = "users"
@@ -2165,6 +2194,7 @@ ACCESS_GROUPS = {
         "engineering.items.view","engineering.items.manage","engineering.bom.view","engineering.bom.manage","engineering.import","engineering.pricing.view","engineering.pricing.manage"
     )),
     "portal": ("Portal do Cliente", ("portal.appointments","portal.receive","portal.manage")),
+    "tasks": ("Gestão de Tarefas", ("tasks.view","tasks.create","tasks.edit","tasks.transfer","tasks.manage")),
     "arrow": ("Arrow", ("arrow.view","arrow.manage","arrow.edit","arrow.delete","arrow.dashboard","arrow.remote")),
     "about_versions": ("Sobre / Versões", ("about.versions",)),
 }
@@ -14660,7 +14690,20 @@ def _v792_cash_payload(start,end,calc_statuses=None):
         return _result
     def _fast_cycle_summary(_ev):
         if not _ev or not _v805_is_valid_closure(_ev): return {"available":False,"reason":"NAO_FECHAMENTO_VALIDO","cycle_valid":False}
-        _final=_fast_closure_info(_ev); _prev=_fast_prev_info(_ev.terminal,_final["at"]) if _final else None
+        _final=_fast_closure_info(_ev)
+        # V85.4: mesmo fechamento anterior do detalhamento: coleta válida anterior,
+        # não um R0050 intermediário sem coleta associada. Sem consulta N+1.
+        _candidates=[]
+        if _final:
+            for _previous_event in _closure_events_by_terminal.get(_ev.terminal,[]):
+                if _previous_event.id == _ev.id: continue
+                _previous_info=_fast_closure_info(_previous_event)
+                if _previous_info and _previous_info['at'] < _final['at']:
+                    _candidates.append((_previous_info['at'],_previous_event,_previous_info))
+        _prev=None
+        if _candidates:
+            _candidates.sort(key=lambda item:item[0],reverse=True)
+            _prev={**_candidates[0][2], 'event_id':_candidates[0][1].id}
         if not _final or not _prev: return {"available":False,"reason":"SEM_FECHAMENTO_ANTERIOR","cycle_valid":True,"final_source":(_final or {}).get("source","MANUAL")}
         _statuses=list(calc_statuses if calc_statuses is not None else ["A","V"])
         _count,_total=_fast_interval_agg(_ev.terminal,_prev["at"],_final["at"])
@@ -22220,6 +22263,97 @@ def v77_bobbins_export():
         sh.freeze_panes='A2';sh.auto_filter.ref=sh.dimensions
         for col in sh.columns:sh.column_dimensions[get_column_letter(col[0].column)].width=min(42,max(12,max(len(str(c.value or '')) for c in col)+2))
     bio=io.BytesIO();wb.save(bio);bio.seek(0);return send_file(bio,as_attachment=True,download_name=f"bobinas_atm_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
+# V85.4 — Gestão de Tarefas
+def _v854_task_dict(t, names):
+    return dict(id=t.id,title=t.title,description=t.description or '',project=t.project or '',department=t.department or '',priority=t.priority,status=t.status,due_at=t.due_at.isoformat() if t.due_at else None,created_by=t.created_by,assigned_to=t.assigned_to,assigned_name=names.get(t.assigned_to,''),atm_id=t.atm_id or '',source_type=t.source_type or '',source_id=t.source_id or '',created_at=t.created_at.isoformat() if t.created_at else '')
+
+def _v854_task_access(perm):
+    if not _has_access(perm): return jsonify({'ok':False,'error':'Sem permissão na Matriz de Permissões.'}),403
+    return None
+
+@app.get('/gestao-tarefas')
+@login_required
+def v854_tasks_page():
+    denied=_v854_task_access('tasks.view')
+    if denied:return denied
+    return render_template('management_tasks_v854.html',app_release=APP_RELEASE,task_user_id=session['user_id'])
+
+@app.get('/api/gestao-tarefas')
+@login_required
+def v854_tasks_list():
+    denied=_v854_task_access('tasks.view')
+    if denied:return denied
+    mine=request.args.get('mine')=='1'; uid=int(session['user_id'])
+    q=ManagementTask.query
+    if mine:q=q.filter(ManagementTask.assigned_to==uid)
+    tasks=q.order_by(ManagementTask.created_at.desc()).limit(1000).all()
+    users=User.query.filter(User.active.is_(True)).order_by(User.name).all()
+    names={u.id:u.name for u in users}
+    return jsonify(ok=True,tasks=[_v854_task_dict(t,names) for t in tasks],users=[dict(id=u.id,name=u.name) for u in users],can_create=_has_access('tasks.create'),can_edit=_has_access('tasks.edit'),can_transfer=_has_access('tasks.transfer'),can_manage=_has_access('tasks.manage'))
+
+@app.post('/api/gestao-tarefas')
+@login_required
+def v854_tasks_create():
+    denied=_v854_task_access('tasks.create')
+    if denied:return denied
+    data=request.get_json(silent=True) or {};title=str(data.get('title') or '').strip()[:220]
+    if not title:return jsonify(ok=False,error='Informe o título.'),400
+    try: assignee=int(data.get('assigned_to') or session['user_id'])
+    except (TypeError,ValueError):return jsonify(ok=False,error='Responsável inválido.'),400
+    user=db.session.get(User,assignee)
+    if not user or not user.active:return jsonify(ok=False,error='Responsável não encontrado.'),400
+    due=None
+    if data.get('due_at'):
+        try:due=datetime.fromisoformat(str(data['due_at']))
+        except ValueError:return jsonify(ok=False,error='Prazo inválido.'),400
+    priority=str(data.get('priority') or 'MEDIA').upper()
+    if priority not in ('BAIXA','MEDIA','ALTA'):return jsonify(ok=False,error='Prioridade inválida.'),400
+    t=ManagementTask(title=title,description=str(data.get('description') or '')[:5000],project=str(data.get('project') or '')[:120],department=str(data.get('department') or '')[:120],priority=priority,due_at=due,created_by=int(session['user_id']),assigned_to=assignee,atm_id=str(data.get('atm_id') or '')[:40],source_type=str(data.get('source_type') or '')[:60],source_id=str(data.get('source_id') or '')[:100]);db.session.add(t);db.session.flush()
+    db.session.add(ManagementTaskEvent(task_id=t.id,user_id=int(session['user_id']),action='CRIADA',detail=title));db.session.commit()
+    return jsonify(ok=True,id=t.id),201
+
+@app.patch('/api/gestao-tarefas/<int:task_id>')
+@login_required
+def v854_tasks_update(task_id):
+    t=db.session.get(ManagementTask,task_id)
+    if not t:return jsonify(ok=False,error='Tarefa não encontrada.'),404
+    data=request.get_json(silent=True) or {};uid=int(session['user_id'])
+    is_manager=_has_access('tasks.manage');is_assignee=t.assigned_to==uid
+    changes=[]
+    if 'assigned_to' in data:
+        if not (_has_access('tasks.transfer') or is_manager):return jsonify(ok=False,error='Sem permissão para transferir.'),403
+        try:assignee=int(data['assigned_to'])
+        except (TypeError,ValueError):return jsonify(ok=False,error='Responsável inválido.'),400
+        user=db.session.get(User,assignee)
+        if not user or not user.active:return jsonify(ok=False,error='Responsável não encontrado.'),400
+        changes.append(f'responsável {t.assigned_to} → {assignee}');t.assigned_to=assignee
+    fields={'title':220,'description':5000,'project':120,'department':120,'atm_id':40}
+    for field,limit in fields.items():
+        if field in data:
+            if not (_has_access('tasks.edit') or is_manager):return jsonify(ok=False,error='Sem permissão para editar.'),403
+            value=str(data[field] or '').strip()[:limit]
+            if field=='title' and not value:return jsonify(ok=False,error='Título obrigatório.'),400
+            setattr(t,field,value);changes.append(field)
+    if 'status' in data:
+        if not (_has_access('tasks.edit') or is_manager or is_assignee):return jsonify(ok=False,error='Sem permissão para alterar status.'),403
+        status=str(data['status']).upper()
+        if status not in ('A_FAZER','EM_ANDAMENTO','EM_VALIDACAO','CONCLUIDA'):return jsonify(ok=False,error='Status inválido.'),400
+        t.status=status;changes.append('status '+status)
+    if 'priority' in data:
+        if not (_has_access('tasks.edit') or is_manager):return jsonify(ok=False,error='Sem permissão para editar.'),403
+        priority=str(data['priority']).upper()
+        if priority not in ('BAIXA','MEDIA','ALTA'):return jsonify(ok=False,error='Prioridade inválida.'),400
+        t.priority=priority;changes.append('prioridade '+priority)
+    if 'due_at' in data:
+        if not (_has_access('tasks.edit') or is_manager):return jsonify(ok=False,error='Sem permissão para editar.'),403
+        try:t.due_at=datetime.fromisoformat(str(data['due_at'])) if data['due_at'] else None
+        except ValueError:return jsonify(ok=False,error='Prazo inválido.'),400
+        changes.append('prazo')
+    if not changes:return jsonify(ok=False,error='Nenhuma alteração válida.'),400
+    db.session.add(ManagementTaskEvent(task_id=t.id,user_id=uid,action='ALTERADA',detail=', '.join(changes)));db.session.commit()
+    return jsonify(ok=True,id=t.id)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "5000")), debug=False)
