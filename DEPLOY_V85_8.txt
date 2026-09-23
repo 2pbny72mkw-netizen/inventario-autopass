@@ -1,0 +1,5 @@
+V85.8 ENXUTA — ARROW — HOMOLOGAÇÃO
+Base: V85.7 aplicada sobre V85.6. Substituir somente app.py e templates/arrow_v75.html.
+Alteração: campo Status e botão Salvar alteração de status no modal de atividade; ADM (acesso integral) ou técnico responsável com arrow.view podem alterar status, inclusive CONCLUÍDA -> EM ANDAMENTO. Outros usuários dependem da permissão arrow.change_status. Justificativa obrigatória; evento anterior preservado no histórico.
+Não altera Gestão de Tarefas, Financeiro ou Firmware/POS. Fazer backup e homologar permissões reais antes de publicar.
+Testes: py_compile app.py, validação de integridade ZIP. Sem testes em PostgreSQL/Render.

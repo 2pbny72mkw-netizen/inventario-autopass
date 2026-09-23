@@ -2212,7 +2212,7 @@ ACCESS_LABELS = {
  "materials.my_documents":"Meus documentos / Minha carga","materials.request":"Solicitar material","materials.catalog.view":"Visualizar catálogo","materials.catalog.manage":"Cadastrar / editar / inativar materiais","materials.kits.manage":"Gerenciar kits","materials.delivery.create":"Criar e enviar entregas","materials.delivery.manage":"Gerenciar aceites / correções","materials.dossier.view":"Dossiê dos colaboradores","materials.access_lists.view":"Listas de acesso Metrô / CPTM","materials.access_lists.manage":"Gerar / validar listas de acesso",
  "engineering.items.view":"Visualizar cadastro de itens","engineering.items.manage":"Cadastrar / editar itens","engineering.bom.view":"Visualizar estruturas BOM","engineering.bom.manage":"Criar / revisar BOM","engineering.import":"Importar planilhas de Engenharia","engineering.pricing.view":"Visualizar formação de preço","engineering.pricing.manage":"Criar / editar estudos de preço",
  "portal.appointments":"Criar / consultar agendamentos","portal.receive":"Receber agendamentos","portal.manage":"Administrar Portal do Cliente",
- "arrow.view":"Visualizar Arrow","arrow.manage":"Gerenciar Arrow / alocações","arrow.edit":"Editar atividade Arrow","arrow.delete":"Excluir atividade Arrow","arrow.dashboard":"Dashboard Arrow","arrow.remote":"TeamViewer / Atendimento Remoto","arrow.create_field":"Criar imprevisto Arrow em campo","arrow.change_status":"Reabrir atividade concluída Arrow",
+ "arrow.view":"Visualizar Arrow","arrow.manage":"Gerenciar Arrow / alocações","arrow.edit":"Editar atividade Arrow","arrow.delete":"Excluir atividade Arrow","arrow.dashboard":"Dashboard Arrow","arrow.remote":"TeamViewer / Atendimento Remoto","arrow.create_field":"Criar imprevisto Arrow em campo","arrow.change_status":"Alterar status de atividade Arrow",
  "about.versions":"Histórico / Versões",
 }
 
@@ -17526,7 +17526,7 @@ def v75_arrow_list_api():
     out=[]
     for x in rows:
         u=uu.get(x.technician_id);loc=ll.get(x.location_id);aloc=aa.get(getattr(x,'arrow_location_id',None));eligible,reason=_v75_arrow_eligibility(u,x.operator) if u else (False,'Colaborador não encontrado')
-        out.append({'id':x.id,'date':x.activity_date.isoformat(),'start_time':x.start_time or '','end_time':x.end_time or '','priority':x.priority or 'NORMAL','title':x.title,'operator':x.operator,'technician_id':x.technician_id,'technician':u.name if u else '—','technician_company':u.company if u else '','location_id':x.location_id,'arrow_location_id':getattr(x,'arrow_location_id',None),'location':(aloc.name if aloc else (loc.location if loc else '—')),'line':('GARAGEM' if aloc else (loc.line if loc else '')),'company':('OUTROS' if aloc else (loc.company if loc else '')),'location_code':(aloc.code if aloc else ''),'address':(aloc.address if aloc else ''),'status':x.status,'remote':x.remote,'teamviewer_id':x.teamviewer_id or '','notes':x.notes or '','eligible':eligible,'eligibility_reason':reason,'created_by':x.created_by,'can_edit':_v7893_arrow_can_edit(x),'can_execute':_v8230r3_arrow_can_execute(x),'can_delete':_v7893_arrow_can_delete(x),'can_change_status':_has_access('arrow.change_status')})
+        out.append({'id':x.id,'date':x.activity_date.isoformat(),'start_time':x.start_time or '','end_time':x.end_time or '','priority':x.priority or 'NORMAL','title':x.title,'operator':x.operator,'technician_id':x.technician_id,'technician':u.name if u else '—','technician_company':u.company if u else '','location_id':x.location_id,'arrow_location_id':getattr(x,'arrow_location_id',None),'location':(aloc.name if aloc else (loc.location if loc else '—')),'line':('GARAGEM' if aloc else (loc.line if loc else '')),'company':('OUTROS' if aloc else (loc.company if loc else '')),'location_code':(aloc.code if aloc else ''),'address':(aloc.address if aloc else ''),'status':x.status,'remote':x.remote,'teamviewer_id':x.teamviewer_id or '','notes':x.notes or '','eligible':eligible,'eligibility_reason':reason,'created_by':x.created_by,'can_edit':_v7893_arrow_can_edit(x),'can_execute':_v8230r3_arrow_can_execute(x),'can_delete':_v7893_arrow_can_delete(x),'can_change_status':(_has_access('arrow.change_status') or (int(x.technician_id or 0)==int(session.get('user_id') or 0) and _has_access('arrow.view')))})
     return jsonify({'ok':True,'rows':out,'current_user_id':session.get('user_id')})
 
 @app.post("/api/arrow/activities/imprevisto")
@@ -17635,14 +17635,22 @@ def v75_arrow_status_api(aid):
     own_activity=int(x.technician_id or 0)==int(session.get('user_id') or 0)
     planner=_v7893_arrow_can_edit(x)
     if not (own_activity or planner or _has_access('arrow.change_status')):abort(403)
-    if st=='REABRIR':
-        if not _has_access('arrow.change_status'):abort(403)
-        if x.status!='CONCLUÍDA':return jsonify({'ok':False,'error':'Somente atividades concluídas podem ser reabertas.'}),409
-        if not obs:return jsonify({'ok':False,'error':'Informe a justificativa da reabertura.'}),400
-        old=x.status;x.status='EM ANDAMENTO'
-        db.session.add(ArrowActivityExecution(activity_id=x.id,user_id=session['user_id'],action='REABERTURA',observation=f'{old} → EM ANDAMENTO · {obs}'))
-        _v7893_arrow_notify(x,'Atividade Arrow reaberta',f'{x.title} · {obs}')
-        db.session.commit();return jsonify({'ok':True,'status':x.status,'action':'REABERTURA'})
+    # V85.8: alteração explícita do status; ADM ou técnico responsável.
+    # Reabertura exige justificativa e mantém o evento de conclusão no histórico.
+    if st in ('ALTERAR_STATUS', 'REABRIR'):
+        allowed=_has_access('arrow.change_status') or (own_activity and _has_access('arrow.view'))
+        if not allowed:abort(403)
+        target=('EM ANDAMENTO' if st=='REABRIR' else (payload.get('new_status') or '').strip().upper())
+        if target not in ('PLANEJADA','EM ANDAMENTO','CONCLUÍDA','CANCELADA'):
+            return jsonify({'ok':False,'error':'Status de destino inválido.'}),400
+        old=x.status
+        if old==target:return jsonify({'ok':True,'status':old,'unchanged':True})
+        if not obs:return jsonify({'ok':False,'error':'Informe a justificativa da alteração de status.'}),400
+        x.status=target
+        db.session.add(ArrowActivityExecution(activity_id=x.id,user_id=session['user_id'],action='ALTERAÇÃO DE STATUS',observation=f'{old or "—"} → {target} · {obs}'))
+        _v7893_arrow_notify(x,'Status da atividade Arrow alterado',f'{x.title} · {old or "—"} → {target} · {obs}')
+        db.session.commit()
+        return jsonify({'ok':True,'status':x.status,'action':'ALTERAÇÃO DE STATUS'})
     if st=='REGISTRO':
         if x.status in ('CONCLUÍDA','CANCELADA'):return jsonify({'ok':False,'error':'Reabra a atividade antes de registrar nova execução.'}),409
         if not obs:return jsonify({'ok':False,'error':'Descreva a atividade executada.'}),400
