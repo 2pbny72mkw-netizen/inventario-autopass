@@ -1,0 +1,9 @@
+V85.10 ENXUTA — HOMOLOGAÇÃO
+Base: V85.9 (aplicar sobre a base que contém V85.9).
+Arquivos: app.py, templates/customer_portal.html, templates/customer_companies.html, templates/logistics_schedule.html.
+
+Incluído: devolução por empresa e por equipamento recebido não devolvido, inclusive agendamentos distintos; seleção individual/todos; reutiliza endpoint transacional e notificações V85.9. Botão ao lado de Recebimentos. Remoção dos traços dos indicadores do Portal. Big Numbers clicáveis nas duas telas administrativas. Expandir/recolher tabela de empresas com scroll e cabeçalho fixo.
+
+Limitações: não testado no PostgreSQL/SMTP do Render. O modal de indicadores logísticos usa os registros disponíveis no payload atual; validar especialmente os cartões de equipamentos e recebimentos. Não altera cadastro de materiais/serviços 00.02.13. Ciência e e-mails dependem da configuração e do fluxo V85.9.
+
+Homologar em ambiente de teste: 3 equipamentos recebidos, devolver 2, conferir 1 pendente, devolver último, ciência e e-mails. Fazer backup.
