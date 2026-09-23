@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.7"
+APP_RELEASE = "V85.11"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -19536,7 +19536,7 @@ def v8510_assistance_pending():
     equipment=CustomerAppointmentEquipment.query.filter(CustomerAppointmentEquipment.appointment_id.in_(ids),CustomerAppointmentEquipment.received.is_(True)).all() if ids else []
     returned={eid for (eid,) in db.session.query(PortalEquipmentEvent.equipment_id).filter(PortalEquipmentEvent.event_type=='DEVOLVIDO',PortalEquipmentEvent.equipment_id.in_([x.id for x in equipment])).all()} if equipment else set()
     amap={a.id:a for a in appointments}
-    return jsonify({'companies':sorted({a.customer_company for a in CustomerAppointment.query.all() if a.customer_company}),
+    return jsonify({'companies':sorted({amap[x.appointment_id].customer_company for x in equipment if x.id not in returned and amap[x.appointment_id].customer_company}),
         'items':[{'id':x.id,'appointment_id':x.appointment_id,'code':amap[x.appointment_id].code,'company':amap[x.appointment_id].customer_company,'serial':x.serial_number,'equipment':x.equipment or '', 'defect':x.defect or ''} for x in equipment if x.id not in returned]})
 
 # V70 — Performance & Banco: migrações versionadas, aditivas e idempotentes.

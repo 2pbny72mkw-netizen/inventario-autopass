@@ -1,0 +1,7 @@
+V85.11 ENXUTA — HOMOLOGAÇÃO
+BASE: V85.10 enxuta, aplicada sobre a base Web correspondente.
+Substituir somente app.py e templates/customer_portal.html, preservando os demais arquivos. Fazer backup antes do deploy.
+ENTREGUE: Portal sem TECSOMOBI no cabeçalho; seleção de empresas somente com equipamentos recebidos e pendentes de devolução; contagem por empresa; seleção de empresa obrigatória; cartões de equipamento alinhados; selecionar todos alinhado; botão confirmar bloqueado sem seleção; identificação da versão central APP_RELEASE V85.11.
+NÃO INCLUÍDO NESTE PATCH: correção do histórico da tela Sobre, Engenharia, ordem visual do cadastro de itens, ou mudanças de status adicionais. Não tratar como escopo completo de todas as pendências.
+TESTAR: escolher empresa; selecionar um equipamento; selecionar todos; devolver parcialmente; verificar que restantes persistem; trocar empresa; reabrir aba; conferir versões e outros módulos.
+Não validado no PostgreSQL ou SMTP de produção.
