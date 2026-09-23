@@ -27,6 +27,7 @@
       {% if can_view('dashboard') or can_view('field.dashboard') or can_view('implantation.dashboard') or can_view('finance.dashboard') %}<a href="/gerencial">Dashboard</a>{% endif %}
       {# V79.5 REV4 — atalho explícito: a permissão efetiva deve produzir navegação visível, independentemente do dropdown Field. #}
       {% if can_view('field.bobbins_dashboard') %}<a href="/dashboard/bobinas" class="navBobbinDashboard">Dashboard Bobinas</a>{% endif %}
+      {% if can_view('tasks.view') %}<a href="/gestao-tarefas">Gestão de Tarefas</a>{% endif %}
       {% if can_view('field') %}
       <div class="navDrop"><button type="button" class="navDropBtn">Field ▾</button><div class="navDropMenu">
         {% if can_view('field.bobbins_dashboard') %}<a href="/dashboard/bobinas"><b>Dashboard Bobinas</b></a>{% endif %}
