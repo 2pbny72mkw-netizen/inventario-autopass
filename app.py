@@ -22357,3 +22357,52 @@ def v854_tasks_update(task_id):
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "5000")), debug=False)
+
+
+# V85.6 — ranking de vendas pagas com voucher (não emissões de voucher).
+@app.get('/api/financeiro/coletas/v856/vouchers')
+@login_required
+def financial_v856_voucher_ranking():
+    if not _finance_collection_monitor_access():
+        return jsonify({'ok':False,'error':'Sem permissão.'}),403
+    try:
+        start=date.fromisoformat(request.args.get('start',''))
+        end=date.fromisoformat(request.args.get('end',''))
+        if end<start or (end-start).days>366:
+            raise ValueError('Período deve ter até 366 dias.')
+    except (ValueError,TypeError):
+        return jsonify({'ok':False,'error':'Informe período válido de até 366 dias.'}),400
+    # O status VOUCHER identifica a venda paga com voucher; voucher_generated
+    # identifica emissão e NÃO deve ser contado como venda.
+    begin=datetime.combine(start,datetime.min.time())
+    finish=datetime.combine(end+timedelta(days=1),datetime.min.time())
+    amount=func.coalesce(FinancialATMTransaction.received_value,FinancialATMTransaction.value)
+    rows=(db.session.query(FinancialATMTransaction.terminal,
+        func.count(FinancialATMTransaction.id),func.coalesce(func.sum(amount),0))
+        .filter(FinancialATMTransaction.transaction_at>=begin,
+                FinancialATMTransaction.transaction_at<finish,
+                func.upper(func.trim(FinancialATMTransaction.status))=='VOUCHER')
+        .group_by(FinancialATMTransaction.terminal).all())
+    meta={str(x['terminal']):x for x in _v79_cash_base()}
+    company=(request.args.get('company') or '').strip().casefold()
+    line=(request.args.get('line') or '').strip().casefold()
+    station=(request.args.get('station') or '').strip().casefold()
+    terminal=(request.args.get('terminal') or '').strip()
+    output=[]
+    for atm,count,total in rows:
+        a=meta.get(str(atm))
+        if not a: continue
+        if company and company!=str(a.get('company') or '').casefold(): continue
+        if line and line!=str(a.get('line') or '').casefold(): continue
+        if station and station!=str(a.get('locality') or '').casefold(): continue
+        if terminal and terminal not in str(atm): continue
+        output.append({'terminal':str(atm),'company':a.get('company') or '',
+            'line':a.get('line') or '', 'station':a.get('locality') or '',
+            'count':int(count),'amount':round(float(total),2)})
+    order=request.args.get('order','count')
+    output.sort(key=lambda x:(-x['amount'],-x['count'],x['terminal']) if order=='amount' else (-x['count'],-x['amount'],x['terminal']))
+    return jsonify({'ok':True,'start':start.isoformat(),'end':end.isoformat(),
+        'definition':'Vendas com status VOUCHER; emissões não incluídas.',
+        'total_count':sum(x['count'] for x in output),
+        'total_amount':round(sum(x['amount'] for x in output),2),
+        'atm_count':len(output),'rows':output})

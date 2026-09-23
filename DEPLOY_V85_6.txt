@@ -1,0 +1,7 @@
+V85.6 ENXUTA — HOMOLOGAÇÃO
+Base: V85.5 publicada (preservar app.py da V85.4 e tela V85.5).
+Aplicar os 3 arquivos de código mantendo os caminhos.
+Ranking conta somente transações com status VOUCHER, não voucher_generated.
+Data inicial/final e filtros operadora/linha/estação/ATM; ordenação quantidade/valor e CSV.
+ATENÇÃO: filtros de status de coleta, BAG, programação e resultado NÃO são aplicados ao ranking; ele representa vendas por data transacional.
+Validar com PostgreSQL real antes de produção.
