@@ -1,0 +1,5 @@
+V85.7 ENXUTA — HOMOLOGAÇÃO
+Aplicar SOBRE V85.6. Substituir app.py e templates/arrow_v75.html mantendo os demais arquivos.
+Na Matriz de Permissões liberar arrow.create_field aos técnicos que poderão criar imprevistos e arrow.change_status aos usuários que poderão reabrir concluídas. ADM segue sua regra global.
+Testar: criação pelo técnico sem empresa/linha/estação; registro de execução sem alterar status; reabertura com justificativa e histórico preservado; acesso negado sem permissão; regressão Financeiro e Gestão de Tarefas.
+Não homologado contra banco PostgreSQL de produção. Backup e teste em homologação antes do deploy.
