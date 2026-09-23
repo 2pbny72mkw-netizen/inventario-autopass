@@ -1,0 +1,8 @@
+V85.3 ENXUTA — HOMOLOGAÇÃO, NÃO PUBLICAR SEM TESTE EM BANCO REAL
+Base: inventario-autopass-main (2)(20260923-013428).zip
+Arquivos: app.py e templates/arrow_v75.html. Aplicar preservando demais arquivos.
+Financeiro: monitoramento soma transações por janela real entre fechamentos em lotes PostgreSQL; T×A e T×D derivados da soma.
+Arrow: histórico de execuções passa a exibir horário de São Paulo calculado no servidor, preservando UTC original; conferir eventos legados e mobile.
+Exportação: mecanismo filtrado já presente na base, não alterado nesta entrega.
+Firmware/POS: código da base preservado, sem mudança nesta entrega.
+PENDÊNCIAS: testes de integração PostgreSQL e caso ATM 32851; verificar Render RAM/tempo e datas Arrow.

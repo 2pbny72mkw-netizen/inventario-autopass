@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.2"
+APP_RELEASE = "V85.3"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -14619,26 +14619,57 @@ def _v792_cash_payload(start,end,calc_statuses=None):
             if _x["at"]<_final_at: _prev=_x
             else: break
         return _prev
+    # V85.3: o R0050 indica o FECHAMENTO, não quais transações pertencem
+    # necessariamente ao ciclo. Agregar por janela temporal, como no detalhe.
+    # Uma consulta por lote de intervalos evita N+1 e não carrega transações em RAM.
+    _interval_totals={}
+    _statuses_for_intervals=list(calc_statuses if calc_statuses is not None else ["A","V"])
+    if _statuses_for_intervals and db.engine.dialect.name == 'postgresql':
+        _intervals=[]
+        for _term,_points in _timeline.items():
+            for _i in range(1,len(_points)):
+                _a,_b=_points[_i-1]['at'],_points[_i]['at']
+                if _b.date() >= start and _a.date() <= end and _a < _b:
+                    _intervals.append((_term,_a,_b))
+        for _offset in range(0,len(_intervals),120):
+            _batch=_intervals[_offset:_offset+120]
+            _params={};_values=[]
+            for _idx,(_term,_a,_b) in enumerate(_batch):
+                _params.update({f't{_idx}':_term,f'a{_idx}':_a,f'b{_idx}':_b})
+                _values.append(f'(:t{_idx}, :a{_idx}, :b{_idx})')
+            _status_params=[]
+            for _idx,_st in enumerate(_statuses_for_intervals):
+                _params[f's{_idx}']=_st;_status_params.append(f':s{_idx}')
+            _sql=("SELECT i.terminal,i.start_at,i.end_at, COUNT(t.id) AS n, "
+                  "COALESCE(SUM(COALESCE(t.received_value,t.value)),0) AS amount "
+                  "FROM (VALUES " + ','.join(_values) + ") AS i(terminal,start_at,end_at) "
+                  "LEFT JOIN financial_atm_transactions t ON t.terminal=i.terminal "
+                  "AND t.transaction_at>i.start_at AND t.transaction_at<=i.end_at "
+                  "AND t.status IN (" + ','.join(_status_params) + ") "
+                  "GROUP BY i.terminal,i.start_at,i.end_at")
+            for _term,_a,_b,_n,_amount in db.session.execute(text(_sql),_params):
+                _interval_totals[(_term,_a,_b)]=(int(_n or 0),round(float(_amount or 0),2))
     def _fast_interval_agg(_terminal,_start_at,_end_at):
         _statuses=list(calc_statuses if calc_statuses is not None else ["A","V"])
         if not _statuses: return (0,0.0)
+        _key=(_terminal,_start_at,_end_at)
+        if _key in _interval_totals: return _interval_totals[_key]
         _q=db.session.query(func.count(FinancialATMTransaction.id),func.coalesce(func.sum(func.coalesce(FinancialATMTransaction.received_value,FinancialATMTransaction.value)),0)).filter(FinancialATMTransaction.terminal==_terminal,FinancialATMTransaction.transaction_at>_start_at,FinancialATMTransaction.transaction_at<=_end_at,FinancialATMTransaction.status.in_(_statuses)).first()
-        return int(_q[0] or 0),round(float(_q[1] or 0),2)
+        _result=(int(_q[0] or 0),round(float(_q[1] or 0),2))
+        _interval_totals[_key]=_result
+        return _result
     def _fast_cycle_summary(_ev):
         if not _ev or not _v805_is_valid_closure(_ev): return {"available":False,"reason":"NAO_FECHAMENTO_VALIDO","cycle_valid":False}
         _final=_fast_closure_info(_ev); _prev=_fast_prev_info(_ev.terminal,_final["at"]) if _final else None
         if not _final or not _prev: return {"available":False,"reason":"SEM_FECHAMENTO_ANTERIOR","cycle_valid":True,"final_source":(_final or {}).get("source","MANUAL")}
         _statuses=list(calc_statuses if calc_statuses is not None else ["A","V"])
-        if _final.get("source")=="R0050" and _prev.get("source")=="R0050":
-            _count,_total=_sys_agg.get((_ev.terminal,_final["at"],_final.get("collection_code") or ""),(0,0.0))
-        else: _count,_total=_fast_interval_agg(_ev.terminal,_prev["at"],_final["at"])
+        _count,_total=_fast_interval_agg(_ev.terminal,_prev["at"],_final["at"])
         _decl=None if _ev.declared_amount is None else round(float(_ev.declared_amount),2)
         return {"available":True,"cycle_valid":True,"initial_id":_prev.get("event_id"),"final_id":_ev.id,"initial_at":_prev["at"].isoformat(),"final_at":_final["at"].isoformat(),"initial_source":_prev.get("source"),"final_source":_final.get("source"),"initial_collection_code":_prev.get("collection_code") or "","final_collection_code":_final.get("collection_code") or "","manual_final_at":_ev.end_at.isoformat(),"final_diff_minutes":_final.get("diff_minutes",0),"transaction_count":int(_count),"transaction_sum":round(float(_total),2),"difference_tx_declared":None if _decl is None else round(float(_total)-_decl,2),"difference_tx_processed":None if _ev.processed_amount is None else round(float(_total)-float(_ev.processed_amount),2),"calc_statuses":_statuses}
     def _fast_system_cycle_summary(_terminal,_final):
         _prev=_fast_prev_info(_terminal,_final["at"]); _statuses=list(calc_statuses if calc_statuses is not None else ["A","V"])
         if not _prev: return {"available":False,"reason":"SEM_FECHAMENTO_ANTERIOR","cycle_valid":True,"final_source":"R0050"}
-        if _prev.get("source")=="R0050": _count,_total=_sys_agg.get((_terminal,_final["at"],_final.get("collection_code") or ""),(0,0.0))
-        else: _count,_total=_fast_interval_agg(_terminal,_prev["at"],_final["at"])
+        _count,_total=_fast_interval_agg(_terminal,_prev["at"],_final["at"])
         return {"available":True,"cycle_valid":True,"initial_id":_prev.get("event_id"),"final_id":None,"initial_at":_prev["at"].isoformat(),"final_at":_final["at"].isoformat(),"initial_source":_prev.get("source"),"final_source":"R0050","initial_collection_code":_prev.get("collection_code") or "","final_collection_code":_final.get("collection_code") or "","transaction_count":int(_count),"transaction_sum":round(float(_total),2),"difference_tx_declared":None,"difference_tx_processed":None,"calc_statuses":_statuses}
     daily_reports=FinancialCashDailyReport.query.filter(FinancialCashDailyReport.terminal.in_(terminals),FinancialCashDailyReport.report_date>=start,FinancialCashDailyReport.report_date<=end).order_by(FinancialCashDailyReport.report_date).all() if terminals else []
     recent_reports=FinancialCashDailyReport.query.filter(FinancialCashDailyReport.terminal.in_(terminals),FinancialCashDailyReport.report_date>=date.today()-timedelta(days=30)).order_by(FinancialCashDailyReport.report_date).all() if terminals else []
@@ -17524,7 +17555,7 @@ def v8230r3_arrow_execution_list_api(aid):
     if not (_has_access("arrow.view") and (uid==int(x.technician_id or 0) or _v7893_arrow_can_edit(x))):abort(403)
     rows=ArrowActivityExecution.query.filter_by(activity_id=x.id).order_by(ArrowActivityExecution.created_at.asc(),ArrowActivityExecution.id.asc()).all()
     uids={r.user_id for r in rows}; users={u.id:u for u in User.query.filter(User.id.in_(uids)).all()} if uids else {}
-    return jsonify({'ok':True,'rows':[{'id':r.id,'action':r.action,'observation':r.observation or '','created_at':r.created_at.isoformat()+'Z' if r.created_at else None,'user_id':r.user_id,'user':(users.get(r.user_id).name if users.get(r.user_id) else 'Usuário')} for r in rows]})
+    return jsonify({'ok':True,'rows':[{'id':r.id,'action':r.action,'observation':r.observation or '','created_at':r.created_at.isoformat()+'Z' if r.created_at else None,'created_at_local':r.created_at.replace(tzinfo=ZoneInfo('UTC')).astimezone(ZoneInfo('America/Sao_Paulo')).strftime('%d/%m/%Y %H:%M') if r.created_at else None,'user_id':r.user_id,'user':(users.get(r.user_id).name if users.get(r.user_id) else 'Usuário')} for r in rows]})
 
 @app.post("/api/arrow/activities/<int:aid>/status")
 @login_required
