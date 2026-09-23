@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85"
+APP_RELEASE = "V85.1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -11687,14 +11687,34 @@ def pos_firmware_cptm_import():
     inactive=PosFirmwareCptm.query.filter(PosFirmwareCptm.active.is_(False)).count()
     return jsonify({"ok":True,"mode":mode,"imported":len(incoming),"created":created,"updated":updated,"duplicates_ignored":duplicates,"active_total":active,"inactive_history":inactive})
 
+# V85.1: limite antes de materializar multipart; streaming por arquivo e telemetria sem dados pessoais.
+_POS_FW_UPLOAD_MAX_MB = max(1, min(15, int(os.environ.get("POS_FW_UPLOAD_MAX_MB", "6"))))
+_POS_FW_REQUEST_MAX_MB = max(_POS_FW_UPLOAD_MAX_MB, int(os.environ.get("POS_FW_REQUEST_MAX_MB", "24")))
+
 @app.post("/api/firmware-pos-cptm/<int:rid>")
 @login_required
 def pos_firmware_cptm_save(rid):
     if not _has_access("field.firmware_pos_cptm"): abort(403)
-    _ensure_pos_firmware_cptm(); r=db.session.get(PosFirmwareCptm,rid) or abort(404)
+    started = time.monotonic()
+    declared_size = request.content_length or 0
+    if declared_size and declared_size > _POS_FW_REQUEST_MAX_MB * 1024 * 1024:
+        return jsonify({"ok":False,"error":f"Envio excede {_POS_FW_REQUEST_MAX_MB} MB. Envie menos fotos por vez."}),413
+    _ensure_pos_firmware_cptm()
+    r=db.session.get(PosFirmwareCptm,rid) or abort(404)
     if not r.active: return jsonify({"ok":False,"error":"Este POS não pertence à base ativa da campanha."}),409
     status=(request.form.get("status") or r.status or "PENDENTE").upper().strip()
-    if status not in ("PENDENTE","EM ANDAMENTO","CONCLUÍDO"): return jsonify({"ok":False,"error":"Status inválido"}),400
+    if status not in ("PENDENTE","EM ANDAMENTO","CONCLUÍDO"):
+        return jsonify({"ok":False,"error":"Status inválido"}),400
+    files=[photo for photo in request.files.getlist("photos") if photo and photo.filename]
+    if len(files)>8:
+        return jsonify({"ok":False,"error":"Envie no máximo 8 fotos por operação."}),413
+    for photo in files:
+        if not (photo.mimetype or "").startswith("image/"):
+            return jsonify({"ok":False,"error":"Apenas imagens são permitidas."}),400
+        size=_uploaded_file_size(photo)
+        if size and size>_POS_FW_UPLOAD_MAX_MB*1024*1024:
+            return jsonify({"ok":False,"error":f"Foto excede {_POS_FW_UPLOAD_MAX_MB} MB. Reduza a resolução."}),413
+    parsed_at=time.monotonic()
     now=datetime.utcnow(); old=r.status
     r.status=status; r.notes=(request.form.get("notes") or "").strip() or None
     if status=="EM ANDAMENTO" and not r.started_at: r.started_at=now
@@ -11704,17 +11724,45 @@ def pos_firmware_cptm_save(rid):
     elif old=="CONCLUÍDO" and status!="CONCLUÍDO": r.completed_at=None
     if status!="PENDENTE" and not r.technician_id:r.technician_id=session.get("user_id")
     r.updated_at=now
-    for photo in request.files.getlist("photos"):
-        if not photo or not photo.filename: continue
-        if not (photo.mimetype or "").startswith("image/"): continue
-        raw=photo.read()
-        if len(raw)>6*1024*1024: continue
-        safe=secure_filename(photo.filename) or "evidencia.jpg"; key=f"firmware-pos-cptm/{datetime.utcnow().strftime('%Y/%m')}/{rid}-{uuid.uuid4().hex}-{safe}"
-        if _r2_available(): _r2_put_bytes(key,raw,photo.mimetype or "image/jpeg"); stored="r2__"+key
-        else:
-            stored=f"fwpos-{rid}-{uuid.uuid4().hex}-{safe}"; (UPLOAD_DIR/stored).write_bytes(raw)
-        db.session.add(PosFirmwareCptmPhoto(firmware_id=rid,original_name=photo.filename,stored_name=stored,mime_type=photo.mimetype,uploaded_by=session["user_id"]))
-    db.session.commit(); return jsonify({"ok":True,"status":r.status})
+    uploaded=[]
+    try:
+        for photo in files:
+            safe=secure_filename(photo.filename) or "evidencia.jpg"
+            stored_name=f"fwpos-{rid}-{uuid.uuid4().hex}-{safe}"
+            stored=_store_uploaded_file(photo,"firmware-pos-cptm",stored_name,photo.mimetype or "image/jpeg",max_mb=_POS_FW_UPLOAD_MAX_MB)
+            uploaded.append(stored)
+            db.session.add(PosFirmwareCptmPhoto(firmware_id=rid,original_name=photo.filename,stored_name=stored,mime_type=photo.mimetype,uploaded_by=session["user_id"]))
+            try: photo.close()
+            except Exception: pass
+        uploaded_at=time.monotonic()
+        db.session.commit()
+        app.logger.info("pos_fw_save rid=%s files=%s bytes=%s parse_s=%.3f upload_s=%.3f commit_s=%.3f total_s=%.3f",rid,len(files),declared_size,parsed_at-started,uploaded_at-parsed_at,time.monotonic()-uploaded_at,time.monotonic()-started)
+        return jsonify({"ok":True,"status":r.status})
+    except Exception:
+        db.session.rollback()
+        app.logger.exception("pos_fw_save_failed rid=%s files=%s elapsed_s=%.3f",rid,len(files),time.monotonic()-started)
+        # Arquivos já enviados permanecem para reconciliação; não apagar automaticamente
+        # em falhas de banco/timeout sem garantia de consistência.
+        return jsonify({"ok":False,"error":"Falha ao salvar a atividade. Verifique o registro antes de reenviar."}),500
+
+@app.get("/api/firmware-pos-cptm/evidencias/simulacao")
+@login_required
+def pos_firmware_evidence_dry_run():
+    if not _has_access("field.firmware_pos_cptm"): abort(403)
+    # Somente leitura: nenhuma exclusão de foto, metadado ou registro.
+    days=max(1,min(3650,int(request.args.get("dias","180"))))
+    limit=max(1,min(500,int(request.args.get("limite","100"))))
+    cutoff=datetime.utcnow()-timedelta(days=days)
+    rows=(db.session.query(PosFirmwareCptmPhoto,PosFirmwareCptm.status)
+        .join(PosFirmwareCptm,PosFirmwareCptm.id==PosFirmwareCptmPhoto.firmware_id)
+        .filter(PosFirmwareCptm.status=="CONCLUÍDO",PosFirmwareCptmPhoto.created_at<cutoff)
+        .order_by(PosFirmwareCptmPhoto.created_at).limit(limit+1).all())
+    return jsonify({"ok":True,"somente_simulacao":True,"dias":days,"limite":limit,
+        "mais_registros":len(rows)>limit,"candidatas_exibidas":min(len(rows),limit),
+        "criterio":"Firmware/POS concluído com evidência anterior ao corte; não autoriza exclusão",
+        "evidencias":[{"id":photo.id,"atividade_id":photo.firmware_id,"criada_em":photo.created_at.isoformat(),
+                       "armazenamento":"R2" if photo.stored_name.startswith("r2__") else "local"}
+                      for photo,_ in rows[:limit]]})
 
 @app.delete("/api/firmware-pos-cptm/photos/<int:pid>")
 @login_required
