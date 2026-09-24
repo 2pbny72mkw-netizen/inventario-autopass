@@ -1,0 +1,6 @@
+V85.12 — PATCH PARCIAL PARA HOMOLOGAÇÃO
+Base: ZIP enviado pelo usuário, APP_RELEASE V85.11.
+Arquivos: app.py, base.html, templates/base.html, templates/customer_portal.html, templates/about.html.
+Implementado: menu Atividades como atalhos permissionados para telas existentes; remove atalho superior Dashboard Bobinas mantendo Field; cor branca do título do portal interno; APP_RELEASE e entrada histórica.
+NÃO IMPLEMENTADO: dashboard consolidado de atividades, nova matriz, diagnóstico de evidências/limpeza, correções Engenharia, homologação integral Portal. Nenhuma foto ou atividade apagada.
+Não há alteração de banco. Aplicar arquivos preservando estrutura; backup e teste em homologação antes do deploy.
