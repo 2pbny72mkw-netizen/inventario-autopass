@@ -26,8 +26,16 @@
     <nav class="mainNavV424" id="mainNavV424">
       {% if can_view('dashboard') or can_view('field.dashboard') or can_view('implantation.dashboard') or can_view('finance.dashboard') %}<a href="/gerencial">Dashboard</a>{% endif %}
       {# V79.5 REV4 — atalho explícito: a permissão efetiva deve produzir navegação visível, independentemente do dropdown Field. #}
-      {% if can_view('field.bobbins_dashboard') %}<a href="/dashboard/bobinas" class="navBobbinDashboard">Dashboard Bobinas</a>{% endif %}
-      {% if can_view('tasks.view') %}<a href="/gestao-tarefas">Gestão de Tarefas</a>{% endif %}
+      {% if can_view('tasks.view') or can_view('arrow.view') or can_view('arrow.manage') or can_view('field.inventory') or can_view('field.preventive') or can_view('implantation.visits') or can_view('field.bobbins') %}
+      <div class="navDrop"><button type="button" class="navDropBtn">Atividades ▾</button><div class="navDropMenu">
+        {% if can_view('tasks.view') %}<a href="/gestao-tarefas">Gestão de Tarefas</a>{% endif %}
+        {% if can_view('arrow.view') %}<a href="/arrow?mine=1#minhas">Minhas Atividades Arrow</a><a href="/arrow#agenda">Agenda Arrow</a>{% endif %}
+        {% if can_view('arrow.manage') %}<a href="/arrow#gestao">Atividades / Alocações Arrow</a>{% endif %}
+        {% if can_view('field.inventory') %}<a href="/tecnico">Inventário</a>{% endif %}
+        {% if can_view('field.preventive') %}<a href="/preventivas">Preventiva ATM</a>{% endif %}
+        {% if can_view('field.bobbins') %}<a href="/field/bobinas">Atividades de Bobinas</a>{% endif %}
+        {% if can_view('implantation.visits') or can_view('implantation.reports') %}<a href="/implantacao-hardware">Visitas / Relatórios</a>{% endif %}
+      </div></div>{% endif %}
       {% if can_view('field') %}
       <div class="navDrop"><button type="button" class="navDropBtn">Field ▾</button><div class="navDropMenu">
         {% if can_view('field.bobbins_dashboard') %}<a href="/dashboard/bobinas"><b>Dashboard Bobinas</b></a>{% endif %}
