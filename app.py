@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.15"
+APP_RELEASE = "V85.16"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -309,6 +309,42 @@ class ManagementTaskEvent(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     action = db.Column(db.String(60), nullable=False)
     detail = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+# V85.16 — cadastro mestre e auditoria das configurações do QR Trilhos.
+class QrRailConfig(db.Model):
+    __tablename__ = "qr_rail_configs_v8516"
+    id = db.Column(db.Integer, primary_key=True)
+    company = db.Column(db.String(120), nullable=False, index=True)
+    line = db.Column(db.String(120), nullable=False, index=True)
+    station = db.Column(db.String(180), nullable=False, index=True)
+    block = db.Column(db.String(120), nullable=False, index=True)
+    trans_oper_id = db.Column(db.Integer, nullable=False)
+    terminal_id = db.Column(db.Integer, nullable=False, unique=True, index=True)
+    turn_model = db.Column(db.Integer, nullable=False)
+    ip = db.Column(db.String(40), default="")
+    mask = db.Column(db.String(40), default="")
+    gateway = db.Column(db.String(40), default="")
+    dns1 = db.Column(db.String(40), default="")
+    dns2 = db.Column(db.String(40), default="")
+    line_id = db.Column(db.Integer, nullable=False)
+    term_grp_id = db.Column(db.Integer, nullable=False, default=1)
+    apn1 = db.Column(db.String(180), default="")
+    apn2 = db.Column(db.String(180), default="")
+    active = db.Column(db.Boolean, nullable=False, default=True)
+    updated_by = db.Column(db.Integer, db.ForeignKey("users.id"))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    __table_args__ = (db.UniqueConstraint("company","line","station","block", name="uq_qr_rail_hierarchy_v8516"),)
+
+class QrRailConfigAudit(db.Model):
+    __tablename__ = "qr_rail_config_audit_v8516"
+    id = db.Column(db.Integer, primary_key=True)
+    config_id = db.Column(db.Integer, db.ForeignKey("qr_rail_configs_v8516.id"), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    action = db.Column(db.String(30), nullable=False)
+    old_json = db.Column(db.Text)
+    new_json = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
 class User(db.Model):
@@ -2185,7 +2221,7 @@ ACCESS_GROUPS = {
         "field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.firmware_pos_cptm","field.bobbins","field.bobbins_dashboard","field.stock_manage","field.atm_mapping","field.atm_mapping_manage"
     )),
     "implantation": ("Implantação de Hardware", (
-        "implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage"
+        "implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage","implantation.qr.view","implantation.qr.manage"
     )),
     "teams": ("RH / Equipes", (
         "teams.map","teams.today","teams.schedule","teams.manage","teams.export","teams.apt"
@@ -2217,7 +2253,7 @@ ACCESS_ALL = set(ACCESS_MODULES) | set(ACCESS_SUBMODULES)
 ACCESS_LABELS = {
  "dashboard.general":"Dashboard Geral",
  "field.dashboard":"Dashboard Field","field.inventory":"Inventário / Lançamento","field.calls":"Chamados","field.preventive":"Solicitação Preventiva ATM","field.equipment":"Equipamentos","field.evidence":"Evidências","field.panorama":"Visão Panorâmica","field.chip_recarga":"Troca de Chips – Recarga","field.firmware_pos_cptm":"Atualização de Firmware POS – CPTM","field.bobbins":"Atividade Bobinas","field.bobbins_dashboard":"Visualizar Dashboard Bobinas","field.stock_manage":"Alterar estoque consolidado / armários / bobinas","field.atm_mapping":"Mapeamento ATM","field.atm_mapping_manage":"Gerenciar Mapeamento ATM",
- "implantation.dashboard":"Dashboard Implantação","implantation.visits":"Visita a Campo / Relatório de Visita","implantation.reports":"Relatórios / Visitas recentes","implantation.emv":"Troca de Chips EMV – Trilhos","implantation.garage":"Troca de Chips Garagem",
+ "implantation.dashboard":"Dashboard Implantação","implantation.visits":"Visita a Campo / Relatório de Visita","implantation.reports":"Relatórios / Visitas recentes","implantation.emv":"Troca de Chips EMV – Trilhos","implantation.garage":"Troca de Chips Garagem","implantation.qr.view":"Gerador de QR – Trilhos","implantation.qr.manage":"Editar configurações de QR – Trilhos",
  "teams.map":"Mapa operacional","teams.today":"Operação de Hoje","teams.schedule":"Escala por dias","teams.manage":"Gestão de equipes / escala","teams.export":"Exportar dados","teams.apt":"APT / Validades",
  "users.view":"Visualizar usuários","users.config.view":"Visualizar configurações de usuários","users.config.manage":"Gerenciar configurações de usuários","users.create":"Criar usuário","users.edit":"Editar usuário","users.activate":"Ativar / Desativar","users.delete":"Excluir / Arquivar","users.password":"Redefinir senha","users.export":"Exportar Excel","users.import":"Importar Excel de configurações","users.roles.manage":"Atribuir perfis administrativos / sensíveis","users.scope.all":"Administrar usuários de todas as empresas",
  "finance.dashboard":"Dashboard Financeira","finance.support":"Suporte a Campo","finance.collection":"Coleta de Valores","finance.monitoring":"Monitoramento de Coletas","finance.apuracao":"Apuração de Numerário","finance.assistance":"Assistência Técnica","finance.implantation":"Implantação de Hardware","finance.entries":"Lançamentos","finance.suppliers":"Empresas / Fornecedores","finance.import":"Importar planilha","finance.edit":"Editar lançamentos","finance.delete":"Excluir lançamentos","finance.petty_cash.view":"Visualizar Caixinha","finance.petty_cash.manage":"Gerenciar Caixinha / despesas","finance.petty_cash.approve1":"Aprovar Caixinha - nível 1","finance.petty_cash.approve2":"Aprovar Caixinha - nível 2",
@@ -22703,57 +22739,77 @@ def _qr_config_proto(values):
     return bytes(out)
 
 
+@app.route('/api/implantacao/qr-trilhos/configs')
+@login_required
+def qr_rail_configs_api():
+    if not (_has_access('implantation.qr.view') or _has_access('implantation.visits')):
+        abort(403)
+    rows=QrRailConfig.query.filter_by(active=True).order_by(QrRailConfig.company,QrRailConfig.line,QrRailConfig.station,QrRailConfig.block).all()
+    return jsonify({'ok':True,'rows':[{'id':r.id,'company':r.company,'line':r.line,'station':r.station,'block':r.block,
+        'TransOperId':r.trans_oper_id,'TerminalId':r.terminal_id,'TurnModel':r.turn_model,'Ip':r.ip or '',
+        'Mask':r.mask or '','Gateway':r.gateway or '','Dns1':r.dns1 or '','Dns2':r.dns2 or '',
+        'LineId':r.line_id,'TermGrpId':r.term_grp_id,'LabelApnChip1':r.apn1 or '','LabelApnChip2':r.apn2 or ''} for r in rows]})
+
+def _qr_rail_snapshot(r):
+    return {'company':r.company,'line':r.line,'station':r.station,'block':r.block,'trans_oper_id':r.trans_oper_id,
+        'terminal_id':r.terminal_id,'turn_model':r.turn_model,'ip':r.ip,'mask':r.mask,'gateway':r.gateway,
+        'dns1':r.dns1,'dns2':r.dns2,'line_id':r.line_id,'term_grp_id':r.term_grp_id,'apn1':r.apn1,'apn2':r.apn2,'active':r.active}
+
+@app.route('/gestao/configuracoes/qr-trilhos', methods=['GET','POST'])
+@login_required
+def qr_rail_configs_manage():
+    if not _has_access('implantation.qr.manage'): abort(403)
+    error=None; success=None
+    if request.method=='POST':
+        try:
+            rid=request.form.get('id',type=int); row=db.session.get(QrRailConfig,rid) if rid else QrRailConfig()
+            if rid and not row: raise ValueError('Configuração não encontrada.')
+            old=_qr_rail_snapshot(row) if rid else None
+            def req(name):
+                v=(request.form.get(name) or '').strip()
+                if not v: raise ValueError(f'Campo obrigatório: {name}.')
+                return v
+            row.company=req('company'); row.line=req('line'); row.station=req('station'); row.block=req('block')
+            row.trans_oper_id=int(req('trans_oper_id')); row.terminal_id=int(req('terminal_id')); row.turn_model=int(req('turn_model')); row.line_id=int(req('line_id')); row.term_grp_id=int(req('term_grp_id'))
+            row.ip=(request.form.get('ip') or '').strip(); row.mask=(request.form.get('mask') or '').strip(); row.gateway=(request.form.get('gateway') or '').strip(); row.dns1=(request.form.get('dns1') or '').strip(); row.dns2=(request.form.get('dns2') or '').strip(); row.apn1=(request.form.get('apn1') or '').strip(); row.apn2=(request.form.get('apn2') or '').strip(); row.active=request.form.get('active')=='1'; row.updated_by=session['user_id']
+            # valida IPv4 sem alterar a convenção binária usada no QR.
+            import ipaddress
+            for val in (row.ip,row.mask,row.gateway,row.dns1,row.dns2):
+                if val: ipaddress.IPv4Address(val)
+            db.session.add(row); db.session.flush()
+            db.session.add(QrRailConfigAudit(config_id=row.id,user_id=session['user_id'],action='UPDATE' if rid else 'CREATE',old_json=json.dumps(old,ensure_ascii=False) if old else None,new_json=json.dumps(_qr_rail_snapshot(row),ensure_ascii=False)))
+            db.session.commit(); success='Configuração salva com auditoria.'
+        except Exception as exc:
+            db.session.rollback(); error=str(exc)
+    rows=QrRailConfig.query.order_by(QrRailConfig.company,QrRailConfig.line,QrRailConfig.station,QrRailConfig.block).all()
+    return render_template('qr_rail_configs_v8516.html',rows=rows,error=error,success=success,app_release=APP_RELEASE)
+
 @app.route('/implantacao/gerador-qr', methods=['GET','POST'])
 @hardware_implantation_required
 def implantation_qr_config():
-    if not _has_access('implantation.visits'):
-        abort(403)
+    if not (_has_access('implantation.qr.view') or _has_access('implantation.visits')): abort(403)
     from datetime import datetime, timezone
-    values = {}
-    qr_png = None
-    qr_text = None
-    error = None
-    if request.method == 'POST':
+    values={}; qr_png=None; qr_text=None; error=None; selected=None
+    configs=QrRailConfig.query.filter_by(active=True).order_by(QrRailConfig.company,QrRailConfig.line,QrRailConfig.station,QrRailConfig.block).all()
+    if request.method=='POST':
         try:
-            import os
-            import secrets
+            import os, secrets
             from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
             from cryptography.hazmat.primitives import padding
             import qrcode
-            values = {k: request.form.get(k, '') for k in
-                ('TransOperId','TerminalId','TurnModel','Ip','Mask','Gateway','Dns1','Dns2',
-                 'LineId','TermGrpId','LabelApnChip1','LabelApnChip2')}
-            values['Date'] = str(int(datetime.now(timezone.utc).timestamp()))
-            project = request.form.get('project','').strip()
-            if project != 'SBE Autopass Homolog':
-                raise ValueError('Projeto não configurado para geração de QR.')
-            # A chave não deve ser incluída no HTML, JavaScript, logs ou histórico.
-            key_hex = os.environ.get('AUTOPASS_QR_SBE_HOMOLOG_KEY_HEX', '').replace(' ', '')
-            if len(key_hex) != 64:
-                raise ValueError('Chave de homologação não configurada no servidor (AUTOPASS_QR_SBE_HOMOLOG_KEY_HEX).')
-            key = bytes.fromhex(key_hex)
-            plain = _qr_config_proto(values)
-            if not plain:
-                raise ValueError('Informe os parâmetros de configuração.')
-            iv = secrets.token_bytes(16)
-            padder = padding.PKCS7(128).padder()
-            padded = padder.update(plain) + padder.finalize()
-            cipher = Cipher(algorithms.AES(key), modes.CBC(iv))
-            enc = cipher.encryptor()
-            encrypted = enc.update(padded) + enc.finalize()
-            qr_text = '<c:2>i:' + base64.b64encode(iv).decode('ascii') + ';p:' + base64.b64encode(encrypted).decode('ascii') + ';'
-            image = qrcode.make(qr_text, box_size=8, border=4)
-            output = io.BytesIO()
-            image.save(output, format='PNG')
-            qr_png = base64.b64encode(output.getvalue()).decode('ascii')
-            app.logger.info('qr_config_generated project=%s user_id=%s terminal_id=%s',
-                            project, session.get('user_id'), values.get('TerminalId'))
-        except (ValueError, TypeError, ImportError) as exc:
-            error = str(exc)
+            config_id=request.form.get('config_id',type=int); selected=db.session.get(QrRailConfig,config_id)
+            if not selected or not selected.active: raise ValueError('Selecione um bloqueio cadastrado e ativo.')
+            values={'TransOperId':selected.trans_oper_id,'TerminalId':selected.terminal_id,'TurnModel':selected.turn_model,'Ip':selected.ip,'Mask':selected.mask,'Gateway':selected.gateway,'Dns1':selected.dns1,'Dns2':selected.dns2,'LineId':selected.line_id,'TermGrpId':selected.term_grp_id,'LabelApnChip1':selected.apn1,'LabelApnChip2':selected.apn2}
+            values['Date']=str(int(datetime.now(timezone.utc).timestamp()))
+            key_hex=os.environ.get('AUTOPASS_QR_SBE_HOMOLOG_KEY_HEX','').replace(' ','')
+            if len(key_hex)!=64: raise ValueError('Chave de homologação não configurada no servidor (AUTOPASS_QR_SBE_HOMOLOG_KEY_HEX).')
+            plain=_qr_config_proto(values)
+            if not plain: raise ValueError('Configuração sem parâmetros para geração.')
+            iv=secrets.token_bytes(16); padder=padding.PKCS7(128).padder(); padded=padder.update(plain)+padder.finalize(); cipher=Cipher(algorithms.AES(bytes.fromhex(key_hex)),modes.CBC(iv)); enc=cipher.encryptor(); encrypted=enc.update(padded)+enc.finalize()
+            qr_text='<c:2>i:'+base64.b64encode(iv).decode('ascii')+';p:'+base64.b64encode(encrypted).decode('ascii')+';'
+            image=qrcode.make(qr_text,box_size=8,border=4); output=io.BytesIO(); image.save(output,format='PNG'); qr_png=base64.b64encode(output.getvalue()).decode('ascii')
+            app.logger.info('qr_rail_generated user_id=%s config_id=%s terminal_id=%s',session.get('user_id'),selected.id,selected.terminal_id)
+        except (ValueError,TypeError,ImportError) as exc: error=str(exc)
         except Exception:
-            app.logger.exception('qr_config_generation_failed')
-            error = 'Falha ao gerar QR Code. Consulte o diagnóstico do servidor.'
-    return render_template('implantation_qr_config_v8513.html',
-                           values=values, qr_png=qr_png, qr_text=qr_text, error=error,
-                           app_release=APP_RELEASE)
-
+            app.logger.exception('qr_rail_generation_failed'); error='Falha ao gerar QR Code. Consulte o diagnóstico do servidor.'
+    return render_template('implantation_qr_config_v8516.html',configs=configs,selected=selected,values=values,qr_png=qr_png,qr_text=qr_text,error=error,app_release=APP_RELEASE)
