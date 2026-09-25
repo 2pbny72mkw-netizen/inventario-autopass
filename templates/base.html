@@ -34,7 +34,7 @@
         {% if can_view('field.inventory') %}<a href="/tecnico">Inventário</a>{% endif %}
         {% if can_view('field.preventive') %}<a href="/preventivas">Preventiva ATM</a>{% endif %}
         {% if can_view('field.bobbins') %}<a href="/field/bobinas">Atividades de Bobinas</a>{% endif %}
-        {% if can_view('implantation.visits') or can_view('implantation.reports') %}<a href="/implantacao-hardware">Visitas / Relatórios</a>{% endif %}
+        {% if can_view('implantation.visits') or can_view('implantation.reports') %}<a href="/implantacao-hardware">Visitas / Relatórios</a>{% endif %}{% if can_view('implantation.visits') %}<a href="/implantacao/gerador-qr">Gerador de QR de Configuração</a>{% endif %}
       </div></div>{% endif %}
       {% if can_view('field') %}
       <div class="navDrop"><button type="button" class="navDropBtn">Field ▾</button><div class="navDropMenu">

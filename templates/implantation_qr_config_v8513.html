@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Gerador de QR de Configuração | Autopass{% endblock %}
+{% block content %}
+<section class="card" style="max-width:1000px;margin:20px auto;padding:24px">
+<h1>Gerador de QR de Configuração</h1>
+<p>Atividades / Implantação · Homologação. O nome Trilhos/Pneus será definido após validação.</p>
+<p><strong>Atenção:</strong> conversão de IPv4 para uint32 em ordem de rede ainda depende de teste no equipamento. Não utilizar em produção antes da homologação.</p>
+{% if error %}<p role="alert" style="color:#b91c1c">{{ error }}</p>{% endif %}
+<form method="post" autocomplete="off">
+<label>Projeto<select name="project" required><option value="SBE Autopass Homolog">SBE Autopass Homolog</option></select></label>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin:18px 0">
+<label>Operadora (ID)<input name="TransOperId" value="{{ values.get('TransOperId','5') }}" inputmode="numeric"></label>
+<label>Terminal (ID)<input name="TerminalId" value="{{ values.get('TerminalId','805555') }}" inputmode="numeric"></label>
+<label>Modelo do bloqueio<input name="TurnModel" value="{{ values.get('TurnModel','6') }}" inputmode="numeric"></label>
+<label>IP<input name="Ip" value="{{ values.get('Ip','') }}" ></label>
+<label>Máscara<input name="Mask" value="{{ values.get('Mask','') }}" ></label>
+<label>Gateway<input name="Gateway" value="{{ values.get('Gateway','') }}" ></label>
+<label>DNS 1<input name="Dns1" value="{{ values.get('Dns1','') }}" ></label>
+<label>DNS 2<input name="Dns2" value="{{ values.get('Dns2','') }}" ></label>
+<label>Linha (ID)<input name="LineId" value="{{ values.get('LineId','') }}" inputmode="numeric"></label>
+<label>Grupo do terminal (ID)<input name="TermGrpId" value="{{ values.get('TermGrpId','1') }}" inputmode="numeric"></label>
+<label>APN chip 1<input name="LabelApnChip1" value="{{ values.get('LabelApnChip1','APN_M2M_ARQIA_01=') }}" ></label>
+<label>APN chip 2<input name="LabelApnChip2" value="{{ values.get('LabelApnChip2','APN_M2M_CLARO_01=') }}" ></label>
+</div><p>Data (Epoch) e IV são gerados automaticamente a cada emissão.</p>
+<button type="submit">Gerar QR Code de homologação</button>
+</form>
+{% if qr_png %}<section style="margin-top:24px"><h2>QR Code gerado</h2><img style="max-width:100%;width:340px;image-rendering:pixelated" alt="QR Code de configuração" src="data:image/png;base64,{{ qr_png }}"><details><summary>Conteúdo do QR</summary><textarea readonly rows="5" style="width:100%">{{ qr_text }}</textarea></details><p>Gerado somente nesta resposta. A imagem e o conteúdo criptografado não são persistidos.</p></section>{% endif %}
+</section>
+{% endblock %}
