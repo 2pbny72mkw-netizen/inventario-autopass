@@ -17,3 +17,6 @@ reportlab>=4.0,<5
 
 cryptography>=42,<47
 qrcode[pil]>=7.4,<9
+
+# V85.13 REV2 - driver usado por URLs postgresql+psycopg://
+psycopg[binary]>=3.2,<4

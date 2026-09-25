@@ -1,0 +1,23 @@
+V85.13 REV2 — ENXUTA / HOMOLOGAÇÃO
+
+Base: ZIP enviado pelo usuário em 25/09/2026.
+
+Arquivos do patch:
+- app.py
+- requirements.txt
+- templates/implantation_qr_config_v8513.html
+
+Correções de deploy:
+1. Inclui psycopg[binary]>=3.2,<4 para ambientes cuja DATABASE_URL usa postgresql+psycopg://.
+2. Remove a dependência da chamada prematura de _eng_seed_code_rules no bootstrap de Engenharia, mantendo a carga idempotente das mesmas regras.
+3. Executa a validação aditiva de colunas fiscais do Portal dentro de app.app_context().
+4. Preserva o Gerador de QR de Configuração V85.13.
+
+Aplicação:
+Substituir apenas os arquivos acima na mesma estrutura do projeto e realizar novo deploy.
+Não apagar banco, tabelas ou objetos R2.
+
+Validação local executada:
+- python -m py_compile app.py: OK
+- estrutura do ZIP: OK
+Não houve execução contra o banco/Render de produção.

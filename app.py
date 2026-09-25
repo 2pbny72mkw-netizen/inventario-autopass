@@ -18724,11 +18724,13 @@ def materials_request_status_api(rid):
 
 
 # V69.2.1 HOTFIX2 — colunas aditivas do documento fiscal do Portal do Cliente.
+# V85.13 REV2: acesso a db.engine no bootstrap precisa de application context.
 try:
-    with db.engine.begin() as conn:
-        insp=db.inspect(db.engine); cols={c['name'] for c in insp.get_columns('customer_appointments')}
-        for col,typ in [('invoice_number','VARCHAR(120)'),('invoice_file','VARCHAR(600)'),('invoice_original_name','VARCHAR(255)')]:
-            if col not in cols: conn.execute(text(f'ALTER TABLE customer_appointments ADD COLUMN {col} {typ}'))
+    with app.app_context():
+        with db.engine.begin() as conn:
+            insp=db.inspect(db.engine); cols={c['name'] for c in insp.get_columns('customer_appointments')}
+            for col,typ in [('invoice_number','VARCHAR(120)'),('invoice_file','VARCHAR(600)'),('invoice_original_name','VARCHAR(255)')]:
+                if col not in cols: conn.execute(text(f'ALTER TABLE customer_appointments ADD COLUMN {col} {typ}'))
 except Exception as exc:
     app.logger.warning('HOTFIX2: não foi possível validar colunas fiscais do Portal: %s',exc)
 
@@ -19717,8 +19719,19 @@ with app.app_context():
             if insp.has_table("engineering_boms") and "product_ncm" not in {c["name"] for c in insp.get_columns("engineering_boms")}: conn.execute(text("ALTER TABLE engineering_boms ADD COLUMN product_ncm VARCHAR(20)"))
             if insp.has_table("engineering_bom_items") and "cost_group" not in {c["name"] for c in insp.get_columns("engineering_bom_items")}: conn.execute(text("ALTER TABLE engineering_bom_items ADD COLUMN cost_group VARCHAR(30) DEFAULT 'MATERIAL'"))
         db.metadata.create_all(bind=db.engine,tables=[EngineeringCodeRule.__table__],checkfirst=True)
+        # V85.13 REV2: o bootstrap ocorre antes da definição tardia de _eng_seed_code_rules.
+        # Faz a carga idempotente aqui para não depender da ordem das funções do módulo.
         if not SchemaMigration.query.filter_by(version="V78.2.4-001").first():
-            _eng_seed_code_rules()
+            if not EngineeringCodeRule.query.count():
+                _seed_rows = {
+                  "GRUPO":[("00","Revenda"),("01","Industrializado"),("02","Serviço MO"),("03","Produto acabado"),("04","Consumo"),("05","Ativo"),("06","Reservado / futuro")],
+                  "ORIGEM":[("00","Nacional"),("01","Importado")],
+                  "TIPO":[("00","Componentes eletrônicos"),("01","Componentes plástico / vidro"),("02","Componente metálico"),("03","Cabos"),("04","Embalagens / Etiquetas"),("05","Sub conjunto"),("06","Placa montada"),("07","Produto montado"),("08","Produto comprado"),("09","Suprimentos - predial"),("10","Suprimentos - AT"),("11","Ativos"),("12","Serviços - facilities"),("13","Serviços - MO AT")]
+                }
+                for _dim,_rows in _seed_rows.items():
+                    for _code,_desc in _rows:
+                        db.session.add(EngineeringCodeRule(dimension=_dim,code=_code,description=_desc,active=True))
+                db.session.commit()
             db.session.add(SchemaMigration(version="V78.2.4-001",description="Engenharia: codificação configurável Grupo.Origem.Tipo.Sequencial"));db.session.commit()
         if not SchemaMigration.query.filter_by(version="V77.9.8-001").first():
             db.session.add(SchemaMigration(version="V77.9.8-001",description="Engenharia: NCM, grupos de custo, nacionalização USD e formação de preço Venda/Locação"));db.session.commit()
