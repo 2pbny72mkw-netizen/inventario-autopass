@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.13"
+APP_RELEASE = "V85.13 REV3"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -11558,7 +11558,15 @@ def recent_audit_api():
 @app.get("/atividades")
 @login_required
 def activities_page():
-    if not _has_access("field"):
+    # V85.13 REV3 — Central de Atividades é transversal. O acesso efetivo a
+    # cada atividade continua vindo exclusivamente da Matriz de Permissões.
+    activity_permissions = (
+        "field.inventory","field.preventive","field.panorama","field.chip_recarga",
+        "field.bobbins","field.firmware_pos_cptm","implantation.visits",
+        "implantation.reports","implantation.emv","implantation.garage",
+        "arrow.view","arrow.manage","tasks.view"
+    )
+    if not any(_has_access(x) for x in activity_permissions):
         return redirect(_v789_landing_for_user())
     return render_template("activities.html", app_release=APP_RELEASE)
 
@@ -11579,19 +11587,24 @@ def activities_summary_api():
     garage_done=GarageChipSwap.query.filter_by(technician_id=uid,status="CONCLUÍDA").count() if 'GarageChipSwap' in globals() else 0
     emv_done=EmvChipSwap.query.filter_by(technician_id=uid,status="CONCLUÍDA").count() if 'EmvChipSwap' in globals() else 0
     candidates=[
-      ("field.inventory",{"key":"inventory","title":"Inventário / Lançamento","href":"/tecnico","done":inv_today,"label":"lançamentos hoje"}),
-      ("field.chip_recarga",{"key":"chips","title":"Troca de Chip Recarga","href":"/troca-chips","done":chip_done,"label":"concluídos"}),
-      ("field.panorama",{"key":"panorama","title":"Visão Panorâmica","href":"/visao-panoramica","done":pan,"label":"pontos registrados"}),
-      ("field.bobbins",{"key":"bobbins","title":"Controle de Bobinas","href":"/field/bobinas","done":bob_today,"label":"registros hoje"}),
-      ("field.firmware_pos_cptm",{"key":"firmware","title":"Atualização Firmware POS","href":"/firmware-pos-cptm","done":fw_done,"label":"concluídos"}),
-      ("implantation.garage",{"key":"garage","title":"Troca de Chip Garagem","href":"/troca-chips-garagem","done":garage_done,"label":"concluídos"}),
-      ("implantation.emv",{"key":"emv","title":"Troca de Chips EMV - Trilhos","href":"/troca-chips-emv","done":emv_done,"label":"concluídos"}),
+      ("field.inventory",{"key":"inventory","group":"FIELD","title":"Inventário / Lançamento","href":"/tecnico","done":inv_today,"label":"lançamentos hoje"}),
+      ("field.preventive",{"key":"preventive","group":"FIELD","title":"Preventiva ATM","href":"/preventivas","done":0,"label":"abrir atividade"}),
+      ("field.chip_recarga",{"key":"chips","group":"FIELD","title":"Troca de Chip Recarga","href":"/troca-chips","done":chip_done,"label":"concluídos"}),
+      ("field.panorama",{"key":"panorama","group":"FIELD","title":"Visão Panorâmica","href":"/visao-panoramica","done":pan,"label":"pontos registrados"}),
+      ("field.bobbins",{"key":"bobbins","group":"FIELD","title":"Controle de Bobinas","href":"/field/bobinas","done":bob_today,"label":"registros hoje"}),
+      ("field.firmware_pos_cptm",{"key":"firmware","group":"FIELD","title":"Atualização Firmware POS","href":"/firmware-pos-cptm","done":fw_done,"label":"concluídos"}),
+      ("implantation.garage",{"key":"garage","group":"IMPLANTAÇÃO","title":"Troca de Chip Garagem","href":"/troca-chips-garagem","done":garage_done,"label":"concluídos"}),
+      ("implantation.emv",{"key":"emv","group":"IMPLANTAÇÃO","title":"Troca de Chips EMV - Trilhos","href":"/troca-chips-emv","done":emv_done,"label":"concluídos"}),
     ]
     for perm,item in candidates:
         if _has_access(perm): activities.append(item)
     if _has_access("implantation.visits") or _has_access("implantation.reports"):
         done=HardwareFieldVisit.query.filter_by(status="FINALIZADO").count()
-        activities.append({"key":"implantation","title":"Implantação de Hardware","href":"/implantacao-hardware","done":done,"label":"visitas finalizadas"})
+        activities.append({"key":"implantation","group":"IMPLANTAÇÃO","title":"Implantação de Hardware","href":"/implantacao-hardware","done":done,"label":"visitas finalizadas"})
+    if _has_access("arrow.view") or _has_access("arrow.manage"):
+        activities.append({"key":"arrow","group":"ARROW","title":"Atividades Arrow","href":"/arrow?mine=1#minhas","done":0,"label":"agenda e alocações"})
+    if _has_access("tasks.view"):
+        activities.append({"key":"tasks","group":"GESTÃO","title":"Gestão de Tarefas","href":"/gestao-tarefas","done":0,"label":"tarefas e pendências"})
     return jsonify({"ok":True,"release":APP_RELEASE,"activities":activities})
 
 
@@ -17944,7 +17957,7 @@ BUILTIN_DASHBOARD_CATALOG = [
     {"key":"overview","label":"Visão Geral","group":"VISÃO GERAL","icon":"▦","roles":[]},
     {"key":"execution","label":"Inventário","group":"ATIVIDADES","icon":"▥","roles":[]},
     {"key":"atm-inventory","label":"Dashboard ATM","group":"ATIVIDADES","icon":"▦","roles":[]},
-    {"key":"bobbin-dashboard","label":"Dashboard Bobinas","group":"ATIVIDADES","icon":"▦","roles":["manager","manager_field"]},
+    {"key":"bobbin-dashboard","label":"Dashboard Bobinas","group":"FIELD","icon":"▦","roles":["manager","manager_field"]},
     {"key":"pos-inventory","label":"Dashboard POS","group":"ATIVIDADES","icon":"▦","roles":[]},
     {"key":"validator-tdi-inventory","label":"Dashboard Validador + TDI","group":"ATIVIDADES","icon":"▦","roles":[]},
     {"key":"block-inventory","label":"Dashboard Bloqueio","group":"ATIVIDADES","icon":"▦","roles":[]},
@@ -18724,13 +18737,11 @@ def materials_request_status_api(rid):
 
 
 # V69.2.1 HOTFIX2 — colunas aditivas do documento fiscal do Portal do Cliente.
-# V85.13 REV2: acesso a db.engine no bootstrap precisa de application context.
 try:
-    with app.app_context():
-        with db.engine.begin() as conn:
-            insp=db.inspect(db.engine); cols={c['name'] for c in insp.get_columns('customer_appointments')}
-            for col,typ in [('invoice_number','VARCHAR(120)'),('invoice_file','VARCHAR(600)'),('invoice_original_name','VARCHAR(255)')]:
-                if col not in cols: conn.execute(text(f'ALTER TABLE customer_appointments ADD COLUMN {col} {typ}'))
+    with db.engine.begin() as conn:
+        insp=db.inspect(db.engine); cols={c['name'] for c in insp.get_columns('customer_appointments')}
+        for col,typ in [('invoice_number','VARCHAR(120)'),('invoice_file','VARCHAR(600)'),('invoice_original_name','VARCHAR(255)')]:
+            if col not in cols: conn.execute(text(f'ALTER TABLE customer_appointments ADD COLUMN {col} {typ}'))
 except Exception as exc:
     app.logger.warning('HOTFIX2: não foi possível validar colunas fiscais do Portal: %s',exc)
 
@@ -19719,19 +19730,8 @@ with app.app_context():
             if insp.has_table("engineering_boms") and "product_ncm" not in {c["name"] for c in insp.get_columns("engineering_boms")}: conn.execute(text("ALTER TABLE engineering_boms ADD COLUMN product_ncm VARCHAR(20)"))
             if insp.has_table("engineering_bom_items") and "cost_group" not in {c["name"] for c in insp.get_columns("engineering_bom_items")}: conn.execute(text("ALTER TABLE engineering_bom_items ADD COLUMN cost_group VARCHAR(30) DEFAULT 'MATERIAL'"))
         db.metadata.create_all(bind=db.engine,tables=[EngineeringCodeRule.__table__],checkfirst=True)
-        # V85.13 REV2: o bootstrap ocorre antes da definição tardia de _eng_seed_code_rules.
-        # Faz a carga idempotente aqui para não depender da ordem das funções do módulo.
         if not SchemaMigration.query.filter_by(version="V78.2.4-001").first():
-            if not EngineeringCodeRule.query.count():
-                _seed_rows = {
-                  "GRUPO":[("00","Revenda"),("01","Industrializado"),("02","Serviço MO"),("03","Produto acabado"),("04","Consumo"),("05","Ativo"),("06","Reservado / futuro")],
-                  "ORIGEM":[("00","Nacional"),("01","Importado")],
-                  "TIPO":[("00","Componentes eletrônicos"),("01","Componentes plástico / vidro"),("02","Componente metálico"),("03","Cabos"),("04","Embalagens / Etiquetas"),("05","Sub conjunto"),("06","Placa montada"),("07","Produto montado"),("08","Produto comprado"),("09","Suprimentos - predial"),("10","Suprimentos - AT"),("11","Ativos"),("12","Serviços - facilities"),("13","Serviços - MO AT")]
-                }
-                for _dim,_rows in _seed_rows.items():
-                    for _code,_desc in _rows:
-                        db.session.add(EngineeringCodeRule(dimension=_dim,code=_code,description=_desc,active=True))
-                db.session.commit()
+            _eng_seed_code_rules()
             db.session.add(SchemaMigration(version="V78.2.4-001",description="Engenharia: codificação configurável Grupo.Origem.Tipo.Sequencial"));db.session.commit()
         if not SchemaMigration.query.filter_by(version="V77.9.8-001").first():
             db.session.add(SchemaMigration(version="V77.9.8-001",description="Engenharia: NCM, grupos de custo, nacionalização USD e formação de preço Venda/Locação"));db.session.commit()
