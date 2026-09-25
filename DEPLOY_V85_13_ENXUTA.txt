@@ -1,0 +1,8 @@
+V85.13 — PATCH ENXUTO DE HOMOLOGAÇÃO
+Base: ZIP fornecido pelo usuário (V85.12).
+Aplicar os arquivos mantendo o restante do repositório.
+Configurar no Render AUTOPASS_QR_SBE_HOMOLOG_KEY_HEX com os 32 bytes hexadecimais do projeto SBE Autopass Homolog, sem espaços (não registrar em repositório).
+Instalar requirements.txt.
+Acesso: Atividades > Gerador de QR de Configuração; permissão atual implantation.visits.
+Não cria tabelas nem altera dados; não persiste QR/imagem/chave.
+Validar conversão IPv4 uint32 no validador e leitura real antes de produção.

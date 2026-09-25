@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.12"
+APP_RELEASE = "V85.13"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -22565,3 +22565,99 @@ def financial_v856_voucher_ranking():
         'total_count':sum(x['count'] for x in output),
         'total_amount':round(sum(x['amount'] for x in output),2),
         'atm_count':len(output),'rows':output})
+
+
+# V85.13 — QR de configuração: Protobuf QrcDevConfig + AES-256-CBC.
+# Sem persistência de chave, payload ou imagem; não altera o inventário.
+def _qr_config_varint(n):
+    if not 0 <= n <= 0xffffffff:
+        raise ValueError("Valor fora do intervalo uint32")
+    out = bytearray()
+    while n > 127:
+        out.append((n & 127) | 128)
+        n >>= 7
+    out.append(n)
+    return bytes(out)
+
+
+def _qr_config_proto(values):
+    import ipaddress
+    out = bytearray()
+    numeric = {1:'TransOperId', 2:'TerminalId', 3:'TurnModel', 4:'Ip',
+               5:'Mask', 6:'Gateway', 7:'Dns1', 8:'Dns2', 9:'LineId',
+               10:'TermGrpId', 11:'Date'}
+    for number, name in numeric.items():
+        raw = str(values.get(name, '')).strip()
+        if not raw:
+            continue  # protobuf proto3: ausentes e zero usam o valor padrão
+        if number in (4,5,6,7,8) and '.' in raw:
+            raw = str(int(ipaddress.IPv4Address(raw)))  # network order; validar no equipamento
+        n = int(raw)
+        if n == 0:
+            continue
+        out.extend(_qr_config_varint(number << 3))
+        out.extend(_qr_config_varint(n))
+    for number, name in ((12,'LabelApnChip1'),(13,'LabelApnChip2')):
+        value = str(values.get(name, ''))
+        if value:
+            encoded = value.encode('utf-8')
+            out.extend(_qr_config_varint((number << 3) | 2))
+            out.extend(_qr_config_varint(len(encoded)))
+            out.extend(encoded)
+    return bytes(out)
+
+
+@app.route('/implantacao/gerador-qr', methods=['GET','POST'])
+@hardware_implantation_required
+def implantation_qr_config():
+    if not _has_access('implantation.visits'):
+        abort(403)
+    from datetime import datetime, timezone
+    values = {}
+    qr_png = None
+    qr_text = None
+    error = None
+    if request.method == 'POST':
+        try:
+            import os
+            import secrets
+            from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+            from cryptography.hazmat.primitives import padding
+            import qrcode
+            values = {k: request.form.get(k, '') for k in
+                ('TransOperId','TerminalId','TurnModel','Ip','Mask','Gateway','Dns1','Dns2',
+                 'LineId','TermGrpId','LabelApnChip1','LabelApnChip2')}
+            values['Date'] = str(int(datetime.now(timezone.utc).timestamp()))
+            project = request.form.get('project','').strip()
+            if project != 'SBE Autopass Homolog':
+                raise ValueError('Projeto não configurado para geração de QR.')
+            # A chave não deve ser incluída no HTML, JavaScript, logs ou histórico.
+            key_hex = os.environ.get('AUTOPASS_QR_SBE_HOMOLOG_KEY_HEX', '').replace(' ', '')
+            if len(key_hex) != 64:
+                raise ValueError('Chave de homologação não configurada no servidor (AUTOPASS_QR_SBE_HOMOLOG_KEY_HEX).')
+            key = bytes.fromhex(key_hex)
+            plain = _qr_config_proto(values)
+            if not plain:
+                raise ValueError('Informe os parâmetros de configuração.')
+            iv = secrets.token_bytes(16)
+            padder = padding.PKCS7(128).padder()
+            padded = padder.update(plain) + padder.finalize()
+            cipher = Cipher(algorithms.AES(key), modes.CBC(iv))
+            enc = cipher.encryptor()
+            encrypted = enc.update(padded) + enc.finalize()
+            qr_text = '<c:2>i:' + base64.b64encode(iv).decode('ascii') + ';p:' + base64.b64encode(encrypted).decode('ascii') + ';'
+            image = qrcode.make(qr_text, box_size=8, border=4)
+            output = io.BytesIO()
+            image.save(output, format='PNG')
+            qr_png = base64.b64encode(output.getvalue()).decode('ascii')
+            app.logger.info('qr_config_generated project=%s user_id=%s terminal_id=%s',
+                            project, session.get('user_id'), values.get('TerminalId'))
+        except (ValueError, TypeError, ImportError) as exc:
+            error = str(exc)
+        except Exception:
+            app.logger.exception('qr_config_generation_failed')
+            error = 'Falha ao gerar QR Code. Consulte o diagnóstico do servidor.'
+    return render_template('implantation_qr_config_v8513.html',
+                           values=values, qr_png=qr_png, qr_text=qr_text, error=error,
+                           app_release=APP_RELEASE)
+
