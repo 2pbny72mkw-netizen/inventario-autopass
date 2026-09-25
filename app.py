@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.14"
+APP_RELEASE = "V85.15"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -6188,6 +6188,89 @@ def diagnostics_storage_api():
         "local":{"files":local.get("files",0),"bytes":local.get("total_bytes",0)},"modules":modules,
         "note":"V81.11 é somente leitura. A medição usa os metadados dos objetos do R2; nenhum arquivo é baixado ou excluído."})
 
+
+
+@app.get("/api/diagnostico/retencao/v8515")
+@login_required
+def diagnostics_retention_v8515_api():
+    """V85.15 — simulação SOMENTE LEITURA de retenção de evidências concluídas."""
+    if not _has_access("management.diagnostics"):
+        return jsonify({"ok":False,"error":"Sem permissão."}),403
+    now=datetime.utcnow()
+    horizons=(30,60,90)
+    # Somente módulos em que existe vínculo inequívoco foto -> atividade e data de conclusão.
+    specs=[
+      ("Troca de Chips – Recarga", ChipSwapPhoto, ChipSwap, ChipSwapPhoto.chip_swap_id, ChipSwap.id, ChipSwapPhoto.stored_name, ChipSwapPhoto.created_at, ChipSwap.completed_at),
+      ("Troca de Chips EMV", EmvChipSwapPhoto, EmvChipSwap, EmvChipSwapPhoto.swap_id, EmvChipSwap.id, EmvChipSwapPhoto.stored_name, EmvChipSwapPhoto.created_at, EmvChipSwap.completed_at),
+      ("Firmware POS CPTM", PosFirmwareCptmPhoto, PosFirmwareCptm, PosFirmwareCptmPhoto.firmware_id, PosFirmwareCptm.id, PosFirmwareCptmPhoto.stored_name, PosFirmwareCptmPhoto.created_at, PosFirmwareCptm.completed_at),
+      ("Garagem / Chips", GarageChipPhoto, GarageChipSwap, GarageChipPhoto.swap_id, GarageChipSwap.id, GarageChipPhoto.stored_name, GarageChipPhoto.created_at, GarageChipSwap.completed_at),
+    ]
+    rows=[]; all_keys=set()
+    for name,photo,parent,fk,pk,keycol,createdcol,completedcol in specs:
+        try:
+            q=(db.session.query(keycol,createdcol,completedcol)
+               .join(parent,fk==pk).filter(completedcol.isnot(None)))
+            vals=q.all(); items=[]
+            for key,created,completed in vals:
+                if not key: continue
+                k=str(key); k=k[4:] if k.startswith('r2__') else k
+                if k.startswith('local:'): continue
+                age=(now-(completed or created or now)).days
+                items.append((k,max(0,age))); all_keys.add(k)
+            rows.append({"module":name,"completed_photos":len(items),"items":items})
+        except Exception:
+            db.session.rollback(); rows.append({"module":name,"completed_photos":0,"items":[],"note":"Métrica indisponível neste ambiente."})
+    sizes={}
+    if _r2_available() and all_keys:
+        # Uma única varredura do bucket; não baixa conteúdo e não altera objetos.
+        try:
+            client=r2_client(); token=None; pages=0
+            while True:
+                kw={"Bucket":os.environ["R2_BUCKET_NAME"],"MaxKeys":1000}
+                if token: kw["ContinuationToken"]=token
+                resp=client.list_objects_v2(**kw); pages+=1
+                for obj in resp.get("Contents",[]):
+                    k=str(obj.get("Key") or "")
+                    if k in all_keys: sizes[k]=int(obj.get("Size") or 0)
+                if not resp.get("IsTruncated") or len(sizes)>=len(all_keys): break
+                token=resp.get("NextContinuationToken")
+                if not token or pages>=100: break
+        except Exception: pass
+    totals={str(d):{"photos":0,"bytes":0} for d in horizons}
+    out=[]
+    for row in rows:
+        sim={}
+        for d in horizons:
+            eligible=[k for k,age in row["items"] if age>=d]
+            sim[str(d)]={"photos":len(eligible),"bytes":sum(sizes.get(k,0) for k in eligible)}
+            totals[str(d)]["photos"]+=len(eligible); totals[str(d)]["bytes"]+=sim[str(d)]["bytes"]
+        out.append({"module":row["module"],"completed_photos":row["completed_photos"],"simulation":sim,"note":row.get("note")})
+    return jsonify({"ok":True,"release":APP_RELEASE,"read_only":True,"generated_at":now.isoformat()+"Z",
+      "horizons_days":list(horizons),"totals":totals,"modules":out,
+      "excluded":["Visão Panorâmica: não possui conclusão inequívoca por atividade.","Relatórios de visita: conclusão/data exige regra de retenção específica.","Bobinas: já possui expires_at/deleted_at e política própria."],
+      "protection_note":"V85.15 não exclui arquivos. Evidências de auditoria, fraude, divergência financeira, investigação ou obrigação legal/contratual devem ser protegidas antes de qualquer limpeza futura."})
+
+@app.get("/api/diagnostico/performance/v8515")
+@login_required
+def diagnostics_performance_v8515_api():
+    """V85.15 — fotografia de performance do banco, sem DDL automático."""
+    if not _has_access("management.diagnostics"):
+        return jsonify({"ok":False,"error":"Sem permissão."}),403
+    out={"ok":True,"release":APP_RELEASE,"read_only":True,"engine":"postgresql" if database_url.startswith('postgresql') else 'sqlite',"tables":[],"indexes":_v70_index_snapshot()}
+    if out["engine"]!='postgresql':
+        out["note"]="Estatísticas detalhadas de scans estão disponíveis no PostgreSQL de homologação/produção. Nenhum índice é criado automaticamente."
+        return jsonify(out)
+    try:
+        rs=db.session.execute(text("""
+          SELECT relname, COALESCE(n_live_tup,0) live_rows, COALESCE(seq_scan,0) seq_scan,
+                 COALESCE(idx_scan,0) idx_scan, COALESCE(n_dead_tup,0) dead_rows
+          FROM pg_stat_user_tables
+          ORDER BY (COALESCE(seq_scan,0)+COALESCE(idx_scan,0)) DESC LIMIT 25
+        """)).mappings().all()
+        out["tables"]=[dict(r) for r in rs]
+    except Exception as exc:
+        db.session.rollback(); out["note"]=f"Estatística parcial: {str(exc)[:160]}"
+    return jsonify(out)
 
 @app.get("/api/diagnostico/armazenamento/v812")
 @login_required
