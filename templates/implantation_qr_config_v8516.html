@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Gerador de QR – Trilhos | Autopass{% endblock %}
+{% block content %}
+<section class="card" style="max-width:1050px;margin:20px auto;padding:24px">
+<h1>Gerador de QR – Trilhos</h1>
+<p>Atividades / Implantação · selecione Empresa → Linha → Estação → Bloqueio. A configuração técnica vem do cadastro mestre e não pode ser alterada nesta tela.</p>
+<p><strong>Homologação:</strong> a conversão IPv4 → uint32 deve ser validada no equipamento antes do uso em produção.</p>
+{% if error %}<p role="alert" style="color:#b91c1c">{{ error }}</p>{% endif %}
+<form method="post" id="qrForm">
+<input type="hidden" name="config_id" id="config_id" value="{{ selected.id if selected else '' }}">
+<div style="display:grid;grid-template-columns:repeat(2,minmax(240px,1fr));gap:14px">
+<label>Empresa<select id="company" required><option value="">Selecione</option></select></label>
+<label>Linha<select id="line" required disabled><option value="">Selecione</option></select></label>
+<label>Estação<select id="station" required disabled><option value="">Selecione</option></select></label>
+<label>Bloqueio<select id="block" required disabled><option value="">Selecione</option></select></label>
+</div>
+<details id="technical" style="margin:18px 0"><summary>Ver configuração</summary><div id="technicalBody" style="padding:12px 0"></div></details>
+<button type="submit" id="generate" disabled>Gerar QR Code</button>
+</form>
+{% if can_view('implantation.qr.manage') %}<p style="margin-top:16px"><a href="/gestao/configuracoes/qr-trilhos">Gerenciar configurações de QR – Trilhos</a></p>{% endif %}
+{% if qr_png %}<section style="margin-top:24px"><h2>QR Code gerado</h2><p><strong>{{ selected.company }} · {{ selected.line }} · {{ selected.station }} · {{ selected.block }}</strong></p><img style="max-width:100%;width:340px;image-rendering:pixelated" alt="QR Code de configuração" src="data:image/png;base64,{{ qr_png }}"><details><summary>Conteúdo criptografado do QR</summary><textarea readonly rows="5" style="width:100%">{{ qr_text }}</textarea></details><p>A imagem e o payload criptografado não são persistidos.</p></section>{% endif %}
+</section>
+<script>
+const rows={{ configs|map(attribute='id')|list|tojson }}; let data=[];
+const $=id=>document.getElementById(id); const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function opts(el, vals, label='Selecione'){el.innerHTML='<option value="">'+label+'</option>'+[...new Set(vals)].sort().map(v=>'<option>'+esc(v)+'</option>').join('');el.disabled=!vals.length;}
+function filter(){return data.filter(r=>(!$('company').value||r.company===$('company').value)&&(!$('line').value||r.line===$('line').value)&&(!$('station').value||r.station===$('station').value));}
+function tech(r){if(!r){$('technicalBody').innerHTML='Selecione um bloqueio.';return}$('technicalBody').innerHTML=`<strong>Terminal ID:</strong> ${esc(r.TerminalId)} · <strong>Operadora:</strong> ${esc(r.TransOperId)} · <strong>Modelo:</strong> ${esc(r.TurnModel)} · <strong>Linha ID:</strong> ${esc(r.LineId)} · <strong>Grupo:</strong> ${esc(r.TermGrpId)}<br><strong>IP:</strong> ${esc(r.Ip)} · <strong>Máscara:</strong> ${esc(r.Mask)} · <strong>Gateway:</strong> ${esc(r.Gateway)} · <strong>DNS1:</strong> ${esc(r.Dns1)} · <strong>DNS2:</strong> ${esc(r.Dns2)}<br><strong>APN1:</strong> ${esc(r.LabelApnChip1)} · <strong>APN2:</strong> ${esc(r.LabelApnChip2)}`;}
+$('company').onchange=()=>{opts($('line'),data.filter(r=>r.company===$('company').value).map(r=>r.line));opts($('station'),[]);opts($('block'),[]);$('config_id').value='';$('generate').disabled=true;tech(null)};
+$('line').onchange=()=>{opts($('station'),filter().map(r=>r.station));opts($('block'),[]);$('config_id').value='';$('generate').disabled=true;tech(null)};
+$('station').onchange=()=>{opts($('block'),filter().map(r=>r.block));$('config_id').value='';$('generate').disabled=true;tech(null)};
+$('block').onchange=()=>{const r=filter().find(x=>x.block===$('block').value);$('config_id').value=r?r.id:'';$('generate').disabled=!r;tech(r)};
+fetch('/api/implantacao/qr-trilhos/configs').then(r=>r.json()).then(j=>{data=j.rows||[];opts($('company'),data.map(r=>r.company));}).catch(()=>{$('technicalBody').textContent='Falha ao carregar configurações.'});
+</script>
+{% endblock %}
