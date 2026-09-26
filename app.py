@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.17 REV7"
+APP_RELEASE = "V85.18"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -15442,7 +15442,11 @@ def financial_cash_v794_daily_preview():
     for x in rows:
         a=official.get(x['terminal']); action='ATUALIZAR' if a else 'DIVERGENCIA_ATM'
         out.append({**x,"matched":bool(a),"company":(a or {}).get('company',''),"line":(a or {}).get('line',''),"station":(a or {}).get('locality',''),"action":action,"reason_category":_v794_reason_category(x.get('note'))})
-    return jsonify({"ok":True,"rows":out,"summary":{"parsed":len(out),"matched":sum(1 for x in out if x['matched']),"unmatched":sum(1 for x in out if not x['matched']),"collected":sum(1 for x in out if x['result_status']=='RECOLHIDO'),"not_collected":sum(1 for x in out if x['result_status']=='NAO_RECOLHIDO')}})
+    users=User.query.filter(User.active.is_(True)).order_by(User.name).all()
+    for item in out:
+        code,label,flow=_v8517_followup_reason(item)
+        item['followup_code']=code; item['followup_label']=label; item['followup_flow']=flow
+    return jsonify({"ok":True,"rows":out,"users":[{"id":u.id,"name":u.name} for u in users],"current_user_id":int(session.get('user_id') or 0),"summary":{"parsed":len(out),"matched":sum(1 for x in out if x['matched']),"unmatched":sum(1 for x in out if not x['matched']),"collected":sum(1 for x in out if x['result_status']=='RECOLHIDO'),"not_collected":sum(1 for x in out if x['result_status']=='NAO_RECOLHIDO')}})
 
 
 # V85.17 — Reporte diário TBForte -> tarefa automática de acompanhamento.
@@ -15503,7 +15507,7 @@ def financial_cash_v794_daily_import():
             task,created=_v8517_create_collection_followup(x,official.get(x['terminal']),followup_assignee,sig)
             followups.append({'task_id':task.id,'terminal':x['terminal'],'date':x['date'],'title':task.title,'created':created,'assigned_to':task.assigned_to})
             if created: followup_created+=1
-    db.session.add(AuditEvent(event_type='COLETA_REPORTE_DIARIO_IMPORTADO',user_id=session.get('user_id'),entity_type='financial_cash_daily_reports',entity_id=str(imported),detail=json.dumps({'imported':imported,'skipped':skipped,'unmatched':len(unmatched)},ensure_ascii=False)))
+    db.session.add(AuditEvent(event_type='COLETA_REPORTE_DIARIO_IMPORTADO',user_id=session.get('user_id'),entity_type='financial_cash_daily_reports',entity_id=str(imported),detail=json.dumps({'imported':imported,'skipped':skipped,'unmatched':len(unmatched),'followup_created':followup_created,'followup_assigned_to':followup_assignee},ensure_ascii=False)))
     db.session.commit(); return jsonify({"ok":True,"imported":imported,"skipped":skipped,"unmatched":unmatched,"followups":followups,"followup_created":followup_created,"followup_assigned_to":followup_assignee})
 
 # V80 — Monitoramento Inteligente da Coleta de Valores.
@@ -22748,6 +22752,15 @@ def v854_tasks_update(task_id):
         if not (_has_access('tasks.edit') or is_manager or is_assignee):return jsonify(ok=False,error='Sem permissão para alterar status.'),403
         status=str(data['status']).upper()
         if status not in ('AGUARDANDO','A_FAZER','EM_ANDAMENTO','EM_VALIDACAO','CONCLUIDA'):return jsonify(ok=False,error='Status inválido.'),400
+        if status=='CONCLUIDA' and t.source_type=='TBFORTE_NAO_COLETA':
+            resolution=str(data.get('resolution') or '').strip()
+            resolution_note=str(data.get('resolution_note') or '').strip()
+            allowed={'COLETA_REALIZADA':'Coleta realizada posteriormente','REPROGRAMADA':'Coleta reprogramada','NAO_REALIZADA':'Não realizada','CANCELADA':'Cancelada','RESPONSABILIDADE_RECLASSIFICADA':'Responsabilidade reclassificada','OUTRO':'Outro'}
+            if resolution not in allowed:return jsonify(ok=False,error='Informe o desfecho da não coleta antes de concluir.'),400
+            if not resolution_note:return jsonify(ok=False,error='Registre uma observação sobre o desfecho antes de concluir.'),400
+            stamp=datetime.now().strftime('%d/%m/%Y %H:%M')
+            t.description=((t.description or '').rstrip()+f"\n\nDESFECHO [{stamp}] — {allowed[resolution]}\n{resolution_note}")[:5000]
+            db.session.add(ManagementTaskEvent(task_id=t.id,user_id=uid,action='DESFECHO_COLETA',detail=f"{allowed[resolution]} — {resolution_note}"[:2000]))
         t.status=status;changes.append('status '+status)
     if 'priority' in data:
         if not (_has_access('tasks.edit') or is_manager):return jsonify(ok=False,error='Sem permissão para editar.'),403
