@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.18"
+APP_RELEASE = "V85.19"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -6286,6 +6286,78 @@ def diagnostics_retention_v8515_api():
       "horizons_days":list(horizons),"totals":totals,"modules":out,
       "excluded":["Visão Panorâmica: não possui conclusão inequívoca por atividade.","Relatórios de visita: conclusão/data exige regra de retenção específica.","Bobinas: já possui expires_at/deleted_at e política própria."],
       "protection_note":"V85.15 não exclui arquivos. Evidências de auditoria, fraude, divergência financeira, investigação ou obrigação legal/contratual devem ser protegidas antes de qualquer limpeza futura."})
+
+@app.post("/api/diagnostico/retencao/v8519/executar")
+@login_required
+def diagnostics_retention_v8519_execute_api():
+    """V85.19 — limpeza controlada de fotos R2 de atividades concluídas.
+
+    Primeira liberação operacional: Troca de Chips Recarga e EMV. O registro da
+    atividade é preservado; somente o objeto de evidência e sua linha de foto
+    são removidos. Toda execução gera AuditEvent.
+    """
+    if not _has_access("management.diagnostics"):
+        return jsonify({"ok":False,"error":"Sem permissão."}),403
+    data=request.get_json(silent=True) or {}
+    try: days=int(data.get("days") or 0)
+    except Exception: days=0
+    if days not in (30,60,90):
+        return jsonify({"ok":False,"error":"Retenção deve ser 30, 60 ou 90 dias."}),400
+    modules=data.get("modules") or []
+    if isinstance(modules,str): modules=[modules]
+    allowed={
+      "recarga":("Troca de Chips – Recarga",ChipSwapPhoto,ChipSwap,ChipSwapPhoto.chip_swap_id,ChipSwap.id,ChipSwapPhoto.stored_name,ChipSwap.completed_at),
+      "emv":("Troca de Chips EMV",EmvChipSwapPhoto,EmvChipSwap,EmvChipSwapPhoto.swap_id,EmvChipSwap.id,EmvChipSwapPhoto.stored_name,EmvChipSwap.completed_at),
+    }
+    selected=[str(x).strip().lower() for x in modules if str(x).strip().lower() in allowed]
+    if not selected:
+        return jsonify({"ok":False,"error":"Selecione Recarga e/ou EMV."}),400
+    confirm=str(data.get("confirmation") or "").strip().upper()
+    dry_run=bool(data.get("dry_run",True))
+    if not dry_run and confirm!="EXCLUIR EVIDENCIAS":
+        return jsonify({"ok":False,"error":"Confirmação inválida. Digite EXCLUIR EVIDENCIAS."}),400
+    cutoff=datetime.utcnow()-timedelta(days=days)
+    bucket=os.environ.get("R2_BUCKET_NAME","").strip()
+    if not dry_run and (not _r2_available() or not bucket):
+        return jsonify({"ok":False,"error":"R2 não está disponível nesta instância."}),503
+    result=[]; total_photos=0; total_bytes=0; total_errors=0
+    client=r2_client() if not dry_run else None
+    for code in selected:
+        label,photo,parent,fk,pk,keycol,completedcol=allowed[code]
+        rows=(db.session.query(photo,parent.completed_at)
+              .join(parent,fk==pk)
+              .filter(parent.completed_at.isnot(None),parent.completed_at<=cutoff)
+              .all())
+        eligible=[]
+        for ph,completed in rows:
+            raw=str(ph.stored_name or "")
+            if not raw or raw.startswith("local:"): continue
+            key=raw[4:] if raw.startswith("r2__") else raw
+            eligible.append((ph,key))
+        bytes_est=0
+        if eligible and _r2_available():
+            head_client=client or r2_client()
+            for _,key in eligible:
+                try: bytes_est+=int(head_client.head_object(Bucket=bucket,Key=key).get("ContentLength") or 0)
+                except Exception: pass
+        deleted=0; errors=[]
+        if not dry_run:
+            for ph,key in eligible:
+                try:
+                    client.delete_object(Bucket=bucket,Key=key)
+                    db.session.delete(ph)
+                    deleted+=1
+                except Exception as exc:
+                    errors.append({"photo_id":ph.id,"error":str(exc)[:180]})
+            db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="RETENTION_EVIDENCE_DELETE",entity_type="evidence_retention",entity_id=code,detail=json.dumps({"release":APP_RELEASE,"module":label,"days":days,"eligible":len(eligible),"deleted":deleted,"estimated_bytes":bytes_est,"errors":len(errors)},ensure_ascii=False)))
+        total_photos+=deleted if not dry_run else len(eligible); total_bytes+=bytes_est; total_errors+=len(errors)
+        result.append({"code":code,"module":label,"eligible":len(eligible),"deleted":deleted,"bytes":bytes_est,"errors":errors[:20]})
+    if not dry_run:
+        try: db.session.commit()
+        except Exception as exc:
+            db.session.rollback(); return jsonify({"ok":False,"error":f"Falha ao registrar limpeza: {str(exc)[:180]}"}),500
+    return jsonify({"ok":True,"release":APP_RELEASE,"dry_run":dry_run,"days":days,"modules":result,"photos":total_photos,"bytes":total_bytes,"errors":total_errors,
+      "note":"Atividades e seus históricos permanecem preservados. A V85.19 remove somente as evidências fotográficas elegíveis de Recarga/EMV e registra auditoria."})
 
 @app.get("/api/diagnostico/performance/v8515")
 @login_required
