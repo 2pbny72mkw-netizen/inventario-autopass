@@ -35,6 +35,7 @@
 
 {% if session.get('role') not in ('technician','technician_implantation') %}
 <section class="card aboutHistoryCompact">
+<div class="versionItem"><div class="history-item"><strong>V85.17 REV4 — Correção do fluxo de seleção/exclusão</strong> — Mantém o estado e todas as funções v8517Bulk* no mesmo escopo do Monitoramento, corrigindo o ReferenceError ao selecionar linhas e estabilizando seleção individual, seleção em lote e exclusão.</div></div>
 <div class="versionItem"><div class="history-item"><strong>V85.17 REV3 — Correções de homologação</strong> — Corrige o cache do Monitoramento (import copy), protege o resumo quando ausente e corrige o escopo JavaScript da exclusão em lote, permitindo concluir a exclusão das linhas selecionadas.</div></div>
 <div class="versionItem"><div class="history-item"><strong>V85.17 REV2 — Exclusão de não realizadas</strong> — Corrige a seleção/exclusão de ocorrências “Não realizada” geradas pela programação. A remoção é somente do Monitoramento, com auditoria, preservando ATM, programação recorrente, R0050 e fontes.</div></div>
 <div class="versionItem"><div class="history-item"><strong>V85.17 REV1 — Exclusão controlada no Monitoramento</strong> — seleção individual, exibidos ou todos os resultados filtrados; exclusão lógica em lote com motivo obrigatório, auditoria e preservação do ATM, programação, R0050 e fontes de origem.</div></div>
