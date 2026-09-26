@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.17"
+APP_RELEASE = "V85.17 REV1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -16103,11 +16103,44 @@ def financial_cash_v805_event_action(event_id):
     elif action=="restore_cycle":
         ev.cycle_excluded=False; ev.cycle_exclusion_reason=None; ev.cycle_excluded_by=None; ev.cycle_excluded_at=None
     elif action=="delete":
+        if not _has_access("finance.delete"):
+            return jsonify({"ok":False,"error":"Sem permissão para excluir lançamentos."}),403
         ev.soft_deleted=True; ev.soft_delete_reason=reason or "Exclusão lógica pelo Monitoramento"; ev.soft_deleted_by=uid; ev.soft_deleted_at=now
     else:
         return jsonify({"ok":False,"error":"Ação inválida."}),400
     db.session.add(ev); db.session.commit()
     return jsonify({"ok":True,"event_id":ev.id,"action":action,"message":"Registro atualizado. Os ciclos seguintes serão recalculados usando apenas fechamentos válidos."})
+
+@app.post("/api/financeiro/coletas/v85-17-rev1/eventos/excluir-lote")
+@login_required
+def financial_cash_v8517_rev1_bulk_delete():
+    if not _finance_collection_monitor_access() or not _has_access("finance.delete"):
+        return jsonify({"ok":False,"error":"Sem permissão para excluir lançamentos."}),403
+    data=request.get_json(silent=True) or {}
+    raw_ids=data.get("event_ids") or []
+    try:
+        ids=sorted({int(x) for x in raw_ids if str(x).strip()})
+    except (TypeError,ValueError):
+        return jsonify({"ok":False,"error":"Lista de lançamentos inválida."}),400
+    if not ids:
+        return jsonify({"ok":False,"error":"Selecione pelo menos um lançamento."}),400
+    if len(ids)>5000:
+        return jsonify({"ok":False,"error":"Limite de 5.000 lançamentos por operação."}),400
+    reason=str(data.get("reason") or "").strip()[:1000]
+    if not reason:
+        return jsonify({"ok":False,"error":"Informe o motivo da exclusão."}),400
+    rows=FinancialCashCollection.query.filter(FinancialCashCollection.id.in_(ids),func.coalesce(FinancialCashCollection.soft_deleted,False).is_(False)).all()
+    if not rows:
+        return jsonify({"ok":False,"error":"Nenhum lançamento ativo localizado."}),404
+    uid=session.get("user_id"); now=datetime.utcnow()
+    snapshot=[]
+    for ev in rows:
+        snapshot.append({"id":ev.id,"terminal":ev.terminal,"date":ev.collection_date.isoformat() if ev.collection_date else None,"declared":ev.declared_amount,"processed":ev.processed_amount})
+        ev.soft_deleted=True; ev.soft_delete_reason=reason; ev.soft_deleted_by=uid; ev.soft_deleted_at=now
+        db.session.add(ev)
+    db.session.add(AuditEvent(event_type="COLETA_VALORES_EXCLUSAO_LOTE",user_id=uid,entity_type="financial_cash_collection",entity_id=f"bulk:{len(rows)}",detail=json.dumps({"count":len(rows),"reason":reason,"items":snapshot[:200]},ensure_ascii=False)[:12000]))
+    db.session.commit()
+    return jsonify({"ok":True,"deleted":len(rows),"requested":len(ids),"message":f"{len(rows)} lançamento(s) excluído(s) logicamente. Cadastro da ATM, programação, R0050 e fontes de origem foram preservados."})
 
 @app.get("/api/financeiro/coletas/v80/ciclo/<int:event_id>")
 @login_required
