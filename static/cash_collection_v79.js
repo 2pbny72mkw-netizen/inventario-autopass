@@ -1,6 +1,6 @@
+(()=>{
 const V8517REV1_SELECTED=new Set();
 function v8517RowKey(x){if(x.event_id)return `event:${x.event_id}`;if(x.status==='NAO_REALIZADA'&&x.terminal&&(x.original_date||x.scheduled_original||x.date))return `planned:${x.terminal}:${x.original_date||x.scheduled_original||x.date}`;return ''}
-(()=>{
 const V={data:null,rows:[],flat:[],filtered:[],status:'',sort:{key:'date',dir:1,user:false},programSort:{key:'',dir:0},expanded:false,lastScrollY:0,reportText:'',txStatuses:[]};
 const $=id=>document.getElementById(id), esc=s=>String(s??'').replace(/[&<>\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const brl=v=>v==null?'—':Number(v).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}), dbr=s=>s?new Date(s+'T12:00:00').toLocaleDateString('pt-BR'):'—', dtbr=s=>{if(!s)return '—';const d=new Date(s);return Number.isNaN(d.getTime())?String(s):d.toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'})};
