@@ -19,7 +19,6 @@ from zoneinfo import ZoneInfo
 import time
 import tempfile
 import shutil
-import copy
 import threading
 import html as html_lib
 import urllib.request
@@ -44,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.17 REV4"
+APP_RELEASE = "V85.15"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -310,42 +309,6 @@ class ManagementTaskEvent(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     action = db.Column(db.String(60), nullable=False)
     detail = db.Column(db.Text)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
-
-# V85.16 — cadastro mestre e auditoria das configurações do QR Trilhos.
-class QrRailConfig(db.Model):
-    __tablename__ = "qr_rail_configs_v8516"
-    id = db.Column(db.Integer, primary_key=True)
-    company = db.Column(db.String(120), nullable=False, index=True)
-    line = db.Column(db.String(120), nullable=False, index=True)
-    station = db.Column(db.String(180), nullable=False, index=True)
-    block = db.Column(db.String(120), nullable=False, index=True)
-    trans_oper_id = db.Column(db.Integer, nullable=False)
-    terminal_id = db.Column(db.Integer, nullable=False, unique=True, index=True)
-    turn_model = db.Column(db.Integer, nullable=False)
-    ip = db.Column(db.String(40), default="")
-    mask = db.Column(db.String(40), default="")
-    gateway = db.Column(db.String(40), default="")
-    dns1 = db.Column(db.String(40), default="")
-    dns2 = db.Column(db.String(40), default="")
-    line_id = db.Column(db.Integer, nullable=False)
-    term_grp_id = db.Column(db.Integer, nullable=False, default=1)
-    apn1 = db.Column(db.String(180), default="")
-    apn2 = db.Column(db.String(180), default="")
-    active = db.Column(db.Boolean, nullable=False, default=True)
-    updated_by = db.Column(db.Integer, db.ForeignKey("users.id"))
-    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
-    __table_args__ = (db.UniqueConstraint("company","line","station","block", name="uq_qr_rail_hierarchy_v8516"),)
-
-class QrRailConfigAudit(db.Model):
-    __tablename__ = "qr_rail_config_audit_v8516"
-    id = db.Column(db.Integer, primary_key=True)
-    config_id = db.Column(db.Integer, db.ForeignKey("qr_rail_configs_v8516.id"), nullable=False, index=True)
-    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
-    action = db.Column(db.String(30), nullable=False)
-    old_json = db.Column(db.Text)
-    new_json = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
 class User(db.Model):
@@ -2222,7 +2185,7 @@ ACCESS_GROUPS = {
         "field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.firmware_pos_cptm","field.bobbins","field.bobbins_dashboard","field.stock_manage","field.atm_mapping","field.atm_mapping_manage"
     )),
     "implantation": ("Implantação de Hardware", (
-        "implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage","implantation.qr.view","implantation.qr.manage"
+        "implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage"
     )),
     "teams": ("RH / Equipes", (
         "teams.map","teams.today","teams.schedule","teams.manage","teams.export","teams.apt"
@@ -2254,7 +2217,7 @@ ACCESS_ALL = set(ACCESS_MODULES) | set(ACCESS_SUBMODULES)
 ACCESS_LABELS = {
  "dashboard.general":"Dashboard Geral",
  "field.dashboard":"Dashboard Field","field.inventory":"Inventário / Lançamento","field.calls":"Chamados","field.preventive":"Solicitação Preventiva ATM","field.equipment":"Equipamentos","field.evidence":"Evidências","field.panorama":"Visão Panorâmica","field.chip_recarga":"Troca de Chips – Recarga","field.firmware_pos_cptm":"Atualização de Firmware POS – CPTM","field.bobbins":"Atividade Bobinas","field.bobbins_dashboard":"Visualizar Dashboard Bobinas","field.stock_manage":"Alterar estoque consolidado / armários / bobinas","field.atm_mapping":"Mapeamento ATM","field.atm_mapping_manage":"Gerenciar Mapeamento ATM",
- "implantation.dashboard":"Dashboard Implantação","implantation.visits":"Visita a Campo / Relatório de Visita","implantation.reports":"Relatórios / Visitas recentes","implantation.emv":"Troca de Chips EMV – Trilhos","implantation.garage":"Troca de Chips Garagem","implantation.qr.view":"Gerador de QR – Trilhos","implantation.qr.manage":"Editar configurações de QR – Trilhos",
+ "implantation.dashboard":"Dashboard Implantação","implantation.visits":"Visita a Campo / Relatório de Visita","implantation.reports":"Relatórios / Visitas recentes","implantation.emv":"Troca de Chips EMV – Trilhos","implantation.garage":"Troca de Chips Garagem",
  "teams.map":"Mapa operacional","teams.today":"Operação de Hoje","teams.schedule":"Escala por dias","teams.manage":"Gestão de equipes / escala","teams.export":"Exportar dados","teams.apt":"APT / Validades",
  "users.view":"Visualizar usuários","users.config.view":"Visualizar configurações de usuários","users.config.manage":"Gerenciar configurações de usuários","users.create":"Criar usuário","users.edit":"Editar usuário","users.activate":"Ativar / Desativar","users.delete":"Excluir / Arquivar","users.password":"Redefinir senha","users.export":"Exportar Excel","users.import":"Importar Excel de configurações","users.roles.manage":"Atribuir perfis administrativos / sensíveis","users.scope.all":"Administrar usuários de todas as empresas",
  "finance.dashboard":"Dashboard Financeira","finance.support":"Suporte a Campo","finance.collection":"Coleta de Valores","finance.monitoring":"Monitoramento de Coletas","finance.apuracao":"Apuração de Numerário","finance.assistance":"Assistência Técnica","finance.implantation":"Implantação de Hardware","finance.entries":"Lançamentos","finance.suppliers":"Empresas / Fornecedores","finance.import":"Importar planilha","finance.edit":"Editar lançamentos","finance.delete":"Excluir lançamentos","finance.petty_cash.view":"Visualizar Caixinha","finance.petty_cash.manage":"Gerenciar Caixinha / despesas","finance.petty_cash.approve1":"Aprovar Caixinha - nível 1","finance.petty_cash.approve2":"Aprovar Caixinha - nível 2",
@@ -14900,9 +14863,6 @@ def _v792_cash_payload(start,end,calc_statuses=None):
         occurrences=[]
         for idx,p in enumerate(planned):
             original=p["original_date"]; ov=omap.get((t,original))
-            # V85.17 REV2: uma ocorrência planejada pode ser ocultada do Monitoramento sem apagar a programação recorrente.
-            if ov and (ov.status or '').upper() == 'CANCELADA_MONITORAMENTO':
-                continue
             effective=ov.scheduled_date.isoformat() if ov else p["date"]
             ev=event_by_date.get(effective) or event_by_date.get(p["date"])
             # V82.24: a data exibida pelo report TBForte pode ficar um dia antes/depois da
@@ -15444,51 +15404,12 @@ def financial_cash_v794_daily_preview():
         out.append({**x,"matched":bool(a),"company":(a or {}).get('company',''),"line":(a or {}).get('line',''),"station":(a or {}).get('locality',''),"action":action,"reason_category":_v794_reason_category(x.get('note'))})
     return jsonify({"ok":True,"rows":out,"summary":{"parsed":len(out),"matched":sum(1 for x in out if x['matched']),"unmatched":sum(1 for x in out if not x['matched']),"collected":sum(1 for x in out if x['result_status']=='RECOLHIDO'),"not_collected":sum(1 for x in out if x['result_status']=='NAO_RECOLHIDO')}})
 
-
-# V85.17 — Reporte diário TBForte -> tarefa automática de acompanhamento.
-def _v8517_followup_reason(x):
-    text=_v794_norm_text(" ".join(str(x.get(k) or '') for k in ('note','occurrence','provider_status','service_type')))
-    if any(k in text for k in ('FECHADURA','CHAVE QUEBR','CHAVE PRESA','COFRE TRAV','NAO ABRE COFRE','PORTA DO COFRE')):
-        return 'FECHADURA', 'Fechadura / cofre', 'Acionar fornecedor para reparo → confirmar manutenção → solicitar/reprogramar nova coleta → confirmar coleta realizada.'
-    if any(k in text for k in ('TBFORTE','TB FORTE','TRANSPORTADORA','CARRO FORTE','NAO COMPAREC','SEM EQUIPE','SEM VEICULO')):
-        return 'TBFORTE', 'Responsabilidade TB Forte', 'Acionar TB Forte → obter retorno/reprogramação → acompanhar nova coleta → confirmar coleta realizada.'
-    if any(k in text for k in ('SEM SUPORTE','FALTA DE SUPORTE','SEM APOIO')):
-        return 'SUPORTE', 'Falta de suporte', 'Acionar responsável operacional → regularizar suporte/acesso → solicitar nova coleta → confirmar realização.'
-    if any(k in text for k in ('ACESSO','CONTRASENHA','CONTRA SENHA','AUTORIZA')):
-        return 'ACESSO', 'Acesso / autorização', 'Regularizar acesso/autorização → solicitar nova coleta → confirmar realização.'
-    if any(k in text for k in ('ATM INDISP','EQUIPAMENTO INDISP','MANUTEN')):
-        return 'TECNICA', 'ATM / manutenção', 'Acionar equipe técnica → confirmar equipamento liberado → solicitar nova coleta → confirmar realização.'
-    return 'ANALISE', 'Não coleta — classificar responsabilidade', 'Classificar causa/responsabilidade → definir ação corretiva → reprogramar quando aplicável → confirmar desfecho.'
-
-def _v8517_create_collection_followup(x, asset, assignee_id, report_hash):
-    # Idempotência independente da reimportação: uma ocorrência por ATM + data programada.
-    source_id=f"{x.get('terminal','')}|{x.get('date','')}"
-    existing=ManagementTask.query.filter_by(source_type='TBFORTE_NAO_COLETA',source_id=source_id).first()
-    if existing:return existing,False
-    code,label,flow=_v8517_followup_reason(x)
-    station=(asset or {}).get('locality') or (asset or {}).get('station') or x.get('name') or ''
-    title=f"Não coleta — ATM {x.get('terminal') or '?'} — {label}"[:220]
-    desc=(f"Reporte diário TB Forte: coleta não realizada.\n"
-          f"Data prevista: {x.get('date') or '-'}\nATM: {x.get('terminal') or '-'}\n"
-          f"Local: {station}\nGTV: {x.get('gtv') or '-'}\n"
-          f"Ocorrência: {x.get('occurrence') or '-'}\nObservação: {x.get('note') or '-'}\n\n"
-          f"Fluxo de acompanhamento: {flow}\n\n"
-          "A ocorrência principal só deve ser concluída após registrar o desfecho da coleta.")
-    t=ManagementTask(title=title,description=desc[:5000],project='Coleta de Valores',department='Financeiro / Operações',priority='ALTA' if code in ('FECHADURA','TBFORTE') else 'MEDIA',status='AGUARDANDO',due_at=None,created_by=int(session.get('user_id') or assignee_id),assigned_to=int(assignee_id),atm_id=str(x.get('terminal') or '')[:40],source_type='TBFORTE_NAO_COLETA',source_id=source_id)
-    db.session.add(t);db.session.flush()
-    db.session.add(ManagementTaskEvent(task_id=t.id,user_id=int(session.get('user_id') or assignee_id),action='CRIADA_AUTOMATICAMENTE',detail=f"Reporte TB Forte · {label} · hash {report_hash[:12]}"))
-    return t,True
-
 @app.post('/api/financeiro/coletas/v79/reporte-diario/import')
 @login_required
 def financial_cash_v794_daily_import():
     if not (_has_access('finance.edit') or _finance_collection_monitor_access()): return jsonify({"ok":False,"error":"Sem permissão."}),403
     d=request.get_json(silent=True) or {}; rows=_v794_parse_daily_report(d.get('text') or '')
-    official={x['terminal']:x for x in _v79_cash_base()}; imported=0; skipped=0; unmatched=[]; followups=[]; followup_created=0
-    try: followup_assignee=int(d.get('followup_assigned_to') or session.get('user_id'))
-    except (TypeError,ValueError): followup_assignee=int(session.get('user_id'))
-    au=db.session.get(User,followup_assignee)
-    if not au or not au.active: followup_assignee=int(session.get('user_id'))
+    official={x['terminal']:x for x in _v79_cash_base()}; imported=0; skipped=0; unmatched=[]
     for x in rows:
         if x['terminal'] not in official: unmatched.append(x); continue
         sig=hashlib.sha256(f"V79.4|{x['date']}|{x['terminal']}|{x['provider_atm']}|{x['provider_status']}|{x['occurrence']}|{x['note']}".encode()).hexdigest()
@@ -15500,11 +15421,8 @@ def financial_cash_v794_daily_import():
             day=date.fromisoformat(x['date']); ov=FinancialCashPlanOverride.query.filter_by(terminal=x['terminal'],original_date=day).first()
             if not ov: ov=FinancialCashPlanOverride(terminal=x['terminal'],original_date=day,scheduled_date=day); db.session.add(ov)
             ov.status='PENDENTE_COLETA'; ov.note=x['note']; ov.updated_by=session.get('user_id'); ov.updated_at=datetime.utcnow()
-            task,created=_v8517_create_collection_followup(x,official.get(x['terminal']),followup_assignee,sig)
-            followups.append({'task_id':task.id,'terminal':x['terminal'],'date':x['date'],'title':task.title,'created':created,'assigned_to':task.assigned_to})
-            if created: followup_created+=1
     db.session.add(AuditEvent(event_type='COLETA_REPORTE_DIARIO_IMPORTADO',user_id=session.get('user_id'),entity_type='financial_cash_daily_reports',entity_id=str(imported),detail=json.dumps({'imported':imported,'skipped':skipped,'unmatched':len(unmatched)},ensure_ascii=False)))
-    db.session.commit(); return jsonify({"ok":True,"imported":imported,"skipped":skipped,"unmatched":unmatched,"followups":followups,"followup_created":followup_created,"followup_assigned_to":followup_assignee})
+    db.session.commit(); return jsonify({"ok":True,"imported":imported,"skipped":skipped,"unmatched":unmatched})
 
 # V80 — Monitoramento Inteligente da Coleta de Valores.
 # Os cálculos quantitativos são determinísticos. A camada "IA" interpreta os
@@ -16107,82 +16025,11 @@ def financial_cash_v805_event_action(event_id):
     elif action=="restore_cycle":
         ev.cycle_excluded=False; ev.cycle_exclusion_reason=None; ev.cycle_excluded_by=None; ev.cycle_excluded_at=None
     elif action=="delete":
-        if not _has_access("finance.delete"):
-            return jsonify({"ok":False,"error":"Sem permissão para excluir lançamentos."}),403
         ev.soft_deleted=True; ev.soft_delete_reason=reason or "Exclusão lógica pelo Monitoramento"; ev.soft_deleted_by=uid; ev.soft_deleted_at=now
     else:
         return jsonify({"ok":False,"error":"Ação inválida."}),400
     db.session.add(ev); db.session.commit()
     return jsonify({"ok":True,"event_id":ev.id,"action":action,"message":"Registro atualizado. Os ciclos seguintes serão recalculados usando apenas fechamentos válidos."})
-
-@app.post("/api/financeiro/coletas/v85-17-rev1/eventos/excluir-lote")
-@login_required
-def financial_cash_v8517_rev1_bulk_delete():
-    if not _finance_collection_monitor_access() or not _has_access("finance.delete"):
-        return jsonify({"ok":False,"error":"Sem permissão para excluir lançamentos."}),403
-    data=request.get_json(silent=True) or {}
-    raw_ids=data.get("event_ids") or []
-    try:
-        ids=sorted({int(x) for x in raw_ids if str(x).strip()})
-    except (TypeError,ValueError):
-        return jsonify({"ok":False,"error":"Lista de lançamentos inválida."}),400
-    if not ids:
-        return jsonify({"ok":False,"error":"Selecione pelo menos um lançamento."}),400
-    if len(ids)>5000:
-        return jsonify({"ok":False,"error":"Limite de 5.000 lançamentos por operação."}),400
-    reason=str(data.get("reason") or "").strip()[:1000]
-    if not reason:
-        return jsonify({"ok":False,"error":"Informe o motivo da exclusão."}),400
-    rows=FinancialCashCollection.query.filter(FinancialCashCollection.id.in_(ids),func.coalesce(FinancialCashCollection.soft_deleted,False).is_(False)).all()
-    if not rows:
-        return jsonify({"ok":False,"error":"Nenhum lançamento ativo localizado."}),404
-    uid=session.get("user_id"); now=datetime.utcnow()
-    snapshot=[]
-    for ev in rows:
-        snapshot.append({"id":ev.id,"terminal":ev.terminal,"date":ev.collection_date.isoformat() if ev.collection_date else None,"declared":ev.declared_amount,"processed":ev.processed_amount})
-        ev.soft_deleted=True; ev.soft_delete_reason=reason; ev.soft_deleted_by=uid; ev.soft_deleted_at=now
-        db.session.add(ev)
-    db.session.add(AuditEvent(event_type="COLETA_VALORES_EXCLUSAO_LOTE",user_id=uid,entity_type="financial_cash_collection",entity_id=f"bulk:{len(rows)}",detail=json.dumps({"count":len(rows),"reason":reason,"items":snapshot[:200]},ensure_ascii=False)[:12000]))
-    db.session.commit()
-    return jsonify({"ok":True,"deleted":len(rows),"requested":len(ids),"message":f"{len(rows)} lançamento(s) excluído(s) logicamente. Cadastro da ATM, programação, R0050 e fontes de origem foram preservados."})
-
-@app.post("/api/financeiro/coletas/v85-17-rev2/linhas/excluir")
-@login_required
-def financial_cash_v8517_rev2_delete_rows():
-    """Exclusão lógica mista: eventos persistidos e ocorrências planejadas do Monitoramento."""
-    if not _finance_collection_monitor_access() or not _has_access("finance.delete"):
-        return jsonify({"ok":False,"error":"Sem permissão para excluir lançamentos."}),403
-    data=request.get_json(silent=True) or {}
-    selections=data.get("selections") or []
-    reason=str(data.get("reason") or "").strip()[:1000]
-    if not reason: return jsonify({"ok":False,"error":"Informe o motivo da exclusão."}),400
-    if not isinstance(selections,list) or not selections: return jsonify({"ok":False,"error":"Selecione pelo menos uma linha."}),400
-    if len(selections)>5000: return jsonify({"ok":False,"error":"Limite de 5.000 linhas por operação."}),400
-    uid=session.get("user_id"); now=datetime.utcnow(); deleted_events=0; hidden_plans=0; audit=[]
-    for item in selections:
-        if not isinstance(item,dict): continue
-        kind=str(item.get("kind") or "").strip().lower()
-        if kind=="event":
-            try: eid=int(item.get("id"))
-            except (TypeError,ValueError): continue
-            ev=db.session.get(FinancialCashCollection,eid)
-            if not ev or bool(getattr(ev,"soft_deleted",False)): continue
-            audit.append({"kind":"event","id":eid,"terminal":ev.terminal,"date":ev.collection_date.isoformat() if ev.collection_date else None})
-            ev.soft_deleted=True; ev.soft_delete_reason=reason; ev.soft_deleted_by=uid; ev.soft_deleted_at=now; db.session.add(ev); deleted_events+=1
-        elif kind=="planned":
-            terminal=str(item.get("terminal") or "").strip(); raw_date=str(item.get("original_date") or item.get("date") or "").strip()
-            if not terminal or not raw_date: continue
-            try: original=date.fromisoformat(raw_date[:10])
-            except ValueError: continue
-            ov=FinancialCashPlanOverride.query.filter_by(terminal=terminal,original_date=original).first()
-            if ov is None:
-                ov=FinancialCashPlanOverride(terminal=terminal,original_date=original,scheduled_date=original,updated_by=uid)
-            ov.status="CANCELADA_MONITORAMENTO"; ov.note=f"Excluída do Monitoramento: {reason}"; ov.updated_by=uid; ov.updated_at=now
-            db.session.add(ov); hidden_plans+=1; audit.append({"kind":"planned","terminal":terminal,"date":original.isoformat()})
-    if not deleted_events and not hidden_plans: return jsonify({"ok":False,"error":"Nenhuma linha válida localizada."}),404
-    db.session.add(AuditEvent(event_type="COLETA_VALORES_EXCLUSAO_MONITORAMENTO",user_id=uid,entity_type="financial_cash_monitor",entity_id=f"bulk:{deleted_events+hidden_plans}",detail=json.dumps({"count":deleted_events+hidden_plans,"events":deleted_events,"planned":hidden_plans,"reason":reason,"items":audit[:200]},ensure_ascii=False)[:12000]))
-    db.session.commit()
-    return jsonify({"ok":True,"deleted":deleted_events+hidden_plans,"events":deleted_events,"planned":hidden_plans,"message":f"{deleted_events+hidden_plans} linha(s) removida(s) do Monitoramento. Programação recorrente, ATM, R0050 e fontes foram preservados."})
 
 @app.get("/api/financeiro/coletas/v80/ciclo/<int:event_id>")
 @login_required
@@ -22747,7 +22594,7 @@ def v854_tasks_update(task_id):
     if 'status' in data:
         if not (_has_access('tasks.edit') or is_manager or is_assignee):return jsonify(ok=False,error='Sem permissão para alterar status.'),403
         status=str(data['status']).upper()
-        if status not in ('AGUARDANDO','A_FAZER','EM_ANDAMENTO','EM_VALIDACAO','CONCLUIDA'):return jsonify(ok=False,error='Status inválido.'),400
+        if status not in ('A_FAZER','EM_ANDAMENTO','EM_VALIDACAO','CONCLUIDA'):return jsonify(ok=False,error='Status inválido.'),400
         t.status=status;changes.append('status '+status)
     if 'priority' in data:
         if not (_has_access('tasks.edit') or is_manager):return jsonify(ok=False,error='Sem permissão para editar.'),403
@@ -22856,77 +22703,57 @@ def _qr_config_proto(values):
     return bytes(out)
 
 
-@app.route('/api/implantacao/qr-trilhos/configs')
-@login_required
-def qr_rail_configs_api():
-    if not (_has_access('implantation.qr.view') or _has_access('implantation.visits')):
-        abort(403)
-    rows=QrRailConfig.query.filter_by(active=True).order_by(QrRailConfig.company,QrRailConfig.line,QrRailConfig.station,QrRailConfig.block).all()
-    return jsonify({'ok':True,'rows':[{'id':r.id,'company':r.company,'line':r.line,'station':r.station,'block':r.block,
-        'TransOperId':r.trans_oper_id,'TerminalId':r.terminal_id,'TurnModel':r.turn_model,'Ip':r.ip or '',
-        'Mask':r.mask or '','Gateway':r.gateway or '','Dns1':r.dns1 or '','Dns2':r.dns2 or '',
-        'LineId':r.line_id,'TermGrpId':r.term_grp_id,'LabelApnChip1':r.apn1 or '','LabelApnChip2':r.apn2 or ''} for r in rows]})
-
-def _qr_rail_snapshot(r):
-    return {'company':r.company,'line':r.line,'station':r.station,'block':r.block,'trans_oper_id':r.trans_oper_id,
-        'terminal_id':r.terminal_id,'turn_model':r.turn_model,'ip':r.ip,'mask':r.mask,'gateway':r.gateway,
-        'dns1':r.dns1,'dns2':r.dns2,'line_id':r.line_id,'term_grp_id':r.term_grp_id,'apn1':r.apn1,'apn2':r.apn2,'active':r.active}
-
-@app.route('/gestao/configuracoes/qr-trilhos', methods=['GET','POST'])
-@login_required
-def qr_rail_configs_manage():
-    if not _has_access('implantation.qr.manage'): abort(403)
-    error=None; success=None
-    if request.method=='POST':
-        try:
-            rid=request.form.get('id',type=int); row=db.session.get(QrRailConfig,rid) if rid else QrRailConfig()
-            if rid and not row: raise ValueError('Configuração não encontrada.')
-            old=_qr_rail_snapshot(row) if rid else None
-            def req(name):
-                v=(request.form.get(name) or '').strip()
-                if not v: raise ValueError(f'Campo obrigatório: {name}.')
-                return v
-            row.company=req('company'); row.line=req('line'); row.station=req('station'); row.block=req('block')
-            row.trans_oper_id=int(req('trans_oper_id')); row.terminal_id=int(req('terminal_id')); row.turn_model=int(req('turn_model')); row.line_id=int(req('line_id')); row.term_grp_id=int(req('term_grp_id'))
-            row.ip=(request.form.get('ip') or '').strip(); row.mask=(request.form.get('mask') or '').strip(); row.gateway=(request.form.get('gateway') or '').strip(); row.dns1=(request.form.get('dns1') or '').strip(); row.dns2=(request.form.get('dns2') or '').strip(); row.apn1=(request.form.get('apn1') or '').strip(); row.apn2=(request.form.get('apn2') or '').strip(); row.active=request.form.get('active')=='1'; row.updated_by=session['user_id']
-            # valida IPv4 sem alterar a convenção binária usada no QR.
-            import ipaddress
-            for val in (row.ip,row.mask,row.gateway,row.dns1,row.dns2):
-                if val: ipaddress.IPv4Address(val)
-            db.session.add(row); db.session.flush()
-            db.session.add(QrRailConfigAudit(config_id=row.id,user_id=session['user_id'],action='UPDATE' if rid else 'CREATE',old_json=json.dumps(old,ensure_ascii=False) if old else None,new_json=json.dumps(_qr_rail_snapshot(row),ensure_ascii=False)))
-            db.session.commit(); success='Configuração salva com auditoria.'
-        except Exception as exc:
-            db.session.rollback(); error=str(exc)
-    rows=QrRailConfig.query.order_by(QrRailConfig.company,QrRailConfig.line,QrRailConfig.station,QrRailConfig.block).all()
-    return render_template('qr_rail_configs_v8516.html',rows=rows,error=error,success=success,app_release=APP_RELEASE)
-
 @app.route('/implantacao/gerador-qr', methods=['GET','POST'])
 @hardware_implantation_required
 def implantation_qr_config():
-    if not (_has_access('implantation.qr.view') or _has_access('implantation.visits')): abort(403)
+    if not _has_access('implantation.visits'):
+        abort(403)
     from datetime import datetime, timezone
-    values={}; qr_png=None; qr_text=None; error=None; selected=None
-    configs=QrRailConfig.query.filter_by(active=True).order_by(QrRailConfig.company,QrRailConfig.line,QrRailConfig.station,QrRailConfig.block).all()
-    if request.method=='POST':
+    values = {}
+    qr_png = None
+    qr_text = None
+    error = None
+    if request.method == 'POST':
         try:
-            import os, secrets
+            import os
+            import secrets
             from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
             from cryptography.hazmat.primitives import padding
             import qrcode
-            config_id=request.form.get('config_id',type=int); selected=db.session.get(QrRailConfig,config_id)
-            if not selected or not selected.active: raise ValueError('Selecione um bloqueio cadastrado e ativo.')
-            values={'TransOperId':selected.trans_oper_id,'TerminalId':selected.terminal_id,'TurnModel':selected.turn_model,'Ip':selected.ip,'Mask':selected.mask,'Gateway':selected.gateway,'Dns1':selected.dns1,'Dns2':selected.dns2,'LineId':selected.line_id,'TermGrpId':selected.term_grp_id,'LabelApnChip1':selected.apn1,'LabelApnChip2':selected.apn2}
-            values['Date']=str(int(datetime.now(timezone.utc).timestamp()))
-            key_hex=os.environ.get('AUTOPASS_QR_SBE_HOMOLOG_KEY_HEX','').replace(' ','')
-            if len(key_hex)!=64: raise ValueError('Chave de homologação não configurada no servidor (AUTOPASS_QR_SBE_HOMOLOG_KEY_HEX).')
-            plain=_qr_config_proto(values)
-            if not plain: raise ValueError('Configuração sem parâmetros para geração.')
-            iv=secrets.token_bytes(16); padder=padding.PKCS7(128).padder(); padded=padder.update(plain)+padder.finalize(); cipher=Cipher(algorithms.AES(bytes.fromhex(key_hex)),modes.CBC(iv)); enc=cipher.encryptor(); encrypted=enc.update(padded)+enc.finalize()
-            qr_text='<c:2>i:'+base64.b64encode(iv).decode('ascii')+';p:'+base64.b64encode(encrypted).decode('ascii')+';'
-            image=qrcode.make(qr_text,box_size=8,border=4); output=io.BytesIO(); image.save(output,format='PNG'); qr_png=base64.b64encode(output.getvalue()).decode('ascii')
-            app.logger.info('qr_rail_generated user_id=%s config_id=%s terminal_id=%s',session.get('user_id'),selected.id,selected.terminal_id)
-        except (ValueError,TypeError,ImportError) as exc: error=str(exc)
+            values = {k: request.form.get(k, '') for k in
+                ('TransOperId','TerminalId','TurnModel','Ip','Mask','Gateway','Dns1','Dns2',
+                 'LineId','TermGrpId','LabelApnChip1','LabelApnChip2')}
+            values['Date'] = str(int(datetime.now(timezone.utc).timestamp()))
+            project = request.form.get('project','').strip()
+            if project != 'SBE Autopass Homolog':
+                raise ValueError('Projeto não configurado para geração de QR.')
+            # A chave não deve ser incluída no HTML, JavaScript, logs ou histórico.
+            key_hex = os.environ.get('AUTOPASS_QR_SBE_HOMOLOG_KEY_HEX', '').replace(' ', '')
+            if len(key_hex) != 64:
+                raise ValueError('Chave de homologação não configurada no servidor (AUTOPASS_QR_SBE_HOMOLOG_KEY_HEX).')
+            key = bytes.fromhex(key_hex)
+            plain = _qr_config_proto(values)
+            if not plain:
+                raise ValueError('Informe os parâmetros de configuração.')
+            iv = secrets.token_bytes(16)
+            padder = padding.PKCS7(128).padder()
+            padded = padder.update(plain) + padder.finalize()
+            cipher = Cipher(algorithms.AES(key), modes.CBC(iv))
+            enc = cipher.encryptor()
+            encrypted = enc.update(padded) + enc.finalize()
+            qr_text = '<c:2>i:' + base64.b64encode(iv).decode('ascii') + ';p:' + base64.b64encode(encrypted).decode('ascii') + ';'
+            image = qrcode.make(qr_text, box_size=8, border=4)
+            output = io.BytesIO()
+            image.save(output, format='PNG')
+            qr_png = base64.b64encode(output.getvalue()).decode('ascii')
+            app.logger.info('qr_config_generated project=%s user_id=%s terminal_id=%s',
+                            project, session.get('user_id'), values.get('TerminalId'))
+        except (ValueError, TypeError, ImportError) as exc:
+            error = str(exc)
         except Exception:
-            app.logger.exception('qr_rail_generation_failed'); error='Falha ao gerar QR Code. Consulte o diagnóstico do servidor.'
-    return render_template('implantation_qr_config_v8516.html',configs=configs,selected=selected,values=values,qr_png=qr_png,qr_text=qr_text,error=error,app_release=APP_RELEASE)
+            app.logger.exception('qr_config_generation_failed')
+            error = 'Falha ao gerar QR Code. Consulte o diagnóstico do servidor.'
+    return render_template('implantation_qr_config_v8513.html',
+                           values=values, qr_png=qr_png, qr_text=qr_text, error=error,
+                           app_release=APP_RELEASE)
+
