@@ -19,6 +19,7 @@ from zoneinfo import ZoneInfo
 import time
 import tempfile
 import shutil
+import copy
 import threading
 import html as html_lib
 import urllib.request
@@ -43,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.17 REV2"
+APP_RELEASE = "V85.17 REV3"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
