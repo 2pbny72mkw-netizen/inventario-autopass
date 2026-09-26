@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.17 REV1"
+APP_RELEASE = "V85.17 REV2"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -14899,6 +14899,9 @@ def _v792_cash_payload(start,end,calc_statuses=None):
         occurrences=[]
         for idx,p in enumerate(planned):
             original=p["original_date"]; ov=omap.get((t,original))
+            # V85.17 REV2: uma ocorrência planejada pode ser ocultada do Monitoramento sem apagar a programação recorrente.
+            if ov and (ov.status or '').upper() == 'CANCELADA_MONITORAMENTO':
+                continue
             effective=ov.scheduled_date.isoformat() if ov else p["date"]
             ev=event_by_date.get(effective) or event_by_date.get(p["date"])
             # V82.24: a data exibida pelo report TBForte pode ficar um dia antes/depois da
@@ -16141,6 +16144,44 @@ def financial_cash_v8517_rev1_bulk_delete():
     db.session.add(AuditEvent(event_type="COLETA_VALORES_EXCLUSAO_LOTE",user_id=uid,entity_type="financial_cash_collection",entity_id=f"bulk:{len(rows)}",detail=json.dumps({"count":len(rows),"reason":reason,"items":snapshot[:200]},ensure_ascii=False)[:12000]))
     db.session.commit()
     return jsonify({"ok":True,"deleted":len(rows),"requested":len(ids),"message":f"{len(rows)} lançamento(s) excluído(s) logicamente. Cadastro da ATM, programação, R0050 e fontes de origem foram preservados."})
+
+@app.post("/api/financeiro/coletas/v85-17-rev2/linhas/excluir")
+@login_required
+def financial_cash_v8517_rev2_delete_rows():
+    """Exclusão lógica mista: eventos persistidos e ocorrências planejadas do Monitoramento."""
+    if not _finance_collection_monitor_access() or not _has_access("finance.delete"):
+        return jsonify({"ok":False,"error":"Sem permissão para excluir lançamentos."}),403
+    data=request.get_json(silent=True) or {}
+    selections=data.get("selections") or []
+    reason=str(data.get("reason") or "").strip()[:1000]
+    if not reason: return jsonify({"ok":False,"error":"Informe o motivo da exclusão."}),400
+    if not isinstance(selections,list) or not selections: return jsonify({"ok":False,"error":"Selecione pelo menos uma linha."}),400
+    if len(selections)>5000: return jsonify({"ok":False,"error":"Limite de 5.000 linhas por operação."}),400
+    uid=session.get("user_id"); now=datetime.utcnow(); deleted_events=0; hidden_plans=0; audit=[]
+    for item in selections:
+        if not isinstance(item,dict): continue
+        kind=str(item.get("kind") or "").strip().lower()
+        if kind=="event":
+            try: eid=int(item.get("id"))
+            except (TypeError,ValueError): continue
+            ev=db.session.get(FinancialCashCollection,eid)
+            if not ev or bool(getattr(ev,"soft_deleted",False)): continue
+            audit.append({"kind":"event","id":eid,"terminal":ev.terminal,"date":ev.collection_date.isoformat() if ev.collection_date else None})
+            ev.soft_deleted=True; ev.soft_delete_reason=reason; ev.soft_deleted_by=uid; ev.soft_deleted_at=now; db.session.add(ev); deleted_events+=1
+        elif kind=="planned":
+            terminal=str(item.get("terminal") or "").strip(); raw_date=str(item.get("original_date") or item.get("date") or "").strip()
+            if not terminal or not raw_date: continue
+            try: original=date.fromisoformat(raw_date[:10])
+            except ValueError: continue
+            ov=FinancialCashPlanOverride.query.filter_by(terminal=terminal,original_date=original).first()
+            if ov is None:
+                ov=FinancialCashPlanOverride(terminal=terminal,original_date=original,scheduled_date=original,updated_by=uid)
+            ov.status="CANCELADA_MONITORAMENTO"; ov.note=f"Excluída do Monitoramento: {reason}"; ov.updated_by=uid; ov.updated_at=now
+            db.session.add(ov); hidden_plans+=1; audit.append({"kind":"planned","terminal":terminal,"date":original.isoformat()})
+    if not deleted_events and not hidden_plans: return jsonify({"ok":False,"error":"Nenhuma linha válida localizada."}),404
+    db.session.add(AuditEvent(event_type="COLETA_VALORES_EXCLUSAO_MONITORAMENTO",user_id=uid,entity_type="financial_cash_monitor",entity_id=f"bulk:{deleted_events+hidden_plans}",detail=json.dumps({"count":deleted_events+hidden_plans,"events":deleted_events,"planned":hidden_plans,"reason":reason,"items":audit[:200]},ensure_ascii=False)[:12000]))
+    db.session.commit()
+    return jsonify({"ok":True,"deleted":deleted_events+hidden_plans,"events":deleted_events,"planned":hidden_plans,"message":f"{deleted_events+hidden_plans} linha(s) removida(s) do Monitoramento. Programação recorrente, ATM, R0050 e fontes foram preservados."})
 
 @app.get("/api/financeiro/coletas/v80/ciclo/<int:event_id>")
 @login_required
