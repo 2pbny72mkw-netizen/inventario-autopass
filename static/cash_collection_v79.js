@@ -9,6 +9,24 @@ const $=id=>document.getElementById(id), esc=s=>String(s??'').replace(/[&<>\"]/g
 function v8517UpdateBulkUI(){const n=V8517REV1_SELECTED.size,c=$('bulkCount'),b=$('bulkDelete');if(c)c.textContent=n;if(b)b.disabled=!n;const boxes=[...document.querySelectorAll('.v8517RowSel')],m=$('bulkMaster');if(m){m.checked=boxes.length>0&&boxes.every(x=>x.checked);m.indeterminate=boxes.some(x=>x.checked)&&!m.checked}boxes.forEach(x=>x.closest('tr')?.classList.toggle('v8517Selected',x.checked))}
 function v8517Select(ids,checked=true){ids.filter(Boolean).forEach(id=>checked?V8517REV1_SELECTED.add(String(id)):V8517REV1_SELECTED.delete(String(id)));document.querySelectorAll('.v8517RowSel').forEach(c=>c.checked=V8517REV1_SELECTED.has(c.dataset.key));v8517UpdateBulkUI()}
 function v8517SelectionPayload(){return [...V8517REV1_SELECTED].map(k=>{const p=String(k).split(':');if(p[0]==='event')return {kind:'event',id:Number(p[1])};if(p[0]==='planned')return {kind:'planned',terminal:p[1],original_date:p.slice(2).join(':')};return null}).filter(Boolean)}
+// V85.17 REV7 — binding delegado instalado no início do módulo.
+// Não depende de o restante da inicialização chegar ao fim; mantém os quatro botões funcionais.
+function v8517BindBulkActions(){
+  document.addEventListener('click',e=>{
+    const b=e.target.closest('#bulkSelectVisible,#bulkSelectFiltered,#bulkClear,#bulkDelete');
+    if(!b)return;
+    e.preventDefault();
+    if(b.id==='bulkSelectVisible')return v8517Select([...document.querySelectorAll('.v8517RowSel')].map(x=>x.dataset.key),true);
+    if(b.id==='bulkSelectFiltered')return v8517Select(V.filtered.map(v8517RowKey),true);
+    if(b.id==='bulkClear'){V8517REV1_SELECTED.clear();document.querySelectorAll('.v8517RowSel').forEach(x=>x.checked=false);return v8517UpdateBulkUI();}
+    if(b.id==='bulkDelete')return v8517BulkDelete();
+  });
+  document.addEventListener('change',e=>{
+    if(e.target?.id==='bulkMaster')v8517Select([...document.querySelectorAll('.v8517RowSel')].map(x=>x.dataset.key),e.target.checked);
+  });
+}
+v8517BindBulkActions();
+
 async function v8517BulkDelete(){const selections=v8517SelectionPayload();if(!selections.length)return;const eventIds=new Set(selections.filter(x=>x.kind==='event').map(x=>Number(x.id)));const critical=V.filtered.filter(x=>x.event_id&&eventIds.has(Number(x.event_id))&&(x.processed_amount!=null||x.declared_amount!=null||x.transaction_cycle?.available));const planned=selections.filter(x=>x.kind==='planned').length;let msg=`Excluir logicamente ${selections.length} linha(s) selecionada(s)?\n\nATM, programação recorrente, R0050 e dados-fonte serão preservados.`;if(planned)msg+=`\n\n${planned} ocorrência(s) planejada(s)/não realizada(s) serão removidas apenas do Monitoramento.`;if(critical.length)msg+=`\n\nATENÇÃO: ${critical.length} lançamento(s) possuem conciliação/apuração/transações associadas.`;if(!confirm(msg))return;const reason=prompt('Informe o motivo da exclusão:','Correção do Monitoramento');if(reason===null)return;if(!reason.trim())return alert('O motivo é obrigatório.');const r=await fetch('/api/financeiro/coletas/v85-17-rev2/linhas/excluir',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({selections,reason:reason.trim()})});const d=await r.json();if(!r.ok||!d.ok)return alert(d.error||'Falha ao excluir linhas.');V8517REV1_SELECTED.clear();alert(d.message);await load()}
 
 const brl=v=>v==null?'—':Number(v).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}), dbr=s=>s?new Date(s+'T12:00:00').toLocaleDateString('pt-BR'):'—', dtbr=s=>{if(!s)return '—';const d=new Date(s);return Number.isNaN(d.getTime())?String(s):d.toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'})};
@@ -185,12 +203,7 @@ tbPreview?.addEventListener('click',async()=>{const text=tbPaste?.value||'';if(!
 tbConfirm?.addEventListener('click',async()=>{if(!tbValidated)return;tbConfirm.disabled=true;tbSummary.textContent='Gravando apurações…';try{const r=await fetch('/api/financeiro/coletas/v80/tbforte/colar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:tbPaste.value})}),d=await r.json();if(!r.ok||!d.ok)throw Error(d.error||'Falha ao gravar apurações');const box=$('v8011TbImportProgress');if(box){box.style.display='block';box.innerHTML=`<b>Apurações TB Forte processadas.</b> ${Number(d.rows||0)} linha(s) · ${Number(d.updated||0)} atualizada(s) · ${Number(d.created||0)} fechamento(s) criado(s) · ${Number(d.unchanged||0)} sem alteração · ${(d.unmatched||[]).length} sem correspondência.`;}tbSummary.textContent='Importação concluída.';await (window.v8011ReloadMonitor?window.v8011ReloadMonitor():Promise.resolve());setTimeout(()=>{closeTbPaste();if(box)box.style.display='none'},2500)}catch(e){tbSummary.textContent=e.message;tbConfirm.disabled=false}});
 loadTxStatus();resumeActive();
 
-// V85.17 REV6 — listeners do fluxo de seleção/exclusão.
-$('bulkMaster')?.addEventListener('change',e=>v8517Select([...document.querySelectorAll('.v8517RowSel')].map(x=>x.dataset.key),e.target.checked));
-$('bulkSelectVisible')?.addEventListener('click',()=>v8517Select([...document.querySelectorAll('.v8517RowSel')].map(x=>x.dataset.key),true));
-$('bulkSelectFiltered')?.addEventListener('click',()=>v8517Select(V.filtered.map(v8517RowKey),true));
-$('bulkClear')?.addEventListener('click',()=>{V8517REV1_SELECTED.clear();document.querySelectorAll('.v8517RowSel').forEach(x=>x.checked=false);v8517UpdateBulkUI()});
-$('bulkDelete')?.addEventListener('click',v8517BulkDelete);
+// V85.17 REV7 — listeners substituídos por delegação instalada no início do módulo.
 })();
 
 
