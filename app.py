@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.16"
+APP_RELEASE = "V85.17"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -15440,12 +15440,51 @@ def financial_cash_v794_daily_preview():
         out.append({**x,"matched":bool(a),"company":(a or {}).get('company',''),"line":(a or {}).get('line',''),"station":(a or {}).get('locality',''),"action":action,"reason_category":_v794_reason_category(x.get('note'))})
     return jsonify({"ok":True,"rows":out,"summary":{"parsed":len(out),"matched":sum(1 for x in out if x['matched']),"unmatched":sum(1 for x in out if not x['matched']),"collected":sum(1 for x in out if x['result_status']=='RECOLHIDO'),"not_collected":sum(1 for x in out if x['result_status']=='NAO_RECOLHIDO')}})
 
+
+# V85.17 — Reporte diário TBForte -> tarefa automática de acompanhamento.
+def _v8517_followup_reason(x):
+    text=_v794_norm_text(" ".join(str(x.get(k) or '') for k in ('note','occurrence','provider_status','service_type')))
+    if any(k in text for k in ('FECHADURA','CHAVE QUEBR','CHAVE PRESA','COFRE TRAV','NAO ABRE COFRE','PORTA DO COFRE')):
+        return 'FECHADURA', 'Fechadura / cofre', 'Acionar fornecedor para reparo → confirmar manutenção → solicitar/reprogramar nova coleta → confirmar coleta realizada.'
+    if any(k in text for k in ('TBFORTE','TB FORTE','TRANSPORTADORA','CARRO FORTE','NAO COMPAREC','SEM EQUIPE','SEM VEICULO')):
+        return 'TBFORTE', 'Responsabilidade TB Forte', 'Acionar TB Forte → obter retorno/reprogramação → acompanhar nova coleta → confirmar coleta realizada.'
+    if any(k in text for k in ('SEM SUPORTE','FALTA DE SUPORTE','SEM APOIO')):
+        return 'SUPORTE', 'Falta de suporte', 'Acionar responsável operacional → regularizar suporte/acesso → solicitar nova coleta → confirmar realização.'
+    if any(k in text for k in ('ACESSO','CONTRASENHA','CONTRA SENHA','AUTORIZA')):
+        return 'ACESSO', 'Acesso / autorização', 'Regularizar acesso/autorização → solicitar nova coleta → confirmar realização.'
+    if any(k in text for k in ('ATM INDISP','EQUIPAMENTO INDISP','MANUTEN')):
+        return 'TECNICA', 'ATM / manutenção', 'Acionar equipe técnica → confirmar equipamento liberado → solicitar nova coleta → confirmar realização.'
+    return 'ANALISE', 'Não coleta — classificar responsabilidade', 'Classificar causa/responsabilidade → definir ação corretiva → reprogramar quando aplicável → confirmar desfecho.'
+
+def _v8517_create_collection_followup(x, asset, assignee_id, report_hash):
+    # Idempotência independente da reimportação: uma ocorrência por ATM + data programada.
+    source_id=f"{x.get('terminal','')}|{x.get('date','')}"
+    existing=ManagementTask.query.filter_by(source_type='TBFORTE_NAO_COLETA',source_id=source_id).first()
+    if existing:return existing,False
+    code,label,flow=_v8517_followup_reason(x)
+    station=(asset or {}).get('locality') or (asset or {}).get('station') or x.get('name') or ''
+    title=f"Não coleta — ATM {x.get('terminal') or '?'} — {label}"[:220]
+    desc=(f"Reporte diário TB Forte: coleta não realizada.\n"
+          f"Data prevista: {x.get('date') or '-'}\nATM: {x.get('terminal') or '-'}\n"
+          f"Local: {station}\nGTV: {x.get('gtv') or '-'}\n"
+          f"Ocorrência: {x.get('occurrence') or '-'}\nObservação: {x.get('note') or '-'}\n\n"
+          f"Fluxo de acompanhamento: {flow}\n\n"
+          "A ocorrência principal só deve ser concluída após registrar o desfecho da coleta.")
+    t=ManagementTask(title=title,description=desc[:5000],project='Coleta de Valores',department='Financeiro / Operações',priority='ALTA' if code in ('FECHADURA','TBFORTE') else 'MEDIA',status='AGUARDANDO',due_at=None,created_by=int(session.get('user_id') or assignee_id),assigned_to=int(assignee_id),atm_id=str(x.get('terminal') or '')[:40],source_type='TBFORTE_NAO_COLETA',source_id=source_id)
+    db.session.add(t);db.session.flush()
+    db.session.add(ManagementTaskEvent(task_id=t.id,user_id=int(session.get('user_id') or assignee_id),action='CRIADA_AUTOMATICAMENTE',detail=f"Reporte TB Forte · {label} · hash {report_hash[:12]}"))
+    return t,True
+
 @app.post('/api/financeiro/coletas/v79/reporte-diario/import')
 @login_required
 def financial_cash_v794_daily_import():
     if not (_has_access('finance.edit') or _finance_collection_monitor_access()): return jsonify({"ok":False,"error":"Sem permissão."}),403
     d=request.get_json(silent=True) or {}; rows=_v794_parse_daily_report(d.get('text') or '')
-    official={x['terminal']:x for x in _v79_cash_base()}; imported=0; skipped=0; unmatched=[]
+    official={x['terminal']:x for x in _v79_cash_base()}; imported=0; skipped=0; unmatched=[]; followups=[]; followup_created=0
+    try: followup_assignee=int(d.get('followup_assigned_to') or session.get('user_id'))
+    except (TypeError,ValueError): followup_assignee=int(session.get('user_id'))
+    au=db.session.get(User,followup_assignee)
+    if not au or not au.active: followup_assignee=int(session.get('user_id'))
     for x in rows:
         if x['terminal'] not in official: unmatched.append(x); continue
         sig=hashlib.sha256(f"V79.4|{x['date']}|{x['terminal']}|{x['provider_atm']}|{x['provider_status']}|{x['occurrence']}|{x['note']}".encode()).hexdigest()
@@ -15457,8 +15496,11 @@ def financial_cash_v794_daily_import():
             day=date.fromisoformat(x['date']); ov=FinancialCashPlanOverride.query.filter_by(terminal=x['terminal'],original_date=day).first()
             if not ov: ov=FinancialCashPlanOverride(terminal=x['terminal'],original_date=day,scheduled_date=day); db.session.add(ov)
             ov.status='PENDENTE_COLETA'; ov.note=x['note']; ov.updated_by=session.get('user_id'); ov.updated_at=datetime.utcnow()
+            task,created=_v8517_create_collection_followup(x,official.get(x['terminal']),followup_assignee,sig)
+            followups.append({'task_id':task.id,'terminal':x['terminal'],'date':x['date'],'title':task.title,'created':created,'assigned_to':task.assigned_to})
+            if created: followup_created+=1
     db.session.add(AuditEvent(event_type='COLETA_REPORTE_DIARIO_IMPORTADO',user_id=session.get('user_id'),entity_type='financial_cash_daily_reports',entity_id=str(imported),detail=json.dumps({'imported':imported,'skipped':skipped,'unmatched':len(unmatched)},ensure_ascii=False)))
-    db.session.commit(); return jsonify({"ok":True,"imported":imported,"skipped":skipped,"unmatched":unmatched})
+    db.session.commit(); return jsonify({"ok":True,"imported":imported,"skipped":skipped,"unmatched":unmatched,"followups":followups,"followup_created":followup_created,"followup_assigned_to":followup_assignee})
 
 # V80 — Monitoramento Inteligente da Coleta de Valores.
 # Os cálculos quantitativos são determinísticos. A camada "IA" interpreta os
@@ -22630,7 +22672,7 @@ def v854_tasks_update(task_id):
     if 'status' in data:
         if not (_has_access('tasks.edit') or is_manager or is_assignee):return jsonify(ok=False,error='Sem permissão para alterar status.'),403
         status=str(data['status']).upper()
-        if status not in ('A_FAZER','EM_ANDAMENTO','EM_VALIDACAO','CONCLUIDA'):return jsonify(ok=False,error='Status inválido.'),400
+        if status not in ('AGUARDANDO','A_FAZER','EM_ANDAMENTO','EM_VALIDACAO','CONCLUIDA'):return jsonify(ok=False,error='Status inválido.'),400
         t.status=status;changes.append('status '+status)
     if 'priority' in data:
         if not (_has_access('tasks.edit') or is_manager):return jsonify(ok=False,error='Sem permissão para editar.'),403
