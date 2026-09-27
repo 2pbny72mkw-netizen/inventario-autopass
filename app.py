@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.19"
+APP_RELEASE = "V85.19 REV1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -3252,10 +3252,12 @@ def v8232_mobile_bootstrap():
     try:
         q=ArrowActivity.query.filter(ArrowActivity.technician_id==user.id, ArrowActivity.deleted_at.is_(None)).filter(ArrowActivity.status.notin_(['CANCELADA']))
         for a in q.order_by(ArrowActivity.activity_date.desc()).limit(100).all():
-            activities.append({'id':a.id,'date':a.activity_date.isoformat() if a.activity_date else None,'title':a.title or '', 'status':a.status or '', 'start_time':a.start_time or '', 'end_time':a.end_time or '', 'location_id':a.location_id,'can_execute':a.status in ('PLANEJADA','EM ANDAMENTO')})
+            loc=db.session.get(Location,a.location_id) if a.location_id else None
+            aloc=db.session.get(ArrowLocation,a.arrow_location_id) if getattr(a,'arrow_location_id',None) else None
+            activities.append({'id':a.id,'date':a.activity_date.isoformat() if a.activity_date else None,'title':a.title or '', 'status':a.status or '', 'start_time':a.start_time or '', 'end_time':a.end_time or '', 'priority':a.priority or 'NORMAL','operator':a.operator or '', 'company':('OUTROS' if aloc else (loc.company if loc else a.operator or '')),'line':('GARAGEM' if aloc else (loc.line if loc else '')),'location':(aloc.name if aloc else (loc.location if loc else '')),'location_id':a.location_id,'arrow_location_id':getattr(a,'arrow_location_id',None),'technician_id':a.technician_id,'technician':user.name,'notes':a.notes or '','can_execute':a.status in ('PLANEJADA','EM ANDAMENTO'),'can_change_status':True})
     except Exception:
         activities=[]
-    return jsonify({'ok':True,'api_version':'mobile-v1-rev1','server_time':datetime.utcnow().isoformat()+'Z','user':{'id':user.id,'name':user.name,'username':user.username,'company':user.company or '','role':user.role,'gps_required':bool(user.gps_required),'gps_history_enabled':bool(user.gps_history_enabled),'journey_control_enabled':bool(user.journey_control_enabled),'work_schedule_type':user.work_schedule_type or '','work_start_time':user.work_start_time or '','work_end_time':user.work_end_time or ''},'permissions':access,'journey':{'controlled':bool(state.get('controlled')),'allowed':bool(state.get('allowed')),'reason':state.get('reason'),'valid_until':state.get('valid_until').isoformat() if state.get('valid_until') else None},'activities':activities,'sync':{'accepted_event_types':['GPS_POSITION','HEARTBEAT','ARROW_ACTION','FIELD_ATTENDANCE'],'max_batch':100,'idempotency':'event_id','captured_at_required':True}})
+    return jsonify({'ok':True,'api_version':'mobile-v1-rev1','server_time':datetime.utcnow().isoformat()+'Z','user':{'id':user.id,'name':user.name,'username':user.username,'company':user.company or '','role':user.role,'gps_required':bool(user.gps_required),'gps_history_enabled':bool(user.gps_history_enabled),'journey_control_enabled':bool(user.journey_control_enabled),'work_schedule_type':user.work_schedule_type or '','work_start_time':user.work_start_time or '','work_end_time':user.work_end_time or ''},'permissions':access,'journey':{'controlled':bool(state.get('controlled')),'allowed':bool(state.get('allowed')),'reason':state.get('reason'),'valid_until':state.get('valid_until').isoformat() if state.get('valid_until') else None},'activities':activities,'sync':{'accepted_event_types':['GPS_POSITION','HEARTBEAT','ARROW_ACTION','ARROW_CREATE','FIELD_ATTENDANCE'],'max_batch':100,'idempotency':'event_id','captured_at_required':True}})
 
 
 # V83.2: catalogo mobile derivado das permissoes efetivas de RH > Usuarios.
@@ -3398,6 +3400,33 @@ def a10_field_history():
     executions=ArrowActivityExecution.query.filter(ArrowActivityExecution.activity_id.in_(ids),ArrowActivityExecution.user_id==user.id).order_by(ArrowActivityExecution.created_at.desc()).limit(300).all() if ids else []
     return jsonify({'ok':True,'history':[{'activity_id':e.activity_id,'action':e.action,'observation':e.observation,'captured_at':e.created_at.isoformat()+'Z'} for e in executions]})
 
+@app.get('/api/mobile/v1/field/panoramas')
+@mobile_auth_required
+def a45_mobile_panoramas():
+    user=request.mobile_user
+    if 'field.panorama' not in _user_access_set(user): return jsonify({'ok':False,'error':'Sem permissão para Visão Panorâmica.'}),403
+    rows=_panorama_payload()
+    return jsonify({'ok':True,'summary':{'total':len(rows),'pending':sum(1 for x in rows if x.get('status')=='PENDENTE'),'in_progress':sum(1 for x in rows if x.get('status')=='EM ANDAMENTO'),'concluded':sum(1 for x in rows if x.get('status')=='CONCLUÍDA')},'locations':rows})
+
+@app.post('/api/mobile/v1/field/panoramas/<int:location_id>/photo')
+@mobile_auth_required
+def a45_mobile_panorama_photo(location_id):
+    user=request.mobile_user
+    if 'field.panorama' not in _user_access_set(user): return jsonify({'ok':False,'error':'Sem permissão para Visão Panorâmica.'}),403
+    loc=db.session.get(Location,location_id)
+    if not loc: return jsonify({'ok':False,'error':'Localidade não encontrada.'}),404
+    f=request.files.get('photo')
+    if not f or not f.filename: return jsonify({'ok':False,'error':'Selecione uma foto.'}),400
+    point_name=(request.form.get('point_name') or 'Visão geral').strip() or 'Visão geral'
+    pt=PanoramaPoint.query.filter(func.lower(PanoramaPoint.point_name)==point_name.lower(),PanoramaPoint.location_id==location_id).first()
+    if not pt:
+        pt=PanoramaPoint(location_id=location_id,point_name=point_name,notes=(request.form.get('notes') or '').strip(),created_by=user.id); db.session.add(pt); db.session.flush()
+    safe=secure_filename(f.filename) or f"panorama_{secrets.token_hex(4)}.jpg"; stored=f"pan_{pt.id}_{secrets.token_hex(6)}_{safe}"; mime=f.mimetype or 'image/jpeg'
+    stored=_store_uploaded_file(f,'panorama',stored,mime)
+    db.session.add(PanoramaPhoto(point_id=pt.id,original_name=f.filename,stored_name=stored,mime_type=mime,uploaded_by=user.id,latitude=_optional_float(request.form.get('latitude')),longitude=_optional_float(request.form.get('longitude'))))
+    pt.updated_at=datetime.utcnow(); db.session.add(AuditEvent(user_id=user.id,event_type='PANORAMA_UPLOAD_MOBILE',entity_type='location',entity_id=str(location_id),detail=point_name)); db.session.commit()
+    return jsonify({'ok':True,'point_id':pt.id,'location_id':location_id})
+
 @app.post('/api/mobile/v1/sync/events')
 @mobile_auth_required
 def v8232_mobile_sync_events():
@@ -3441,6 +3470,41 @@ def v8232_mobile_sync_events():
                     try: _v7331_record_station_passage(user,lat,lon,acc,captured,previous_position=None)
                     except Exception: app.logger.exception('V82.32: falha não bloqueante ao correlacionar estação do GPS mobile')
                     row.status='APLICADO'; row.applied_at=datetime.utcnow()
+            elif etype=='ARROW_CREATE':
+                access=_user_access_set(user)
+                if not (('arrow.create_field' in access) or ('arrow.manage' in access)):
+                    raise ValueError('Permissão para criar atividade Arrow não concedida.')
+                title=str(payload.get('title') or '').strip()
+                if not title: raise ValueError('Informe a atividade.')
+                try: wd=date.fromisoformat(str(payload.get('date') or date.today().isoformat())[:10])
+                except Exception: raise ValueError('Data inválida.')
+                start=str(payload.get('start_time') or payload.get('start') or '').strip()[:5] or None
+                end=str(payload.get('end_time') or payload.get('end') or '').strip()[:5] or None
+                for value in (start,end):
+                    if value:
+                        try: datetime.strptime(value,'%H:%M')
+                        except Exception: raise ValueError('Horário inválido.')
+                priority=str(payload.get('priority') or 'NORMAL').strip().upper()
+                if priority not in ('NORMAL','ALTA','URGENTE'): raise ValueError('Prioridade inválida.')
+                requested_status=str(payload.get('status') or 'PLANEJADA').strip().upper().replace('A FAZER','PLANEJADA').replace('EM EXECUÇÃO','EM ANDAMENTO').replace('EM EXECUCAO','EM ANDAMENTO').replace('CONCLUIDA','CONCLUÍDA')
+                if requested_status not in ('PLANEJADA','EM ANDAMENTO','CONCLUÍDA'):
+                    raise ValueError('Status inicial inválido.')
+                company=str(payload.get('company') or payload.get('operator') or '').strip()
+                line=str(payload.get('line') or '').strip(); station=str(payload.get('station') or payload.get('location') or '').strip()
+                loc=None
+                if station:
+                    q=Location.query
+                    if company: q=q.filter(func.lower(Location.company)==company.lower())
+                    if line: q=q.filter(func.lower(Location.line)==line.lower())
+                    loc=q.filter(func.lower(Location.location)==station.lower()).first()
+                if not loc and company.upper()!='OUTROS':
+                    raise ValueError('Empresa/linha/estação não localizada na base Web.')
+                x=ArrowActivity(activity_date=wd,start_time=start,end_time=end,priority=priority,title=title,
+                    operator=(loc.company if loc else (company or 'OUTROS')).upper(),location_id=(loc.id if loc else None),arrow_location_id=None,
+                    technician_id=user.id,status=requested_status,remote=False,teamviewer_id='',notes=str(payload.get('observations') or payload.get('notes') or '').strip(),created_by=user.id)
+                db.session.add(x); db.session.flush()
+                db.session.add(ArrowActivityExecution(activity_id=x.id,user_id=user.id,action='CRIADA NO ANDROID',observation=x.notes or '',created_at=captured))
+                row.status='APLICADO'; row.applied_at=datetime.utcnow(); db.session.flush(); results_observation=x.notes or ''
             elif etype=='ARROW_ACTION':
                 aid=int(payload.get('activity_id') or 0)
                 action=str(payload.get('action') or '').strip().upper().replace('CONCLUIDA','CONCLUÍDA')
@@ -3498,7 +3562,7 @@ def v8232_mobile_sync_events():
                 row.status='APLICADO'; row.applied_at=datetime.utcnow()
             else:
                 row.status='PENDENTE'; row.error_message='Tipo reservado para evolução mobile.'
-            db.session.flush(); savepoint.commit(); existing[eid]=row; accepted+=1; results.append({'event_id':eid,'ok':True,'status':row.status,'server_id':row.id,'observation_saved':results_observation if etype=='ARROW_ACTION' else None})
+            db.session.flush(); savepoint.commit(); existing[eid]=row; accepted+=1; results.append({'event_id':eid,'ok':True,'status':row.status,'server_id':(x.id if etype=='ARROW_CREATE' else row.id),'observation_saved':results_observation if etype in ('ARROW_ACTION','ARROW_CREATE') else None})
         except Exception as exc:
             savepoint.rollback(); rejected+=1; results.append({'event_id':eid,'event_type':etype,'activity_id':payload.get('activity_id') if etype=='ARROW_ACTION' else None,'action':payload.get('action') if etype=='ARROW_ACTION' else None,'ok':False,'status':'REJEITADO','error':str(exc)[:240],'retryable':False})
     try: db.session.commit()

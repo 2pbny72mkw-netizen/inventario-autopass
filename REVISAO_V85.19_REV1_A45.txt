@@ -1,0 +1,6 @@
+V85.19 REV1 — BACKEND COMPATÍVEL ANDROID A4.5 DEV
+- /api/mobile/v1/bootstrap: atividade Arrow completa para uso mobile.
+- /api/mobile/v1/sync/events: suporte a ARROW_CREATE com permissão, validação e idempotência por event_id.
+- /api/mobile/v1/field/panoramas: base real da Visão Panorâmica e resumo.
+- /api/mobile/v1/field/panoramas/<location_id>/photo: upload autenticado de evidência panorâmica.
+- Não altera o roadmap V85.20/QR Trilhos.
