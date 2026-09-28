@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.20"
+APP_RELEASE = "V85.21"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -3613,6 +3613,35 @@ def v8520_mobile_arrow_photo(activity_id):
     db.session.add(ArrowActivityExecution(activity_id=activity.id,user_id=user.id,action='EVIDÊNCIA',observation='Foto anexada pelo Android.'))
     db.session.commit()
     return jsonify({'ok':True,'id':ev.id,'activity_id':activity.id})
+
+@app.get('/api/arrow/evidencias/<int:evidence_id>/arquivo')
+@login_required
+def v8521_arrow_evidence_file(evidence_id):
+    ev=db.session.get(ArrowActivityEvidence,evidence_id)
+    if not ev: abort(404)
+    activity=db.session.get(ArrowActivity,ev.activity_id)
+    if not activity or activity.deleted_at is not None: abort(404)
+    user=db.session.get(User,session.get('user_id'))
+    access=_user_access_set(user) if user else set()
+    if not user or not (activity.technician_id==user.id or 'arrow.view' in access or 'arrow.manage' in access or 'arrow.edit' in access): abort(403)
+    stored=ev.stored_name or ''
+    if stored.startswith('r2__'):
+        raw=_r2_get_bytes(stored[4:])
+        if raw is None: abort(404)
+        return Response(raw,mimetype=ev.mime_type or 'application/octet-stream',headers={'Content-Disposition':f'inline; filename="{ev.original_name}"'})
+    path=UPLOAD_DIR/stored
+    if not path.is_file(): abort(404)
+    return send_file(path,mimetype=ev.mime_type or None,download_name=ev.original_name,as_attachment=False)
+
+@app.get('/api/arrow/<int:activity_id>/evidencias')
+@login_required
+def v8521_arrow_evidence_list(activity_id):
+    activity=db.session.get(ArrowActivity,activity_id)
+    if not activity or activity.deleted_at is not None: return jsonify({'ok':False,'error':'Atividade não encontrada.'}),404
+    user=db.session.get(User,session.get('user_id')); access=_user_access_set(user) if user else set()
+    if not user or not (activity.technician_id==user.id or 'arrow.view' in access or 'arrow.manage' in access or 'arrow.edit' in access): return jsonify({'ok':False,'error':'Sem permissão.'}),403
+    rows=ArrowActivityEvidence.query.filter_by(activity_id=activity_id).order_by(ArrowActivityEvidence.created_at.asc()).all()
+    return jsonify({'ok':True,'count':len(rows),'photos':[{'id':x.id,'name':x.original_name,'mime':x.mime_type,'created_at':x.created_at.isoformat()+'Z','url':f'/api/arrow/evidencias/{x.id}/arquivo'} for x in rows]})
 
 @app.get('/api/mobile/v1/arrow/<int:activity_id>/photos')
 @mobile_auth_required
