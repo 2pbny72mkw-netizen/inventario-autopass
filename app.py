@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.21"
+APP_RELEASE = "V85.22"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -2577,6 +2577,7 @@ def _v72_defaults():
         "bobbin_photo_retention_days": 7,
         "engineering_import_factor": 1.8,
         "engineering_usd_brl": 5.40,
+        "menu_layout_json": "",
     }
 
 def _v72_settings():
@@ -6291,6 +6292,127 @@ def telemetry_export_xlsx():
     return send_file(out, as_attachment=True, download_name=f"telemetria_{APP_RELEASE.replace(' ','_')}_{stamp}.xlsx", mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
+
+# V85.22 — Organização do Menu Principal. A navegação é apresentação; permissões continuam na Matriz.
+_V8522_DEFAULT_MENU = {
+ "Dashboard": [],
+ "Atividades": ["Central de Atividades","Gestão de Tarefas","Minhas Atividades Arrow","Agenda Arrow","Atividades / Alocações Arrow","Inventário","Preventiva ATM","Atividades de Bobinas","Visitas / Relatórios","Gerador de QR – Trilhos","Configurações QR – Trilhos"],
+ "Field": ["Dashboard Bobinas","Inventário","Chamados","Preventiva ATM","Equipamentos","Evidências","Visão Panorâmica","Troca de Chips Recarga","Mapeamento ATM","Bobinas","Estoque Field","Atualização Firmware POS - CPTM"],
+ "Implantação de Hardware": ["Visitas / Relatórios","Troca de Chips EMV - Trilhos","Troca de Chips Garagem"],
+ "RH": ["Equipes","APT","Usuários"],
+ "Portal do Cliente": ["Agendamentos","Recebimentos","Gestão de Agendamentos","Cadastro de Clientes"],
+ "Engenharia": ["Cadastro de Itens","Estruturas BOM","Preço de Venda / Locação","Revisões","Codificação"],
+ "Documentos & Materiais": ["Dossiê & Materiais","Raio-X dos Colaboradores"],
+ "Gestão": ["Central Operacional","Inteligência Operacional","Chamados","Central 360","Notificações","Diagnóstico","Configurações","Localidades Externas","Resumo dos Links","Rastreabilidade & Jornada","Perfis & Permissões","Configuração de Dashboards","Construtor de Dashboards","Saúde da Plataforma"],
+ "Financeiro": ["Lançamentos","Coleta de Valores","Monitoramento de Coletas","Apuração"],
+ "Arrow": ["Agenda","Minhas atividades","Notificações","Atividades / Alocações","Dashboard Arrow","Atendimento Remoto / TeamViewer"],
+ "Meu Perfil": [], "Sobre": [], "Sair": []
+}
+
+def _v8522_menu_layout():
+    raw=_v72_settings().get("menu_layout_json") or ""
+    try:
+        obj=json.loads(raw) if raw else {}
+        if isinstance(obj,dict) and isinstance(obj.get("columns"),list): return obj
+    except Exception: pass
+    cols=[]
+    for order,(name,items) in enumerate(_V8522_DEFAULT_MENU.items(),1):
+        cols.append({"name":name,"order":order,"items":[{"source":x,"label":x,"group":"","order":i+1} for i,x in enumerate(items)]})
+    return {"version":1,"columns":cols}
+
+def _v8522_menu_save(layout):
+    _v72_save_settings({"menu_layout_json":json.dumps(layout,ensure_ascii=False)})
+    db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="MENU_LAYOUT_APPLY",entity_type="menu_layout",entity_id=APP_RELEASE,detail=json.dumps({"columns":len(layout.get("columns",[])),"permissions_changed":0},ensure_ascii=False)))
+    db.session.commit()
+
+def _v8522_menu_from_workbook(fileobj):
+    wb=load_workbook(fileobj,data_only=True)
+    ws=wb["Menu Visual"] if "Menu Visual" in wb.sheetnames else wb[wb.sheetnames[0]]
+    cols=[]; seen=set()
+    for c in range(1,ws.max_column+1):
+        name=str(ws.cell(1,c).value or "").strip()
+        if not name: continue
+        items=[]
+        for r in range(2,ws.max_row+1):
+            val=str(ws.cell(r,c).value or "").strip()
+            if not val: continue
+            parts=[x.strip() for x in val.split(">") if x.strip()]
+            label=parts[-1]; group=" > ".join(parts[:-1])
+            # source is resolved from technical sheet when available; otherwise current visible label.
+            source=label
+            items.append({"source":source,"label":label,"group":group,"order":len(items)+1})
+        cols.append({"name":name,"order":len(cols)+1,"items":items})
+    if "Estrutura Técnica" in wb.sheetnames:
+        tws=wb["Estrutura Técnica"]
+        hdr={str(tws.cell(1,c).value or '').strip():c for c in range(1,tws.max_column+1)}
+        if all(k in hdr for k in ("Menu","Funcionalidade","Identidade original")):
+            lookup={}; order_lookup={}
+            order_col=hdr.get('Ordem')
+            for r in range(2,tws.max_row+1):
+                m=str(tws.cell(r,hdr['Menu']).value or '').strip(); lab=str(tws.cell(r,hdr['Funcionalidade']).value or '').strip(); src=str(tws.cell(r,hdr['Identidade original']).value or '').strip()
+                if m and lab and src: lookup[(m,lab)]=src
+                if m and src and order_col:
+                    try: order_lookup[(m,int(tws.cell(r,order_col).value or 0))]=src
+                    except Exception: pass
+            for col in cols:
+                for it in col['items']:
+                    # A identidade original sobrevive a renomeações feitas apenas na aba visual,
+                    # desde que a linha permaneça na mesma posição dentro da coluna exportada.
+                    it['source']=lookup.get((col['name'],it['label']),order_lookup.get((col['name'],int(it.get('order') or 0)),it['source']))
+    if not cols: raise ValueError("A planilha não contém menus.")
+    return {"version":1,"columns":cols}
+
+@app.context_processor
+def v8522_menu_context():
+    return {"menu_layout_v8522":_v8522_menu_layout() if session.get("user_id") else {"columns":[]}}
+
+@app.get('/gestao/organizacao-menu')
+@login_required
+def v8522_menu_page():
+    if not _has_access('management.settings'): return redirect(_v789_landing_for_user())
+    return render_template('menu_organization_v8522.html',app_release=APP_RELEASE,layout=_v8522_menu_layout())
+
+@app.get('/api/gestao/menu/exportar')
+@login_required
+def v8522_menu_export():
+    if not _has_access('management.settings'): return jsonify({'ok':False,'error':'Sem permissão.'}),403
+    layout=_v8522_menu_layout(); wb=Workbook(); ws=wb.active; ws.title='Menu Visual'
+    cols=layout.get('columns',[])
+    for c,col in enumerate(cols,1):
+        ws.cell(1,c,col.get('name','')).font=Font(bold=True)
+        for r,it in enumerate(col.get('items',[]),2):
+            group=(it.get('group') or '').strip(); label=it.get('label') or it.get('source') or ''
+            ws.cell(r,c,(group+' > ' if group else '')+label)
+        ws.column_dimensions[get_column_letter(c)].width=max(18,min(42,len(col.get('name',''))+8))
+    ws.freeze_panes='A2'
+    tech=wb.create_sheet('Estrutura Técnica'); tech.append(['Menu','Grupo / Nível 2','Funcionalidade','Identidade original','Ordem','Permissões'])
+    for col in cols:
+        for it in col.get('items',[]): tech.append([col.get('name'),it.get('group',''),it.get('label'),it.get('source'),it.get('order'), 'PRESERVADAS — não editado pela importação'])
+    for cell in tech[1]: cell.font=Font(bold=True)
+    tech.freeze_panes='A2';
+    for c,w in enumerate((24,30,38,38,10,38),1): tech.column_dimensions[get_column_letter(c)].width=w
+    out=io.BytesIO(); wb.save(out); out.seek(0)
+    return send_file(out,as_attachment=True,download_name=f'Estrutura_Menus_Autopass_{APP_RELEASE}.xlsx',mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+@app.post('/api/gestao/menu/importar')
+@login_required
+def v8522_menu_import():
+    if not _has_access('management.settings'): return jsonify({'ok':False,'error':'Sem permissão.'}),403
+    f=request.files.get('file'); mode=(request.form.get('mode') or 'preview').lower()
+    if not f: return jsonify({'ok':False,'error':'Selecione o Excel.'}),400
+    try: proposed=_v8522_menu_from_workbook(f.stream)
+    except Exception as exc: return jsonify({'ok':False,'error':f'Planilha inválida: {str(exc)[:180]}'}),400
+    current=_v8522_menu_layout()
+    old_cols={x.get('name') for x in current.get('columns',[])}; new_cols={x.get('name') for x in proposed.get('columns',[])}
+    old_items={(i.get('source') or i.get('label')):(c.get('name'),i.get('label'),i.get('group','')) for c in current.get('columns',[]) for i in c.get('items',[])}
+    new_items={(i.get('source') or i.get('label')):(c.get('name'),i.get('label'),i.get('group','')) for c in proposed.get('columns',[]) for i in c.get('items',[])}
+    changes={'new_menus':sorted(new_cols-old_cols),'removed_menus':sorted(old_cols-new_cols),'moved':0,'renamed':0,'regrouped':0,'permissions_changed':0}
+    for k,v in new_items.items():
+        if k in old_items:
+            ov=old_items[k]; changes['moved']+=int(ov[0]!=v[0]); changes['renamed']+=int(ov[1]!=v[1]); changes['regrouped']+=int(ov[2]!=v[2])
+    if mode=='apply': _v8522_menu_save(proposed)
+    return jsonify({'ok':True,'mode':mode,'changes':changes,'layout':proposed,'note':'Impacto em permissões: 0. A importação altera somente navegação/apresentação.'})
+
 @app.get("/diagnostico")
 @login_required
 def diagnostics_page():
@@ -6504,6 +6626,56 @@ def diagnostics_retention_v8519_execute_api():
             db.session.rollback(); return jsonify({"ok":False,"error":f"Falha ao registrar limpeza: {str(exc)[:180]}"}),500
     return jsonify({"ok":True,"release":APP_RELEASE,"dry_run":dry_run,"days":days,"modules":result,"photos":total_photos,"bytes":total_bytes,"errors":total_errors,
       "note":"Atividades e seus históricos permanecem preservados. A V85.19 remove somente as evidências fotográficas elegíveis de Recarga/EMV e registra auditoria."})
+
+
+@app.post("/api/diagnostico/retencao/v8522/lote")
+@login_required
+def diagnostics_retention_v8522_batch_api():
+    """V85.22 — exclusão retomável em lotes pequenos para evitar timeout 502."""
+    if not _has_access("management.diagnostics"): return jsonify({"ok":False,"error":"Sem permissão."}),403
+    data=request.get_json(silent=True) or {}
+    try: days=int(data.get("days") or 0); limit=max(1,min(int(data.get("limit") or 25),50))
+    except Exception: return jsonify({"ok":False,"error":"Parâmetros inválidos."}),400
+    if days not in (30,60,90): return jsonify({"ok":False,"error":"Retenção deve ser 30, 60 ou 90 dias."}),400
+    if str(data.get("confirmation") or "").strip().upper()!="EXCLUIR EVIDENCIAS": return jsonify({"ok":False,"error":"Confirmação inválida."}),400
+    selected=[str(x).strip().lower() for x in (data.get("modules") or [])]
+    allowed={
+      "recarga":("Troca de Chips – Recarga",ChipSwapPhoto,ChipSwap,ChipSwapPhoto.chip_swap_id,ChipSwap.id,ChipSwap.completed_at),
+      "emv":("Troca de Chips EMV",EmvChipSwapPhoto,EmvChipSwap,EmvChipSwapPhoto.swap_id,EmvChipSwap.id,EmvChipSwap.completed_at),
+    }
+    selected=[x for x in selected if x in allowed]
+    if not selected: return jsonify({"ok":False,"error":"Selecione Recarga e/ou EMV."}),400
+    if not _r2_available() or not os.environ.get("R2_BUCKET_NAME"): return jsonify({"ok":False,"error":"R2 indisponível."}),503
+    cutoff=datetime.utcnow()-timedelta(days=days); bucket=os.environ["R2_BUCKET_NAME"]; client=r2_client()
+    # Processa no máximo 'limit' no total da chamada, com commit por foto removida para retomada segura.
+    processed=deleted=errors=bytes_deleted=0; details=[]
+    for code in selected:
+        if processed>=limit: break
+        label,photo,parent,fk,pk,completedcol=allowed[code]
+        rows=(photo.query.join(parent,fk==pk).filter(completedcol.isnot(None),completedcol<=cutoff).order_by(photo.id.asc()).limit(limit-processed).all())
+        for ph in rows:
+            raw=str(getattr(ph,'stored_name',None) or '')
+            if not raw or raw.startswith('local:'):
+                # registro local/inválido não deve travar a fila; preserva e reporta.
+                errors+=1; processed+=1; details.append({'photo_id':ph.id,'module':code,'error':'Evidência sem objeto R2 elegível.'}); continue
+            key=raw[4:] if raw.startswith('r2__') else raw; sz=0
+            try:
+                try: sz=int(client.head_object(Bucket=bucket,Key=key).get('ContentLength') or 0)
+                except Exception: sz=0
+                client.delete_object(Bucket=bucket,Key=key)
+                db.session.delete(ph)
+                db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='RETENTION_EVIDENCE_DELETE',entity_type='evidence_retention',entity_id=code,detail=json.dumps({'release':APP_RELEASE,'module':label,'days':days,'photo_id':ph.id,'key':key,'bytes':sz},ensure_ascii=False)))
+                db.session.commit(); deleted+=1; bytes_deleted+=sz
+            except Exception as exc:
+                db.session.rollback(); errors+=1; details.append({'photo_id':ph.id,'module':code,'error':str(exc)[:180]})
+            processed+=1
+            if processed>=limit: break
+    # restante é contado sem HEAD no R2, para resposta rápida.
+    remaining=0
+    for code in selected:
+        _,photo,parent,fk,pk,completedcol=allowed[code]
+        remaining += int(photo.query.join(parent,fk==pk).filter(completedcol.isnot(None),completedcol<=cutoff).count())
+    return jsonify({'ok':True,'release':APP_RELEASE,'processed':processed,'deleted':deleted,'errors':errors,'bytes_deleted':bytes_deleted,'remaining':remaining,'done':remaining==0,'details':details[:10],'batch_limit':limit})
 
 @app.get("/api/diagnostico/performance/v8515")
 @login_required
