@@ -1,0 +1,5 @@
+V85.24 REV3 ENXUTA
+- Base: V85.24 REV2 homologada.
+- Alteracao: layout do Kanban em Gestao de Tarefas com rolagem horizontal e colunas sem corte/compressao lateral.
+- Preservados: backend funcional, banco, APIs, permissoes, filtros, demais modulos e Android.
+- Pacote enxuto: removidos READMEs/releases/deploys historicos, backups, __pycache__ e arquivos legados de raiz nao usados no runtime.
