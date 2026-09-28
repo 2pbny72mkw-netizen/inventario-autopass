@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.24"
+APP_RELEASE = "V85.24 REV1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -23174,6 +23174,38 @@ def _v8524_set_task_labels(task_id, labels):
         lab=ManagementTaskLabel.query.filter(func.lower(ManagementTaskLabel.name)==name.lower()).first()
         if not lab: lab=ManagementTaskLabel(name=name);db.session.add(lab);db.session.flush()
         db.session.add(ManagementTaskLabelLink(task_id=task_id,label_id=lab.id))
+
+@app.route('/api/gestao-tarefas/etiquetas', methods=['GET','POST','PATCH'])
+@login_required
+def v8524_rev1_task_labels_manage():
+    if not _has_access('tasks.manage'):
+        return jsonify(ok=False,error='Sem permissão para administrar etiquetas.'),403
+    if request.method=='GET':
+        rows=ManagementTaskLabel.query.order_by(ManagementTaskLabel.active.desc(),ManagementTaskLabel.name).all()
+        return jsonify(ok=True,labels=[dict(id=x.id,name=x.name,active=bool(x.active)) for x in rows])
+    data=request.get_json(silent=True) or {}
+    if request.method=='POST':
+        name=str(data.get('name') or '').strip()[:80]
+        if not name:return jsonify(ok=False,error='Informe o nome da etiqueta.'),400
+        row=ManagementTaskLabel.query.filter(func.lower(ManagementTaskLabel.name)==name.lower()).first()
+        if row:
+            if row.active:return jsonify(ok=False,error='Essa etiqueta já existe.'),409
+            row.active=True; row.name=name
+        else:
+            row=ManagementTaskLabel(name=name,active=True);db.session.add(row)
+        db.session.commit();return jsonify(ok=True,id=row.id,name=row.name,active=True)
+    try: label_id=int(data.get('id'))
+    except (TypeError,ValueError):return jsonify(ok=False,error='Etiqueta inválida.'),400
+    row=db.session.get(ManagementTaskLabel,label_id)
+    if not row:return jsonify(ok=False,error='Etiqueta não encontrada.'),404
+    if 'name' in data:
+        name=str(data.get('name') or '').strip()[:80]
+        if not name:return jsonify(ok=False,error='Informe o nome da etiqueta.'),400
+        duplicate=ManagementTaskLabel.query.filter(func.lower(ManagementTaskLabel.name)==name.lower(),ManagementTaskLabel.id!=row.id).first()
+        if duplicate:return jsonify(ok=False,error='Já existe outra etiqueta com esse nome.'),409
+        row.name=name
+    if 'active' in data:row.active=bool(data.get('active'))
+    db.session.commit();return jsonify(ok=True,id=row.id,name=row.name,active=bool(row.active))
 
 @app.route('/api/gestao-tarefas/roteamento',methods=['POST'])
 @login_required
