@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.23"
+APP_RELEASE = "V85.23 REV1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -6366,23 +6366,27 @@ def _v8522_menu_from_workbook(fileobj):
 def v8522_menu_context():
     return {"menu_layout_v8522":_v8522_menu_layout() if session.get("user_id") else {"columns":[]}}
 
+def _v8523_can_manage_menu():
+    # REV1: usa a mesma regra central da Matriz; ADM/Gestor já são tratados por _has_access.
+    return _has_access('management.settings') or _current_user_is_superadmin()
+
 @app.get('/gestao/organizacao-menu')
 @login_required
 def v8522_menu_page():
-    if not (session.get('role') == 'manager' or _has_access('management.settings')): return redirect(_v789_landing_for_user())
+    if not _v8523_can_manage_menu(): return redirect(_v789_landing_for_user())
     return render_template('menu_organization_v8522.html',app_release=APP_RELEASE,layout=_v8522_menu_layout())
 
 
 @app.get('/configuracoes/organizacao-menu')
 @login_required
 def v8523_menu_page_alias():
-    if not (session.get('role') == 'manager' or _has_access('management.settings')): return redirect(_v789_landing_for_user())
+    if not _v8523_can_manage_menu(): return redirect(_v789_landing_for_user())
     return redirect('/gestao/organizacao-menu')
 
 @app.get('/api/gestao/menu/exportar')
 @login_required
 def v8522_menu_export():
-    if not (session.get('role') == 'manager' or _has_access('management.settings')): return jsonify({'ok':False,'error':'Sem permissão.'}),403
+    if not _v8523_can_manage_menu(): return jsonify({'ok':False,'error':'Sem permissão.'}),403
     layout=_v8522_menu_layout(); wb=Workbook(); ws=wb.active; ws.title='Menu Visual'
     cols=layout.get('columns',[])
     for c,col in enumerate(cols,1):
@@ -6404,7 +6408,7 @@ def v8522_menu_export():
 @app.post('/api/gestao/menu/importar')
 @login_required
 def v8522_menu_import():
-    if not (session.get('role') == 'manager' or _has_access('management.settings')): return jsonify({'ok':False,'error':'Sem permissão.'}),403
+    if not _v8523_can_manage_menu(): return jsonify({'ok':False,'error':'Sem permissão.'}),403
     f=request.files.get('file'); mode=(request.form.get('mode') or 'preview').lower()
     if not f: return jsonify({'ok':False,'error':'Selecione o Excel.'}),400
     try: proposed=_v8522_menu_from_workbook(f.stream)
