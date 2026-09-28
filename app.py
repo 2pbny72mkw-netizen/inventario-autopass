@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.23 REV3"
+APP_RELEASE = "V85.23 REV4"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -6303,7 +6303,7 @@ _V8522_DEFAULT_MENU = {
  "Portal do Cliente": ["Agendamentos","Recebimentos","Gestão de Agendamentos","Cadastro de Clientes"],
  "Engenharia": ["Cadastro de Itens","Estruturas BOM","Preço de Venda / Locação","Revisões","Codificação"],
  "Documentos & Materiais": ["Dossiê & Materiais","Raio-X dos Colaboradores"],
- "Gestão": ["Central Operacional","Inteligência Operacional","Chamados","Central 360","Notificações","Diagnóstico","Configurações","Localidades Externas","Resumo dos Links","Rastreabilidade & Jornada","Perfis & Permissões","Configuração de Dashboards","Construtor de Dashboards","Saúde da Plataforma"],
+ "Gestão": ["Central Operacional","Inteligência Operacional","Chamados","Central 360","Notificações","Diagnóstico","Configurações","Organização do Menu Principal","Localidades Externas","Resumo dos Links","Rastreabilidade & Jornada","Perfis & Permissões","Configuração de Dashboards","Construtor de Dashboards","Saúde da Plataforma"],
  "Financeiro": ["Lançamentos","Coleta de Valores","Monitoramento de Coletas","Apuração"],
  "Arrow": ["Agenda","Minhas atividades","Notificações","Atividades / Alocações","Dashboard Arrow","Atendimento Remoto / TeamViewer"],
  "Meu Perfil": [], "Sobre": [], "Sair": []
@@ -6311,14 +6311,39 @@ _V8522_DEFAULT_MENU = {
 
 def _v8522_menu_layout():
     raw=_v72_settings().get("menu_layout_json") or ""
+    obj=None
     try:
-        obj=json.loads(raw) if raw else {}
-        if isinstance(obj,dict) and isinstance(obj.get("columns"),list): return obj
-    except Exception: pass
-    cols=[]
-    for order,(name,items) in enumerate(_V8522_DEFAULT_MENU.items(),1):
-        cols.append({"name":name,"order":order,"items":[{"source":x,"label":x,"group":"","order":i+1} for i,x in enumerate(items)]})
-    return {"version":1,"columns":cols}
+        candidate=json.loads(raw) if raw else {}
+        if isinstance(candidate,dict) and isinstance(candidate.get("columns"),list):
+            obj=candidate
+    except Exception:
+        obj=None
+    if obj is None:
+        cols=[]
+        for order,(name,items) in enumerate(_V8522_DEFAULT_MENU.items(),1):
+            cols.append({"name":name,"order":order,"items":[{"source":x,"label":x,"group":"","order":i+1} for i,x in enumerate(items)]})
+        obj={"version":1,"columns":cols}
+
+    # REV4: layouts salvos antes desta revisão não continham esta funcionalidade.
+    # O reorganizador remove o dropdown original; por isso o link era descartado.
+    source="Organização do Menu Principal"
+    exists=any(
+        (it.get("source") or it.get("label")) == source
+        for col in obj.get("columns",[])
+        for it in col.get("items",[])
+        if isinstance(it,dict)
+    )
+    if not exists:
+        gestao=next((c for c in obj.get("columns",[]) if str(c.get("name") or "").strip()=="Gestão"),None)
+        if gestao is None:
+            gestao={"name":"Gestão","order":len(obj.get("columns",[]))+1,"items":[]}
+            obj.setdefault("columns",[]).append(gestao)
+        items=gestao.setdefault("items",[])
+        insert_at=next((i+1 for i,x in enumerate(items) if (x.get("source") or x.get("label"))=="Configurações"),len(items))
+        items.insert(insert_at,{"source":source,"label":source,"group":"","order":insert_at+1})
+        for i,x in enumerate(items,1):
+            x["order"]=i
+    return obj
 
 def _v8522_menu_save(layout):
     _v72_save_settings({"menu_layout_json":json.dumps(layout,ensure_ascii=False)})
