@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.23 REV4"
+APP_RELEASE = "V85.24"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -311,6 +311,33 @@ class ManagementTaskEvent(db.Model):
     action = db.Column(db.String(60), nullable=False)
     detail = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+
+# V85.24 — etiquetas e direcionamento automático da Gestão de Tarefas.
+class ManagementTaskLabel(db.Model):
+    __tablename__ = 'management_task_labels_v8524'
+    id=db.Column(db.Integer,primary_key=True)
+    name=db.Column(db.String(80),nullable=False,unique=True,index=True)
+    active=db.Column(db.Boolean,nullable=False,default=True)
+    created_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow)
+
+class ManagementTaskLabelLink(db.Model):
+    __tablename__ = 'management_task_label_links_v8524'
+    id=db.Column(db.Integer,primary_key=True)
+    task_id=db.Column(db.Integer,db.ForeignKey('management_tasks_v854.id',ondelete='CASCADE'),nullable=False,index=True)
+    label_id=db.Column(db.Integer,db.ForeignKey('management_task_labels_v8524.id',ondelete='CASCADE'),nullable=False,index=True)
+    __table_args__=(db.UniqueConstraint('task_id','label_id',name='uq_task_label_v8524'),)
+
+class ManagementTaskRoutingRule(db.Model):
+    __tablename__='management_task_routing_rules_v8524'
+    id=db.Column(db.Integer,primary_key=True)
+    source_type=db.Column(db.String(60),nullable=False,default='TBFORTE_NAO_COLETA',index=True)
+    occurrence_code=db.Column(db.String(60),nullable=False,index=True)
+    assigned_to=db.Column(db.Integer,db.ForeignKey('users.id'),nullable=False,index=True)
+    active=db.Column(db.Boolean,nullable=False,default=True)
+    updated_by=db.Column(db.Integer,db.ForeignKey('users.id'))
+    updated_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow,onupdate=datetime.utcnow)
+    __table_args__=(db.UniqueConstraint('source_type','occurrence_code',name='uq_task_route_v8524'),)
 
 # V85.16 — cadastro mestre e auditoria das configurações do QR Trilhos.
 class QrRailConfig(db.Model):
@@ -15896,6 +15923,8 @@ def _v8517_create_collection_followup(x, asset, assignee_id, report_hash):
     existing=ManagementTask.query.filter_by(source_type='TBFORTE_NAO_COLETA',source_id=source_id).first()
     if existing:return existing,False
     code,label,flow=_v8517_followup_reason(x)
+    rule=ManagementTaskRoutingRule.query.filter_by(source_type='TBFORTE_NAO_COLETA',occurrence_code=code,active=True).first()
+    if rule and db.session.get(User,rule.assigned_to) and db.session.get(User,rule.assigned_to).active: assignee_id=rule.assigned_to
     station=(asset or {}).get('locality') or (asset or {}).get('station') or x.get('name') or ''
     title=f"Não coleta — ATM {x.get('terminal') or '?'} — {label}"[:220]
     desc=(f"Reporte diário TB Forte: coleta não realizada.\n"
@@ -15907,6 +15936,7 @@ def _v8517_create_collection_followup(x, asset, assignee_id, report_hash):
     t=ManagementTask(title=title,description=desc[:5000],project='Coleta de Valores',department='Financeiro / Operações',priority='ALTA' if code in ('FECHADURA','TBFORTE') else 'MEDIA',status='AGUARDANDO',due_at=None,created_by=int(session.get('user_id') or assignee_id),assigned_to=int(assignee_id),atm_id=str(x.get('terminal') or '')[:40],source_type='TBFORTE_NAO_COLETA',source_id=source_id)
     db.session.add(t);db.session.flush()
     db.session.add(ManagementTaskEvent(task_id=t.id,user_id=int(session.get('user_id') or assignee_id),action='CRIADA_AUTOMATICAMENTE',detail=f"Reporte TB Forte · {label} · hash {report_hash[:12]}"))
+    db.session.add(V76Notification(recipient_id=int(assignee_id),severity='ALERTA',category='TAREFAS',title='Nova ocorrência de coleta',message=title,action_url=f'/gestao-tarefas?task={t.id}',entity_type='management_task',entity_id=str(t.id)))
     return t,True
 
 @app.post('/api/financeiro/coletas/v79/reporte-diario/import')
@@ -23105,7 +23135,8 @@ def v77_bobbins_export():
 
 # V85.4 — Gestão de Tarefas
 def _v854_task_dict(t, names):
-    return dict(id=t.id,title=t.title,description=t.description or '',project=t.project or '',department=t.department or '',priority=t.priority,status=t.status,due_at=t.due_at.isoformat() if t.due_at else None,created_by=t.created_by,assigned_to=t.assigned_to,assigned_name=names.get(t.assigned_to,''),atm_id=t.atm_id or '',source_type=t.source_type or '',source_id=t.source_id or '',created_at=t.created_at.isoformat() if t.created_at else '')
+    links=(db.session.query(ManagementTaskLabel.name).join(ManagementTaskLabelLink,ManagementTaskLabel.id==ManagementTaskLabelLink.label_id).filter(ManagementTaskLabelLink.task_id==t.id).order_by(ManagementTaskLabel.name).all())
+    return dict(id=t.id,title=t.title,description=t.description or '',project=t.project or '',department=t.department or '',priority=t.priority,status=t.status,due_at=t.due_at.isoformat() if t.due_at else None,created_by=t.created_by,assigned_to=t.assigned_to,assigned_name=names.get(t.assigned_to,''),atm_id=t.atm_id or '',source_type=t.source_type or '',source_id=t.source_id or '',created_at=t.created_at.isoformat() if t.created_at else '',updated_at=t.updated_at.isoformat() if t.updated_at else '',labels=[x[0] for x in links])
 
 def _v854_task_access(perm):
     if not _has_access(perm): return jsonify({'ok':False,'error':'Sem permissão na Matriz de Permissões.'}),403
@@ -23129,7 +23160,35 @@ def v854_tasks_list():
     tasks=q.order_by(ManagementTask.created_at.desc()).limit(1000).all()
     users=User.query.filter(User.active.is_(True)).order_by(User.name).all()
     names={u.id:u.name for u in users}
-    return jsonify(ok=True,tasks=[_v854_task_dict(t,names) for t in tasks],users=[dict(id=u.id,name=u.name) for u in users],can_create=_has_access('tasks.create'),can_edit=_has_access('tasks.edit'),can_transfer=_has_access('tasks.transfer'),can_manage=_has_access('tasks.manage'))
+    labels=[x.name for x in ManagementTaskLabel.query.filter_by(active=True).order_by(ManagementTaskLabel.name).all()]
+    routes=[dict(id=r.id,source_type=r.source_type,occurrence_code=r.occurrence_code,assigned_to=r.assigned_to,assigned_name=names.get(r.assigned_to,'')) for r in ManagementTaskRoutingRule.query.filter_by(active=True).order_by(ManagementTaskRoutingRule.occurrence_code).all()]
+    return jsonify(ok=True,tasks=[_v854_task_dict(t,names) for t in tasks],users=[dict(id=u.id,name=u.name) for u in users],labels=labels,routing_rules=routes,can_create=_has_access('tasks.create'),can_edit=_has_access('tasks.edit'),can_transfer=_has_access('tasks.transfer'),can_manage=_has_access('tasks.manage'))
+
+def _v8524_set_task_labels(task_id, labels):
+    clean=[]
+    for raw in labels if isinstance(labels,list) else []:
+        name=str(raw or '').strip()[:80]
+        if name and name.casefold() not in [x.casefold() for x in clean]: clean.append(name)
+    ManagementTaskLabelLink.query.filter_by(task_id=task_id).delete(synchronize_session=False)
+    for name in clean[:12]:
+        lab=ManagementTaskLabel.query.filter(func.lower(ManagementTaskLabel.name)==name.lower()).first()
+        if not lab: lab=ManagementTaskLabel(name=name);db.session.add(lab);db.session.flush()
+        db.session.add(ManagementTaskLabelLink(task_id=task_id,label_id=lab.id))
+
+@app.route('/api/gestao-tarefas/roteamento',methods=['POST'])
+@login_required
+def v8524_task_routing_save():
+    if not _has_access('tasks.manage'):return jsonify(ok=False,error='Sem permissão para configurar direcionamento.'),403
+    d=request.get_json(silent=True) or {}; code=str(d.get('occurrence_code') or '').strip().upper()[:60]
+    try: uid=int(d.get('assigned_to'))
+    except (TypeError,ValueError):return jsonify(ok=False,error='Responsável inválido.'),400
+    if code not in ('FECHADURA','TBFORTE','SUPORTE','ACESSO','TECNICA','ANALISE'):return jsonify(ok=False,error='Tipo de ocorrência inválido.'),400
+    u=db.session.get(User,uid)
+    if not u or not u.active:return jsonify(ok=False,error='Usuário inválido.'),400
+    row=ManagementTaskRoutingRule.query.filter_by(source_type='TBFORTE_NAO_COLETA',occurrence_code=code).first()
+    if not row: row=ManagementTaskRoutingRule(source_type='TBFORTE_NAO_COLETA',occurrence_code=code,assigned_to=uid);db.session.add(row)
+    row.assigned_to=uid;row.active=True;row.updated_by=session['user_id'];row.updated_at=datetime.utcnow();db.session.commit()
+    return jsonify(ok=True)
 
 @app.post('/api/gestao-tarefas')
 @login_required
@@ -23148,8 +23207,13 @@ def v854_tasks_create():
         except ValueError:return jsonify(ok=False,error='Prazo inválido.'),400
     priority=str(data.get('priority') or 'MEDIA').upper()
     if priority not in ('BAIXA','MEDIA','ALTA'):return jsonify(ok=False,error='Prioridade inválida.'),400
-    t=ManagementTask(title=title,description=str(data.get('description') or '')[:5000],project=str(data.get('project') or '')[:120],department=str(data.get('department') or '')[:120],priority=priority,due_at=due,created_by=int(session['user_id']),assigned_to=assignee,atm_id=str(data.get('atm_id') or '')[:40],source_type=str(data.get('source_type') or '')[:60],source_id=str(data.get('source_id') or '')[:100]);db.session.add(t);db.session.flush()
-    db.session.add(ManagementTaskEvent(task_id=t.id,user_id=int(session['user_id']),action='CRIADA',detail=title));db.session.commit()
+    status=str(data.get('status') or 'A_FAZER').upper()
+    if status not in ('AGUARDANDO','A_FAZER','EM_ANDAMENTO','CONCLUIDA'):return jsonify(ok=False,error='Status inválido.'),400
+    t=ManagementTask(title=title,description=str(data.get('description') or '')[:5000],project=str(data.get('project') or '')[:120],department=str(data.get('department') or '')[:120],priority=priority,status=status,due_at=due,created_by=int(session['user_id']),assigned_to=assignee,atm_id=str(data.get('atm_id') or '')[:40],source_type=str(data.get('source_type') or '')[:60],source_id=str(data.get('source_id') or '')[:100]);db.session.add(t);db.session.flush()
+    _v8524_set_task_labels(t.id,data.get('labels') or [])
+    db.session.add(ManagementTaskEvent(task_id=t.id,user_id=int(session['user_id']),action='CRIADA',detail=title))
+    db.session.add(V76Notification(recipient_id=assignee,severity='INFO',category='TAREFAS',title='Nova atividade atribuída',message=title,action_url=f'/gestao-tarefas?task={t.id}',entity_type='management_task',entity_id=str(t.id)))
+    db.session.commit()
     return jsonify(ok=True,id=t.id),201
 
 @app.patch('/api/gestao-tarefas/<int:task_id>')
@@ -23166,7 +23230,7 @@ def v854_tasks_update(task_id):
         except (TypeError,ValueError):return jsonify(ok=False,error='Responsável inválido.'),400
         user=db.session.get(User,assignee)
         if not user or not user.active:return jsonify(ok=False,error='Responsável não encontrado.'),400
-        changes.append(f'responsável {t.assigned_to} → {assignee}');t.assigned_to=assignee
+        changes.append(f'responsável {t.assigned_to} → {assignee}');t.assigned_to=assignee;db.session.add(V76Notification(recipient_id=assignee,severity='INFO',category='TAREFAS',title='Atividade atribuída a você',message=t.title,action_url=f'/gestao-tarefas?task={t.id}',entity_type='management_task',entity_id=str(t.id)))
     fields={'title':220,'description':5000,'project':120,'department':120,'atm_id':40}
     for field,limit in fields.items():
         if field in data:
@@ -23177,7 +23241,7 @@ def v854_tasks_update(task_id):
     if 'status' in data:
         if not (_has_access('tasks.edit') or is_manager or is_assignee):return jsonify(ok=False,error='Sem permissão para alterar status.'),403
         status=str(data['status']).upper()
-        if status not in ('AGUARDANDO','A_FAZER','EM_ANDAMENTO','EM_VALIDACAO','CONCLUIDA'):return jsonify(ok=False,error='Status inválido.'),400
+        if status not in ('AGUARDANDO','A_FAZER','EM_ANDAMENTO','CONCLUIDA'):return jsonify(ok=False,error='Status inválido.'),400
         if status=='CONCLUIDA' and t.source_type=='TBFORTE_NAO_COLETA':
             resolution=str(data.get('resolution') or '').strip()
             resolution_note=str(data.get('resolution_note') or '').strip()
@@ -23198,6 +23262,9 @@ def v854_tasks_update(task_id):
         try:t.due_at=datetime.fromisoformat(str(data['due_at'])) if data['due_at'] else None
         except ValueError:return jsonify(ok=False,error='Prazo inválido.'),400
         changes.append('prazo')
+    if 'labels' in data:
+        if not (_has_access('tasks.edit') or is_manager):return jsonify(ok=False,error='Sem permissão para editar etiquetas.'),403
+        _v8524_set_task_labels(t.id,data.get('labels') or []);changes.append('etiquetas')
     if not changes:return jsonify(ok=False,error='Nenhuma alteração válida.'),400
     db.session.add(ManagementTaskEvent(task_id=t.id,user_id=uid,action='ALTERADA',detail=', '.join(changes)));db.session.commit()
     return jsonify(ok=True,id=t.id)
