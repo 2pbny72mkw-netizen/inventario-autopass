@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.19 REV1"
+APP_RELEASE = "V85.20"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -1130,6 +1130,16 @@ class ArrowActivityExecution(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
     action = db.Column(db.String(40), nullable=False, index=True)
     observation = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+class ArrowActivityEvidence(db.Model):
+    __tablename__ = "arrow_activity_evidences"
+    id = db.Column(db.Integer, primary_key=True)
+    activity_id = db.Column(db.Integer, db.ForeignKey("arrow_activities.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    original_name = db.Column(db.String(300), nullable=False)
+    stored_name = db.Column(db.String(700), nullable=False)
+    mime_type = db.Column(db.String(180))
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
 
 class AtmBobbinStationStock(db.Model):
@@ -3492,13 +3502,14 @@ def v8232_mobile_sync_events():
                 company=str(payload.get('company') or payload.get('operator') or '').strip()
                 line=str(payload.get('line') or '').strip(); station=str(payload.get('station') or payload.get('location') or '').strip()
                 loc=None
+                # V85.20: Empresa/Linha/Estação são opcionais no Arrow mobile.
+                # Quando a combinação existe na base mestre, correlacionamos; quando não existe
+                # ou está em branco, a criação não é bloqueada.
                 if station:
                     q=Location.query
                     if company: q=q.filter(func.lower(Location.company)==company.lower())
                     if line: q=q.filter(func.lower(Location.line)==line.lower())
                     loc=q.filter(func.lower(Location.location)==station.lower()).first()
-                if not loc and company.upper()!='OUTROS':
-                    raise ValueError('Empresa/linha/estação não localizada na base Web.')
                 x=ArrowActivity(activity_date=wd,start_time=start,end_time=end,priority=priority,title=title,
                     operator=(loc.company if loc else (company or 'OUTROS')).upper(),location_id=(loc.id if loc else None),arrow_location_id=None,
                     technician_id=user.id,status=requested_status,remote=False,teamviewer_id='',notes=str(payload.get('observations') or payload.get('notes') or '').strip(),created_by=user.id)
@@ -3570,6 +3581,48 @@ def v8232_mobile_sync_events():
         db.session.rollback(); return jsonify({'ok':False,'error':'Conflito de sincronização. Reenvie o mesmo lote; event_id garante idempotência.'}),409
     return jsonify({'ok':True,'device_id':device_id,'accepted':accepted,'duplicates':duplicates,'rejected':rejected,'results':results,'server_time':datetime.utcnow().isoformat()+'Z'})
 
+
+@app.post('/api/mobile/v1/arrow/<int:activity_id>/photo')
+@mobile_auth_required
+def v8520_mobile_arrow_photo(activity_id):
+    user=request.mobile_user
+    activity=db.session.get(ArrowActivity,activity_id)
+    if not user or not activity or activity.deleted_at is not None:
+        return jsonify({'ok':False,'error':'Atividade não encontrada.'}),404
+    access=_user_access_set(user)
+    if not (activity.technician_id==user.id or 'arrow.manage' in access or 'arrow.edit' in access):
+        return jsonify({'ok':False,'error':'Sem permissão para anexar evidência.'}),403
+    f=request.files.get('photo')
+    if not f or not f.filename:
+        return jsonify({'ok':False,'error':'Selecione uma foto.'}),400
+    raw=f.read()
+    if not raw: return jsonify({'ok':False,'error':'Foto vazia.'}),400
+    if len(raw)>12*1024*1024: return jsonify({'ok':False,'error':'Foto excede 12 MB.'}),413
+    mime=(f.mimetype or 'image/jpeg').lower()
+    if mime not in ('image/jpeg','image/png','image/webp'):
+        return jsonify({'ok':False,'error':'Formato de imagem não permitido.'}),400
+    original=secure_filename(f.filename) or f'arrow_{activity_id}.jpg'
+    ext={'image/jpeg':'jpg','image/png':'png','image/webp':'webp'}.get(mime,'jpg')
+    key=f"arrow/{activity_id}/{datetime.utcnow().strftime('%Y/%m')}/{secrets.token_hex(12)}.{ext}"
+    if _r2_available():
+        _r2_put_bytes(key,raw,mime); stored='r2__'+key
+    else:
+        stored=f"arrow_{activity_id}_{secrets.token_hex(8)}.{ext}"; (UPLOAD_DIR/stored).write_bytes(raw)
+    ev=ArrowActivityEvidence(activity_id=activity.id,user_id=user.id,original_name=original,stored_name=stored,mime_type=mime)
+    db.session.add(ev)
+    db.session.add(ArrowActivityExecution(activity_id=activity.id,user_id=user.id,action='EVIDÊNCIA',observation='Foto anexada pelo Android.'))
+    db.session.commit()
+    return jsonify({'ok':True,'id':ev.id,'activity_id':activity.id})
+
+@app.get('/api/mobile/v1/arrow/<int:activity_id>/photos')
+@mobile_auth_required
+def v8520_mobile_arrow_photos(activity_id):
+    user=request.mobile_user; activity=db.session.get(ArrowActivity,activity_id)
+    if not user or not activity or activity.deleted_at is not None: return jsonify({'ok':False,'error':'Atividade não encontrada.'}),404
+    access=_user_access_set(user)
+    if not (activity.technician_id==user.id or 'arrow.manage' in access or 'arrow.edit' in access or 'arrow.view' in access): return jsonify({'ok':False,'error':'Sem permissão.'}),403
+    rows=ArrowActivityEvidence.query.filter_by(activity_id=activity.id).order_by(ArrowActivityEvidence.created_at.asc()).all()
+    return jsonify({'ok':True,'photos':[{'id':x.id,'name':x.original_name,'mime':x.mime_type,'created_at':x.created_at.isoformat()+'Z'} for x in rows]})
 
 @app.get('/api/mobile/v1/sync/status')
 @mobile_auth_required
