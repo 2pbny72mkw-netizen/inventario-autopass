@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.25"
+APP_RELEASE = "V85.25 REV1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -23472,9 +23472,9 @@ def _qr_rail_project_key(company):
     raise ValueError('Projeto/chave AES não configurado para esta empresa no servidor.')
 
 @app.route('/implantacao/gerador-qr', methods=['GET','POST'])
-@hardware_implantation_required
+@login_required
 def implantation_qr_config():
-    if not (_has_access('implantation.qr.view') or _has_access('implantation.visits')): abort(403)
+    if not (_has_access('implantation.qr.view') or _has_access('implantation.qr.manage') or _has_access('implantation.visits')): abort(403)
     from datetime import datetime, timezone
     values={}; qr_png=None; qr_text=None; error=None; selected=None
     configs=QrRailConfig.query.filter_by(active=True).order_by(QrRailConfig.company,QrRailConfig.line,QrRailConfig.station,QrRailConfig.block).all()
