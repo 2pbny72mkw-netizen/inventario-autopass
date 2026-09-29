@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.26 REV1"
+APP_RELEASE = "V85.26 REV2"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -23413,8 +23413,8 @@ def _qr_config_proto(values):
 
 
 def _qr_rail_base_configs():
-    """V85.26 REV1 — monta a seleção do gerador a partir da base Trilhos já existente.
-    QrRailConfig continua sendo override administrativo; cadastro manual não é pré-requisito.
+    """V85.26 REV2 — navegação pela base de bloqueios e rede pela tabela técnica homologada.
+    Fluxo: Empresa -> Linha -> Estação -> Bloqueio.
     """
     import os, re
     block_cfg={}
@@ -23424,25 +23424,32 @@ def _qr_rail_base_configs():
         block_cfg=payload.get("by_prefix") or {}
     except Exception as exc:
         app.logger.warning("QR Trilhos: falha lendo block_config_v18.json: %s",exc)
+    network_by_terminal={}
+    try:
+        source=DATA_DIR / "qr_trilhos_rede_v8526_rev2.json"
+        payload=json.loads(source.read_text(encoding="utf-8")) if source.exists() else {}
+        network_by_terminal={str(x.get("terminal") or ""):x for x in (payload.get("rows") or []) if x.get("terminal")}
+    except Exception as exc:
+        app.logger.warning("QR Trilhos: falha lendo tabela de rede REV2: %s",exc)
     rows=[]
     for src in _v41_emv_rows():
         terminal=re.sub(r"\D","",str(src.get("terminal") or ""))
         if not terminal: continue
         cfg=block_cfg.get(terminal) or {}
+        net=network_by_terminal.get(terminal) or {}
         company=str(src.get("company") or "").strip()
         raw_station=str(cfg.get("station_raw") or "").strip()
-        # station_raw = "UTINGA   UTG"; remove somente o código final de 3 letras.
         station=re.sub(r"\s{2,}[A-Z0-9]{3}$","",raw_station).strip() if raw_station else str(src.get("station") or "").strip()
         if not station: station=str(src.get("station") or "").strip()
-        line=str(src.get("line") or cfg.get("source_sheet") or "").strip()
-        block=cfg.get("blocking_number") or src.get("blocking_number") or terminal[-2:]
+        line=str(src.get("line") or cfg.get("source_sheet") or net.get("sheet") or "").strip()
+        block=cfg.get("blocking_number") or src.get("blocking_number") or net.get("block") or terminal[-2:]
         trans_oper=src.get("tp_id")
         try: trans_oper=int(trans_oper) if trans_oper not in (None,'') else None
         except Exception: trans_oper=None
-        line_id=cfg.get("line_logic")
+        line_id=cfg.get("line_logic") or net.get("line_code")
         try: line_id=int(str(line_id).strip()) if line_id not in (None,'') else None
         except Exception: line_id=None
-        group=cfg.get("group") or src.get("group")
+        group=net.get("group") or cfg.get("group") or src.get("group")
         try: group=int(str(group).strip()) if group not in (None,'') else None
         except Exception: group=None
         turn_model=None
@@ -23450,14 +23457,13 @@ def _qr_rail_base_configs():
         if default_turn:
             try: turn_model=int(default_turn)
             except Exception: pass
-        rows.append({'id':'base:'+terminal,'source':'BASE_TRILHOS','company':company,'line':line,'station':station,
+        rows.append({'id':'base:'+terminal,'source':'BASE_BLOQUEIOS+TABELA_REDE','company':company,'line':line,'station':station,
             'block':str(block),'TransOperId':trans_oper,'TerminalId':int(terminal),'TurnModel':turn_model,
-            'Ip':str(src.get('ip') or cfg.get('ip') or ''),'Mask':str(cfg.get('mask') or src.get('mask') or ''),
-            'Gateway':str(cfg.get('gateway') or src.get('gateway') or ''),'Dns1':str(cfg.get('dns1') or src.get('dns1') or ''),
-            'Dns2':str(cfg.get('dns2') or src.get('dns2') or ''),'LineId':line_id,'TermGrpId':group,
-            'LabelApnChip1':'','LabelApnChip2':''})
+            'Ip':str(net.get('ip') or src.get('ip') or cfg.get('ip') or ''),'Mask':str(net.get('mask') or cfg.get('mask') or src.get('mask') or ''),
+            'Gateway':str(net.get('gateway') or cfg.get('gateway') or src.get('gateway') or ''),'Dns1':str(net.get('dns1') or cfg.get('dns1') or src.get('dns1') or ''),
+            'Dns2':str(net.get('dns2') or cfg.get('dns2') or src.get('dns2') or ''),'LineId':line_id,'TermGrpId':group,
+            'LabelApnChip1':'','LabelApnChip2':'','installation':str(net.get('installation') or '')})
     return rows
-
 
 def _qr_rail_effective_configs():
     # Base operacional é a fonte padrão. Cadastro administrativo substitui o mesmo terminal quando existir.
