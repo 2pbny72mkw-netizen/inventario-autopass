@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.27 REV2"
+APP_RELEASE = "V85.27 REV3"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -6388,6 +6388,20 @@ def _v8522_menu_layout():
         items.insert(insert_at,{"source":source,"label":source,"group":"","order":insert_at+1})
         for i,x in enumerate(items,1):
             x["order"]=i
+    # V85.27 REV3 — garante o gerador QR Trilhos mesmo em layouts de menu salvos antes da funcionalidade.
+    # O menu visual reconstrói a navegação a partir deste JSON e descarta links não referenciados.
+    qr_source="Gerar QR Code – Trilhos"
+    qr_exists=any(
+        (it.get("source") or it.get("label")) == qr_source
+        for col in obj.get("columns",[]) for it in col.get("items",[]) if isinstance(it,dict)
+    )
+    if not qr_exists:
+        field=next((c for c in obj.get("columns",[]) if str(c.get("name") or "").strip()=="Field"),None)
+        if field is None:
+            field={"name":"Field","order":len(obj.get("columns",[]))+1,"items":[]}
+            obj.setdefault("columns",[]).append(field)
+        items=field.setdefault("items",[])
+        items.append({"source":qr_source,"label":qr_source,"group":"","order":len(items)+1})
     return obj
 
 def _v8522_menu_save(layout):
