@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.27 REV4"
+APP_RELEASE = "V85.27 REV5"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -22259,7 +22259,7 @@ def v8227_bobbin_deliveries_save():
         obj=BobbinDeliverySchedule(created_by=session['user_id']);db.session.add(obj)
     try: unit_cost=max(0.0,float(str(d.get('unit_cost') or 0).replace(',','.')))
     except Exception: unit_cost=0.0
-    total_cost=round(boxes*unit_cost,2)
+    total_cost=round((boxes*6+loose)*unit_cost,2)
     clean_note=re.sub(r'\s*\[FIN:[^\]]+\]','',(d.get('notes') or '')).strip()
     fin=f"[FIN:BOBINA|{unit_cost:.2f}|{total_cost:.2f}]" if unit_cost>0 else ''
     obj.location=location;obj.delivery_date=delivery_date;obj.status=status;obj.boxes_qty=boxes;obj.notes=(clean_note+(' '+fin if fin else '')).strip();obj.updated_at=datetime.utcnow()
@@ -22399,7 +22399,7 @@ def v8527_bobbin_deliveries_bulk():
             delivery_date=date.fromisoformat(str(item.get('delivery_date') or default_date or ''))
             try: unit_cost=max(0.0,float(str(item.get('unit_cost') if item.get('unit_cost') not in (None,'') else default_unit_cost).replace(',','.')))
             except Exception: unit_cost=default_unit_cost
-            total_cost=round(boxes*unit_cost,2)
+            total_cost=round((boxes*6+loose)*unit_cost,2)
             clean_note=re.sub(r'\s*\[FIN:[^\]]+\]','',str(item.get('notes') or notes or '')).strip()
             fin=f"[FIN:BOBINA|{unit_cost:.2f}|{total_cost:.2f}]" if unit_cost>0 else ''
             obj=BobbinDeliverySchedule(created_by=session['user_id'],location=location,delivery_date=delivery_date,status='PROGRAMADO',boxes_qty=boxes,notes=(clean_note+(' '+fin if fin else '')).strip(),updated_at=datetime.utcnow())
@@ -22414,15 +22414,25 @@ def v8527_bobbin_deliveries_bulk():
 @login_required
 def v85274_bobbin_deliveries_bulk_update():
     if not _has_access('field.stock_manage'): abort(403)
-    d=request.get_json(silent=True) or {}; ids=d.get('ids') or []; status=str(d.get('status') or '').strip().upper()
-    if status not in ('PROGRAMADO','EM_ANDAMENTO','ENTREGUE'): return jsonify({'ok':False,'error':'Status inválido.'}),400
+    d=request.get_json(silent=True) or {}; ids=d.get('ids') or []; field=str(d.get('field') or 'status').strip().lower()
     try: ids=[int(x) for x in ids]
     except Exception:return jsonify({'ok':False,'error':'Seleção inválida.'}),400
     rows=BobbinDeliverySchedule.query.filter(BobbinDeliverySchedule.id.in_(ids)).all() if ids else []
+    if field=='unit_cost':
+        try: unit_cost=max(0.0,float(str(d.get('unit_cost') or 0).replace(',','.')))
+        except Exception:return jsonify({'ok':False,'error':'Valor unitário inválido.'}),400
+        for x in rows:
+            detail=BobbinDeliveryDetail.query.filter_by(delivery_id=x.id).first(); loose=int(getattr(detail,'loose_qty',0) or 0); boxes=int(x.boxes_qty or 0); total_bobbins=boxes*6+loose
+            clean_note=re.sub(r'\s*\[FIN:[^\]]*\]','',x.notes or '').strip(); total_cost=round(total_bobbins*unit_cost,2); fin=f"[FIN:BOBINA|{unit_cost:.2f}|{total_cost:.2f}]" if unit_cost>0 else ''
+            x.notes=(clean_note+(' '+fin if fin else '')).strip(); x.updated_at=datetime.utcnow()
+            db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='BOBINAS_VALOR_UNITARIO_MASSA',entity_type='bobbin_delivery_schedule',entity_id=str(x.id),detail=json.dumps({'unit_cost':unit_cost,'total_bobbins':total_bobbins,'total_cost':total_cost,'location':x.location},ensure_ascii=False)))
+        db.session.commit();return jsonify({'ok':True,'updated':len(rows),'field':'unit_cost','unit_cost':unit_cost})
+    status=str(d.get('status') or '').strip().upper()
+    if status not in ('PROGRAMADO','EM_ANDAMENTO','ENTREGUE'): return jsonify({'ok':False,'error':'Status inválido.'}),400
     for x in rows:
         old=x.status; x.status=status; x.updated_at=datetime.utcnow()
         db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='BOBINAS_STATUS_MASSA',entity_type='bobbin_delivery_schedule',entity_id=str(x.id),detail=json.dumps({'de':old,'para':status,'location':x.location},ensure_ascii=False)))
-    db.session.commit();return jsonify({'ok':True,'updated':len(rows),'status':status})
+    db.session.commit();return jsonify({'ok':True,'updated':len(rows),'field':'status','status':status})
 
 @app.get('/api/bobinas/dashboard')
 @login_required
