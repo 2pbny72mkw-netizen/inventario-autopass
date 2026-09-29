@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.24 REV3"
+APP_RELEASE = "V85.25"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -23439,6 +23439,38 @@ def qr_rail_configs_manage():
     rows=QrRailConfig.query.order_by(QrRailConfig.company,QrRailConfig.line,QrRailConfig.station,QrRailConfig.block).all()
     return render_template('qr_rail_configs_v8516.html',rows=rows,error=error,success=success,app_release=APP_RELEASE)
 
+# V85.25 — chave AES vinculada ao projeto. O técnico não seleciona nem visualiza a chave.
+def _qr_rail_project_key(company):
+    import os
+    def load_json_env(name):
+        raw=(os.environ.get(name) or '').strip()
+        if not raw: return {}
+        try:
+            obj=json.loads(raw)
+            return obj if isinstance(obj,dict) else {}
+        except Exception:
+            return {}
+    projects=load_json_env('AUTOPASS_QR_COMPANY_PROJECTS_JSON')
+    keys=load_json_env('AUTOPASS_QR_PROJECT_KEYS_JSON')
+    company_key=normalize(company)
+    project=''
+    for k,v in projects.items():
+        if normalize(k)==company_key:
+            project=str(v or '').strip(); break
+    if project:
+        for k,v in keys.items():
+            if normalize(k)==normalize(project):
+                key_hex=str(v or '').replace(' ','').strip()
+                if len(key_hex)==64:
+                    return project,key_hex
+                raise ValueError(f'Chave AES do projeto {project} inválida: esperado hexadecimal de 32 bytes.')
+        raise ValueError(f'Chave AES não configurada para o projeto {project}.')
+    # Compatibilidade com a configuração já existente nas versões anteriores.
+    legacy=(os.environ.get('AUTOPASS_QR_SBE_HOMOLOG_KEY_HEX') or '').replace(' ','').strip()
+    if len(legacy)==64:
+        return 'PADRAO',legacy
+    raise ValueError('Projeto/chave AES não configurado para esta empresa no servidor.')
+
 @app.route('/implantacao/gerador-qr', methods=['GET','POST'])
 @hardware_implantation_required
 def implantation_qr_config():
@@ -23456,15 +23488,14 @@ def implantation_qr_config():
             if not selected or not selected.active: raise ValueError('Selecione um bloqueio cadastrado e ativo.')
             values={'TransOperId':selected.trans_oper_id,'TerminalId':selected.terminal_id,'TurnModel':selected.turn_model,'Ip':selected.ip,'Mask':selected.mask,'Gateway':selected.gateway,'Dns1':selected.dns1,'Dns2':selected.dns2,'LineId':selected.line_id,'TermGrpId':selected.term_grp_id,'LabelApnChip1':selected.apn1,'LabelApnChip2':selected.apn2}
             values['Date']=str(int(datetime.now(timezone.utc).timestamp()))
-            key_hex=os.environ.get('AUTOPASS_QR_SBE_HOMOLOG_KEY_HEX','').replace(' ','')
-            if len(key_hex)!=64: raise ValueError('Chave de homologação não configurada no servidor (AUTOPASS_QR_SBE_HOMOLOG_KEY_HEX).')
+            project_name,key_hex=_qr_rail_project_key(selected.company)
             plain=_qr_config_proto(values)
             if not plain: raise ValueError('Configuração sem parâmetros para geração.')
             iv=secrets.token_bytes(16); padder=padding.PKCS7(128).padder(); padded=padder.update(plain)+padder.finalize(); cipher=Cipher(algorithms.AES(bytes.fromhex(key_hex)),modes.CBC(iv)); enc=cipher.encryptor(); encrypted=enc.update(padded)+enc.finalize()
             qr_text='<c:2>i:'+base64.b64encode(iv).decode('ascii')+';p:'+base64.b64encode(encrypted).decode('ascii')+';'
             image=qrcode.make(qr_text,box_size=8,border=4); output=io.BytesIO(); image.save(output,format='PNG'); qr_png=base64.b64encode(output.getvalue()).decode('ascii')
-            app.logger.info('qr_rail_generated user_id=%s config_id=%s terminal_id=%s',session.get('user_id'),selected.id,selected.terminal_id)
+            app.logger.info('qr_rail_generated user_id=%s config_id=%s terminal_id=%s project=%s',session.get('user_id'),selected.id,selected.terminal_id,project_name)
         except (ValueError,TypeError,ImportError) as exc: error=str(exc)
         except Exception:
             app.logger.exception('qr_rail_generation_failed'); error='Falha ao gerar QR Code. Consulte o diagnóstico do servidor.'
-    return render_template('implantation_qr_config_v8516.html',configs=configs,selected=selected,values=values,qr_png=qr_png,qr_text=qr_text,error=error,app_release=APP_RELEASE)
+    return render_template('implantation_qr_config_v8525.html',configs=configs,selected=selected,values=values,qr_png=qr_png,qr_text=qr_text,error=error,app_release=APP_RELEASE)
