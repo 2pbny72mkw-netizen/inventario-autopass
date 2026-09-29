@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.25 REV1"
+APP_RELEASE = "V85.26"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -5479,7 +5479,25 @@ def atm_financial_dashboard_api():
             d=by_supplier.setdefault(key,{"supplier":key[0],"description":key[1],"period_value":0.0,"avg_jan_jun_2026":0.0,"category":"ATM","allocation_rule":"RATEIO","allocation_percentages":{"ATM":atm_pct}})
             d["period_value"]+=atm_value
         supplier_payload={"suppliers":[{**v,"period_value":round(v["period_value"],2)} for v in by_supplier.values()],"totals":{"period_value":round(sum(v["period_value"] for v in by_supplier.values()),2)},"source":"LANÇAMENTOS_FINANCEIROS"}
-    payload.update({"ok":True,"release":APP_RELEASE,"supplier_costs":supplier_payload,"monthly_costs":dynamic,"monthly_allocated":allocated,"monthly_forecast_allocated":forecast_allocated,"monthly_total":round(sum(float(x.get("amount") or 0) for x in dynamic),2),"monthly_forecast_total":round(sum(float(x.get("forecast_amount") or 0) for x in dynamic if x.get("forecast_amount") is not None),2),"competences":all_competences})
+    # V85.26 — base oficial para Ticket Médio por Modelo de ATM.
+    # Custos comuns são rateados pelas 602 ATMs oficiais; TB Forte somente pelas 256 com dinheiro habilitado.
+    def _ticket_model_name(row):
+        raw=str((row or {}).get("model") or (row or {}).get("modelo") or (row or {}).get("type") or (row or {}).get("tipo_atm") or "NÃO INFORMADO").strip().upper()
+        compact="".join(ch for ch in raw if ch.isalnum())
+        if "MKNEO" in compact: return "MKNEO"
+        if compact=="MK" or compact.startswith("MKATM"): return "MK"
+        return raw or "NÃO INFORMADO"
+    official_rows=_v773_official_atm_rows()
+    model_counts={}
+    for a in official_rows:
+        m=_ticket_model_name(a); model_counts[m]=model_counts.get(m,0)+1
+    cash_rows=_v82_cash_atms()
+    cash_model_counts={}
+    for a in cash_rows:
+        m=str(a.get("model") or "NÃO INFORMADO").strip().upper() or "NÃO INFORMADO"
+        cash_model_counts[m]=cash_model_counts.get(m,0)+1
+    atm_model_base=[{"model":m,"atm_count":n,"cash_atm_count":cash_model_counts.get(m,0)} for m,n in sorted(model_counts.items(),key=lambda kv:(-kv[1],kv[0]))]
+    payload.update({"ok":True,"release":APP_RELEASE,"supplier_costs":supplier_payload,"monthly_costs":dynamic,"monthly_allocated":allocated,"monthly_forecast_allocated":forecast_allocated,"monthly_total":round(sum(float(x.get("amount") or 0) for x in dynamic),2),"monthly_forecast_total":round(sum(float(x.get("forecast_amount") or 0) for x in dynamic if x.get("forecast_amount") is not None),2),"competences":all_competences,"atm_model_base":atm_model_base,"atm_official_total":sum(model_counts.values()),"atm_cash_total":sum(cash_model_counts.values())})
     return jsonify(payload)
 
 @app.get("/api/v30/atm-contracts")
@@ -23471,6 +23489,7 @@ def _qr_rail_project_key(company):
         return 'PADRAO',legacy
     raise ValueError('Projeto/chave AES não configurado para esta empresa no servidor.')
 
+@app.route('/qr-trilhos', methods=['GET','POST'])
 @app.route('/implantacao/gerador-qr', methods=['GET','POST'])
 @login_required
 def implantation_qr_config():
