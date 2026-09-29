@@ -6341,9 +6341,9 @@ def telemetry_export_xlsx():
 # V85.22 — Organização do Menu Principal. A navegação é apresentação; permissões continuam na Matriz.
 _V8522_DEFAULT_MENU = {
  "Dashboard": [],
- "Atividades": ["Central de Atividades","Gestão de Tarefas","Minhas Atividades Arrow","Agenda Arrow","Atividades / Alocações Arrow","Inventário","Preventiva ATM","Atividades de Bobinas","Visitas / Relatórios","Gerador de QR – Trilhos","Configurações QR – Trilhos"],
+ "Atividades": ["Central de Atividades","Gestão de Tarefas","Minhas Atividades Arrow","Agenda Arrow","Atividades / Alocações Arrow","Inventário","Preventiva ATM","Atividades de Bobinas","Visitas / Relatórios"],
  "Field": ["Dashboard Bobinas","Inventário","Chamados","Preventiva ATM","Equipamentos","Evidências","Visão Panorâmica","Troca de Chips Recarga","Mapeamento ATM","Bobinas","Estoque Field","Atualização Firmware POS - CPTM"],
- "Implantação de Hardware": ["Visitas / Relatórios","Troca de Chips EMV - Trilhos","Troca de Chips Garagem"],
+ "Implantação de Hardware": ["Visitas / Relatórios","Gerar QR Code – Trilhos","Configurações QR – Trilhos","Troca de Chips EMV - Trilhos","Troca de Chips Garagem"],
  "RH": ["Equipes","APT","Usuários"],
  "Portal do Cliente": ["Agendamentos","Recebimentos","Gestão de Agendamentos","Cadastro de Clientes"],
  "Engenharia": ["Cadastro de Itens","Estruturas BOM","Preço de Venda / Locação","Revisões","Codificação"],
@@ -6388,20 +6388,31 @@ def _v8522_menu_layout():
         items.insert(insert_at,{"source":source,"label":source,"group":"","order":insert_at+1})
         for i,x in enumerate(items,1):
             x["order"]=i
-    # V85.27 REV3 — garante o gerador QR Trilhos mesmo em layouts de menu salvos antes da funcionalidade.
-    # O menu visual reconstrói a navegação a partir deste JSON e descarta links não referenciados.
-    qr_source="Gerar QR Code – Trilhos"
-    qr_exists=any(
-        (it.get("source") or it.get("label")) == qr_source
-        for col in obj.get("columns",[]) for it in col.get("items",[]) if isinstance(it,dict)
-    )
-    if not qr_exists:
-        field=next((c for c in obj.get("columns",[]) if str(c.get("name") or "").strip()=="Field"),None)
-        if field is None:
-            field={"name":"Field","order":len(obj.get("columns",[]))+1,"items":[]}
-            obj.setdefault("columns",[]).append(field)
-        items=field.setdefault("items",[])
-        items.append({"source":qr_source,"label":qr_source,"group":"","order":len(items)+1})
+    # V85.27 REV4 CORRIGIDA — QR Trilhos é um módulo de Implantação com ID técnico estável.
+    # Layouts salvos antigos podem conter rótulos diferentes ("Gerador..."/"Gerar...")
+    # ou o item em Atividades/Field. Removemos apenas essas referências legadas e
+    # reinserimos o módulo em Implantação, preservando toda a customização restante.
+    qr_legacy_labels={"Gerador de QR – Trilhos","Gerar QR Code – Trilhos"}
+    for col in obj.get("columns",[]):
+        items=col.get("items",[]) if isinstance(col,dict) else []
+        col["items"]=[it for it in items if not (
+            isinstance(it,dict) and (
+                str(it.get("menu_id") or "").strip()=="implantation.qr.generate" or
+                str(it.get("source") or it.get("label") or "").strip() in qr_legacy_labels
+            )
+        )]
+        for i,it in enumerate(col.get("items",[]),1):
+            if isinstance(it,dict): it["order"]=i
+    imp=next((c for c in obj.get("columns",[]) if str(c.get("name") or "").strip() in ("Implantação","Implantação de Hardware")),None)
+    if imp is None:
+        imp={"name":"Implantação de Hardware","order":len(obj.get("columns",[]))+1,"items":[]}
+        obj.setdefault("columns",[]).append(imp)
+    items=imp.setdefault("items",[])
+    # Mantém Configurações QR logo após o gerador quando a configuração estiver disponível no layout.
+    insert_at=next((i for i,x in enumerate(items) if str(x.get("source") or x.get("label") or "").strip()=="Configurações QR – Trilhos"),1 if items else 0)
+    items.insert(insert_at,{"menu_id":"implantation.qr.generate","href":"/qr-trilhos","source":"Gerar QR Code – Trilhos","label":"Gerar QR Code – Trilhos","group":"","order":insert_at+1})
+    for i,it in enumerate(items,1):
+        if isinstance(it,dict): it["order"]=i
     return obj
 
 def _v8522_menu_save(layout):
@@ -22226,7 +22237,8 @@ def v8227_bobbin_deliveries_list():
     for x in rows:
         loose=int(getattr(details.get(x.id),'loose_qty',0) or 0); boxes=int(x.boxes_qty or 0)
         note=x.notes or ''; fm=re.search(r'\[FIN:([^|\]]*)\|([0-9.]+)\|([0-9.]+)\]',note)
-        product=(fm.group(1) if fm else ''); unit_cost=float(fm.group(2)) if fm else 0.0; total_cost=float(fm.group(3)) if fm else 0.0
+        product=(fm.group(1) if fm else ''); unit_cost=float(fm.group(2)) if fm else 0.0; stored_total=float(fm.group(3)) if fm else 0.0
+        total_cost=round(boxes*unit_cost,2) if unit_cost>0 else stored_total
         clean_note=re.sub(r'\s*\[FIN:[^\]]+\]','',note).strip()
         payload.append({'id':x.id,'location':x.location,'delivery_date':x.delivery_date.isoformat(),'status':x.status,'boxes_qty':boxes,'loose_qty':loose,'total_bobbins':boxes*box_size+loose,'product':product,'unit_cost':unit_cost,'total_cost':total_cost,'notes':clean_note,'created_at':x.created_at.isoformat()+'Z'})
     return jsonify({'ok':True,'release':APP_RELEASE,'box_size':box_size,'rows':payload})
@@ -22245,7 +22257,12 @@ def v8227_bobbin_deliveries_save():
         obj=db.session.get(BobbinDeliverySchedule,int(d['id']))
     if not obj:
         obj=BobbinDeliverySchedule(created_by=session['user_id']);db.session.add(obj)
-    obj.location=location;obj.delivery_date=delivery_date;obj.status=status;obj.boxes_qty=boxes;obj.notes=(d.get('notes') or '').strip();obj.updated_at=datetime.utcnow()
+    try: unit_cost=max(0.0,float(str(d.get('unit_cost') or 0).replace(',','.')))
+    except Exception: unit_cost=0.0
+    total_cost=round(boxes*unit_cost,2)
+    clean_note=re.sub(r'\s*\[FIN:[^\]]+\]','',(d.get('notes') or '')).strip()
+    fin=f"[FIN:BOBINA|{unit_cost:.2f}|{total_cost:.2f}]" if unit_cost>0 else ''
+    obj.location=location;obj.delivery_date=delivery_date;obj.status=status;obj.boxes_qty=boxes;obj.notes=(clean_note+(' '+fin if fin else '')).strip();obj.updated_at=datetime.utcnow()
     db.session.flush();detail=BobbinDeliveryDetail.query.filter_by(delivery_id=obj.id).first()
     if not detail: detail=BobbinDeliveryDetail(delivery_id=obj.id);db.session.add(detail)
     detail.loose_qty=loose
@@ -22371,6 +22388,8 @@ def v85271_bobbin_deliveries_import_history():
 def v8527_bobbin_deliveries_bulk():
     if not _has_access('field.stock_manage'): abort(403)
     d=request.get_json(silent=True) or {}; items=d.get('rows') or []; default_date=str(d.get('delivery_date') or '').strip(); notes=(d.get('notes') or '').strip()
+    try: default_unit_cost=max(0.0,float(str(d.get('unit_cost') or 0).replace(',','.')))
+    except Exception: default_unit_cost=0.0
     if not isinstance(items,list): return jsonify({'ok':False,'error':'Lista de localidades inválida.'}),400
     created=[]
     try:
@@ -22378,7 +22397,12 @@ def v8527_bobbin_deliveries_bulk():
             location=str(item.get('location') or '').strip(); boxes=max(0,int(item.get('boxes_qty') or 0)); loose=max(0,int(item.get('loose_qty') or 0))
             if not location or (boxes<=0 and loose<=0): continue
             delivery_date=date.fromisoformat(str(item.get('delivery_date') or default_date or ''))
-            obj=BobbinDeliverySchedule(created_by=session['user_id'],location=location,delivery_date=delivery_date,status='PROGRAMADO',boxes_qty=boxes,notes=str(item.get('notes') or notes or '').strip(),updated_at=datetime.utcnow())
+            try: unit_cost=max(0.0,float(str(item.get('unit_cost') if item.get('unit_cost') not in (None,'') else default_unit_cost).replace(',','.')))
+            except Exception: unit_cost=default_unit_cost
+            total_cost=round(boxes*unit_cost,2)
+            clean_note=re.sub(r'\s*\[FIN:[^\]]+\]','',str(item.get('notes') or notes or '')).strip()
+            fin=f"[FIN:BOBINA|{unit_cost:.2f}|{total_cost:.2f}]" if unit_cost>0 else ''
+            obj=BobbinDeliverySchedule(created_by=session['user_id'],location=location,delivery_date=delivery_date,status='PROGRAMADO',boxes_qty=boxes,notes=(clean_note+(' '+fin if fin else '')).strip(),updated_at=datetime.utcnow())
             db.session.add(obj);db.session.flush();db.session.add(BobbinDeliveryDetail(delivery_id=obj.id,loose_qty=loose));created.append(obj.id)
             db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='BOBINAS_ENTREGA_PROGRAMADA_MASSA',entity_type='bobbin_delivery_schedule',entity_id=str(obj.id),detail=json.dumps({'location':location,'delivery_date':delivery_date.isoformat(),'boxes_qty':boxes,'loose_qty':loose},ensure_ascii=False)))
         if not created: return jsonify({'ok':False,'error':'Informe caixas ou bobinas avulsas em pelo menos uma localidade.'}),400
