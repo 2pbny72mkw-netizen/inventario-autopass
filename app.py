@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.27"
+APP_RELEASE = "V85.27 REV1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -22238,7 +22238,82 @@ def v8527_bobbin_delivery_locations():
         if (x.name or '').strip(): names.add((x.name or '').strip())
     for x in BobbinDeliverySchedule.query.all():
         if (x.location or '').strip(): names.add((x.location or '').strip())
-    return jsonify({'ok':True,'rows':sorted(names,key=lambda x:normalize(x)),'box_size':max(1,int(app.config.get('BOBBIN_ROLLS_PER_BOX',6)))})
+    preferred=['CD Itaquera','CD Barra Funda','CD Luz','CD Ana Rosa','CD Tamanduateí','CD SP Morumbi','CD Butantã','CD Capão Redondo','CD Eucaliptos','Terminal Bortolosso','Estação São Mateus','Estação Santo André','ATMS Jabaquara','Terminal Caieiras']
+    aliases={
+        'CD CORINTHIANS ITAQUERA':'CD Itaquera','CD ESTACAO BARRA FUNDA':'CD Barra Funda','CD ESTACAO LUZ':'CD Luz','CD ESTACAO ANA ROSA':'CD Ana Rosa',
+        'CD ESTACAO TAMANDUATEI':'CD Tamanduateí','CD ESTACAO SP MORUMBI':'CD SP Morumbi','CD ESTACAO EUCALIPTOS':'CD Eucaliptos',
+        'CD TERMINAL BORTOLOSSO':'Terminal Bortolosso','CD TERMINAL SAO MATEUS':'Estação São Mateus','CD TERMINAL SANTO ANDRE':'Estação Santo André',
+        'CD TERMINAL JABAQUARA':'ATMS Jabaquara','CD JABAQUARA':'ATMS Jabaquara','CD TERMINAL CAIEIRAS':'Terminal Caieiras'
+    }
+    def canon(v): return aliases.get(normalize(v),v)
+    canon_names={canon(x) for x in names}
+    rank={normalize(v):i for i,v in enumerate(preferred)}
+    rows=sorted(canon_names,key=lambda x:(rank.get(normalize(x),9999),normalize(x)))
+    return jsonify({'ok':True,'rows':rows,'box_size':max(1,int(app.config.get('BOBBIN_ROLLS_PER_BOX',6)))})
+
+@app.post('/api/bobinas/entregas/importar-historico')
+@login_required
+def v85271_bobbin_deliveries_import_history():
+    if not _has_access('field.stock_manage'): abort(403)
+    f=request.files.get('file'); mode=(request.form.get('mode') or 'preview').strip().lower()
+    if not f or not (f.filename or '').lower().endswith(('.xlsx','.xlsm')): return jsonify({'ok':False,'error':'Selecione uma planilha Excel .xlsx ou .xlsm.'}),400
+    try: wb=load_workbook(f,data_only=True,read_only=True)
+    except Exception as exc: return jsonify({'ok':False,'error':f'Não foi possível ler a planilha: {exc}'}),400
+    aliases={'CD CORINTHIANS ITAQUERA':'CD Itaquera','CD ESTACAO ITAQUERA':'CD Itaquera','CD ESTACAO BARRA FUNDA':'CD Barra Funda','CD ESTACAO LUZ':'CD Luz','CD ESTACAO ANA ROSA':'CD Ana Rosa','CD ESTACAO TAMANDUATEI':'CD Tamanduateí','CD ESTACAO SP MORUMBI':'CD SP Morumbi','CD ESTACAO BUTANTA':'CD Butantã','CD ESTACAO EUCALIPTOS':'CD Eucaliptos','CD TERMINAL BORTOLOSSO':'Terminal Bortolosso','CD TERMINAL SAO MATEUS':'Estação São Mateus','CD TERMINAL SANTO ANDRE':'Estação Santo André','CD TERMINAL JABAQUARA':'ATMS Jabaquara','CD JABAQUARA':'ATMS Jabaquara','CD TERMINAL CAIEIRAS':'Terminal Caieiras'}
+    preferred=['CD Itaquera','CD Barra Funda','CD Luz','CD Ana Rosa','CD Tamanduateí','CD SP Morumbi','CD Butantã','CD Capão Redondo','CD Eucaliptos','Terminal Bortolosso','Estação São Mateus','Estação Santo André','ATMS Jabaquara','Terminal Caieiras']
+    known={normalize(x):x for x in preferred}
+    rows=[]; skipped=[]
+    for ws in wb.worksheets:
+        vals=ws.iter_rows(values_only=True); hdr=next(vals,None)
+        if not hdr: continue
+        h={normalize(str(v or '')):i for i,v in enumerate(hdr)}
+        def col(*names):
+            for n in names:
+                if normalize(n) in h:return h[normalize(n)]
+            return None
+        ci_date=col('Data'); ci_loc=col('CD','Localidade'); ci_bob=col('Quantidade Bobinas'); ci_box=col('Qtde Caixas','Quantidade Caixas'); ci_status=col('Status'); ci_obs=col('OBS','Observação')
+        if ci_date is None or ci_loc is None: continue
+        for rn,r in enumerate(vals,start=2):
+            loc=str(r[ci_loc] or '').strip() if ci_loc<len(r) else ''
+            if not loc: continue
+            dv=r[ci_date] if ci_date<len(r) else None
+            if isinstance(dv,datetime): dd=dv.date()
+            elif isinstance(dv,date): dd=dv
+            else:
+                try: dd=datetime.strptime(str(dv).strip(),'%d/%m/%Y').date()
+                except Exception: skipped.append({'aba':ws.title,'linha':rn,'motivo':'data inválida','localidade':loc});continue
+            raw_status=str(r[ci_status] or '').strip().upper() if ci_status is not None and ci_status<len(r) else 'PROGRAMADO'
+            status='ENTREGUE' if 'ENTREGUE' in raw_status else ('EM_ANDAMENTO' if 'ANDAMENTO' in raw_status else 'PROGRAMADO')
+            try: boxes=max(0,int(round(float(r[ci_box] or 0)))) if ci_box is not None and ci_box<len(r) else 0
+            except Exception: boxes=0
+            try: bob=max(0,int(round(float(r[ci_bob] or 0)))) if ci_bob is not None and ci_bob<len(r) else boxes*6
+            except Exception: bob=boxes*6
+            loose=max(0,bob-boxes*6)
+            canon=aliases.get(normalize(loc),known.get(normalize(loc),loc))
+            obs=str(r[ci_obs] or '').strip() if ci_obs is not None and ci_obs<len(r) else ''
+            rows.append({'sheet':ws.title.strip(),'row':rn,'location':canon,'original_location':loc,'delivery_date':dd,'status':status,'raw_status':raw_status,'boxes_qty':boxes,'loose_qty':loose,'total_bobbins':bob,'notes':obs})
+    # Duplicidade por data/localidade/quantidades; não duplica histórico já importado/programado.
+    dup=0; newrows=[]
+    for x in rows:
+        q=BobbinDeliverySchedule.query.filter_by(location=x['location'],delivery_date=x['delivery_date'],boxes_qty=x['boxes_qty']).all()
+        exists=False
+        for obj in q:
+            det=BobbinDeliveryDetail.query.filter_by(delivery_id=obj.id).first()
+            if int(getattr(det,'loose_qty',0) or 0)==x['loose_qty']: exists=True;break
+        if exists: dup+=1
+        else: newrows.append(x)
+    preview={'records':len(rows),'new_records':len(newrows),'duplicates':dup,'skipped':len(skipped),'months':len({x['delivery_date'].strftime('%Y-%m') for x in rows}),'locations':len({x['location'] for x in rows}),'total_boxes':sum(x['boxes_qty'] for x in newrows),'total_bobbins':sum(x['total_bobbins'] for x in newrows),'sample':[dict(x,delivery_date=x['delivery_date'].isoformat()) for x in newrows[:20]],'issues':skipped[:20]}
+    if mode!='commit': return jsonify({'ok':True,'preview':preview})
+    created=[]
+    try:
+        for x in newrows:
+            note='[HISTÓRICO EXCEL] '+(x['notes'] or '')
+            obj=BobbinDeliverySchedule(location=x['location'],delivery_date=x['delivery_date'],status=x['status'],boxes_qty=x['boxes_qty'],notes=note.strip(),created_by=session['user_id'],updated_at=datetime.utcnow())
+            db.session.add(obj);db.session.flush();db.session.add(BobbinDeliveryDetail(delivery_id=obj.id,loose_qty=x['loose_qty']));created.append(obj.id)
+        db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='BOBINAS_HISTORICO_EXCEL_IMPORTADO',entity_type='bobbin_delivery_schedule',entity_id='LOTE',detail=json.dumps({'arquivo':f.filename,'criados':len(created),'duplicados':dup,'ignorados':len(skipped)},ensure_ascii=False)))
+        db.session.commit();return jsonify({'ok':True,'created':len(created),'duplicates':dup,'skipped':len(skipped),'preview':preview})
+    except Exception as exc:
+        db.session.rollback();return jsonify({'ok':False,'error':str(exc)}),400
 
 @app.post('/api/bobinas/entregas/massa')
 @login_required
