@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.26 REV2"
+APP_RELEASE = "V85.27"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -22229,6 +22229,37 @@ def v8227_bobbin_deliveries_save():
     db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='BOBINAS_ENTREGA_PROGRAMADA',entity_type='bobbin_delivery_schedule',entity_id=str(obj.id),detail=json.dumps({'location':location,'delivery_date':delivery_date.isoformat(),'status':status,'boxes_qty':boxes,'loose_qty':loose},ensure_ascii=False)));db.session.commit()
     return jsonify({'ok':True,'id':obj.id,'status':obj.status})
 
+@app.get('/api/bobinas/entregas/localidades')
+@login_required
+def v8527_bobbin_delivery_locations():
+    if not _has_access('field.bobbins_dashboard'): abort(403)
+    names=set()
+    for x in FieldStockPoint.query.filter(FieldStockPoint.active.is_(True),FieldStockPoint.point_type.in_(['ARMARIO','ESTOQUE','CD'])).all():
+        if (x.name or '').strip(): names.add((x.name or '').strip())
+    for x in BobbinDeliverySchedule.query.all():
+        if (x.location or '').strip(): names.add((x.location or '').strip())
+    return jsonify({'ok':True,'rows':sorted(names,key=lambda x:normalize(x)),'box_size':max(1,int(app.config.get('BOBBIN_ROLLS_PER_BOX',6)))})
+
+@app.post('/api/bobinas/entregas/massa')
+@login_required
+def v8527_bobbin_deliveries_bulk():
+    if not _has_access('field.stock_manage'): abort(403)
+    d=request.get_json(silent=True) or {}; items=d.get('rows') or []; default_date=str(d.get('delivery_date') or '').strip(); notes=(d.get('notes') or '').strip()
+    if not isinstance(items,list): return jsonify({'ok':False,'error':'Lista de localidades inválida.'}),400
+    created=[]
+    try:
+        for item in items:
+            location=str(item.get('location') or '').strip(); boxes=max(0,int(item.get('boxes_qty') or 0)); loose=max(0,int(item.get('loose_qty') or 0))
+            if not location or (boxes<=0 and loose<=0): continue
+            delivery_date=date.fromisoformat(str(item.get('delivery_date') or default_date or ''))
+            obj=BobbinDeliverySchedule(created_by=session['user_id'],location=location,delivery_date=delivery_date,status='PROGRAMADO',boxes_qty=boxes,notes=str(item.get('notes') or notes or '').strip(),updated_at=datetime.utcnow())
+            db.session.add(obj);db.session.flush();db.session.add(BobbinDeliveryDetail(delivery_id=obj.id,loose_qty=loose));created.append(obj.id)
+            db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='BOBINAS_ENTREGA_PROGRAMADA_MASSA',entity_type='bobbin_delivery_schedule',entity_id=str(obj.id),detail=json.dumps({'location':location,'delivery_date':delivery_date.isoformat(),'boxes_qty':boxes,'loose_qty':loose},ensure_ascii=False)))
+        if not created: return jsonify({'ok':False,'error':'Informe caixas ou bobinas avulsas em pelo menos uma localidade.'}),400
+        db.session.commit();return jsonify({'ok':True,'created':len(created),'ids':created})
+    except Exception as exc:
+        db.session.rollback();return jsonify({'ok':False,'error':str(exc)}),400
+
 @app.get('/api/bobinas/dashboard')
 @login_required
 def v77_bobbins_dashboard_api():
@@ -23413,55 +23444,54 @@ def _qr_config_proto(values):
 
 
 def _qr_rail_base_configs():
-    """V85.26 REV2 — navegação pela base de bloqueios e rede pela tabela técnica homologada.
-    Fluxo: Empresa -> Linha -> Estação -> Bloqueio.
+    """V85.27 — hierarquia soberana da mesma BaseAsset usada no Dashboard Bloqueio.
+    Empresa -> Linha -> Estação -> Bloqueio vêm da base oficial; a tabela técnica apenas complementa rede.
     """
     import os, re
-    block_cfg={}
-    try:
-        source=DATA_DIR / "block_config_v18.json"
-        payload=json.loads(source.read_text(encoding="utf-8")) if source.exists() else {}
-        block_cfg=payload.get("by_prefix") or {}
-    except Exception as exc:
-        app.logger.warning("QR Trilhos: falha lendo block_config_v18.json: %s",exc)
     network_by_terminal={}
     try:
         source=DATA_DIR / "qr_trilhos_rede_v8526_rev2.json"
         payload=json.loads(source.read_text(encoding="utf-8")) if source.exists() else {}
-        network_by_terminal={str(x.get("terminal") or ""):x for x in (payload.get("rows") or []) if x.get("terminal")}
+        network_by_terminal={str(x.get("terminal") or "").strip():x for x in (payload.get("rows") or []) if x.get("terminal")}
     except Exception as exc:
-        app.logger.warning("QR Trilhos: falha lendo tabela de rede REV2: %s",exc)
-    rows=[]
-    for src in _v41_emv_rows():
-        terminal=re.sub(r"\D","",str(src.get("terminal") or ""))
-        if not terminal: continue
-        cfg=block_cfg.get(terminal) or {}
+        app.logger.warning("QR Trilhos: falha lendo tabela de rede: %s",exc)
+    rows=[]; seen=set()
+    try:
+        assets=BaseAsset.query.all()
+    except Exception:
+        assets=[]
+    for a in assets:
+        if _v716_norm_equipment_type(a.equipment_type) != "BLOQUEIO": continue
+        st=str(a.base_status or "").strip()
+        if "INATIVO" in normalize(st) or "FORA DO ESCOPO" in normalize(st): continue
+        company=str(a.company or "").strip(); line=str(a.line or "").strip(); station=str(a.locality or "").strip()
+        terminal=re.sub(r"\D","",str(a.terminal_number or a.top_id or a.qrcode_id or a.asset_key or ""))
+        if not (company and line and station and terminal): continue
+        ident=(normalize(company),_normalize_line_key(line),normalize(station),terminal)
+        if ident in seen: continue
+        seen.add(ident)
         net=network_by_terminal.get(terminal) or {}
-        company=str(src.get("company") or "").strip()
-        raw_station=str(cfg.get("station_raw") or "").strip()
-        station=re.sub(r"\s{2,}[A-Z0-9]{3}$","",raw_station).strip() if raw_station else str(src.get("station") or "").strip()
-        if not station: station=str(src.get("station") or "").strip()
-        line=str(src.get("line") or cfg.get("source_sheet") or net.get("sheet") or "").strip()
-        block=cfg.get("blocking_number") or src.get("blocking_number") or net.get("block") or terminal[-2:]
-        trans_oper=src.get("tp_id")
-        try: trans_oper=int(trans_oper) if trans_oper not in (None,'') else None
+        block=str(net.get("block") or "").strip()
+        if not block:
+            # BaseAsset é soberana; o número do bloqueio pode estar no identificador/terminal.
+            block=str(getattr(a,'blocking_number',None) or '').strip() or terminal[-2:].lstrip('0') or terminal[-2:]
+        trans_oper=net.get("company_code")
+        try: trans_oper=int(str(trans_oper).strip()) if trans_oper not in (None,'') else None
         except Exception: trans_oper=None
-        line_id=cfg.get("line_logic") or net.get("line_code")
+        line_id=net.get("line_code")
         try: line_id=int(str(line_id).strip()) if line_id not in (None,'') else None
         except Exception: line_id=None
-        group=net.get("group") or cfg.get("group") or src.get("group")
+        group=net.get("group")
         try: group=int(str(group).strip()) if group not in (None,'') else None
         except Exception: group=None
-        turn_model=None
-        default_turn=(os.environ.get('AUTOPASS_QR_DEFAULT_TURN_MODEL') or '').strip()
+        turn_model=None; default_turn=(os.environ.get('AUTOPASS_QR_DEFAULT_TURN_MODEL') or '').strip()
         if default_turn:
             try: turn_model=int(default_turn)
             except Exception: pass
-        rows.append({'id':'base:'+terminal,'source':'BASE_BLOQUEIOS+TABELA_REDE','company':company,'line':line,'station':station,
-            'block':str(block),'TransOperId':trans_oper,'TerminalId':int(terminal),'TurnModel':turn_model,
-            'Ip':str(net.get('ip') or src.get('ip') or cfg.get('ip') or ''),'Mask':str(net.get('mask') or cfg.get('mask') or src.get('mask') or ''),
-            'Gateway':str(net.get('gateway') or cfg.get('gateway') or src.get('gateway') or ''),'Dns1':str(net.get('dns1') or cfg.get('dns1') or src.get('dns1') or ''),
-            'Dns2':str(net.get('dns2') or cfg.get('dns2') or src.get('dns2') or ''),'LineId':line_id,'TermGrpId':group,
+        rows.append({'id':'base:'+terminal,'source':'BASE_OFICIAL_BLOQUEIOS+TABELA_REDE','company':company,'line':line,'station':station,
+            'block':block,'TransOperId':trans_oper,'TerminalId':int(terminal),'TurnModel':turn_model,
+            'Ip':str(net.get('ip') or ''),'Mask':str(net.get('mask') or ''),'Gateway':str(net.get('gateway') or ''),
+            'Dns1':str(net.get('dns1') or ''),'Dns2':str(net.get('dns2') or ''),'LineId':line_id,'TermGrpId':group,
             'LabelApnChip1':'','LabelApnChip2':'','installation':str(net.get('installation') or '')})
     return rows
 
