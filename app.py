@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.26"
+APP_RELEASE = "V85.26 REV1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -23412,16 +23412,72 @@ def _qr_config_proto(values):
     return bytes(out)
 
 
+def _qr_rail_base_configs():
+    """V85.26 REV1 — monta a seleção do gerador a partir da base Trilhos já existente.
+    QrRailConfig continua sendo override administrativo; cadastro manual não é pré-requisito.
+    """
+    import os, re
+    block_cfg={}
+    try:
+        source=DATA_DIR / "block_config_v18.json"
+        payload=json.loads(source.read_text(encoding="utf-8")) if source.exists() else {}
+        block_cfg=payload.get("by_prefix") or {}
+    except Exception as exc:
+        app.logger.warning("QR Trilhos: falha lendo block_config_v18.json: %s",exc)
+    rows=[]
+    for src in _v41_emv_rows():
+        terminal=re.sub(r"\D","",str(src.get("terminal") or ""))
+        if not terminal: continue
+        cfg=block_cfg.get(terminal) or {}
+        company=str(src.get("company") or "").strip()
+        raw_station=str(cfg.get("station_raw") or "").strip()
+        # station_raw = "UTINGA   UTG"; remove somente o código final de 3 letras.
+        station=re.sub(r"\s{2,}[A-Z0-9]{3}$","",raw_station).strip() if raw_station else str(src.get("station") or "").strip()
+        if not station: station=str(src.get("station") or "").strip()
+        line=str(src.get("line") or cfg.get("source_sheet") or "").strip()
+        block=cfg.get("blocking_number") or src.get("blocking_number") or terminal[-2:]
+        trans_oper=src.get("tp_id")
+        try: trans_oper=int(trans_oper) if trans_oper not in (None,'') else None
+        except Exception: trans_oper=None
+        line_id=cfg.get("line_logic")
+        try: line_id=int(str(line_id).strip()) if line_id not in (None,'') else None
+        except Exception: line_id=None
+        group=cfg.get("group") or src.get("group")
+        try: group=int(str(group).strip()) if group not in (None,'') else None
+        except Exception: group=None
+        turn_model=None
+        default_turn=(os.environ.get('AUTOPASS_QR_DEFAULT_TURN_MODEL') or '').strip()
+        if default_turn:
+            try: turn_model=int(default_turn)
+            except Exception: pass
+        rows.append({'id':'base:'+terminal,'source':'BASE_TRILHOS','company':company,'line':line,'station':station,
+            'block':str(block),'TransOperId':trans_oper,'TerminalId':int(terminal),'TurnModel':turn_model,
+            'Ip':str(src.get('ip') or cfg.get('ip') or ''),'Mask':str(cfg.get('mask') or src.get('mask') or ''),
+            'Gateway':str(cfg.get('gateway') or src.get('gateway') or ''),'Dns1':str(cfg.get('dns1') or src.get('dns1') or ''),
+            'Dns2':str(cfg.get('dns2') or src.get('dns2') or ''),'LineId':line_id,'TermGrpId':group,
+            'LabelApnChip1':'','LabelApnChip2':''})
+    return rows
+
+
+def _qr_rail_effective_configs():
+    # Base operacional é a fonte padrão. Cadastro administrativo substitui o mesmo terminal quando existir.
+    merged={str(r.get('TerminalId')):r for r in _qr_rail_base_configs() if r.get('TerminalId')}
+    db_rows=QrRailConfig.query.filter_by(active=True).order_by(QrRailConfig.company,QrRailConfig.line,QrRailConfig.station,QrRailConfig.block).all()
+    for r in db_rows:
+        merged[str(r.terminal_id)]={'id':str(r.id),'source':'CADASTRO_QR','company':r.company,'line':r.line,'station':r.station,'block':r.block,
+            'TransOperId':r.trans_oper_id,'TerminalId':r.terminal_id,'TurnModel':r.turn_model,'Ip':r.ip or '',
+            'Mask':r.mask or '','Gateway':r.gateway or '','Dns1':r.dns1 or '','Dns2':r.dns2 or '',
+            'LineId':r.line_id,'TermGrpId':r.term_grp_id,'LabelApnChip1':r.apn1 or '','LabelApnChip2':r.apn2 or ''}
+    return sorted(merged.values(),key=lambda x:(normalize(x.get('company')),normalize(x.get('line')),normalize(x.get('station')),str(x.get('block'))))
+
+
 @app.route('/api/implantacao/qr-trilhos/configs')
 @login_required
 def qr_rail_configs_api():
     if not (_has_access('implantation.qr.view') or _has_access('implantation.visits')):
         abort(403)
-    rows=QrRailConfig.query.filter_by(active=True).order_by(QrRailConfig.company,QrRailConfig.line,QrRailConfig.station,QrRailConfig.block).all()
-    return jsonify({'ok':True,'rows':[{'id':r.id,'company':r.company,'line':r.line,'station':r.station,'block':r.block,
-        'TransOperId':r.trans_oper_id,'TerminalId':r.terminal_id,'TurnModel':r.turn_model,'Ip':r.ip or '',
-        'Mask':r.mask or '','Gateway':r.gateway or '','Dns1':r.dns1 or '','Dns2':r.dns2 or '',
-        'LineId':r.line_id,'TermGrpId':r.term_grp_id,'LabelApnChip1':r.apn1 or '','LabelApnChip2':r.apn2 or ''} for r in rows]})
+    rows=_qr_rail_effective_configs()
+    return jsonify({'ok':True,'rows':rows,'count':len(rows),'source':'base_trilhos+overrides'})
 
 def _qr_rail_snapshot(r):
     return {'company':r.company,'line':r.line,'station':r.station,'block':r.block,'trans_oper_id':r.trans_oper_id,
@@ -23496,24 +23552,28 @@ def implantation_qr_config():
     if not (_has_access('implantation.qr.view') or _has_access('implantation.qr.manage') or _has_access('implantation.visits')): abort(403)
     from datetime import datetime, timezone
     values={}; qr_png=None; qr_text=None; error=None; selected=None
-    configs=QrRailConfig.query.filter_by(active=True).order_by(QrRailConfig.company,QrRailConfig.line,QrRailConfig.station,QrRailConfig.block).all()
+    configs=_qr_rail_effective_configs()
     if request.method=='POST':
         try:
             import os, secrets
             from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
             from cryptography.hazmat.primitives import padding
             import qrcode
-            config_id=request.form.get('config_id',type=int); selected=db.session.get(QrRailConfig,config_id)
-            if not selected or not selected.active: raise ValueError('Selecione um bloqueio cadastrado e ativo.')
-            values={'TransOperId':selected.trans_oper_id,'TerminalId':selected.terminal_id,'TurnModel':selected.turn_model,'Ip':selected.ip,'Mask':selected.mask,'Gateway':selected.gateway,'Dns1':selected.dns1,'Dns2':selected.dns2,'LineId':selected.line_id,'TermGrpId':selected.term_grp_id,'LabelApnChip1':selected.apn1,'LabelApnChip2':selected.apn2}
+            config_id=(request.form.get('config_id') or '').strip()
+            selected=next((x for x in configs if str(x.get('id'))==config_id),None)
+            if not selected: raise ValueError('Selecione um bloqueio disponível na base Trilhos.')
+            values={k:selected.get(k) for k in ('TransOperId','TerminalId','TurnModel','Ip','Mask','Gateway','Dns1','Dns2','LineId','TermGrpId','LabelApnChip1','LabelApnChip2')}
+            required=('TransOperId','TerminalId','TurnModel','Ip','Mask','Gateway','Dns1','Dns2','LineId','TermGrpId')
+            missing=[k for k in required if values.get(k) in (None,'')]
+            if missing: raise ValueError('Base técnica incompleta para este bloqueio: '+', '.join(missing)+'. Complete o cadastro/override antes de gerar.')
             values['Date']=str(int(datetime.now(timezone.utc).timestamp()))
-            project_name,key_hex=_qr_rail_project_key(selected.company)
+            project_name,key_hex=_qr_rail_project_key(selected.get('company'))
             plain=_qr_config_proto(values)
             if not plain: raise ValueError('Configuração sem parâmetros para geração.')
             iv=secrets.token_bytes(16); padder=padding.PKCS7(128).padder(); padded=padder.update(plain)+padder.finalize(); cipher=Cipher(algorithms.AES(bytes.fromhex(key_hex)),modes.CBC(iv)); enc=cipher.encryptor(); encrypted=enc.update(padded)+enc.finalize()
             qr_text='<c:2>i:'+base64.b64encode(iv).decode('ascii')+';p:'+base64.b64encode(encrypted).decode('ascii')+';'
             image=qrcode.make(qr_text,box_size=8,border=4); output=io.BytesIO(); image.save(output,format='PNG'); qr_png=base64.b64encode(output.getvalue()).decode('ascii')
-            app.logger.info('qr_rail_generated user_id=%s config_id=%s terminal_id=%s project=%s',session.get('user_id'),selected.id,selected.terminal_id,project_name)
+            app.logger.info('qr_rail_generated user_id=%s config_id=%s terminal_id=%s project=%s',session.get('user_id'),selected.get('id'),selected.get('TerminalId'),project_name)
         except (ValueError,TypeError,ImportError) as exc: error=str(exc)
         except Exception:
             app.logger.exception('qr_rail_generation_failed'); error='Falha ao gerar QR Code. Consulte o diagnóstico do servidor.'
