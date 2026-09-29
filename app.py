@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.27 REV1"
+APP_RELEASE = "V85.27 REV2"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -22228,6 +22228,19 @@ def v8227_bobbin_deliveries_save():
     detail.loose_qty=loose
     db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='BOBINAS_ENTREGA_PROGRAMADA',entity_type='bobbin_delivery_schedule',entity_id=str(obj.id),detail=json.dumps({'location':location,'delivery_date':delivery_date.isoformat(),'status':status,'boxes_qty':boxes,'loose_qty':loose},ensure_ascii=False)));db.session.commit()
     return jsonify({'ok':True,'id':obj.id,'status':obj.status})
+
+@app.delete('/api/bobinas/entregas/<int:delivery_id>')
+@login_required
+def v85272_bobbin_delivery_delete(delivery_id):
+    if not _has_access('field.stock_manage'): abort(403)
+    obj=db.session.get(BobbinDeliverySchedule,delivery_id)
+    if not obj: return jsonify({'ok':False,'error':'Programação não encontrada.'}),404
+    snapshot={'location':obj.location,'delivery_date':obj.delivery_date.isoformat() if obj.delivery_date else None,'status':obj.status,'boxes_qty':obj.boxes_qty,'notes':obj.notes or ''}
+    detail=BobbinDeliveryDetail.query.filter_by(delivery_id=obj.id).first()
+    if detail: snapshot['loose_qty']=int(detail.loose_qty or 0)
+    db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='BOBINAS_ENTREGA_EXCLUIDA',entity_type='bobbin_delivery_schedule',entity_id=str(obj.id),detail=json.dumps(snapshot,ensure_ascii=False)))
+    db.session.delete(obj);db.session.commit()
+    return jsonify({'ok':True,'id':delivery_id})
 
 @app.get('/api/bobinas/entregas/localidades')
 @login_required
