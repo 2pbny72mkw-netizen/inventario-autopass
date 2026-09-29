@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.27 REV5"
+APP_RELEASE = "V85.27 REV6"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -22238,7 +22238,7 @@ def v8227_bobbin_deliveries_list():
         loose=int(getattr(details.get(x.id),'loose_qty',0) or 0); boxes=int(x.boxes_qty or 0)
         note=x.notes or ''; fm=re.search(r'\[FIN:([^|\]]*)\|([0-9.]+)\|([0-9.]+)\]',note)
         product=(fm.group(1) if fm else ''); unit_cost=float(fm.group(2)) if fm else 0.0; stored_total=float(fm.group(3)) if fm else 0.0
-        total_cost=round(boxes*unit_cost,2) if unit_cost>0 else stored_total
+        total_cost=round((boxes*box_size+loose)*unit_cost,2) if unit_cost>0 else stored_total
         clean_note=re.sub(r'\s*\[FIN:[^\]]+\]','',note).strip()
         payload.append({'id':x.id,'location':x.location,'delivery_date':x.delivery_date.isoformat(),'status':x.status,'boxes_qty':boxes,'loose_qty':loose,'total_bobbins':boxes*box_size+loose,'product':product,'unit_cost':unit_cost,'total_cost':total_cost,'notes':clean_note,'created_at':x.created_at.isoformat()+'Z'})
     return jsonify({'ok':True,'release':APP_RELEASE,'box_size':box_size,'rows':payload})
