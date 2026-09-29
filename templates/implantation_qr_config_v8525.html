@@ -16,7 +16,7 @@
 <button type="submit" id="generate" disabled>Gerar QR Code Trilhos</button>
 </form>
 {% if can_view('implantation.qr.manage') %}<p style="margin-top:16px"><a href="/gestao/configuracoes/qr-trilhos">Gerenciar base técnica de QR Trilhos</a></p>{% endif %}
-{% if qr_png %}<section style="margin-top:24px"><h2>QR Code Trilhos gerado</h2><p><strong>{{ selected.company }} · {{ selected.station }} · Bloqueio {{ selected.block }}</strong></p><p>Linha: {{ selected.line }} · Terminal: {{ selected.terminal_id }}</p><img style="max-width:100%;width:340px;image-rendering:pixelated" alt="QR Code Trilhos" src="data:image/png;base64,{{ qr_png }}"><details><summary>Conteúdo criptografado do QR</summary><textarea readonly rows="5" style="width:100%">{{ qr_text }}</textarea></details><p>A chave do projeto não é exibida. A imagem e o payload criptografado não são persistidos.</p></section>{% endif %}
+{% if qr_png %}<section style="margin-top:24px"><h2>QR Code Trilhos gerado</h2><p><strong>{{ selected.company }} · {{ selected.station }} · Bloqueio {{ selected.block }}</strong></p><p>Linha: {{ selected.line }} · Terminal: {{ selected.TerminalId }}</p><img style="max-width:100%;width:340px;image-rendering:pixelated" alt="QR Code Trilhos" src="data:image/png;base64,{{ qr_png }}"><details><summary>Conteúdo criptografado do QR</summary><textarea readonly rows="5" style="width:100%">{{ qr_text }}</textarea></details><p>A chave do projeto não é exibida. A imagem e o payload criptografado não são persistidos.</p></section>{% endif %}
 </section>
 <script>
 let data=[];
