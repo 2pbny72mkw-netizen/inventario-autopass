@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.27 REV3"
+APP_RELEASE = "V85.27 REV4"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -22213,13 +22213,22 @@ def v82301_bobbin_stock_delete(point_id):
 def v8227_bobbin_deliveries_list():
     if not _has_access('field.bobbins_dashboard'): abort(403)
     status=(request.args.get('status') or '').strip().upper()
+    # REV4: por regra operacional, competências até set/2026 são histórico entregue.
+    stale=BobbinDeliverySchedule.query.filter(BobbinDeliverySchedule.delivery_date < date(2026,10,1),BobbinDeliverySchedule.status!='ENTREGUE').all()
+    if stale:
+        for z in stale: z.status='ENTREGUE'; z.updated_at=datetime.utcnow()
+        db.session.commit()
     q=BobbinDeliverySchedule.query
     if status in ('PROGRAMADO','EM_ANDAMENTO','ENTREGUE'): q=q.filter(BobbinDeliverySchedule.status==status)
     rows=q.order_by(BobbinDeliverySchedule.delivery_date.desc(),BobbinDeliverySchedule.id.desc()).all()
     ids=[x.id for x in rows]; details={d.delivery_id:d for d in BobbinDeliveryDetail.query.filter(BobbinDeliveryDetail.delivery_id.in_(ids)).all()} if ids else {}; box_size=max(1,int(app.config.get('BOBBIN_ROLLS_PER_BOX',6)))
     payload=[]
     for x in rows:
-        loose=int(getattr(details.get(x.id),'loose_qty',0) or 0); boxes=int(x.boxes_qty or 0); payload.append({'id':x.id,'location':x.location,'delivery_date':x.delivery_date.isoformat(),'status':x.status,'boxes_qty':boxes,'loose_qty':loose,'total_bobbins':boxes*box_size+loose,'notes':x.notes or '','created_at':x.created_at.isoformat()+'Z'})
+        loose=int(getattr(details.get(x.id),'loose_qty',0) or 0); boxes=int(x.boxes_qty or 0)
+        note=x.notes or ''; fm=re.search(r'\[FIN:([^|\]]*)\|([0-9.]+)\|([0-9.]+)\]',note)
+        product=(fm.group(1) if fm else ''); unit_cost=float(fm.group(2)) if fm else 0.0; total_cost=float(fm.group(3)) if fm else 0.0
+        clean_note=re.sub(r'\s*\[FIN:[^\]]+\]','',note).strip()
+        payload.append({'id':x.id,'location':x.location,'delivery_date':x.delivery_date.isoformat(),'status':x.status,'boxes_qty':boxes,'loose_qty':loose,'total_bobbins':boxes*box_size+loose,'product':product,'unit_cost':unit_cost,'total_cost':total_cost,'notes':clean_note,'created_at':x.created_at.isoformat()+'Z'})
     return jsonify({'ok':True,'release':APP_RELEASE,'box_size':box_size,'rows':payload})
 
 @app.post('/api/bobinas/entregas')
@@ -22298,7 +22307,7 @@ def v85271_bobbin_deliveries_import_history():
             for n in names:
                 if normalize(n) in h:return h[normalize(n)]
             return None
-        ci_date=col('Data'); ci_loc=col('CD','Localidade'); ci_bob=col('Quantidade Bobinas'); ci_box=col('Qtde Caixas','Quantidade Caixas'); ci_status=col('Status'); ci_obs=col('OBS','Observação')
+        ci_date=col('Data'); ci_loc=col('CD','Localidade'); ci_bob=col('Quantidade Bobinas','Qtde Bobinas'); ci_box=col('Qtde Caixas','Quantidade Caixas'); ci_status=col('Status'); ci_obs=col('OBS','Observação'); ci_prod=col('Produto'); ci_unit=col('Valor Unitário','Valor Unitario'); ci_total=col('Valor Total')
         if ci_date is None or ci_loc is None: continue
         for rn,r in enumerate(vals,start=2):
             loc=str(r[ci_loc] or '').strip() if ci_loc<len(r) else ''
@@ -22310,7 +22319,7 @@ def v85271_bobbin_deliveries_import_history():
                 try: dd=datetime.strptime(str(dv).strip(),'%d/%m/%Y').date()
                 except Exception: skipped.append({'aba':ws.title,'linha':rn,'motivo':'data inválida','localidade':loc});continue
             raw_status=str(r[ci_status] or '').strip().upper() if ci_status is not None and ci_status<len(r) else 'PROGRAMADO'
-            status='ENTREGUE' if 'ENTREGUE' in raw_status else ('EM_ANDAMENTO' if 'ANDAMENTO' in raw_status else 'PROGRAMADO')
+            status='ENTREGUE' if (dd < date(2026,10,1) or 'ENTREGUE' in raw_status) else ('EM_ANDAMENTO' if 'ANDAMENTO' in raw_status else 'PROGRAMADO')
             try: boxes=max(0,int(round(float(r[ci_box] or 0)))) if ci_box is not None and ci_box<len(r) else 0
             except Exception: boxes=0
             try: bob=max(0,int(round(float(r[ci_bob] or 0)))) if ci_bob is not None and ci_bob<len(r) else boxes*6
@@ -22318,7 +22327,12 @@ def v85271_bobbin_deliveries_import_history():
             loose=max(0,bob-boxes*6)
             canon=aliases.get(normalize(loc),known.get(normalize(loc),loc))
             obs=str(r[ci_obs] or '').strip() if ci_obs is not None and ci_obs<len(r) else ''
-            rows.append({'sheet':ws.title.strip(),'row':rn,'location':canon,'original_location':loc,'delivery_date':dd,'status':status,'raw_status':raw_status,'boxes_qty':boxes,'loose_qty':loose,'total_bobbins':bob,'notes':obs})
+            product=str(r[ci_prod] or '').strip() if ci_prod is not None and ci_prod<len(r) else ''
+            def money(v):
+                try:return round(float(v or 0),2)
+                except Exception:return 0.0
+            unit_cost=money(r[ci_unit] if ci_unit is not None and ci_unit<len(r) else 0); total_cost=money(r[ci_total] if ci_total is not None and ci_total<len(r) else 0)
+            rows.append({'sheet':ws.title.strip(),'row':rn,'location':canon,'original_location':loc,'delivery_date':dd,'status':status,'raw_status':raw_status,'boxes_qty':boxes,'loose_qty':loose,'total_bobbins':bob,'product':product,'unit_cost':unit_cost,'total_cost':total_cost,'notes':obs})
     # Duplicidade por data/localidade/quantidades; não duplica histórico já importado/programado.
     dup=0; newrows=[]
     for x in rows:
@@ -22331,14 +22345,24 @@ def v85271_bobbin_deliveries_import_history():
         else: newrows.append(x)
     preview={'records':len(rows),'new_records':len(newrows),'duplicates':dup,'skipped':len(skipped),'months':len({x['delivery_date'].strftime('%Y-%m') for x in rows}),'locations':len({x['location'] for x in rows}),'total_boxes':sum(x['boxes_qty'] for x in newrows),'total_bobbins':sum(x['total_bobbins'] for x in newrows),'sample':[dict(x,delivery_date=x['delivery_date'].isoformat()) for x in newrows[:20]],'issues':skipped[:20]}
     if mode!='commit': return jsonify({'ok':True,'preview':preview})
-    created=[]
+    created=[]; updated=[]
     try:
+        # Atualiza registros já importados: status histórico e dados financeiros da planilha.
+        for x in rows:
+            q=BobbinDeliverySchedule.query.filter_by(location=x['location'],delivery_date=x['delivery_date'],boxes_qty=x['boxes_qty']).all()
+            for obj in q:
+                det=BobbinDeliveryDetail.query.filter_by(delivery_id=obj.id).first()
+                if int(getattr(det,'loose_qty',0) or 0)!=x['loose_qty']: continue
+                fin=f"[FIN:{x.get('product','')}|{float(x.get('unit_cost') or 0):.2f}|{float(x.get('total_cost') or 0):.2f}]"
+                clean=re.sub(r'\s*\[FIN:[^\]]+\]','',obj.notes or '').strip()
+                obj.notes=(clean+' '+fin).strip(); obj.status=x['status']; obj.updated_at=datetime.utcnow(); updated.append(obj.id); break
         for x in newrows:
-            note='[HISTÓRICO EXCEL] '+(x['notes'] or '')
-            obj=BobbinDeliverySchedule(location=x['location'],delivery_date=x['delivery_date'],status=x['status'],boxes_qty=x['boxes_qty'],notes=note.strip(),created_by=session['user_id'],updated_at=datetime.utcnow())
+            fin=f"[FIN:{x.get('product','')}|{float(x.get('unit_cost') or 0):.2f}|{float(x.get('total_cost') or 0):.2f}]"
+            note=('[HISTÓRICO EXCEL] '+(x['notes'] or '')+' '+fin).strip()
+            obj=BobbinDeliverySchedule(location=x['location'],delivery_date=x['delivery_date'],status=x['status'],boxes_qty=x['boxes_qty'],notes=note,created_by=session['user_id'],updated_at=datetime.utcnow())
             db.session.add(obj);db.session.flush();db.session.add(BobbinDeliveryDetail(delivery_id=obj.id,loose_qty=x['loose_qty']));created.append(obj.id)
         db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='BOBINAS_HISTORICO_EXCEL_IMPORTADO',entity_type='bobbin_delivery_schedule',entity_id='LOTE',detail=json.dumps({'arquivo':f.filename,'criados':len(created),'duplicados':dup,'ignorados':len(skipped)},ensure_ascii=False)))
-        db.session.commit();return jsonify({'ok':True,'created':len(created),'duplicates':dup,'skipped':len(skipped),'preview':preview})
+        db.session.commit();return jsonify({'ok':True,'created':len(created),'updated':len(set(updated)),'duplicates':dup,'skipped':len(skipped),'preview':preview})
     except Exception as exc:
         db.session.rollback();return jsonify({'ok':False,'error':str(exc)}),400
 
@@ -22361,6 +22385,20 @@ def v8527_bobbin_deliveries_bulk():
         db.session.commit();return jsonify({'ok':True,'created':len(created),'ids':created})
     except Exception as exc:
         db.session.rollback();return jsonify({'ok':False,'error':str(exc)}),400
+
+@app.post('/api/bobinas/entregas/alteracao-massa')
+@login_required
+def v85274_bobbin_deliveries_bulk_update():
+    if not _has_access('field.stock_manage'): abort(403)
+    d=request.get_json(silent=True) or {}; ids=d.get('ids') or []; status=str(d.get('status') or '').strip().upper()
+    if status not in ('PROGRAMADO','EM_ANDAMENTO','ENTREGUE'): return jsonify({'ok':False,'error':'Status inválido.'}),400
+    try: ids=[int(x) for x in ids]
+    except Exception:return jsonify({'ok':False,'error':'Seleção inválida.'}),400
+    rows=BobbinDeliverySchedule.query.filter(BobbinDeliverySchedule.id.in_(ids)).all() if ids else []
+    for x in rows:
+        old=x.status; x.status=status; x.updated_at=datetime.utcnow()
+        db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='BOBINAS_STATUS_MASSA',entity_type='bobbin_delivery_schedule',entity_id=str(x.id),detail=json.dumps({'de':old,'para':status,'location':x.location},ensure_ascii=False)))
+    db.session.commit();return jsonify({'ok':True,'updated':len(rows),'status':status})
 
 @app.get('/api/bobinas/dashboard')
 @login_required
