@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.29"
+APP_RELEASE = "V85.29 REV1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -22413,7 +22413,7 @@ def v85271_bobbin_deliveries_import_history():
 @login_required
 def v8527_bobbin_deliveries_bulk():
     if not _has_access('field.stock_manage'): abort(403)
-    d=request.get_json(silent=True) or {}; items=d.get('rows') or []; default_date=str(d.get('delivery_date') or '').strip(); notes=(d.get('notes') or '').strip()
+    d=request.get_json(silent=True) or {}; items=d.get('rows') or []; default_date=str(d.get('delivery_date') or '').strip(); notes=(d.get('notes') or '').strip(); batch_id=str(d.get('batch_id') or uuid.uuid4().hex[:16]).strip()
     try: default_unit_cost=max(0.0,float(str(d.get('unit_cost') or 0).replace(',','.')))
     except Exception: default_unit_cost=0.0
     if not isinstance(items,list): return jsonify({'ok':False,'error':'Lista de localidades inválida.'}),400
@@ -22428,14 +22428,43 @@ def v8527_bobbin_deliveries_bulk():
             kind=str(item.get('bobbin_type') or _v85281_bobbin_type(location)).strip().upper(); kind=kind if kind in ('ATM','POS') else 'ATM'; total_cost=round((boxes*_v85281_box_size(kind)+loose)*unit_cost,2)
             clean_note=re.sub(r'\s*\[FIN:[^\]]+\]','',str(item.get('notes') or notes or '')).strip()
             fin=f"[FIN:BOBINA {kind}|{unit_cost:.2f}|{total_cost:.2f}]" if unit_cost>0 else ''
-            clean_note=(_v85281_clean_note(clean_note)+f' [TYPE:{kind}]').strip()
+            clean_note=(_v85281_clean_note(clean_note)+f' [TYPE:{kind}] [BATCH:{batch_id}]').strip()
             obj=BobbinDeliverySchedule(created_by=session['user_id'],location=location,delivery_date=delivery_date,status='PROGRAMADO',boxes_qty=boxes,notes=(clean_note+(' '+fin if fin else '')).strip(),updated_at=datetime.utcnow())
             db.session.add(obj);db.session.flush();db.session.add(BobbinDeliveryDetail(delivery_id=obj.id,loose_qty=loose));created.append(obj.id)
             db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='BOBINAS_ENTREGA_PROGRAMADA_MASSA',entity_type='bobbin_delivery_schedule',entity_id=str(obj.id),detail=json.dumps({'location':location,'delivery_date':delivery_date.isoformat(),'boxes_qty':boxes,'loose_qty':loose},ensure_ascii=False)))
         if not created: return jsonify({'ok':False,'error':'Informe caixas ou bobinas avulsas em pelo menos uma localidade.'}),400
-        db.session.commit();return jsonify({'ok':True,'created':len(created),'ids':created})
+        db.session.commit();return jsonify({'ok':True,'created':len(created),'ids':created,'batch_id':batch_id})
     except Exception as exc:
         db.session.rollback();return jsonify({'ok':False,'error':str(exc)}),400
+
+@app.get('/api/bobinas/entregas/massas')
+@login_required
+def v85291_bobbin_bulk_batches():
+    if not _has_access('field.bobbins_dashboard'): abort(403)
+    groups={}
+    for x in BobbinDeliverySchedule.query.order_by(BobbinDeliverySchedule.delivery_date.desc(),BobbinDeliverySchedule.id.desc()).all():
+        m=re.search(r'\[BATCH:([^\]]+)\]',x.notes or '')
+        if not m: continue
+        bid=m.group(1); d=groups.setdefault(bid,{'batch_id':bid,'rows':[],'created_at':x.created_at.isoformat()+'Z' if x.created_at else None})
+        detail=BobbinDeliveryDetail.query.filter_by(delivery_id=x.id).first(); loose=int(getattr(detail,'loose_qty',0) or 0); kind=_v85281_bobbin_type(x.location,'',x.notes or '')
+        fm=re.search(r'\[FIN:([^|\]]*)\|([0-9.]+)\|([0-9.]+)\]',x.notes or ''); unit=float(fm.group(2)) if fm else 0.0
+        d['rows'].append({'id':x.id,'location':x.location,'delivery_date':x.delivery_date.isoformat(),'boxes_qty':int(x.boxes_qty or 0),'loose_qty':loose,'bobbin_type':kind,'unit_cost':unit,'notes':_v85281_clean_note(re.sub(r'\s*\[FIN:[^\]]+\]|\s*\[BATCH:[^\]]+\]','',x.notes or '').strip())})
+    out=[]
+    for d in groups.values():
+        rr=d['rows']; d['locations']=len(rr); d['boxes']=sum(r['boxes_qty'] for r in rr); d['loose']=sum(r['loose_qty'] for r in rr); d['delivery_date']=rr[0]['delivery_date'] if rr else ''; d['unit_cost']=rr[0]['unit_cost'] if rr else 0; out.append(d)
+    return jsonify({'ok':True,'rows':out})
+
+@app.delete('/api/bobinas/entregas/massa/<batch_id>')
+@login_required
+def v85291_bobbin_bulk_delete(batch_id):
+    if not _has_access('field.stock_manage'): abort(403)
+    rows=[x for x in BobbinDeliverySchedule.query.all() if re.search(r'\[BATCH:'+re.escape(batch_id)+r'\]',x.notes or '')]
+    if not rows:return jsonify({'ok':False,'error':'Lote não encontrado.'}),404
+    ids=[x.id for x in rows]
+    BobbinDeliveryDetail.query.filter(BobbinDeliveryDetail.delivery_id.in_(ids)).delete(synchronize_session=False)
+    for x in rows: db.session.delete(x)
+    db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='BOBINAS_ENTREGA_MASSA_EXCLUIDA',entity_type='bobbin_delivery_schedule',entity_id=batch_id,detail=json.dumps({'ids':ids},ensure_ascii=False)))
+    db.session.commit();return jsonify({'ok':True,'deleted':len(ids)})
 
 @app.post('/api/bobinas/entregas/alteracao-massa')
 @login_required
