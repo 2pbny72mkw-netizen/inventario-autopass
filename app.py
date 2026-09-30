@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.28 REV1"
+APP_RELEASE = "V85.29"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -17834,7 +17834,14 @@ def _v7893_apt_required_lines():
         rows=AptRequiredLine.query.filter_by(active=True).order_by(AptRequiredLine.line).all()
         if rows:return [x.line for x in rows]
     except Exception:pass
-    return ['04 - AMARELA','05 - LILÁS','08 - DIAMANTE','09 - ESMERALDA']
+    return ['LINHA 4','LINHA 5','LINHA 8','LINHA 9']
+
+def _v8529_apt_display_line(raw):
+    """Normaliza a apresentação/filtro sem destruir o valor histórico gravado."""
+    text=str(raw or '').strip()
+    if not text: return ''
+    m=re.search(r'(?<!\d)0?([4589])(?!\d)', text.upper())
+    return f"LINHA {int(m.group(1))}" if m else text.upper()
 
 @app.get("/rh/apt")
 @login_required
@@ -17848,16 +17855,16 @@ def v73_apt_page():
     if q:query=query.filter(or_(AptRecord.collaborator_name.ilike(f"%{q}%"),AptRecord.apt_number.ilike(f"%{q}%"),AptRecord.company.ilike(f"%{q}%"),AptRecord.line.ilike(f"%{q}%")))
     if process:query=query.filter(func.upper(AptRecord.process_status)==process)
     if company: query=query.join(User, AptRecord.user_id==User.id).filter(User.active.is_(True), User.company==company)
-    if line:query=query.filter(AptRecord.line==line)
     raw=query.order_by(AptRecord.valid_until,AptRecord.collaborator_name).all();data=[]
     for x in raw:
+        if line and _v8529_apt_display_line(x.line) != _v8529_apt_display_line(line): continue
         vs,days=_apt_status(x);n10,n10d=_apt_date_status(x.nr10_valid_until);n35,n35d=_apt_date_status(x.nr35_valid_until);asost,asod=_apt_date_status(x.aso_valid_until);inst,insd=_apt_date_status(x.integration_valid_until)
         if validity and vs!=validity:continue
         if nr10 and n10!=nr10:continue
         if nr35 and n35!=nr35:continue
         if aso and asost!=aso:continue
         if integration and inst!=integration:continue
-        u_master=db.session.get(User,x.user_id) if x.user_id else None; data.append({"row":x,"master_company":(u_master.company or "").strip() if u_master else (x.company or "").strip(),"validity_status":vs,"days":days,"nr10_status":n10,"nr35_status":n35,"aso_status":asost,"integration_status":inst,"missing_apt":False})
+        u_master=db.session.get(User,x.user_id) if x.user_id else None; data.append({"row":x,"master_company":(u_master.company or "").strip() if u_master else (x.company or "").strip(),"validity_status":vs,"days":days,"nr10_status":n10,"nr35_status":n35,"aso_status":asost,"integration_status":inst,"missing_apt":False,"display_line":_v8529_apt_display_line(x.line)})
 
     # V79.5 REV1 — a tela de APT passa a ser colaborador-cêntrica também.
     # Antes, a listagem nascia somente de AptRecord; por isso uma empresa podia
@@ -17904,26 +17911,17 @@ def v73_apt_page():
 
     summary={k:sum(1 for x in data if x["validity_status"]==k) for k in ("VENCIDA","ATÉ 15 DIAS","ATÉ 30 DIAS","ATÉ 40 DIAS","REGULAR","SEM VALIDADE")}
     # V85.28 REV1 — empresa/filtro vêm exclusivamente do Cadastro de Usuários (fonte mestre).
-    companies=sorted({u.company.strip() for u in User.query.filter(User.active.is_(True),User.company.isnot(None)).all() if (u.company or '').strip()},key=lambda x:normalize(x));lines=sorted({x.line for x in AptRecord.query.filter(AptRecord.line.isnot(None)).all() if x.line})
+    companies=sorted({u.company.strip() for u in User.query.filter(User.active.is_(True),User.company.isnot(None)).all() if (u.company or '').strip()},key=lambda x:normalize(x));lines=sorted({_v8529_apt_display_line(x.line) for x in AptRecord.query.filter(AptRecord.line.isnot(None)).all() if _v8529_apt_display_line(x.line)},key=lambda v:int(re.search(r'\d+',v).group()) if re.search(r'\d+',v) else 999)
     users=User.query.filter(User.active.is_(True)).order_by(User.name).all()
     apt_users=[{"id":u.id,"name":u.name,"company":u.company or "","job_title":u.job_title or "","username":u.username} for u in users if u.role not in ('customer',)]
     apt_user_companies=sorted({x['company'] for x in apt_users if x['company']},key=lambda x:normalize(x))
-    apt_lines=_v7893_apt_required_lines()
+    apt_lines=sorted({_v8529_apt_display_line(x) for x in _v7893_apt_required_lines() if _v8529_apt_display_line(x)},key=lambda v:int(re.search(r"\d+",v).group()) if re.search(r"\d+",v) else 999)
     return render_template("apt_v73.html",items=data,summary=summary,total=len(data),companies=companies,lines=lines,apt_users=apt_users,apt_user_companies=apt_user_companies,apt_lines=apt_lines,filters={"q":q,"validity":validity,"process":process,"active":active,"company":company,"line":line,"nr10":nr10,"nr35":nr35,"aso":aso,"integration":integration},app_release=APP_RELEASE)
 
 def _v8212_apt_canonical_line(raw):
-    """Aceita variações de 4/5/8/9 e devolve a descrição configurada na APT."""
-    text=str(raw or '').strip()
-    if not text:return None
-    allowed=_v7893_apt_required_lines()
-    if text in allowed:return text
-    m=re.search(r'(?<!\\d)0?([4589])(?!\\d)', text)
-    if not m:return None
-    num=int(m.group(1))
-    for candidate in allowed:
-        cm=re.search(r'(?<!\\d)0?([4589])(?!\\d)', str(candidate))
-        if cm and int(cm.group(1))==num:return candidate
-    return None
+    """Aceita variações históricas de 4/5/8/9 e grava a nomenclatura canônica LINHA N."""
+    value=_v8529_apt_display_line(raw)
+    return value or None
 
 def _v8212_apt_shared_fields(user_id, exclude_id=None):
     """NR/ASO/integração são dados do colaborador e são herdados da APT ativa mais recente."""
@@ -22304,6 +22302,7 @@ def v85272_bobbin_delivery_delete(delivery_id):
     snapshot={'location':obj.location,'delivery_date':obj.delivery_date.isoformat() if obj.delivery_date else None,'status':obj.status,'boxes_qty':obj.boxes_qty,'notes':obj.notes or ''}
     detail=BobbinDeliveryDetail.query.filter_by(delivery_id=obj.id).first()
     if detail: snapshot['loose_qty']=int(detail.loose_qty or 0)
+    if detail: db.session.delete(detail)
     db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='BOBINAS_ENTREGA_EXCLUIDA',entity_type='bobbin_delivery_schedule',entity_id=str(obj.id),detail=json.dumps(snapshot,ensure_ascii=False)))
     db.session.delete(obj);db.session.commit()
     return jsonify({'ok':True,'id':delivery_id})
@@ -23717,6 +23716,8 @@ def qr_rail_configs_api():
     rows=_qr_rail_effective_configs()
     return jsonify({'ok':True,'rows':rows,'count':len(rows),'source':'base_trilhos+overrides'})
 
+QR_RAIL_TURN_MODELS={1:'2 sensores',2:'1 sensor',4:'MGB',6:'Automática',7:'Digicon serial',8:'THUB',9:'Dahua'}
+
 def _qr_rail_snapshot(r):
     return {'company':r.company,'line':r.line,'station':r.station,'block':r.block,'trans_oper_id':r.trans_oper_id,
         'terminal_id':r.terminal_id,'turn_model':r.turn_model,'ip':r.ip,'mask':r.mask,'gateway':r.gateway,
@@ -23738,6 +23739,7 @@ def qr_rail_configs_manage():
                 return v
             row.company=req('company'); row.line=req('line'); row.station=req('station'); row.block=req('block')
             row.trans_oper_id=int(req('trans_oper_id')); row.terminal_id=int(req('terminal_id')); row.turn_model=int(req('turn_model')); row.line_id=int(req('line_id')); row.term_grp_id=int(req('term_grp_id'))
+            if row.turn_model not in QR_RAIL_TURN_MODELS: raise ValueError('TurnModel inválido. Selecione um tipo de catraca cadastrado.')
             row.ip=(request.form.get('ip') or '').strip(); row.mask=(request.form.get('mask') or '').strip(); row.gateway=(request.form.get('gateway') or '').strip(); row.dns1=(request.form.get('dns1') or '').strip(); row.dns2=(request.form.get('dns2') or '').strip(); row.apn1=(request.form.get('apn1') or '').strip(); row.apn2=(request.form.get('apn2') or '').strip(); row.active=request.form.get('active')=='1'; row.updated_by=session['user_id']
             # valida IPv4 sem alterar a convenção binária usada no QR.
             import ipaddress
@@ -23749,7 +23751,7 @@ def qr_rail_configs_manage():
         except Exception as exc:
             db.session.rollback(); error=str(exc)
     rows=QrRailConfig.query.order_by(QrRailConfig.company,QrRailConfig.line,QrRailConfig.station,QrRailConfig.block).all()
-    return render_template('qr_rail_configs_v8516.html',rows=rows,error=error,success=success,app_release=APP_RELEASE)
+    return render_template('qr_rail_configs_v8516.html',rows=rows,error=error,success=success,turn_models=QR_RAIL_TURN_MODELS,app_release=APP_RELEASE)
 
 # V85.25 — chave AES vinculada ao projeto. O técnico não seleciona nem visualiza a chave.
 def _qr_rail_project_key(company):
@@ -23815,4 +23817,4 @@ def implantation_qr_config():
         except (ValueError,TypeError,ImportError) as exc: error=str(exc)
         except Exception:
             app.logger.exception('qr_rail_generation_failed'); error='Falha ao gerar QR Code. Consulte o diagnóstico do servidor.'
-    return render_template('implantation_qr_config_v8525.html',configs=configs,selected=selected,values=values,qr_png=qr_png,qr_text=qr_text,error=error,app_release=APP_RELEASE)
+    return render_template('implantation_qr_config_v8525.html',configs=configs,selected=selected,values=values,qr_png=qr_png,qr_text=qr_text,error=error,turn_models=QR_RAIL_TURN_MODELS,app_release=APP_RELEASE)
