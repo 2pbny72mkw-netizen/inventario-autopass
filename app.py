@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.28"
+APP_RELEASE = "V85.28 REV1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -17847,7 +17847,7 @@ def v73_apt_page():
     elif active=="inactive":query=query.filter(AptRecord.active.is_(False))
     if q:query=query.filter(or_(AptRecord.collaborator_name.ilike(f"%{q}%"),AptRecord.apt_number.ilike(f"%{q}%"),AptRecord.company.ilike(f"%{q}%"),AptRecord.line.ilike(f"%{q}%")))
     if process:query=query.filter(func.upper(AptRecord.process_status)==process)
-    if company:query=query.filter(AptRecord.company==company)
+    if company: query=query.join(User, AptRecord.user_id==User.id).filter(User.active.is_(True), User.company==company)
     if line:query=query.filter(AptRecord.line==line)
     raw=query.order_by(AptRecord.valid_until,AptRecord.collaborator_name).all();data=[]
     for x in raw:
@@ -17857,7 +17857,7 @@ def v73_apt_page():
         if nr35 and n35!=nr35:continue
         if aso and asost!=aso:continue
         if integration and inst!=integration:continue
-        data.append({"row":x,"validity_status":vs,"days":days,"nr10_status":n10,"nr35_status":n35,"aso_status":asost,"integration_status":inst,"missing_apt":False})
+        u_master=db.session.get(User,x.user_id) if x.user_id else None; data.append({"row":x,"master_company":(u_master.company or "").strip() if u_master else (x.company or "").strip(),"validity_status":vs,"days":days,"nr10_status":n10,"nr35_status":n35,"aso_status":asost,"integration_status":inst,"missing_apt":False})
 
     # V79.5 REV1 — a tela de APT passa a ser colaborador-cêntrica também.
     # Antes, a listagem nascia somente de AptRecord; por isso uma empresa podia
@@ -17903,8 +17903,8 @@ def v73_apt_page():
         g=_apt_group_key(z); z["group_first"]=g not in seen_groups; z["group_size"]=group_counts[g]; seen_groups.add(g)
 
     summary={k:sum(1 for x in data if x["validity_status"]==k) for k in ("VENCIDA","ATÉ 15 DIAS","ATÉ 30 DIAS","ATÉ 40 DIAS","REGULAR","SEM VALIDADE")}
-    # Empresas vêm do cadastro mestre de usuários + registros históricos de APT.
-    companies=sorted(({x.company for x in AptRecord.query.filter(AptRecord.company.isnot(None)).all() if x.company} | {u.company for u in User.query.filter(User.active.is_(True),User.company.isnot(None)).all() if u.company}),key=lambda x:normalize(x));lines=sorted({x.line for x in AptRecord.query.filter(AptRecord.line.isnot(None)).all() if x.line})
+    # V85.28 REV1 — empresa/filtro vêm exclusivamente do Cadastro de Usuários (fonte mestre).
+    companies=sorted({u.company.strip() for u in User.query.filter(User.active.is_(True),User.company.isnot(None)).all() if (u.company or '').strip()},key=lambda x:normalize(x));lines=sorted({x.line for x in AptRecord.query.filter(AptRecord.line.isnot(None)).all() if x.line})
     users=User.query.filter(User.active.is_(True)).order_by(User.name).all()
     apt_users=[{"id":u.id,"name":u.name,"company":u.company or "","job_title":u.job_title or "","username":u.username} for u in users if u.role not in ('customer',)]
     apt_user_companies=sorted({x['company'] for x in apt_users if x['company']},key=lambda x:normalize(x))
@@ -22229,6 +22229,20 @@ def v82301_bobbin_stock_delete(point_id):
     db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='ESTOQUE_BOBINA_EXCLUIDO',entity_type='field_stock_point',entity_id=str(point.id),detail=f'{point.name} | exclusão lógica; histórico preservado | {reason}'));db.session.commit()
     return jsonify({'ok':True,'id':point.id,'history_preserved':True})
 
+def _v85281_bobbin_type(location='', product='', note=''):
+    """Classificação explícita ATM/POS; legado Anhanguera-Tag é migrado logicamente como POS."""
+    m=re.search(r'\[TYPE:(ATM|POS)\]', note or '', re.I)
+    if m:return m.group(1).upper()
+    txt=normalize(f"{product} {location}")
+    if 'POS' in txt or ('ANHANGUERA' in txt and 'TAG' in txt):return 'POS'
+    return 'ATM'
+
+def _v85281_box_size(kind):
+    return 150 if str(kind).upper()=='POS' else 6
+
+def _v85281_clean_note(note):
+    return re.sub(r'\s*\[TYPE:(?:ATM|POS)\]','',note or '',flags=re.I).strip()
+
 @app.get('/api/bobinas/entregas')
 @login_required
 def v8227_bobbin_deliveries_list():
@@ -22248,9 +22262,10 @@ def v8227_bobbin_deliveries_list():
         loose=int(getattr(details.get(x.id),'loose_qty',0) or 0); boxes=int(x.boxes_qty or 0)
         note=x.notes or ''; fm=re.search(r'\[FIN:([^|\]]*)\|([0-9.]+)\|([0-9.]+)\]',note)
         product=(fm.group(1) if fm else ''); unit_cost=float(fm.group(2)) if fm else 0.0; stored_total=float(fm.group(3)) if fm else 0.0
-        total_cost=round((boxes*box_size+loose)*unit_cost,2) if unit_cost>0 else stored_total
-        clean_note=re.sub(r'\s*\[FIN:[^\]]+\]','',note).strip()
-        payload.append({'id':x.id,'location':x.location,'delivery_date':x.delivery_date.isoformat(),'status':x.status,'boxes_qty':boxes,'loose_qty':loose,'total_bobbins':boxes*box_size+loose,'product':product,'unit_cost':unit_cost,'total_cost':total_cost,'notes':clean_note,'created_at':x.created_at.isoformat()+'Z'})
+        kind=_v85281_bobbin_type(x.location,product,note); row_box_size=_v85281_box_size(kind); total_bobbins=boxes*row_box_size+loose
+        total_cost=round(total_bobbins*unit_cost,2) if unit_cost>0 else stored_total
+        clean_note=_v85281_clean_note(re.sub(r'\s*\[FIN:[^\]]+\]','',note).strip())
+        payload.append({'id':x.id,'location':x.location,'delivery_date':x.delivery_date.isoformat(),'status':x.status,'boxes_qty':boxes,'loose_qty':loose,'total_bobbins':total_bobbins,'bobbin_type':kind,'box_size':row_box_size,'product':product,'bobbin_type':kind,'unit_cost':unit_cost,'total_cost':total_cost,'notes':clean_note,'created_at':x.created_at.isoformat()+'Z'})
     return jsonify({'ok':True,'release':APP_RELEASE,'box_size':box_size,'rows':payload})
 
 @app.post('/api/bobinas/entregas')
@@ -22269,9 +22284,10 @@ def v8227_bobbin_deliveries_save():
         obj=BobbinDeliverySchedule(created_by=session['user_id']);db.session.add(obj)
     try: unit_cost=max(0.0,float(str(d.get('unit_cost') or 0).replace(',','.')))
     except Exception: unit_cost=0.0
-    total_cost=round((boxes*6+loose)*unit_cost,2)
-    clean_note=re.sub(r'\s*\[FIN:[^\]]+\]','',(d.get('notes') or '')).strip()
-    fin=f"[FIN:BOBINA|{unit_cost:.2f}|{total_cost:.2f}]" if unit_cost>0 else ''
+    kind=str(d.get('bobbin_type') or _v85281_bobbin_type(location)).strip().upper(); kind=kind if kind in ('ATM','POS') else 'ATM'; total_bobbins=boxes*_v85281_box_size(kind)+loose; total_cost=round(total_bobbins*unit_cost,2)
+    clean_note=_v85281_clean_note(re.sub(r'\s*\[FIN:[^\]]+\]','',(d.get('notes') or '')).strip())
+    fin=f"[FIN:BOBINA {kind}|{unit_cost:.2f}|{total_cost:.2f}]" if unit_cost>0 else ''
+    clean_note=(clean_note+f' [TYPE:{kind}]').strip()
     obj.location=location;obj.delivery_date=delivery_date;obj.status=status;obj.boxes_qty=boxes;obj.notes=(clean_note+(' '+fin if fin else '')).strip();obj.updated_at=datetime.utcnow()
     db.session.flush();detail=BobbinDeliveryDetail.query.filter_by(delivery_id=obj.id).first()
     if not detail: detail=BobbinDeliveryDetail(delivery_id=obj.id);db.session.add(detail)
@@ -22355,11 +22371,12 @@ def v85271_bobbin_deliveries_import_history():
             canon=aliases.get(normalize(loc),known.get(normalize(loc),loc))
             obs=str(r[ci_obs] or '').strip() if ci_obs is not None and ci_obs<len(r) else ''
             product=str(r[ci_prod] or '').strip() if ci_prod is not None and ci_prod<len(r) else ''
+            kind=_v85281_bobbin_type(canon,product); expected=boxes*_v85281_box_size(kind); bob=max(bob,expected) if kind=='POS' else bob; loose=max(0,bob-expected)
             def money(v):
                 try:return round(float(v or 0),2)
                 except Exception:return 0.0
             unit_cost=money(r[ci_unit] if ci_unit is not None and ci_unit<len(r) else 0); total_cost=money(r[ci_total] if ci_total is not None and ci_total<len(r) else 0)
-            rows.append({'sheet':ws.title.strip(),'row':rn,'location':canon,'original_location':loc,'delivery_date':dd,'status':status,'raw_status':raw_status,'boxes_qty':boxes,'loose_qty':loose,'total_bobbins':bob,'product':product,'unit_cost':unit_cost,'total_cost':total_cost,'notes':obs})
+            rows.append({'sheet':ws.title.strip(),'row':rn,'location':canon,'original_location':loc,'delivery_date':dd,'status':status,'raw_status':raw_status,'boxes_qty':boxes,'loose_qty':loose,'total_bobbins':bob,'product':product,'bobbin_type':kind,'unit_cost':unit_cost,'total_cost':total_cost,'notes':obs})
     # Duplicidade por data/localidade/quantidades; não duplica histórico já importado/programado.
     dup=0; newrows=[]
     for x in rows:
@@ -22385,7 +22402,7 @@ def v85271_bobbin_deliveries_import_history():
                 obj.notes=(clean+' '+fin).strip(); obj.status=x['status']; obj.updated_at=datetime.utcnow(); updated.append(obj.id); break
         for x in newrows:
             fin=f"[FIN:{x.get('product','')}|{float(x.get('unit_cost') or 0):.2f}|{float(x.get('total_cost') or 0):.2f}]"
-            note=('[HISTÓRICO EXCEL] '+(x['notes'] or '')+' '+fin).strip()
+            note=('[HISTÓRICO EXCEL] '+(x['notes'] or '')+f" [TYPE:{x.get('bobbin_type','ATM')}] "+fin).strip()
             obj=BobbinDeliverySchedule(location=x['location'],delivery_date=x['delivery_date'],status=x['status'],boxes_qty=x['boxes_qty'],notes=note,created_by=session['user_id'],updated_at=datetime.utcnow())
             db.session.add(obj);db.session.flush();db.session.add(BobbinDeliveryDetail(delivery_id=obj.id,loose_qty=x['loose_qty']));created.append(obj.id)
         db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='BOBINAS_HISTORICO_EXCEL_IMPORTADO',entity_type='bobbin_delivery_schedule',entity_id='LOTE',detail=json.dumps({'arquivo':f.filename,'criados':len(created),'duplicados':dup,'ignorados':len(skipped)},ensure_ascii=False)))
@@ -22409,9 +22426,10 @@ def v8527_bobbin_deliveries_bulk():
             delivery_date=date.fromisoformat(str(item.get('delivery_date') or default_date or ''))
             try: unit_cost=max(0.0,float(str(item.get('unit_cost') if item.get('unit_cost') not in (None,'') else default_unit_cost).replace(',','.')))
             except Exception: unit_cost=default_unit_cost
-            total_cost=round((boxes*6+loose)*unit_cost,2)
+            kind=str(item.get('bobbin_type') or _v85281_bobbin_type(location)).strip().upper(); kind=kind if kind in ('ATM','POS') else 'ATM'; total_cost=round((boxes*_v85281_box_size(kind)+loose)*unit_cost,2)
             clean_note=re.sub(r'\s*\[FIN:[^\]]+\]','',str(item.get('notes') or notes or '')).strip()
-            fin=f"[FIN:BOBINA|{unit_cost:.2f}|{total_cost:.2f}]" if unit_cost>0 else ''
+            fin=f"[FIN:BOBINA {kind}|{unit_cost:.2f}|{total_cost:.2f}]" if unit_cost>0 else ''
+            clean_note=(_v85281_clean_note(clean_note)+f' [TYPE:{kind}]').strip()
             obj=BobbinDeliverySchedule(created_by=session['user_id'],location=location,delivery_date=delivery_date,status='PROGRAMADO',boxes_qty=boxes,notes=(clean_note+(' '+fin if fin else '')).strip(),updated_at=datetime.utcnow())
             db.session.add(obj);db.session.flush();db.session.add(BobbinDeliveryDetail(delivery_id=obj.id,loose_qty=loose));created.append(obj.id)
             db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='BOBINAS_ENTREGA_PROGRAMADA_MASSA',entity_type='bobbin_delivery_schedule',entity_id=str(obj.id),detail=json.dumps({'location':location,'delivery_date':delivery_date.isoformat(),'boxes_qty':boxes,'loose_qty':loose},ensure_ascii=False)))
@@ -22432,7 +22450,7 @@ def v85274_bobbin_deliveries_bulk_update():
         try: unit_cost=max(0.0,float(str(d.get('unit_cost') or 0).replace(',','.')))
         except Exception:return jsonify({'ok':False,'error':'Valor unitário inválido.'}),400
         for x in rows:
-            detail=BobbinDeliveryDetail.query.filter_by(delivery_id=x.id).first(); loose=int(getattr(detail,'loose_qty',0) or 0); boxes=int(x.boxes_qty or 0); total_bobbins=boxes*6+loose
+            detail=BobbinDeliveryDetail.query.filter_by(delivery_id=x.id).first(); loose=int(getattr(detail,'loose_qty',0) or 0); boxes=int(x.boxes_qty or 0); kind=_v85281_bobbin_type(x.location,'',x.notes or ''); total_bobbins=boxes*_v85281_box_size(kind)+loose
             clean_note=re.sub(r'\s*\[FIN:[^\]]*\]','',x.notes or '').strip(); total_cost=round(total_bobbins*unit_cost,2); fin=f"[FIN:BOBINA|{unit_cost:.2f}|{total_cost:.2f}]" if unit_cost>0 else ''
             x.notes=(clean_note+(' '+fin if fin else '')).strip(); x.updated_at=datetime.utcnow()
             db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='BOBINAS_VALOR_UNITARIO_MASSA',entity_type='bobbin_delivery_schedule',entity_id=str(x.id),detail=json.dumps({'unit_cost':unit_cost,'total_bobbins':total_bobbins,'total_cost':total_cost,'location':x.location},ensure_ascii=False)))
