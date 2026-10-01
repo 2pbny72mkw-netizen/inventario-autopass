@@ -11,11 +11,10 @@
 
 
 
-<!-- V85.39 REV2 — Bobinas: receber + consultas do dashboard -->
+<!-- V85.39 REV3 — Bobinas: receber + consultas do dashboard -->
 <section id="bobbinToolsV8539" style="margin:12px 0;display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
  <button type="button" id="openReceiveV8539">Receber Bobinas</button>
- <button type="button" id="openOperatorsV8539">Visão por Operadora</button>
- <button type="button" id="openStationsV8539">Detalhe da Estação</button>
+ <button type="button" id="openOperatorsV8539">Visão Geral</button>
 </section>
 <div id="modalV8539" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:9999">
  <div id="windowV8539" style="position:absolute;left:50%;top:8%;transform:translateX(-50%);width:min(760px,94vw);max-height:84vh;overflow:auto;background:#fff;border-radius:12px;padding:14px;box-shadow:0 12px 35px rgba(0,0,0,.25)">
@@ -33,7 +32,27 @@
  function esc(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
  function badge(p){if(p==null)return '—';let bg=p<=20?'#dc3545':p<=70?'#f2c94c':'#219653',fg=p<=20||p>=71?'#fff':'#222';return `<span style="background:${bg};color:${fg};padding:3px 7px;border-radius:5px;font-weight:700">${p}%</span>`;}
  function fmtDate(v){if(!v)return '—';let d=new Date(v);return isNaN(d)?esc(v):d.toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});}
- function filters39(j){let f=j.filters||{};return `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:10px"><select id="fOp39"><option value="">Todas operadoras</option>${(f.companies||[]).map(x=>`<option>${esc(x)}</option>`).join('')}</select><select id="fLn39"><option value="">Todas linhas</option>${(f.lines||[]).map(x=>`<option>${esc(x)}</option>`).join('')}</select><select id="fSt39"><option value="">Todas estações</option>${(f.stations||[]).map(x=>`<option>${esc(x)}</option>`).join('')}</select><select id="fSi39"><option value="">Situação: todas</option><option value="critical">Crítica</option><option value="attention">Atenção</option><option value="normal">Normal</option></select></div>`;}
+ function filters39(j){
+   return `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:10px">
+    <select id="fOp39"><option value="">Todas operadoras</option></select>
+    <select id="fLn39"><option value="">Todas linhas</option></select>
+    <select id="fSt39"><option value="">Todas estações</option></select>
+    <select id="fSi39"><option value="">Situação: todas</option><option value="critical">Crítica</option><option value="attention">Atenção</option><option value="normal">Normal</option></select>
+   </div>`;}
+ function setupCascade39(j,render){
+   const op=document.getElementById('fOp39'),ln=document.getElementById('fLn39'),st=document.getElementById('fSt39');
+   const hierarchy=(j.hierarchy||[]).map(x=>({company:String(x.company||'').trim(),line:String(x.line||'').trim(),station:String(x.station||'').trim()})); 
+   const uniq=a=>[...new Set(a.filter(Boolean))].sort((a,b)=>a.localeCompare(b,'pt-BR'));
+   const fill=(el,label,vals)=>{el.innerHTML=`<option value="">${label}</option>`+vals.map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('');};
+   fill(op,'Todas operadoras',uniq(hierarchy.map(x=>x.company)));
+   function lines(){let c=(op.value||'').trim().toLocaleLowerCase('pt-BR');fill(ln,'Todas linhas',uniq(hierarchy.filter(x=>!c||x.company.toLocaleLowerCase('pt-BR')===c).map(x=>x.line)));stations();}
+   function stations(){let c=(op.value||'').trim().toLocaleLowerCase('pt-BR'),l=(ln.value||'').trim().toLocaleLowerCase('pt-BR');fill(st,'Todas estações',uniq(hierarchy.filter(x=>(!c||x.company.toLocaleLowerCase('pt-BR')===c)&&(!l||x.line.toLocaleLowerCase('pt-BR')===l)).map(x=>x.station)));}
+   op.onchange=()=>{lines();render();};
+   ln.onchange=()=>{stations();render();};
+   st.onchange=render;
+   document.getElementById('fSi39').onchange=render;
+   lines();
+  }
  async function dash(){if(dashboard)return dashboard;let r=await fetch('/api/bobinas/v8539/visao');dashboard=await r.json();return dashboard;}
  document.getElementById('closeV8539').onclick=()=>modal.style.display='none';
  modal.onclick=e=>{if(e.target===modal)modal.style.display='none';};
@@ -51,11 +70,11 @@
 
  document.getElementById('openOperatorsV8539').onclick=async()=>{open('Visão por Operadora');let j=await dash();if(!j.ok){body.textContent='Não foi possível carregar o dashboard.';return;}
   function render(){let op=fOp39.value,ln=fLn39.value,st=fSt39.value,si=fSi39.value;let base=j.rows||[];let allowed=new Set(base.filter(r=>(!op||r.company===op)&&(!ln||r.line===ln)&&(!st||r.station===st)&&(!si||r.severity===si)).map(r=>r.company));let xs=(j.operators||[]).filter(x=>allowed.has(x.company));document.getElementById('opTable39').innerHTML=`<div style="overflow:auto"><table style="width:100%;border-collapse:collapse"><thead style="background:#eaf2fb"><tr><th>Operadora</th><th>Reserva</th><th>ATMs</th><th>% Bobina média</th><th>Críticas</th><th>Atenção</th><th>Última atualização</th><th>Último técnico</th></tr></thead><tbody>${xs.map(x=>`<tr><td>${esc(x.company)}</td><td>${x.reserve||0}</td><td>${x.atms||0}/${x.official_atms||0}</td><td>${badge(x.avg_pct)}</td><td>${x.critical||0}</td><td>${x.attention||0}</td><td>${fmtDate(x.last_at)}</td><td>${esc(x.last_tech||'—')}</td></tr>`).join('')}</tbody></table></div>`;}
-  body.innerHTML=filters39(j)+'<div id="opTable39"></div>';['fOp39','fLn39','fSt39','fSi39'].forEach(id=>document.getElementById(id).onchange=render);render();};
+  body.innerHTML=filters39(j)+'<div id="opTable39"></div>';setupCascade39(j,render);render();};
 
  document.getElementById('openStationsV8539').onclick=async()=>{open('Detalhe da Estação');let j=await dash();if(!j.ok){body.textContent='Não foi possível carregar o dashboard.';return;}
   function render(){let op=fOp39.value,ln=fLn39.value,st=fSt39.value,si=fSi39.value;let rows=(j.rows||[]).filter(r=>(!op||r.company===op)&&(!ln||r.line===ln)&&(!st||r.station===st)&&(!si||r.severity===si));let title=st?`<h4>${esc(st)}</h4>`:'';document.getElementById('stTable39').innerHTML=title+`<div style="overflow:auto"><table style="width:100%;border-collapse:collapse"><thead style="background:#eaf2fb"><tr><th>ID ATM</th><th>% Bobina</th><th>Situação</th><th>Última leitura</th><th>Último técnico</th><th>Reserva</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(r.atm_id)}</td><td>${badge(r.percent_available)}</td><td>${esc(r.situation)}</td><td>${fmtDate(r.last_at)}</td><td>${esc(r.last_tech||'—')}</td><td>${r.reserve_qty||0}</td></tr>`).join('')}</tbody></table></div>`;}
-  body.innerHTML=filters39(j)+'<div id="stTable39"></div>';['fOp39','fLn39','fSt39','fSi39'].forEach(id=>document.getElementById(id).onchange=render);render();};
+  body.innerHTML=filters39(j)+'<div id="stTable39"></div>';setupCascade39(j,render);render();};
 
  // draggable window
  let dragging=false,dx=0,dy=0;const drag=document.getElementById('dragV8539');
