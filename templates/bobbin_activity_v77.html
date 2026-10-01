@@ -9,64 +9,52 @@
 
 
 
-<!-- V85.38 REV4 — Receber Bobinas -->
-<section id="bobbinReceiveR4" style="margin:12px 0">
-  <button type="button" id="openBobbinReceiveR4" style="width:100%;padding:12px;font-weight:700;border:0;border-radius:8px;cursor:pointer">Receber Bobinas</button>
-</section>
 
-<div id="bobbinReceiveModalR4" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;padding:18px;overflow:auto">
- <div style="max-width:560px;margin:5vh auto;background:#fff;border-radius:12px;padding:16px">
-  <div style="display:flex;justify-content:space-between;align-items:center">
-   <h3 style="margin:0">Receber Bobinas</h3>
-   <button type="button" id="closeBobbinReceiveR4">Fechar</button>
+
+<!-- V85.39 — Bobinas: receber + consultas do dashboard -->
+<section id="bobbinToolsV8539" style="margin:12px 0;display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
+ <button type="button" id="openReceiveV8539">Receber Bobinas</button>
+ <button type="button" id="openOperatorsV8539">Visão por Operadora</button>
+ <button type="button" id="openStationsV8539">Detalhe da Estação</button>
+</section>
+<div id="modalV8539" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:9999">
+ <div id="windowV8539" style="position:absolute;left:50%;top:8%;transform:translateX(-50%);width:min(760px,94vw);max-height:84vh;overflow:auto;background:#fff;border-radius:12px;padding:14px;box-shadow:0 12px 35px rgba(0,0,0,.25)">
+  <div id="dragV8539" style="display:flex;justify-content:space-between;align-items:center;cursor:move;user-select:none;border-bottom:1px solid #ddd;padding-bottom:8px">
+   <h3 id="titleV8539" style="margin:0"></h3><button type="button" id="closeV8539">Fechar</button>
   </div>
-  <label style="display:block;margin-top:12px">Entrega programada
-   <select id="deliveryR4" style="width:100%;padding:9px"><option value="">Selecione...</option></select>
-  </label>
-  <div id="deliveryFormR4" style="display:none">
-   <label style="display:block;margin-top:10px">Localidade
-    <input id="locationR4" readonly style="width:100%;padding:9px">
-   </label>
-   <label style="display:block;margin-top:10px">Caixas
-    <input id="boxesR4" type="number" min="0" style="width:100%;padding:9px">
-   </label>
-   <label style="display:block;margin-top:10px">Foto(s) — câmera ou galeria
-    <input id="photosR4" type="file" accept="image/*" multiple style="width:100%;padding:9px">
-   </label>
-   <div id="photoCountR4" style="font-size:12px;margin-top:4px"></div>
-   <button type="button" id="confirmReceiveR4" style="width:100%;padding:12px;margin-top:14px;font-weight:700">Recebido</button>
-  </div>
+  <div id="bodyV8539" style="margin-top:12px"></div>
  </div>
 </div>
 <script>
 (function(){
- let rows=[];
- const modal=document.getElementById('bobbinReceiveModalR4'),sel=document.getElementById('deliveryR4'),
- form=document.getElementById('deliveryFormR4'),loc=document.getElementById('locationR4'),
- boxes=document.getElementById('boxesR4'),photos=document.getElementById('photosR4'),
- count=document.getElementById('photoCountR4'),confirm=document.getElementById('confirmReceiveR4');
- function load(){
-  fetch('/api/bobinas/v8538/minhas-entregas').then(r=>r.json()).then(j=>{
-   rows=(j.ok?j.rows:[])||[]; sel.innerHTML='<option value="">Selecione...</option>';
-   rows.forEach(x=>{let o=new Option(`${x.localidade} · ${x.caixas} caixas · ${x.data}`,x.id);sel.add(o);});
-  });
- }
- document.getElementById('openBobbinReceiveR4').onclick=()=>{load();modal.style.display='block';};
- document.getElementById('closeBobbinReceiveR4').onclick=()=>modal.style.display='none';
- modal.addEventListener('click',e=>{if(e.target===modal)modal.style.display='none';});
- sel.onchange=()=>{let x=rows.find(r=>String(r.id)===sel.value);form.style.display=x?'block':'none';if(x){loc.value=x.localidade||'';boxes.value=x.caixas||0;photos.value='';count.textContent='';}};
- photos.onchange=()=>count.textContent=`${photos.files.length} foto(s) selecionada(s)`;
- confirm.onclick=async()=>{
-  let x=rows.find(r=>String(r.id)===sel.value);if(!x)return;
-  if(!photos.files.length){alert('Inclua ao menos uma foto.');return;}
-  let lat=null,lon=null;try{let p=await new Promise((ok,er)=>navigator.geolocation.getCurrentPosition(ok,er,{enableHighAccuracy:true,timeout:8000}));lat=p.coords.latitude;lon=p.coords.longitude;}catch(_){}
-  let payload={boxes:+boxes.value||0,photos:[...photos.files].map(f=>f.name),latitude:lat,longitude:lon};
-  confirm.disabled=true;
-  let res=await fetch('/api/bobinas/v8538/entregas/'+x.id+'/receber',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-  let j=await res.json();confirm.disabled=false;
-  if(!j.ok){alert(j.error||'Não foi possível registrar.');return;}
-  alert('Recebimento registrado.');modal.style.display='none';form.style.display='none';load();
+ const modal=document.getElementById('modalV8539'),win=document.getElementById('windowV8539'),body=document.getElementById('bodyV8539'),title=document.getElementById('titleV8539');
+ let dashboard=null, deliveries=[];
+ function open(t){title.textContent=t;body.innerHTML='Carregando...';modal.style.display='block';win.style.left='50%';win.style.top='8%';win.style.transform='translateX(-50%)';}
+ function esc(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
+ async function dash(){if(dashboard)return dashboard;let r=await fetch('/api/bobinas/dashboard');dashboard=await r.json();return dashboard;}
+ document.getElementById('closeV8539').onclick=()=>modal.style.display='none';
+ modal.onclick=e=>{if(e.target===modal)modal.style.display='none';};
+
+ document.getElementById('openReceiveV8539').onclick=async()=>{
+  open('Receber Bobinas');let j=await fetch('/api/bobinas/v8538/minhas-entregas').then(r=>r.json());deliveries=(j.rows||[]);
+  body.innerHTML=`<label>Entrega programada<select id="selR39" style="width:100%;padding:8px"><option value="">Selecione...</option>${deliveries.map(x=>`<option value="${x.id}">${esc(x.localidade)} · ${x.caixas} caixas · ${esc(x.data)}</option>`).join('')}</select></label>
+  <div id="formR39" style="display:none"><label>Localidade<input id="locR39" readonly style="width:100%;padding:8px"></label><label>Caixas<input id="boxR39" type="number" min="0" style="width:100%;padding:8px"></label><label>Foto(s) — câmera ou galeria<input id="picR39" type="file" accept="image/*" multiple style="width:100%;padding:8px"></label><div id="cntR39"></div><button id="okR39" type="button" style="width:100%;padding:11px;margin-top:10px">Recebido</button></div>`;
+  let sel=document.getElementById('selR39'),form=document.getElementById('formR39'),pics=document.getElementById('picR39');
+  sel.onchange=()=>{let x=deliveries.find(v=>String(v.id)===sel.value);form.style.display=x?'block':'none';if(x){locR39.value=x.localidade;boxR39.value=x.caixas;pics.value='';cntR39.textContent='';}};
+  pics.onchange=()=>cntR39.textContent=`${pics.files.length} foto(s) selecionada(s)`;
+  document.getElementById('okR39').onclick=async()=>{let x=deliveries.find(v=>String(v.id)===sel.value);if(!x||!pics.files.length){alert('Selecione a programação e inclua ao menos uma foto.');return;}let lat=null,lon=null;try{let p=await new Promise((ok,er)=>navigator.geolocation.getCurrentPosition(ok,er,{enableHighAccuracy:true,timeout:8000}));lat=p.coords.latitude;lon=p.coords.longitude;}catch(_){}
+   let payload={boxes:+boxR39.value||0,photos:[...pics.files].map(f=>f.name),latitude:lat,longitude:lon};let r=await fetch('/api/bobinas/v8538/entregas/'+x.id+'/receber',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});let z=await r.json();if(!z.ok){alert(z.error||'Falha no recebimento.');return;}dashboard=null;alert('Recebimento registrado e programação atualizada.');modal.style.display='none';};
  };
+
+ document.getElementById('openOperatorsV8539').onclick=async()=>{open('Visão por Operadora');let j=await dash();if(!j.ok){body.textContent='Não foi possível carregar o dashboard.';return;}body.innerHTML=`<div style="overflow:auto"><table style="width:100%;border-collapse:collapse"><thead><tr><th>Operadora</th><th>Reserva</th><th>ATMs</th><th>% Bobina</th><th>Críticas</th><th>Atenção</th><th>Última atualização</th><th>Último técnico</th></tr></thead><tbody>${(j.operators||[]).map(x=>`<tr><td>${esc(x.company)}</td><td>${x.reserve||0}</td><td>${x.atms||0}/${x.official_atms||0}</td><td>${x.avg_pct==null?'—':x.avg_pct+'%'}</td><td>${x.critical||0}</td><td>${x.attention||0}</td><td>${esc(x.last_at||'—')}</td><td>${esc(x.last_tech||'—')}</td></tr>`).join('')}</tbody></table></div>`;};
+
+ document.getElementById('openStationsV8539').onclick=async()=>{open('Detalhe da Estação');let j=await dash();if(!j.ok){body.textContent='Não foi possível carregar o dashboard.';return;}let stations=j.stations||[];body.innerHTML=`<label>Estação<select id="stR39" style="width:100%;padding:8px"><option value="">Selecione...</option>${stations.map((x,i)=>`<option value="${i}">${esc(x.company)} · ${esc(x.line)} · ${esc(x.station)}</option>`).join('')}</select></label><div id="stDetailR39" style="margin-top:10px"></div>`;document.getElementById('stR39').onchange=function(){let x=stations[+this.value];if(!x){stDetailR39.innerHTML='';return;}let rows=(j.rows||[]).filter(r=>r.company===x.company&&r.line===x.line&&r.station===x.station);stDetailR39.innerHTML=`<h4>${esc(x.station)}</h4><div>Operadora: ${esc(x.company)} · Linha: ${esc(x.line)} · Reserva: ${x.reserve||0}</div><div style="overflow:auto;margin-top:8px"><table style="width:100%"><thead><tr><th>ID ATM</th><th>% Bobina</th><th>Situação</th><th>Última leitura</th><th>Último técnico</th><th>Reserva</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(r.atm_id)}</td><td>${r.percent_available}%</td><td>${r.situation||''}</td><td>${esc(r.created_at||'—')}</td><td>${esc(r.technician_name||'—')}</td><td>${r.reserve_qty||0}</td></tr>`).join('')}</tbody></table></div>`;};};
+
+ // draggable window
+ let dragging=false,dx=0,dy=0;const drag=document.getElementById('dragV8539');
+ drag.onmousedown=e=>{if(e.target.tagName==='BUTTON')return;let r=win.getBoundingClientRect();win.style.transform='none';win.style.left=r.left+'px';win.style.top=r.top+'px';dragging=true;dx=e.clientX-r.left;dy=e.clientY-r.top;};
+ document.onmousemove=e=>{if(!dragging)return;let maxX=innerWidth-win.offsetWidth,maxY=innerHeight-60;win.style.left=Math.max(0,Math.min(maxX,e.clientX-dx))+'px';win.style.top=Math.max(0,Math.min(maxY,e.clientY-dy))+'px';};
+ document.onmouseup=()=>dragging=false;
 })();
 </script>
 <h3>1. Selecione a ATM</h3><div class="bobGrid">
