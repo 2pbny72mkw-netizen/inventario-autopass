@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.40"
+APP_RELEASE = "V85.40 REV1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -24231,7 +24231,7 @@ def bobinas_v8539_visao():
             r.setdefault("last_tech",r.get("technician_name") or "—")
             r.setdefault("reserve_qty",r.get("reserve") or 0)
         for r in operators:r["severity"]=_v8539r2_severity(r.get("avg_pct"))
-        data["release"]="V85.39 REV3"
+        data["release"]="V85.40 REV1"
         hierarchy=[]
         seen_hierarchy=set()
         for r in stations:
@@ -24251,6 +24251,6 @@ def bobinas_v8539_visao():
         data["thresholds"]={"critical_max":10,"attention_max":30,"normal_min":31}
         return jsonify(data)
     except Exception as exc:
-        app.logger.exception("V85.40 bobinas visao")
-        return jsonify({"ok":False,"release":"V85.39 REV3","error":str(exc)}),500
+        app.logger.exception("V85.40 REV1 bobinas visao")
+        return jsonify({"ok":False,"release":"V85.40 REV1","error":str(exc)}),500
 # === /V85.39 REV2 ===
