@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.34"
+APP_RELEASE = "V85.35"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -15228,6 +15228,66 @@ def _v802_event_cycle_summary(ev, calc_statuses=None):
             "difference_tx_processed":None if processed is None else round(total-processed,2),"calc_statuses":statuses}
 
 
+def _v8535_refresh_financial_daily_summary():
+    """V85.35: resumo diário paralelo, não destrutivo, das transações ATM.
+    A base bruta permanece como fonte de verdade. O resumo só é marcado READY
+    após reconstrução completa e validação básica de quantidade/valor por status.
+    """
+    if db.engine.dialect.name != 'postgresql':
+        return False
+    with db.engine.begin() as conn:
+        conn.execute(text("""CREATE TABLE IF NOT EXISTS financial_atm_daily_summary (
+            terminal VARCHAR(40) NOT NULL,
+            tx_date DATE NOT NULL,
+            status VARCHAR(20) NOT NULL,
+            tx_count BIGINT NOT NULL DEFAULT 0,
+            amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+            refreshed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (terminal, tx_date, status)
+        )"""))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_fin_daily_summary_date_terminal ON financial_atm_daily_summary (tx_date, terminal)"))
+        conn.execute(text("""CREATE TABLE IF NOT EXISTS financial_atm_summary_meta (
+            id INTEGER PRIMARY KEY,
+            source_count BIGINT NOT NULL DEFAULT 0,
+            source_max_id BIGINT NOT NULL DEFAULT 0,
+            refreshed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            status VARCHAR(20) NOT NULL DEFAULT 'BUILDING'
+        )"""))
+        src=conn.execute(text("SELECT COUNT(*), COALESCE(MAX(id),0) FROM financial_atm_transactions")).first()
+        source_count=int(src[0] or 0); source_max_id=int(src[1] or 0)
+        meta=conn.execute(text("SELECT source_count,source_max_id,status FROM financial_atm_summary_meta WHERE id=1")).first()
+        if meta and int(meta[0] or 0)==source_count and int(meta[1] or 0)==source_max_id and str(meta[2])=='READY':
+            return True
+        conn.execute(text("""INSERT INTO financial_atm_summary_meta(id,source_count,source_max_id,refreshed_at,status)
+            VALUES(1,:cnt,:mx,CURRENT_TIMESTAMP,'BUILDING')
+            ON CONFLICT(id) DO UPDATE SET source_count=EXCLUDED.source_count,source_max_id=EXCLUDED.source_max_id,refreshed_at=CURRENT_TIMESTAMP,status='BUILDING'"""),{'cnt':source_count,'mx':source_max_id})
+        conn.execute(text("TRUNCATE TABLE financial_atm_daily_summary"))
+        conn.execute(text("""INSERT INTO financial_atm_daily_summary(terminal,tx_date,status,tx_count,amount,refreshed_at)
+            SELECT terminal, transaction_at::date, COALESCE(status,''), COUNT(*),
+                   COALESCE(SUM(COALESCE(received_value,value)),0), CURRENT_TIMESTAMP
+            FROM financial_atm_transactions
+            GROUP BY terminal, transaction_at::date, COALESCE(status,'')"""))
+        # Validação conservadora: o resumo deve reproduzir exatamente a contagem bruta.
+        agg_count=conn.execute(text("SELECT COALESCE(SUM(tx_count),0) FROM financial_atm_daily_summary")).scalar() or 0
+        if int(agg_count) != source_count:
+            conn.execute(text("UPDATE financial_atm_summary_meta SET status='INVALID',refreshed_at=CURRENT_TIMESTAMP WHERE id=1"))
+            return False
+        conn.execute(text("UPDATE financial_atm_summary_meta SET status='READY',refreshed_at=CURRENT_TIMESTAMP WHERE id=1"))
+    return True
+
+def _v8535_financial_summary_ready():
+    try:
+        if db.engine.dialect.name != 'postgresql': return False
+        row=db.session.execute(text("""SELECT m.status,m.source_count,m.source_max_id,
+            (SELECT COUNT(*) FROM financial_atm_transactions),
+            (SELECT COALESCE(MAX(id),0) FROM financial_atm_transactions)
+            FROM financial_atm_summary_meta m WHERE m.id=1""")).first()
+        return bool(row and row[0]=='READY' and int(row[1] or 0)==int(row[3] or 0) and int(row[2] or 0)==int(row[4] or 0))
+    except Exception:
+        try: db.session.rollback()
+        except Exception: pass
+        return False
+
 def _v809_prefetch_cycle_data(terminals,start,end,calc_statuses):
     """V80 REV9: pré-carrega fechamentos e agregados do R0050 em lote.
     Evita consultas N+1 por ATM/ocorrência no Monitoramento.
@@ -15324,15 +15384,30 @@ def _v792_cash_payload(start,end,calc_statuses=None):
             _status_params=[]
             for _idx,_st in enumerate(_statuses_for_intervals):
                 _params[f's{_idx}']=_st;_status_params.append(f':s{_idx}')
-            # V85.33 PERFORMANCE: LATERAL força uma busca indexada por intervalo/ATM,
-            # evitando o plano de join que podia varrer grande parte de financial_atm_transactions.
-            _sql=("SELECT i.terminal,i.start_at,i.end_at, COALESCE(a.n,0) AS n, COALESCE(a.amount,0) AS amount "
-                  "FROM (VALUES " + ','.join(_values) + ") AS i(terminal,start_at,end_at) "
-                  "LEFT JOIN LATERAL (SELECT COUNT(t.id) AS n, "
-                  "COALESCE(SUM(COALESCE(t.received_value,t.value)),0) AS amount "
-                  "FROM financial_atm_transactions t WHERE t.terminal=i.terminal "
-                  "AND t.transaction_at>i.start_at AND t.transaction_at<=i.end_at "
-                  "AND t.status IN (" + ','.join(_status_params) + ")) a ON TRUE")
+            # V85.35 PERFORMANCE: usa o resumo diário apenas para dias completos entre
+            # os fechamentos. As duas bordas horárias continuam vindo da base bruta,
+            # preservando exatamente a regra > início e <= fim. Se o resumo estiver
+            # ausente/desatualizado, mantém automaticamente a consulta V85.34.
+            if _v8535_financial_summary_ready():
+                _sql=("SELECT i.terminal,i.start_at,i.end_at, "
+                      "COALESCE(b.n,0)+COALESCE(d.n,0) AS n, COALESCE(b.amount,0)+COALESCE(d.amount,0) AS amount "
+                      "FROM (VALUES " + ','.join(_values) + ") AS i(terminal,start_at,end_at) "
+                      "LEFT JOIN LATERAL (SELECT COUNT(t.id) AS n, COALESCE(SUM(COALESCE(t.received_value,t.value)),0) AS amount "
+                      "FROM financial_atm_transactions t WHERE t.terminal=i.terminal "
+                      "AND t.transaction_at>i.start_at AND t.transaction_at<=i.end_at "
+                      "AND (t.transaction_at::date=i.start_at::date OR t.transaction_at::date=i.end_at::date) "
+                      "AND t.status IN (" + ','.join(_status_params) + ")) b ON TRUE "
+                      "LEFT JOIN LATERAL (SELECT COALESCE(SUM(s.tx_count),0) AS n, COALESCE(SUM(s.amount),0) AS amount "
+                      "FROM financial_atm_daily_summary s WHERE s.terminal=i.terminal "
+                      "AND s.tx_date>i.start_at::date AND s.tx_date<i.end_at::date "
+                      "AND s.status IN (" + ','.join(_status_params) + ")) d ON TRUE")
+            else:
+                _sql=("SELECT i.terminal,i.start_at,i.end_at, COALESCE(a.n,0) AS n, COALESCE(a.amount,0) AS amount "
+                      "FROM (VALUES " + ','.join(_values) + ") AS i(terminal,start_at,end_at) "
+                      "LEFT JOIN LATERAL (SELECT COUNT(t.id) AS n, COALESCE(SUM(COALESCE(t.received_value,t.value)),0) AS amount "
+                      "FROM financial_atm_transactions t WHERE t.terminal=i.terminal "
+                      "AND t.transaction_at>i.start_at AND t.transaction_at<=i.end_at "
+                      "AND t.status IN (" + ','.join(_status_params) + ")) a ON TRUE")
             for _term,_a,_b,_n,_amount in db.session.execute(text(_sql),_params):
                 _interval_totals[(_term,_a,_b)]=(int(_n or 0),round(float(_amount or 0),2))
     def _fast_interval_agg(_terminal,_start_at,_end_at):
@@ -20448,6 +20523,22 @@ except Exception:
     pass
 
 with app.app_context():
+    # V85.35 — pré-agregação financeira paralela e retenção da telemetria.
+    # Falhas nunca bloqueiam o startup; Coletas mantém fallback para a base bruta.
+    try:
+        _v8535_refresh_financial_daily_summary()
+    except Exception:
+        try: db.session.rollback()
+        except Exception: pass
+        app.logger.exception("V85.35: falha ao preparar resumo financeiro; fallback bruto mantido")
+    try:
+        cutoff=datetime.utcnow()-timedelta(days=7)
+        with db.engine.begin() as conn:
+            conn.execute(text("DELETE FROM performance_metrics WHERE created_at < :cutoff"),{'cutoff':cutoff})
+    except Exception:
+        try: db.session.rollback()
+        except Exception: pass
+
     # V56-B REV: migração aditiva da telemetria detalhada.
     try:
         insp=db.inspect(db.engine)
