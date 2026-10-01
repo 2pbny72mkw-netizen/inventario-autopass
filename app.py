@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.39"
+APP_RELEASE = "V85.39 REV1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -24097,7 +24097,7 @@ def bobinas_v8538_minhas_entregas():
                 "caixas":int(e.boxes_qty or 0),"avulsas":int(getattr(d,"loose_qty",0) or 0),
                 "status":getattr(f,"status",None) or "PENDENTE",
                 "atribuida":bool(f and f.technician_user_id)})
-        return jsonify({"ok":True,"release":"V85.39","rows":payload})
+        return jsonify({"ok":True,"release":"V85.39 REV1","rows":payload})
     except Exception as exc:
         db.session.rollback()
         current_app.logger.exception("V85.38 REV3 minhas entregas")
@@ -24197,3 +24197,79 @@ def bobinas_v8538_receber(delivery_id):
     db.session.commit()
     return jsonify({"ok":True,"status":"RECEBIDO","delivery_id":delivery_id,"boxes":boxes,"photos":len(photos)})
 # === /V85.38 REV4 ===
+
+
+# === V85.39 REV1 — Bobinas API comum Web/Android ===
+def _v8539r1_level(pct):
+    if pct is None: return "unknown"
+    try: pct=float(pct)
+    except Exception: return "unknown"
+    if pct <= 20: return "critical"
+    if pct <= 70: return "attention"
+    return "normal"
+
+@app.get("/api/bobinas/v8539/visao")
+@login_required
+def bobinas_v8539_visao():
+    # Contrato leve para Web/Android. A fonte oficial continua sendo a mesma
+    # utilizada pelo dashboard; não cria cálculo/base paralela.
+    company=(request.args.get("company") or "").strip()
+    line=(request.args.get("line") or "").strip()
+    station=(request.args.get("station") or "").strip()
+    situation=(request.args.get("situation") or "").strip().lower()
+    try:
+        readings=_bobbin_latest_readings_map()
+        official_assets=_bobbin_official_assets()
+        reserve_map=_bobbin_reserve_map()
+        reserve_company_map=_bobbin_reserve_company_map()
+        operators=[]; stations=[]; rows=[]
+        company_bucket={}
+        station_bucket={}
+        for asset in official_assets:
+            c=(asset.company or "SEM OPERADORA").strip()
+            l=(asset.line or "SEM LINHA").strip()
+            st=(asset.location or "SEM ESTAÇÃO").strip()
+            if company and c!=company: continue
+            if line and l!=line: continue
+            if station and st!=station: continue
+            aid=str(asset.asset_id or "").strip()
+            rd=readings.get(aid) or {}
+            pct=rd.get("percent_available")
+            level=_v8539r1_level(pct)
+            if situation and situation not in (level, str(rd.get("situation") or "").lower()): continue
+            reserve=int(reserve_map.get(aid,0) or 0)
+            row={"atm_id":aid,"company":c,"line":l,"station":st,
+                 "percent_available":pct,"severity":level,
+                 "situation":rd.get("situation") or ("Normal" if level=="normal" else "Atenção" if level=="attention" else "Crítica" if level=="critical" else "Sem leitura"),
+                 "last_at":rd.get("created_at"),"last_tech":rd.get("technician_name") or "—",
+                 "reserve_qty":reserve}
+            rows.append(row)
+            cb=company_bucket.setdefault(c,{"company":c,"official_atms":0,"read":0,"pcts":[],"critical":0,"attention":0,"last_at":None,"last_tech":"—"})
+            cb["official_atms"]+=1
+            if pct is not None:
+                cb["read"]+=1; cb["pcts"].append(float(pct))
+                if level=="critical": cb["critical"]+=1
+                elif level=="attention": cb["attention"]+=1
+            if rd.get("created_at") and (not cb["last_at"] or str(rd["created_at"])>str(cb["last_at"])):
+                cb["last_at"]=rd["created_at"]; cb["last_tech"]=rd.get("technician_name") or "—"
+            sk=(c,l,st)
+            sb=station_bucket.setdefault(sk,{"company":c,"line":l,"station":st,"reserve":0,"atms":0})
+            sb["atms"]+=1; sb["reserve"]+=reserve
+        for c,b in sorted(company_bucket.items()):
+            avg=round(sum(b["pcts"])/len(b["pcts"])) if b["pcts"] else None
+            operators.append({"company":c,"reserve":int(reserve_company_map.get(c,0) or 0),
+                "atms":b["read"],"official_atms":b["official_atms"],"avg_pct":avg,
+                "severity":_v8539r1_level(avg),"critical":b["critical"],"attention":b["attention"],
+                "last_at":b["last_at"],"last_tech":b["last_tech"]})
+        stations=list(station_bucket.values())
+        filters={"companies":sorted({x["company"] for x in rows}),
+                 "lines":sorted({x["line"] for x in rows}),
+                 "stations":sorted({x["station"] for x in rows}),
+                 "situations":["critical","attention","normal"]}
+        return jsonify({"ok":True,"release":"V85.39 REV1","filters":filters,
+                        "operators":operators,"stations":stations,"rows":rows,
+                        "thresholds":{"critical_max":20,"attention_max":70,"normal_min":71}})
+    except Exception as exc:
+        current_app.logger.exception("V85.39 REV1 bobinas visao")
+        return jsonify({"ok":False,"error":str(exc)}),500
+# === /V85.39 REV1 ===
