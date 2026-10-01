@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.38 REV3"
+APP_RELEASE = "V85.38 REV4"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -24097,7 +24097,7 @@ def bobinas_v8538_minhas_entregas():
                 "caixas":int(e.boxes_qty or 0),"avulsas":int(getattr(d,"loose_qty",0) or 0),
                 "status":getattr(f,"status",None) or "PENDENTE",
                 "atribuida":bool(f and f.technician_user_id)})
-        return jsonify({"ok":True,"release":"V85.38 REV3","rows":payload})
+        return jsonify({"ok":True,"release":"V85.38 REV4","rows":payload})
     except Exception as exc:
         db.session.rollback()
         current_app.logger.exception("V85.38 REV3 minhas entregas")
@@ -24155,3 +24155,45 @@ def bobinas_v8538_concluir(delivery_id):
       "entregue":{"boxes":boxes,"loose":loose,"total_bobbins":boxes*6+loose},
       "divergente":boxes!=programmed_boxes or loose!=programmed_loose})
 # === /V85.38 REV3 ===
+
+
+# === V85.38 REV4 — Receber Bobinas, uma programação por vez ===
+@app.post("/api/bobinas/v8538/entregas/<int:delivery_id>/receber")
+@login_required
+def bobinas_v8538_receber(delivery_id):
+    data=request.get_json(silent=True) or {}
+    photos=data.get("photos") or []
+    if isinstance(photos,str): photos=[photos]
+    photos=[str(x).strip()[:700] for x in photos if str(x).strip()]
+    if not photos:
+        return jsonify({"ok":False,"error":"Inclua ao menos uma foto."}),400
+    try:
+        boxes=max(0,int(data.get("boxes") or 0))
+    except Exception:
+        return jsonify({"ok":False,"error":"Quantidade de caixas inválida."}),400
+    _v8538r3_ensure_schema()
+    delivery=db.session.get(BobbinDeliverySchedule,delivery_id)
+    if not delivery:
+        return jsonify({"ok":False,"error":"Programação não encontrada."}),404
+    row=BobbinFieldDelivery.query.filter_by(delivery_id=delivery_id).first()
+    if not row:
+        row=BobbinFieldDelivery(delivery_id=delivery_id); db.session.add(row)
+    row.technician_user_id=session.get("user_id")
+    row.status="RECEBIDO"
+    row.delivered_boxes=boxes
+    row.delivered_loose=0
+    row.photo_ref=json.dumps(photos,ensure_ascii=False)
+    row.latitude=data.get("latitude")
+    row.longitude=data.get("longitude")
+    row.delivered_at=datetime.utcnow()
+    row.updated_at=datetime.utcnow()
+    delivery.status="ENTREGUE"
+    delivery.updated_at=datetime.utcnow()
+    db.session.add(AuditEvent(
+      user_id=session.get("user_id"),event_type="BOBINAS_RECEBIDAS",
+      entity_type="bobbin_delivery_schedule",entity_id=str(delivery_id),
+      detail=json.dumps({"localidade":delivery.location,"boxes":boxes,"photos":photos,
+        "latitude":row.latitude,"longitude":row.longitude},ensure_ascii=False)))
+    db.session.commit()
+    return jsonify({"ok":True,"status":"RECEBIDO","delivery_id":delivery_id,"boxes":boxes,"photos":len(photos)})
+# === /V85.38 REV4 ===
