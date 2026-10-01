@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.40 REV1"
+APP_RELEASE = "V85.40 REV2"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -24094,7 +24094,7 @@ def bobinas_v8538_minhas_entregas():
         rows=(db.session.query(BobbinDeliverySchedule, BobbinDeliveryDetail, BobbinFieldDelivery)
               .outerjoin(BobbinDeliveryDetail, BobbinDeliveryDetail.delivery_id==BobbinDeliverySchedule.id)
               .outerjoin(BobbinFieldDelivery, BobbinFieldDelivery.delivery_id==BobbinDeliverySchedule.id)
-              .filter(BobbinDeliverySchedule.status!="ENTREGUE")
+              .filter(BobbinDeliverySchedule.status.notin_(["ENTREGUE","RECEBIDO"]))
               .filter(db.or_(BobbinFieldDelivery.technician_user_id==uid, BobbinFieldDelivery.technician_user_id.is_(None)))
               .order_by(BobbinDeliverySchedule.delivery_date.asc(), BobbinDeliverySchedule.id.asc())
               .limit(100).all())
@@ -24184,7 +24184,10 @@ def bobinas_v8538_receber(delivery_id):
     delivery=db.session.get(BobbinDeliverySchedule,delivery_id)
     if not delivery:
         return jsonify({"ok":False,"error":"Programação não encontrada."}),404
+    # REV2: recebimento é idempotente. Uma programação recebida não pode creditar estoque novamente.
     row=BobbinFieldDelivery.query.filter_by(delivery_id=delivery_id).first()
+    if delivery.status == "RECEBIDO" or (row and row.status == "RECEBIDO"):
+        return jsonify({"ok":False,"error":"Esta programação já foi recebida e creditada no estoque."}),409
     if not row:
         row=BobbinFieldDelivery(delivery_id=delivery_id); db.session.add(row)
     row.technician_user_id=session.get("user_id")
@@ -24198,13 +24201,32 @@ def bobinas_v8538_receber(delivery_id):
     row.updated_at=datetime.utcnow()
     delivery.status="RECEBIDO"
     delivery.updated_at=datetime.utcnow()
+
+    # REV2: PROGRAMADO não compõe estoque. O crédito ocorre somente no recebimento confirmado.
+    box_size=max(1,int(app.config.get("BOBBIN_ROLLS_PER_BOX",6)))
+    received_bobbins=boxes*box_size
+    stock_item=_v771_stock_item("Bobina ATM","UN")
+    stock_point=_v771_stock_point(delivery.location,"CD",station=delivery.location)
+    stock_balance=_v771_balance(stock_point,stock_item)
+    stock_before=float(stock_balance.qty_good or 0)
+    stock_balance.qty_good=stock_before+received_bobbins
+    stock_balance.updated_by=session.get("user_id")
+    stock_balance.updated_at=datetime.utcnow()
+    db.session.add(FieldStockMovement(
+      item_id=stock_item.id,movement_type="ENTREGA",qty=received_bobbins,
+      destination_point_id=stock_point.id,technician_id=session.get("user_id"),
+      destination_station=delivery.location,
+      justification=f"Recebimento programação Bobinas #{delivery_id}: {boxes} caixa(s) x {box_size}",
+      photo_key=json.dumps(photos,ensure_ascii=False),status="CONCLUIDO"))
     db.session.add(AuditEvent(
       user_id=session.get("user_id"),event_type="BOBINAS_RECEBIDAS",
       entity_type="bobbin_delivery_schedule",entity_id=str(delivery_id),
       detail=json.dumps({"localidade":delivery.location,"boxes":boxes,"photos":photos,
         "latitude":row.latitude,"longitude":row.longitude},ensure_ascii=False)))
     db.session.commit()
-    return jsonify({"ok":True,"status":"RECEBIDO","delivery_id":delivery_id,"boxes":boxes,"photos":len(photos)})
+    return jsonify({"ok":True,"status":"RECEBIDO","delivery_id":delivery_id,"boxes":boxes,"photos":len(photos),
+      "box_size":box_size,"credited_bobbins":received_bobbins,"stock_before":int(stock_before),
+      "stock_after":int(stock_balance.qty_good or 0),"stock_location":delivery.location})
 # === /V85.38 REV4 ===
 
 
@@ -24227,11 +24249,13 @@ def bobinas_v8539_visao():
         rows=data.get("rows") or []; operators=data.get("operators") or []; stations=data.get("stations") or []
         for r in rows:
             r["severity"]=_v8539r2_severity(r.get("percent_available"))
-            r.setdefault("last_at",r.get("created_at"))
-            r.setdefault("last_tech",r.get("technician_name") or "—")
-            r.setdefault("reserve_qty",r.get("reserve") or 0)
+            r["last_at"]=r.get("created_at")
+            r["last_tech"]=r.get("technician") or "—"
+            r["reserve_qty"]=int(r.get("reserve_after") or 0)
+            pct=r.get("percent_available")
+            r["situation"]="Crítica" if pct is not None and float(pct)<=10 else ("Atenção" if pct is not None and float(pct)<=30 else ("Normal" if pct is not None else "—"))
         for r in operators:r["severity"]=_v8539r2_severity(r.get("avg_pct"))
-        data["release"]="V85.40 REV1"
+        data["release"]="V85.40 REV2"
         hierarchy=[]
         seen_hierarchy=set()
         for r in stations:
@@ -24251,6 +24275,6 @@ def bobinas_v8539_visao():
         data["thresholds"]={"critical_max":10,"attention_max":30,"normal_min":31}
         return jsonify(data)
     except Exception as exc:
-        app.logger.exception("V85.40 REV1 bobinas visao")
-        return jsonify({"ok":False,"release":"V85.40 REV1","error":str(exc)}),500
+        app.logger.exception("V85.40 REV2 bobinas visao")
+        return jsonify({"ok":False,"release":"V85.40 REV2","error":str(exc)}),500
 # === /V85.39 REV2 ===
