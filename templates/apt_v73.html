@@ -37,8 +37,28 @@ main {
   padding-left: 0 !important;
   padding-right: 0 !important;
 }
+
+/* V85.37 — APT viewport full-width, independent of inherited centered wrapper */
+body:has(#aptV85FullWidth) main,
+body:has(#aptV85FullWidth) .container,
+body:has(#aptV85FullWidth) .container-fluid,
+body:has(#aptV85FullWidth) .content,
+body:has(#aptV85FullWidth) .content-wrapper,
+body:has(#aptV85FullWidth) .main-content {
+  width: calc(100vw - 24px) !important;
+  max-width: calc(100vw - 24px) !important;
+  margin-left: calc(50% - 50vw + 12px) !important;
+  margin-right: 12px !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+}
+#aptV85FullWidth {
+  width: calc(100vw - 24px) !important;
+  max-width: calc(100vw - 24px) !important;
+}
 </style>
-<div class="pageHead"><div><small>{{app_release}} · RH</small><h1>APT · Controle e Validades</h1><p>APT, NR10, NR35, ASO, integrações, documentos e vínculo com o cadastro de usuários.</p></div><div class="heroActions"><button class="btn primary" id="aptNew">Incluir colaborador / APT</button><label class="btn">Importar CSV/Excel<input id="aptFile" type="file" accept=".csv,.xlsx,.xlsm" hidden></label><button class="btn" id="aptExport">Exportar Excel</button></div></div>
+<div class="pageHead"><div><small>{{app_release}} · RH</small><div id="aptV85FullWidth">
+<h1>APT · Controle e Validades</h1><p>APT, NR10, NR35, ASO, integrações, documentos e vínculo com o cadastro de usuários.</p></div><div class="heroActions"><button class="btn primary" id="aptNew">Incluir colaborador / APT</button><label class="btn">Importar CSV/Excel<input id="aptFile" type="file" accept=".csv,.xlsx,.xlsm" hidden></label><button class="btn" id="aptExport">Exportar Excel</button></div></div>
 <div class="v73kpis aptKpis"><button data-validity=""><b>{{total}}</b><span>Total exibido</span></button><button data-validity="VENCIDA"><b>{{summary['VENCIDA']}}</b><span>APT vencidas</span></button><button data-validity="ATÉ 15 DIAS"><b>{{summary['ATÉ 15 DIAS']}}</b><span>APT até 15 dias</span></button><button data-validity="ATÉ 30 DIAS"><b>{{summary['ATÉ 30 DIAS']}}</b><span>APT 16–30 dias</span></button><button data-validity="REGULAR"><b>{{summary['REGULAR']}}</b><span>APT regulares</span></button></div>
 <section class="card aptWide" id="aptCard"><form id="aptFilters" class="v73toolbar aptFilters" method="get">
 <input name="q" value="{{filters.q}}" placeholder="Colaborador, APT, empresa ou linha"><select name="company"><option value="">Todas empresas</option>{% for x in companies %}<option value="{{x}}" {{'selected' if filters.company==x else ''}}>{{x}}</option>{% endfor %}</select><select name="line"><option value="">Todas linhas</option>{% for x in lines %}<option value="{{x}}" {{'selected' if filters.line==x else ''}}>{{x}}</option>{% endfor %}</select>
@@ -84,61 +104,7 @@ function aptSyncScroll(){if(!aptWrap||!aptTopScroll||!aptTopScrollInner||!aptTab
 </script>{% endblock %}
 
 
-<script>
-(function(){
-  function normalize(v){ return (v||'').replace(/\s+/g,' ').trim().toLowerCase(); }
-  function groupAptRows(){
-    const table = document.querySelector('table');
-    if(!table || !table.tBodies || !table.tBodies.length) return;
-    let lastKey = null;
-    [...table.tBodies[0].rows].forEach((tr)=>{
-      if(tr.cells.length < 3) return;
-      const c0=tr.cells[0], c1=tr.cells[1];
-      const key=normalize(c0.innerText)+'|'+normalize(c1.innerText);
-      if(key && key===lastKey){
-        c0.innerHTML='';
-        c1.innerHTML='';
-        c0.setAttribute('aria-label','Mesmo colaborador da linha anterior');
-        c1.setAttribute('aria-label','Mesma empresa da linha anterior');
-      } else {
-        lastKey=key;
-      }
-    });
-  }
-  function prefillPtFromRow(btn){
-    const tr=btn && btn.closest('tr');
-    if(!tr || tr.cells.length<2) return;
-    const collaborator=(tr.cells[0].innerText||'').split('\n')[0].trim();
-    const company=(tr.cells[1].innerText||'').trim();
-    setTimeout(()=>{
-      const modal=[...document.querySelectorAll('[role="dialog"], .modal, dialog')].find(x=>x.offsetParent!==null);
-      if(!modal) return;
-      const inputs=[...modal.querySelectorAll('input')];
-      const coll=inputs.find(x=>/colaborador/i.test(x.labels?.[0]?.innerText||x.placeholder||''));
-      const comp=inputs.find(x=>/empresa/i.test(x.labels?.[0]?.innerText||x.placeholder||''));
-      if(coll && collaborator){ coll.value=collaborator; coll.readOnly=true; }
-      if(comp && company){ comp.value=company; comp.readOnly=true; }
-      [...modal.querySelectorAll('select')].forEach(sel=>{
-        const label=(sel.labels?.[0]?.innerText||sel.previousElementSibling?.innerText||'');
-        if(/colaborador/i.test(label) && collaborator){
-          const opt=[...sel.options].find(o=>normalize(o.textContent).includes(normalize(collaborator)));
-          if(opt){ sel.value=opt.value; sel.dispatchEvent(new Event('change',{bubbles:true})); sel.disabled=true; }
-        }
-        if(/empresa/i.test(label) && company){
-          const opt=[...sel.options].find(o=>normalize(o.textContent).includes(normalize(company)));
-          if(opt){ sel.value=opt.value; sel.dispatchEvent(new Event('change',{bubbles:true})); sel.disabled=true; }
-        }
-      });
-    },80);
-  }
-  document.addEventListener('click',e=>{
-    const b=e.target.closest('button,a');
-    if(b && /\+?\s*incluir\s+pt/i.test(b.innerText||'')) prefillPtFromRow(b);
-  },true);
-  document.addEventListener('DOMContentLoaded',groupAptRows);
-  setTimeout(groupAptRows,300);
-})();
-</script>
+
 
 
 <script>
@@ -182,5 +148,71 @@ function aptSyncScroll(){if(!aptWrap||!aptTopScroll||!aptTopScrollInner||!aptTab
       }
     }
   },true);
+})();
+</script>
+
+</div>
+<script>
+/* V85.37 — um colaborador, várias APTs; sem quebrar a grade */
+(function(){
+ const norm=v=>(v||'').replace(/\s+/g,' ').trim().toLowerCase();
+ function groupRows(){
+   const tables=[...document.querySelectorAll('#aptV85FullWidth table')];
+   tables.forEach(table=>{
+     if(!table.tBodies.length) return;
+     let lastKey='';
+     [...table.tBodies[0].rows].forEach(tr=>{
+       if(tr.cells.length<3) return;
+       const nameCell=tr.cells[0], companyCell=tr.cells[1];
+       const name=(nameCell.querySelector('strong,b')?.innerText || nameCell.innerText.split('\n')[0] || '').trim();
+       const company=(companyCell.innerText||'').trim();
+       const userText=(nameCell.innerText||'').match(/usu[aá]rio\s*#?\s*(\d+)/i);
+       const key=userText ? 'u:'+userText[1] : 'n:'+norm(name)+'|'+norm(company);
+       if(key && key===lastKey){
+          nameCell.innerHTML='';
+          companyCell.innerHTML='';
+          nameCell.classList.add('apt-same-user');
+          companyCell.classList.add('apt-same-user');
+       } else {
+          lastKey=key;
+       }
+     });
+   });
+ }
+ document.addEventListener('DOMContentLoaded',groupRows);
+ window.addEventListener('load',groupRows);
+ setTimeout(groupRows,250);
+})();
+</script>
+
+<script>
+/* V85.37 — Fechar modal PT */
+(function(){
+ function isPT(m){return m && /incluir\s+(nova\s+)?pt/i.test(m.innerText||'');}
+ function closePT(m){
+   if(!m) return;
+   const x=m.querySelector('[data-bs-dismiss="modal"],[data-dismiss="modal"],button.btn-close');
+   if(x){ x.dispatchEvent(new MouseEvent('click',{bubbles:true})); return; }
+   if(m.tagName==='DIALOG' && m.open){m.close();return;}
+   try{
+     if(window.bootstrap?.Modal){bootstrap.Modal.getOrCreateInstance(m).hide();return;}
+   }catch(e){}
+   // same user-visible path already known to work: Escape
+   document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',code:'Escape',keyCode:27,which:27,bubbles:true}));
+   setTimeout(()=>{
+     if(m.offsetParent!==null){
+       m.style.display='none'; m.classList.remove('show'); m.setAttribute('aria-hidden','true');
+       document.querySelectorAll('.modal-backdrop').forEach(b=>b.remove());
+       document.body.classList.remove('modal-open');
+       document.body.style.overflow='';
+     }
+   },30);
+ }
+ document.addEventListener('click',e=>{
+   const b=e.target.closest('button,a');
+   if(!b || !/^fechar$/i.test((b.innerText||'').trim())) return;
+   const m=b.closest('dialog,[role="dialog"],.modal') || [...document.querySelectorAll('dialog,[role="dialog"],.modal')].find(x=>x.offsetParent!==null && isPT(x));
+   if(isPT(m)){e.preventDefault();e.stopImmediatePropagation();closePT(m);}
+ },true);
 })();
 </script>
