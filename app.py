@@ -23992,3 +23992,58 @@ def implantation_qr_config():
         except Exception:
             app.logger.exception('qr_rail_generation_failed'); error='Falha ao gerar QR Code. Consulte o diagnóstico do servidor.'
     return render_template('implantation_qr_config_v8525.html',configs=configs,selected=selected,values=values,qr_png=qr_png,qr_text=qr_text,error=error,turn_models=QR_RAIL_TURN_MODELS,app_release=APP_RELEASE)
+
+# === V85.38 BOBINAS FIELD TRACKING ===
+def _v8538_bobbin_schema(conn):
+    cur=conn.cursor()
+    cur.execute("""CREATE TABLE IF NOT EXISTS atm_bobbin_field_deliveries (
+      id SERIAL PRIMARY KEY, delivery_id INTEGER NOT NULL UNIQUE,
+      technician_user_id INTEGER, status VARCHAR(30) NOT NULL DEFAULT 'PENDENTE',
+      delivered_boxes INTEGER, delivered_loose INTEGER, photo_ref TEXT,
+      latitude DOUBLE PRECISION, longitude DOUBLE PRECISION,
+      delivered_at TIMESTAMP, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)""")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_bobbin_field_status ON atm_bobbin_field_deliveries(status)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_bobbin_field_user ON atm_bobbin_field_deliveries(technician_user_id)")
+    conn.commit()
+
+@app.get("/api/bobinas/v8538/acompanhamento")
+@login_required
+def bobinas_v8538_acompanhamento():
+    conn=get_db_connection()
+    try:
+        _v8538_bobbin_schema(conn); cur=conn.cursor()
+        cur.execute("""SELECT COALESCE(e.operadora,''),COALESCE(e.localidade,''),COUNT(*),
+          SUM(CASE WHEN COALESCE(f.status,'PENDENTE')='ENTREGUE' THEN 1 ELSE 0 END)
+          FROM atm_bobbin_deliveries e LEFT JOIN atm_bobbin_field_deliveries f ON f.delivery_id=e.id
+          GROUP BY COALESCE(e.operadora,''),COALESCE(e.localidade,'') ORDER BY 1,2""")
+        return jsonify({"ok":True,"rows":[{"operadora":r[0],"localidade":r[1],"programadas":r[2],"entregues":r[3]} for r in cur.fetchall()]})
+    except Exception as exc:
+        current_app.logger.exception("V85.38 acompanhamento bobinas")
+        return jsonify({"ok":False,"error":str(exc)}),500
+    finally: conn.close()
+
+@app.post("/api/bobinas/v8538/entregas/<int:delivery_id>/entregue")
+@login_required
+def bobinas_v8538_entregue(delivery_id):
+    data=request.get_json(silent=True) or {}
+    if not data.get("photo_ref"): return jsonify({"ok":False,"error":"Foto obrigatória."}),400
+    conn=get_db_connection()
+    try:
+        _v8538_bobbin_schema(conn); cur=conn.cursor()
+        cur.execute("""INSERT INTO atm_bobbin_field_deliveries
+          (delivery_id,technician_user_id,status,delivered_boxes,delivered_loose,photo_ref,latitude,longitude,delivered_at,updated_at)
+          VALUES (%s,%s,'ENTREGUE',%s,%s,%s,%s,%s,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+          ON CONFLICT (delivery_id) DO UPDATE SET technician_user_id=EXCLUDED.technician_user_id,
+          status='ENTREGUE',delivered_boxes=EXCLUDED.delivered_boxes,delivered_loose=EXCLUDED.delivered_loose,
+          photo_ref=EXCLUDED.photo_ref,latitude=EXCLUDED.latitude,longitude=EXCLUDED.longitude,
+          delivered_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP""",
+          (delivery_id,getattr(current_user,"id",None),data.get("boxes"),data.get("loose"),
+           data.get("photo_ref"),data.get("latitude"),data.get("longitude")))
+        conn.commit()
+        return jsonify({"ok":True,"delivery_id":delivery_id,"status":"ENTREGUE"})
+    except Exception as exc:
+        conn.rollback(); current_app.logger.exception("V85.38 entrega bobinas")
+        return jsonify({"ok":False,"error":str(exc)}),500
+    finally: conn.close()
+# === /V85.38 BOBINAS FIELD TRACKING ===
