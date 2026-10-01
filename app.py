@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.30"
+APP_RELEASE = "V85.31"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -15584,7 +15584,9 @@ def financial_cash_v79_api():
 def financial_cash_v80_transactions_status():
     if not (_finance_collection_monitor_access() or _has_access('finance.apuracao')):
         return jsonify({"ok":False,"error":"Sem permissão."}),403
-    _stats=db.session.query(func.count(FinancialATMTransaction.id),func.max(FinancialATMTransaction.imported_at),func.max(FinancialATMTransaction.transaction_at)).first()
+    # V85.31 PERFORMANCE: a tabela é append-only e source_hash é único. COUNT(*) em ~850k
+    # linhas fazia varredura cara; MAX(id) usa o índice da PK e mantém o indicador operacional.
+    _stats=db.session.query(func.max(FinancialATMTransaction.id),func.max(FinancialATMTransaction.imported_at),func.max(FinancialATMTransaction.transaction_at)).first()
     total=int((_stats or (0,None,None))[0] or 0); latest_import_at=(_stats or (0,None,None))[1]; latest_tx_at=(_stats or (0,None,None))[2]
     latest_file=""; imported_by_name=""
     if latest_import_at:
@@ -15612,7 +15614,18 @@ def financial_cash_v80_staff_planning():
         start=date.fromisoformat((request.args.get('start') or '').strip()); end=date.fromisoformat((request.args.get('end') or '').strip())
     except Exception: return jsonify({"ok":False,"error":"Informe data inicial e final."}),400
     if end<start or (end-start).days>120: return jsonify({"ok":False,"error":"Planejamento limitado a 120 dias."}),400
-    payload=_v792_cash_payload(start,end); days={}
+    # V85.31 PERFORMANCE: compartilha o cache curto do Monitoramento. Abrir Planejamento
+    # após Coletas não recalcula a mesma massa de ~850k transações.
+    cache_key=(start.isoformat(),end.isoformat(),tuple(["A","V"])); now=time.time(); cached=_FIN_CASH_PAYLOAD_CACHE.get(cache_key)
+    if cached and now-cached[0] < _FIN_CASH_PAYLOAD_CACHE_TTL:
+        payload=copy.deepcopy(cached[1])
+    else:
+        payload=_v792_cash_payload(start,end,["A","V"])
+        try:
+            _FIN_CASH_PAYLOAD_CACHE.clear(); _FIN_CASH_PAYLOAD_CACHE[cache_key]=(now,copy.deepcopy(payload))
+        except Exception:
+            pass
+    days={}
     for atm in payload.get('rows') or []:
         if not atm.get('has_schedule'): continue
         for occ in (atm.get('planned') or []):
@@ -17882,6 +17895,9 @@ def v73_apt_page():
     if process:query=query.filter(func.upper(AptRecord.process_status)==process)
     if company: query=query.join(User, AptRecord.user_id==User.id).filter(User.active.is_(True), User.company==company)
     raw=query.order_by(AptRecord.valid_until,AptRecord.collaborator_name).all();data=[]
+    # V85.31 PERFORMANCE: elimina N+1 de User por APT.
+    _apt_user_ids={x.user_id for x in raw if x.user_id}
+    _apt_users_by_id={u.id:u for u in User.query.filter(User.id.in_(_apt_user_ids)).all()} if _apt_user_ids else {}
     for x in raw:
         if line and _v8529_apt_display_line(x.line) != _v8529_apt_display_line(line): continue
         vs,days=_apt_status(x);n10,n10d=_apt_date_status(x.nr10_valid_until);n35,n35d=_apt_date_status(x.nr35_valid_until);asost,asod=_apt_date_status(x.aso_valid_until);inst,insd=_apt_date_status(x.integration_valid_until)
@@ -17890,7 +17906,7 @@ def v73_apt_page():
         if nr35 and n35!=nr35:continue
         if aso and asost!=aso:continue
         if integration and inst!=integration:continue
-        u_master=db.session.get(User,x.user_id) if x.user_id else None; data.append({"row":x,"master_company":(u_master.company or "").strip() if u_master else (x.company or "").strip(),"validity_status":vs,"days":days,"nr10_status":n10,"nr35_status":n35,"aso_status":asost,"integration_status":inst,"missing_apt":False,"display_line":_v8529_apt_display_line(x.line)})
+        u_master=_apt_users_by_id.get(x.user_id) if x.user_id else None; data.append({"row":x,"master_company":(u_master.company or "").strip() if u_master else (x.company or "").strip(),"validity_status":vs,"days":days,"nr10_status":n10,"nr35_status":n35,"aso_status":asost,"integration_status":inst,"missing_apt":False,"display_line":_v8529_apt_display_line(x.line)})
 
     # V79.5 REV1 — a tela de APT passa a ser colaborador-cêntrica também.
     # Antes, a listagem nascia somente de AptRecord; por isso uma empresa podia
@@ -17900,6 +17916,8 @@ def v73_apt_page():
     show_missing=(active in ('active','all') and not line and not process and not nr10 and not nr35 and not aso and not integration and (not validity or validity=='SEM VALIDADE'))
     if show_missing:
         represented_user_ids={x["row"].user_id for x in data if getattr(x["row"],"user_id",None)}
+        # V85.31 PERFORMANCE: uma consulta em lote substitui AptRecord.first() por usuário.
+        _active_apt_user_ids={r[0] for r in db.session.query(AptRecord.user_id).filter(AptRecord.active.is_(True),AptRecord.user_id.isnot(None)).distinct().all()}
         uq=User.query.filter(User.active.is_(True), User.role!='customer')
         if company:uq=uq.filter(User.company==company)
         if q:
@@ -17908,7 +17926,7 @@ def v73_apt_page():
             if u.id in represented_user_ids:continue
             # Se existe qualquer APT ativa vinculada ao usuário fora do recorte
             # atual, não cria linha sintética duplicada.
-            if AptRecord.query.filter_by(user_id=u.id,active=True).first():continue
+            if u.id in _active_apt_user_ids:continue
             data.append({"row":u,"validity_status":"SEM VALIDADE","days":None,"nr10_status":"SEM DATA","nr35_status":"SEM DATA","aso_status":"SEM DATA","integration_status":"SEM DATA","missing_apt":True})
         data.sort(key=lambda z: normalize((z["row"].name if z.get("missing_apt") else z["row"].collaborator_name) or ''))
 
@@ -17937,7 +17955,7 @@ def v73_apt_page():
 
     summary={k:sum(1 for x in data if x["validity_status"]==k) for k in ("VENCIDA","ATÉ 15 DIAS","ATÉ 30 DIAS","ATÉ 40 DIAS","REGULAR","SEM VALIDADE")}
     # V85.28 REV1 — empresa/filtro vêm exclusivamente do Cadastro de Usuários (fonte mestre).
-    companies=sorted({u.company.strip() for u in User.query.filter(User.active.is_(True),User.company.isnot(None)).all() if (u.company or '').strip()},key=lambda x:normalize(x));lines=sorted({_v8529_apt_display_line(x.line) for x in AptRecord.query.filter(AptRecord.line.isnot(None)).all() if _v8529_apt_display_line(x.line)},key=lambda v:int(re.search(r'\d+',v).group()) if re.search(r'\d+',v) else 999)
+    companies=sorted({str(r[0]).strip() for r in db.session.query(User.company).filter(User.active.is_(True),User.company.isnot(None),User.company!='').distinct().all() if str(r[0] or '').strip()},key=lambda x:normalize(x));lines=sorted({_v8529_apt_display_line(r[0]) for r in db.session.query(AptRecord.line).filter(AptRecord.line.isnot(None),AptRecord.line!='').distinct().all() if _v8529_apt_display_line(r[0])},key=lambda v:int(re.search(r'\d+',v).group()) if re.search(r'\d+',v) else 999)
     users=User.query.filter(User.active.is_(True)).order_by(User.name).all()
     apt_users=[{"id":u.id,"name":u.name,"company":u.company or "","job_title":u.job_title or "","username":u.username} for u in users if u.role not in ('customer',)]
     apt_user_companies=sorted({x['company'] for x in apt_users if x['company']},key=lambda x:normalize(x))
