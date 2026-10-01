@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.35"
+APP_RELEASE = "V85.36"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -15390,13 +15390,18 @@ def _v792_cash_payload(start,end,calc_statuses=None):
             # ausente/desatualizado, mantém automaticamente a consulta V85.34.
             if _v8535_financial_summary_ready():
                 _sql=("SELECT i.terminal,i.start_at,i.end_at, "
-                      "COALESCE(b.n,0)+COALESCE(d.n,0) AS n, COALESCE(b.amount,0)+COALESCE(d.amount,0) AS amount "
+                      "COALESCE(b1.n,0)+COALESCE(b2.n,0)+COALESCE(d.n,0) AS n, COALESCE(b1.amount,0)+COALESCE(b2.amount,0)+COALESCE(d.amount,0) AS amount "
                       "FROM (VALUES " + ','.join(_values) + ") AS i(terminal,start_at,end_at) "
                       "LEFT JOIN LATERAL (SELECT COUNT(t.id) AS n, COALESCE(SUM(COALESCE(t.received_value,t.value)),0) AS amount "
                       "FROM financial_atm_transactions t WHERE t.terminal=i.terminal "
-                      "AND t.transaction_at>i.start_at AND t.transaction_at<=i.end_at "
-                      "AND (t.transaction_at::date=i.start_at::date OR t.transaction_at::date=i.end_at::date) "
-                      "AND t.status IN (" + ','.join(_status_params) + ")) b ON TRUE "
+                      "AND t.transaction_at>i.start_at "
+                      "AND t.transaction_at<LEAST(i.end_at + INTERVAL '1 microsecond', date_trunc('day',i.start_at)+INTERVAL '1 day') "
+                      "AND t.status IN (" + ','.join(_status_params) + ")) b1 ON TRUE "
+                      "LEFT JOIN LATERAL (SELECT COUNT(t.id) AS n, COALESCE(SUM(COALESCE(t.received_value,t.value)),0) AS amount "
+                      "FROM financial_atm_transactions t WHERE t.terminal=i.terminal "
+                      "AND i.end_at::date>i.start_at::date "
+                      "AND t.transaction_at>=date_trunc('day',i.end_at) AND t.transaction_at<=i.end_at "
+                      "AND t.status IN (" + ','.join(_status_params) + ")) b2 ON TRUE "
                       "LEFT JOIN LATERAL (SELECT COALESCE(SUM(s.tx_count),0) AS n, COALESCE(SUM(s.amount),0) AS amount "
                       "FROM financial_atm_daily_summary s WHERE s.terminal=i.terminal "
                       "AND s.tx_date>i.start_at::date AND s.tx_date<i.end_at::date "
@@ -22544,12 +22549,21 @@ def v85271_bobbin_deliveries_import_history():
 @login_required
 def v8527_bobbin_deliveries_bulk():
     if not _has_access('field.stock_manage'): abort(403)
-    d=request.get_json(silent=True) or {}; items=d.get('rows') or []; default_date=str(d.get('delivery_date') or '').strip(); notes=(d.get('notes') or '').strip(); batch_id=str(d.get('batch_id') or uuid.uuid4().hex[:16]).strip()
+    d=request.get_json(silent=True) or {}; items=d.get('rows') or []; default_date=str(d.get('delivery_date') or '').strip(); notes=(d.get('notes') or '').strip(); batch_id=str(d.get('batch_id') or uuid.uuid4().hex[:16]).strip(); replace_batch=bool(d.get('replace_batch'))
     try: default_unit_cost=max(0.0,float(str(d.get('unit_cost') or 0).replace(',','.')))
     except Exception: default_unit_cost=0.0
     if not isinstance(items,list): return jsonify({'ok':False,'error':'Lista de localidades inválida.'}),400
     created=[]
     try:
+        # V85.36: edição real de lote. Substitui o lote dentro da mesma transação,
+        # preservando o batch_id e evitando duplicação parcial.
+        if replace_batch and batch_id:
+            old_rows=[x for x in BobbinDeliverySchedule.query.all() if re.search(r'\[BATCH:'+re.escape(batch_id)+r'\]',x.notes or '')]
+            old_ids=[x.id for x in old_rows]
+            if old_ids:
+                BobbinDeliveryDetail.query.filter(BobbinDeliveryDetail.delivery_id.in_(old_ids)).delete(synchronize_session=False)
+                for x in old_rows: db.session.delete(x)
+                db.session.flush()
         for item in items:
             location=str(item.get('location') or '').strip(); boxes=max(0,int(item.get('boxes_qty') or 0)); loose=max(0,int(item.get('loose_qty') or 0))
             if not location or (boxes<=0 and loose<=0): continue
