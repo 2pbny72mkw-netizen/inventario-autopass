@@ -24047,3 +24047,30 @@ def bobinas_v8538_entregue(delivery_id):
         return jsonify({"ok":False,"error":str(exc)}),500
     finally: conn.close()
 # === /V85.38 BOBINAS FIELD TRACKING ===
+
+# === V85.38 REV1 — entregas programadas na Atividade Bobinas ===
+@app.get("/api/bobinas/v8538/minhas-entregas")
+@login_required
+def bobinas_v8538_minhas_entregas():
+    conn=get_db_connection()
+    try:
+        _v8538_bobbin_schema(conn); cur=conn.cursor()
+        uid=getattr(current_user,"id",None)
+        cur.execute("""
+          SELECT e.id, COALESCE(e.operadora,''), COALESCE(e.localidade,''),
+                 COALESCE(e.delivery_date::text,''), COALESCE(e.boxes,0), COALESCE(e.loose,0),
+                 COALESCE(f.status,'PENDENTE')
+            FROM atm_bobbin_deliveries e
+            LEFT JOIN atm_bobbin_field_deliveries f ON f.delivery_id=e.id
+           WHERE (f.technician_user_id=%s OR f.technician_user_id IS NULL)
+             AND COALESCE(f.status,'PENDENTE') <> 'ENTREGUE'
+           ORDER BY e.delivery_date NULLS LAST, e.id
+           LIMIT 100
+        """,(uid,))
+        return jsonify({"ok":True,"rows":[{"id":r[0],"operadora":r[1],"localidade":r[2],
+          "data":r[3],"caixas":r[4],"avulsas":r[5],"status":r[6]} for r in cur.fetchall()]})
+    except Exception as exc:
+        current_app.logger.exception("V85.38 REV1 minhas entregas")
+        return jsonify({"ok":False,"error":str(exc)}),500
+    finally: conn.close()
+# === /V85.38 REV1 ===
