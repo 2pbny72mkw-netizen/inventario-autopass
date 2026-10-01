@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.36"
+APP_RELEASE = "V85.38 REV3"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -24048,133 +24048,110 @@ def bobinas_v8538_entregue(delivery_id):
     finally: conn.close()
 # === /V85.38 BOBINAS FIELD TRACKING ===
 
-# === V85.38 REV2 — entregas programadas na Atividade Bobinas ===
+
+# === V85.38 REV3 — Bobinas integrado aos modelos reais SQLAlchemy ===
+class BobbinFieldDelivery(db.Model):
+    __tablename__ = "bobbin_field_deliveries"
+    id = db.Column(db.Integer, primary_key=True)
+    delivery_id = db.Column(db.Integer, db.ForeignKey("bobbin_delivery_schedules.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    technician_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
+    status = db.Column(db.String(30), nullable=False, default="PENDENTE", index=True)
+    delivered_boxes = db.Column(db.Integer)
+    delivered_loose = db.Column(db.Integer)
+    photo_ref = db.Column(db.String(700))
+    latitude = db.Column(db.Float)
+    longitude = db.Column(db.Float)
+    delivered_at = db.Column(db.DateTime)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+def _v8538r3_ensure_schema():
+    # Cria somente a tabela complementar da execução de campo; a programação oficial
+    # continua em bobbin_delivery_schedules / bobbin_delivery_details.
+    BobbinFieldDelivery.__table__.create(bind=db.engine, checkfirst=True)
+
+def _v8538r3_operator_station(location):
+    loc=(location or '').strip()
+    # A programação oficial hoje armazena Localidade/CD. Não inventar operadora:
+    # a estação/localidade é apresentada como detalhe e Operadora fica "NÃO INFORMADA"
+    # até existir vínculo oficial no cadastro.
+    return "NÃO INFORMADA", loc
+
 @app.get("/api/bobinas/v8538/minhas-entregas")
 @login_required
 def bobinas_v8538_minhas_entregas():
-    conn=get_db_connection()
     try:
-        _v8538_bobbin_schema(conn); cur=conn.cursor()
-        uid=getattr(current_user,"id",None)
-        cur.execute("""
-          SELECT e.id, COALESCE(e.operadora,''), COALESCE(e.localidade,''),
-                 COALESCE(e.delivery_date::text,''), COALESCE(e.boxes,0), COALESCE(e.loose,0),
-                 COALESCE(f.status,'PENDENTE')
-            FROM atm_bobbin_deliveries e
-            LEFT JOIN atm_bobbin_field_deliveries f ON f.delivery_id=e.id
-           WHERE (f.technician_user_id=%s OR f.technician_user_id IS NULL)
-             AND COALESCE(f.status,'PENDENTE') <> 'ENTREGUE'
-           ORDER BY e.delivery_date NULLS LAST, e.id
-           LIMIT 100
-        """,(uid,))
-        return jsonify({"ok":True,"rows":[{"id":r[0],"operadora":r[1],"localidade":r[2],
-          "data":r[3],"caixas":r[4],"avulsas":r[5],"status":r[6]} for r in cur.fetchall()]})
+        _v8538r3_ensure_schema()
+        uid=session.get("user_id")
+        rows=(db.session.query(BobbinDeliverySchedule, BobbinDeliveryDetail, BobbinFieldDelivery)
+              .outerjoin(BobbinDeliveryDetail, BobbinDeliveryDetail.delivery_id==BobbinDeliverySchedule.id)
+              .outerjoin(BobbinFieldDelivery, BobbinFieldDelivery.delivery_id==BobbinDeliverySchedule.id)
+              .filter(BobbinDeliverySchedule.status!="ENTREGUE")
+              .filter(db.or_(BobbinFieldDelivery.technician_user_id==uid, BobbinFieldDelivery.technician_user_id.is_(None)))
+              .order_by(BobbinDeliverySchedule.delivery_date.asc(), BobbinDeliverySchedule.id.asc())
+              .limit(100).all())
+        payload=[]
+        for e,d,f in rows:
+            operadora,estacao=_v8538r3_operator_station(e.location)
+            payload.append({"id":e.id,"operadora":operadora,"localidade":estacao,
+                "data":e.delivery_date.isoformat() if e.delivery_date else "",
+                "caixas":int(e.boxes_qty or 0),"avulsas":int(getattr(d,"loose_qty",0) or 0),
+                "status":getattr(f,"status",None) or "PENDENTE",
+                "atribuida":bool(f and f.technician_user_id)})
+        return jsonify({"ok":True,"release":"V85.38 REV3","rows":payload})
     except Exception as exc:
-        current_app.logger.exception("V85.38 REV2 minhas entregas")
+        db.session.rollback()
+        current_app.logger.exception("V85.38 REV3 minhas entregas")
         return jsonify({"ok":False,"error":str(exc)}),500
-    finally: conn.close()
-# === /V85.38 REV2 ===
-
-# === V85.38 REV2 — fluxo ponta a ponta de entrega de bobinas ===
-def _v8538r2_schema(conn):
-    cur=conn.cursor()
-    cur.execute("""CREATE TABLE IF NOT EXISTS atm_bobbin_stock_movements (
-      id SERIAL PRIMARY KEY,
-      delivery_id INTEGER NOT NULL,
-      technician_user_id INTEGER,
-      movement_type VARCHAR(30) NOT NULL DEFAULT 'ENTREGA',
-      boxes INTEGER NOT NULL DEFAULT 0,
-      loose INTEGER NOT NULL DEFAULT 0,
-      total_bobbins INTEGER NOT NULL DEFAULT 0,
-      source_cd TEXT,
-      destination_location TEXT,
-      photo_ref TEXT,
-      latitude DOUBLE PRECISION,
-      longitude DOUBLE PRECISION,
-      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(delivery_id, movement_type)
-    )""")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_bobbin_stock_delivery ON atm_bobbin_stock_movements(delivery_id)")
-    conn.commit()
 
 @app.post("/api/bobinas/v8538/entregas/<int:delivery_id>/atribuir")
 @login_required
 def bobinas_v8538_atribuir(delivery_id):
+    if not _has_access("field.stock_manage"): abort(403)
     data=request.get_json(silent=True) or {}
-    technician_user_id=data.get("technician_user_id")
-    if not technician_user_id:
-        return jsonify({"ok":False,"error":"Técnico obrigatório."}),400
-    conn=get_db_connection()
-    try:
-        _v8538_bobbin_schema(conn)
-        cur=conn.cursor()
-        cur.execute("""INSERT INTO atm_bobbin_field_deliveries(delivery_id,technician_user_id,status,updated_at)
-          VALUES(%s,%s,'PENDENTE',CURRENT_TIMESTAMP)
-          ON CONFLICT(delivery_id) DO UPDATE SET technician_user_id=EXCLUDED.technician_user_id,
-          status=CASE WHEN atm_bobbin_field_deliveries.status='ENTREGUE' THEN 'ENTREGUE' ELSE 'PENDENTE' END,
-          updated_at=CURRENT_TIMESTAMP""",(delivery_id,technician_user_id))
-        conn.commit()
-        return jsonify({"ok":True,"delivery_id":delivery_id,"technician_user_id":technician_user_id})
-    except Exception as exc:
-        conn.rollback(); current_app.logger.exception("V85.38 REV2 atribuir bobinas")
-        return jsonify({"ok":False,"error":str(exc)}),500
-    finally: conn.close()
-
-@app.get("/api/bobinas/v8538/entregas/<int:delivery_id>")
-@login_required
-def bobinas_v8538_detalhe_entrega(delivery_id):
-    conn=get_db_connection()
-    try:
-        _v8538_bobbin_schema(conn); _v8538r2_schema(conn); cur=conn.cursor()
-        cur.execute("""SELECT e.id,COALESCE(e.operadora,''),COALESCE(e.localidade,''),
-          COALESCE(e.delivery_date::text,''),COALESCE(e.boxes,0),COALESCE(e.loose,0),
-          COALESCE(f.status,'PENDENTE'),f.technician_user_id,f.delivered_boxes,f.delivered_loose,
-          f.photo_ref,f.latitude,f.longitude,f.delivered_at
-          FROM atm_bobbin_deliveries e LEFT JOIN atm_bobbin_field_deliveries f ON f.delivery_id=e.id
-          WHERE e.id=%s""",(delivery_id,))
-        r=cur.fetchone()
-        if not r:return jsonify({"ok":False,"error":"Entrega não encontrada."}),404
-        return jsonify({"ok":True,"row":{"id":r[0],"operadora":r[1],"localidade":r[2],"data":r[3],
-          "caixas_programadas":r[4],"avulsas_programadas":r[5],"status":r[6],"technician_user_id":r[7],
-          "caixas_entregues":r[8],"avulsas_entregues":r[9],"photo_ref":r[10],
-          "latitude":r[11],"longitude":r[12],"delivered_at":str(r[13] or "")}})
-    finally: conn.close()
+    uid=data.get("technician_user_id")
+    if not uid:return jsonify({"ok":False,"error":"Técnico obrigatório."}),400
+    _v8538r3_ensure_schema()
+    delivery=db.session.get(BobbinDeliverySchedule,delivery_id)
+    if not delivery:return jsonify({"ok":False,"error":"Programação não encontrada."}),404
+    row=BobbinFieldDelivery.query.filter_by(delivery_id=delivery_id).first()
+    if not row:
+        row=BobbinFieldDelivery(delivery_id=delivery_id);db.session.add(row)
+    row.technician_user_id=int(uid);row.status="PENDENTE";row.updated_at=datetime.utcnow()
+    db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="BOBINAS_ENTREGA_ATRIBUIDA",
+      entity_type="bobbin_delivery_schedule",entity_id=str(delivery_id),
+      detail=json.dumps({"technician_user_id":int(uid)},ensure_ascii=False)))
+    db.session.commit()
+    return jsonify({"ok":True,"delivery_id":delivery_id,"technician_user_id":int(uid)})
 
 @app.post("/api/bobinas/v8538/entregas/<int:delivery_id>/concluir")
 @login_required
 def bobinas_v8538_concluir(delivery_id):
     data=request.get_json(silent=True) or {}
-    if not data.get("photo_ref"):
-        return jsonify({"ok":False,"error":"Foto obrigatória."}),400
-    boxes=int(data.get("boxes") or 0); loose=int(data.get("loose") or 0)
-    if boxes<0 or loose<0:return jsonify({"ok":False,"error":"Quantidade inválida."}),400
-    conn=get_db_connection()
+    if not data.get("photo_ref"):return jsonify({"ok":False,"error":"Foto obrigatória."}),400
     try:
-        _v8538_bobbin_schema(conn); _v8538r2_schema(conn); cur=conn.cursor()
-        uid=getattr(current_user,"id",None)
-        cur.execute("SELECT COALESCE(localidade,''),COALESCE(boxes,0),COALESCE(loose,0) FROM atm_bobbin_deliveries WHERE id=%s FOR UPDATE",(delivery_id,))
-        base=cur.fetchone()
-        if not base:return jsonify({"ok":False,"error":"Entrega não encontrada."}),404
-        cur.execute("""INSERT INTO atm_bobbin_field_deliveries
-          (delivery_id,technician_user_id,status,delivered_boxes,delivered_loose,photo_ref,latitude,longitude,delivered_at,updated_at)
-          VALUES(%s,%s,'ENTREGUE',%s,%s,%s,%s,%s,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
-          ON CONFLICT(delivery_id) DO UPDATE SET technician_user_id=EXCLUDED.technician_user_id,status='ENTREGUE',
-          delivered_boxes=EXCLUDED.delivered_boxes,delivered_loose=EXCLUDED.delivered_loose,photo_ref=EXCLUDED.photo_ref,
-          latitude=EXCLUDED.latitude,longitude=EXCLUDED.longitude,delivered_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP""",
-          (delivery_id,uid,boxes,loose,data["photo_ref"],data.get("latitude"),data.get("longitude")))
-        total=boxes*6+loose
-        cur.execute("""INSERT INTO atm_bobbin_stock_movements
-          (delivery_id,technician_user_id,movement_type,boxes,loose,total_bobbins,source_cd,destination_location,photo_ref,latitude,longitude)
-          VALUES(%s,%s,'ENTREGA',%s,%s,%s,%s,%s,%s,%s,%s)
-          ON CONFLICT(delivery_id,movement_type) DO UPDATE SET boxes=EXCLUDED.boxes,loose=EXCLUDED.loose,
-          total_bobbins=EXCLUDED.total_bobbins,photo_ref=EXCLUDED.photo_ref,latitude=EXCLUDED.latitude,longitude=EXCLUDED.longitude""",
-          (delivery_id,uid,boxes,loose,total,"",base[0],data["photo_ref"],data.get("latitude"),data.get("longitude")))
-        conn.commit()
-        return jsonify({"ok":True,"status":"ENTREGUE","programado":{"boxes":base[1],"loose":base[2]},
-          "entregue":{"boxes":boxes,"loose":loose,"total_bobbins":total},
-          "divergente": boxes!=base[1] or loose!=base[2]})
-    except Exception as exc:
-        conn.rollback(); current_app.logger.exception("V85.38 REV2 concluir entrega")
-        return jsonify({"ok":False,"error":str(exc)}),500
-    finally: conn.close()
-# === /V85.38 REV2 ===
+        boxes=max(0,int(data.get("boxes") or 0));loose=max(0,int(data.get("loose") or 0))
+    except Exception:return jsonify({"ok":False,"error":"Quantidade inválida."}),400
+    _v8538r3_ensure_schema()
+    delivery=db.session.get(BobbinDeliverySchedule,delivery_id)
+    if not delivery:return jsonify({"ok":False,"error":"Programação não encontrada."}),404
+    detail=BobbinDeliveryDetail.query.filter_by(delivery_id=delivery_id).first()
+    programmed_boxes=int(delivery.boxes_qty or 0);programmed_loose=int(getattr(detail,"loose_qty",0) or 0)
+    row=BobbinFieldDelivery.query.filter_by(delivery_id=delivery_id).first()
+    if not row:
+        row=BobbinFieldDelivery(delivery_id=delivery_id);db.session.add(row)
+    row.technician_user_id=session.get("user_id");row.status="ENTREGUE"
+    row.delivered_boxes=boxes;row.delivered_loose=loose;row.photo_ref=str(data["photo_ref"])[:700]
+    row.latitude=data.get("latitude");row.longitude=data.get("longitude")
+    row.delivered_at=datetime.utcnow();row.updated_at=datetime.utcnow()
+    delivery.status="ENTREGUE";delivery.updated_at=datetime.utcnow()
+    db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="BOBINAS_ENTREGA_CAMPO",
+      entity_type="bobbin_delivery_schedule",entity_id=str(delivery_id),
+      detail=json.dumps({"programado":{"boxes":programmed_boxes,"loose":programmed_loose},
+       "entregue":{"boxes":boxes,"loose":loose},"photo_ref":row.photo_ref,
+       "latitude":row.latitude,"longitude":row.longitude},ensure_ascii=False)))
+    db.session.commit()
+    return jsonify({"ok":True,"status":"ENTREGUE",
+      "programado":{"boxes":programmed_boxes,"loose":programmed_loose},
+      "entregue":{"boxes":boxes,"loose":loose,"total_bobbins":boxes*6+loose},
+      "divergente":boxes!=programmed_boxes or loose!=programmed_loose})
+# === /V85.38 REV3 ===
