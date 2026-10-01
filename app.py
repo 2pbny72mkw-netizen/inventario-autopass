@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.32"
+APP_RELEASE = "V85.33"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -15256,36 +15256,18 @@ def _v809_prefetch_cycle_data(terminals,start,end,calc_statuses):
         item={'at':at,'collection_code':str(code or '').strip(),'source':'R0050'}
         by_terminal.setdefault(terminal,[]).append(item)
         by_day.setdefault((terminal,at.date()),[]).append(item)
-    aggregates={}
-    statuses=list(calc_statuses or [])
-    if statuses:
-        agg_rows=db.session.query(
-            FinancialATMTransaction.terminal,
-            FinancialATMTransaction.source_collection_at,
-            FinancialATMTransaction.source_collection_code,
-            func.count(FinancialATMTransaction.id),
-            func.coalesce(func.sum(func.coalesce(FinancialATMTransaction.received_value,FinancialATMTransaction.value)),0)
-        ).filter(
-            FinancialATMTransaction.terminal.in_(terminals),
-            FinancialATMTransaction.source_collection_at.isnot(None),
-            FinancialATMTransaction.source_collection_at>=lo,
-            FinancialATMTransaction.source_collection_at<hi,
-            FinancialATMTransaction.status.in_(statuses)
-        ).group_by(
-            FinancialATMTransaction.terminal,
-            FinancialATMTransaction.source_collection_at,
-            FinancialATMTransaction.source_collection_code
-        ).all()
-        for terminal,at,code,count_,amount in agg_rows:
-            aggregates[(terminal,at,str(code or '').strip())]=(int(count_ or 0),round(float(amount or 0),2))
-    return {'closures_by_terminal':by_terminal,'closures_by_day':by_day,'aggregates':aggregates}
+    # V85.33 PERFORMANCE: a agregação por fechamento do R0050 foi removida daqui.
+    # Ela varria/agregava a massa de transações de até 370 dias, mas o resultado não era
+    # consumido por _v792_cash_payload. Os totais de ciclo são calculados abaixo somente
+    # para os intervalos efetivamente necessários.
+    return {'closures_by_terminal':by_terminal,'closures_by_day':by_day,'aggregates':{}}
 
 def _v792_cash_payload(start,end,calc_statuses=None):
     schedules={x.terminal:x for x in FinancialCashSchedule.query.filter(FinancialCashSchedule.active.is_(True)).all()}
     official=_v79_cash_base(); terminals=[x["terminal"] for x in official]
     # V80 REV9: duas consultas em lote substituem milhares de consultas por ocorrência.
     _cycle_prefetch=_v809_prefetch_cycle_data(terminals,start,end,calc_statuses if calc_statuses is not None else ["A","V"])
-    _sys_by_terminal=_cycle_prefetch["closures_by_terminal"]; _sys_by_day=_cycle_prefetch["closures_by_day"]; _sys_agg=_cycle_prefetch["aggregates"]
+    _sys_by_terminal=_cycle_prefetch["closures_by_terminal"]; _sys_by_day=_cycle_prefetch["closures_by_day"]
     _closure_events=FinancialCashCollection.query.filter(FinancialCashCollection.terminal.in_(terminals),FinancialCashCollection.collection_date>=start-timedelta(days=370),FinancialCashCollection.collection_date<=end,FinancialCashCollection.declared_amount.isnot(None),func.coalesce(FinancialCashCollection.cycle_excluded,False).is_(False),func.coalesce(FinancialCashCollection.soft_deleted,False).is_(False)).order_by(FinancialCashCollection.terminal,FinancialCashCollection.end_at).all() if terminals else []
     _closure_events_by_terminal={}
     for _ev in _closure_events: _closure_events_by_terminal.setdefault(_ev.terminal,[]).append(_ev)
@@ -15342,13 +15324,15 @@ def _v792_cash_payload(start,end,calc_statuses=None):
             _status_params=[]
             for _idx,_st in enumerate(_statuses_for_intervals):
                 _params[f's{_idx}']=_st;_status_params.append(f':s{_idx}')
-            _sql=("SELECT i.terminal,i.start_at,i.end_at, COUNT(t.id) AS n, "
-                  "COALESCE(SUM(COALESCE(t.received_value,t.value)),0) AS amount "
+            # V85.33 PERFORMANCE: LATERAL força uma busca indexada por intervalo/ATM,
+            # evitando o plano de join que podia varrer grande parte de financial_atm_transactions.
+            _sql=("SELECT i.terminal,i.start_at,i.end_at, COALESCE(a.n,0) AS n, COALESCE(a.amount,0) AS amount "
                   "FROM (VALUES " + ','.join(_values) + ") AS i(terminal,start_at,end_at) "
-                  "LEFT JOIN financial_atm_transactions t ON t.terminal=i.terminal "
+                  "LEFT JOIN LATERAL (SELECT COUNT(t.id) AS n, "
+                  "COALESCE(SUM(COALESCE(t.received_value,t.value)),0) AS amount "
+                  "FROM financial_atm_transactions t WHERE t.terminal=i.terminal "
                   "AND t.transaction_at>i.start_at AND t.transaction_at<=i.end_at "
-                  "AND t.status IN (" + ','.join(_status_params) + ") "
-                  "GROUP BY i.terminal,i.start_at,i.end_at")
+                  "AND t.status IN (" + ','.join(_status_params) + ")) a ON TRUE")
             for _term,_a,_b,_n,_amount in db.session.execute(text(_sql),_params):
                 _interval_totals[(_term,_a,_b)]=(int(_n or 0),round(float(_amount or 0),2))
     def _fast_interval_agg(_terminal,_start_at,_end_at):
