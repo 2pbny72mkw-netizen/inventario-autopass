@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.29 REV1"
+APP_RELEASE = "V85.30"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -76,6 +76,7 @@ _ATM_MAPPING_API_CACHE_TTL = int(os.getenv("ATM_MAPPING_API_CACHE_TTL", "60"))
 _FIN_CASH_PAYLOAD_CACHE = {}
 _FIN_CASH_PAYLOAD_CACHE_TTL = int(os.getenv("FIN_CASH_PAYLOAD_CACHE_TTL", "20"))
 _ATM_MAPPING_API_CACHE_LOCK = threading.Lock()
+_V8530_LAST_PERF_CLEANUP = 0.0
 
 def _invalidate_atm_mapping_cache():
     with _ATM_MAPPING_API_CACHE_LOCK:
@@ -248,6 +249,7 @@ def _v56b_perf_start():
     g._perf_started = time.perf_counter()
     g._perf_sql_ms = 0.0
     g._perf_query_count = 0
+    g._perf_request_id = str(uuid.uuid4())
 
 @app.after_request
 def _v56b_perf_finish(response):
@@ -258,10 +260,18 @@ def _v56b_perf_finish(response):
         started=getattr(g,"_perf_started",None)
         if started is not None and 'PerformanceMetric' in globals():
             ms=(time.perf_counter()-started)*1000.0
-            # amostragem integral de rotas lentas/erros e 1/4 das rápidas para reduzir overhead.
-            keep = ms >= 750 or response.status_code >= 400 or (int(time.time()*1000) % 4 == 0)
-            if keep:
-                db.session.add(PerformanceMetric(route=(request.url_rule.rule if request.url_rule else path)[:220],method=request.method,status_code=response.status_code,duration_ms=round(ms,2),sql_ms=round(float(getattr(g,"_perf_sql_ms",0) or 0),2),query_count=int(getattr(g,"_perf_query_count",0) or 0),user_id=session.get("user_id")))
+            # V85.30 — janela de diagnóstico: 100% das requisições funcionais são medidas.
+            # Retenção curta evita que a própria telemetria cresça indefinidamente.
+            response_bytes=int(response.calculate_content_length() or 0) if not response.direct_passthrough else 0
+            db.session.add(PerformanceMetric(route=(request.url_rule.rule if request.url_rule else path)[:220],method=request.method,status_code=response.status_code,duration_ms=round(ms,2),sql_ms=round(float(getattr(g,"_perf_sql_ms",0) or 0),2),query_count=int(getattr(g,"_perf_query_count",0) or 0),response_bytes=response_bytes,request_id=getattr(g,"_perf_request_id",None),user_id=session.get("user_id")))
+            db.session.commit()
+            # Limpeza no máximo uma vez/hora, mantendo 7 dias de diagnóstico.
+            global _V8530_LAST_PERF_CLEANUP
+            now_ts=time.time()
+            if now_ts-_V8530_LAST_PERF_CLEANUP >= 3600:
+                _V8530_LAST_PERF_CLEANUP=now_ts
+                cutoff=datetime.utcnow()-timedelta(days=7)
+                PerformanceMetric.query.filter(PerformanceMetric.created_at < cutoff).delete(synchronize_session=False)
                 db.session.commit()
     except Exception:
         try: db.session.rollback()
@@ -1083,6 +1093,8 @@ class PerformanceMetric(db.Model):
     duration_ms = db.Column(db.Float, nullable=False, index=True)
     sql_ms = db.Column(db.Float, nullable=False, default=0)
     query_count = db.Column(db.Integer, nullable=False, default=0)
+    response_bytes = db.Column(db.Integer, nullable=False, default=0)
+    request_id = db.Column(db.String(36), index=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
     __table_args__ = (Index("ix_perf_created_route", "created_at", "route"),)
@@ -6182,6 +6194,20 @@ def _v70_index_snapshot():
         return {"ok":False,"rows":out,"error":str(exc)}
     return {"ok":True,"rows":out}
 
+def _v8530_treport_audit():
+    """Diagnóstico não destrutivo da massa de transações (T-Report/R0050)."""
+    try:
+        cols=[c["name"] for c in db.inspect(db.engine).get_columns("financial_atm_transactions")]
+        total=db.session.query(func.count(FinancialATMTransaction.id)).scalar() or 0
+        latest=db.session.query(func.max(FinancialATMTransaction.imported_at)).scalar()
+        latest_file=None
+        if latest:
+            row=db.session.query(FinancialATMTransaction.source_file).filter(FinancialATMTransaction.imported_at==latest).first()
+            latest_file=row[0] if row else None
+        return {"ok":True,"stored_rows":int(total),"stored_columns":len(cols),"columns":cols,"latest_import_at":latest.isoformat()+"Z" if latest else None,"latest_file":latest_file,"note":"A tabela persiste somente os campos mapeados pelo importador; colunas não mapeadas do arquivo não são gravadas."}
+    except Exception as exc:
+        return {"ok":False,"error":str(exc)}
+
 @app.get("/telemetria")
 @login_required
 def telemetry_page():
@@ -6209,11 +6235,11 @@ def telemetry_summary_api():
             a=sorted(arr); return round(a[min(len(a)-1,max(0,int((len(a)-1)*p)))],1)
         by={}
         for x in rows:
-            d=by.setdefault(x.route,{"route":x.route,"count":0,"sum":0.0,"max":0.0,"errors":0,"vals":[],"sql_sum":0.0,"queries":0})
-            d["count"]+=1; d["sum"]+=float(x.duration_ms or 0); d["max"]=max(d["max"],float(x.duration_ms or 0)); d["errors"]+=1 if x.status_code>=500 else 0; d["vals"].append(float(x.duration_ms or 0)); d["sql_sum"]+=float(getattr(x,"sql_ms",0) or 0); d["queries"]+=int(getattr(x,"query_count",0) or 0)
+            d=by.setdefault(x.route,{"route":x.route,"count":0,"sum":0.0,"max":0.0,"errors":0,"vals":[],"sql_sum":0.0,"queries":0,"bytes_sum":0})
+            d["count"]+=1; d["sum"]+=float(x.duration_ms or 0); d["max"]=max(d["max"],float(x.duration_ms or 0)); d["errors"]+=1 if x.status_code>=500 else 0; d["vals"].append(float(x.duration_ms or 0)); d["sql_sum"]+=float(getattr(x,"sql_ms",0) or 0); d["queries"]+=int(getattr(x,"query_count",0) or 0); d["bytes_sum"]+=int(getattr(x,"response_bytes",0) or 0)
         route_rows=[]
         for d in by.values():
-            route_rows.append({"route":d["route"],"count":d["count"],"avg_ms":round(d["sum"]/d["count"],1),"p95_ms":pct(d["vals"],.95),"p99_ms":pct(d["vals"],.99),"max_ms":round(d["max"],1),"avg_sql_ms":round(d["sql_sum"]/d["count"],1),"avg_queries":round(d["queries"]/d["count"],1),"slow_1s":sum(v>=1000 for v in d["vals"]),"slow_2s":sum(v>=2000 for v in d["vals"]),"slow_5s":sum(v>=5000 for v in d["vals"]),"errors":d["errors"]})
+            route_rows.append({"route":d["route"],"count":d["count"],"avg_ms":round(d["sum"]/d["count"],1),"p95_ms":pct(d["vals"],.95),"p99_ms":pct(d["vals"],.99),"max_ms":round(d["max"],1),"avg_sql_ms":round(d["sql_sum"]/d["count"],1),"avg_queries":round(d["queries"]/d["count"],1),"avg_response_kb":round((d["bytes_sum"]/d["count"])/1024,1),"slow_1s":sum(v>=1000 for v in d["vals"]),"slow_2s":sum(v>=2000 for v in d["vals"]),"slow_5s":sum(v>=5000 for v in d["vals"]),"errors":d["errors"]})
         route_rows.sort(key=lambda x:(x["p95_ms"],x["avg_ms"]),reverse=True)
         # série em blocos de 5 minutos
         buckets={}
@@ -6233,7 +6259,7 @@ def telemetry_summary_api():
         with PANORAMA_EXPORT_LOCK:
             _jobs=list(PANORAMA_EXPORT_JOBS.values())
         storage={"database":_database_storage_snapshot(),"r2":_r2_storage_snapshot(),"local":_local_storage_snapshot(),"runtime":_process_memory_snapshot(),"jobs":{"active":sum(1 for j in _jobs if j.get("status") in ("FILA","PROCESSANDO")),"ready":sum(1 for j in _jobs if j.get("status")=="PRONTO"),"errors":sum(1 for j in _jobs if j.get("status")=="ERRO")}}
-        return jsonify({"ok":True,"release":APP_RELEASE,"generated_at":datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y %H:%M:%S"),"window_minutes":minutes,"health":health,"avg_ms":avg,"p95_ms":p95,"p99_ms":p99,"slow_1s":slow_1s,"slow_2s":slow_2s,"slow_5s":slow_5s,"max_ms":round(max(vals),1) if vals else 0,"requests":len(rows),"errors_5xx":errors,"active_users_15m":int(active_users),"routes":route_rows[:20],"top5":top5,"timeline":timeline[-24:],"table_counts":table_counts,"storage":storage,"migrations":_v70_migration_snapshot(),"indexes":_v70_index_snapshot()})
+        return jsonify({"ok":True,"release":APP_RELEASE,"generated_at":datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y %H:%M:%S"),"window_minutes":minutes,"health":health,"avg_ms":avg,"p95_ms":p95,"p99_ms":p99,"slow_1s":slow_1s,"slow_2s":slow_2s,"slow_5s":slow_5s,"max_ms":round(max(vals),1) if vals else 0,"requests":len(rows),"errors_5xx":errors,"active_users_15m":int(active_users),"routes":route_rows[:20],"top5":top5,"timeline":timeline[-24:],"table_counts":table_counts,"storage":storage,"migrations":_v70_migration_snapshot(),"indexes":_v70_index_snapshot(),"t_report_audit":_v8530_treport_audit(),"telemetry":{"sampling":"100% rotas funcionais","retention_days":7,"request_id":True,"response_bytes":True}})
     except Exception as exc:
         return jsonify({"ok":False,"error":str(exc)}),500
 
@@ -20420,6 +20446,10 @@ with app.app_context():
             with db.engine.begin() as conn:
                 if "sql_ms" not in cols: conn.execute(text("ALTER TABLE performance_metrics ADD COLUMN sql_ms FLOAT DEFAULT 0"))
                 if "query_count" not in cols: conn.execute(text("ALTER TABLE performance_metrics ADD COLUMN query_count INTEGER DEFAULT 0"))
+                if "response_bytes" not in cols: conn.execute(text("ALTER TABLE performance_metrics ADD COLUMN response_bytes INTEGER DEFAULT 0"))
+                if "request_id" not in cols: conn.execute(text("ALTER TABLE performance_metrics ADD COLUMN request_id VARCHAR(36)"))
+                try: conn.execute(text("CREATE INDEX IF NOT EXISTS ix_perf_request_id ON performance_metrics (request_id)"))
+                except Exception: pass
     except Exception:
         try: db.session.rollback()
         except Exception: pass
