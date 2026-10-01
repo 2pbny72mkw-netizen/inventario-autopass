@@ -4,7 +4,44 @@
 </style>
 <div class="bobWrap">
   <div class="bobHero"><div><h1>Atividade Bobinas</h1><div class="muted">Registro da bobina instalada, reservas existentes dentro da ATM e foto. O GPS é apenas evidência do salvamento e não bloqueia a localidade.</div></div><span class="status">● Online</span></div>
-  <div class="bobCard"><h3>1. Selecione a ATM</h3><div class="bobGrid">
+  <div class="bobCard">
+<!-- V85.38 REV1 — acompanhamento dentro da Atividade Bobinas -->
+<section id="v8538ActivityTracking" style="margin:12px 0;padding:12px;border:1px solid #d8e0ea;border-radius:10px;background:#fff">
+  <h3 style="margin:0 0 10px">Acompanhamento</h3>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+    <label>Visão por Operadora<select id="v8538ActOp"><option value="">Todas</option></select></label>
+    <label>Detalhe da Estação<select id="v8538ActSt"><option value="">Todas</option></select></label>
+  </div>
+  <div id="v8538Assigned" style="margin-top:12px"></div>
+</section>
+<script>
+(function(){
+ let rows=[]; const op=document.getElementById('v8538ActOp'),st=document.getElementById('v8538ActSt'),box=document.getElementById('v8538Assigned');
+ const esc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+ function render(){
+   const f=rows.filter(r=>(!op.value||r.operadora===op.value)&&(!st.value||r.localidade===st.value));
+   box.innerHTML='<b>Entregas programadas</b>'+(f.length?'': '<p>Nenhuma entrega pendente para este filtro.</p>')+
+   f.map(r=>`<div style="border:1px solid #d8e0ea;border-radius:8px;padding:9px;margin-top:7px">
+    <b>${esc(r.operadora)} · ${esc(r.localidade)}</b><br><small>${esc(r.data)} · ${r.caixas} caixas · ${r.avulsas} avulsas</small>
+    <div style="margin-top:7px"><input type="file" accept="image/*" capture="environment" id="foto_${r.id}">
+    <button type="button" data-entrega="${r.id}" style="margin-top:6px">✓ Entregue</button></div></div>`).join('');
+ }
+ fetch('/api/bobinas/v8538/minhas-entregas').then(r=>r.json()).then(j=>{if(!j.ok)return;rows=j.rows||[];
+   [...new Set(rows.map(x=>x.operadora).filter(Boolean))].sort().forEach(v=>op.add(new Option(v,v)));
+   [...new Set(rows.map(x=>x.localidade).filter(Boolean))].sort().forEach(v=>st.add(new Option(v,v)));render();});
+ op.addEventListener('change',render);st.addEventListener('change',render);
+ box.addEventListener('click',async e=>{
+   const b=e.target.closest('[data-entrega]'); if(!b)return; const id=b.dataset.entrega;
+   const fi=document.getElementById('foto_'+id); if(!fi||!fi.files.length){alert('A foto é obrigatória.');return;}
+   const photo_ref=fi.files[0].name; let latitude=null,longitude=null;
+   try{const pos=await new Promise((ok,err)=>navigator.geolocation.getCurrentPosition(ok,err,{enableHighAccuracy:true,timeout:8000}));latitude=pos.coords.latitude;longitude=pos.coords.longitude;}catch(_){}
+   const row=rows.find(x=>String(x.id)===String(id));
+   const res=await fetch('/api/bobinas/v8538/entregas/'+id+'/entregue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({photo_ref,latitude,longitude,boxes:row?.caixas,loose:row?.avulsas})});
+   const j=await res.json(); if(j.ok){rows=rows.filter(x=>String(x.id)!==String(id));render();alert('Entrega registrada.');}else alert(j.error||'Não foi possível registrar.');
+ });
+})();
+</script>
+<h3>1. Selecione a ATM</h3><div class="bobGrid">
     <div class="bobField"><label>Operadora</label><select id="company"></select></div>
     <div class="bobField"><label>Linha</label><select id="line"></select></div>
     <div class="bobField"><label>Estação</label><select id="station"></select></div>
