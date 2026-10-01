@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.39 REV2"
+APP_RELEASE = "V85.39 REV3"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -22619,6 +22619,15 @@ def v85274_bobbin_deliveries_bulk_update():
     try: ids=[int(x) for x in ids]
     except Exception:return jsonify({'ok':False,'error':'Seleção inválida.'}),400
     rows=BobbinDeliverySchedule.query.filter(BobbinDeliverySchedule.id.in_(ids)).all() if ids else []
+    if field=='delivery_date':
+        raw_date=str(d.get('delivery_date') or '').strip()
+        try: new_date=datetime.strptime(raw_date,'%Y-%m-%d').date()
+        except Exception:return jsonify({'ok':False,'error':'Data inválida.'}),400
+        for x in rows:
+            old=x.delivery_date.isoformat() if x.delivery_date else None
+            x.delivery_date=new_date; x.updated_at=datetime.utcnow()
+            db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='BOBINAS_DATA_MASSA',entity_type='bobbin_delivery_schedule',entity_id=str(x.id),detail=json.dumps({'de':old,'para':new_date.isoformat(),'location':x.location},ensure_ascii=False)))
+        db.session.commit();return jsonify({'ok':True,'updated':len(rows),'field':'delivery_date','delivery_date':new_date.isoformat()})
     if field=='unit_cost':
         try: unit_cost=max(0.0,float(str(d.get('unit_cost') or 0).replace(',','.')))
         except Exception:return jsonify({'ok':False,'error':'Valor unitário inválido.'}),400
@@ -24222,7 +24231,7 @@ def bobinas_v8539_visao():
             r.setdefault("last_tech",r.get("technician_name") or "—")
             r.setdefault("reserve_qty",r.get("reserve") or 0)
         for r in operators:r["severity"]=_v8539r2_severity(r.get("avg_pct"))
-        data["release"]="V85.39 REV2"
+        data["release"]="V85.39 REV3"
         data["filters"]={
           "companies":sorted({str(r.get("company") or "") for r in rows+operators if r.get("company")}),
           "lines":sorted({str(r.get("line") or "") for r in rows+stations if r.get("line")}),
@@ -24232,5 +24241,5 @@ def bobinas_v8539_visao():
         return jsonify(data)
     except Exception as exc:
         app.logger.exception("V85.39 REV2 bobinas visao")
-        return jsonify({"ok":False,"release":"V85.39 REV2","error":str(exc)}),500
+        return jsonify({"ok":False,"release":"V85.39 REV3","error":str(exc)}),500
 # === /V85.39 REV2 ===
