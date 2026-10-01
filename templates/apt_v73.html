@@ -8,6 +8,35 @@ body main,body .main,body .content,body .container{max-width:none!important}.pag
 .aptTableWrap{display:block!important;width:100%!important;max-width:100%!important;overflow-x:auto!important;overflow-y:auto!important;max-height:64vh;overscroll-behavior-x:contain;scrollbar-gutter:stable;border:1px solid #dbe5ef;border-radius:8px;-webkit-overflow-scrolling:touch}
 .aptTable{font-size:11px;white-space:nowrap;width:1660px!important;min-width:1660px!important;table-layout:auto!important}.aptTable th{position:sticky;top:0;background:#eef5fb;z-index:3}.aptTable th,.aptTable td{padding:7px 8px!important}.aptGroupCell{vertical-align:top!important;background:#f8fbfe;font-weight:600;border-right:1px solid #dbe5ef}.aptGroupStart td{border-top:2px solid #c9d8e6}.aptGroupAdd{margin-top:6px}.dateStatus{display:block;font-size:9px;margin-top:2px}.rowActions{display:flex;gap:4px;flex-wrap:nowrap;align-items:center}.rowActions .btn{padding:6px 8px!important;min-height:30px;font-size:10px;white-space:nowrap}.aptPdfDelete{color:#b42318}.aptLink{font-size:10px;color:#475467}.grid4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.full{grid-column:1/-1}.aptTableTools{display:flex;justify-content:space-between;align-items:center;gap:6px;margin:8px 0}.aptRowsInfo{font-size:11px;color:#475467}
 @media(max-width:1100px){.aptFilters,.grid4{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:700px){.aptFilters,.grid4{grid-template-columns:1fr}.aptWide{width:100%!important;margin-left:0!important;padding-left:4px!important;padding-right:4px!important}}
+
+/* V85.36 REV1 — APT full-width */
+body .container, body main.container, body .page-container, body .content-container {
+  width: calc(100% - 24px) !important;
+  max-width: none !important;
+  margin-left: 12px !important;
+  margin-right: 12px !important;
+}
+
+/* V85.36 REV2 — APT realmente full width */
+html, body { width:100% !important; }
+body > .container,
+body > .container-fluid,
+main.container,
+main.container-fluid,
+.container,
+.container-fluid,
+.page-container,
+.content-container,
+.content-wrapper,
+.main-content,
+main {
+  width: calc(100% - 20px) !important;
+  max-width: none !important;
+  margin-left: 10px !important;
+  margin-right: 10px !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+}
 </style>
 <div class="pageHead"><div><small>{{app_release}} · RH</small><h1>APT · Controle e Validades</h1><p>APT, NR10, NR35, ASO, integrações, documentos e vínculo com o cadastro de usuários.</p></div><div class="heroActions"><button class="btn primary" id="aptNew">Incluir colaborador / APT</button><label class="btn">Importar CSV/Excel<input id="aptFile" type="file" accept=".csv,.xlsx,.xlsm" hidden></label><button class="btn" id="aptExport">Exportar Excel</button></div></div>
 <div class="v73kpis aptKpis"><button data-validity=""><b>{{total}}</b><span>Total exibido</span></button><button data-validity="VENCIDA"><b>{{summary['VENCIDA']}}</b><span>APT vencidas</span></button><button data-validity="ATÉ 15 DIAS"><b>{{summary['ATÉ 15 DIAS']}}</b><span>APT até 15 dias</span></button><button data-validity="ATÉ 30 DIAS"><b>{{summary['ATÉ 30 DIAS']}}</b><span>APT 16–30 dias</span></button><button data-validity="REGULAR"><b>{{summary['REGULAR']}}</b><span>APT regulares</span></button></div>
@@ -53,3 +82,105 @@ const aptCollapse=$a('aptCollapse'),aptMore=$a('aptMore'),aptRowsInfo=$a('aptRow
 function aptApplyLimit(){if(!aptTable)return;const rows=[...aptTable.querySelectorAll('tbody tr')];const keys=[],seen=new Set();rows.forEach((r,i)=>{const k=r.dataset.missing==='1'?`m:${r.dataset.user||i}`:(r.dataset.user?`u:${r.dataset.user}`:`n:${r.dataset.name||''}|${r.dataset.company||''}`);r.dataset.groupKey=k;if(!seen.has(k)){seen.add(k);keys.push(k)}});const allowed=new Set(keys.slice(0,aptVisible));rows.forEach(r=>r.style.display=allowed.has(r.dataset.groupKey)?'':'none');if(aptRowsInfo)aptRowsInfo.textContent=`Exibindo ${Math.min(aptVisible,keys.length)} de ${keys.length} colaborador(es)`;if(aptMore)aptMore.style.display=aptVisible<keys.length?'inline-block':'none';if(aptCollapse)aptCollapse.style.display=keys.length>10?'inline-block':'none'}
 function aptSyncScroll(){if(!aptWrap||!aptTopScroll||!aptTopScrollInner||!aptTable)return;aptTopScrollInner.style.width=Math.max(aptTable.scrollWidth,1750)+'px'}if(aptWrap&&aptTopScroll){let lock=false;aptTopScroll.onscroll=()=>{if(lock)return;lock=true;aptWrap.scrollLeft=aptTopScroll.scrollLeft;lock=false};aptWrap.onscroll=()=>{if(lock)return;lock=true;aptTopScroll.scrollLeft=aptWrap.scrollLeft;lock=false};window.addEventListener('resize',aptSyncScroll);setTimeout(aptSyncScroll,0)}if(aptMore)aptMore.onclick=()=>{aptVisible+=50;aptApplyLimit();aptSyncScroll()};if(aptCollapse)aptCollapse.onclick=()=>{aptVisible=10;aptApplyLimit();aptTable&&aptTable.scrollIntoView({block:'start',behavior:'smooth'})};aptApplyLimit();
 </script>{% endblock %}
+
+
+<script>
+(function(){
+  function normalize(v){ return (v||'').replace(/\s+/g,' ').trim().toLowerCase(); }
+  function groupAptRows(){
+    const table = document.querySelector('table');
+    if(!table || !table.tBodies || !table.tBodies.length) return;
+    let lastKey = null;
+    [...table.tBodies[0].rows].forEach((tr)=>{
+      if(tr.cells.length < 3) return;
+      const c0=tr.cells[0], c1=tr.cells[1];
+      const key=normalize(c0.innerText)+'|'+normalize(c1.innerText);
+      if(key && key===lastKey){
+        c0.innerHTML='';
+        c1.innerHTML='';
+        c0.setAttribute('aria-label','Mesmo colaborador da linha anterior');
+        c1.setAttribute('aria-label','Mesma empresa da linha anterior');
+      } else {
+        lastKey=key;
+      }
+    });
+  }
+  function prefillPtFromRow(btn){
+    const tr=btn && btn.closest('tr');
+    if(!tr || tr.cells.length<2) return;
+    const collaborator=(tr.cells[0].innerText||'').split('\n')[0].trim();
+    const company=(tr.cells[1].innerText||'').trim();
+    setTimeout(()=>{
+      const modal=[...document.querySelectorAll('[role="dialog"], .modal, dialog')].find(x=>x.offsetParent!==null);
+      if(!modal) return;
+      const inputs=[...modal.querySelectorAll('input')];
+      const coll=inputs.find(x=>/colaborador/i.test(x.labels?.[0]?.innerText||x.placeholder||''));
+      const comp=inputs.find(x=>/empresa/i.test(x.labels?.[0]?.innerText||x.placeholder||''));
+      if(coll && collaborator){ coll.value=collaborator; coll.readOnly=true; }
+      if(comp && company){ comp.value=company; comp.readOnly=true; }
+      [...modal.querySelectorAll('select')].forEach(sel=>{
+        const label=(sel.labels?.[0]?.innerText||sel.previousElementSibling?.innerText||'');
+        if(/colaborador/i.test(label) && collaborator){
+          const opt=[...sel.options].find(o=>normalize(o.textContent).includes(normalize(collaborator)));
+          if(opt){ sel.value=opt.value; sel.dispatchEvent(new Event('change',{bubbles:true})); sel.disabled=true; }
+        }
+        if(/empresa/i.test(label) && company){
+          const opt=[...sel.options].find(o=>normalize(o.textContent).includes(normalize(company)));
+          if(opt){ sel.value=opt.value; sel.dispatchEvent(new Event('change',{bubbles:true})); sel.disabled=true; }
+        }
+      });
+    },80);
+  }
+  document.addEventListener('click',e=>{
+    const b=e.target.closest('button,a');
+    if(b && /\+?\s*incluir\s+pt/i.test(b.innerText||'')) prefillPtFromRow(b);
+  },true);
+  document.addEventListener('DOMContentLoaded',groupAptRows);
+  setTimeout(groupAptRows,300);
+})();
+</script>
+
+
+<script>
+/* V85.36 REV2 — fechamento do modal Incluir PT */
+(function(){
+  function visiblePtModal(){
+    return [...document.querySelectorAll('dialog,[role="dialog"],.modal')].find(m=>{
+      const txt=(m.innerText||'').toLowerCase();
+      return m.offsetParent!==null && (txt.includes('incluir nova pt') || txt.includes('incluir pt'));
+    });
+  }
+  function closePtModal(modal){
+    if(!modal) return;
+    if(typeof modal.close==='function' && modal.tagName==='DIALOG'){ modal.close(); return; }
+    try{
+      if(window.bootstrap && bootstrap.Modal){
+        const inst=bootstrap.Modal.getInstance(modal) || bootstrap.Modal.getOrCreateInstance(modal);
+        inst.hide(); return;
+      }
+    }catch(e){}
+    const nativeClose=modal.querySelector('[data-bs-dismiss="modal"],[data-dismiss="modal"],.btn-close,.close');
+    if(nativeClose && nativeClose.offsetParent!==null){ nativeClose.click(); return; }
+    modal.classList.remove('show');
+    modal.style.display='none';
+    modal.setAttribute('aria-hidden','true');
+    document.querySelectorAll('.modal-backdrop').forEach(x=>x.remove());
+    document.body.classList.remove('modal-open');
+    document.body.style.removeProperty('overflow');
+    document.body.style.removeProperty('padding-right');
+  }
+  document.addEventListener('click',function(e){
+    const b=e.target.closest('button,a');
+    if(!b) return;
+    const label=(b.innerText||b.getAttribute('aria-label')||'').trim();
+    if(/^fechar$/i.test(label)){
+      const modal=b.closest('dialog,[role="dialog"],.modal') || visiblePtModal();
+      if(modal){
+        e.preventDefault();
+        e.stopPropagation();
+        closePtModal(modal);
+      }
+    }
+  },true);
+})();
+</script>
