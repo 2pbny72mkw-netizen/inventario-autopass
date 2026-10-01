@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.31"
+APP_RELEASE = "V85.32"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -15330,8 +15330,11 @@ def _v792_cash_payload(start,end,calc_statuses=None):
                 _a,_b=_points[_i-1]['at'],_points[_i]['at']
                 if _b.date() >= start and _a.date() <= end and _a < _b:
                     _intervals.append((_term,_a,_b))
-        for _offset in range(0,len(_intervals),120):
-            _batch=_intervals[_offset:_offset+120]
+        # V85.32 PERFORMANCE: reduz round-trips SQL do cálculo de ciclos.
+        # O lote de 120 criava várias consultas pesadas contra a tabela de transações;
+        # 500 intervalos permanece muito abaixo do limite de parâmetros do PostgreSQL.
+        for _offset in range(0,len(_intervals),500):
+            _batch=_intervals[_offset:_offset+500]
             _params={};_values=[]
             for _idx,(_term,_a,_b) in enumerate(_batch):
                 _params.update({f't{_idx}':_term,f'a{_idx}':_a,f'b{_idx}':_b})
@@ -20448,7 +20451,12 @@ try:
             "CREATE INDEX IF NOT EXISTS ix_session_user_event_created ON session_events (user_id, event_type, created_at)",
             "CREATE INDEX IF NOT EXISTS ix_team_profile_active_user ON team_schedule_profiles (active, user_id)",
             "CREATE INDEX IF NOT EXISTS ix_fin_atm_tx_imported_at ON financial_atm_transactions (imported_at)",
-            "CREATE INDEX IF NOT EXISTS ix_fin_atm_tx_terminal_status_at ON financial_atm_transactions (terminal, status, transaction_at)"
+            "CREATE INDEX IF NOT EXISTS ix_fin_atm_tx_terminal_status_at ON financial_atm_transactions (terminal, status, transaction_at)",
+            # V85.32 PERFORMANCE: consultas de conciliação filtram terminal + janela temporal
+            # e só depois status. Este índice acompanha exatamente esse padrão.
+            "CREATE INDEX IF NOT EXISTS ix_fin_atm_tx_terminal_at_status ON financial_atm_transactions (terminal, transaction_at, status)",
+            # MAX/ORDER BY global de transaction_at no status de importação.
+            "CREATE INDEX IF NOT EXISTS ix_fin_atm_tx_transaction_at_desc ON financial_atm_transactions (transaction_at DESC)"
         ):
             try: conn.execute(text(sql))
             except Exception: pass
