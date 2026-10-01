@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.33"
+APP_RELEASE = "V85.34"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -74,7 +74,7 @@ _CASH_ATMS_CACHE_LOCK = threading.Lock()
 _ATM_MAPPING_API_CACHE = {"at": 0.0, "payload": None}
 _ATM_MAPPING_API_CACHE_TTL = int(os.getenv("ATM_MAPPING_API_CACHE_TTL", "60"))
 _FIN_CASH_PAYLOAD_CACHE = {}
-_FIN_CASH_PAYLOAD_CACHE_TTL = int(os.getenv("FIN_CASH_PAYLOAD_CACHE_TTL", "20"))
+_FIN_CASH_PAYLOAD_CACHE_TTL = int(os.getenv("FIN_CASH_PAYLOAD_CACHE_TTL", "60"))
 _ATM_MAPPING_API_CACHE_LOCK = threading.Lock()
 _V8530_LAST_PERF_CLEANUP = 0.0
 
@@ -15312,11 +15312,11 @@ def _v792_cash_payload(start,end,calc_statuses=None):
                 _a,_b=_points[_i-1]['at'],_points[_i]['at']
                 if _b.date() >= start and _a.date() <= end and _a < _b:
                     _intervals.append((_term,_a,_b))
-        # V85.32 PERFORMANCE: reduz round-trips SQL do cálculo de ciclos.
-        # O lote de 120 criava várias consultas pesadas contra a tabela de transações;
-        # 500 intervalos permanece muito abaixo do limite de parâmetros do PostgreSQL.
-        for _offset in range(0,len(_intervals),500):
-            _batch=_intervals[_offset:_offset+500]
+        # V85.34 PERFORMANCE: amplia o lote de intervalos para reduzir round-trips SQL.
+        # 1500 intervalos = 4500 parâmetros de intervalo, ainda com margem ampla no PostgreSQL.
+        # Mantém exatamente a mesma regra de cálculo por ATM e janela temporal.
+        for _offset in range(0,len(_intervals),1500):
+            _batch=_intervals[_offset:_offset+1500]
             _params={};_values=[]
             for _idx,(_term,_a,_b) in enumerate(_batch):
                 _params.update({f't{_idx}':_term,f'a{_idx}':_a,f'b{_idx}':_b})
