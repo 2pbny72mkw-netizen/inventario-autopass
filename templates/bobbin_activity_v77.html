@@ -7,39 +7,66 @@
   <div class="bobCard">
 
 
-<!-- V85.38 REV3 — Atividade Bobinas: programação -> técnico -> entrega -->
-<section id="v8538r2Tracking" style="margin:12px 0;padding:12px;border:1px solid #d8e0ea;border-radius:10px;background:#fff">
- <h3 style="margin:0 0 4px">Acompanhamento</h3>
- <div style="font-size:12px;color:#526070;margin-bottom:10px">Programações atribuídas ao técnico, com confirmação da entrega e evidência.</div>
- <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-  <label>Visão por Operadora<select id="r2Op"><option value="">Todas</option></select></label>
-  <label>Detalhe da Estação<select id="r2St"><option value="">Todas</option></select></label>
- </div>
- <div id="r2Deliveries" style="margin-top:10px"></div>
+
+
+<!-- V85.38 REV4 — Receber Bobinas -->
+<section id="bobbinReceiveR4" style="margin:12px 0">
+  <button type="button" id="openBobbinReceiveR4" style="width:100%;padding:12px;font-weight:700;border:0;border-radius:8px;cursor:pointer">Receber Bobinas</button>
 </section>
+
+<div id="bobbinReceiveModalR4" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;padding:18px;overflow:auto">
+ <div style="max-width:560px;margin:5vh auto;background:#fff;border-radius:12px;padding:16px">
+  <div style="display:flex;justify-content:space-between;align-items:center">
+   <h3 style="margin:0">Receber Bobinas</h3>
+   <button type="button" id="closeBobbinReceiveR4">Fechar</button>
+  </div>
+  <label style="display:block;margin-top:12px">Entrega programada
+   <select id="deliveryR4" style="width:100%;padding:9px"><option value="">Selecione...</option></select>
+  </label>
+  <div id="deliveryFormR4" style="display:none">
+   <label style="display:block;margin-top:10px">Localidade
+    <input id="locationR4" readonly style="width:100%;padding:9px">
+   </label>
+   <label style="display:block;margin-top:10px">Caixas
+    <input id="boxesR4" type="number" min="0" style="width:100%;padding:9px">
+   </label>
+   <label style="display:block;margin-top:10px">Foto(s) — câmera ou galeria
+    <input id="photosR4" type="file" accept="image/*" multiple style="width:100%;padding:9px">
+   </label>
+   <div id="photoCountR4" style="font-size:12px;margin-top:4px"></div>
+   <button type="button" id="confirmReceiveR4" style="width:100%;padding:12px;margin-top:14px;font-weight:700">Recebido</button>
+  </div>
+ </div>
+</div>
 <script>
 (function(){
- let rows=[];const op=document.getElementById('r2Op'),st=document.getElementById('r2St'),box=document.getElementById('r2Deliveries');
- const esc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
- function draw(){let f=rows.filter(x=>(!op.value||x.operadora===op.value)&&(!st.value||x.localidade===st.value));
- box.innerHTML='<b>Minhas entregas programadas</b>'+(!f.length?'<p style="font-size:12px">Nenhuma entrega pendente para este filtro.</p>':'')+
- f.map(x=>`<div style="border:1px solid #d8e0ea;border-radius:8px;padding:9px;margin-top:7px">
- <b>${esc(x.operadora)} · ${esc(x.localidade)}</b><br><small>${esc(x.data)} · Programado: ${x.caixas} caixas + ${x.avulsas} avulsas</small>
- <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:7px">
- <label>Caixas entregues<input id="bx_${x.id}" type="number" min="0" value="${x.caixas}" style="width:100%"></label>
- <label>Avulsas entregues<input id="av_${x.id}" type="number" min="0" value="${x.avulsas}" style="width:100%"></label></div>
- <label style="display:block;margin-top:6px">Foto obrigatória<input id="ph_${x.id}" type="file" accept="image/*" capture="environment" style="width:100%"></label>
- <button type="button" data-done="${x.id}" style="width:100%;margin-top:7px">✓ Entregue</button></div>`).join('');}
- fetch('/api/bobinas/v8538/minhas-entregas').then(r=>r.json()).then(j=>{if(!j.ok)return;rows=j.rows||[];
- [...new Set(rows.map(x=>x.operadora).filter(Boolean))].sort().forEach(v=>op.add(new Option(v,v)));
- [...new Set(rows.map(x=>x.localidade).filter(Boolean))].sort().forEach(v=>st.add(new Option(v,v)));draw();});
- op.addEventListener('change',draw);st.addEventListener('change',draw);
- box.addEventListener('click',async e=>{const b=e.target.closest('[data-done]');if(!b)return;const id=b.dataset.done,ph=document.getElementById('ph_'+id);
- if(!ph.files.length){alert('A foto é obrigatória.');return;}let lat=null,lon=null;
- try{let p=await new Promise((ok,er)=>navigator.geolocation.getCurrentPosition(ok,er,{enableHighAccuracy:true,timeout:8000}));lat=p.coords.latitude;lon=p.coords.longitude;}catch(_){}
- const payload={boxes:+document.getElementById('bx_'+id).value||0,loose:+document.getElementById('av_'+id).value||0,photo_ref:ph.files[0].name,latitude:lat,longitude:lon};
- b.disabled=true;const res=await fetch('/api/bobinas/v8538/entregas/'+id+'/concluir',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const j=await res.json();
- b.disabled=false;if(!j.ok){alert(j.error||'Falha ao registrar entrega.');return;}rows=rows.filter(x=>String(x.id)!==String(id));draw();alert(j.divergente?'Entrega registrada com divergência entre programado e entregue.':'Entrega registrada e movimentação do CD gravada.');});
+ let rows=[];
+ const modal=document.getElementById('bobbinReceiveModalR4'),sel=document.getElementById('deliveryR4'),
+ form=document.getElementById('deliveryFormR4'),loc=document.getElementById('locationR4'),
+ boxes=document.getElementById('boxesR4'),photos=document.getElementById('photosR4'),
+ count=document.getElementById('photoCountR4'),confirm=document.getElementById('confirmReceiveR4');
+ function load(){
+  fetch('/api/bobinas/v8538/minhas-entregas').then(r=>r.json()).then(j=>{
+   rows=(j.ok?j.rows:[])||[]; sel.innerHTML='<option value="">Selecione...</option>';
+   rows.forEach(x=>{let o=new Option(`${x.localidade} · ${x.caixas} caixas · ${x.data}`,x.id);sel.add(o);});
+  });
+ }
+ document.getElementById('openBobbinReceiveR4').onclick=()=>{load();modal.style.display='block';};
+ document.getElementById('closeBobbinReceiveR4').onclick=()=>modal.style.display='none';
+ modal.addEventListener('click',e=>{if(e.target===modal)modal.style.display='none';});
+ sel.onchange=()=>{let x=rows.find(r=>String(r.id)===sel.value);form.style.display=x?'block':'none';if(x){loc.value=x.localidade||'';boxes.value=x.caixas||0;photos.value='';count.textContent='';}};
+ photos.onchange=()=>count.textContent=`${photos.files.length} foto(s) selecionada(s)`;
+ confirm.onclick=async()=>{
+  let x=rows.find(r=>String(r.id)===sel.value);if(!x)return;
+  if(!photos.files.length){alert('Inclua ao menos uma foto.');return;}
+  let lat=null,lon=null;try{let p=await new Promise((ok,er)=>navigator.geolocation.getCurrentPosition(ok,er,{enableHighAccuracy:true,timeout:8000}));lat=p.coords.latitude;lon=p.coords.longitude;}catch(_){}
+  let payload={boxes:+boxes.value||0,photos:[...photos.files].map(f=>f.name),latitude:lat,longitude:lon};
+  confirm.disabled=true;
+  let res=await fetch('/api/bobinas/v8538/entregas/'+x.id+'/receber',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  let j=await res.json();confirm.disabled=false;
+  if(!j.ok){alert(j.error||'Não foi possível registrar.');return;}
+  alert('Recebimento registrado.');modal.style.display='none';form.style.display='none';load();
+ };
 })();
 </script>
 <h3>1. Selecione a ATM</h3><div class="bobGrid">
