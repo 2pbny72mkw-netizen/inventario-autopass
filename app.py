@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.39 REV3"
+APP_RELEASE = "V85.40"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -24232,14 +24232,25 @@ def bobinas_v8539_visao():
             r.setdefault("reserve_qty",r.get("reserve") or 0)
         for r in operators:r["severity"]=_v8539r2_severity(r.get("avg_pct"))
         data["release"]="V85.39 REV3"
+        hierarchy=[]
+        seen_hierarchy=set()
+        for r in stations:
+            company=str(r.get("company") or "").strip()
+            line=str(r.get("line") or "").strip()
+            station=str(r.get("station") or "").strip()
+            key=(company.casefold(),line.casefold(),station.casefold())
+            if company and key not in seen_hierarchy:
+                seen_hierarchy.add(key)
+                hierarchy.append({"company":company,"line":line,"station":station})
+        data["hierarchy"]=hierarchy
         data["filters"]={
-          "companies":sorted({str(r.get("company") or "") for r in rows+operators if r.get("company")}),
-          "lines":sorted({str(r.get("line") or "") for r in rows+stations if r.get("line")}),
-          "stations":sorted({str(r.get("station") or "") for r in rows+stations if r.get("station")}),
+          "companies":sorted({h["company"] for h in hierarchy},key=str.casefold),
+          "lines":sorted({h["line"] for h in hierarchy if h["line"]},key=str.casefold),
+          "stations":sorted({h["station"] for h in hierarchy if h["station"]},key=str.casefold),
           "situations":["critical","attention","normal"]}
         data["thresholds"]={"critical_max":10,"attention_max":30,"normal_min":31}
         return jsonify(data)
     except Exception as exc:
-        app.logger.exception("V85.39 REV2 bobinas visao")
+        app.logger.exception("V85.40 bobinas visao")
         return jsonify({"ok":False,"release":"V85.39 REV3","error":str(exc)}),500
 # === /V85.39 REV2 ===
