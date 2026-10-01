@@ -124,3 +124,18 @@ async function loadPerformance(){try{let d=await api('/api/bobinas/desempenho?da
 $('perfBtn').onclick=()=>{$('perfShade').style.display='flex';loadPerformance()};$('perfClose').onclick=()=>{$('perfShade').style.display='none'};$('perfDays').onchange=loadPerformance;$('perfActivity').onchange=loadPerformance;$('perfShade').onclick=e=>{if(e.target===$('perfShade'))$('perfShade').style.display='none'};
 opts().then(load).catch(console.error)
 </script>{% endblock %}
+
+<!-- V85.38 BOBINAS TRACKING -->
+<section id="bobbinV8538Tracking" class="mt-3"><div class="card"><div class="card-body">
+<h5>Acompanhamento das entregas</h5><div class="row g-2 mb-3">
+<div class="col-md-4"><label>Visão por Operadora</label><select id="v8538Operadora" class="form-select"><option value="">Todas</option></select></div>
+<div class="col-md-4"><label>Detalhe da Estação</label><select id="v8538Estacao" class="form-select"><option value="">Todas</option></select></div></div>
+<div class="table-responsive"><table class="table table-sm"><thead><tr><th>Operadora</th><th>Estação / Localidade</th><th>Programadas</th><th>Entregues</th><th>Pendentes</th></tr></thead><tbody id="v8538Rows"></tbody></table></div>
+</div></div></section>
+<script>
+(function(){let rows=[];const op=document.getElementById('v8538Operadora'),st=document.getElementById('v8538Estacao'),body=document.getElementById('v8538Rows');
+const esc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+function render(){const f=rows.filter(r=>(!op.value||r.operadora===op.value)&&(!st.value||r.localidade===st.value));body.innerHTML=f.map(r=>`<tr><td>${esc(r.operadora)}</td><td>${esc(r.localidade)}</td><td>${r.programadas}</td><td>${r.entregues}</td><td>${r.programadas-r.entregues}</td></tr>`).join('');}
+fetch('/api/bobinas/v8538/acompanhamento').then(r=>r.json()).then(j=>{if(!j.ok)return;rows=j.rows||[];[...new Set(rows.map(r=>r.operadora).filter(Boolean))].sort().forEach(v=>op.add(new Option(v,v)));[...new Set(rows.map(r=>r.localidade).filter(Boolean))].sort().forEach(v=>st.add(new Option(v,v)));render();}).catch(()=>{});
+op.addEventListener('change',render);st.addEventListener('change',render);})();
+</script>
