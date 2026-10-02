@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.40 REV2"
+APP_RELEASE = "V85.40 REV3"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -22901,18 +22901,49 @@ def v771_field_stock_withdraw():
         db.session.rollback();app.logger.exception('V77.6: falha na retirada para carga do técnico')
         return jsonify({'ok':False,'error':'Não foi possível gerar a carga. Nenhuma movimentação foi realizada.'}),500
 
+@app.get('/api/field-stock/destinos-atm')
+@login_required
+def v8540r3_field_stock_atm_destinations():
+    if not (_has_access('field.bobbins') or _has_access('field.bobbins_dashboard') or _has_access('field.stock_manage')): abort(403)
+    master=_v772_master_atm_map(); rows=[]
+    for (company,line,station),ids in sorted(master.items(),key=lambda z:(z[0][0].casefold(),z[0][1].casefold(),z[0][2].casefold())):
+        rows.append({'company':company,'line':line,'station':station,'atms':sorted(ids,key=lambda z:(len(str(z)),str(z)))})
+    return jsonify({'ok':True,'release':APP_RELEASE,'source':'BASE_OFICIAL_ATM_602','rows':rows})
+
 @app.post('/api/field-stock/destinar')
 @login_required
 def v771_field_stock_destination():
-    d=request.form;item=db.session.get(FieldStockItem,int(d.get('item_id') or 0));qty=float(d.get('qty') or 0);load=_v771_load(session['user_id'],item) if item else None
-    if not item or qty<=0 or not load or load.qty<qty:return jsonify({'ok':False,'error':'Carga insuficiente ou dados inválidos.'}),409
-    justification=(d.get('justification') or '').strip();station=(d.get('station') or '').strip();asset=(d.get('asset') or '').strip();photo=request.files.get('photo')
-    if not justification or not station or not photo:return jsonify({'ok':False,'error':'Destino, justificativa e foto são obrigatórios.'}),400
+    d=request.form
+    try:item_id=int(d.get('item_id') or 0);qty=float(d.get('qty') or 0)
+    except (TypeError,ValueError):return jsonify({'ok':False,'error':'Item ou quantidade inválidos.'}),400
+    item=db.session.get(FieldStockItem,item_id);load=_v771_load(session['user_id'],item) if item else None
+    if not item or qty<=0 or not load or float(load.qty or 0)<qty:return jsonify({'ok':False,'error':'Carga insuficiente ou dados inválidos.'}),409
+    company=(d.get('company') or '').strip();line=(d.get('line') or '').strip();station=(d.get('station') or '').strip();asset=_v773_norm_atm_id(d.get('asset'))
+    justification=(d.get('justification') or '').strip();photo=request.files.get('photo')
+    if not company or not line or not station or not asset:return jsonify({'ok':False,'error':'Selecione Operadora, Linha, Estação e ATM.'}),400
+    if not justification or not photo:return jsonify({'ok':False,'error':'Justificativa e foto são obrigatórios.'}),400
+    master=_v772_master_atm_map();official_ids=master.get((company,line,station),set())
+    official_by_norm={_v773_norm_atm_id(x):str(x) for x in official_ids}
+    if asset not in official_by_norm:return jsonify({'ok':False,'error':'ATM não pertence à combinação Operadora / Linha / Estação da base oficial.'}),409
+    asset=official_by_norm[asset]
+    is_bobbin=bool(re.search(r'BOBINA\s*ATM',str(item.description or ''),re.I))
+    if is_bobbin and abs(qty-round(qty))>1e-9:return jsonify({'ok':False,'error':'Bobina ATM deve ser movimentada em quantidade inteira.'}),400
     key=None
-    try:key=_store_uploaded_file(photo,'estoque-field',f"uso_{uuid.uuid4().hex[:12]}{Path(secure_filename(photo.filename)).suffix.lower() or '.jpg'}",photo.mimetype,max_mb=12)
-    except Exception as e:return jsonify({'ok':False,'error':f'Falha ao salvar foto: {e}'}),400
-    load.qty-=qty;load.updated_at=datetime.utcnow();db.session.add(FieldStockMovement(item_id=item.id,movement_type='USO_DESTINO',qty=qty,technician_id=session['user_id'],destination_company=(d.get('company') or '').strip(),destination_line=(d.get('line') or '').strip(),destination_station=station,destination_asset=asset,justification=justification,removed_part_destination=(d.get('removed_part_destination') or '').strip(),photo_key=key,status='CONCLUIDO'));db.session.commit()
-    return jsonify({'ok':True,'load_after':load.qty})
+    try:
+        key=_store_uploaded_file(photo,'estoque-field',f"uso_{uuid.uuid4().hex[:12]}{Path(secure_filename(photo.filename)).suffix.lower() or '.jpg'}",photo.mimetype,max_mb=12)
+        load_before=float(load.qty or 0);load.qty=load_before-qty;load.updated_at=datetime.utcnow()
+        reserve_before=None;reserve_after=None
+        if is_bobbin:
+            stock=_v771_stock(company,line,station,asset,create=True);reserve_before=int(stock.reserve_qty or 0);reserve_after=reserve_before+int(round(qty));stock.reserve_qty=reserve_after;stock.updated_by=session['user_id'];stock.updated_at=datetime.utcnow()
+        db.session.add(FieldStockMovement(item_id=item.id,movement_type='USO_DESTINO',qty=qty,technician_id=session['user_id'],destination_company=company,destination_line=line,destination_station=station,destination_asset=asset,justification=justification,removed_part_destination=(d.get('removed_part_destination') or '').strip(),photo_key=key,status='CONCLUIDO'))
+        try:
+            db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='FIELD_CARGA_DESTINADA_ATM',entity_type='atm_bobbin_atm_stock' if is_bobbin else 'field_stock_movement',entity_id=asset,detail=json.dumps({'item':item.description,'qty':qty,'company':company,'line':line,'station':station,'atm':asset,'load_before':load_before,'load_after':load.qty,'reserve_before':reserve_before,'reserve_after':reserve_after},ensure_ascii=False)))
+        except Exception:pass
+        db.session.commit()
+        return jsonify({'ok':True,'load_after':load.qty,'atm':asset,'reserve_before':reserve_before,'reserve_after':reserve_after,'bobbin_reserve_updated':is_bobbin})
+    except Exception as exc:
+        db.session.rollback();app.logger.exception('V85.40 REV3: falha ao destinar item da carga para ATM')
+        return jsonify({'ok':False,'error':'Não foi possível concluir a destinação. Nenhum saldo foi alterado.'}),500
 
 @app.post('/api/field-stock/regularizacao')
 @login_required
