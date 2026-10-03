@@ -1,0 +1,37 @@
+V85.41 ENXUTA - BOBINAS: API MOBILE (RECEBER / VISAO GERAL) - HOMOLOGACAO
+Base: V85.40 REV6. Substituir SOMENTE app.py. Nao ha alteracao de banco nem de templates.
+
+O QUE MUDOU
+1) Novos endpoints Bearer (os que o Android A5.2 ja chama):
+   GET  /api/mobile/v1/field/bobinas/visao             (permissao: field.bobbins_dashboard, como na Web)
+   GET  /api/mobile/v1/field/bobinas/minhas-entregas   (permissao: field.bobbins)
+   POST /api/mobile/v1/field/bobinas/entregas/<id>/receber  (permissao: field.bobbins)
+2) Regra unica Web/Android: a logica de "minhas entregas" e de "Recebido" foi extraida para funcoes
+   compartilhadas (_v8541_bobbin_my_deliveries / _v8541_bobbin_receive). As rotas Web V85.38 passaram a
+   chamar o mesmo nucleo; respostas Web inalteradas.
+3) Recebido credita UMA vez: a linha da programacao e travada (FOR UPDATE no PostgreSQL), entao duplo toque
+   ou retentativa do app nao duplica estoque. Segunda chamada retorna 409.
+4) Visao Geral: a dashboard de bobinas agora aceita o usuario do Bearer (helper _v8541_actor_has);
+   para a Web o comportamento e o mesmo de antes. Matriz de Permissoes continua sendo a fonte; ADM = integral.
+5) Correcao: import de current_app que faltava (3 handlers de erro de Bobinas dariam NameError ao falhar).
+6) APP_RELEASE = V85.41.
+
+NAO ALTERA: Financeiro, Coletas, Field/Estoque (cascata), Armarios, Android.
+
+PONTO DE ATENCAO (Android)
+O app A5.2 envia em "photos" apenas o NOME do arquivo, nao a imagem. O backend aceita e registra o nome,
+mas a foto de evidencia do recebimento nao chega ao servidor. Corrigir na proxima A5.2 (upload multipart).
+
+TESTES FEITOS: py_compile, analise estatica de nomes nas funcoes novas.
+NAO TESTADO: execucao real (sem Flask-SQLAlchemy/PostgreSQL neste ambiente). Homologar antes de publicar.
+
+ROTEIRO DE HOMOLOGACAO (substitua URL, usuario e ID)
+ TOKEN=$(curl -s -X POST $URL/api/mobile/v1/auth/login -H 'Content-Type: application/json' \
+   -d '{"username":"USUARIO","password":"SENHA","device_id":"teste-1"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
+ curl -s $URL/api/mobile/v1/field/bobinas/minhas-entregas -H "Authorization: Bearer $TOKEN"
+ curl -s $URL/api/mobile/v1/field/bobinas/visao -H "Authorization: Bearer $TOKEN"
+ curl -s -X POST $URL/api/mobile/v1/field/bobinas/entregas/ID/receber -H "Authorization: Bearer $TOKEN" \
+   -H 'Content-Type: application/json' -d '{"boxes":1,"photos":["teste.jpg"]}'
+ Repetir o POST: deve retornar 409 e o saldo da CD nao pode subir de novo.
+Verificar tambem: sem token = 401; usuario sem field.bobbins = 403; Web /api/bobinas/v8538/* e /v8539/visao iguais.
+Conferir no Render (logs) que nao ha erro 5xx nas rotas novas. Rollback: restaurar o app.py da V85.40 REV6.

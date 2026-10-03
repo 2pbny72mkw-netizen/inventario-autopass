@@ -28,7 +28,7 @@ import math
 import csv
 from functools import wraps
 
-from flask import Flask, has_request_context, render_template, request, redirect, url_for, session, jsonify, flash, send_from_directory, Response, send_file, make_response, g, abort
+from flask import Flask, current_app, has_request_context, render_template, request, redirect, url_for, session, jsonify, flash, send_from_directory, Response, send_file, make_response, g, abort
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import UniqueConstraint, Index, func, case, text, and_, event, or_, inspect
 from sqlalchemy.exc import IntegrityError
@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.40 REV6"
+APP_RELEASE = "V85.41"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -22647,7 +22647,7 @@ def v85274_bobbin_deliveries_bulk_update():
 @app.get('/api/bobinas/dashboard')
 @login_required
 def v77_bobbins_dashboard_api():
-    if not _has_access('field.bobbins_dashboard'): abort(403)
+    if not _v8541_actor_has('field.bobbins_dashboard'): abort(403)
     _v771_cleanup_photos()
     company=(request.args.get('company') or '').strip();line=(request.args.get('line') or '').strip();station=(request.args.get('station') or '').strip();atm=(request.args.get('atm') or '').strip();situation=(request.args.get('situation') or '').strip().upper();replacement=(request.args.get('replacement') or '').strip().upper()
     official=_v773_official_index(); installed=official['installed']; official_ids={a for x in installed for a in _v773_atm_aliases(x)}
@@ -24153,27 +24153,31 @@ def _v8538r3_operator_station(location):
     # até existir vínculo oficial no cadastro.
     return "NÃO INFORMADA", loc
 
+def _v8541_bobbin_my_deliveries(uid):
+    """V85.41 — regra única de 'minhas entregas' (Web e Android Bearer)."""
+    _v8538r3_ensure_schema()
+    rows=(db.session.query(BobbinDeliverySchedule, BobbinDeliveryDetail, BobbinFieldDelivery)
+          .outerjoin(BobbinDeliveryDetail, BobbinDeliveryDetail.delivery_id==BobbinDeliverySchedule.id)
+          .outerjoin(BobbinFieldDelivery, BobbinFieldDelivery.delivery_id==BobbinDeliverySchedule.id)
+          .filter(BobbinDeliverySchedule.status.notin_(["ENTREGUE","RECEBIDO"]))
+          .filter(db.or_(BobbinFieldDelivery.technician_user_id==uid, BobbinFieldDelivery.technician_user_id.is_(None)))
+          .order_by(BobbinDeliverySchedule.delivery_date.asc(), BobbinDeliverySchedule.id.asc())
+          .limit(100).all())
+    payload=[]
+    for e,d,f in rows:
+        operadora,estacao=_v8538r3_operator_station(e.location)
+        payload.append({"id":e.id,"operadora":operadora,"localidade":estacao,
+            "data":e.delivery_date.isoformat() if e.delivery_date else "",
+            "caixas":int(e.boxes_qty or 0),"avulsas":int(getattr(d,"loose_qty",0) or 0),
+            "status":getattr(f,"status",None) or "PENDENTE",
+            "atribuida":bool(f and f.technician_user_id)})
+    return payload
+
 @app.get("/api/bobinas/v8538/minhas-entregas")
 @login_required
 def bobinas_v8538_minhas_entregas():
     try:
-        _v8538r3_ensure_schema()
-        uid=session.get("user_id")
-        rows=(db.session.query(BobbinDeliverySchedule, BobbinDeliveryDetail, BobbinFieldDelivery)
-              .outerjoin(BobbinDeliveryDetail, BobbinDeliveryDetail.delivery_id==BobbinDeliverySchedule.id)
-              .outerjoin(BobbinFieldDelivery, BobbinFieldDelivery.delivery_id==BobbinDeliverySchedule.id)
-              .filter(BobbinDeliverySchedule.status.notin_(["ENTREGUE","RECEBIDO"]))
-              .filter(db.or_(BobbinFieldDelivery.technician_user_id==uid, BobbinFieldDelivery.technician_user_id.is_(None)))
-              .order_by(BobbinDeliverySchedule.delivery_date.asc(), BobbinDeliverySchedule.id.asc())
-              .limit(100).all())
-        payload=[]
-        for e,d,f in rows:
-            operadora,estacao=_v8538r3_operator_station(e.location)
-            payload.append({"id":e.id,"operadora":operadora,"localidade":estacao,
-                "data":e.delivery_date.isoformat() if e.delivery_date else "",
-                "caixas":int(e.boxes_qty or 0),"avulsas":int(getattr(d,"loose_qty",0) or 0),
-                "status":getattr(f,"status",None) or "PENDENTE",
-                "atribuida":bool(f and f.technician_user_id)})
+        payload=_v8541_bobbin_my_deliveries(session.get("user_id"))
         return jsonify({"ok":True,"release":"V85.39 REV1","rows":payload})
     except Exception as exc:
         db.session.rollback()
@@ -24235,30 +24239,34 @@ def bobinas_v8538_concluir(delivery_id):
 
 
 # === V85.38 REV4 — Receber Bobinas, uma programação por vez ===
-@app.post("/api/bobinas/v8538/entregas/<int:delivery_id>/receber")
-@login_required
-def bobinas_v8538_receber(delivery_id):
-    data=request.get_json(silent=True) or {}
+def _v8541_bobbin_receive(delivery_id,user_id,data):
+    """V85.41 — regra única de RECEBIDO (Web e Android Bearer).
+    PROGRAMADO não compõe estoque; somente o recebimento confirmado credita a CD/localidade,
+    uma única vez. Retorna (payload, http_status)."""
     photos=data.get("photos") or []
     if isinstance(photos,str): photos=[photos]
     photos=[str(x).strip()[:700] for x in photos if str(x).strip()]
     if not photos:
-        return jsonify({"ok":False,"error":"Inclua ao menos uma foto."}),400
+        return {"ok":False,"error":"Inclua ao menos uma foto."},400
     try:
         boxes=max(0,int(data.get("boxes") or 0))
     except Exception:
-        return jsonify({"ok":False,"error":"Quantidade de caixas inválida."}),400
+        return {"ok":False,"error":"Quantidade de caixas inválida."},400
     _v8538r3_ensure_schema()
-    delivery=db.session.get(BobbinDeliverySchedule,delivery_id)
+    # V85.41: trava a linha da programação (PostgreSQL) para que duplo toque/retentativa do app
+    # não credite duas vezes; em SQLite o FOR UPDATE é ignorado.
+    delivery=(db.session.query(BobbinDeliverySchedule).filter(BobbinDeliverySchedule.id==delivery_id)
+              .with_for_update().first())
     if not delivery:
-        return jsonify({"ok":False,"error":"Programação não encontrada."}),404
+        return {"ok":False,"error":"Programação não encontrada."},404
     # REV2: recebimento é idempotente. Uma programação recebida não pode creditar estoque novamente.
     row=BobbinFieldDelivery.query.filter_by(delivery_id=delivery_id).first()
     if delivery.status == "RECEBIDO" or (row and row.status == "RECEBIDO"):
-        return jsonify({"ok":False,"error":"Esta programação já foi recebida e creditada no estoque."}),409
+        db.session.rollback()
+        return {"ok":False,"error":"Esta programação já foi recebida e creditada no estoque."},409
     if not row:
         row=BobbinFieldDelivery(delivery_id=delivery_id); db.session.add(row)
-    row.technician_user_id=session.get("user_id")
+    row.technician_user_id=user_id
     row.status="RECEBIDO"
     row.delivered_boxes=boxes
     row.delivered_loose=0
@@ -24278,23 +24286,30 @@ def bobinas_v8538_receber(delivery_id):
     stock_balance=_v771_balance(stock_point,stock_item)
     stock_before=float(stock_balance.qty_good or 0)
     stock_balance.qty_good=stock_before+received_bobbins
-    stock_balance.updated_by=session.get("user_id")
+    stock_balance.updated_by=user_id
     stock_balance.updated_at=datetime.utcnow()
     db.session.add(FieldStockMovement(
       item_id=stock_item.id,movement_type="ENTREGA",qty=received_bobbins,
-      destination_point_id=stock_point.id,technician_id=session.get("user_id"),
+      destination_point_id=stock_point.id,technician_id=user_id,
       destination_station=delivery.location,
       justification=f"Recebimento programação Bobinas #{delivery_id}: {boxes} caixa(s) x {box_size}",
       photo_key=json.dumps(photos,ensure_ascii=False),status="CONCLUIDO"))
     db.session.add(AuditEvent(
-      user_id=session.get("user_id"),event_type="BOBINAS_RECEBIDAS",
+      user_id=user_id,event_type="BOBINAS_RECEBIDAS",
       entity_type="bobbin_delivery_schedule",entity_id=str(delivery_id),
       detail=json.dumps({"localidade":delivery.location,"boxes":boxes,"photos":photos,
         "latitude":row.latitude,"longitude":row.longitude},ensure_ascii=False)))
     db.session.commit()
-    return jsonify({"ok":True,"status":"RECEBIDO","delivery_id":delivery_id,"boxes":boxes,"photos":len(photos),
+    return {"ok":True,"status":"RECEBIDO","delivery_id":delivery_id,"boxes":boxes,"photos":len(photos),
       "box_size":box_size,"credited_bobbins":received_bobbins,"stock_before":int(stock_before),
-      "stock_after":int(stock_balance.qty_good or 0),"stock_location":delivery.location})
+      "stock_after":int(stock_balance.qty_good or 0),"stock_location":delivery.location},200
+
+@app.post("/api/bobinas/v8538/entregas/<int:delivery_id>/receber")
+@login_required
+def bobinas_v8538_receber(delivery_id):
+    data=request.get_json(silent=True) or {}
+    payload,code=_v8541_bobbin_receive(delivery_id,session.get("user_id"),data)
+    return jsonify(payload),code
 # === /V85.38 REV4 ===
 
 
@@ -24311,7 +24326,7 @@ def _v8539r2_severity(pct):
 @login_required
 def bobinas_v8539_visao():
     try:
-        response=v77_bobbins_dashboard_api()
+        response=v77_bobbins_dashboard_api.__wrapped__()  # V85.41: núcleo sem login_required (Web já autenticada; mobile via Bearer)
         data=response.get_json() if hasattr(response,"get_json") else response
         if not isinstance(data,dict): return response
         rows=data.get("rows") or []; operators=data.get("operators") or []; stations=data.get("stations") or []
@@ -24346,3 +24361,53 @@ def bobinas_v8539_visao():
         app.logger.exception("V85.40 REV2 bobinas visao")
         return jsonify({"ok":False,"release":"V85.40 REV2","error":str(exc)}),500
 # === /V85.39 REV2 ===
+
+# === V85.41 — Bobinas: API mobile Bearer (Receber Bobinas / Visão Geral / Minhas entregas) ===
+# Mesma regra de negócio da Web (V85.38/V85.39), sem duplicação: as rotas mobile chamam os mesmos núcleos.
+def _v8541_actor_has(permission):
+    """Permissão do 'ator' da requisição: Bearer mobile (request.mobile_user) ou sessão Web.
+    A Matriz de Permissões continua sendo a fonte (ADM/manager = acesso integral)."""
+    mu=getattr(request,"mobile_user",None) if has_request_context() else None
+    if mu is None:
+        return _has_access(permission)
+    if not getattr(mu,"active",True): return False
+    if getattr(mu,"role",None)=="manager": return True
+    access=_user_access_set(mu)
+    if permission in ACCESS_GROUPS:
+        return permission in access or any(x in access for x in ACCESS_GROUPS[permission][1])
+    if permission in ACCESS_SUBMODULES:
+        group=permission.split(".",1)[0]
+        return permission in access or group in access
+    return False
+
+@app.get("/api/mobile/v1/field/bobinas/visao")
+@mobile_auth_required
+def v8541_mobile_bobinas_visao():
+    if not _v8541_actor_has("field.bobbins_dashboard"):
+        return jsonify({"ok":False,"error":"Sem permissão para a Visão Geral de Bobinas."}),403
+    return bobinas_v8539_visao.__wrapped__()
+
+@app.get("/api/mobile/v1/field/bobinas/minhas-entregas")
+@mobile_auth_required
+def v8541_mobile_bobinas_minhas_entregas():
+    if not _v8541_actor_has("field.bobbins"):
+        return jsonify({"ok":False,"error":"Sem permissão para Bobinas."}),403
+    try:
+        return jsonify({"ok":True,"release":APP_RELEASE,"rows":_v8541_bobbin_my_deliveries(request.mobile_user.id)})
+    except Exception as exc:
+        db.session.rollback(); app.logger.exception("V85.41 mobile minhas entregas")
+        return jsonify({"ok":False,"error":"Falha ao consultar programações."}),500
+
+@app.post("/api/mobile/v1/field/bobinas/entregas/<int:delivery_id>/receber")
+@mobile_auth_required
+def v8541_mobile_bobinas_receber(delivery_id):
+    if not _v8541_actor_has("field.bobbins"):
+        return jsonify({"ok":False,"error":"Sem permissão para Bobinas."}),403
+    data=request.get_json(silent=True) or {}
+    try:
+        payload,code=_v8541_bobbin_receive(delivery_id,request.mobile_user.id,data)
+        return jsonify(payload),code
+    except Exception:
+        db.session.rollback(); app.logger.exception("V85.41 mobile receber bobinas")
+        return jsonify({"ok":False,"error":"Falha ao registrar o recebimento."}),500
+# === /V85.41 ===
