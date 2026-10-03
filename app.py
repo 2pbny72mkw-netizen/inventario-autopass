@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.40 REV5"
+APP_RELEASE = "V85.40 REV6"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -22882,6 +22882,31 @@ def v7796_field_stock_balance_adjust():
     try:db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='ESTOQUE_SALDO_AJUSTADO',entity_type='field_stock_balance',entity_id=f'{point.id}:{item.id}',detail=f'{point.name} | {item.description} | bom {old_good}->{good} | ruim {old_bad}->{bad} | {reason}'))
     except Exception:pass
     db.session.commit();return jsonify({'ok':True,'good_before':old_good,'good_after':good,'bad_before':old_bad,'bad_after':bad})
+
+@app.post('/api/field-stock/movimentar')
+@login_required
+def v8540r6_field_stock_move():
+    if not _has_access('field.stock_manage'): abort(403)
+    d=request.get_json(silent=True) or {}
+    try:
+        point_id=int(d.get('point_id') or 0); item_id=int(d.get('item_id') or 0); qty=float(d.get('qty') or 0)
+    except (TypeError,ValueError):
+        return jsonify({'ok':False,'error':'Valores inválidos.'}),400
+    direction=(d.get('direction') or '').strip().upper(); reason=(d.get('reason') or '').strip()
+    if direction not in ('ENTRADA','SAIDA'): return jsonify({'ok':False,'error':'Tipo de movimentação inválido.'}),400
+    if qty<=0: return jsonify({'ok':False,'error':'Quantidade deve ser maior que zero.'}),400
+    if not reason: return jsonify({'ok':False,'error':'Justificativa obrigatória.'}),400
+    point=db.session.get(FieldStockPoint,point_id); item=db.session.get(FieldStockItem,item_id)
+    if not point or not item or not item.active: return jsonify({'ok':False,'error':'Estoque ou item não encontrado.'}),404
+    bal=_v771_balance(point,item); before=float(bal.qty_good or 0)
+    delta=qty if direction=='ENTRADA' else -qty
+    if before+delta < 0: return jsonify({'ok':False,'error':f'Saldo insuficiente. Disponível: {before}.'}),409
+    bal.qty_good=before+delta; bal.updated_by=session['user_id']; bal.updated_at=datetime.utcnow()
+    db.session.add(FieldStockMovement(item_id=item.id,movement_type=direction,qty=delta,source_point_id=point.id,technician_id=session['user_id'],destination_company=point.company,destination_line=point.line,destination_station=point.station,destination_asset=point.name,justification=reason,status='CONCLUIDO'))
+    try: db.session.add(AuditEvent(user_id=session.get('user_id'),event_type=f'ESTOQUE_{direction}',entity_type='field_stock_balance',entity_id=f'{point.id}:{item.id}',detail=f'{point.name} | {item.description} | {direction} {qty} | saldo {before}->{before+delta} | {reason}'))
+    except Exception: pass
+    db.session.commit()
+    return jsonify({'ok':True,'direction':direction,'before':before,'after':before+delta})
 
 @app.post('/api/field-stock/retirar')
 @login_required
