@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.40 REV4"
+APP_RELEASE = "V85.40 REV5"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -22920,7 +22920,7 @@ def v771_field_stock_destination():
     if not item or qty<=0 or not load or float(load.qty or 0)<qty:return jsonify({'ok':False,'error':'Carga insuficiente ou dados inválidos.'}),409
     company=(d.get('company') or '').strip();line=(d.get('line') or '').strip();station=(d.get('station') or '').strip();asset=_v773_norm_atm_id(d.get('asset'))
     justification=(d.get('justification') or '').strip();photo=request.files.get('photo')
-    # REV4: ATM é opcional. Operadora/Linha/Estação continuam obrigatórios e oficiais.
+    # REV5: ATM permanece opcional. Somente Operadora/Linha/Estação são obrigatórios e oficiais.
     if not company or not line or not station:return jsonify({'ok':False,'error':'Selecione Operadora, Linha e Estação.'}),400
     if not justification or not photo:return jsonify({'ok':False,'error':'Justificativa e foto são obrigatórios.'}),400
     master=_v772_master_atm_map();official_ids=master.get((company,line,station),set())
@@ -22954,7 +22954,7 @@ def v771_field_stock_destination():
         db.session.commit()
         return jsonify({'ok':True,'load_after':load.qty,'atm':asset or None,'destination_scope':'ATM' if asset else 'ESTACAO','reserve_before':reserve_before,'reserve_after':reserve_after,'reserve_scope':reserve_scope,'bobbin_reserve_updated':is_bobbin})
     except Exception as exc:
-        db.session.rollback();app.logger.exception('V85.40 REV4: falha ao destinar item da carga')
+        db.session.rollback();app.logger.exception('V85.40 REV5: falha ao destinar item da carga')
         return jsonify({'ok':False,'error':'Não foi possível concluir a destinação. Nenhum saldo foi alterado.'}),500
 
 @app.post('/api/field-stock/regularizacao')
