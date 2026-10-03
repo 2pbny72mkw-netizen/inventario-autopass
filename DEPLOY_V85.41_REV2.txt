@@ -1,0 +1,12 @@
+AUTOPASS V85.41 REV2
+Base: V85.41 REV1
+Escopo: Composição de Preços / Reforma Tributária simplificada.
+- Pergunta Considerar Reforma Tributária? Não/Sim.
+- Não preserva integralmente o cálculo atual.
+- Sim remove PIS/COFINS da simulação e habilita CBS parametrizável.
+- CBS calculada por fora e sem créditos nesta etapa.
+- ICMS, IPI e ISS permanecem conforme parâmetros atuais.
+- Comparativo simplificado: modelo atual x CBS.
+- Estudo salvo persiste tax_reform e cbs.
+- Exportação XLSX registra cenário e CBS.
+Fora do escopo: IBS, créditos CBS, transição anual e demais efeitos da reforma.
