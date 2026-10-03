@@ -1,0 +1,17 @@
+AUTOPASS — V85.41 REV3 — ENXUTA
+
+Arquivos alterados:
+- app.py
+- templates/engineering.html
+- static/engineering_v72.js
+
+Escopo:
+- Layout da Reforma Tributária ajustado ao desenho aprovado.
+- Cenário Não preserva integralmente o cálculo atual.
+- Cenário Sim remove visualmente PIS/COFINS e usa CBS por fora, sem crédito.
+- Base CBS simplificada exclui IPI, ICMS e ISS durante a transição.
+- Memória da margem no cenário Reforma: preço final faturado -> IPI -> CBS -> ICMS -> ISS -> receita líquida -> custo -> lucro/margem.
+- Comparativo Atual x CBS mantido.
+- IBS e créditos fora do escopo.
+
+Observação fiscal: simulação gerencial; manter homologação final do contador.
