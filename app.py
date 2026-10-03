@@ -28,7 +28,7 @@ import math
 import csv
 from functools import wraps
 
-from flask import Flask, current_app, has_request_context, render_template, request, redirect, url_for, session, jsonify, flash, send_from_directory, Response, send_file, make_response, g, abort
+from flask import Flask, has_request_context, render_template, request, redirect, url_for, session, jsonify, flash, send_from_directory, Response, send_file, make_response, g, abort
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import UniqueConstraint, Index, func, case, text, and_, event, or_, inspect
 from sqlalchemy.exc import IntegrityError
@@ -263,7 +263,7 @@ def _v56b_perf_finish(response):
             # V85.30 — janela de diagnóstico: 100% das requisições funcionais são medidas.
             # Retenção curta evita que a própria telemetria cresça indefinidamente.
             response_bytes=int(response.calculate_content_length() or 0) if not response.direct_passthrough else 0
-            db.session.add(PerformanceMetric(route=(request.url_rule.rule if request.url_rule else path)[:220],method=request.method,status_code=response.status_code,duration_ms=round(ms,2),sql_ms=round(float(getattr(g,"_perf_sql_ms",0) or 0),2),query_count=int(getattr(g,"_perf_query_count",0) or 0),response_bytes=response_bytes,request_id=getattr(g,"_perf_request_id",None),user_id=session.get("user_id")))
+            db.session.add(PerformanceMetric(route=(request.url_rule.rule if request.url_rule else path)[:220],method=request.method,status_code=response.status_code,duration_ms=round(ms,2),sql_ms=round(float(getattr(g,"_perf_sql_ms",0) or 0),2),query_count=int(getattr(g,"_perf_query_count",0) or 0),response_bytes=response_bytes,request_id=getattr(g,"_perf_request_id",None),release=APP_RELEASE,user_id=session.get("user_id")))
             db.session.commit()
             # Limpeza no máximo uma vez/hora, mantendo 7 dias de diagnóstico.
             global _V8530_LAST_PERF_CLEANUP
@@ -1095,6 +1095,8 @@ class PerformanceMetric(db.Model):
     query_count = db.Column(db.Integer, nullable=False, default=0)
     response_bytes = db.Column(db.Integer, nullable=False, default=0)
     request_id = db.Column(db.String(36), index=True)
+    # V85.41: fixa a versão que originou cada amostra para comparação histórica.
+    release = db.Column(db.String(40), nullable=True, index=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
     __table_args__ = (Index("ix_perf_created_route", "created_at", "route"),)
@@ -6208,6 +6210,56 @@ def _v8530_treport_audit():
     except Exception as exc:
         return {"ok":False,"error":str(exc)}
 
+
+# V85.41 — histórico por versão, crescimento do PostgreSQL e uso real de índices.
+def _v8541_version_history(days=30):
+    """Agrega métricas por release sem expor payloads ou dados pessoais."""
+    try:
+        since=datetime.utcnow()-timedelta(days=max(1,min(int(days or 30),90)))
+        rows=PerformanceMetric.query.filter(PerformanceMetric.created_at>=since).order_by(PerformanceMetric.created_at.desc()).limit(50000).all()
+        groups={}
+        for x in rows:
+            rel=(getattr(x,'release',None) or 'LEGADO / SEM VERSÃO').strip()
+            d=groups.setdefault(rel,{'release':rel,'requests':0,'sum_ms':0.0,'sum_sql':0.0,'queries':0,'errors':0,'vals':[],'first':None,'last':None})
+            d['requests']+=1; d['sum_ms']+=float(x.duration_ms or 0); d['sum_sql']+=float(getattr(x,'sql_ms',0) or 0); d['queries']+=int(getattr(x,'query_count',0) or 0); d['errors']+=1 if int(x.status_code or 0)>=500 else 0; d['vals'].append(float(x.duration_ms or 0))
+            dt=x.created_at
+            d['first']=dt if d['first'] is None or dt<d['first'] else d['first']; d['last']=dt if d['last'] is None or dt>d['last'] else d['last']
+        def pct(vals,p):
+            if not vals:return 0
+            a=sorted(vals); return round(a[min(len(a)-1,max(0,int((len(a)-1)*p)))],1)
+        out=[]
+        for d in groups.values():
+            n=max(1,d['requests']); out.append({'release':d['release'],'requests':d['requests'],'avg_ms':round(d['sum_ms']/n,1),'p95_ms':pct(d['vals'],.95),'p99_ms':pct(d['vals'],.99),'avg_sql_ms':round(d['sum_sql']/n,1),'avg_queries':round(d['queries']/n,1),'errors_5xx':d['errors'],'first_at':d['first'].isoformat()+'Z' if d['first'] else None,'last_at':d['last'].isoformat()+'Z' if d['last'] else None})
+        return sorted(out,key=lambda x:x.get('last_at') or '',reverse=True)
+    except Exception as exc:
+        try: db.session.rollback()
+        except Exception: pass
+        return [{'release':'ERRO','error':str(exc)[:180]}]
+
+def _v8541_index_usage_snapshot():
+    if not database_url.startswith('postgresql'): return {'ok':False,'rows':[],'note':'Disponível somente em PostgreSQL.'}
+    try:
+        rows=db.session.execute(text("""
+          SELECT schemaname, relname AS table_name, indexrelname AS index_name,
+                 idx_scan, pg_relation_size(indexrelid) AS index_bytes
+          FROM pg_stat_user_indexes
+          ORDER BY pg_relation_size(indexrelid) DESC
+          LIMIT 40
+        """)).mappings().all()
+        return {'ok':True,'rows':[{'table':r['table_name'],'index':r['index_name'],'scans':int(r['idx_scan'] or 0),'bytes':int(r['index_bytes'] or 0),'usage':'SEM USO OBSERVADO' if int(r['idx_scan'] or 0)==0 else 'EM USO'} for r in rows], 'note':'idx_scan é acumulado desde o último reset das estatísticas do PostgreSQL; não remover índice apenas por este indicador.'}
+    except Exception as exc:
+        try: db.session.rollback()
+        except Exception: pass
+        return {'ok':False,'rows':[],'note':str(exc)[:180]}
+
+def _v8541_db_growth_snapshot():
+    """Fotografia atual para o painel; histórico real passa a ser comparável entre exports/versões."""
+    snap=_database_storage_snapshot()
+    total=int(snap.get('total_bytes') or 0)
+    indexes=sum(int(x.get('index_bytes') or 0) for x in snap.get('tables',[]))
+    data=sum(int(x.get('table_bytes') or 0) for x in snap.get('tables',[]))
+    return {'total_bytes':total,'top_tables_data_bytes':data,'top_tables_index_bytes':indexes,'captured_at':datetime.utcnow().isoformat()+'Z'}
+
 @app.get("/telemetria")
 @login_required
 def telemetry_page():
@@ -6259,7 +6311,10 @@ def telemetry_summary_api():
         with PANORAMA_EXPORT_LOCK:
             _jobs=list(PANORAMA_EXPORT_JOBS.values())
         storage={"database":_database_storage_snapshot(),"r2":_r2_storage_snapshot(),"local":_local_storage_snapshot(),"runtime":_process_memory_snapshot(),"jobs":{"active":sum(1 for j in _jobs if j.get("status") in ("FILA","PROCESSANDO")),"ready":sum(1 for j in _jobs if j.get("status")=="PRONTO"),"errors":sum(1 for j in _jobs if j.get("status")=="ERRO")}}
-        return jsonify({"ok":True,"release":APP_RELEASE,"generated_at":datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y %H:%M:%S"),"window_minutes":minutes,"health":health,"avg_ms":avg,"p95_ms":p95,"p99_ms":p99,"slow_1s":slow_1s,"slow_2s":slow_2s,"slow_5s":slow_5s,"max_ms":round(max(vals),1) if vals else 0,"requests":len(rows),"errors_5xx":errors,"active_users_15m":int(active_users),"routes":route_rows[:20],"top5":top5,"timeline":timeline[-24:],"table_counts":table_counts,"storage":storage,"migrations":_v70_migration_snapshot(),"indexes":_v70_index_snapshot(),"t_report_audit":_v8530_treport_audit(),"telemetry":{"sampling":"100% rotas funcionais","retention_days":7,"request_id":True,"response_bytes":True}})
+        version_history=_v8541_version_history(30)
+        index_usage=_v8541_index_usage_snapshot()
+        db_growth=_v8541_db_growth_snapshot()
+        return jsonify({"ok":True,"release":APP_RELEASE,"generated_at":datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y %H:%M:%S"),"window_minutes":minutes,"health":health,"avg_ms":avg,"p95_ms":p95,"p99_ms":p99,"slow_1s":slow_1s,"slow_2s":slow_2s,"slow_5s":slow_5s,"max_ms":round(max(vals),1) if vals else 0,"requests":len(rows),"errors_5xx":errors,"active_users_15m":int(active_users),"routes":route_rows[:20],"top5":top5,"timeline":timeline[-24:],"table_counts":table_counts,"storage":storage,"migrations":_v70_migration_snapshot(),"indexes":_v70_index_snapshot(),"t_report_audit":_v8530_treport_audit(),"version_history":version_history,"index_usage":index_usage,"db_growth":db_growth,"telemetry":{"sampling":"100% rotas funcionais","retention_days":7,"request_id":True,"response_bytes":True,"release_tag":True,"architecture":"V85.41 Performance & Data Architecture"}})
     except Exception as exc:
         return jsonify({"ok":False,"error":str(exc)}),500
 
@@ -20554,8 +20609,20 @@ with app.app_context():
                 if "query_count" not in cols: conn.execute(text("ALTER TABLE performance_metrics ADD COLUMN query_count INTEGER DEFAULT 0"))
                 if "response_bytes" not in cols: conn.execute(text("ALTER TABLE performance_metrics ADD COLUMN response_bytes INTEGER DEFAULT 0"))
                 if "request_id" not in cols: conn.execute(text("ALTER TABLE performance_metrics ADD COLUMN request_id VARCHAR(36)"))
+                if "release" not in cols: conn.execute(text("ALTER TABLE performance_metrics ADD COLUMN release VARCHAR(40)"))
                 try: conn.execute(text("CREATE INDEX IF NOT EXISTS ix_perf_request_id ON performance_metrics (request_id)"))
                 except Exception: pass
+                try: conn.execute(text("CREATE INDEX IF NOT EXISTS ix_perf_release_created ON performance_metrics (release, created_at)"))
+                except Exception: pass
+    except Exception:
+        try: db.session.rollback()
+        except Exception: pass
+
+    # V85.41 — observabilidade histórica por release e auditoria de índices.
+    try:
+        if not SchemaMigration.query.filter_by(version='V85.41-001').first():
+            db.session.add(SchemaMigration(version='V85.41-001',description='Performance & Data Architecture: telemetria por release, comparativo histórico, uso de índices e crescimento do banco'))
+            db.session.commit()
     except Exception:
         try: db.session.rollback()
         except Exception: pass
@@ -22647,7 +22714,7 @@ def v85274_bobbin_deliveries_bulk_update():
 @app.get('/api/bobinas/dashboard')
 @login_required
 def v77_bobbins_dashboard_api():
-    if not _v8541_actor_has('field.bobbins_dashboard'): abort(403)
+    if not _has_access('field.bobbins_dashboard'): abort(403)
     _v771_cleanup_photos()
     company=(request.args.get('company') or '').strip();line=(request.args.get('line') or '').strip();station=(request.args.get('station') or '').strip();atm=(request.args.get('atm') or '').strip();situation=(request.args.get('situation') or '').strip().upper();replacement=(request.args.get('replacement') or '').strip().upper()
     official=_v773_official_index(); installed=official['installed']; official_ids={a for x in installed for a in _v773_atm_aliases(x)}
@@ -24153,31 +24220,27 @@ def _v8538r3_operator_station(location):
     # até existir vínculo oficial no cadastro.
     return "NÃO INFORMADA", loc
 
-def _v8541_bobbin_my_deliveries(uid):
-    """V85.41 — regra única de 'minhas entregas' (Web e Android Bearer)."""
-    _v8538r3_ensure_schema()
-    rows=(db.session.query(BobbinDeliverySchedule, BobbinDeliveryDetail, BobbinFieldDelivery)
-          .outerjoin(BobbinDeliveryDetail, BobbinDeliveryDetail.delivery_id==BobbinDeliverySchedule.id)
-          .outerjoin(BobbinFieldDelivery, BobbinFieldDelivery.delivery_id==BobbinDeliverySchedule.id)
-          .filter(BobbinDeliverySchedule.status.notin_(["ENTREGUE","RECEBIDO"]))
-          .filter(db.or_(BobbinFieldDelivery.technician_user_id==uid, BobbinFieldDelivery.technician_user_id.is_(None)))
-          .order_by(BobbinDeliverySchedule.delivery_date.asc(), BobbinDeliverySchedule.id.asc())
-          .limit(100).all())
-    payload=[]
-    for e,d,f in rows:
-        operadora,estacao=_v8538r3_operator_station(e.location)
-        payload.append({"id":e.id,"operadora":operadora,"localidade":estacao,
-            "data":e.delivery_date.isoformat() if e.delivery_date else "",
-            "caixas":int(e.boxes_qty or 0),"avulsas":int(getattr(d,"loose_qty",0) or 0),
-            "status":getattr(f,"status",None) or "PENDENTE",
-            "atribuida":bool(f and f.technician_user_id)})
-    return payload
-
 @app.get("/api/bobinas/v8538/minhas-entregas")
 @login_required
 def bobinas_v8538_minhas_entregas():
     try:
-        payload=_v8541_bobbin_my_deliveries(session.get("user_id"))
+        _v8538r3_ensure_schema()
+        uid=session.get("user_id")
+        rows=(db.session.query(BobbinDeliverySchedule, BobbinDeliveryDetail, BobbinFieldDelivery)
+              .outerjoin(BobbinDeliveryDetail, BobbinDeliveryDetail.delivery_id==BobbinDeliverySchedule.id)
+              .outerjoin(BobbinFieldDelivery, BobbinFieldDelivery.delivery_id==BobbinDeliverySchedule.id)
+              .filter(BobbinDeliverySchedule.status.notin_(["ENTREGUE","RECEBIDO"]))
+              .filter(db.or_(BobbinFieldDelivery.technician_user_id==uid, BobbinFieldDelivery.technician_user_id.is_(None)))
+              .order_by(BobbinDeliverySchedule.delivery_date.asc(), BobbinDeliverySchedule.id.asc())
+              .limit(100).all())
+        payload=[]
+        for e,d,f in rows:
+            operadora,estacao=_v8538r3_operator_station(e.location)
+            payload.append({"id":e.id,"operadora":operadora,"localidade":estacao,
+                "data":e.delivery_date.isoformat() if e.delivery_date else "",
+                "caixas":int(e.boxes_qty or 0),"avulsas":int(getattr(d,"loose_qty",0) or 0),
+                "status":getattr(f,"status",None) or "PENDENTE",
+                "atribuida":bool(f and f.technician_user_id)})
         return jsonify({"ok":True,"release":"V85.39 REV1","rows":payload})
     except Exception as exc:
         db.session.rollback()
@@ -24239,34 +24302,30 @@ def bobinas_v8538_concluir(delivery_id):
 
 
 # === V85.38 REV4 — Receber Bobinas, uma programação por vez ===
-def _v8541_bobbin_receive(delivery_id,user_id,data):
-    """V85.41 — regra única de RECEBIDO (Web e Android Bearer).
-    PROGRAMADO não compõe estoque; somente o recebimento confirmado credita a CD/localidade,
-    uma única vez. Retorna (payload, http_status)."""
+@app.post("/api/bobinas/v8538/entregas/<int:delivery_id>/receber")
+@login_required
+def bobinas_v8538_receber(delivery_id):
+    data=request.get_json(silent=True) or {}
     photos=data.get("photos") or []
     if isinstance(photos,str): photos=[photos]
     photos=[str(x).strip()[:700] for x in photos if str(x).strip()]
     if not photos:
-        return {"ok":False,"error":"Inclua ao menos uma foto."},400
+        return jsonify({"ok":False,"error":"Inclua ao menos uma foto."}),400
     try:
         boxes=max(0,int(data.get("boxes") or 0))
     except Exception:
-        return {"ok":False,"error":"Quantidade de caixas inválida."},400
+        return jsonify({"ok":False,"error":"Quantidade de caixas inválida."}),400
     _v8538r3_ensure_schema()
-    # V85.41: trava a linha da programação (PostgreSQL) para que duplo toque/retentativa do app
-    # não credite duas vezes; em SQLite o FOR UPDATE é ignorado.
-    delivery=(db.session.query(BobbinDeliverySchedule).filter(BobbinDeliverySchedule.id==delivery_id)
-              .with_for_update().first())
+    delivery=db.session.get(BobbinDeliverySchedule,delivery_id)
     if not delivery:
-        return {"ok":False,"error":"Programação não encontrada."},404
+        return jsonify({"ok":False,"error":"Programação não encontrada."}),404
     # REV2: recebimento é idempotente. Uma programação recebida não pode creditar estoque novamente.
     row=BobbinFieldDelivery.query.filter_by(delivery_id=delivery_id).first()
     if delivery.status == "RECEBIDO" or (row and row.status == "RECEBIDO"):
-        db.session.rollback()
-        return {"ok":False,"error":"Esta programação já foi recebida e creditada no estoque."},409
+        return jsonify({"ok":False,"error":"Esta programação já foi recebida e creditada no estoque."}),409
     if not row:
         row=BobbinFieldDelivery(delivery_id=delivery_id); db.session.add(row)
-    row.technician_user_id=user_id
+    row.technician_user_id=session.get("user_id")
     row.status="RECEBIDO"
     row.delivered_boxes=boxes
     row.delivered_loose=0
@@ -24286,30 +24345,23 @@ def _v8541_bobbin_receive(delivery_id,user_id,data):
     stock_balance=_v771_balance(stock_point,stock_item)
     stock_before=float(stock_balance.qty_good or 0)
     stock_balance.qty_good=stock_before+received_bobbins
-    stock_balance.updated_by=user_id
+    stock_balance.updated_by=session.get("user_id")
     stock_balance.updated_at=datetime.utcnow()
     db.session.add(FieldStockMovement(
       item_id=stock_item.id,movement_type="ENTREGA",qty=received_bobbins,
-      destination_point_id=stock_point.id,technician_id=user_id,
+      destination_point_id=stock_point.id,technician_id=session.get("user_id"),
       destination_station=delivery.location,
       justification=f"Recebimento programação Bobinas #{delivery_id}: {boxes} caixa(s) x {box_size}",
       photo_key=json.dumps(photos,ensure_ascii=False),status="CONCLUIDO"))
     db.session.add(AuditEvent(
-      user_id=user_id,event_type="BOBINAS_RECEBIDAS",
+      user_id=session.get("user_id"),event_type="BOBINAS_RECEBIDAS",
       entity_type="bobbin_delivery_schedule",entity_id=str(delivery_id),
       detail=json.dumps({"localidade":delivery.location,"boxes":boxes,"photos":photos,
         "latitude":row.latitude,"longitude":row.longitude},ensure_ascii=False)))
     db.session.commit()
-    return {"ok":True,"status":"RECEBIDO","delivery_id":delivery_id,"boxes":boxes,"photos":len(photos),
+    return jsonify({"ok":True,"status":"RECEBIDO","delivery_id":delivery_id,"boxes":boxes,"photos":len(photos),
       "box_size":box_size,"credited_bobbins":received_bobbins,"stock_before":int(stock_before),
-      "stock_after":int(stock_balance.qty_good or 0),"stock_location":delivery.location},200
-
-@app.post("/api/bobinas/v8538/entregas/<int:delivery_id>/receber")
-@login_required
-def bobinas_v8538_receber(delivery_id):
-    data=request.get_json(silent=True) or {}
-    payload,code=_v8541_bobbin_receive(delivery_id,session.get("user_id"),data)
-    return jsonify(payload),code
+      "stock_after":int(stock_balance.qty_good or 0),"stock_location":delivery.location})
 # === /V85.38 REV4 ===
 
 
@@ -24326,7 +24378,7 @@ def _v8539r2_severity(pct):
 @login_required
 def bobinas_v8539_visao():
     try:
-        response=v77_bobbins_dashboard_api.__wrapped__()  # V85.41: núcleo sem login_required (Web já autenticada; mobile via Bearer)
+        response=v77_bobbins_dashboard_api()
         data=response.get_json() if hasattr(response,"get_json") else response
         if not isinstance(data,dict): return response
         rows=data.get("rows") or []; operators=data.get("operators") or []; stations=data.get("stations") or []
@@ -24361,53 +24413,3 @@ def bobinas_v8539_visao():
         app.logger.exception("V85.40 REV2 bobinas visao")
         return jsonify({"ok":False,"release":"V85.40 REV2","error":str(exc)}),500
 # === /V85.39 REV2 ===
-
-# === V85.41 — Bobinas: API mobile Bearer (Receber Bobinas / Visão Geral / Minhas entregas) ===
-# Mesma regra de negócio da Web (V85.38/V85.39), sem duplicação: as rotas mobile chamam os mesmos núcleos.
-def _v8541_actor_has(permission):
-    """Permissão do 'ator' da requisição: Bearer mobile (request.mobile_user) ou sessão Web.
-    A Matriz de Permissões continua sendo a fonte (ADM/manager = acesso integral)."""
-    mu=getattr(request,"mobile_user",None) if has_request_context() else None
-    if mu is None:
-        return _has_access(permission)
-    if not getattr(mu,"active",True): return False
-    if getattr(mu,"role",None)=="manager": return True
-    access=_user_access_set(mu)
-    if permission in ACCESS_GROUPS:
-        return permission in access or any(x in access for x in ACCESS_GROUPS[permission][1])
-    if permission in ACCESS_SUBMODULES:
-        group=permission.split(".",1)[0]
-        return permission in access or group in access
-    return False
-
-@app.get("/api/mobile/v1/field/bobinas/visao")
-@mobile_auth_required
-def v8541_mobile_bobinas_visao():
-    if not _v8541_actor_has("field.bobbins_dashboard"):
-        return jsonify({"ok":False,"error":"Sem permissão para a Visão Geral de Bobinas."}),403
-    return bobinas_v8539_visao.__wrapped__()
-
-@app.get("/api/mobile/v1/field/bobinas/minhas-entregas")
-@mobile_auth_required
-def v8541_mobile_bobinas_minhas_entregas():
-    if not _v8541_actor_has("field.bobbins"):
-        return jsonify({"ok":False,"error":"Sem permissão para Bobinas."}),403
-    try:
-        return jsonify({"ok":True,"release":APP_RELEASE,"rows":_v8541_bobbin_my_deliveries(request.mobile_user.id)})
-    except Exception as exc:
-        db.session.rollback(); app.logger.exception("V85.41 mobile minhas entregas")
-        return jsonify({"ok":False,"error":"Falha ao consultar programações."}),500
-
-@app.post("/api/mobile/v1/field/bobinas/entregas/<int:delivery_id>/receber")
-@mobile_auth_required
-def v8541_mobile_bobinas_receber(delivery_id):
-    if not _v8541_actor_has("field.bobbins"):
-        return jsonify({"ok":False,"error":"Sem permissão para Bobinas."}),403
-    data=request.get_json(silent=True) or {}
-    try:
-        payload,code=_v8541_bobbin_receive(delivery_id,request.mobile_user.id,data)
-        return jsonify(payload),code
-    except Exception:
-        db.session.rollback(); app.logger.exception("V85.41 mobile receber bobinas")
-        return jsonify({"ok":False,"error":"Falha ao registrar o recebimento."}),500
-# === /V85.41 ===

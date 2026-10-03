@@ -1,0 +1,15 @@
+AUTOPASS V85.41 — PERFORMANCE & DATA ARCHITECTURE
+
+Base: V85.40 REV6 completa.
+
+Alterações:
+- telemetria passa a gravar APP_RELEASE em cada PerformanceMetric;
+- comparação histórica por versão (média, P95, P99, SQL, queries/req, 5xx);
+- auditoria somente leitura de uso/tamanho de índices via pg_stat_user_indexes;
+- fotografia de crescimento PostgreSQL;
+- migração aditiva/idempotente da coluna release + índice (release, created_at);
+- mantém pré-agregação financial_atm_daily_summary da V85.35 e fallback bruto;
+- nenhuma remoção automática de índices e nenhuma alteração destrutiva de dados.
+
+Arquivos alterados: app.py, templates/telemetry.html
+Arquivo novo: DEPLOY_V85.41.txt
