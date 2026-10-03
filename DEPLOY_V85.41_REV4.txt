@@ -1,0 +1,19 @@
+AUTOPASS — V85.41 REV4 — 03/10/2026
+
+Escopo desta revisão:
+- Reforma Tributária = Sim / Informar preço: o valor digitado passa a ser o PREÇO FINAL FATURADO, já com IPI + CBS.
+- O cálculo CBS é decomposto de trás para frente; não soma CBS novamente ao valor informado.
+- CBS permanece por fora e sem crédito nesta etapa.
+- Base CBS simplificada preserva exclusão de IPI, ICMS e ISS adotada no estudo.
+- PIS/COFINS continuam ocultos no cenário Reforma = Sim.
+- Campo muda para “Preço final c/ IPI + CBS” quando Reforma = Sim.
+- Comparativo usa o mesmo preço final informado para Atual x Reforma.
+- Ajustes visuais para aproximar a tela do layout aprovado (bloco Reforma, cards e comparativo).
+- Reforma = Não mantém a lógica atual.
+- IBS, créditos de CBS e transição anual permanecem fora do escopo.
+
+Arquivos alterados:
+app.py
+templates/engineering.html
+static/engineering_v72.js
+DEPLOY_V85.41_REV4.txt
