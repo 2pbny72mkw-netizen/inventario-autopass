@@ -1,0 +1,15 @@
+AUTOPASS V85.41 REV1 — HOTFIX IMPORTAÇÃO COLETAS/TBFORTE
+Data: 03/10/2026
+Base: V85.41
+
+ALTERAÇÕES
+- Mantém UNIQUE de financial_cash_collections.source_hash.
+- Deduplica hashes dentro do próprio lote.
+- Consulta hashes já persistidos antes do INSERT.
+- PostgreSQL continua protegido com ON CONFLICT (source_hash) DO NOTHING.
+- Usa session.no_autoflush durante pré-checagem/inserção.
+- Importação TBForte passa a contabilizar registros duplicados ignorados.
+- Worker continua iniciando com rollback para garantir sessão limpa.
+
+OBJETIVO
+Reimportar o mesmo arquivo/coleta sem UniqueViolation e sem duplicar registros.

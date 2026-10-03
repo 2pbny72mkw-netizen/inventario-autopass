@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.41"
+APP_RELEASE = "V85.41 REV1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -14508,24 +14508,28 @@ def _fin_bulk_ignore(model, mappings, chunk=2000):
         seen.add(sh); unique.append(item)
     inserted=0
     dialect=db.engine.dialect.name
-    # Impede Query-invoked autoflush de tentar persistir objetos ORM pendentes antes
-    # da proteção ON CONFLICT. O UNIQUE do PostgreSQL continua sendo a última barreira.
+    # REV1: antes de inserir, consulta explicitamente os hashes já persistidos.
+    # Isso evita enviar duplicados conhecidos ao PostgreSQL e também impede que uma
+    # consulta intermediária provoque autoflush de objetos ORM pendentes. ON CONFLICT
+    # permanece como proteção final contra concorrência entre workers.
     with db.session.no_autoflush:
         for start in range(0,len(unique),chunk):
             part=unique[start:start+chunk]
+            hashes=[x["source_hash"] for x in part]
+            existing={x[0] for x in db.session.query(model.source_hash).filter(model.source_hash.in_(hashes)).all()}
+            fresh=[x for x in part if x["source_hash"] not in existing]
+            if not fresh:
+                continue
             if dialect=="postgresql":
                 from sqlalchemy.dialects.postgresql import insert as pg_insert
-                stmt=pg_insert(model.__table__).values(part).on_conflict_do_nothing(index_elements=["source_hash"])
+                stmt=pg_insert(model.__table__).values(fresh).on_conflict_do_nothing(index_elements=["source_hash"])
                 res=db.session.execute(stmt); inserted += max(0,res.rowcount or 0)
             elif dialect=="sqlite":
                 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-                stmt=sqlite_insert(model.__table__).values(part).on_conflict_do_nothing(index_elements=["source_hash"])
+                stmt=sqlite_insert(model.__table__).values(fresh).on_conflict_do_nothing(index_elements=["source_hash"])
                 res=db.session.execute(stmt); inserted += max(0,res.rowcount or 0)
             else:
-                hashes=[x["source_hash"] for x in part]
-                existing={x[0] for x in db.session.query(model.source_hash).filter(model.source_hash.in_(hashes)).all()}
-                fresh=[x for x in part if x["source_hash"] not in existing]
-                if fresh: db.session.bulk_insert_mappings(model,fresh); inserted+=len(fresh)
+                db.session.bulk_insert_mappings(model,fresh); inserted+=len(fresh)
     return inserted
 
 def _fin_optional_number(value):
@@ -14562,7 +14566,10 @@ def _fin_import_tbf_wb(wb, filename, user_id):
                 sh=_fin_hash("COL",terminal,end_at.isoformat(),gtv,amount)
                 rows.append({"terminal":terminal,"point_name":point,"collection_date":d,"start_at":start_at,"end_at":end_at,"collected_amount":amount,"gtv":gtv or None,"route":str(gv(row,"Rota") or "").strip() or None,"municipality":str(gv(row,"MUNICÍPIO") or "").strip() or None,"source_file":filename,"source_hash":sh,"imported_by":user_id,"imported_at":datetime.utcnow()})
             except Exception: result["errors"]+=1
-    result["collections"]=_fin_bulk_ignore(FinancialCashCollection,rows); db.session.flush()
+    unique_source_hashes={x.get("source_hash") for x in rows if x.get("source_hash")}
+    result["collections"]=_fin_bulk_ignore(FinancialCashCollection,rows)
+    result["duplicates"]=max(0,len(unique_source_hashes)-int(result["collections"] or 0))
+    db.session.flush()
     # Atualiza valor declarado/apurado pela GTV. O processamento não precisa criar outra coleta.
     for ws in processing:
         headers={str(v or "").strip().upper():i for i,v in enumerate(next(ws.iter_rows(min_row=1,max_row=1,values_only=True)))}
