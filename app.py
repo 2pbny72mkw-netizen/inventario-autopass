@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.41 REV4"
+APP_RELEASE = "V85.41 REV5"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -1102,6 +1102,17 @@ class PerformanceMetric(db.Model):
     __table_args__ = (Index("ix_perf_created_route", "created_at", "route"),)
 
 # V82 — Mapeamento ATM (atividade Field)
+class AtmMasterOverride(db.Model):
+    """V85.41 REV5 — ajustes auditáveis sobre a base mestre oficial sem reescrever histórico."""
+    __tablename__ = "atm_master_overrides"
+    id = db.Column(db.Integer, primary_key=True)
+    atm_id = db.Column(db.String(60), nullable=False, unique=True, index=True)
+    model = db.Column(db.String(180), nullable=False, index=True)
+    reason = db.Column(db.String(500), nullable=False)
+    changed_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    changed_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+
+
 class AtmMapping(db.Model):
     __tablename__ = "atm_mappings"
     id = db.Column(db.Integer, primary_key=True)
@@ -20847,7 +20858,7 @@ with app.app_context():
         app.logger.exception('V76.2: falha ao persistir configurações operacionais')
     # V77/V77.1 — Controle de Bobinas ATM / Bobinômetro.
     try:
-        db.metadata.create_all(bind=db.engine,tables=[AtmMapping.__table__,AtmMappingPhoto.__table__,AtmBobbinStationStock.__table__,AtmBobbinReading.__table__,AtmBobbinAtmStock.__table__,AtmBobbinUnlocatedReserve.__table__,AtmBobbinPhoto.__table__,AtmBobbinImportBatch.__table__,AtmBobbinImportDivergence.__table__,FieldStockPoint.__table__,FieldStockItem.__table__,FieldStockBalance.__table__,FieldStockMovement.__table__,FieldTechnicianLoad.__table__,FieldStockIncident.__table__,FieldLoadRegularization.__table__],checkfirst=True)
+        db.metadata.create_all(bind=db.engine,tables=[AtmMasterOverride.__table__,AtmMapping.__table__,AtmMappingPhoto.__table__,AtmBobbinStationStock.__table__,AtmBobbinReading.__table__,AtmBobbinAtmStock.__table__,AtmBobbinUnlocatedReserve.__table__,AtmBobbinPhoto.__table__,AtmBobbinImportBatch.__table__,AtmBobbinImportDivergence.__table__,FieldStockPoint.__table__,FieldStockItem.__table__,FieldStockBalance.__table__,FieldStockMovement.__table__,FieldTechnicianLoad.__table__,FieldStockIncident.__table__,FieldLoadRegularization.__table__],checkfirst=True)
         # V82.5 — nova pergunta obrigatória no Mapeamento ATM.
         atm_mapping_cols={c['name'] for c in inspect(db.engine).get_columns('atm_mappings')}
         if 'rear_safe_door' not in atm_mapping_cols:
@@ -21983,7 +21994,20 @@ def _v773_official_atm_rows():
     """
     try:
         rows=json.loads((DATA_DIR / "atm_official_082026.json").read_text(encoding="utf-8"))
-        return rows if isinstance(rows,list) else []
+        rows=rows if isinstance(rows,list) else []
+        # REV5: aplica somente o estado atual cadastral. O arquivo oficial permanece imutável.
+        try:
+            overrides={_v773_norm_atm_id(x.atm_id):x for x in AtmMasterOverride.query.all()}
+            rebuilt=[]
+            for row in rows:
+                ov=next((overrides.get(a) for a in _v773_atm_aliases(row) if overrides.get(a)),None)
+                if ov:
+                    row=dict(row); row['model']=ov.model; row['modelo']=ov.model; row['master_override']=True
+                rebuilt.append(row)
+            rows=rebuilt
+        except Exception:
+            app.logger.exception('REV5: não foi possível aplicar overrides da base mestre ATM')
+        return rows
     except Exception:
         app.logger.exception('V77.3: base oficial ATM indisponível')
         return []
@@ -23285,6 +23309,31 @@ def _v82_cash_atms():
         _CASH_ATMS_CACHE["rows"]=out
         _CASH_ATMS_CACHE["at"]=time.time()
         return out
+@app.post('/api/mapeamento-atm/base-mestre/modelo')
+@login_required
+def v8541rev5_update_atm_master_model():
+    if not (_has_access('field.atm_mapping_manage') or _current_user_is_superadmin()):
+        return jsonify({'ok':False,'error':'Sem permissão para alterar a base mestre ATM.'}),403
+    d=request.get_json(silent=True) or {}
+    atm=_v773_norm_atm_id(d.get('atm_id')); model=str(d.get('model') or '').strip().upper(); reason=str(d.get('reason') or '').strip()
+    if not atm or not model or not reason:
+        return jsonify({'ok':False,'error':'ATM, novo modelo e motivo são obrigatórios.'}),400
+    official=None
+    for row in _v773_official_atm_rows():
+        if atm in _v773_atm_aliases(row): official=row; break
+    if not official:
+        return jsonify({'ok':False,'error':'ATM não pertence à base mestre oficial.'}),404
+    before=str(official.get('model') or official.get('modelo') or '').strip() or 'NÃO INFORMADO'
+    ov=AtmMasterOverride.query.filter_by(atm_id=atm).first() or AtmMasterOverride(atm_id=atm)
+    ov.model=model; ov.reason=reason; ov.changed_at=datetime.utcnow(); ov.changed_by=session.get('user_id')
+    db.session.add(ov)
+    db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='ATM_MASTER_MODEL_CHANGED',entity_type='atm_master',entity_id=atm,detail=json.dumps({'atm_id':atm,'before':before,'after':model,'reason':reason},ensure_ascii=False)))
+    db.session.commit()
+    with _CASH_ATMS_CACHE_LOCK:
+        _CASH_ATMS_CACHE['at']=0.0; _CASH_ATMS_CACHE['rows']=None
+    _invalidate_atm_mapping_cache()
+    return jsonify({'ok':True,'atm_id':atm,'before':before,'model':model,'reason':reason,'release':APP_RELEASE})
+
 @app.get('/api/mapeamento-atm/diagnostico-modelos')
 @login_required
 def v8211_mapping_model_diagnostic():
@@ -23315,7 +23364,7 @@ def v82_atm_mapping_list():
     rows=[]
     for a in _v82_cash_atms():
         m=maps.get(a['atm_id']); complete=bool(m and m.has_holes is not None and m.physical_access in ('INTERNO','EXTERNO') and m.rear_safe_door is not None and m.bill_acceptor in ('UBA-PRO','I-VIZION','SPECTRAL') and m.acceptor_fixed is not None and (m.has_holes is False or m.holes_sealed is not None) and photos.get(m.id,0)>0); rows.append({**a,'status':((m.status if m and m.status in ('PENDENTE','EM_ANDAMENTO','CONCLUIDO') else ('CONCLUIDO' if complete else 'PENDENTE')) if m else 'PENDENTE'),'mapping_id':m.id if m else None,'has_holes':m.has_holes if m else None,'holes_sealed':m.holes_sealed if m else None,'physical_access':m.physical_access if m else None,'rear_safe_door':m.rear_safe_door if m else None,'bill_acceptor':m.bill_acceptor if m else None,'acceptor_fixed':m.acceptor_fixed if m else None,'notes':m.notes if m else '','technician':users.get(m.technician_id,'') if m else '','updated_at':m.updated_at.isoformat()+'Z' if m else None,'photos':photos.get(m.id,0) if m else 0,'photo_items':photo_items.get(m.id,[]) if m else []})
-    summary={'total':len(rows),'done':sum(x['status']=='CONCLUIDO' for x in rows),'pending':sum(x['status']=='PENDENTE' for x in rows),'internal':sum(x['physical_access']=='INTERNO' for x in rows),'external':sum(x['physical_access']=='EXTERNO' for x in rows),'holes':sum(x['has_holes'] is True for x in rows),'unsealed':sum(x['has_holes'] is True and x['holes_sealed'] is False for x in rows),'with_photos':sum((x.get('photos') or 0)>0 for x in rows),'rear_safe_door_yes':sum(x.get('rear_safe_door') is True for x in rows),'rear_safe_door_no':sum(x.get('rear_safe_door') is False for x in rows),'acceptor_uba_pro':sum(x.get('bill_acceptor')=='UBA-PRO' for x in rows),'acceptor_i_vizion':sum(x.get('bill_acceptor')=='I-VIZION' for x in rows),'acceptor_spectral':sum(x.get('bill_acceptor')=='SPECTRAL' for x in rows),'acceptor_fixed_yes':sum(x.get('acceptor_fixed') is True for x in rows),'acceptor_fixed_no':sum(x.get('acceptor_fixed') is False for x in rows)}
+    summary={'total':len(rows),'done':sum(x['status']=='CONCLUIDO' for x in rows),'pending':sum(x['status']=='PENDENTE' for x in rows),'internal':sum(x['physical_access']=='INTERNO' for x in rows),'external':sum(x['physical_access']=='EXTERNO' for x in rows),'holes':sum(x['has_holes'] is True for x in rows),'unsealed':sum(x['has_holes'] is True and x['holes_sealed'] is False for x in rows),'with_photos':sum((x.get('photos') or 0)>0 for x in rows),'rear_safe_door_yes':sum(x.get('rear_safe_door') is True for x in rows),'rear_safe_door_no':sum(x.get('rear_safe_door') is False for x in rows),'acceptor_uba_pro':sum(x.get('bill_acceptor')=='UBA-PRO' for x in rows),'acceptor_i_vizion':sum(x.get('bill_acceptor')=='I-VIZION' for x in rows),'acceptor_spectral':sum(x.get('bill_acceptor')=='SPECTRAL' for x in rows),'acceptor_fixed_yes':sum(x.get('acceptor_fixed') is True for x in rows),'acceptor_fixed_no':sum(x.get('acceptor_fixed') is False for x in rows),'acceptor_fixed_unknown':sum(x.get('acceptor_fixed') is None for x in rows)}
     summary['progress_pct']=round((summary['done']/summary['total']*100),1) if summary['total'] else 0
     # Dashboard 2.0: evolução dos mapeamentos e progresso por operadora.
     daily={}
@@ -23417,7 +23466,7 @@ def _v824_mapping_export_rows():
         m=maps.get(a['atm_id']); complete=bool(m and m.has_holes is not None and m.physical_access in ('INTERNO','EXTERNO') and m.rear_safe_door is not None and m.bill_acceptor in ('UBA-PRO','I-VIZION','SPECTRAL') and m.acceptor_fixed is not None and (m.has_holes is False or m.holes_sealed is not None) and photo_counts.get(m.id,0)>0); row={**a,'status':'CONCLUIDO' if complete else 'PENDENTE','has_holes':m.has_holes if m else None,'holes_sealed':m.holes_sealed if m else None,'physical_access':m.physical_access if m else None,'rear_safe_door':m.rear_safe_door if m else None,'bill_acceptor':m.bill_acceptor if m else None,'acceptor_fixed':m.acceptor_fixed if m else None,'notes':m.notes if m else '','technician':names.get(m.technician_id,'') if m else '','updated_at':m.updated_at if m else None,'photos':photo_counts.get(m.id,0) if m else 0,'mapping_id':m.id if m else None}
         out.append(row)
     company=(request.args.get('company') or '').strip(); line=(request.args.get('line') or '').strip(); station=(request.args.get('station') or '').strip(); model=(request.args.get('model') or '').strip().upper(); status=(request.args.get('status') or '').strip().upper(); rear=(request.args.get('rear_safe_door') or '').strip().upper(); acceptor=(request.args.get('bill_acceptor') or '').strip().upper(); fixed=(request.args.get('acceptor_fixed') or '').strip().upper()
-    return [x for x in out if (not company or x['company']==company) and (not line or x['line']==line) and (not station or x['station']==station) and (not model or x['model']==model) and (not status or x['status']==status) and (not rear or (rear=='SIM' and x.get('rear_safe_door') is True) or (rear=='NAO' and x.get('rear_safe_door') is False)) and (not acceptor or x.get('bill_acceptor')==acceptor) and (not fixed or (fixed=='SIM' and x.get('acceptor_fixed') is True) or (fixed=='NAO' and x.get('acceptor_fixed') is False))]
+    return [x for x in out if (not company or x['company']==company) and (not line or x['line']==line) and (not station or x['station']==station) and (not model or x['model']==model) and (not status or x['status']==status) and (not rear or (rear=='SIM' and x.get('rear_safe_door') is True) or (rear=='NAO' and x.get('rear_safe_door') is False)) and (not acceptor or x.get('bill_acceptor')==acceptor) and (not fixed or (fixed=='SIM' and x.get('acceptor_fixed') is True) or (fixed=='NAO' and x.get('acceptor_fixed') is False) or (fixed=='NAO_INFORMADO' and x.get('acceptor_fixed') is None))]
 
 @app.get('/api/mapeamento-atm/export.xlsx')
 @login_required

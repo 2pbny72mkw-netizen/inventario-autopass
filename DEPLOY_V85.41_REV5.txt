@@ -1,0 +1,15 @@
+AUTOPASS V85.41 REV5 — pacote enxuto
+
+1. Mapeamento ATM: filtro Aceitador fixo? = Todos / Sim / Não / Não informado.
+   - NULL/legado permanece Não informado; nunca é convertido automaticamente para Não.
+   - Tabela exibe "Não informado" em vez de traço.
+   - Exportação respeita o filtro Não informado.
+
+2. Base mestre ATM: atualização auditável de modelo.
+   - Novo registro persistente atm_master_overrides, sem alterar o arquivo oficial nem o ID da ATM.
+   - Permissão: field.atm_mapping_manage ou superadmin.
+   - Motivo obrigatório e AuditEvent ATM_MASTER_MODEL_CHANGED.
+   - A fonte oficial é mesclada com o override para que consumidores da base mestre recebam o modelo atual.
+   - Histórico operacional não é reescrito.
+
+Arquivos alterados: app.py; templates/atm_mapping_v82.html; DEPLOY_V85.41_REV5.txt
