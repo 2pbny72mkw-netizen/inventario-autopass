@@ -1346,6 +1346,18 @@ class FieldTechnicianLoad(db.Model):
     updated_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow,index=True)
     __table_args__=(db.UniqueConstraint("technician_id","item_id",name="uq_field_technician_load"),)
 
+
+class MobileWorkShift(db.Model):
+    __tablename__="mobile_work_shifts"
+    id=db.Column(db.Integer,primary_key=True)
+    user_id=db.Column(db.Integer,db.ForeignKey("users.id"),nullable=False,index=True)
+    started_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow,index=True)
+    start_latitude=db.Column(db.Float); start_longitude=db.Column(db.Float); start_accuracy=db.Column(db.Float)
+    ended_at=db.Column(db.DateTime,index=True)
+    end_latitude=db.Column(db.Float); end_longitude=db.Column(db.Float); end_accuracy=db.Column(db.Float)
+    start_auth=db.Column(db.String(30),nullable=False,default="BIOMETRIC_DEVICE")
+    end_auth=db.Column(db.String(30))
+
 class FieldStockIncident(db.Model):
     __tablename__="field_stock_incidents"
     id=db.Column(db.Integer,primary_key=True)
@@ -3444,6 +3456,138 @@ def a20_bobinas_register():
         expires_at=datetime.utcnow()+timedelta(days=_v771_photo_retention_days())))
     db.session.commit();_v771_cleanup_photos()
     return jsonify({'ok':True,'id':row.id,'reserve_after':reserve_qty})
+
+
+# Android A5.5 — Bobinas, Estoque Field / Minha Carga e jornada com GPS.
+def _a55_mobile_has(user,*keys):
+    access=_user_access_set(user)
+    return any(k in access for k in keys)
+
+@app.get('/api/mobile/v1/field/bobinas/visao')
+@mobile_auth_required
+def a55_mobile_bobinas_visao():
+    user=request.mobile_user
+    if not _a55_mobile_has(user,'field.bobbins','field.bobbins_dashboard'): return jsonify({'ok':False,'error':'Sem permissão para Bobinas.'}),403
+    readings=AtmBobbinReading.query.order_by(AtmBobbinReading.created_at.desc()).all();latest={}
+    for x in readings:
+        key=(x.company,x.line,x.station,str(x.atm_id))
+        if key not in latest: latest[key]=x
+    names={u.id:u.name for u in User.query.filter(User.id.in_({x.technician_id for x in latest.values()})).all()} if latest else {}
+    rows=[]; hierarchy=[]
+    master=_v772_master_atm_map()
+    for (company,line,station),ids in master.items():
+        hierarchy.append({'company':company,'line':line,'station':station})
+        for atm in ids:
+            key=(company,line,station,str(atm));x=latest.get(key);stock=_v771_stock(company,line,station,str(atm))
+            pct=int(x.percent_available or 0) if x else 0;sev='critical' if pct<=10 else ('attention' if pct<=30 else 'normal')
+            rows.append({'company':company,'line':line,'station':station,'atm_id':str(atm),'percent_available':pct,'severity':sev,'situation':'Crítica' if sev=='critical' else ('Atenção' if sev=='attention' else 'Normal'),'reserve_qty':int(stock.reserve_qty or 0) if stock else 0,'last_at':x.created_at.isoformat()+'Z' if x and x.created_at else None,'last_tech':names.get(x.technician_id,'') if x else ''})
+    return jsonify({'ok':True,'rows':rows,'hierarchy':hierarchy,'release':APP_RELEASE})
+
+@app.get('/api/mobile/v1/field/bobinas/minhas-entregas')
+@mobile_auth_required
+def a55_mobile_bobinas_deliveries():
+    user=request.mobile_user
+    if not _a55_mobile_has(user,'field.bobbins'): return jsonify({'ok':False,'error':'Sem permissão para Bobinas.'}),403
+    _v8538r3_ensure_schema()
+    rows=(db.session.query(BobbinDeliverySchedule,BobbinDeliveryDetail,BobbinFieldDelivery)
+          .outerjoin(BobbinDeliveryDetail,BobbinDeliveryDetail.delivery_id==BobbinDeliverySchedule.id)
+          .outerjoin(BobbinFieldDelivery,BobbinFieldDelivery.delivery_id==BobbinDeliverySchedule.id)
+          .filter(BobbinDeliverySchedule.status.notin_(['ENTREGUE','RECEBIDO']))
+          .filter(db.or_(BobbinFieldDelivery.technician_user_id==user.id,BobbinFieldDelivery.technician_user_id.is_(None)))
+          .order_by(BobbinDeliverySchedule.delivery_date.asc(),BobbinDeliverySchedule.id.asc()).limit(100).all())
+    return jsonify({'ok':True,'rows':[{'id':e.id,'localidade':e.location or '','data':e.delivery_date.isoformat() if e.delivery_date else '','caixas':int(e.boxes_qty or 0),'avulsas':int(getattr(d,'loose_qty',0) or 0),'status':getattr(f,'status',None) or 'PENDENTE'} for e,d,f in rows]})
+
+@app.post('/api/mobile/v1/field/bobinas/entregas/<int:delivery_id>/receber')
+@mobile_auth_required
+def a55_mobile_bobinas_receive(delivery_id):
+    user=request.mobile_user
+    if not _a55_mobile_has(user,'field.bobbins'): return jsonify({'ok':False,'error':'Sem permissão para Bobinas.'}),403
+    data=request.get_json(silent=True) or {};photos=data.get('photos') or []
+    if isinstance(photos,str):photos=[photos]
+    photos=[str(x).strip()[:700] for x in photos if str(x).strip()]
+    if not photos:return jsonify({'ok':False,'error':'Inclua ao menos uma evidência.'}),400
+    try:boxes=max(0,int(data.get('boxes') or 0))
+    except Exception:return jsonify({'ok':False,'error':'Quantidade inválida.'}),400
+    _v8538r3_ensure_schema();delivery=db.session.get(BobbinDeliverySchedule,delivery_id)
+    if not delivery:return jsonify({'ok':False,'error':'Programação não encontrada.'}),404
+    row=BobbinFieldDelivery.query.filter_by(delivery_id=delivery_id).first()
+    if delivery.status=='RECEBIDO' or (row and row.status=='RECEBIDO'):return jsonify({'ok':False,'error':'Esta programação já foi recebida e creditada.'}),409
+    if not row:row=BobbinFieldDelivery(delivery_id=delivery_id);db.session.add(row)
+    row.technician_user_id=user.id;row.status='RECEBIDO';row.delivered_boxes=boxes;row.delivered_loose=0;row.photo_ref=json.dumps(photos,ensure_ascii=False);row.delivered_at=datetime.utcnow();row.updated_at=datetime.utcnow();delivery.status='RECEBIDO';delivery.updated_at=datetime.utcnow()
+    box_size=max(1,int(app.config.get('BOBBIN_ROLLS_PER_BOX',6)));received=boxes*box_size;item=_v771_stock_item('Bobina ATM','UN');point=_v771_stock_point(delivery.location,'CD',station=delivery.location);bal=_v771_balance(point,item);before=float(bal.qty_good or 0);bal.qty_good=before+received;bal.updated_by=user.id;bal.updated_at=datetime.utcnow();db.session.add(FieldStockMovement(item_id=item.id,movement_type='ENTREGA',qty=received,destination_point_id=point.id,technician_id=user.id,destination_station=delivery.location,justification=f'Recebimento Android A5.5 programação #{delivery_id}: {boxes} caixa(s) x {box_size}',photo_key=json.dumps(photos,ensure_ascii=False),status='CONCLUIDO'));db.session.commit();return jsonify({'ok':True,'credited_bobbins':received,'stock_before':int(before),'stock_after':int(bal.qty_good or 0)})
+
+@app.get('/api/mobile/v1/field/stock/dashboard')
+@mobile_auth_required
+def a55_mobile_stock_dashboard():
+    user=request.mobile_user
+    if not _a55_mobile_has(user,'field.bobbins','field.stock_manage'): return jsonify({'ok':False,'error':'Sem permissão para Estoque Field.'}),403
+    points=FieldStockPoint.query.filter_by(active=True).order_by(FieldStockPoint.name).all();items={x.id:x for x in FieldStockItem.query.filter_by(active=True).all()};balances=FieldStockBalance.query.all();loads=FieldTechnicianLoad.query.filter_by(technician_id=user.id).filter(FieldTechnicianLoad.qty>0).all()
+    return jsonify({'ok':True,'points':[{'id':x.id,'name':x.name,'type':x.point_type,'company':x.company or '','line':x.line or '','station':x.station or ''} for x in points],'items':[{'id':x.id,'description':x.description,'unit':x.unit or 'UN'} for x in items.values()],'balances':[{'point_id':x.point_id,'item_id':x.item_id,'good':float(x.qty_good or 0),'bad':float(x.qty_bad or 0)} for x in balances],'my_loads':[{'item_id':x.item_id,'item':items[x.item_id].description if x.item_id in items else '', 'qty':float(x.qty or 0)} for x in loads],'summary':{'my_load':sum(float(x.qty or 0) for x in loads)}})
+
+@app.get('/api/mobile/v1/field/stock/destinations')
+@mobile_auth_required
+def a55_mobile_stock_destinations():
+    user=request.mobile_user
+    if not _a55_mobile_has(user,'field.bobbins','field.stock_manage'): return jsonify({'ok':False,'error':'Sem permissão.'}),403
+    master=_v772_master_atm_map();return jsonify({'ok':True,'rows':[{'company':c,'line':l,'station':st,'atms':sorted(list(ids),key=str)} for (c,l,st),ids in sorted(master.items())]})
+
+@app.post('/api/mobile/v1/field/stock/withdraw')
+@mobile_auth_required
+def a55_mobile_stock_withdraw():
+    user=request.mobile_user;d=request.get_json(silent=True) or {}
+    if not _a55_mobile_has(user,'field.bobbins','field.stock_manage'): return jsonify({'ok':False,'error':'Sem permissão.'}),403
+    try: point=db.session.get(FieldStockPoint,int(d.get('point_id') or 0));item=db.session.get(FieldStockItem,int(d.get('item_id') or 0));qty=float(d.get('qty') or 0)
+    except Exception:return jsonify({'ok':False,'error':'Dados inválidos.'}),400
+    if not point or not item or qty<=0:return jsonify({'ok':False,'error':'Estoque, item e quantidade são obrigatórios.'}),400
+    bal=_v771_balance(point,item)
+    if float(bal.qty_good or 0)<qty:return jsonify({'ok':False,'error':'Saldo insuficiente no armário.'}),409
+    before=float(bal.qty_good or 0);bal.qty_good=before-qty;bal.updated_by=user.id;bal.updated_at=datetime.utcnow();load=_v771_load(user.id,item);load.qty=float(load.qty or 0)+qty;load.updated_at=datetime.utcnow();db.session.add(FieldStockMovement(item_id=item.id,movement_type='RETIRADA_DISTRIBUICAO',qty=qty,source_point_id=point.id,technician_id=user.id,justification=str(d.get('justification') or ''),status='EM_DISTRIBUICAO'));db.session.commit();return jsonify({'ok':True,'stock_after':bal.qty_good,'load_after':load.qty})
+
+@app.post('/api/mobile/v1/field/stock/destination')
+@mobile_auth_required
+def a55_mobile_stock_destination():
+    user=request.mobile_user;d=request.get_json(silent=True) or {}
+    try:item=db.session.get(FieldStockItem,int(d.get('item_id') or 0));qty=float(d.get('qty') or 0)
+    except Exception:return jsonify({'ok':False,'error':'Dados inválidos.'}),400
+    load=_v771_load(user.id,item) if item else None;company=str(d.get('company') or '').strip();line=str(d.get('line') or '').strip();station=str(d.get('station') or '').strip();asset=_v773_norm_atm_id(d.get('asset'))
+    if not item or qty<=0 or not load or float(load.qty or 0)<qty:return jsonify({'ok':False,'error':'Carga insuficiente.'}),409
+    master=_v772_master_atm_map();ids=master.get((company,line,station),set());norm={_v773_norm_atm_id(x):str(x) for x in ids}
+    if not ids:return jsonify({'ok':False,'error':'Destino não pertence à base oficial.'}),409
+    if asset and asset not in norm:return jsonify({'ok':False,'error':'ATM não pertence à estação.'}),409
+    asset=norm.get(asset) if asset else None;before=float(load.qty or 0);load.qty=before-qty;load.updated_at=datetime.utcnow();is_bobbin=bool(re.search(r'BOBINA\s*ATM',str(item.description or ''),re.I));reserve_after=None
+    if is_bobbin:
+        if asset: stock=_v771_stock(company,line,station,asset,create=True)
+        else:
+            stock=AtmBobbinStationStock.query.filter_by(company=company,line=line,station=station).first()
+            if not stock: stock=AtmBobbinStationStock(company=company,line=line,station=station,reserve_qty=0);db.session.add(stock)
+        stock.reserve_qty=int(stock.reserve_qty or 0)+int(round(qty));stock.updated_by=user.id;stock.updated_at=datetime.utcnow();reserve_after=stock.reserve_qty
+    db.session.add(FieldStockMovement(item_id=item.id,movement_type='USO_DESTINO',qty=qty,technician_id=user.id,destination_company=company,destination_line=line,destination_station=station,destination_asset=asset,justification=str(d.get('justification') or ''),status='CONCLUIDO'));db.session.commit();return jsonify({'ok':True,'load_after':load.qty,'reserve_after':reserve_after,'destination_scope':'ATM' if asset else 'ESTACAO'})
+
+def _a55_shift_json(x):
+    return {'id':x.id,'started_at':x.started_at.isoformat()+'Z','ended_at':x.ended_at.isoformat()+'Z' if x.ended_at else None,'start':{'latitude':x.start_latitude,'longitude':x.start_longitude,'accuracy':x.start_accuracy},'end':{'latitude':x.end_latitude,'longitude':x.end_longitude,'accuracy':x.end_accuracy} if x.ended_at else None}
+
+@app.get('/api/mobile/v1/shift/status')
+@mobile_auth_required
+def a55_shift_status():
+    u=request.mobile_user;x=MobileWorkShift.query.filter_by(user_id=u.id,ended_at=None).order_by(MobileWorkShift.started_at.desc()).first();return jsonify({'ok':True,'open':bool(x),'shift':_a55_shift_json(x) if x else None,'server_time':datetime.utcnow().isoformat()+'Z'})
+
+@app.post('/api/mobile/v1/shift/start')
+@mobile_auth_required
+def a55_shift_start():
+    u=request.mobile_user;d=request.get_json(silent=True) or {};open_shift=MobileWorkShift.query.filter_by(user_id=u.id,ended_at=None).first()
+    if open_shift:return jsonify({'ok':False,'error':'Já existe um turno aberto para este usuário.'}),409
+    try:lat=float(d['latitude']);lon=float(d['longitude']);acc=float(d.get('accuracy') or 0)
+    except Exception:return jsonify({'ok':False,'error':'GPS válido é obrigatório.'}),400
+    x=MobileWorkShift(user_id=u.id,started_at=datetime.utcnow(),start_latitude=lat,start_longitude=lon,start_accuracy=acc,start_auth='BIOMETRIC_DEVICE');db.session.add(x);db.session.commit();return jsonify({'ok':True,'shift':_a55_shift_json(x)})
+
+@app.post('/api/mobile/v1/shift/end')
+@mobile_auth_required
+def a55_shift_end():
+    u=request.mobile_user;d=request.get_json(silent=True) or {};x=MobileWorkShift.query.filter_by(user_id=u.id,ended_at=None).order_by(MobileWorkShift.started_at.desc()).first()
+    if not x:return jsonify({'ok':False,'error':'Não existe turno aberto.'}),409
+    try:lat=float(d['latitude']);lon=float(d['longitude']);acc=float(d.get('accuracy') or 0)
+    except Exception:return jsonify({'ok':False,'error':'GPS válido é obrigatório.'}),400
+    x.ended_at=datetime.utcnow();x.end_latitude=lat;x.end_longitude=lon;x.end_accuracy=acc;x.end_auth='BIOMETRIC_DEVICE';db.session.commit();return jsonify({'ok':True,'shift':_a55_shift_json(x)})
 
 @app.get('/api/mobile/v1/field/atms')
 @mobile_auth_required

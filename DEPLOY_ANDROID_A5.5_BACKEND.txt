@@ -1,0 +1,4 @@
+Backend compatível com Android A5.5 sobre Web V85.41 REV5.
+Arquivo alterado: app.py.
+Adiciona APIs /api/mobile/v1 para Bobinas Visão Geral/Recebimento, Estoque Field/Minha Carga/Destinação e jornada início/fim.
+Preserva autenticação Bearer mobile e regras de estoque centralizadas no backend.
