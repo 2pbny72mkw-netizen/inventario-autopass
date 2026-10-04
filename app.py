@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.41 REV5"
+APP_RELEASE = "V85.42"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -3522,7 +3522,7 @@ def a55_mobile_stock_dashboard():
     user=request.mobile_user
     if not _a55_mobile_has(user,'field.bobbins','field.stock_manage'): return jsonify({'ok':False,'error':'Sem permissão para Estoque Field.'}),403
     points=FieldStockPoint.query.filter_by(active=True).order_by(FieldStockPoint.name).all();items={x.id:x for x in FieldStockItem.query.filter_by(active=True).all()};balances=FieldStockBalance.query.all();loads=FieldTechnicianLoad.query.filter_by(technician_id=user.id).filter(FieldTechnicianLoad.qty>0).all()
-    return jsonify({'ok':True,'points':[{'id':x.id,'name':x.name,'type':x.point_type,'company':x.company or '','line':x.line or '','station':x.station or ''} for x in points],'items':[{'id':x.id,'description':x.description,'unit':x.unit or 'UN'} for x in items.values()],'balances':[{'point_id':x.point_id,'item_id':x.item_id,'good':float(x.qty_good or 0),'bad':float(x.qty_bad or 0)} for x in balances],'my_loads':[{'item_id':x.item_id,'item':items[x.item_id].description if x.item_id in items else '', 'qty':float(x.qty or 0)} for x in loads],'summary':{'my_load':sum(float(x.qty or 0) for x in loads)}})
+    return jsonify({'ok':True,'points':[{'id':x.id,'name':x.name,'type':x.point_type,'company':x.company or '','line':x.line or '','station':x.station or ''} for x in points],'items':[{'id':x.id,'description':x.description,'unit':x.unit or 'UN'} for x in items.values()],'balances':[{'point_id':x.point_id,'item_id':x.item_id,'good':float(x.qty_good or 0),'bad':float(x.qty_bad or 0)} for x in balances],'my_loads':[{'item_id':x.item_id,'item':items[x.item_id].description if x.item_id in items else '', 'unit':(items[x.item_id].unit or 'UN') if x.item_id in items else 'UN', 'qty':float(x.qty or 0)} for x in loads],'summary':{'my_load':sum(float(x.qty or 0) for x in loads)}})
 
 @app.get('/api/mobile/v1/field/stock/destinations')
 @mobile_auth_required
@@ -3578,7 +3578,7 @@ def a55_shift_start():
     if open_shift:return jsonify({'ok':False,'error':'Já existe um turno aberto para este usuário.'}),409
     try:lat=float(d['latitude']);lon=float(d['longitude']);acc=float(d.get('accuracy') or 0)
     except Exception:return jsonify({'ok':False,'error':'GPS válido é obrigatório.'}),400
-    x=MobileWorkShift(user_id=u.id,started_at=datetime.utcnow(),start_latitude=lat,start_longitude=lon,start_accuracy=acc,start_auth='BIOMETRIC_DEVICE');db.session.add(x);db.session.commit();return jsonify({'ok':True,'shift':_a55_shift_json(x)})
+    now=datetime.utcnow();x=MobileWorkShift(user_id=u.id,started_at=now,start_latitude=lat,start_longitude=lon,start_accuracy=acc,start_auth=str(d.get('auth_method') or 'ANDROID_DEVICE')[:30]);db.session.add(x);db.session.add(TechnicianPosition(user_id=u.id,latitude=lat,longitude=lon,accuracy=acc,captured_at=now,source='mobile_shift_start'));db.session.commit();return jsonify({'ok':True,'shift':_a55_shift_json(x)})
 
 @app.post('/api/mobile/v1/shift/end')
 @mobile_auth_required
@@ -3587,7 +3587,7 @@ def a55_shift_end():
     if not x:return jsonify({'ok':False,'error':'Não existe turno aberto.'}),409
     try:lat=float(d['latitude']);lon=float(d['longitude']);acc=float(d.get('accuracy') or 0)
     except Exception:return jsonify({'ok':False,'error':'GPS válido é obrigatório.'}),400
-    x.ended_at=datetime.utcnow();x.end_latitude=lat;x.end_longitude=lon;x.end_accuracy=acc;x.end_auth='BIOMETRIC_DEVICE';db.session.commit();return jsonify({'ok':True,'shift':_a55_shift_json(x)})
+    now=datetime.utcnow();x.ended_at=now;x.end_latitude=lat;x.end_longitude=lon;x.end_accuracy=acc;x.end_auth=str(d.get('auth_method') or 'ANDROID_DEVICE')[:30];db.session.add(TechnicianPosition(user_id=u.id,latitude=lat,longitude=lon,accuracy=acc,captured_at=now,source='mobile_shift_end'));db.session.commit();return jsonify({'ok':True,'shift':_a55_shift_json(x)})
 
 @app.get('/api/mobile/v1/field/atms')
 @mobile_auth_required
@@ -4626,6 +4626,29 @@ def teams_status_api():
         for uid,first_at,n in db.session.query(SessionEvent.user_id,func.min(SessionEvent.created_at),func.count(SessionEvent.id)).filter(SessionEvent.user_id.in_(user_ids),SessionEvent.event_type=="LOGIN",SessionEvent.created_at>=start_utc,SessionEvent.created_at<end_utc).group_by(SessionEvent.user_id).all(): login_map[uid]=first_at; login_counts[uid]=int(n)
         session_counts={uid:int(n) for uid,n in db.session.query(SessionEvent.user_id,func.count(SessionEvent.id)).filter(SessionEvent.user_id.in_(user_ids),SessionEvent.created_at>=start_utc,SessionEvent.created_at<end_utc).group_by(SessionEvent.user_id).all()}
         gps_counts={uid:int(n) for uid,n in db.session.query(TechnicianPosition.user_id,func.count(TechnicianPosition.id)).filter(TechnicianPosition.user_id.in_(user_ids),TechnicianPosition.captured_at>=start_utc,TechnicianPosition.captured_at<end_utc).group_by(TechnicianPosition.user_id).all()}
+    # V85.42 — Jornada Android é a fonte operacional primária para quem registrou turno.
+    # Inclui na visão de Equipes usuários que abriram turno no dia, mesmo fora da escala prevista,
+    # e usa o GPS/horário do registro de jornada sem depender de um LOGIN Web separado.
+    mobile_shift_map={}
+    if user_ids:
+        shift_rows=MobileWorkShift.query.filter(
+            MobileWorkShift.user_id.in_(user_ids),
+            MobileWorkShift.started_at>=start_utc,
+            MobileWorkShift.started_at<end_utc,
+        ).order_by(MobileWorkShift.started_at.asc()).all()
+        for sh in shift_rows: mobile_shift_map[sh.user_id]=sh
+    # Quem efetivamente iniciou turno pelo Android também deve aparecer na operação do dia.
+    shift_users_q=MobileWorkShift.query.filter(MobileWorkShift.started_at>=start_utc,MobileWorkShift.started_at<end_utc).all()
+    missing_shift_ids={sh.user_id for sh in shift_users_q if sh.user_id not in user_ids}
+    if missing_shift_ids:
+        for u in User.query.filter(User.id.in_(missing_shift_ids),User.active.is_(True)).all():
+            if normalize(u.personnel_status or "ATIVO")!="ATIVO": continue
+            scheduled.append({"profile_id":None,"user_id":u.id,"linked_user_name":u.name,"linked":True,"name":u.name,
+                "category":"TECNICO","schedule_type":u.work_schedule_type or "","shift":u.work_shift or "","supervision":"","entry":"","lines":[],
+                "anchor_date":u.work_anchor_date.isoformat() if u.work_anchor_date else None,"active":True,"company":u.company or "","job_title":u.job_title or "",
+                "personnel_status":u.personnel_status or "ATIVO","personnel_status_note":u.personnel_status_note or "","source":"JORNADA_ANDROID","mobile_shift_actual":True})
+            user_ids.add(u.id); users[u.id]=u
+        for sh in shift_users_q: mobile_shift_map[sh.user_id]=sh
     stations=Location.query.filter(Location.reference_latitude.isnot(None),Location.reference_longitude.isnot(None)).all()
     reference_radius=float(_v50_settings().get("gps_radius_m",250) or 250)
     stale_limit=10
@@ -4640,14 +4663,31 @@ def teams_status_api():
         dist,loc=best; return {"id":loc.id,"name":loc.location,"company":loc.company or "","line":loc.line or "","distance_m":round(dist),"relation":"NA ESTAÇÃO" if dist<=reference_radius else "FORA DA ÁREA","radius_m":reference_radius}
     rows=[]; summary={"in_operation":0,"late":0,"not_logged":0,"stale_gt10":0,"no_gps":0,"outside_locality":0,"not_started":0,"extraordinary":0,"session_inconsistency":0}
     for member in scheduled:
-        uid=member.get("user_id"); user=users.get(uid); pos=pos_map.get(uid); minutes=max(0,int((now_utc-pos.captured_at).total_seconds()//60)) if pos else None
+        uid=member.get("user_id"); user=users.get(uid); pos=pos_map.get(uid); mobile_shift=mobile_shift_map.get(uid)
+        # O GPS do início/fim de turno é evidência válida mesmo antes do serviço periódico gravar TechnicianPosition.
+        shift_lat=None; shift_lon=None; shift_acc=None; shift_captured=None
+        if mobile_shift:
+            if mobile_shift.ended_at and mobile_shift.end_latitude is not None:
+                shift_lat=mobile_shift.end_latitude; shift_lon=mobile_shift.end_longitude; shift_acc=mobile_shift.end_accuracy; shift_captured=mobile_shift.ended_at
+            else:
+                shift_lat=mobile_shift.start_latitude; shift_lon=mobile_shift.start_longitude; shift_acc=mobile_shift.start_accuracy; shift_captured=mobile_shift.started_at
+        captured_ref=pos.captured_at if pos else shift_captured
+        minutes=max(0,int((now_utc-captured_ref).total_seconds()//60)) if captured_ref else None
         shift=(member.get("shift") or member.get("entry") or "").strip(); m=re.search(r'(\d{1,2}):(\d{2})',shift); expected_local=None
         if m: expected_local=datetime.combine(target_date,datetime.min.time(),tzinfo=ZoneInfo("America/Sao_Paulo")).replace(hour=int(m.group(1)),minute=int(m.group(2)))
-        first_at=login_map.get(uid); login_local=first_at.replace(tzinfo=ZoneInfo("UTC")).astimezone(ZoneInfo("America/Sao_Paulo")) if first_at else None
-        late_minutes=max(0,int((login_local-expected_local).total_seconds()//60)) if login_local and expected_local else 0; station=nearest_station(pos.latitude,pos.longitude) if pos else None
+        first_at=login_map.get(uid)
+        # Para status operacional, início de turno Android vale como entrada autenticada.
+        operational_entry=(mobile_shift.started_at if mobile_shift else first_at)
+        login_local=operational_entry.replace(tzinfo=ZoneInfo("UTC")).astimezone(ZoneInfo("America/Sao_Paulo")) if operational_entry else None
+        late_minutes=max(0,int((login_local-expected_local).total_seconds()//60)) if login_local and expected_local else 0
+        station=nearest_station(pos.latitude,pos.longitude) if pos else (nearest_station(shift_lat,shift_lon) if shift_lat is not None and shift_lon is not None else None)
         extraordinary=bool(member.get("extraordinary_authorization")); summary["extraordinary"]+=1 if extraordinary else 0
-        # V76.1: GPS autenticado é evidência operacional. Nunca esconder GPS >10 min atrás de "NÃO LOGOU".
-        if minutes is not None and minutes>stale_limit:
+        # V85.42: turno Android prevalece sobre a heurística de login. Login no app != jornada.
+        if mobile_shift and mobile_shift.ended_at is None:
+            operation_status="EM TURNO · ANDROID"; summary["in_operation"]+=1
+        elif mobile_shift and mobile_shift.ended_at is not None:
+            operation_status="FINALIZADO · ANDROID"
+        elif minutes is not None and minutes>stale_limit:
             operation_status=f"SEM POSIÇÃO >{stale_limit} MIN"; summary["stale_gt10"]+=1
             if not login_local: summary["session_inconsistency"]+=1
         elif pos and not login_local:
@@ -4664,7 +4704,7 @@ def teams_status_api():
             operation_status="EM OPERAÇÃO · AUTORIZAÇÃO" if extraordinary else "EM OPERAÇÃO"; summary["in_operation"]+=1
         if station and station["relation"]=="FORA DA ÁREA": summary["outside_locality"]+=1
         freshness="SEM SINAL" if minutes is None else ("ATUAL" if minutes<=5 else ("ATENÇÃO" if minutes<=stale_limit else "ATRASADO"))
-        rows.append({**member,"gps_points_today":gps_counts.get(uid,0),"session_events_today":session_counts.get(uid,0),"login_events_today":login_counts.get(uid,0),"photo_url":(f"/usuarios/{user.id}/foto" if user and user.photo_url else None),"photo_version":(str(user.photo_url) if user and user.photo_url else None),"latitude":pos.latitude if pos else None,"longitude":pos.longitude if pos else None,"accuracy":pos.accuracy if pos else None,"captured_at":(pos.captured_at.isoformat()+"Z") if pos else None,"minutes_since":minutes,"freshness":freshness,"first_login":login_local.strftime("%H:%M") if login_local else None,"late_minutes":late_minutes,"operation_status":operation_status,"nearest_station":station,"current_location":station["name"] if station else None})
+        rows.append({**member,"gps_points_today":gps_counts.get(uid,0),"session_events_today":session_counts.get(uid,0),"login_events_today":login_counts.get(uid,0),"photo_url":(f"/usuarios/{user.id}/foto" if user and user.photo_url else None),"photo_version":(str(user.photo_url) if user and user.photo_url else None),"latitude":pos.latitude if pos else shift_lat,"longitude":pos.longitude if pos else shift_lon,"accuracy":pos.accuracy if pos else shift_acc,"captured_at":(captured_ref.isoformat()+"Z") if captured_ref else None,"minutes_since":minutes,"freshness":freshness,"first_login":login_local.strftime("%H:%M") if login_local else None,"late_minutes":late_minutes,"operation_status":operation_status,"nearest_station":station,"current_location":station["name"] if station else None,"mobile_shift_id":mobile_shift.id if mobile_shift else None,"shift_started_at":mobile_shift.started_at.isoformat()+"Z" if mobile_shift else None,"shift_ended_at":mobile_shift.ended_at.isoformat()+"Z" if mobile_shift and mobile_shift.ended_at else None,"shift_source":"ANDROID" if mobile_shift else None})
     counts={}
     for row in rows: counts[row["category"]]=counts.get(row["category"],0)+1
     return jsonify({"ok":True,"date":target_date.isoformat(),"time":(local_now.strftime("%H:%M") if is_today else "23:59"),"is_today":is_today,"is_future":is_future,"scheduled":len(rows),"counts_by_category":counts,"summary":summary,"technicians":rows,"gps_reference_radius_m":reference_radius,"gps_stale_alert_minutes":stale_limit})

@@ -1,0 +1,12 @@
+AUTOPASS WEB V85.42
+
+Escopo:
+- Integra jornada Android A5.6/A5.5 à Central de Equipes.
+- Início de turno autenticado passa a definir status EM TURNO · ANDROID.
+- Fim de turno passa a definir FINALIZADO · ANDROID.
+- GPS de início/fim é persistido também em TechnicianPosition para refletir imediatamente na operação/mapa.
+- Usuário que iniciou turno no Android aparece na operação do dia mesmo fora da escala prevista.
+- Histórico Sobre/Versões atualizado com V85.41, REV1–REV5 e V85.42.
+- Estoque mobile retorna unidade do item em Minha Carga.
+
+Deploy incremental: substituir app.py e templates/about.html.
