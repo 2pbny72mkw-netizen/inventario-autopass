@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.42 REV2"
+APP_RELEASE = "V85.43"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -6401,7 +6401,19 @@ def _v8530_treport_audit():
         if latest:
             row=db.session.query(FinancialATMTransaction.source_file).filter(FinancialATMTransaction.imported_at==latest).first()
             latest_file=row[0] if row else None
-        return {"ok":True,"stored_rows":int(total),"stored_columns":len(cols),"columns":cols,"latest_import_at":latest.isoformat()+"Z" if latest else None,"latest_file":latest_file,"note":"A tabela persiste somente os campos mapeados pelo importador; colunas não mapeadas do arquivo não são gravadas."}
+        cutoff90=datetime.utcnow()-timedelta(days=90)
+        oldest_tx=db.session.query(func.min(FinancialATMTransaction.transaction_at)).scalar()
+        latest_tx=db.session.query(func.max(FinancialATMTransaction.transaction_at)).scalar()
+        archive_candidates=db.session.query(func.count(FinancialATMTransaction.id)).filter(FinancialATMTransaction.transaction_at < cutoff90).scalar() or 0
+        summary_rows=0
+        summary_min=None; summary_max=None
+        try:
+            row=db.session.execute(text("SELECT COUNT(*), MIN(tx_date), MAX(tx_date) FROM financial_atm_daily_summary")).first()
+            if row: summary_rows=int(row[0] or 0); summary_min=row[1]; summary_max=row[2]
+        except Exception:
+            try: db.session.rollback()
+            except Exception: pass
+        return {"ok":True,"stored_rows":int(total),"stored_columns":len(cols),"columns":cols,"latest_import_at":latest.isoformat()+"Z" if latest else None,"latest_file":latest_file,"oldest_transaction_at":oldest_tx.isoformat()+"Z" if oldest_tx else None,"latest_transaction_at":latest_tx.isoformat()+"Z" if latest_tx else None,"retention_policy":{"online_days":90,"automatic_delete":False,"archive_candidates":int(archive_candidates),"mode":"SIMULAÇÃO / SEM EXCLUSÃO"},"daily_summary":{"rows":summary_rows,"min_date":summary_min.isoformat() if summary_min else None,"max_date":summary_max.isoformat() if summary_max else None},"note":"V85.43: diagnóstico de retenção não destrutivo. O bruto permanece íntegro; o consolidado diário é priorizado onde já suportado e nenhum registro é excluído automaticamente."}
     except Exception as exc:
         return {"ok":False,"error":str(exc)}
 
@@ -6509,7 +6521,7 @@ def telemetry_summary_api():
         version_history=_v8541_version_history(30)
         index_usage=_v8541_index_usage_snapshot()
         db_growth=_v8541_db_growth_snapshot()
-        return jsonify({"ok":True,"release":APP_RELEASE,"generated_at":datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y %H:%M:%S"),"window_minutes":minutes,"health":health,"avg_ms":avg,"p95_ms":p95,"p99_ms":p99,"slow_1s":slow_1s,"slow_2s":slow_2s,"slow_5s":slow_5s,"max_ms":round(max(vals),1) if vals else 0,"requests":len(rows),"errors_5xx":errors,"active_users_15m":int(active_users),"routes":route_rows[:20],"top5":top5,"timeline":timeline[-24:],"table_counts":table_counts,"storage":storage,"migrations":_v70_migration_snapshot(),"indexes":_v70_index_snapshot(),"t_report_audit":_v8530_treport_audit(),"version_history":version_history,"index_usage":index_usage,"db_growth":db_growth,"telemetry":{"sampling":"100% rotas funcionais","retention_days":7,"request_id":True,"response_bytes":True,"release_tag":True,"architecture":"V85.41 Performance & Data Architecture"}})
+        return jsonify({"ok":True,"release":APP_RELEASE,"generated_at":datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y %H:%M:%S"),"window_minutes":minutes,"health":health,"avg_ms":avg,"p95_ms":p95,"p99_ms":p99,"slow_1s":slow_1s,"slow_2s":slow_2s,"slow_5s":slow_5s,"max_ms":round(max(vals),1) if vals else 0,"requests":len(rows),"errors_5xx":errors,"active_users_15m":int(active_users),"routes":route_rows[:20],"top5":top5,"timeline":timeline[-24:],"table_counts":table_counts,"storage":storage,"migrations":_v70_migration_snapshot(),"indexes":_v70_index_snapshot(),"t_report_audit":_v8530_treport_audit(),"version_history":version_history,"index_usage":index_usage,"db_growth":db_growth,"telemetry":{"sampling":"100% rotas funcionais","retention_days":7,"request_id":True,"response_bytes":True,"release_tag":True,"architecture":"V85.43 Performance & Data Lifecycle","raw_transaction_policy":"90 dias online propostos; sem exclusão automática nesta versão"}})
     except Exception as exc:
         return jsonify({"ok":False,"error":str(exc)}),500
 
@@ -18206,6 +18218,16 @@ def _v8529_apt_display_line(raw):
     m=re.search(r'(?<!\d)0?([4589])(?!\d)', text.upper())
     return f"LINHA {int(m.group(1))}" if m else text.upper()
 
+# V85.43 — APT sempre exibe a empresa canônica do cadastro mestre.
+def _v8543_canonical_company_name(value):
+    raw=(value or '').strip()
+    key=normalize(raw).upper() if raw else ''
+    aliases={
+        'DOGMA':'Dogma Serviços Especializados LTDA',
+        'DOGMA SERVICOS ESPECIALIZADOS LTDA':'Dogma Serviços Especializados LTDA',
+    }
+    return aliases.get(key,raw)
+
 @app.get("/rh/apt")
 @login_required
 def v73_apt_page():
@@ -18230,7 +18252,7 @@ def v73_apt_page():
         if nr35 and n35!=nr35:continue
         if aso and asost!=aso:continue
         if integration and inst!=integration:continue
-        u_master=_apt_users_by_id.get(x.user_id) if x.user_id else None; data.append({"row":x,"master_company":(u_master.company or "").strip() if u_master else (x.company or "").strip(),"validity_status":vs,"days":days,"nr10_status":n10,"nr35_status":n35,"aso_status":asost,"integration_status":inst,"missing_apt":False,"display_line":_v8529_apt_display_line(x.line)})
+        u_master=_apt_users_by_id.get(x.user_id) if x.user_id else None; data.append({"row":x,"master_company":_v8543_canonical_company_name(u_master.company if u_master else x.company),"validity_status":vs,"days":days,"nr10_status":n10,"nr35_status":n35,"aso_status":asost,"integration_status":inst,"missing_apt":False,"display_line":_v8529_apt_display_line(x.line)})
 
     # V79.5 REV1 — a tela de APT passa a ser colaborador-cêntrica também.
     # Antes, a listagem nascia somente de AptRecord; por isso uma empresa podia
@@ -18281,7 +18303,7 @@ def v73_apt_page():
     # V85.28 REV1 — empresa/filtro vêm exclusivamente do Cadastro de Usuários (fonte mestre).
     companies=sorted({str(r[0]).strip() for r in db.session.query(User.company).filter(User.active.is_(True),User.company.isnot(None),User.company!='').distinct().all() if str(r[0] or '').strip()},key=lambda x:normalize(x));lines=sorted({_v8529_apt_display_line(r[0]) for r in db.session.query(AptRecord.line).filter(AptRecord.line.isnot(None),AptRecord.line!='').distinct().all() if _v8529_apt_display_line(r[0])},key=lambda v:int(re.search(r'\d+',v).group()) if re.search(r'\d+',v) else 999)
     users=User.query.filter(User.active.is_(True)).order_by(User.name).all()
-    apt_users=[{"id":u.id,"name":u.name,"company":u.company or "","job_title":u.job_title or "","username":u.username} for u in users if u.role not in ('customer',)]
+    apt_users=[{"id":u.id,"name":u.name,"company":_v8543_canonical_company_name(u.company),"job_title":u.job_title or "","username":u.username} for u in users if u.role not in ('customer',)]
     apt_user_companies=sorted({x['company'] for x in apt_users if x['company']},key=lambda x:normalize(x))
     apt_lines=sorted({_v8529_apt_display_line(x) for x in _v7893_apt_required_lines() if _v8529_apt_display_line(x)},key=lambda v:int(re.search(r"\d+",v).group()) if re.search(r"\d+",v) else 999)
     return render_template("apt_v73.html",items=data,summary=summary,total=len(data),companies=companies,lines=lines,apt_users=apt_users,apt_user_companies=apt_user_companies,apt_lines=apt_lines,filters={"q":q,"validity":validity,"process":process,"active":active,"company":company,"line":line,"nr10":nr10,"nr35":nr35,"aso":aso,"integration":integration},app_release=APP_RELEASE)
@@ -18332,7 +18354,7 @@ def v735_apt_create():
     name=(u.name or '').strip();apt=(d.get('apt_number') or '').strip();line=_v8212_apt_canonical_line(d.get('line'))
     if not apt:return jsonify({'ok':False,'error':'Informe o número da PT/APT.'}),400
     if not line:return jsonify({'ok':False,'error':'Selecione uma das linhas que exigem APT: 4, 5, 8 ou 9.'}),400
-    x=AptRecord(user_id=u.id,collaborator_name=name,company=(u.company or '').strip(),line=line,apt_number=apt,process_status=(d.get('process_status') or 'AGUARDANDO').strip().upper(),active=True)
+    x=AptRecord(user_id=u.id,collaborator_name=name,company=_v8543_canonical_company_name(u.company),line=line,apt_number=apt,process_status=(d.get('process_status') or 'AGUARDANDO').strip().upper(),active=True)
     x.valid_until=_apt_date(d.get('valid_until'))
     _v8212_apply_shared_apt_fields(x,d,u.id,inherit=True)
     x.notes=(d.get('notes') or '').strip();db.session.add(x)
@@ -18392,7 +18414,7 @@ def v731_apt_update(rid):
     if not line:return jsonify({'ok':False,'error':'Selecione uma das linhas que exigem APT: 4, 5, 8 ou 9.'}),400
     apt=(d.get('apt_number') or '').strip()
     if not apt:return jsonify({'ok':False,'error':'Informe o número da PT/APT.'}),400
-    x.user_id=u.id;x.collaborator_name=u.name.strip();x.company=(u.company or '').strip();x.line=line;x.apt_number=apt;x.process_status=(d.get('process_status') or x.process_status or 'AGUARDANDO').strip().upper();x.notes=(d.get('notes') or '').strip()
+    x.user_id=u.id;x.collaborator_name=u.name.strip();x.company=_v8543_canonical_company_name(u.company);x.line=line;x.apt_number=apt;x.process_status=(d.get('process_status') or x.process_status or 'AGUARDANDO').strip().upper();x.notes=(d.get('notes') or '').strip()
     x.valid_until=_apt_date(d.get('valid_until'))
     # Em edição explícita, os dados compartilhados podem ser atualizados e passam a ser a referência do colaborador.
     for fld in ('nr10_valid_until','nr35_valid_until','aso_scheduled_at','aso_valid_until','integration_scheduled_at','integration_valid_until'):setattr(x,fld,_apt_date(d.get(fld)))
@@ -20824,6 +20846,15 @@ with app.app_context():
     try:
         if not SchemaMigration.query.filter_by(version='V85.41-001').first():
             db.session.add(SchemaMigration(version='V85.41-001',description='Performance & Data Architecture: telemetria por release, comparativo histórico, uso de índices e crescimento do banco'))
+            db.session.commit()
+    except Exception:
+        try: db.session.rollback()
+        except Exception: pass
+
+    # V85.43 — ciclo de vida dos dados: diagnóstico e governança sem exclusão destrutiva.
+    try:
+        if not SchemaMigration.query.filter_by(version='V85.43-001').first():
+            db.session.add(SchemaMigration(version='V85.43-001',description='Performance & Data Lifecycle: diagnóstico T-Report 90 dias, consolidação diária, APT canônico e estabilização operacional'))
             db.session.commit()
     except Exception:
         try: db.session.rollback()

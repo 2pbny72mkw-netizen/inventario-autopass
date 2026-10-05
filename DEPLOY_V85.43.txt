@@ -1,0 +1,18 @@
+AUTOPASS V85.43 — versão enxuta
+
+Arquivos alterados:
+- app.py
+- templates/teams.js
+- templates/telemetry.html
+- templates/about.html
+- DEPLOY_V85.43.txt
+
+Escopo:
+1. Performance & Data Lifecycle: diagnóstico T-Reports 90 dias, sem exclusão automática.
+2. Consolidação diária exposta na telemetria e comparativo bruto x candidatos a arquivo.
+3. Equipes: atualização periódica não reposiciona zoom/pan do mapa.
+4. Equipes: linhas ferroviárias deixam de ser inferidas por proximidade, eliminando diagonais espúrias.
+5. APT: nome canônico Dogma Serviços Especializados LTDA.
+6. Histórico de versão atualizado para V85.43.
+
+Banco: somente migração lógica/auditável V85.43-001; sem DELETE de transações financeiras.
