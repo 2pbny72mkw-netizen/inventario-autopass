@@ -1,0 +1,8 @@
+AUTOPASS V85.42 REV2 — pacote incremental
+
+Alterações:
+- Equipes: Big Numbers clicáveis; ordenação Técnico/Turno/Entrada; quebra de segmentos ferroviários anormais para remover diagonais falsas.
+- APT: fontes ampliadas para leitura.
+- Engenharia / Preço: composição de venda em largura operacional, mantendo cálculo CBS da REV4.
+- Implantação: RV sem quebra; gráficos mais legíveis/interativos; tendência temporal; normalização de categorias recorrentes.
+- Versionamento: APP_RELEASE V85.42 REV2 e histórico atualizado.
