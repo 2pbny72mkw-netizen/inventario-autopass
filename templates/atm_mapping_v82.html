@@ -84,6 +84,6 @@ $('exportPptx').onclick=async()=>{
  }catch(e){progress.textContent='Exportação interrompida: '+e.message;alert(e.message);}
  finally{btn.disabled=false;}
 };
-if($('adminStatusSave'))$('adminStatusSave').onclick=async()=>{if(!current?.mapping_id)return;let reason=$('adminReason').value.trim();if(!reason)return alert('Informe a justificativa.');let r=await fetch(`/api/mapeamento-atm/${current.mapping_id}/status-admin`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:$('adminStatus').value,reason})}),d=await r.json();if(!r.ok||!d.ok)return alert(d.error||'Falha ao alterar status');$('modal').style.display='none';await load()};
+if($('adminStatusSave'))$('adminStatusSave').onclick=async()=>{if(!current?.mapping_id)return;let reason=$('adminReason').value.trim();if(!reason)return alert('Informe a justificativa.');const payload={status:$('adminStatus').value,reason,has_holes:$('holes').value,holes_sealed:$('sealed').value,physical_access:$('access').value,rear_safe_door:$('rearSafeDoor').value,bill_acceptor:$('billAcceptor').value,acceptor_fixed:$('acceptorFixed').value,notes:$('notes').value};let r=await fetch(`/api/mapeamento-atm/${current.mapping_id}/status-admin`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),d=await r.json();if(!r.ok||!d.ok)return alert(d.error||'Falha ao salvar alteração administrativa');$('modal').style.display='none';await load()};
 load().catch(e=>alert(e.message));
 </script>{% endblock %}
