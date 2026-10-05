@@ -1,4 +1,4 @@
-window.AUTOPASS_TEAMS_VERSION="teams-v63-rev1";
+window.AUTOPASS_TEAMS_VERSION="teams-v85.42-rev1";
 
 console.log('AUTOPASS Operação 2.0 V59 carregada');
 
@@ -20,6 +20,9 @@ let tileLayer=null;
 let markers=[];
 let profilesCache=[];
 let usersCache=[];
+let teamMapInitialFitDone=false;
+let teamMapUserMoved=false;
+let opSort={col:null,dir:1};
 
 function createTeamMap(){
   if(teamMap) return;
@@ -39,6 +42,7 @@ function createTeamMap(){
   }).addTo(teamMap);
 
   const container=$('teamMap');
+  teamMap.on('dragstart zoomstart',()=>{teamMapUserMoved=true});
   if('ResizeObserver' in window){
     const observer=new ResizeObserver(()=>{
       if(teamMap) requestAnimationFrame(()=>teamMap.invalidateSize({pan:false}));
@@ -171,17 +175,30 @@ async function loadTeams(dateOverride){
   if($('opOutside')) $('opOutside').textContent=d.summary?.outside_locality||0;
   if($('opNotStarted')) $('opNotStarted').textContent=d.summary?.not_started||0;
 
-  if(teamMap&&markers.length){
-    const bounds=L.featureGroup(markers).getBounds();
-    if(bounds.isValid()) teamMap.fitBounds(bounds.pad(.18),{maxZoom:15});
-  }else if(teamMap){
-    teamMap.setView([-23.5505,-46.6333],10);
+  if(teamMap&&!teamMapInitialFitDone&&!teamMapUserMoved){
+    if(markers.length){const bounds=L.featureGroup(markers).getBounds();if(bounds.isValid())teamMap.fitBounds(bounds.pad(.18),{maxZoom:15});}
+    teamMapInitialFitDone=true;
   }
   if(teamMap) rebuildMapIfNeeded();
+  applyOperationSort();
   // V73.1: a atualização da operação do dia não deve perder o filtro já selecionado.
   v38ApplyTeamFilter();
 }
 
+function opSortValue(td){
+  const raw=(td?.innerText||'').trim();
+  if(!raw||raw==='—')return '';
+  const hm=raw.match(/^(\d{1,2}):(\d{2})$/);if(hm)return Number(hm[1])*60+Number(hm[2]);
+  const mins=raw.match(/^(\d+)\s*min/);if(mins)return Number(mins[1]);
+  return raw.toLocaleLowerCase('pt-BR');
+}
+function applyOperationSort(){
+  if(opSort.col===null)return;const body=$('todayTeamTable');if(!body)return;
+  const rows=[...body.querySelectorAll('tr')];rows.sort((a,b)=>{let x=opSortValue(a.cells[opSort.col]),y=opSortValue(b.cells[opSort.col]);if(typeof x==='number'&&typeof y==='number')return (x-y)*opSort.dir;return String(x).localeCompare(String(y),'pt-BR',{numeric:true,sensitivity:'base'})*opSort.dir});rows.forEach(r=>body.appendChild(r));
+  document.querySelectorAll('#todayOperationTable .opSortable').forEach((th,i)=>{const m=th.querySelector('.opSortMark');if(m)m.textContent=i===opSort.col?(opSort.dir===1?'▲':'▼'):'↕'});
+}
+function setupOperationSort(){document.querySelectorAll('#todayOperationTable .opSortable').forEach(th=>{const go=()=>{const col=Number(th.dataset.col);opSort.dir=opSort.col===col?-opSort.dir:1;opSort.col=col;applyOperationSort()};th.addEventListener('click',go);th.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go()}})})}
+function fitAllTeamMarkers(){if(!teamMap)return;teamMapUserMoved=false;if(markers.length){const bounds=L.featureGroup(markers).getBounds();if(bounds.isValid())teamMap.fitBounds(bounds.pad(.18),{maxZoom:15})}else teamMap.setView([-23.5505,-46.6333],10);teamMapInitialFitDone=true;setTimeout(()=>{teamMapUserMoved=true},0)}
 async function loadCalendar(){
   const params=new URLSearchParams({
     start:$('calendarStart').value,
@@ -612,6 +629,8 @@ async function v58StartTeams(){
   if(v58TeamsStarted) return;
   v58TeamsStarted=true;
   console.info('[V59] início da Operação 2.0');
+  setupOperationSort();
+  if($('teamMapFit'))$('teamMapFit').addEventListener('click',fitAllTeamMarkers);
 
   // 1) Carrega dados primeiro. Uma falha de mapa nunca deve zerar Equipes.
   const dataJobs=await refreshAll();
