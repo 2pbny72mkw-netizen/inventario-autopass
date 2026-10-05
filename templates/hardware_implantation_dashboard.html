@@ -14,3 +14,7 @@
 </div>
 <section class="card"><div class="sectionHead"><div><h2>Últimas visitas</h2><p class="muted">Clique no RV para abrir o relatório completo.</p></div><span class="tag" id="visitCountTag">0 registros</span></div><div class="tableWrap"><table><thead><tr><th>RV</th><th>Cliente</th><th>Projeto</th><th>Local</th><th>Data</th><th>Técnico</th><th>Resultado</th><th>Aceite</th><th>Status</th>{% if can_view('implantation.reports') %}<th>Ações</th>{% endif %}</tr></thead><tbody id="visitRows"></tbody></table></div></section>
 {% endblock %}{% block scripts %}<script>window.CAN_MANAGE_VISITS={{ 'true' if can_view('implantation.reports') else 'false' }};</script><script src="{{url_for('static',filename='hardware_implantation_dashboard.js')}}?v=v55-4"></script>{% endblock %}
+
+<style>/* V85.42 REV2 */
+#visitRows td:first-child,.rvLink{white-space:nowrap!important;word-break:keep-all!important}.barRow.v8542Clickable{cursor:pointer;border-radius:8px;padding:4px 6px}.barRow.v8542Clickable:hover{background:#f1f6fb}.v8542Trend{width:100%;height:170px;display:block}.v8542Trend polyline{fill:none;stroke:#2468d8;stroke-width:3}.v8542Trend circle{fill:#2468d8}.v8542TrendLabels{display:flex;justify-content:space-between;font-size:.72rem;color:#5b6d80;margin-top:4px}
+</style>
