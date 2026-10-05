@@ -1,0 +1,20 @@
+AUTOPASS — V85.42 REV1
+
+Arquivos alterados:
+- app.py
+- templates/about.html
+- templates/teams.html
+- templates/atm_mapping_v82.html
+- static/teams.js
+- DEPLOY_V85.42_REV1.txt
+
+Alterações:
+1. Operação por data: ordenação crescente/decrescente em todas as colunas, preservada após atualização automática.
+2. Mapa Operacional: atualização de técnicos não altera zoom/centro escolhidos pelo usuário; enquadramento automático apenas inicial; botão "Enquadrar todos".
+3. Mapeamento ATM: "Salvar status administrativo" persiste também campos técnicos alterados (furos/tampados, acesso, porta traseira, aceitador, aceitador fixo e observação), mantendo justificativa obrigatória e auditoria before/after.
+4. Histórico de versões atualizado para V85.42 REV1.
+
+Validações locais:
+- app.py: py_compile OK
+- Jinja: about.html, teams.html, atm_mapping_v82.html OK
+- static/teams.js: node --check OK

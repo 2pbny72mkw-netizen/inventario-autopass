@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.42"
+APP_RELEASE = "V85.42 REV1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -23604,7 +23604,32 @@ def v828_atm_mapping_admin_status(mapping_id):
     m=db.session.get(AtmMapping,mapping_id) or abort(404);d=request.get_json(silent=True) or {};new=(d.get('status') or '').strip().upper();reason=(d.get('reason') or '').strip()
     if new not in ('PENDENTE','EM_ANDAMENTO','CONCLUIDO'):return jsonify({'ok':False,'error':'Status inválido.'}),400
     if not reason:return jsonify({'ok':False,'error':'Informe a justificativa da alteração administrativa.'}),400
-    old=m.status;m.status=new;m.updated_at=datetime.utcnow();db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='ATM_MAPPING_STATUS_ADMIN',entity_type='atm_mapping',entity_id=str(m.id),detail=json.dumps({'atm_id':m.atm_id,'before':old,'after':new,'reason':reason},ensure_ascii=False)));db.session.commit();_invalidate_atm_mapping_cache();return jsonify({'ok':True,'before':old,'status':new})
+    old=m.status
+    changes={}
+    def _set_text(attr,key,allowed):
+        raw=(d.get(key) or '').strip().upper()
+        if not raw:return
+        if raw not in allowed:raise ValueError(key)
+        before=getattr(m,attr,None)
+        if before!=raw:changes[key]={'before':before,'after':raw};setattr(m,attr,raw)
+    try:
+        _set_text('physical_access','physical_access',('INTERNO','EXTERNO'))
+        _set_text('bill_acceptor','bill_acceptor',('UBA-PRO','I-VIZION','SPECTRAL'))
+        for attr,key in (('has_holes','has_holes'),('holes_sealed','holes_sealed'),('rear_safe_door','rear_safe_door'),('acceptor_fixed','acceptor_fixed')):
+            raw=(d.get(key) or '').strip().upper()
+            if not raw:continue
+            if raw not in ('SIM','NAO'):raise ValueError(key)
+            value=(raw=='SIM');before=getattr(m,attr,None)
+            if before!=value:changes[key]={'before':before,'after':value};setattr(m,attr,value)
+        if 'notes' in d:
+            value=(d.get('notes') or '').strip();before=m.notes or ''
+            if before!=value:changes['notes']={'before':before,'after':value};m.notes=value
+    except ValueError as exc:
+        return jsonify({'ok':False,'error':f'Valor inválido para {exc.args[0]}.'}),400
+    m.status=new;m.updated_at=datetime.utcnow()
+    db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='ATM_MAPPING_STATUS_ADMIN',entity_type='atm_mapping',entity_id=str(m.id),detail=json.dumps({'atm_id':m.atm_id,'before':old,'after':new,'technical_changes':changes,'reason':reason},ensure_ascii=False)))
+    db.session.commit();_invalidate_atm_mapping_cache()
+    return jsonify({'ok':True,'before':old,'status':new,'technical_changes':changes})
 
 @app.get('/api/mapeamento-atm/foto/<int:photo_id>')
 @login_required
