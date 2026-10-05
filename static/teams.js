@@ -225,9 +225,9 @@ async function loadCalendar(){
   if($('calendarTable')) $('calendarTable').style.minWidth=`${Math.max(900,520+(d.dates?.length||0)*92)}px`;
   $('scaleHead').innerHTML=`
     <tr>
-      <th class="stickyTechCol">Técnico</th>
-      <th>Turno</th>
-      <th>Entrada</th>
+      <th class="stickyTechCol scaleSortHead" data-scale-col="0">Técnico <span class="scaleSortMark">↕</span></th>
+      <th class="scaleSortHead" data-scale-col="1">Turno <span class="scaleSortMark">↕</span></th>
+      <th class="scaleSortHead" data-scale-col="2">Entrada <span class="scaleSortMark">↕</span></th>
       ${d.dates.map(x=>`<th><b>${weekday(x)}</b><small>${fmtDate(x)}</small></th>`).join('')}
     </tr>`;
 
@@ -243,7 +243,15 @@ async function loadCalendar(){
         <td class="${day.scheduled?'scaleWork':'scaleOff'}">
           ${day.status_override?esc(String(day.status_override).replaceAll('_',' ')):(day.scheduled?esc(t.shift.replaceAll(':00','')):'Folga')}
         </td>`).join('')}
-    </tr>`).join('');  if($('calendarTableWrap')) $('calendarTableWrap').scrollLeft=0;
+    </tr>`).join('');  document.querySelectorAll('#scaleHead .scaleSortHead').forEach(th=>th.onclick=()=>{
+    const col=Number(th.dataset.scaleCol), tbody=$('scaleBody'), rows=[...tbody.rows], next=th.dataset.dir==='asc'?'desc':'asc';
+    document.querySelectorAll('#scaleHead .scaleSortHead').forEach(h=>{h.dataset.dir='';const m=h.querySelector('.scaleSortMark');if(m)m.textContent='↕'});
+    th.dataset.dir=next;th.querySelector('.scaleSortMark').textContent=next==='asc'?'▲':'▼';
+    const norm=v=>String(v||'').trim().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+    rows.sort((a,b)=>{let av=norm(a.cells[col]?.textContent),bv=norm(b.cells[col]?.textContent);if(col===1){const tm=x=>{const m=x.match(/(\d{1,2}):(\d{2})/);return m?Number(m[1])*60+Number(m[2]):99999};const d=tm(av)-tm(bv);if(d)return next==='asc'?d:-d}const d=av.localeCompare(bv,'pt-BR',{numeric:true});return next==='asc'?d:-d});
+    rows.forEach(r=>tbody.appendChild(r));
+  });
+  if($('calendarTableWrap')) $('calendarTableWrap').scrollLeft=0;
 }
 
 
@@ -553,17 +561,23 @@ function v3978RailDiag(msg,ok=true){const e=$('teamRailDiag');if(!e)return;e.tex
 function v39710DrawLeafletRails(sourceLabel='fallback local'){
   if(!teamMap||!v391RailLines)return;
   v391RailLines.clearLayers();
-  let lines=0,points=0;
+  let lines=0,points=0,segments=0;
+  const MAX_SEGMENT_M=8500; // evita atalhos/diagonais que não pertencem à malha ferroviária
   Object.entries(v3978RailSource).forEach(([n,pts])=>{
     if(!Array.isArray(pts)||pts.length<2)return;
     const clean=pts.map(p=>[+p[0],+p[1]]).filter(p=>Number.isFinite(p[0])&&Number.isFinite(p[1]));
     if(clean.length<2)return;
     lines++;points+=clean.length;
-    L.polyline(clean,{color:'#fff',weight:8,opacity:.9,interactive:false,lineCap:'round',lineJoin:'round'}).addTo(v391RailLines);
-    L.polyline(clean,{color:V391_COLORS[n]||'#334155',weight:5,opacity:.96,interactive:false,lineCap:'round',lineJoin:'round'}).bindTooltip(`Linha ${n} - ${V391_NAMES[n]||''}`,{sticky:true}).addTo(v391RailLines);
+    const chunks=[];let chunk=[clean[0]];
+    for(let i=1;i<clean.length;i++){
+      const a={reference_latitude:clean[i-1][0],reference_longitude:clean[i-1][1]},b={reference_latitude:clean[i][0],reference_longitude:clean[i][1]};
+      if(v391Dist(a,b)>MAX_SEGMENT_M){if(chunk.length>1)chunks.push(chunk);chunk=[clean[i]]}else chunk.push(clean[i]);
+    }
+    if(chunk.length>1)chunks.push(chunk);
+    chunks.forEach(part=>{segments++;L.polyline(part,{color:'#fff',weight:8,opacity:.9,interactive:false,lineCap:'round',lineJoin:'round'}).addTo(v391RailLines);L.polyline(part,{color:V391_COLORS[n]||'#334155',weight:5,opacity:.96,interactive:false,lineCap:'round',lineJoin:'round'}).bindTooltip(`Linha ${n} - ${V391_NAMES[n]||''}`,{sticky:true}).addTo(v391RailLines)});
   });
   v3978RailPointCount=points;
-  v3978RailDiag(`Trilhos: ${sourceLabel} / ${lines} linha(s) / ${points} pontos`,lines>0);
+  v3978RailDiag(`Trilhos: ${sourceLabel} / ${lines} linha(s) / ${segments} trecho(s) / ${points} pontos`,lines>0);
 }
 function v39710ApproxStationPoint(points,index,total){
   if(!points?.length)return null;if(points.length===1)return points[0];
@@ -657,3 +671,15 @@ if(document.readyState==='loading'){
   v58StartTeams().catch(err=>console.error('[V59] startup',err));
 }
 
+
+// V85.42 REV2 — Big Numbers como filtros operacionais
+(function(){
+  function applyKpi(kind){
+    document.querySelectorAll('.teamKpiAction').forEach(x=>x.classList.toggle('kpiSelected',x.dataset.kpiFilter===kind));
+    const cat=document.getElementById('v38TeamCategory'),gps=document.getElementById('v38TeamGps'),q=document.getElementById('v38TeamSearch');if(q)q.value='';if(cat)cat.value='';if(gps)gps.value='';
+    if(kind==='current'&&gps)gps.value='ATUAL';else if(kind==='nosignal'&&gps)gps.value='SEM SINAL';else if(kind==='supervisor'&&cat)cat.value='SUPERVISOR';else if(kind==='support'&&cat)cat.value='APOIO';
+    if(kind==='attention'){document.querySelectorAll('#todayTeamTable tr').forEach(tr=>{const t=tr.textContent.toUpperCase();tr.style.display=(t.includes('ATENÇÃO')||t.includes('ATRASADO'))?'':'none'});document.querySelectorAll('#teamCards > *').forEach(el=>el.style.display=(el.classList.contains('freshness-attention')||el.classList.contains('freshness-late'))?'':'none')}else if(window.v38ApplyTeamFilter)v38ApplyTeamFilter();
+    document.getElementById('teamCards')?.scrollIntoView({behavior:'smooth',block:'start'});
+  }
+  document.querySelectorAll('.teamKpiAction').forEach(el=>{el.addEventListener('click',()=>applyKpi(el.dataset.kpiFilter));el.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();applyKpi(el.dataset.kpiFilter)}})});
+})();
