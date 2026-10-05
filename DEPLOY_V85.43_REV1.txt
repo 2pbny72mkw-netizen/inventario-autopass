@@ -1,0 +1,16 @@
+AUTOPASS V85.43 REV1 — PERFORMANCE
+Base: V85.43
+
+ALTERAÇÕES
+- Monitoramento Coletas: cache de payload ampliado para 300s e cache dos fechamentos R0050 por período.
+- Resumo diário: validação de prontidão deixa de executar COUNT(*) integral da financial_atm_transactions em cada chamada; usa MAX(id) indexado + meta.
+- Saúde das Fontes: cache completo por período por 300s, reduzindo GROUP BY repetitivo sobre R0050.
+- Fotos de usuários: cache em memória por object_key por 600s, limitado a 128 objetos, reduzindo leituras repetidas no R2.
+- Sem exclusão/arquivamento automático de T-Reports.
+- Sem alteração das fórmulas/regras financeiras.
+
+TESTE APÓS DEPLOY
+1. Abrir Financeiro > Coletas duas vezes no mesmo período; comparar primeira carga e refresh.
+2. Abrir Saúde das Fontes e repetir/atualizar dentro de 5 min.
+3. Abrir Equipes com fotos e atualizar a tela.
+4. Exportar telemetria após 20-30 min de uso.

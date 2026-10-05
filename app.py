@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.43"
+APP_RELEASE = "V85.43 REV1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -74,7 +74,14 @@ _CASH_ATMS_CACHE_LOCK = threading.Lock()
 _ATM_MAPPING_API_CACHE = {"at": 0.0, "payload": None}
 _ATM_MAPPING_API_CACHE_TTL = int(os.getenv("ATM_MAPPING_API_CACHE_TTL", "60"))
 _FIN_CASH_PAYLOAD_CACHE = {}
-_FIN_CASH_PAYLOAD_CACHE_TTL = int(os.getenv("FIN_CASH_PAYLOAD_CACHE_TTL", "60"))
+_FIN_CASH_PAYLOAD_CACHE_TTL = int(os.getenv("FIN_CASH_PAYLOAD_CACHE_TTL", "300"))
+# V85.43 REV1 — caches de leitura para rotas críticas; não alteram regra de negócio.
+_V8543R1_SUMMARY_READY_CACHE = {"at": 0.0, "value": False}
+_V8543R1_CLOSURE_PREFETCH_CACHE = {}
+_V8543R1_SOURCE_HEALTH_FULL_CACHE = {}
+_V8543R1_USER_PHOTO_CACHE = {}
+_V8543R1_READ_CACHE_TTL = int(os.getenv("V8543R1_READ_CACHE_TTL", "300"))
+_V8543R1_PHOTO_CACHE_TTL = int(os.getenv("V8543R1_PHOTO_CACHE_TTL", "600"))
 _ATM_MAPPING_API_CACHE_LOCK = threading.Lock()
 _V8530_LAST_PERF_CLEANUP = 0.0
 
@@ -9387,12 +9394,18 @@ def user_photo(user_id):
         return "", 404
 
     try:
-        obj = r2_client().get_object(
-            Bucket=os.environ["R2_BUCKET_NAME"],
-            Key=user.photo_url
-        )
-        raw=obj["Body"].read()
-        mime=obj.get("ContentType") or "image/jpeg"
+        # V85.43 REV1 — evita buscar a mesma foto no R2 a cada refresh da Central de Equipes.
+        # Cache é somente leitura, curto e limitado; a chave inclui o object_key imutável.
+        now=time.time(); cache_key=str(user.photo_url); cached=_V8543R1_USER_PHOTO_CACHE.get(cache_key)
+        if cached and now-cached[0] < _V8543R1_PHOTO_CACHE_TTL:
+            raw,mime=cached[1],cached[2]
+        else:
+            obj = r2_client().get_object(Bucket=os.environ["R2_BUCKET_NAME"],Key=user.photo_url)
+            raw=obj["Body"].read(); mime=obj.get("ContentType") or "image/jpeg"
+            if len(_V8543R1_USER_PHOTO_CACHE) >= 128:
+                oldest=min(_V8543R1_USER_PHOTO_CACHE,key=lambda k:_V8543R1_USER_PHOTO_CACHE[k][0])
+                _V8543R1_USER_PHOTO_CACHE.pop(oldest,None)
+            _V8543R1_USER_PHOTO_CACHE[cache_key]=(now,raw,mime)
         if request.args.get("thumb")=="1":
             return _cached_media_response(raw,mime,"usuario.jpg",thumb=True)
         return Response(raw,mimetype=mime,headers={"Cache-Control":"private, max-age=86400, stale-while-revalidate=604800"})
@@ -15545,17 +15558,22 @@ def _v8535_refresh_financial_daily_summary():
     return True
 
 def _v8535_financial_summary_ready():
+    # V85.43 REV1 — COUNT(*) sobre ~900k transações não precisa rodar em cada Monitoramento.
+    now=time.time(); hit=_V8543R1_SUMMARY_READY_CACHE
+    if now-float(hit.get("at") or 0) < _V8543R1_READ_CACHE_TTL:
+        return bool(hit.get("value"))
     try:
         if db.engine.dialect.name != 'postgresql': return False
-        row=db.session.execute(text("""SELECT m.status,m.source_count,m.source_max_id,
-            (SELECT COUNT(*) FROM financial_atm_transactions),
+        # MAX(id) é indexado e suficiente para validar a fotografia append-only junto ao meta.
+        row=db.session.execute(text("""SELECT m.status,m.source_max_id,
             (SELECT COALESCE(MAX(id),0) FROM financial_atm_transactions)
             FROM financial_atm_summary_meta m WHERE m.id=1""")).first()
-        return bool(row and row[0]=='READY' and int(row[1] or 0)==int(row[3] or 0) and int(row[2] or 0)==int(row[4] or 0))
+        value=bool(row and row[0]=='READY' and int(row[1] or 0)==int(row[2] or 0))
+        hit.update({"at":now,"value":value}); return value
     except Exception:
         try: db.session.rollback()
         except Exception: pass
-        return False
+        hit.update({"at":now,"value":False}); return False
 
 def _v809_prefetch_cycle_data(terminals,start,end,calc_statuses):
     """V80 REV9: pré-carrega fechamentos e agregados do R0050 em lote.
@@ -15563,6 +15581,12 @@ def _v809_prefetch_cycle_data(terminals,start,end,calc_statuses):
     """
     if not terminals:
         return {'closures_by_terminal':{},'closures_by_day':{},'aggregates':{}}
+    # V85.43 REV1 — fechamentos R0050 são idênticos entre refreshes do mesmo período.
+    # Cache curto elimina a agregação repetida sobre a massa bruta sem alterar o resultado.
+    _ck=(tuple(terminals),start.isoformat(),end.isoformat())
+    _now=time.time(); _hit=_V8543R1_CLOSURE_PREFETCH_CACHE.get(_ck)
+    if _hit and _now-_hit[0] < _V8543R1_READ_CACHE_TTL:
+        return copy.deepcopy(_hit[1])
     lo=datetime.combine(start-timedelta(days=370),datetime.min.time())
     hi=datetime.combine(end+timedelta(days=1),datetime.min.time())
     closure_rows=db.session.query(
@@ -15589,7 +15613,10 @@ def _v809_prefetch_cycle_data(terminals,start,end,calc_statuses):
     # Ela varria/agregava a massa de transações de até 370 dias, mas o resultado não era
     # consumido por _v792_cash_payload. Os totais de ciclo são calculados abaixo somente
     # para os intervalos efetivamente necessários.
-    return {'closures_by_terminal':by_terminal,'closures_by_day':by_day,'aggregates':{}}
+    _result={'closures_by_terminal':by_terminal,'closures_by_day':by_day,'aggregates':{}}
+    if len(_V8543R1_CLOSURE_PREFETCH_CACHE) >= 6: _V8543R1_CLOSURE_PREFETCH_CACHE.clear()
+    _V8543R1_CLOSURE_PREFETCH_CACHE[_ck]=(_now,copy.deepcopy(_result))
+    return _result
 
 def _v792_cash_payload(start,end,calc_statuses=None):
     schedules={x.terminal:x for x in FinancialCashSchedule.query.filter(FinancialCashSchedule.active.is_(True)).all()}
@@ -16799,6 +16826,11 @@ def financial_cash_v81_source_health():
     if not _finance_collection_monitor_access(): return jsonify({'ok':False,'error':'Sem permissão.'}),403
     try: start=date.fromisoformat(request.args.get('start')); end=date.fromisoformat(request.args.get('end'))
     except Exception: start=date.today().replace(day=1); end=date.today()
+    # V85.43 REV1 — a saúde das fontes é diagnóstico; cache curto evita repetir GROUP BY
+    # pesado no R0050 em cada atualização automática da tela.
+    _hk=(start.isoformat(),end.isoformat()); _now=time.time(); _cached=_V8543R1_SOURCE_HEALTH_FULL_CACHE.get(_hk)
+    if _cached and _now-_cached[0] < _V8543R1_READ_CACHE_TTL:
+        return jsonify(copy.deepcopy(_cached[1]))
     h=_v814_cached_source_health(start,end)
     # completude individual no período: realizado -> R0050 no dia -> TB Forte apurada
     realized=FinancialCashDailyReport.query.filter(FinancialCashDailyReport.report_date>=start,FinancialCashDailyReport.report_date<=min(end,date.today()),FinancialCashDailyReport.result_status=='RECOLHIDO').all()
@@ -16823,7 +16855,10 @@ def financial_cash_v81_source_health():
         r_ok+=bool(rq); t_ok+=bool(tq); complete+=bool(rq and tq)
         if not (rq and tq): missing.append({'terminal':x.terminal,'date':x.report_date.isoformat(),'r0050':bool(rq),'tbforte':bool(tq)})
     h.update({'period':{'start':start.isoformat(),'end':end.isoformat()},'realized_cycles':total,'with_r0050':r_ok,'with_tbforte':t_ok,'complete_cycles':complete,'completeness_pct':round(complete*100/max(1,total),1),'missing':missing[:100]})
-    return jsonify({'ok':True,'release':APP_RELEASE,**h})
+    _payload={'ok':True,'release':APP_RELEASE,**h}
+    if len(_V8543R1_SOURCE_HEALTH_FULL_CACHE) >= 12: _V8543R1_SOURCE_HEALTH_FULL_CACHE.clear()
+    _V8543R1_SOURCE_HEALTH_FULL_CACHE[_hk]=(_now,copy.deepcopy(_payload))
+    return jsonify(_payload)
 
 @app.route('/api/financeiro/coletas/v81/monitoramento-campo',methods=['GET','POST'])
 @login_required
