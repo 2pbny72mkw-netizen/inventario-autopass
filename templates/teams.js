@@ -15,6 +15,7 @@ const weekday=s=>{
 };
 
 let teamMap=null;
+let teamMapAutoFitted=false;
 let tileLayer=null;
 let markers=[];
 let profilesCache=[];
@@ -162,11 +163,15 @@ async function loadTeams(){
   $('kAttention').textContent=attention;
   $('kNoSignal').textContent=noSignal;
 
-  if(markers.length){
-    const bounds=L.featureGroup(markers).getBounds();
-    if(bounds.isValid()) teamMap.fitBounds(bounds.pad(.18),{maxZoom:15});
-  }else{
-    teamMap.setView([-23.5505,-46.6333],10);
+  // V85.43: atualização periódica troca apenas marcadores/dados. Não mexe no zoom/pan do operador.
+  if(!teamMapAutoFitted){
+    if(markers.length){
+      const bounds=L.featureGroup(markers).getBounds();
+      if(bounds.isValid()) teamMap.fitBounds(bounds.pad(.18),{maxZoom:15});
+    }else{
+      teamMap.setView([-23.5505,-46.6333],10);
+    }
+    teamMapAutoFitted=true;
   }
   rebuildMapIfNeeded();
 }
@@ -490,7 +495,9 @@ async function v391BuildRails(){
     const r=await fetch('/api/equipes/rail-network',{cache:'no-store'}); if(!r.ok)throw new Error('HTTP '+r.status); const locs=await r.json(); const groups={};
     (locs||[]).forEach(x=>{if(x.reference_latitude==null||x.reference_longitude==null)return;const n=v391LineNo(x.line);if(!n)return;(groups[n]??=[]).push(x);const pt=[+x.reference_latitude,+x.reference_longitude];L.circleMarker(pt,{pane:'railStationsPane',radius:5,color:'#fff',weight:2,fillColor:V391_COLORS[n]||'#64748b',fillOpacity:1}).bindTooltip(String(x.location||''),{direction:'top'}).addTo(v391Stations);L.marker(pt,{interactive:false,icon:L.divIcon({className:'stationLabelIcon',html:`<span>${esc(x.location||'')}</span>`,iconSize:null})}).addTo(v391StationNames)});
     Object.keys(V391_FALLBACK).forEach(n=>{if(!groups[n])groups[n]=[]});
-    Object.entries(groups).forEach(([n,arr])=>{const seq=v391Sequence(arr);const pts=seq.length>=2?seq.map(x=>[+x.reference_latitude,+x.reference_longitude]):(V391_FALLBACK[n]||[]);if(pts.length<2)return;L.polyline(pts,{pane:'railLinesPane',color:'#fff',weight:11,opacity:.96,interactive:false}).addTo(v391RailLines);L.polyline(pts,{pane:'railLinesPane',color:V391_COLORS[n]||'#64748b',weight:6,opacity:1}).bindPopup(`<b>Linha ${n} — ${V391_NAMES[n]||''}</b>`).addTo(v391RailLines)});
+    // V85.43: a geometria da linha não é inferida ligando estações por proximidade.
+    // Isso eliminava diagonais/atalhos que não pertencem à malha ferroviária.
+    Object.entries(groups).forEach(([n,arr])=>{const pts=(V391_FALLBACK[n]||[]);if(pts.length<2)return;L.polyline(pts,{pane:'railLinesPane',color:'#fff',weight:11,opacity:.96,interactive:false}).addTo(v391RailLines);L.polyline(pts,{pane:'railLinesPane',color:V391_COLORS[n]||'#64748b',weight:6,opacity:1}).bindPopup(`<b>Linha ${n} — ${V391_NAMES[n]||''}</b>`).addTo(v391RailLines)});
   }catch(e){console.warn('V39.1 mapa equipes',e)}
 }
 function v391SetupTeamMap(){
