@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.44 REV1"
+APP_RELEASE = "V85.44 REV2"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -22921,7 +22921,15 @@ def v8527_bobbin_deliveries_bulk():
         # V85.36: edição real de lote. Substitui o lote dentro da mesma transação,
         # preservando o batch_id e evitando duplicação parcial.
         if replace_batch and batch_id:
-            old_rows=[x for x in BobbinDeliverySchedule.query.all() if re.search(r'\[BATCH:'+re.escape(batch_id)+r'\]',x.notes or '')]
+            # V85.44 REV2: lotes legados (criados antes do BATCH) também podem ser editados em massa.
+            if batch_id.startswith('LEGACY_DATE:'):
+                legacy_date=date.fromisoformat(batch_id.split(':',1)[1])
+                old_rows=[x for x in BobbinDeliverySchedule.query.filter_by(delivery_date=legacy_date).all()
+                          if not re.search(r'\[BATCH:[^\]]+\]',x.notes or '') and str(x.status or '').upper()=='PROGRAMADO']
+                # A edição converte o grupo legado em um lote rastreável novo.
+                batch_id=uuid.uuid4().hex[:16]
+            else:
+                old_rows=[x for x in BobbinDeliverySchedule.query.all() if re.search(r'\[BATCH:'+re.escape(batch_id)+r'\]',x.notes or '')]
             old_ids=[x.id for x in old_rows]
             if old_ids:
                 BobbinDeliveryDetail.query.filter(BobbinDeliveryDetail.delivery_id.in_(old_ids)).delete(synchronize_session=False)
@@ -22952,8 +22960,14 @@ def v85291_bobbin_bulk_batches():
     groups={}
     for x in BobbinDeliverySchedule.query.order_by(BobbinDeliverySchedule.delivery_date.desc(),BobbinDeliverySchedule.id.desc()).all():
         m=re.search(r'\[BATCH:([^\]]+)\]',x.notes or '')
-        if not m: continue
-        bid=m.group(1); d=groups.setdefault(bid,{'batch_id':bid,'rows':[],'created_at':x.created_at.isoformat()+'Z' if x.created_at else None})
+        if m:
+            bid=m.group(1)
+        else:
+            # V85.44 REV2: programações antigas sem lote aparecem agrupadas por data.
+            # Histórico já entregue não entra na edição de programação em massa.
+            if str(x.status or '').upper()!='PROGRAMADO' or not x.delivery_date: continue
+            bid='LEGACY_DATE:'+x.delivery_date.isoformat()
+        d=groups.setdefault(bid,{'batch_id':bid,'rows':[],'created_at':x.created_at.isoformat()+'Z' if x.created_at else None,'legacy':not bool(m)})
         detail=BobbinDeliveryDetail.query.filter_by(delivery_id=x.id).first(); loose=int(getattr(detail,'loose_qty',0) or 0); kind=_v85281_bobbin_type(x.location,'',x.notes or '')
         fm=re.search(r'\[FIN:([^|\]]*)\|([0-9.]+)\|([0-9.]+)\]',x.notes or ''); unit=float(fm.group(2)) if fm else 0.0
         d['rows'].append({'id':x.id,'location':x.location,'delivery_date':x.delivery_date.isoformat(),'boxes_qty':int(x.boxes_qty or 0),'loose_qty':loose,'bobbin_type':kind,'unit_cost':unit,'notes':_v85281_clean_note(re.sub(r'\s*\[FIN:[^\]]+\]|\s*\[BATCH:[^\]]+\]','',x.notes or '').strip())})
