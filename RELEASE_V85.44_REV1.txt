@@ -1,0 +1,6 @@
+V85.44 REV1
+- Atividade Bobinas: foto permanece opcional (V85.44).
+- Engenharia > Estruturas BOM: edição de componente permite substituir o código/item do cadastro mestre no mesmo ponto da BOM.
+- Ao trocar o código, origem/fabricante/PN/moeda passam a refletir o novo item; quantidade/grupo/lead time permanecem editáveis.
+- Auditoria registra item/código anterior e novo.
+- Impede duplicar na mesma BOM um código que já esteja presente.

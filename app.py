@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.44"
+APP_RELEASE = "V85.44 REV1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -21765,8 +21765,17 @@ def engineering_bom_item_save_api(bid):
     if not _has_access("engineering.bom.manage"):return jsonify({"ok":False,"error":"Sem permissão."}),403
     b=db.session.get(EngineeringBom,bid);d=request.get_json(silent=True) or {};it=db.session.get(EngineeringItem,int(d.get("item_id") or 0))
     if not b or not it:return jsonify({"ok":False,"error":"BOM ou item não encontrado."}),404
-    x=EngineeringBomItem.query.filter_by(bom_id=bid,item_id=it.id).first() or EngineeringBomItem(bom_id=bid,item_id=it.id)
-    old={"quantity":x.quantity,"origin":x.origin,"cost_group":getattr(x,"cost_group",None),"supplier":x.supplier,"supplier_part_number":x.supplier_part_number,"lead_time_days":x.lead_time_days,"unit_cost":x.unit_cost,"currency":x.currency} if x.id else None
+    bom_item_id=int(d.get("bom_item_id") or 0)
+    x=db.session.get(EngineeringBomItem,bom_item_id) if bom_item_id else None
+    if x and x.bom_id!=bid:return jsonify({"ok":False,"error":"Componente não pertence a esta BOM."}),400
+    if not x:x=EngineeringBomItem.query.filter_by(bom_id=bid,item_id=it.id).first() or EngineeringBomItem(bom_id=bid,item_id=it.id)
+    old_item_id=x.item_id if x.id else None
+    old_it=db.session.get(EngineeringItem,old_item_id) if old_item_id else None
+    if x.id and old_item_id!=it.id:
+        dup=EngineeringBomItem.query.filter(EngineeringBomItem.bom_id==bid,EngineeringBomItem.item_id==it.id,EngineeringBomItem.id!=x.id).first()
+        if dup:return jsonify({"ok":False,"error":"O novo código já existe nesta estrutura. Edite o componente existente ou remova a duplicidade."}),409
+        x.item_id=it.id
+    old={"item_id":old_item_id,"internal_part_number":getattr(old_it,"internal_part_number",None),"quantity":x.quantity,"origin":x.origin,"cost_group":getattr(x,"cost_group",None),"supplier":x.supplier,"supplier_part_number":x.supplier_part_number,"lead_time_days":x.lead_time_days,"unit_cost":x.unit_cost,"currency":x.currency} if x.id else None
     try:x.quantity=float(d.get("quantity") or 1)
     except:x.quantity=1
     try:x.unit_cost=float(str(d.get("unit_cost") or 0).replace(",","."))
@@ -21778,7 +21787,7 @@ def engineering_bom_item_save_api(bid):
     if d.get("unit_cost") in (None,""):
         ref_currency=(getattr(it,"default_currency",None) or "BRL").upper()
         x.unit_cost=float(getattr(it,"reference_unit_cost",0) or 0) if (x.origin!="IMPORTADO" or ref_currency=="USD") else 0
-    db.session.add(x);db.session.flush();new={"quantity":x.quantity,"origin":x.origin,"cost_group":x.cost_group,"supplier":x.supplier,"supplier_part_number":x.supplier_part_number,"lead_time_days":x.lead_time_days,"unit_cost":x.unit_cost,"currency":x.currency}
+    db.session.add(x);db.session.flush();new={"item_id":it.id,"internal_part_number":it.internal_part_number,"quantity":x.quantity,"origin":x.origin,"cost_group":x.cost_group,"supplier":x.supplier,"supplier_part_number":x.supplier_part_number,"lead_time_days":x.lead_time_days,"unit_cost":x.unit_cost,"currency":x.currency}
     db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="ENGINEERING_BOM_ITEM_UPDATED" if old else "ENGINEERING_BOM_ITEM_CREATED",entity_type="engineering_bom_item",entity_id=str(x.id),detail=json.dumps({"before":old,"after":new},ensure_ascii=False)))
     db.session.commit();return jsonify({"ok":True,"bom":_eng_bom_json(b)})
 
@@ -22381,7 +22390,7 @@ def v77_bobbins_register():
         if bool(master.get('stock')):return jsonify({'ok':False,'error':'ATM está classificada como estoque na base oficial e não recebe atividade operacional.'}),409
         # Cadastro mestre é soberano; a seleção continua manual e o GPS não bloqueia a localidade.
         company=str(master.get('company') or company).strip();line=str(master.get('line') or line).strip();station=str(master.get('locality') or station).strip()
-    # V85.44: foto da atividade Bobinas é opcional.
+    # V85.44 — evidência fotográfica da Atividade Bobinas é opcional.
     photo=request.files.get('photo')
     has_photo=bool(photo and photo.filename)
     replaced=str(request.form.get('bobbin_replaced') or '').lower() in ('1','true','yes','sim','on')
@@ -22417,7 +22426,8 @@ def v77_bobbins_register():
         except Exception as exc:db.session.rollback();return jsonify({'ok':False,'error':str(exc)}),400
         ph=AtmBobbinPhoto(reading_id=row.id,storage_key=stored,original_name=secure_filename(photo.filename),content_type=photo.mimetype or 'image/jpeg',expires_at=datetime.utcnow()+timedelta(days=_v771_photo_retention_days()))
         db.session.add(ph)
-    db.session.commit();_v771_cleanup_photos()
+    db.session.commit()
+    if has_photo:_v771_cleanup_photos()
     return jsonify({'ok':True,'id':row.id,'reserve_after':reserve_qty,'has_photo':has_photo,'photo_retention_days':_v771_photo_retention_days() if has_photo else None,'gps':{'captured':lat is not None and lon is not None,'accuracy':acc,'distance_m':distance}})
 
 @app.get('/api/bobinas/foto/<int:photo_id>')
