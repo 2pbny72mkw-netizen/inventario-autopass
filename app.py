@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.44 REV2"
+APP_RELEASE = "V85.44 REV3"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -3422,8 +3422,8 @@ def a20_bobinas_register():
         company=str(master.get('company') or company).strip()
         line=str(master.get('line') or line).strip()
         station=str(master.get('locality') or station).strip()
+    # V85.44 REV3: evidência fotográfica de Bobinas é opcional também no endpoint Android/offline.
     photo=request.files.get('photo')
-    if not photo or not photo.filename:return jsonify({'ok':False,'error':'Foto obrigatória.'}),400
     replaced=str(request.form.get('bobbin_replaced') or '').lower() in ('1','true','yes','sim','on')
     if replaced and pct!=100:return jsonify({'ok':False,'error':'Após troca, registre 100%.'}),400
     try:reserve_qty=int(request.form.get('reserve_qty') or 0)
@@ -3454,13 +3454,14 @@ def a20_bobinas_register():
         technician_id=user.id,latitude=lat,longitude=lon,gps_accuracy=acc,
         gps_captured_at=gps_at,gps_distance_m=distance)
     db.session.add(row);db.session.flush()
-    ext=Path(secure_filename(photo.filename)).suffix.lower() or '.jpg'
-    stored_name=f"bobina_{row.id}_{uuid.uuid4().hex[:10]}{ext}"
-    try:stored=_store_uploaded_file(photo,'bobinas',stored_name,photo.mimetype,max_mb=12)
-    except Exception as exc:db.session.rollback();return jsonify({'ok':False,'error':str(exc)}),400
-    db.session.add(AtmBobbinPhoto(reading_id=row.id,storage_key=stored,
-        original_name=secure_filename(photo.filename),content_type=photo.mimetype or 'image/jpeg',
-        expires_at=datetime.utcnow()+timedelta(days=_v771_photo_retention_days())))
+    if photo and photo.filename:
+        ext=Path(secure_filename(photo.filename)).suffix.lower() or '.jpg'
+        stored_name=f"bobina_{row.id}_{uuid.uuid4().hex[:10]}{ext}"
+        try:stored=_store_uploaded_file(photo,'bobinas',stored_name,photo.mimetype,max_mb=12)
+        except Exception as exc:db.session.rollback();return jsonify({'ok':False,'error':str(exc)}),400
+        db.session.add(AtmBobbinPhoto(reading_id=row.id,storage_key=stored,
+            original_name=secure_filename(photo.filename),content_type=photo.mimetype or 'image/jpeg',
+            expires_at=datetime.utcnow()+timedelta(days=_v771_photo_retention_days())))
     db.session.commit();_v771_cleanup_photos()
     return jsonify({'ok':True,'id':row.id,'reserve_after':reserve_qty})
 
