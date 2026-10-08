@@ -1,33 +1,32 @@
-// V50.6 — cache seguro: páginas, dashboards e APIs nunca são interceptados.
-const CACHE = 'autopass-v761-static';
-const PRECACHE = ['/static/autopass-icon-192.png','/static/autopass-icon-512.png'];
-self.addEventListener('install', event => {
-  event.waitUntil((async()=>{const cache=await caches.open(CACHE);await cache.addAll(PRECACHE);await self.skipWaiting();})());
+// V85.44 REV8 — PWA/cache seguro para operação de campo.
+// Estáticos: network-first com fallback. Bobinas/Estoque: cache runtime somente após resposta autenticada válida.
+// APIs mutáveis/POST nunca são cacheadas. A fila offline de Bobinas permanece no IndexedDB da própria tela.
+const STATIC_CACHE='autopass-v85-44-rev8-static';
+const PRIVATE_CACHE='autopass-v85-44-rev8-private';
+const PRECACHE=['/static/autopass-icon-192.png','/static/autopass-icon-512.png','/static/autopass-logo.png','/offline'];
+const OFFLINE_PAGES=new Set(['/field/bobinas','/field/estoque']);
+const OFFLINE_GET_APIS=['/api/bobinas/options','/api/bobinas/atm-status'];
+self.addEventListener('install',event=>event.waitUntil((async()=>{const c=await caches.open(STATIC_CACHE);await c.addAll(PRECACHE);await self.skipWaiting();})()));
+self.addEventListener('activate',event=>event.waitUntil((async()=>{const keys=await caches.keys();await Promise.all(keys.filter(k=>k!==STATIC_CACHE&&k!==PRIVATE_CACHE).map(k=>caches.delete(k)));await self.clients.claim();})()));
+async function networkFirst(request,cacheName){
+  const cache=await caches.open(cacheName);
+  try{const response=await fetch(request,{cache:'no-store'});if(response&&response.ok){await cache.put(request,response.clone());}return response;}
+  catch(err){const cached=await cache.match(request);if(cached)return cached;throw err;}
+}
+self.addEventListener('fetch',event=>{
+  const request=event.request;if(request.method!=='GET')return;
+  const url=new URL(request.url);if(url.origin!==self.location.origin)return;
+  if(url.pathname.startsWith('/static/')){event.respondWith(networkFirst(request,STATIC_CACHE));return;}
+  if(request.mode==='navigate'&&OFFLINE_PAGES.has(url.pathname)){
+    event.respondWith((async()=>{try{return await networkFirst(request,PRIVATE_CACHE)}catch(_e){return (await caches.match('/offline'))||Response.error()}})());return;
+  }
+  if(OFFLINE_GET_APIS.some(p=>url.pathname===p)){
+    event.respondWith(networkFirst(request,PRIVATE_CACHE));return;
+  }
 });
-self.addEventListener('activate', event => {
-  event.waitUntil((async()=>{const keys=await caches.keys();await Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)));await self.clients.claim();})());
+self.addEventListener('message',event=>{
+  const d=event.data||{};
+  if(d.type==='CLEAR_PRIVATE_CACHE'){event.waitUntil(caches.delete(PRIVATE_CACHE));return;}
+  if(d.type==='SHOW_NOTIFICATION'){self.registration.showNotification(d.title||'Sistema de Gestão',{body:d.body||'',icon:'/static/autopass-icon-192.png',badge:'/static/autopass-icon-192.png',tag:d.tag||'autopass-v8544r8',renotify:true,data:{url:d.url||'/notificacoes'}});}
 });
-self.addEventListener('fetch', event => {
-  const request=event.request;
-  if(request.method!=='GET') return;
-  const url=new URL(request.url);
-  if(url.origin!==self.location.origin) return;
-  // Não interceptar navegação, HTML, APIs ou rotas autenticadas.
-  if(request.mode==='navigate') return;
-  if(!url.pathname.startsWith('/static/')) return;
-  // Somente estáticos: rede primeiro; cache apenas como fallback offline.
-  event.respondWith((async()=>{
-    try{
-      const response=await fetch(request,{cache:'no-store'});
-      if(response && response.ok){const cache=await caches.open(CACHE);await cache.put(request,response.clone());}
-      return response;
-    }catch(error){
-      const cached=await caches.match(request);
-      if(cached) return cached;
-      throw error;
-    }
-  })());
-});
-// V76.1 — notificações locais exibidas pelo Service Worker quando o PWA está ativo.
-self.addEventListener('message',event=>{const d=event.data||{};if(d.type==='SHOW_NOTIFICATION'){self.registration.showNotification(d.title||'Sistema de Gestão',{body:d.body||'',icon:'/static/autopass-icon-192.png',badge:'/static/autopass-icon-192.png',tag:d.tag||'autopass-v761',renotify:true,data:{url:d.url||'/notificacoes'}});}});
 self.addEventListener('notificationclick',event=>{event.notification.close();const url=event.notification.data?.url||'/notificacoes';event.waitUntil(clients.matchAll({type:'window',includeUncontrolled:true}).then(ws=>{for(const w of ws){if('focus' in w){w.navigate(url);return w.focus();}}return clients.openWindow(url);}));});
