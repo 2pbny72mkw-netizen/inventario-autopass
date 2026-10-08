@@ -15,6 +15,7 @@
 <section id="bobbinToolsV8539" style="margin:12px 0;display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
  <button type="button" id="openReceiveV8539">Receber Bobinas</button>
  <button type="button" id="openOperatorsV8539">Visão Geral</button>
+ <button type="button" id="openStockV8544R7">Estoque</button>
 </section>
 <div id="modalV8539" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:9999">
  <div id="windowV8539" style="position:absolute;left:50%;top:8%;transform:translateX(-50%);width:min(760px,94vw);max-height:84vh;overflow:auto;background:#fff;border-radius:12px;padding:14px;box-shadow:0 12px 35px rgba(0,0,0,.25)">
@@ -54,6 +55,7 @@
    lines();
   }
  async function dash(){if(dashboard)return dashboard;let r=await fetch('/api/bobinas/v8539/visao');dashboard=await r.json();return dashboard;}
+ document.getElementById('openStockV8544R7').onclick=()=>{window.location.href='/field/estoque#minha-carga';};
  document.getElementById('closeV8539').onclick=()=>modal.style.display='none';
  modal.onclick=e=>{if(e.target===modal)modal.style.display='none';};
 
