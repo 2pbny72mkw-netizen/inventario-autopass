@@ -89,12 +89,12 @@ main.wrap{position:relative;z-index:1}
 let v50InstallPrompt=null;
 window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();v50InstallPrompt=e;const b=document.getElementById('installPwa');if(b)b.hidden=false;});
 document.getElementById('installPwa')?.addEventListener('click',async()=>{if(!v50InstallPrompt)return;v50InstallPrompt.prompt();await v50InstallPrompt.userChoice;v50InstallPrompt=null;document.getElementById('installPwa').hidden=true;});
-// V85.44 REV8: limpa apenas cache privado de páginas no logout; IndexedDB operacional é preservado.
+// V85.44 REV9: limpa cache privado de páginas no logout; IndexedDB operacional é preservado.
 document.getElementById('logoutLink')?.addEventListener('click',()=>{try{navigator.serviceWorker?.controller?.postMessage({type:'CLEAR_PRIVATE_CACHE'});}catch(_e){}});
 if('serviceWorker' in navigator && (location.protocol==='https:' || location.hostname==='localhost')){
   window.addEventListener('load',async()=>{
     try{
-      const reg=await navigator.serviceWorker.register('/sw.js?v=v85-44-rev8',{scope:'/',updateViaCache:'none'});
+      const reg=await navigator.serviceWorker.register('/sw.js?v=v85-44-rev9',{scope:'/',updateViaCache:'none'});
       await reg.update();
     }catch(err){console.warn('Falha ao atualizar Service Worker',err);}
   },{once:true});
