@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.44 REV5"
+APP_RELEASE = "V85.44 REV6"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -1234,6 +1234,7 @@ class AtmBobbinReading(db.Model):
     gps_accuracy = db.Column(db.Float)
     gps_captured_at = db.Column(db.DateTime)
     gps_distance_m = db.Column(db.Float)
+    client_event_id = db.Column(db.String(80), index=True)  # V85.44 REV6 — idempotência da fila offline Web
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
     __table_args__ = (Index("ix_bobbin_atm_created", "atm_id", "created_at"),)
 
@@ -3453,7 +3454,7 @@ def a20_bobinas_register():
         bobbin_replaced=replaced,replacement_origin=None,reserve_delta=reserve_qty-old_reserve,
         reserve_after=reserve_qty,notes=(request.form.get('notes') or '').strip(),
         technician_id=user.id,latitude=lat,longitude=lon,gps_accuracy=acc,
-        gps_captured_at=gps_at,gps_distance_m=distance)
+        gps_captured_at=gps_at,gps_distance_m=distance,client_event_id=client_event_id or None)
     db.session.add(row);db.session.flush()
     if photo and photo.filename:
         ext=Path(secure_filename(photo.filename)).suffix.lower() or '.jpg'
@@ -21140,6 +21141,17 @@ with app.app_context():
         if not SchemaMigration.query.filter_by(version='V85.44-REV4-001').first():
             db.session.add(SchemaMigration(version='V85.44-REV4-001',description='Mapeamento ATM: Aceitador Soldado (Sim/Não/Não informado), filtro e relatórios'))
             db.session.commit()
+        # V85.44 REV6 — idempotência para sincronização offline da Atividade Bobinas Web.
+        bobbin_cols={c['name'] for c in inspect(db.engine).get_columns('atm_bobbin_readings')}
+        if 'client_event_id' not in bobbin_cols:
+            with db.engine.begin() as conn: conn.execute(text('ALTER TABLE atm_bobbin_readings ADD COLUMN client_event_id VARCHAR(80)'))
+        try:
+            with db.engine.begin() as conn: conn.execute(text('CREATE INDEX IF NOT EXISTS ix_atm_bobbin_readings_client_event_id ON atm_bobbin_readings (client_event_id)'))
+        except Exception:
+            app.logger.exception('V85.44 REV6: não foi possível criar índice client_event_id')
+        if not SchemaMigration.query.filter_by(version='V85.44-REV6-001').first():
+            db.session.add(SchemaMigration(version='V85.44-REV6-001',description='Atividade Bobinas Web: fila offline local, sincronização automática e idempotência por client_event_id'))
+            db.session.commit()
         if not SchemaMigration.query.filter_by(version='V77-001').first():
             db.session.add(SchemaMigration(version='V77-001',description='Atividade Bobinas + Dashboard de Bobinas/Insumos + histórico de leituras, trocas e reservas'))
             db.session.commit()
@@ -22399,6 +22411,12 @@ def v77_bobbins_register():
         if bool(master.get('stock')):return jsonify({'ok':False,'error':'ATM está classificada como estoque na base oficial e não recebe atividade operacional.'}),409
         # Cadastro mestre é soberano; a seleção continua manual e o GPS não bloqueia a localidade.
         company=str(master.get('company') or company).strip();line=str(master.get('line') or line).strip();station=str(master.get('locality') or station).strip()
+    # V85.44 REV6 — reenvios da fila offline Web são idempotentes.
+    client_event_id=(request.form.get('client_event_id') or '').strip()[:80]
+    if client_event_id:
+        existing=AtmBobbinReading.query.filter_by(technician_id=session['user_id'],client_event_id=client_event_id).first()
+        if existing:
+            return jsonify({'ok':True,'id':existing.id,'duplicate':True,'reserve_after':existing.reserve_after,'has_photo':bool(AtmBobbinPhoto.query.filter_by(reading_id=existing.id).first()),'photo_retention_days':_v771_photo_retention_days(),'gps':{'captured':existing.latitude is not None and existing.longitude is not None,'accuracy':existing.gps_accuracy,'distance_m':existing.gps_distance_m}})
     # V85.44 — evidência fotográfica da Atividade Bobinas é opcional.
     photo=request.files.get('photo')
     has_photo=bool(photo and photo.filename)

@@ -1,0 +1,8 @@
+V85.44 REV6
+- Atividade Bobinas Web: salva primeiro em fila local IndexedDB, inclusive sem conexão/GPS.
+- Sincronização automática ao recuperar conexão, ao retornar à página e a cada 30 s enquanto online.
+- Botão "Sincronizar agora" e contador de registros pendentes na própria atividade.
+- Registro local só é removido após confirmação do backend.
+- client_event_id no backend evita duplicidade em reenvios após queda de conexão.
+- Foto continua opcional; quando selecionada, o Blob também permanece na fila local até confirmação.
+- Preserva V85.44 REV5 e demais funcionalidades.
