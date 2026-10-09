@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.44 REV9"
+APP_RELEASE = "V85.45"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -60,11 +60,11 @@ OFFICIAL_PARK = {
 }
 OFFICIAL_PARK_TOTAL = sum(OFFICIAL_PARK.values())  # 3.801
 TECHNICAL_TDI_TOTAL = int(os.getenv("TECHNICAL_TDI_TOTAL", "42"))
-EXPECTED_CACHE_TTL_SECONDS = 600
+EXPECTED_CACHE_TTL_SECONDS = 1800
 _expected_cache = {"at": 0.0, "data": None}
 # V56-D: cache curtíssimo da visão consolidada de localidades para reduzir recomputações concorrentes.
 _LOCATIONS_API_CACHE = {"light": {"at": 0.0, "payload": None}, "observed": {"at": 0.0, "payload": None}}
-_LOCATIONS_API_CACHE_TTL = int(os.getenv("LOCATIONS_API_CACHE_TTL", "900"))
+_LOCATIONS_API_CACHE_TTL = int(os.getenv("LOCATIONS_API_CACHE_TTL", "1800"))
 _LOCATIONS_API_CACHE_LOCK = threading.Lock()
 
 # V82.28 — caches curtos para reduzir CPU/serialização nas rotas mais acessadas.
@@ -72,7 +72,7 @@ _CASH_ATMS_CACHE = {"at": 0.0, "rows": None}
 _CASH_ATMS_CACHE_TTL = int(os.getenv("CASH_ATMS_CACHE_TTL", "900"))
 _CASH_ATMS_CACHE_LOCK = threading.Lock()
 _ATM_MAPPING_API_CACHE = {"at": 0.0, "payload": None}
-_ATM_MAPPING_API_CACHE_TTL = int(os.getenv("ATM_MAPPING_API_CACHE_TTL", "60"))
+_ATM_MAPPING_API_CACHE_TTL = int(os.getenv("ATM_MAPPING_API_CACHE_TTL", "300"))
 _FIN_CASH_PAYLOAD_CACHE = {}
 _FIN_CASH_PAYLOAD_CACHE_TTL = int(os.getenv("FIN_CASH_PAYLOAD_CACHE_TTL", "300"))
 # V85.43 REV1 — caches de leitura para rotas críticas; não alteram regra de negócio.
@@ -15854,8 +15854,27 @@ def _v792_cash_payload(start,end,calc_statuses=None):
         for sysc in [x for x in _sys_by_terminal.get(t,[]) if start<=x["at"].date()<=end]:
             ident=(sysc.get("collection_code") or "",sysc["at"])
             if ident in known_system: continue
-            # Se já há ocorrência R0050 na mesma data/código, não duplica visualmente.
-            if any((z.get("closure_collection_code") or "")==ident[0] and z.get("realized_date")==sysc["at"].date().isoformat() for z in occurrences+extra): continue
+            # V85.45: reconciliação retroativa R0050 x coleta/apuração existente.
+            # O fechamento R0050 é uma evidência do MESMO ciclo quando existe exatamente
+            # uma coleta real/TBForte do ATM na mesma data. Nesse caso enriquece a linha
+            # existente em vez de criar COLETA_EXTRA_R0050. A regra é conservadora:
+            # havendo mais de uma candidata no dia, preserva as linhas para não unir
+            # coletas legítimas distintas. Como é calculada na leitura, corrige também
+            # duplicidades históricas sem excluir registros da base.
+            _sys_day=sysc["at"].date().isoformat()
+            if any((z.get("closure_collection_code") or "")==ident[0] and z.get("realized_date")==_sys_day for z in occurrences+extra):
+                continue
+            _reconcile_candidates=[z for z in occurrences+extra if z.get("event_id") is not None and (z.get("realized_date") or z.get("date"))==_sys_day and (z.get("closure_source") or "")!="R0050"]
+            if len(_reconcile_candidates)==1:
+                _z=_reconcile_candidates[0]
+                _z["closure_source"]="R0050"
+                _z["closure_collection_code"]=sysc.get("collection_code") or ""
+                _z["time"]=sysc["at"].strftime("%H:%M:%S")
+                _z["realized_date"]=_sys_day
+                _z["system_closure"]=True
+                _z["r0050_reconciled"]=True
+                _z["transaction_cycle"]=_fast_system_cycle_summary(t,sysc)
+                continue
             extra_next=next((f for f in future if date.fromisoformat(f["date"])>sysc["at"].date()),None)
             cycle_summary=_fast_system_cycle_summary(t,sysc)
             extra.append({"date":sysc["at"].date().isoformat(),"original_date":sysc["at"].date().isoformat(),
