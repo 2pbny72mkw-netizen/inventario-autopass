@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.45 REV2"
+APP_RELEASE = "V85.45 REV4"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -23728,10 +23728,21 @@ def v82_atm_mapping_list():
     now=time.time(); cached=_ATM_MAPPING_API_CACHE.get('payload')
     if cached is not None and now-float(_ATM_MAPPING_API_CACHE.get('at') or 0) < _ATM_MAPPING_API_CACHE_TTL:
         resp=jsonify(cached); resp.headers['X-Autopass-Cache']='HIT'; return resp
-    maps={x.atm_id:x for x in AtmMapping.query.all()}; users={u.id:u.name for u in User.query.filter(User.id.in_({x.technician_id for x in maps.values()})).all()} if maps else {}; photos={}; photo_items={}
+    maps={x.atm_id:x for x in AtmMapping.query.all()}
+    tech_ids={x.technician_id for x in maps.values() if x.technician_id is not None}
+    users=dict(db.session.query(User.id, User.name).filter(User.id.in_(tech_ids)).all()) if tech_ids else {}
+    photos={}; photo_items={}
     if maps:
-        for ph in AtmMappingPhoto.query.filter(AtmMappingPhoto.mapping_id.in_([x.id for x in maps.values()])).order_by(AtmMappingPhoto.created_at).all():
-            photos[ph.mapping_id]=photos.get(ph.mapping_id,0)+1; photo_items.setdefault(ph.mapping_id,[]).append({'id':ph.id,'name':ph.original_name or 'Evidência','url':f'/api/mapeamento-atm/foto/{ph.id}','created_at':ph.created_at.isoformat()+'Z' if ph.created_at else None})
+        # REV4: fetch photo metadata only, avoiding expensive ORM hydration of binary columns.
+        photo_rows=(db.session.query(AtmMappingPhoto.id, AtmMappingPhoto.mapping_id,
+                    AtmMappingPhoto.original_name, AtmMappingPhoto.created_at)
+                    .filter(AtmMappingPhoto.mapping_id.in_([x.id for x in maps.values()]))
+                    .order_by(AtmMappingPhoto.created_at).all())
+        for ph_id, mapping_id, original_name, created_at in photo_rows:
+            photos[mapping_id]=photos.get(mapping_id,0)+1
+            photo_items.setdefault(mapping_id,[]).append({'id':ph_id,'name':original_name or 'Evidência',
+                'url':f'/api/mapeamento-atm/foto/{ph_id}',
+                'created_at':created_at.isoformat()+'Z' if created_at else None})
     rows=[]
     for a in _v82_cash_atms():
         m=maps.get(a['atm_id']); complete=bool(m and m.has_holes is not None and m.physical_access in ('INTERNO','EXTERNO') and m.rear_safe_door is not None and m.bill_acceptor in ('UBA-PRO','I-VIZION','SPECTRAL') and m.acceptor_fixed is not None and (m.has_holes is False or m.holes_sealed is not None) and photos.get(m.id,0)>0); rows.append({**a,'status':((m.status if m and m.status in ('PENDENTE','EM_ANDAMENTO','CONCLUIDO') else ('CONCLUIDO' if complete else 'PENDENTE')) if m else 'PENDENTE'),'mapping_id':m.id if m else None,'has_holes':m.has_holes if m else None,'holes_sealed':m.holes_sealed if m else None,'physical_access':m.physical_access if m else None,'rear_safe_door':m.rear_safe_door if m else None,'bill_acceptor':m.bill_acceptor if m else None,'acceptor_fixed':m.acceptor_fixed if m else None,'acceptor_welded':m.acceptor_welded if m else None,'notes':m.notes if m else '','technician':users.get(m.technician_id,'') if m else '','updated_at':m.updated_at.isoformat()+'Z' if m else None,'photos':photos.get(m.id,0) if m else 0,'photo_items':photo_items.get(m.id,[]) if m else []})
