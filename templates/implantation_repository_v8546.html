@@ -1,0 +1,24 @@
+{% extends "base.html" %}{% block content %}
+<h1>Repositório Técnico — Implantação</h1><p>Pastas, projetos, esquemas elétricos, versões e formulários para técnicos em campo.</p>
+<div id="repoMessage" role="status"></div>
+<div style="display:flex;gap:8px;flex-wrap:wrap;margin:16px 0"><button id="backFolder">← Voltar</button><strong id="path">Raiz</strong><input id="searchRepo" placeholder="Pesquisar pastas e arquivos"></div>
+<div id="actions" hidden style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px"><button id="newFolder">+ Pasta</button><button id="newProject">+ Produto / Projeto</button><label>Enviar arquivo <input type="file" id="uploadRepo"></label></div>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:16px"><section style="border:1px solid #cbd5e1;border-radius:10px;padding:15px"><h2>Pastas</h2><div id="folders"></div></section><section style="border:1px solid #cbd5e1;border-radius:10px;padding:15px"><h2>Arquivos e versões</h2><div id="files"></div></section></div>
+{% endblock %}{% block scripts %}<script>
+(()=>{'use strict';let data={folders:[],files:[]},current=null;
+const $=id=>document.getElementById(id),message=s=>$('repoMessage').textContent=s;
+const body=x=>({headers:{'Content-Type':'application/json'},body:JSON.stringify(x)});
+async function api(url,options={}){const r=await fetch(url,{credentials:'same-origin',cache:'no-store',...options}),d=await r.json();if(!r.ok||!d.ok)throw Error(d.error||'Erro');return d}
+function button(label,fn){const b=document.createElement('button');b.type='button';b.textContent=label;b.onclick=fn;return b}
+function row(){const e=document.createElement('div');e.style='display:flex;gap:8px;align-items:center;flex-wrap:wrap;border-bottom:1px solid #ddd;padding:10px 0';return e}
+function render(){let f=data.folders.find(x=>x.id===current),parts=[],seen=new Set();while(f&&!seen.has(f.id)){seen.add(f.id);parts.unshift(f.name);f=data.folders.find(x=>x.id===f.parent_id)}$('path').textContent=parts.join(' / ')||'Raiz';$('actions').hidden=!data.can_manage;
+const term=$('searchRepo').value.trim().toLowerCase();$('folders').replaceChildren();$('files').replaceChildren();
+for(const x of data.folders.filter(x=>term?x.name.toLowerCase().includes(term):x.parent_id===current)){const r=row();r.append(button('📁 '+x.name,()=>{current=x.id;$('searchRepo').value='';render()}));if(data.can_manage)r.append(button('Editar',async()=>{const name=prompt('Novo nome',x.name);if(!name)return;try{await api('/api/implantacao/repositorio/pastas/'+x.id,{method:'PATCH',...body({name})});await load()}catch(e){message(e.message)}}));if(data.can_delete)r.append(button('Excluir',async()=>{if(!confirm('Excluir pasta e subpastas?'))return;try{await api('/api/implantacao/repositorio/pastas/'+x.id,{method:'DELETE'});await load()}catch(e){message(e.message)}}));$('folders').append(r)}
+for(const x of data.files.filter(x=>term?x.name.toLowerCase().includes(term):x.folder_id===current)){const r=row(),a=document.createElement('a');a.textContent='📄 '+x.name+' (v'+x.version+')';a.href='/api/implantacao/repositorio/arquivos/'+x.id+'/download';r.append(a);if(data.can_delete)r.append(button('Excluir',async()=>{if(!confirm('Excluir esta versão?'))return;try{await api('/api/implantacao/repositorio/arquivos/'+x.id,{method:'DELETE'});await load()}catch(e){message(e.message)}}));$('files').append(r)}
+}
+async function load(){try{data=await api('/api/implantacao/repositorio');if(current!==null&&!data.folders.some(x=>x.id===current))current=null;render()}catch(e){message(e.message)}}
+$('backFolder').onclick=()=>{current=data.folders.find(x=>x.id===current)?.parent_id??null;$('searchRepo').value='';render()};$('searchRepo').oninput=render;
+$('newFolder').onclick=async()=>{const name=prompt('Nome da pasta');if(!name)return;try{await api('/api/implantacao/repositorio/pastas',{method:'POST',...body({name,parent_id:current})});await load()}catch(e){message(e.message)}};
+$('newProject').onclick=async()=>{const name=prompt('Nome do produto/projeto');if(!name)return;try{await api('/api/implantacao/repositorio/projetos',{method:'POST',...body({name})});await load()}catch(e){message(e.message)}};
+$('uploadRepo').onchange=async e=>{const file=e.target.files[0];if(!file)return;if(current===null){message('Abra uma pasta para enviar arquivos.');e.target.value='';return}const form=new FormData();form.append('folder_id',current);form.append('file',file);try{await api('/api/implantacao/repositorio/arquivos',{method:'POST',body:form});message('Arquivo enviado.');await load()}catch(err){message(err.message)}e.target.value=''};load();})();
+</script>{% endblock %}
