@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.45"
+APP_RELEASE = "V85.45 REV1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -240,6 +240,9 @@ def _perf_sql_after(conn, cursor, statement, parameters, context, executemany):
         if started is not None and has_request_context():
             g._perf_sql_ms=float(getattr(g,"_perf_sql_ms",0) or 0)+(time.perf_counter()-started)*1000.0
             g._perf_query_count=int(getattr(g,"_perf_query_count",0) or 0)+1
+            sql_elapsed=(time.perf_counter()-started)*1000.0
+            if sql_elapsed > float(getattr(g,"_perf_sql_max_ms",0) or 0):
+                g._perf_sql_max_ms=sql_elapsed
     except Exception:
         pass
 
@@ -257,6 +260,8 @@ def _v56b_perf_start():
     g._perf_sql_ms = 0.0
     g._perf_query_count = 0
     g._perf_request_id = str(uuid.uuid4())
+    g._perf_sql_max_ms = 0.0
+    g._perf_sql_max_statement = None
 
 @app.after_request
 def _v56b_perf_finish(response):
@@ -267,6 +272,16 @@ def _v56b_perf_finish(response):
         started=getattr(g,"_perf_started",None)
         if started is not None and 'PerformanceMetric' in globals():
             ms=(time.perf_counter()-started)*1000.0
+            # REV1: separar tempo total, tempo SQL e custo residual de aplicação.
+            # Sem armazenar parâmetros SQL, corpos ou dados de usuários.
+            sql_ms=float(getattr(g,"_perf_sql_ms",0) or 0)
+            app_ms=max(0.0, ms-sql_ms)
+            if ms >= 1000 and path.startswith(("/api/mapeamento-atm", "/api/locations", "/api/bobinas/registro")):
+                app.logger.warning("PERF_REV1 route=%s request_id=%s total_ms=%.1f sql_ms=%.1f app_ms=%.1f queries=%d max_sql_ms=%.1f response_bytes=%d",
+                    request.url_rule.rule if request.url_rule else path, getattr(g,"_perf_request_id",""),
+                    ms, sql_ms, app_ms, int(getattr(g,"_perf_query_count",0) or 0),
+                    float(getattr(g,"_perf_sql_max_ms",0) or 0),
+                    int(response.calculate_content_length() or 0) if not response.direct_passthrough else 0)
             # V85.30 — janela de diagnóstico: 100% das requisições funcionais são medidas.
             # Retenção curta evita que a própria telemetria cresça indefinidamente.
             response_bytes=int(response.calculate_content_length() or 0) if not response.direct_passthrough else 0
@@ -286,7 +301,8 @@ def _v56b_perf_finish(response):
     # V63: Server-Timing para diagnóstico e gzip apenas em JSON grande.
     try:
         total_ms=(time.perf_counter()-getattr(g,"_perf_started",time.perf_counter()))*1000.0
-        response.headers["Server-Timing"] = f"app;dur={total_ms:.1f}, sql;dur={float(getattr(g,'_perf_sql_ms',0) or 0):.1f}"
+        sql_ms=float(getattr(g,"_perf_sql_ms",0) or 0)
+        response.headers["Server-Timing"] = f"total;dur={total_ms:.1f}, sql;dur={sql_ms:.1f}, app;dur={max(0.0,total_ms-sql_ms):.1f}"
         response.headers["X-Autopass-Release"] = APP_RELEASE
         ae=(request.headers.get("Accept-Encoding") or "").lower(); ct=(response.headers.get("Content-Type") or "").lower()
         if "gzip" in ae and response.status_code==200 and not response.direct_passthrough and ("application/json" in ct or "text/json" in ct):
