@@ -17150,10 +17150,13 @@ def financial_cash_v802_cycle_detail(event_id):
         return jsonify({"ok":False,"error":"Sem permissão."}),403
     b=db.session.get(FinancialCashCollection,event_id)
     if not b or bool(getattr(b,"soft_deleted",False)): return jsonify({"ok":False,"error":"Coleta não encontrada."}),404
-    if not _v805_is_valid_closure(b): return jsonify({"ok":False,"error":"Este registro não é um fechamento válido e não delimita ciclo transacional."}),400
-    final_info=_v806_closure_info(b)
-    a,initial_info=_v806_prev_closure_info(b)
     reconciled_at=(request.args.get("reconciled_final_at") or "").strip()
+    # A reconciled TB Forte row may be informative rather than a valid manual
+    # closure. Its verified R0050 boundary, not the manual event, defines cycle.
+    if not reconciled_at and not _v805_is_valid_closure(b):
+        return jsonify({"ok":False,"error":"Este registro não é um fechamento válido e não delimita ciclo transacional."}),400
+    final_info=_v806_closure_info(b) if _v805_is_valid_closure(b) else None
+    a,initial_info=_v806_prev_closure_info(b) if _v805_is_valid_closure(b) else (None,None)
     if reconciled_at:
         try:
             requested_at=datetime.fromisoformat(reconciled_at)
@@ -17165,10 +17168,17 @@ def financial_cash_v802_cycle_detail(event_id):
         if not matching or b.collection_date!=requested_at.date():
             return jsonify({"ok":False,"error":"Fechamento R0050 não corresponde à coleta."}),404
         final_info={"at":requested_at,"source":"R0050","collection_code":matching.get("collection_code") or "","diff_minutes":round((requested_at-b.end_at).total_seconds()/60,1)}
-        # The previous valid closure must precede the reconciled R0050 boundary.
+        # Resolve preceding boundary from authoritative R0050 closures, even
+        # when the reconciled TB Forte event is not itself a valid closure.
+        previous_system=_v808_system_closures(b.terminal,end_date=requested_at.date())
+        previous_system=[x for x in previous_system if x["at"]<requested_at]
+        if previous_system:
+            prev=max(previous_system,key=lambda x:x["at"])
+            initial_info={"at":prev["at"],"source":"R0050","collection_code":prev.get("collection_code") or ""}
+            a=None
         if not initial_info or initial_info["at"]>=requested_at:
             return jsonify({"ok":False,"error":"Fechamento anterior não encontrado."}),400
-    if not a or not initial_info or not final_info: return jsonify({"ok":False,"error":"Não existe fechamento válido anterior para formar o ciclo."}),400
+    if not initial_info or not final_info: return jsonify({"ok":False,"error":"Não existe fechamento válido anterior para formar o ciclo."}),400
     q_all=FinancialATMTransaction.query.filter(FinancialATMTransaction.terminal==b.terminal,FinancialATMTransaction.transaction_at>initial_info["at"],FinancialATMTransaction.transaction_at<=final_info["at"])
     calc_statuses=_v804_tx_statuses(request.args.get("calc_statuses") if "calc_statuses" in request.args else None)
     txs=q_all.order_by(FinancialATMTransaction.transaction_at).all()
@@ -17203,7 +17213,7 @@ def financial_cash_v802_cycle_detail(event_id):
     # V80 REV4: o modal herda os status selecionados no Monitoramento principal.
     available_statuses=sorted({(x.status or "—").strip().upper() or "—" for x in txs})
     default_calc_statuses=[x for x in calc_statuses if x in available_statuses]
-    return jsonify({"ok":True,"available_statuses":available_statuses,"default_calc_statuses":default_calc_statuses,"terminal":b.terminal,"initial":{"id":a.id,"at":initial_info["at"].isoformat(),"label":initial_info["at"].strftime("%d/%m/%Y %H:%M"),"source":initial_info["source"],"collection_code":initial_info.get("collection_code") or ""},"final":{"id":b.id,"at":final_info["at"].isoformat(),"label":final_info["at"].strftime("%d/%m/%Y %H:%M"),"source":final_info["source"],"collection_code":final_info.get("collection_code") or "","manual_at":b.end_at.isoformat(),"manual_label":b.end_at.strftime("%d/%m/%Y %H:%M"),"diff_minutes":final_info.get("diff_minutes",0)},"transaction_count":len(valid_txs),"all_transaction_count":len(txs),"transaction_sum":tx_sum,"declared_amount":declared,"processed_amount":processed,"difference_tx_declared":None if declared is None else round(tx_sum-declared,2),"difference_declared_processed":None if declared is None or processed is None else round(processed-declared,2),"difference_tx_processed":None if processed is None else round(tx_sum-processed,2),"denominations":denoms,"all_denominations":all_denoms,"note_count":note_qty,"note_amount":note_amount,"status_breakdown":[{"status":st or "—","count":int(n),"amount":round(float(v or 0),2)} for st,n,v in status_rows],"products":[{**z,"amount":round(z["amount"],2)} for z in sorted(products.values(),key=lambda z:z["amount"],reverse=True)],"transactions":details,"transactions_truncated":len(txs)>2000,"insights":[x.replace(",","X").replace(".",",").replace("X",".") for x in insight],"rule":"Ciclo: transação > fechamento anterior e <= fechamento atual. Quando Data Coleta do R0050 está disponível ela prevalece; o horário manual é apenas fallback. Registros informativos, desconsiderados ou excluídos não cortam a janela."})
+    return jsonify({"ok":True,"available_statuses":available_statuses,"default_calc_statuses":default_calc_statuses,"terminal":b.terminal,"initial":{"id":a.id if a else None,"at":initial_info["at"].isoformat(),"label":initial_info["at"].strftime("%d/%m/%Y %H:%M"),"source":initial_info["source"],"collection_code":initial_info.get("collection_code") or ""},"final":{"id":b.id,"at":final_info["at"].isoformat(),"label":final_info["at"].strftime("%d/%m/%Y %H:%M"),"source":final_info["source"],"collection_code":final_info.get("collection_code") or "","manual_at":b.end_at.isoformat(),"manual_label":b.end_at.strftime("%d/%m/%Y %H:%M"),"diff_minutes":final_info.get("diff_minutes",0)},"transaction_count":len(valid_txs),"all_transaction_count":len(txs),"transaction_sum":tx_sum,"declared_amount":declared,"processed_amount":processed,"difference_tx_declared":None if declared is None else round(tx_sum-declared,2),"difference_declared_processed":None if declared is None or processed is None else round(processed-declared,2),"difference_tx_processed":None if processed is None else round(tx_sum-processed,2),"denominations":denoms,"all_denominations":all_denoms,"note_count":note_qty,"note_amount":note_amount,"status_breakdown":[{"status":st or "—","count":int(n),"amount":round(float(v or 0),2)} for st,n,v in status_rows],"products":[{**z,"amount":round(z["amount"],2)} for z in sorted(products.values(),key=lambda z:z["amount"],reverse=True)],"transactions":details,"transactions_truncated":len(txs)>2000,"insights":[x.replace(",","X").replace(".",",").replace("X",".") for x in insight],"rule":"Ciclo: transação > fechamento anterior e <= fechamento atual. Quando Data Coleta do R0050 está disponível ela prevalece; o horário manual é apenas fallback. Registros informativos, desconsiderados ou excluídos não cortam a janela."})
 
 @app.get("/api/financeiro/apuracao/calcular")
 @login_required
