@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.45 REV5"
+APP_RELEASE = "V85.46"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -1429,6 +1429,29 @@ class OperationalAction(db.Model):
     updated_at = db.Column(db.DateTime)
 
 
+# V85.46 — repositório técnico de implantação, histórico e exclusão lógica.
+class ImplantationRepoFolder(db.Model):
+    __tablename__='implantation_repo_folders'
+    id=db.Column(db.Integer,primary_key=True)
+    parent_id=db.Column(db.Integer,db.ForeignKey('implantation_repo_folders.id'),index=True)
+    name=db.Column(db.String(180),nullable=False)
+    deleted_at=db.Column(db.DateTime)
+    created_by=db.Column(db.Integer)
+    created_at=db.Column(db.DateTime,default=datetime.utcnow,nullable=False)
+
+class ImplantationRepoFile(db.Model):
+    __tablename__='implantation_repo_files'
+    id=db.Column(db.Integer,primary_key=True)
+    folder_id=db.Column(db.Integer,db.ForeignKey('implantation_repo_folders.id'),nullable=False,index=True)
+    name=db.Column(db.String(220),nullable=False)
+    version=db.Column(db.Integer,default=1,nullable=False)
+    storage_key=db.Column(db.String(100),nullable=False,unique=True)
+    content_type=db.Column(db.String(120))
+    size=db.Column(db.Integer)
+    created_by=db.Column(db.Integer)
+    created_at=db.Column(db.DateTime,default=datetime.utcnow,nullable=False)
+    deleted_at=db.Column(db.DateTime)
+
 class AuditEvent(db.Model):
     __tablename__ = "audit_events"
     id = db.Column(db.Integer, primary_key=True)
@@ -2322,7 +2345,7 @@ ACCESS_GROUPS = {
         "field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.firmware_pos_cptm","field.bobbins","field.bobbins_dashboard","field.stock_manage","field.atm_mapping","field.atm_mapping_manage"
     )),
     "implantation": ("Implantação de Hardware", (
-        "implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage","implantation.qr.view","implantation.qr.manage"
+        "implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage","implantation.qr.view","implantation.qr.manage","implantation.repository.view","implantation.repository.manage","implantation.repository.delete"
     )),
     "teams": ("RH / Equipes", (
         "teams.map","teams.today","teams.schedule","teams.manage","teams.export","teams.apt"
@@ -2354,7 +2377,7 @@ ACCESS_ALL = set(ACCESS_MODULES) | set(ACCESS_SUBMODULES)
 ACCESS_LABELS = {
  "dashboard.general":"Dashboard Geral",
  "field.dashboard":"Dashboard Field","field.inventory":"Inventário / Lançamento","field.calls":"Chamados","field.preventive":"Solicitação Preventiva ATM","field.equipment":"Equipamentos","field.evidence":"Evidências","field.panorama":"Visão Panorâmica","field.chip_recarga":"Troca de Chips – Recarga","field.firmware_pos_cptm":"Atualização de Firmware POS – CPTM","field.bobbins":"Atividade Bobinas","field.bobbins_dashboard":"Visualizar Dashboard Bobinas","field.stock_manage":"Alterar estoque consolidado / armários / bobinas","field.atm_mapping":"Mapeamento ATM","field.atm_mapping_manage":"Gerenciar Mapeamento ATM",
- "implantation.dashboard":"Dashboard Implantação","implantation.visits":"Visita a Campo / Relatório de Visita","implantation.reports":"Relatórios / Visitas recentes","implantation.emv":"Troca de Chips EMV – Trilhos","implantation.garage":"Troca de Chips Garagem","implantation.qr.view":"Gerador de QR – Trilhos","implantation.qr.manage":"Editar configurações de QR – Trilhos",
+ "implantation.dashboard":"Dashboard Implantação","implantation.visits":"Visita a Campo / Relatório de Visita","implantation.reports":"Relatórios / Visitas recentes","implantation.emv":"Troca de Chips EMV – Trilhos","implantation.garage":"Troca de Chips Garagem","implantation.qr.view":"Gerador de QR – Trilhos","implantation.qr.manage":"Editar configurações de QR – Trilhos","implantation.repository.view":"Consultar repositório técnico","implantation.repository.manage":"Gerenciar pastas e arquivos técnicos","implantation.repository.delete":"Excluir pastas e arquivos técnicos",
  "teams.map":"Mapa operacional","teams.today":"Operação de Hoje","teams.schedule":"Escala por dias","teams.manage":"Gestão de equipes / escala","teams.export":"Exportar dados","teams.apt":"APT / Validades",
  "users.view":"Visualizar usuários","users.config.view":"Visualizar configurações de usuários","users.config.manage":"Gerenciar configurações de usuários","users.create":"Criar usuário","users.edit":"Editar usuário","users.activate":"Ativar / Desativar","users.delete":"Excluir / Arquivar","users.password":"Redefinir senha","users.export":"Exportar Excel","users.import":"Importar Excel de configurações","users.roles.manage":"Atribuir perfis administrativos / sensíveis","users.scope.all":"Administrar usuários de todas as empresas",
  "finance.dashboard":"Dashboard Financeira","finance.support":"Suporte a Campo","finance.collection":"Coleta de Valores","finance.monitoring":"Monitoramento de Coletas","finance.apuracao":"Apuração de Numerário","finance.assistance":"Assistência Técnica","finance.implantation":"Implantação de Hardware","finance.entries":"Lançamentos","finance.suppliers":"Empresas / Fornecedores","finance.import":"Importar planilha","finance.edit":"Editar lançamentos","finance.delete":"Excluir lançamentos","finance.petty_cash.view":"Visualizar Caixinha","finance.petty_cash.manage":"Gerenciar Caixinha / despesas","finance.petty_cash.approve1":"Aprovar Caixinha - nível 1","finance.petty_cash.approve2":"Aprovar Caixinha - nível 2",
@@ -24878,3 +24901,152 @@ def bobinas_v8539_visao():
         app.logger.exception("V85.40 REV2 bobinas visao")
         return jsonify({"ok":False,"release":"V85.40 REV2","error":str(exc)}),500
 # === /V85.39 REV2 ===
+
+
+# V85.46 — Repositório Técnico / Implantação de Hardware.
+from uuid import uuid4 as _repo_uuid4
+from werkzeug.utils import secure_filename as _repo_secure_filename
+
+def _repo_authorized(permission='implantation.repository.view'):
+    return bool(session.get('user_id') and _has_access(permission))
+
+def _repo_folder(folder_id):
+    f=db.session.get(ImplantationRepoFolder,folder_id) if folder_id else None
+    if not f or f.deleted_at: return None
+    # Reject descendants of deleted parents.
+    seen=set()
+    while f.parent_id:
+        if f.parent_id in seen: return None
+        seen.add(f.parent_id)
+        f=db.session.get(ImplantationRepoFolder,f.parent_id)
+        if not f or f.deleted_at:return None
+    return db.session.get(ImplantationRepoFolder,folder_id)
+
+def _repo_audit(action,entity,id,detail=''):
+    db.session.add(AuditEvent(user_id=session.get('user_id'),event_type=action,entity_type=entity,entity_id=str(id),detail=str(detail)[:2000]))
+
+def _repo_json_folder(f):
+    return {'id':f.id,'parent_id':f.parent_id,'name':f.name,'created_at':f.created_at.isoformat() if f.created_at else None}
+
+def _repo_json_file(f):
+    return {'id':f.id,'folder_id':f.folder_id,'name':f.name,'version':f.version,'size':f.size,'created_at':f.created_at.isoformat() if f.created_at else None}
+
+@app.get('/implantacao-hardware/repositorio')
+@login_required
+def implantation_repo_page():
+    if not _repo_authorized(): abort(403)
+    return render_template('implantation_repository_v8546.html',app_release=APP_RELEASE)
+
+@app.get('/api/implantacao/repositorio')
+@login_required
+def implantation_repo_list():
+    if not _repo_authorized(): return jsonify(ok=False,error='Sem permissão'),403
+    folders=ImplantationRepoFolder.query.filter_by(deleted_at=None).order_by(ImplantationRepoFolder.name).all()
+    files=ImplantationRepoFile.query.filter_by(deleted_at=None).order_by(ImplantationRepoFile.name,ImplantationRepoFile.version.desc()).all()
+    active={f.id for f in folders}
+    return jsonify(ok=True,folders=[_repo_json_folder(f) for f in folders if f.parent_id is None or f.parent_id in active],files=[_repo_json_file(f) for f in files if f.folder_id in active],can_manage=_repo_authorized('implantation.repository.manage'),can_delete=_repo_authorized('implantation.repository.delete'))
+
+@app.post('/api/implantacao/repositorio/pastas')
+@login_required
+def implantation_repo_create_folder():
+    if not _repo_authorized('implantation.repository.manage'):return jsonify(ok=False,error='Sem permissão'),403
+    data=request.get_json(silent=True) or {}
+    name=str(data.get('name') or '').strip(); parent_id=data.get('parent_id')
+    if not name or len(name)>180:return jsonify(ok=False,error='Nome inválido'),400
+    try: parent_id=int(parent_id) if parent_id is not None else None
+    except (ValueError,TypeError):return jsonify(ok=False,error='Pasta inválida'),400
+    if parent_id and not _repo_folder(parent_id):return jsonify(ok=False,error='Pasta não encontrada'),404
+    exists=ImplantationRepoFolder.query.filter_by(parent_id=parent_id,name=name,deleted_at=None).first()
+    if exists:return jsonify(ok=False,error='Pasta já existe'),409
+    f=ImplantationRepoFolder(parent_id=parent_id,name=name,created_by=session.get('user_id'))
+    db.session.add(f);db.session.flush();_repo_audit('REPO_FOLDER_CREATE','implantation_repo_folder',f.id,name);db.session.commit()
+    return jsonify(ok=True,folder=_repo_json_folder(f))
+
+@app.post('/api/implantacao/repositorio/projetos')
+@login_required
+def implantation_repo_create_project():
+    if not _repo_authorized('implantation.repository.manage'):return jsonify(ok=False,error='Sem permissão'),403
+    name=str((request.get_json(silent=True) or {}).get('name') or '').strip()
+    if not name or len(name)>120:return jsonify(ok=False,error='Produto inválido'),400
+    products=ImplantationRepoFolder.query.filter_by(parent_id=None,name='Produtos',deleted_at=None).first()
+    if not products:
+        products=ImplantationRepoFolder(name='Produtos',created_by=session.get('user_id'));db.session.add(products);db.session.flush()
+    existing=ImplantationRepoFolder.query.filter_by(parent_id=products.id,name=name,deleted_at=None).first()
+    if existing:return jsonify(ok=False,error='Projeto já existe',id=existing.id),409
+    project=ImplantationRepoFolder(parent_id=products.id,name=name,created_by=session.get('user_id'))
+    db.session.add(project);db.session.flush()
+    top=ImplantationRepoFolder(parent_id=project.id,name='TOP',created_by=session.get('user_id'))
+    db.session.add(top);db.session.flush()
+    for label in ('Esquema elétrico','Versões'):
+        db.session.add(ImplantationRepoFolder(parent_id=top.id,name=label,created_by=session.get('user_id')))
+    _repo_audit('REPO_PROJECT_CREATE','implantation_repo_folder',project.id,name);db.session.commit()
+    return jsonify(ok=True,id=project.id)
+
+@app.patch('/api/implantacao/repositorio/pastas/<int:folder_id>')
+@login_required
+def implantation_repo_rename_folder(folder_id):
+    if not _repo_authorized('implantation.repository.manage'):return jsonify(ok=False,error='Sem permissão'),403
+    f=_repo_folder(folder_id)
+    if not f:return jsonify(ok=False,error='Pasta não encontrada'),404
+    name=str((request.get_json(silent=True) or {}).get('name') or '').strip()
+    if not name or len(name)>180:return jsonify(ok=False,error='Nome inválido'),400
+    if ImplantationRepoFolder.query.filter_by(parent_id=f.parent_id,name=name,deleted_at=None).filter(ImplantationRepoFolder.id!=f.id).first():return jsonify(ok=False,error='Nome duplicado'),409
+    old=f.name;f.name=name;_repo_audit('REPO_FOLDER_RENAME','implantation_repo_folder',f.id,f'{old} -> {name}');db.session.commit();return jsonify(ok=True)
+
+@app.delete('/api/implantacao/repositorio/pastas/<int:folder_id>')
+@login_required
+def implantation_repo_delete_folder(folder_id):
+    if not _repo_authorized('implantation.repository.delete'):return jsonify(ok=False,error='Sem permissão'),403
+    f=_repo_folder(folder_id)
+    if not f:return jsonify(ok=False,error='Pasta não encontrada'),404
+    # Soft-delete all descendants and file versions, without touching physical blobs.
+    all_f=ImplantationRepoFolder.query.filter_by(deleted_at=None).all(); ids={folder_id}
+    changed=True
+    while changed:
+        before=len(ids);ids.update(x.id for x in all_f if x.parent_id in ids);changed=len(ids)>before
+    now=datetime.utcnow()
+    for x in all_f:
+        if x.id in ids:x.deleted_at=now
+    ImplantationRepoFile.query.filter(ImplantationRepoFile.folder_id.in_(ids),ImplantationRepoFile.deleted_at.is_(None)).update({'deleted_at':now},synchronize_session=False)
+    _repo_audit('REPO_FOLDER_DELETE','implantation_repo_folder',folder_id,f'{len(ids)} pastas');db.session.commit();return jsonify(ok=True)
+
+@app.post('/api/implantacao/repositorio/arquivos')
+@login_required
+def implantation_repo_upload():
+    if not _repo_authorized('implantation.repository.manage'):return jsonify(ok=False,error='Sem permissão'),403
+    try: folder_id=int(request.form.get('folder_id') or 0)
+    except ValueError:return jsonify(ok=False,error='Pasta inválida'),400
+    if not _repo_folder(folder_id):return jsonify(ok=False,error='Pasta não encontrada'),404
+    upload=request.files.get('file')
+    if not upload or not upload.filename:return jsonify(ok=False,error='Arquivo obrigatório'),400
+    name=_repo_secure_filename(upload.filename)
+    if not name or len(name)>220:return jsonify(ok=False,error='Nome de arquivo inválido'),400
+    allowed={'pdf','png','jpg','jpeg','webp','xlsx','xls','docx','doc','txt','csv','pptx','zip'}
+    if '.' not in name or name.rsplit('.',1)[1].lower() not in allowed:return jsonify(ok=False,error='Formato não permitido'),400
+    upload.stream.seek(0,2);size=upload.stream.tell();upload.stream.seek(0)
+    if size>25*1024*1024:return jsonify(ok=False,error='Limite de 25 MB'),413
+    last=ImplantationRepoFile.query.filter_by(folder_id=folder_id,name=name,deleted_at=None).order_by(ImplantationRepoFile.version.desc()).first()
+    version=(last.version+1) if last else 1
+    key='repo_'+_repo_uuid4().hex+'_'+name
+    upload.save(str(UPLOAD_DIR/key))
+    f=ImplantationRepoFile(folder_id=folder_id,name=name,version=version,storage_key=key,content_type=upload.mimetype,size=size,created_by=session.get('user_id'))
+    db.session.add(f);db.session.flush();_repo_audit('REPO_FILE_UPLOAD','implantation_repo_file',f.id,f'{name} v{version}');db.session.commit()
+    return jsonify(ok=True,file=_repo_json_file(f))
+
+@app.get('/api/implantacao/repositorio/arquivos/<int:file_id>/download')
+@login_required
+def implantation_repo_download(file_id):
+    if not _repo_authorized():abort(403)
+    f=db.session.get(ImplantationRepoFile,file_id)
+    if not f or f.deleted_at or not _repo_folder(f.folder_id):abort(404)
+    response=send_from_directory(UPLOAD_DIR,f.storage_key,as_attachment=True,download_name=f.name,mimetype='application/octet-stream')
+    response.headers['Cache-Control']='private, no-store'
+    return response
+
+@app.delete('/api/implantacao/repositorio/arquivos/<int:file_id>')
+@login_required
+def implantation_repo_delete_file(file_id):
+    if not _repo_authorized('implantation.repository.delete'):return jsonify(ok=False,error='Sem permissão'),403
+    f=db.session.get(ImplantationRepoFile,file_id)
+    if not f or f.deleted_at or not _repo_folder(f.folder_id):return jsonify(ok=False,error='Arquivo não encontrado'),404
+    f.deleted_at=datetime.utcnow();_repo_audit('REPO_FILE_DELETE','implantation_repo_file',f.id,f.name);db.session.commit();return jsonify(ok=True)
