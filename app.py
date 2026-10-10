@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.45 REV1"
+APP_RELEASE = "V85.45 REV2"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -15890,6 +15890,13 @@ def _v792_cash_payload(start,end,calc_statuses=None):
                 _z["system_closure"]=True
                 _z["r0050_reconciled"]=True
                 _z["transaction_cycle"]=_fast_system_cycle_summary(t,sysc)
+                _cy=_z["transaction_cycle"]
+                if _cy and _cy.get("available"):
+                    _total=float(_cy["transaction_sum"])
+                    _dec=_z.get("declared_amount")
+                    _ap=_z.get("processed_amount")
+                    _cy["difference_tx_declared"]=None if _dec is None else round(_total-float(_dec),2)
+                    _cy["difference_tx_processed"]=None if _ap is None else round(_total-float(_ap),2)
                 continue
             extra_next=next((f for f in future if date.fromisoformat(f["date"])>sysc["at"].date()),None)
             cycle_summary=_fast_system_cycle_summary(t,sysc)
@@ -17146,6 +17153,21 @@ def financial_cash_v802_cycle_detail(event_id):
     if not _v805_is_valid_closure(b): return jsonify({"ok":False,"error":"Este registro não é um fechamento válido e não delimita ciclo transacional."}),400
     final_info=_v806_closure_info(b)
     a,initial_info=_v806_prev_closure_info(b)
+    reconciled_at=(request.args.get("reconciled_final_at") or "").strip()
+    if reconciled_at:
+        try:
+            requested_at=datetime.fromisoformat(reconciled_at)
+        except ValueError:
+            return jsonify({"ok":False,"error":"Data de fechamento inválida."}),400
+        # Only accept an R0050 closure whose timestamp belongs to this ATM/date.
+        system_rows=_v809_prefetch_cycle_data([b.terminal],requested_at.date(),requested_at.date(),["A","V"])["closures_by_terminal"].get(b.terminal,[])
+        matching=next((x for x in system_rows if x["at"]==requested_at),None)
+        if not matching or b.collection_date!=requested_at.date():
+            return jsonify({"ok":False,"error":"Fechamento R0050 não corresponde à coleta."}),404
+        final_info={"at":requested_at,"source":"R0050","collection_code":matching.get("collection_code") or "","diff_minutes":round((requested_at-b.end_at).total_seconds()/60,1)}
+        # The previous valid closure must precede the reconciled R0050 boundary.
+        if not initial_info or initial_info["at"]>=requested_at:
+            return jsonify({"ok":False,"error":"Fechamento anterior não encontrado."}),400
     if not a or not initial_info or not final_info: return jsonify({"ok":False,"error":"Não existe fechamento válido anterior para formar o ciclo."}),400
     q_all=FinancialATMTransaction.query.filter(FinancialATMTransaction.terminal==b.terminal,FinancialATMTransaction.transaction_at>initial_info["at"],FinancialATMTransaction.transaction_at<=final_info["at"])
     calc_statuses=_v804_tx_statuses(request.args.get("calc_statuses") if "calc_statuses" in request.args else None)
