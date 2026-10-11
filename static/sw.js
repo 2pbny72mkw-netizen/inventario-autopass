@@ -2,8 +2,8 @@
 // Toda navegação GET autenticada visitada com sucesso fica disponível como fallback offline.
 // Estáticos usam network-first. POST/PUT/PATCH/DELETE e APIs dinâmicas não são cacheados.
 // A fila offline de Bobinas permanece no IndexedDB da própria tela.
-const STATIC_CACHE='autopass-v85-47-rev3-static';
-const PRIVATE_CACHE='autopass-v85-47-rev3-private';
+const STATIC_CACHE='autopass-v85-47-rev4-static';
+const PRIVATE_CACHE='autopass-v85-47-rev4-private';
 const PRECACHE=['/static/autopass-icon-192.png','/static/autopass-icon-512.png','/static/autopass-logo.png','/offline'];
 const OFFLINE_GET_APIS=['/api/bobinas/options','/api/bobinas/atm-status'];
 self.addEventListener('install',event=>event.waitUntil((async()=>{const c=await caches.open(STATIC_CACHE);await c.addAll(PRECACHE);await self.skipWaiting();})()));
