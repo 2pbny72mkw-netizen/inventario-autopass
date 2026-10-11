@@ -47,7 +47,8 @@
 {% block scripts %}
 <script>
 (()=>{'use strict';
-const $=id=>document.getElementById(id),state={folders:[],files:[],can_manage:false,can_delete:false},selected={kind:'root'},view={folder:null,mode:'grid'};
+const $=id=>document.getElementById(id),state={folders:[],files:[],can_manage:false,can_delete:false},view={folder:null,mode:'grid'};
+let selected={kind:'root'};
 const endpoint='/api/implantacao/repositorio',say=x=>$('driveMessage').textContent=x||'';
 const body=x=>({headers:{'Content-Type':'application/json'},body:JSON.stringify(x)});
 async function api(url,options={}){const r=await fetch(url,{credentials:'same-origin',cache:'no-store',...options}),d=await r.json().catch(()=>({error:'Erro de comunicação'}));if(!r.ok||!d.ok)throw Error(d.error||'Falha na operação');return d}
