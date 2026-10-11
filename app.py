@@ -25091,6 +25091,7 @@ def implantation_repo_move_file(file_id):
     try: destination=int(data.get('folder_id'))
     except (ValueError,TypeError):return jsonify(ok=False,error='Pasta inválida'),400
     if not _repo_folder(destination):return jsonify(ok=False,error='Pasta de destino não encontrada'),404
+    if ImplantationAttendance.query.filter_by(file_id=f.id,status='CONCLUIDA').first() and not _att_access(True):return jsonify(ok=False,error='Permissão para gerenciar listas de presença necessária'),403
     if destination==f.folder_id:return jsonify(ok=True,file=_repo_json_file(f))
     if ImplantationRepoFile.query.filter_by(folder_id=destination,name=f.name,version=f.version,deleted_at=None).first():
         return jsonify(ok=False,error='Arquivo com mesmo nome e versão já existe no destino'),409
@@ -25108,7 +25109,16 @@ def implantation_repo_delete_file(file_id):
     if not _repo_authorized('implantation.repository.delete'):return jsonify(ok=False,error='Sem permissão'),403
     f=db.session.get(ImplantationRepoFile,file_id)
     if not f or f.deleted_at or not _repo_folder(f.folder_id):return jsonify(ok=False,error='Arquivo não encontrado'),404
-    if ImplantationAttendance.query.filter_by(file_id=f.id,status='CONCLUIDA').first():return jsonify(ok=False,error='PDF de lista concluída: exclua a lista pela Lista de Presença Digital para manter a auditoria'),409
+    linked=ImplantationAttendance.query.filter_by(file_id=f.id,status='CONCLUIDA').all()
+    if linked:
+        if not _att_access(True):return jsonify(ok=False,error='Permissão para gerenciar listas de presença necessária'),403
+        data=request.get_json(silent=True) or {}
+        if data.get('confirm_linked_pdf') is not True:
+            return jsonify(ok=False,error='Confirme a retirada do PDF vinculado à lista de presença'),409
+        # Keep signed participant and instructor records, plus the original PDF bytes
+        # for authorized reissue; hide only the file from the Drive.
+        for row in linked:
+            _repo_audit('ATTENDANCE_PDF_REMOVED','implantation_attendance',row.id,'PDF removido da navegação do Drive; registro e assinaturas preservados')
     f.deleted_at=datetime.utcnow();_repo_audit('REPO_FILE_DELETE','implantation_repo_file',f.id,f.name);db.session.commit();return jsonify(ok=True)
 # === V85.47 — Lista de Presença Digital ===
 import base64 as _att_b64
