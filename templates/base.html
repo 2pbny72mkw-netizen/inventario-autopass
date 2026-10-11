@@ -78,6 +78,15 @@ main.wrap{position:relative;z-index:1}
 .activityNav{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin:0 0 12px}.activityNav a,.activityNav button{min-height:38px;padding:8px 13px;border:1px solid #cbd5e1;border-radius:10px;text-decoration:none;font-weight:800;background:#fff;color:#17345d}.activityNav a.active{background:#17345d;color:#fff;border-color:#17345d}.pageHead,.dashHero{padding-top:4px}.pageHead h1,.dashHero h1{margin-bottom:4px}.card,.tableWrap{min-width:0}.tableWrap{max-width:100%;overflow:auto}@media(max-width:700px){.activityNav{justify-content:flex-start}.activityNav a{flex:1 1 auto;text-align:center}.kpis,.v424Kpis{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
 /* V69.3 menu: dropdown sempre acima do conteúdo, sem scroll interno */
 @media(min-width:761px){.topbar{position:relative!important;z-index:50000!important;overflow:visible!important}.topbar .wrap,.topbar .nav,.mainNavV424,.navDrop{overflow:visible!important}.navDropMenu{z-index:50010!important;max-height:none!important;overflow:visible!important;overscroll-behavior:auto!important}.navDropMenu::-webkit-scrollbar{display:none!important}}
+/* REV3: active dropdown is above adjacent menu headings and all page content. */
+@media(min-width:761px){
+  .mainNavV424>.navDrop{position:relative!important;z-index:1!important}
+  .mainNavV424>.navDrop:hover,
+  .mainNavV424>.navDrop:focus-within,
+  .mainNavV424>.navDrop.open{z-index:60020!important}
+  .mainNavV424>.navDrop>.navDropMenu{position:absolute;z-index:60030!important;isolation:isolate}
+  .topbar,.topbar .wrap,.topbar .nav,.mainNavV424{overflow:visible!important}
+}
 </style>
 <main class="wrap">
 {% with msgs=get_flashed_messages(with_categories=true) %}{% for cat,m in msgs %}<div class="alert v73flash {{cat if cat in ['success','error','warning','info'] else ('success' if 'sucesso' in m|lower or 'atualizado' in m|lower or 'salva' in m|lower else 'error')}}">{{m}}</div>{% endfor %}{% endwith %}
@@ -94,7 +103,7 @@ document.getElementById('logoutLink')?.addEventListener('click',()=>{try{navigat
 if('serviceWorker' in navigator && (location.protocol==='https:' || location.hostname==='localhost')){
   window.addEventListener('load',async()=>{
     try{
-      const reg=await navigator.serviceWorker.register('/sw.js?v=v85-46-rev2',{scope:'/',updateViaCache:'none'});
+      const reg=await navigator.serviceWorker.register('/sw.js?v=v85-46-rev3',{scope:'/',updateViaCache:'none'});
       await reg.update();
     }catch(err){console.warn('Falha ao atualizar Service Worker',err);}
   },{once:true});
@@ -171,7 +180,11 @@ for(const old of oldDrops){
   const originalName=norm(old.querySelector(':scope > .navDropBtn')?.textContent);
   const remaining=[...old.querySelectorAll('a')].filter(a=>!used.has(a));
   if(!remaining.length)continue;
-  let dest=newDrops.find(d=>norm(d.querySelector(':scope > .navDropBtn')?.textContent)===originalName);
+  // REV3: resolve original section names to personalized menu column labels.
+  // The legacy template says 'Implantação', while the saved layout says 'Implantação de Hardware'.
+  // Without this alias the new Drive link is appended to an extra dropdown instead of the visible one.
+  const canonical=n=>norm(n).toLocaleLowerCase('pt-BR').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/ de hardware$/,'');
+  let dest=newDrops.find(d=>canonical(d.querySelector(':scope > .navDropBtn')?.textContent)===canonical(originalName));
   if(!dest){
     dest=document.createElement('div');dest.className='navDrop';
     const b=document.createElement('button');b.type='button';b.className='navDropBtn';b.textContent=originalName+' ▾';
