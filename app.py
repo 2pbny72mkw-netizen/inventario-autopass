@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.47"
+APP_RELEASE = "V85.47 REV1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -1470,6 +1470,15 @@ class ImplantationAttendance(db.Model):
     created_by=db.Column(db.Integer,nullable=False)
     created_at=db.Column(db.DateTime,default=datetime.utcnow,nullable=False)
     completed_at=db.Column(db.DateTime)
+
+class ImplantationAttendanceInstructorSign(db.Model):
+    __tablename__='implantation_attendance_instructor_signs'
+    id=db.Column(db.Integer,primary_key=True)
+    attendance_id=db.Column(db.Integer,db.ForeignKey('implantation_attendance.id'),nullable=False,unique=True,index=True)
+    instructor_name=db.Column(db.String(180),nullable=False)
+    signature=db.Column(db.Text,nullable=False)
+    signed_at=db.Column(db.DateTime,default=datetime.utcnow,nullable=False)
+    signed_by=db.Column(db.Integer,nullable=False)
 
 class ImplantationAttendanceParticipant(db.Model):
     __tablename__='implantation_attendance_participants'
@@ -25070,12 +25079,36 @@ def implantation_repo_download(file_id):
     response.headers['Cache-Control']='private, no-store'
     return response
 
+@app.patch('/api/implantacao/repositorio/arquivos/<int:file_id>/mover')
+@login_required
+def implantation_repo_move_file(file_id):
+    if not _repo_authorized('implantation.repository.manage'):
+        return jsonify(ok=False,error='Sem permissão para mover arquivos'),403
+    f=db.session.get(ImplantationRepoFile,file_id)
+    if not f or f.deleted_at or not _repo_folder(f.folder_id):
+        return jsonify(ok=False,error='Arquivo não encontrado'),404
+    data=request.get_json(silent=True) or {}
+    try: destination=int(data.get('folder_id'))
+    except (ValueError,TypeError):return jsonify(ok=False,error='Pasta inválida'),400
+    if not _repo_folder(destination):return jsonify(ok=False,error='Pasta de destino não encontrada'),404
+    if destination==f.folder_id:return jsonify(ok=True,file=_repo_json_file(f))
+    if ImplantationRepoFile.query.filter_by(folder_id=destination,name=f.name,version=f.version,deleted_at=None).first():
+        return jsonify(ok=False,error='Arquivo com mesmo nome e versão já existe no destino'),409
+    old=f.folder_id
+    f.folder_id=destination
+    for attendance in ImplantationAttendance.query.filter_by(file_id=f.id,status='CONCLUIDA').all():
+        attendance.folder_id=destination
+    _repo_audit('REPO_FILE_MOVE','implantation_repo_file',f.id,f'{old} -> {destination}')
+    db.session.commit()
+    return jsonify(ok=True,file=_repo_json_file(f))
+
 @app.delete('/api/implantacao/repositorio/arquivos/<int:file_id>')
 @login_required
 def implantation_repo_delete_file(file_id):
     if not _repo_authorized('implantation.repository.delete'):return jsonify(ok=False,error='Sem permissão'),403
     f=db.session.get(ImplantationRepoFile,file_id)
     if not f or f.deleted_at or not _repo_folder(f.folder_id):return jsonify(ok=False,error='Arquivo não encontrado'),404
+    if ImplantationAttendance.query.filter_by(file_id=f.id,status='CONCLUIDA').first():return jsonify(ok=False,error='PDF de lista concluída: exclua a lista pela Lista de Presença Digital para manter a auditoria'),409
     f.deleted_at=datetime.utcnow();_repo_audit('REPO_FILE_DELETE','implantation_repo_file',f.id,f.name);db.session.commit();return jsonify(ok=True)
 # === V85.47 — Lista de Presença Digital ===
 import base64 as _att_b64
@@ -25128,8 +25161,8 @@ def implantation_attendance_page():
 @login_required
 def implantation_attendance_list():
     if not _att_access():return jsonify(ok=False,error='Sem permissão'),403
-    rows=ImplantationAttendance.query.order_by(ImplantationAttendance.id.desc()).limit(200).all()
-    return jsonify(ok=True,rows=[_att_payload(r) for r in rows],can_manage=_att_access(True))
+    rows=ImplantationAttendance.query.filter(ImplantationAttendance.status!='EXCLUIDA').order_by(ImplantationAttendance.id.desc()).limit(200).all()
+    return jsonify(ok=True,rows=[_att_payload(r) for r in rows],can_manage=_att_access(True),can_delete=_repo_authorized('implantation.repository.delete'))
 
 @app.post('/api/implantacao/listas-presenca')
 @login_required
@@ -25181,34 +25214,148 @@ def implantation_attendance_sign(attendance_id):
     db.session.add(p);db.session.flush();_repo_audit('ATTENDANCE_SIGN','implantation_attendance_participant',p.id,'Lista '+str(row.id));db.session.commit()
     return jsonify(ok=True,participant_id=p.id)
 
-def _att_generate_pdf(row,people):
+def _att_generate_pdf(row,people,instructor_sign=None):
+    """A4 landscape attendance record, approved Autopass visual identity."""
     from pathlib import Path as _AttPath
-    buf=_att_io.BytesIO();page=_att_landscape(_AttA4)
-    doc=_AttDoc(buf,pagesize=page,rightMargin=27,leftMargin=27,topMargin=105,bottomMargin=35,title='Lista de Presença - '+row.title)
-    styles=_att_styles();styles['Normal'].fontSize=8;styles['Normal'].leading=11
-    navy=_att_colors.HexColor('#103e63');pale=_att_colors.HexColor('#eaf2fa')
-    def para(value):return _AttParagraph(_att_escape(str(value or '—')),styles['Normal'])
-    def header(canvas,document):
-        canvas.saveState();w,h=page
+    from reportlab.lib.styles import ParagraphStyle as _AttParagraphStyle
+    from reportlab.lib.enums import TA_CENTER
+    from reportlab.lib.utils import ImageReader as _AttImageReader
+    buf=_att_io.BytesIO()
+    page=_att_landscape(_AttA4)
+    width,height=page
+    navy=_att_colors.HexColor('#103e63')
+    pale=_att_colors.HexColor('#eaf2fa')
+    grid=_att_colors.HexColor('#c5d6e7')
+    white=_att_colors.white
+    normal=_AttParagraphStyle('AttText',fontName='Helvetica',fontSize=8,leading=11,textColor=_att_colors.HexColor('#152a43'))
+    small=_AttParagraphStyle('AttSmall',parent=normal,fontSize=7,leading=9)
+    bold=_AttParagraphStyle('AttBold',parent=normal,fontName='Helvetica-Bold')
+    center=_AttParagraphStyle('AttCenter',parent=normal,alignment=TA_CENTER)
+    def txt(value,style=normal):
+        return _AttParagraph(_att_escape(str(value if value not in (None,'') else '—')),style)
+    def br_date(raw):
+        if not raw:return '—'
+        try:return datetime.strptime(str(raw)[:10],'%Y-%m-%d').strftime('%d/%m/%Y')
+        except ValueError:return str(raw)
+    def bar(label):
+        t=_AttTable([[txt(label,_AttParagraphStyle('bar',parent=bold,textColor=white,fontSize=10))]],colWidths=[786])
+        t.setStyle(_AttTableStyle([('BACKGROUND',(0,0),(-1,-1),navy),('LEFTPADDING',(0,0),(-1,-1),12),('TOPPADDING',(0,0),(-1,-1),7),('BOTTOMPADDING',(0,0),(-1,-1),7)]))
+        return t
+    def header(canvas,doc):
+        canvas.saveState()
         logo=_AttPath(app.static_folder)/'autopass_logo_oficial_v8547.png'
-        if logo.exists():canvas.drawImage(str(logo),30,h-67,width=175,height=58,preserveAspectRatio=True,anchor='c',mask='auto')
-        canvas.setFillColor(navy);canvas.setFont('Helvetica-Bold',17);canvas.drawCentredString(w/2,h-38,'LISTA DE PRESENÇA')
-        canvas.setFont('Helvetica',10);canvas.drawCentredString(w/2,h-55,'Treinamento / Implantação de Hardware')
-        canvas.setFont('Helvetica-Bold',9);canvas.drawRightString(w-28,h-34,'Nº LP-'+str(row.id).zfill(6))
-        canvas.setFont('Helvetica',8);canvas.drawRightString(w-28,h-49,'Página '+str(document.page))
-        canvas.setStrokeColor(_att_colors.HexColor('#cad9e9'));canvas.line(25,h-78,w-25,h-78)
+        if logo.exists():
+            img=_AttImageReader(str(logo));iw,ih=img.getSize()
+            target_w=180;target_h=min(55,target_w*ih/max(iw,1))
+            canvas.drawImage(img,29,height-73,width=target_w,height=target_h,mask='auto')
+        canvas.setFillColor(navy)
+        canvas.setFont('Helvetica-Bold',18)
+        canvas.drawCentredString(width/2,height-43,'LISTA DE PRESENÇA')
+        canvas.setFont('Helvetica',10)
+        canvas.drawCentredString(width/2,height-60,'Treinamento / Implantação de Hardware')
+        canvas.setFont('Helvetica-Bold',9)
+        canvas.drawRightString(width-28,height-40,'Nº LP-'+str(row.id).zfill(6))
+        canvas.setFont('Helvetica',8)
+        canvas.drawRightString(width-28,height-55,'Página '+str(doc.page))
+        canvas.setStrokeColor(grid);canvas.line(26,height-91,width-26,height-91)
         canvas.restoreState()
-    story=[_AttParagraph('DADOS DA ATIVIDADE',styles['Heading3'])]
-    details=[['Atividade / Treinamento:',para(row.title),'Data:',para(row.activity_date)],['Local / Estação:',para(row.location),'Duração:',para(row.duration)],['Instrutor / Responsável:',para(row.instructor),'Horário:',para(row.start_time)],['Descrição da atividade:',para(row.description),'','']]
-    table=_AttTable(details,colWidths=[125,435,65,160]);table.setStyle(_AttTableStyle([('GRID',(0,0),(-1,-1),.4,_att_colors.HexColor('#ccd9e6')),('BACKGROUND',(0,0),(0,-1),pale),('BACKGROUND',(2,0),(2,-2),pale),('VALIGN',(0,0),(-1,-1),'MIDDLE'),('FONTNAME',(0,0),(0,-1),'Helvetica-Bold'),('FONTSIZE',(0,0),(-1,-1),8),('TOPPADDING',(0,0),(-1,-1),7),('BOTTOMPADDING',(0,0),(-1,-1),7)]));story.extend([table,_AttSpacer(1,14)])
-    columns=[36,145,105,105,95,80,145,74]
-    rows=[['Nº','Nome completo','Empresa','Documento','Cargo / Função','Área','Assinatura','Data / Hora']]
+    doc=_AttDoc(buf,pagesize=page,rightMargin=28,leftMargin=28,topMargin=108,bottomMargin=34,title='Lista de Presença LP-'+str(row.id).zfill(6))
+    activity=[
+      [txt('Atividade / Treinamento:',bold),txt(row.title),txt('Data:',bold),txt(br_date(row.activity_date))],
+      [txt('Local / Estação:',bold),txt(row.location),txt('Duração:',bold),txt(row.duration)],
+      [txt('Instrutor / Responsável:',bold),txt(row.instructor),txt('Horário:',bold),txt(row.start_time)],
+      [txt('Descrição da atividade:',bold),txt(row.description),'','']
+    ]
+    details=_AttTable(activity,colWidths=[145,414,65,162])
+    details.setStyle(_AttTableStyle([
+      ('GRID',(0,0),(-1,-1),.45,grid),('BACKGROUND',(0,0),(0,-1),pale),
+      ('BACKGROUND',(2,0),(2,2),pale),('VALIGN',(0,0),(-1,-1),'MIDDLE'),
+      ('TOPPADDING',(0,0),(-1,-1),7),('BOTTOMPADDING',(0,0),(-1,-1),7),
+      ('SPAN',(1,3),(3,3))
+    ]))
+    story=[bar('DADOS DA ATIVIDADE'),details,_AttSpacer(1,13)]
+    widths=[34,143,103,103,95,81,146,81]
+    headings=['Nº','Nome completo','Empresa','Documento','Cargo / Função','Área','Assinatura','Data / Hora']
+    rows=[[txt(h,_AttParagraphStyle('th'+str(i),parent=center,fontName='Helvetica-Bold',textColor=white,fontSize=7.6)) for i,h in enumerate(headings)]]
     for i,p in enumerate(people,1):
         try:
-            raw=_att_b64.b64decode(p.signature.split(',',1)[1]);sig=_AttImage(_att_io.BytesIO(raw),width=132,height=38)
-        except Exception:sig=para('Assinatura indisponível')
-        rows.append([str(i),para(p.name),para(p.company),para(p.document),para(p.role),para(p.area),sig,para(p.signed_at.strftime('%d/%m/%Y %H:%M'))])
-    table=_AttTable(rows,colWidths=columns,repeatRows=1,hAlign='LEFT');table.setStyle(_AttTableStyle([('BACKGROUND',(0,0),(-1,0),navy),('TEXTCOLOR',(0,0),(-1,0),_att_colors.white),('FONTNAME',(0,0),(-1,0),'Helvetica-Bold'),('FONTSIZE',(0,0),(-1,0),8),('GRID',(0,0),(-1,-1),.35,_att_colors.HexColor('#c6d6e5')),('VALIGN',(0,0),(-1,-1),'MIDDLE'),('ALIGN',(0,0),(0,-1),'CENTER'),('ROWBACKGROUNDS',(0,1),(-1,-1),[_att_colors.white,_att_colors.HexColor('#f5f9fd')]),('TOPPADDING',(0,1),(-1,-1),5),('BOTTOMPADDING',(0,1),(-1,-1),5)]));story.extend([table,_AttSpacer(1,12),_AttParagraph('Observações: '+_att_escape(row.observations or '—'),styles['Normal']),_AttSpacer(1,8),_AttParagraph('Responsável: '+_att_escape(row.instructor or '—')+'  |  Emitido em: '+datetime.utcnow().strftime('%d/%m/%Y %H:%M')+' UTC  |  Lista LP-'+str(row.id).zfill(6),styles['Normal'])]);doc.build(story,onFirstPage=header,onLaterPages=header);return buf.getvalue()
+            raw=_att_b64.b64decode(p.signature.split(',',1)[1])
+            im=_AttImageReader(_att_io.BytesIO(raw))
+            iw,ih=im.getSize();factor=min(133/iw,39/ih)
+            sig=_AttImage(_att_io.BytesIO(raw),width=iw*factor,height=ih*factor)
+        except Exception:sig=txt('Indisponível',small)
+        signed=p.signed_at.strftime('%d/%m/%Y')+'<br/>'+p.signed_at.strftime('%H:%M') if p.signed_at else '—'
+        rows.append([txt(i,center),txt(p.name),txt(p.company),txt(p.document),txt(p.role),txt(p.area),sig,_AttParagraph(signed,center)])
+    table=_AttTable(rows,colWidths=widths,repeatRows=1,hAlign='LEFT')
+    table.setStyle(_AttTableStyle([
+      ('BACKGROUND',(0,0),(-1,0),navy),('GRID',(0,0),(-1,-1),.45,grid),
+      ('ROWBACKGROUNDS',(0,1),(-1,-1),[white,_att_colors.HexColor('#f4f8fc')]),
+      ('VALIGN',(0,0),(-1,-1),'MIDDLE'),('ALIGN',(6,1),(6,-1),'CENTER'),
+      ('TOPPADDING',(0,0),(-1,0),10),('BOTTOMPADDING',(0,0),(-1,0),10),
+      ('TOPPADDING',(0,1),(-1,-1),6),('BOTTOMPADDING',(0,1),(-1,-1),6)
+    ]))
+    story.extend([table,_AttSpacer(1,13)])
+    observations=_AttTable([[
+        [txt('Observações:',bold),_AttSpacer(1,8),txt(row.observations)],
+        [txt('Responsável pela Lista:',bold),_AttSpacer(1,8),txt(row.instructor),_AttSpacer(1,8),txt('Implantação de Hardware — Autopass',small)],
+        [txt('Data de Emissão:',bold),_AttSpacer(1,8),txt(datetime.now().strftime('%d/%m/%Y %H:%M')),txt('LP-'+str(row.id).zfill(6),bold)]
+    ]],colWidths=[380,265,141])
+    observations.setStyle(_AttTableStyle([
+        ('BACKGROUND',(0,0),(-1,-1),pale),('BOX',(0,0),(-1,-1),.5,grid),
+        ('INNERGRID',(0,0),(-1,-1),.5,grid),('VALIGN',(0,0),(-1,-1),'TOP'),
+        ('TOPPADDING',(0,0),(-1,-1),12),('BOTTOMPADDING',(0,0),(-1,-1),16)
+    ]))
+    story.append(observations)
+    if instructor_sign:
+        raw=_att_b64.b64decode(instructor_sign.signature.split(',',1)[1])
+        sign_img=_AttImage(_att_io.BytesIO(raw),width=185,height=58)
+        signed_at=instructor_sign.signed_at.strftime('%d/%m/%Y %H:%M') if instructor_sign.signed_at else '—'
+        story.extend([_AttSpacer(1,12),bar('ASSINATURA DO INSTRUTOR / RESPONSÁVEL'),_AttSpacer(1,9)])
+        sign_table=_AttTable([[txt('Instrutor: '+instructor_sign.instructor_name,bold),sign_img,txt('Assinado em: '+signed_at,small)]],colWidths=[290,270,226])
+        sign_table.setStyle(_AttTableStyle([('VALIGN',(0,0),(-1,-1),'MIDDLE'),('BOX',(0,0),(-1,-1),.5,grid),('TOPPADDING',(0,0),(-1,-1),8),('BOTTOMPADDING',(0,0),(-1,-1),8)]))
+        story.append(sign_table)
+    doc.build(story,onFirstPage=header,onLaterPages=header)
+    return buf.getvalue()
+
+@app.patch('/api/implantacao/listas-presenca/<int:attendance_id>/mover')
+@login_required
+def implantation_attendance_move(attendance_id):
+    if not _att_access(True) or not _repo_authorized('implantation.repository.manage'):
+        return jsonify(ok=False,error='Sem permissão para mover listas'),403
+    row=db.session.get(ImplantationAttendance,attendance_id)
+    if not row or row.status!='CONCLUIDA' or not row.file_id:
+        return jsonify(ok=False,error='Lista concluída não encontrada'),404
+    data=request.get_json(silent=True) or {}
+    try: dest=int(data.get('folder_id'))
+    except (TypeError,ValueError):return jsonify(ok=False,error='Pasta inválida'),400
+    if not _repo_folder(dest):return jsonify(ok=False,error='Pasta não encontrada'),404
+    file=db.session.get(ImplantationRepoFile,row.file_id)
+    if not file or file.deleted_at:return jsonify(ok=False,error='PDF não encontrado'),404
+    if file.folder_id==dest:return jsonify(ok=True,row=_att_payload(row,True))
+    previous=file.folder_id
+    conflict=ImplantationRepoFile.query.filter_by(folder_id=dest,name=file.name,version=file.version,deleted_at=None).first()
+    if conflict:return jsonify(ok=False,error='Já existe um arquivo com o mesmo nome e versão na pasta de destino'),409
+    file.folder_id=dest;row.folder_id=dest
+    _repo_audit('ATTENDANCE_MOVE','implantation_attendance',row.id,f'Pasta {previous} -> {dest}; arquivo {file.id}')
+    db.session.commit()
+    return jsonify(ok=True,row=_att_payload(row,True))
+
+@app.delete('/api/implantacao/listas-presenca/<int:attendance_id>')
+@login_required
+def implantation_attendance_delete(attendance_id):
+    if not _att_access(True) or not _repo_authorized('implantation.repository.delete'):
+        return jsonify(ok=False,error='Sem permissão para excluir listas'),403
+    row=db.session.get(ImplantationAttendance,attendance_id)
+    if not row:return jsonify(ok=False,error='Lista não encontrada'),404
+    # Soft-delete completed lists, retaining the signed record for audit.
+    if row.status=='EXCLUIDA':return jsonify(ok=False,error='Lista já excluída'),409
+    if row.file_id:
+        file=db.session.get(ImplantationRepoFile,row.file_id)
+        if file and not file.deleted_at:file.deleted_at=datetime.utcnow()
+    row.status='EXCLUIDA'
+    _repo_audit('ATTENDANCE_DELETE','implantation_attendance',row.id,'Exclusão lógica de lista e PDF')
+    db.session.commit()
+    return jsonify(ok=True)
 
 @app.post('/api/implantacao/listas-presenca/<int:attendance_id>/concluir')
 @login_required
@@ -25223,7 +25370,23 @@ def implantation_attendance_complete(attendance_id):
     if not _repo_folder(folder_id):return jsonify(ok=False,error='Pasta não encontrada'),404
     people=ImplantationAttendanceParticipant.query.filter_by(attendance_id=row.id).order_by(ImplantationAttendanceParticipant.id).all()
     if not people:return jsonify(ok=False,error='Adicione pelo menos um participante assinado'),400
-    content=_att_generate_pdf(row,people)
+    if not row.instructor or not row.instructor.strip():
+        return jsonify(ok=False,error='Informe o nome do instrutor antes de concluir'),400
+    data_name=str(data.get('instructor_name') or '').strip()
+    if data_name.casefold()!=row.instructor.strip().casefold():
+        return jsonify(ok=False,error='O nome do instrutor deve coincidir com o responsável informado na atividade'),400
+    if not data.get('instructor_consent'):
+        return jsonify(ok=False,error='Confirmação da assinatura do instrutor obrigatória'),400
+    try:
+        instructor_signature=_att_image_data(data.get('instructor_signature'))
+    except Exception as e:
+        return jsonify(ok=False,error='Assinatura do instrutor inválida: '+str(e)[:150]),400
+    # Tabela isolada: migração aditiva, sem alterar tabelas de listas já existentes.
+    ImplantationAttendanceInstructorSign.__table__.create(bind=db.engine,checkfirst=True)
+    instructor_sign=ImplantationAttendanceInstructorSign(
+        attendance_id=row.id,instructor_name=data_name,signature=instructor_signature,
+        signed_at=datetime.utcnow(),signed_by=session['user_id'])
+    content=_att_generate_pdf(row,people,instructor_sign)
     filename='Lista_Presenca_LP-'+str(row.id).zfill(6)+'.pdf'
     last=ImplantationRepoFile.query.filter_by(folder_id=folder_id,name=filename,deleted_at=None).order_by(ImplantationRepoFile.version.desc()).first()
     key='attendance_'+_repo_uuid4().hex+'.pdf'
@@ -25231,7 +25394,7 @@ def implantation_attendance_complete(attendance_id):
     (_AttPath(UPLOAD_DIR)/key).write_bytes(content)
     try:
         file=ImplantationRepoFile(folder_id=folder_id,name=filename,version=(last.version+1 if last else 1),storage_key=key,content_type='application/pdf',size=len(content),created_by=session.get('user_id'))
-        db.session.add(file);db.session.flush();row.folder_id=folder_id;row.file_id=file.id;row.status='CONCLUIDA';row.completed_at=datetime.utcnow()
+        db.session.add(instructor_sign);db.session.add(file);db.session.flush();_repo_audit('ATTENDANCE_INSTRUCTOR_SIGN','implantation_attendance',row.id,'Assinatura do instrutor registrada');row.folder_id=folder_id;row.file_id=file.id;row.status='CONCLUIDA';row.completed_at=datetime.utcnow()
         _repo_audit('ATTENDANCE_COMPLETE','implantation_attendance',row.id,'PDF '+str(file.id)+' participantes '+str(len(people)))
         db.session.commit()
     except Exception:
