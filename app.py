@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.46 REV4"
+APP_RELEASE = "V85.47"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -1452,6 +1452,37 @@ class ImplantationRepoFile(db.Model):
     created_at=db.Column(db.DateTime,default=datetime.utcnow,nullable=False)
     deleted_at=db.Column(db.DateTime)
 
+# V85.47 — listas de presença digital com assinaturas e trilha de auditoria.
+class ImplantationAttendance(db.Model):
+    __tablename__='implantation_attendance'
+    id=db.Column(db.Integer,primary_key=True)
+    title=db.Column(db.String(240),nullable=False)
+    location=db.Column(db.String(240))
+    instructor=db.Column(db.String(180))
+    activity_date=db.Column(db.String(10))
+    start_time=db.Column(db.String(5))
+    duration=db.Column(db.String(80))
+    description=db.Column(db.Text)
+    observations=db.Column(db.Text)
+    status=db.Column(db.String(20),nullable=False,default='RASCUNHO')
+    folder_id=db.Column(db.Integer,db.ForeignKey('implantation_repo_folders.id'))
+    file_id=db.Column(db.Integer,db.ForeignKey('implantation_repo_files.id'))
+    created_by=db.Column(db.Integer,nullable=False)
+    created_at=db.Column(db.DateTime,default=datetime.utcnow,nullable=False)
+    completed_at=db.Column(db.DateTime)
+
+class ImplantationAttendanceParticipant(db.Model):
+    __tablename__='implantation_attendance_participants'
+    id=db.Column(db.Integer,primary_key=True)
+    attendance_id=db.Column(db.Integer,db.ForeignKey('implantation_attendance.id'),nullable=False,index=True)
+    name=db.Column(db.String(180),nullable=False)
+    company=db.Column(db.String(180),nullable=False)
+    document=db.Column(db.String(80),nullable=False)
+    role=db.Column(db.String(160))
+    area=db.Column(db.String(160))
+    signature=db.Column(db.Text,nullable=False)
+    signed_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow)
+
 class AuditEvent(db.Model):
     __tablename__ = "audit_events"
     id = db.Column(db.Integer, primary_key=True)
@@ -2345,7 +2376,7 @@ ACCESS_GROUPS = {
         "field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.firmware_pos_cptm","field.bobbins","field.bobbins_dashboard","field.stock_manage","field.atm_mapping","field.atm_mapping_manage"
     )),
     "implantation": ("Implantação de Hardware", (
-        "implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage","implantation.qr.view","implantation.qr.manage","implantation.repository.view","implantation.repository.manage","implantation.repository.delete"
+        "implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage","implantation.qr.view","implantation.qr.manage","implantation.repository.view","implantation.repository.manage","implantation.repository.delete","implantation.attendance.view","implantation.attendance.manage"
     )),
     "teams": ("RH / Equipes", (
         "teams.map","teams.today","teams.schedule","teams.manage","teams.export","teams.apt"
@@ -2377,7 +2408,7 @@ ACCESS_ALL = set(ACCESS_MODULES) | set(ACCESS_SUBMODULES)
 ACCESS_LABELS = {
  "dashboard.general":"Dashboard Geral",
  "field.dashboard":"Dashboard Field","field.inventory":"Inventário / Lançamento","field.calls":"Chamados","field.preventive":"Solicitação Preventiva ATM","field.equipment":"Equipamentos","field.evidence":"Evidências","field.panorama":"Visão Panorâmica","field.chip_recarga":"Troca de Chips – Recarga","field.firmware_pos_cptm":"Atualização de Firmware POS – CPTM","field.bobbins":"Atividade Bobinas","field.bobbins_dashboard":"Visualizar Dashboard Bobinas","field.stock_manage":"Alterar estoque consolidado / armários / bobinas","field.atm_mapping":"Mapeamento ATM","field.atm_mapping_manage":"Gerenciar Mapeamento ATM",
- "implantation.dashboard":"Dashboard Implantação","implantation.visits":"Visita a Campo / Relatório de Visita","implantation.reports":"Relatórios / Visitas recentes","implantation.emv":"Troca de Chips EMV – Trilhos","implantation.garage":"Troca de Chips Garagem","implantation.qr.view":"Gerador de QR – Trilhos","implantation.qr.manage":"Editar configurações de QR – Trilhos","implantation.repository.view":"Consultar repositório técnico","implantation.repository.manage":"Gerenciar pastas e arquivos técnicos","implantation.repository.delete":"Excluir pastas e arquivos técnicos",
+ "implantation.dashboard":"Dashboard Implantação","implantation.visits":"Visita a Campo / Relatório de Visita","implantation.reports":"Relatórios / Visitas recentes","implantation.emv":"Troca de Chips EMV – Trilhos","implantation.garage":"Troca de Chips Garagem","implantation.qr.view":"Gerador de QR – Trilhos","implantation.qr.manage":"Editar configurações de QR – Trilhos","implantation.repository.view":"Consultar repositório técnico","implantation.repository.manage":"Gerenciar pastas e arquivos técnicos","implantation.repository.delete":"Excluir pastas e arquivos técnicos","implantation.attendance.view":"Consultar listas de presença","implantation.attendance.manage":"Criar e concluir listas de presença",
  "teams.map":"Mapa operacional","teams.today":"Operação de Hoje","teams.schedule":"Escala por dias","teams.manage":"Gestão de equipes / escala","teams.export":"Exportar dados","teams.apt":"APT / Validades",
  "users.view":"Visualizar usuários","users.config.view":"Visualizar configurações de usuários","users.config.manage":"Gerenciar configurações de usuários","users.create":"Criar usuário","users.edit":"Editar usuário","users.activate":"Ativar / Desativar","users.delete":"Excluir / Arquivar","users.password":"Redefinir senha","users.export":"Exportar Excel","users.import":"Importar Excel de configurações","users.roles.manage":"Atribuir perfis administrativos / sensíveis","users.scope.all":"Administrar usuários de todas as empresas",
  "finance.dashboard":"Dashboard Financeira","finance.support":"Suporte a Campo","finance.collection":"Coleta de Valores","finance.monitoring":"Monitoramento de Coletas","finance.apuracao":"Apuração de Numerário","finance.assistance":"Assistência Técnica","finance.implantation":"Implantação de Hardware","finance.entries":"Lançamentos","finance.suppliers":"Empresas / Fornecedores","finance.import":"Importar planilha","finance.edit":"Editar lançamentos","finance.delete":"Excluir lançamentos","finance.petty_cash.view":"Visualizar Caixinha","finance.petty_cash.manage":"Gerenciar Caixinha / despesas","finance.petty_cash.approve1":"Aprovar Caixinha - nível 1","finance.petty_cash.approve2":"Aprovar Caixinha - nível 2",
@@ -25046,3 +25077,164 @@ def implantation_repo_delete_file(file_id):
     f=db.session.get(ImplantationRepoFile,file_id)
     if not f or f.deleted_at or not _repo_folder(f.folder_id):return jsonify(ok=False,error='Arquivo não encontrado'),404
     f.deleted_at=datetime.utcnow();_repo_audit('REPO_FILE_DELETE','implantation_repo_file',f.id,f.name);db.session.commit();return jsonify(ok=True)
+# === V85.47 — Lista de Presença Digital ===
+import base64 as _att_b64
+import io as _att_io
+import re as _att_re
+from reportlab.platypus import SimpleDocTemplate as _AttDoc, Table as _AttTable, TableStyle as _AttTableStyle, Paragraph as _AttParagraph, Spacer as _AttSpacer, KeepTogether as _AttKeep
+from reportlab.lib import colors as _att_colors
+from reportlab.lib.styles import getSampleStyleSheet as _att_styles
+from reportlab.lib.pagesizes import landscape as _att_landscape, A4 as _AttA4
+from reportlab.lib.utils import ImageReader as _AttImageReader
+from reportlab.platypus import Image as _AttImage
+from xml.sax.saxutils import escape as _att_escape
+
+def _att_access(manage=False):
+    return bool(session.get('user_id') and _has_access('implantation.attendance.manage' if manage else 'implantation.attendance.view'))
+
+def _att_owned(row):
+    return bool(row and (row.created_by==session.get('user_id') or _has_access('implantation.attendance.manage')))
+
+def _att_payload(row,include_people=False):
+    d={'id':row.id,'title':row.title,'location':row.location,'instructor':row.instructor,'activity_date':row.activity_date,'start_time':row.start_time,'duration':row.duration,'description':row.description,'observations':row.observations,'status':row.status,'folder_id':row.folder_id,'file_id':row.file_id,'created_at':row.created_at.isoformat() if row.created_at else None,'completed_at':row.completed_at.isoformat() if row.completed_at else None}
+    if include_people:
+        people=ImplantationAttendanceParticipant.query.filter_by(attendance_id=row.id).order_by(ImplantationAttendanceParticipant.id).all()
+        d['participants']=[{'id':p.id,'name':p.name,'company':p.company,'document':p.document,'role':p.role,'area':p.area,'signed_at':p.signed_at.isoformat()} for p in people]
+    return d
+
+def _att_validate_text(data,key,limit,required=False):
+    value=str(data.get(key) or '').strip()
+    if len(value)>limit or (required and not value):raise ValueError('Campo inválido: '+key)
+    return value
+
+def _att_image_data(value):
+    if not isinstance(value,str) or len(value)>300000 or not value.startswith('data:image/png;base64,'):raise ValueError('Assinatura PNG obrigatória')
+    raw=_att_b64.b64decode(value.split(',',1)[1],validate=True)
+    if len(raw)>150000 or not raw.startswith(b'\x89PNG\r\n\x1a\n'):raise ValueError('Assinatura inválida')
+    from PIL import Image as _AttPIL
+    im=_AttPIL.open(_att_io.BytesIO(raw));im.verify()
+    im=_AttPIL.open(_att_io.BytesIO(raw))
+    if im.width<100 or im.height<35 or im.width*im.height>1200000:raise ValueError('Dimensões da assinatura inválidas')
+    if not im.convert('RGBA').getchannel('A').getbbox():raise ValueError('Assinatura em branco')
+    return value
+
+@app.get('/implantacao-hardware/lista-presenca')
+@login_required
+def implantation_attendance_page():
+    if not _att_access():abort(403)
+    return render_template('implantation_attendance_v8547.html',app_release=APP_RELEASE)
+
+@app.get('/api/implantacao/listas-presenca')
+@login_required
+def implantation_attendance_list():
+    if not _att_access():return jsonify(ok=False,error='Sem permissão'),403
+    rows=ImplantationAttendance.query.order_by(ImplantationAttendance.id.desc()).limit(200).all()
+    return jsonify(ok=True,rows=[_att_payload(r) for r in rows],can_manage=_att_access(True))
+
+@app.post('/api/implantacao/listas-presenca')
+@login_required
+def implantation_attendance_create():
+    if not _att_access(True):return jsonify(ok=False,error='Sem permissão'),403
+    data=request.get_json(silent=True) or {}
+    try:
+        row=ImplantationAttendance(title=_att_validate_text(data,'title',240,True),location=_att_validate_text(data,'location',240),instructor=_att_validate_text(data,'instructor',180),activity_date=_att_validate_text(data,'activity_date',10),start_time=_att_validate_text(data,'start_time',5),duration=_att_validate_text(data,'duration',80),description=_att_validate_text(data,'description',5000),observations=_att_validate_text(data,'observations',3000),created_by=session['user_id'])
+    except ValueError as e:return jsonify(ok=False,error=str(e)),400
+    db.session.add(row);db.session.flush();_repo_audit('ATTENDANCE_CREATE','implantation_attendance',row.id,row.title);db.session.commit()
+    return jsonify(ok=True,row=_att_payload(row,True))
+
+@app.get('/api/implantacao/listas-presenca/<int:attendance_id>')
+@login_required
+def implantation_attendance_detail(attendance_id):
+    if not _att_access():return jsonify(ok=False,error='Sem permissão'),403
+    row=db.session.get(ImplantationAttendance,attendance_id)
+    if not row:return jsonify(ok=False,error='Lista não encontrada'),404
+    return jsonify(ok=True,row=_att_payload(row,True),can_manage=_att_access(True))
+
+@app.patch('/api/implantacao/listas-presenca/<int:attendance_id>')
+@login_required
+def implantation_attendance_update(attendance_id):
+    if not _att_access(True):return jsonify(ok=False,error='Sem permissão'),403
+    row=db.session.get(ImplantationAttendance,attendance_id)
+    if not row:return jsonify(ok=False,error='Lista não encontrada'),404
+    if row.status!='RASCUNHO':return jsonify(ok=False,error='Lista concluída e bloqueada'),409
+    data=request.get_json(silent=True) or {}
+    try:
+        for key,max_len in [('title',240),('location',240),('instructor',180),('activity_date',10),('start_time',5),('duration',80),('description',5000),('observations',3000)]:
+            if key in data:setattr(row,key,_att_validate_text(data,key,max_len,key=='title'))
+    except ValueError as e:return jsonify(ok=False,error=str(e)),400
+    db.session.commit();return jsonify(ok=True,row=_att_payload(row,True))
+
+@app.post('/api/implantacao/listas-presenca/<int:attendance_id>/participantes')
+@login_required
+def implantation_attendance_sign(attendance_id):
+    if not _att_access(True):return jsonify(ok=False,error='Sem permissão'),403
+    row=db.session.get(ImplantationAttendance,attendance_id)
+    if not row:return jsonify(ok=False,error='Lista não encontrada'),404
+    if row.status!='RASCUNHO':return jsonify(ok=False,error='Lista já concluída'),409
+    data=request.get_json(silent=True) or {}
+    try:
+        values={key:_att_validate_text(data,key,limit,required) for key,limit,required in [('name',180,True),('company',180,True),('document',80,True),('role',160,False),('area',160,False)]}
+        signature=_att_image_data(data.get('signature'))
+        if not data.get('consent'):raise ValueError('Participante deve confirmar os dados e a assinatura')
+    except (ValueError,TypeError,Exception) as e:return jsonify(ok=False,error='Assinatura ou dados inválidos: '+str(e)[:150]),400
+    p=ImplantationAttendanceParticipant(attendance_id=row.id,signature=signature,**values)
+    db.session.add(p);db.session.flush();_repo_audit('ATTENDANCE_SIGN','implantation_attendance_participant',p.id,'Lista '+str(row.id));db.session.commit()
+    return jsonify(ok=True,participant_id=p.id)
+
+def _att_generate_pdf(row,people):
+    from pathlib import Path as _AttPath
+    buf=_att_io.BytesIO();page=_att_landscape(_AttA4)
+    doc=_AttDoc(buf,pagesize=page,rightMargin=27,leftMargin=27,topMargin=105,bottomMargin=35,title='Lista de Presença - '+row.title)
+    styles=_att_styles();styles['Normal'].fontSize=8;styles['Normal'].leading=11
+    navy=_att_colors.HexColor('#103e63');pale=_att_colors.HexColor('#eaf2fa')
+    def para(value):return _AttParagraph(_att_escape(str(value or '—')),styles['Normal'])
+    def header(canvas,document):
+        canvas.saveState();w,h=page
+        logo=_AttPath(app.static_folder)/'autopass_logo_oficial_v8547.png'
+        if logo.exists():canvas.drawImage(str(logo),30,h-67,width=175,height=58,preserveAspectRatio=True,anchor='c',mask='auto')
+        canvas.setFillColor(navy);canvas.setFont('Helvetica-Bold',17);canvas.drawCentredString(w/2,h-38,'LISTA DE PRESENÇA')
+        canvas.setFont('Helvetica',10);canvas.drawCentredString(w/2,h-55,'Treinamento / Implantação de Hardware')
+        canvas.setFont('Helvetica-Bold',9);canvas.drawRightString(w-28,h-34,'Nº LP-'+str(row.id).zfill(6))
+        canvas.setFont('Helvetica',8);canvas.drawRightString(w-28,h-49,'Página '+str(document.page))
+        canvas.setStrokeColor(_att_colors.HexColor('#cad9e9'));canvas.line(25,h-78,w-25,h-78)
+        canvas.restoreState()
+    story=[_AttParagraph('DADOS DA ATIVIDADE',styles['Heading3'])]
+    details=[['Atividade / Treinamento:',para(row.title),'Data:',para(row.activity_date)],['Local / Estação:',para(row.location),'Duração:',para(row.duration)],['Instrutor / Responsável:',para(row.instructor),'Horário:',para(row.start_time)],['Descrição da atividade:',para(row.description),'','']]
+    table=_AttTable(details,colWidths=[125,435,65,160]);table.setStyle(_AttTableStyle([('GRID',(0,0),(-1,-1),.4,_att_colors.HexColor('#ccd9e6')),('BACKGROUND',(0,0),(0,-1),pale),('BACKGROUND',(2,0),(2,-2),pale),('VALIGN',(0,0),(-1,-1),'MIDDLE'),('FONTNAME',(0,0),(0,-1),'Helvetica-Bold'),('FONTSIZE',(0,0),(-1,-1),8),('TOPPADDING',(0,0),(-1,-1),7),('BOTTOMPADDING',(0,0),(-1,-1),7)]));story.extend([table,_AttSpacer(1,14)])
+    columns=[36,145,105,105,95,80,145,74]
+    rows=[['Nº','Nome completo','Empresa','Documento','Cargo / Função','Área','Assinatura','Data / Hora']]
+    for i,p in enumerate(people,1):
+        try:
+            raw=_att_b64.b64decode(p.signature.split(',',1)[1]);sig=_AttImage(_att_io.BytesIO(raw),width=132,height=38)
+        except Exception:sig=para('Assinatura indisponível')
+        rows.append([str(i),para(p.name),para(p.company),para(p.document),para(p.role),para(p.area),sig,para(p.signed_at.strftime('%d/%m/%Y %H:%M'))])
+    table=_AttTable(rows,colWidths=columns,repeatRows=1,hAlign='LEFT');table.setStyle(_AttTableStyle([('BACKGROUND',(0,0),(-1,0),navy),('TEXTCOLOR',(0,0),(-1,0),_att_colors.white),('FONTNAME',(0,0),(-1,0),'Helvetica-Bold'),('FONTSIZE',(0,0),(-1,0),8),('GRID',(0,0),(-1,-1),.35,_att_colors.HexColor('#c6d6e5')),('VALIGN',(0,0),(-1,-1),'MIDDLE'),('ALIGN',(0,0),(0,-1),'CENTER'),('ROWBACKGROUNDS',(0,1),(-1,-1),[_att_colors.white,_att_colors.HexColor('#f5f9fd')]),('TOPPADDING',(0,1),(-1,-1),5),('BOTTOMPADDING',(0,1),(-1,-1),5)]));story.extend([table,_AttSpacer(1,12),_AttParagraph('Observações: '+_att_escape(row.observations or '—'),styles['Normal']),_AttSpacer(1,8),_AttParagraph('Responsável: '+_att_escape(row.instructor or '—')+'  |  Emitido em: '+datetime.utcnow().strftime('%d/%m/%Y %H:%M')+' UTC  |  Lista LP-'+str(row.id).zfill(6),styles['Normal'])]);doc.build(story,onFirstPage=header,onLaterPages=header);return buf.getvalue()
+
+@app.post('/api/implantacao/listas-presenca/<int:attendance_id>/concluir')
+@login_required
+def implantation_attendance_complete(attendance_id):
+    if not _att_access(True) or not _repo_authorized('implantation.repository.manage'):return jsonify(ok=False,error='Sem permissão para concluir e salvar no Drive'),403
+    row=db.session.get(ImplantationAttendance,attendance_id)
+    if not row:return jsonify(ok=False,error='Lista não encontrada'),404
+    if row.status!='RASCUNHO':return jsonify(ok=False,error='Lista já concluída'),409
+    data=request.get_json(silent=True) or {}
+    try:folder_id=int(data.get('folder_id'))
+    except (TypeError,ValueError):return jsonify(ok=False,error='Escolha uma pasta no Drive Técnico'),400
+    if not _repo_folder(folder_id):return jsonify(ok=False,error='Pasta não encontrada'),404
+    people=ImplantationAttendanceParticipant.query.filter_by(attendance_id=row.id).order_by(ImplantationAttendanceParticipant.id).all()
+    if not people:return jsonify(ok=False,error='Adicione pelo menos um participante assinado'),400
+    content=_att_generate_pdf(row,people)
+    filename='Lista_Presenca_LP-'+str(row.id).zfill(6)+'.pdf'
+    last=ImplantationRepoFile.query.filter_by(folder_id=folder_id,name=filename,deleted_at=None).order_by(ImplantationRepoFile.version.desc()).first()
+    key='attendance_'+_repo_uuid4().hex+'.pdf'
+    from pathlib import Path as _AttPath
+    (_AttPath(UPLOAD_DIR)/key).write_bytes(content)
+    try:
+        file=ImplantationRepoFile(folder_id=folder_id,name=filename,version=(last.version+1 if last else 1),storage_key=key,content_type='application/pdf',size=len(content),created_by=session.get('user_id'))
+        db.session.add(file);db.session.flush();row.folder_id=folder_id;row.file_id=file.id;row.status='CONCLUIDA';row.completed_at=datetime.utcnow()
+        _repo_audit('ATTENDANCE_COMPLETE','implantation_attendance',row.id,'PDF '+str(file.id)+' participantes '+str(len(people)))
+        db.session.commit()
+    except Exception:
+        db.session.rollback();(_AttPath(UPLOAD_DIR)/key).unlink(missing_ok=True);raise
+    return jsonify(ok=True,row=_att_payload(row,True),download_url='/api/implantacao/repositorio/arquivos/'+str(file.id)+'/download')
+# === /V85.47 ===
