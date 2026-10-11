@@ -114,7 +114,7 @@ document.getElementById('logoutLink')?.addEventListener('click',()=>{try{navigat
 if('serviceWorker' in navigator && (location.protocol==='https:' || location.hostname==='localhost')){
   window.addEventListener('load',async()=>{
     try{
-      const reg=await navigator.serviceWorker.register('/sw.js?v=v85-47-rev2',{scope:'/',updateViaCache:'none'});
+      const reg=await navigator.serviceWorker.register('/sw.js?v=v85-47-rev3',{scope:'/',updateViaCache:'none'});
       await reg.update();
     }catch(err){console.warn('Falha ao atualizar Service Worker',err);}
   },{once:true});
