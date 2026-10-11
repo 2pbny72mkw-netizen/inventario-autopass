@@ -87,6 +87,17 @@ main.wrap{position:relative;z-index:1}
   .mainNavV424>.navDrop>.navDropMenu{position:absolute;z-index:60030!important;isolation:isolate}
   .topbar,.topbar .wrap,.topbar .nav,.mainNavV424{overflow:visible!important}
 }
+/* REV4: dropdowns must stack above adjacent navigation rows. The older
+   app.css assigns every navDrop the same important z-index (5200), causing
+   later siblings to paint over an earlier opened dropdown. */
+@media(min-width:761px){
+ .mainNavV424>.navDrop{z-index:1!important;isolation:auto!important}
+ .mainNavV424>.navDrop:hover,
+ .mainNavV424>.navDrop:focus-within,
+ .mainNavV424>.navDrop.open{z-index:90000!important}
+ .mainNavV424>.navDrop>.navDropMenu{z-index:90001!important;background:#fff!important;box-shadow:0 16px 34px #17345d33!important}
+ .mainNavV424>.navDrop>.navDropMenu a{position:relative;z-index:1}
+}
 </style>
 <main class="wrap">
 {% with msgs=get_flashed_messages(with_categories=true) %}{% for cat,m in msgs %}<div class="alert v73flash {{cat if cat in ['success','error','warning','info'] else ('success' if 'sucesso' in m|lower or 'atualizado' in m|lower or 'salva' in m|lower else 'error')}}">{{m}}</div>{% endfor %}{% endwith %}
@@ -103,7 +114,7 @@ document.getElementById('logoutLink')?.addEventListener('click',()=>{try{navigat
 if('serviceWorker' in navigator && (location.protocol==='https:' || location.hostname==='localhost')){
   window.addEventListener('load',async()=>{
     try{
-      const reg=await navigator.serviceWorker.register('/sw.js?v=v85-46-rev3',{scope:'/',updateViaCache:'none'});
+      const reg=await navigator.serviceWorker.register('/sw.js?v=v85-46-rev4',{scope:'/',updateViaCache:'none'});
       await reg.update();
     }catch(err){console.warn('Falha ao atualizar Service Worker',err);}
   },{once:true});
@@ -173,7 +184,7 @@ document.addEventListener('click',function(e){const b=e.target.closest('.navDrop
 </script>
 <style>.navSubGroup{position:relative}.navSubGroup>button{width:100%;border:0;background:#f7fafc;text-align:left;padding:10px 12px;font-weight:800;color:#17324d;cursor:pointer}.navSubItems{padding-left:10px}.navSubItems a{display:block}.navSubGroup .navSubGroup>button{padding-left:20px}</style>
 <script id="menuLayoutV8522" type="application/json">{{ menu_layout_v8522|tojson }}</script>
-<script>(()=>{try{const root=document.getElementById('mainNavV424'),cfg=JSON.parse(document.getElementById('menuLayoutV8522')?.textContent||'{"columns":[]}');if(!root||!cfg.columns?.length)return;const norm=s=>(s||'').replace(/\s+/g,' ').replace(/\s*▾\s*$/,'').trim();const pool=[...root.querySelectorAll('a')];const used=new Set();const findAnchor=it=>{const mid=String(it?.menu_id||'').trim(),href=String(it?.href||'').trim(),src=it?.source||it?.label||'';return pool.find(a=>!used.has(a)&&((mid&&a.dataset?.menuId===mid)||(href&&a.getAttribute('href')===href)||norm(a.textContent)===norm(src)))};const oldDrops=[...root.querySelectorAll(':scope > .navDrop')];const direct=[...root.children].filter(x=>x.tagName==='A');const special=[...root.children].filter(x=>!x.classList?.contains('navDrop')&&x.tagName!=='A');const frag=document.createDocumentFragment();for(const col of cfg.columns){const items=[];for(const it of col.items||[]){const a=findAnchor(it);if(a){used.add(a);a.childNodes.forEach(n=>{});if(it.label&&norm(a.textContent)!==norm(it.label)){for(const n of [...a.childNodes])if(n.nodeType===3){n.textContent=it.label;break}}items.push({a,it})}}const top=direct.find(a=>!used.has(a)&&norm(a.textContent)===norm(col.name));if(top&&!items.length){used.add(top);frag.appendChild(top);continue}if(!items.length)continue;const d=document.createElement('div');d.className='navDrop';const btn=document.createElement('button');btn.type='button';btn.className='navDropBtn';btn.textContent=col.name+' ▾';const m=document.createElement('div');m.className='navDropMenu';const groups=new Map();for(const x of items){const path=(x.it.group||'').split('>').map(norm).filter(Boolean);if(!path.length){m.appendChild(x.a);continue}let host=m,key='';for(const g of path.slice(0,2)){key+=(key?'>':'')+g;let entry=groups.get(key);if(!entry){const wrap=document.createElement('div');wrap.className='navSubGroup';const gb=document.createElement('button');gb.type='button';gb.textContent=g+' ›';const gi=document.createElement('div');gi.className='navSubItems';wrap.append(gb,gi);host.appendChild(wrap);entry=gi;groups.set(key,entry)}host=entry}host.appendChild(x.a)}d.append(btn,m);frag.appendChild(d)}// REV2: retain authorized links introduced after a saved menu layout was created.
+<script>(()=>{try{const root=document.getElementById('mainNavV424'),cfg=JSON.parse(document.getElementById('menuLayoutV8522')?.textContent||'{"columns":[]}');if(!root||!cfg.columns?.length)return;const norm=s=>(s||'').replace(/\s+/g,' ').replace(/\s*▾\s*$/,'').trim();const pool=[...root.querySelectorAll('a')];const used=new Set();const findAnchor=it=>{const mid=String(it?.menu_id||'').trim(),href=String(it?.href||'').trim(),src=it?.source||it?.label||'';return pool.find(a=>!used.has(a)&&((mid&&a.dataset?.menuId===mid)||(href&&a.getAttribute('href')===href)||norm(a.textContent)===norm(src)))};const oldDrops=[...root.querySelectorAll(':scope > .navDrop')];const originalLinks=new Map(oldDrops.map(d=>[d,[...d.querySelectorAll('a')]]));const direct=[...root.children].filter(x=>x.tagName==='A');const special=[...root.children].filter(x=>!x.classList?.contains('navDrop')&&x.tagName!=='A');const frag=document.createDocumentFragment();for(const col of cfg.columns){const items=[];for(const it of col.items||[]){const a=findAnchor(it);if(a){used.add(a);a.childNodes.forEach(n=>{});if(it.label&&norm(a.textContent)!==norm(it.label)){for(const n of [...a.childNodes])if(n.nodeType===3){n.textContent=it.label;break}}items.push({a,it})}}const top=direct.find(a=>!used.has(a)&&norm(a.textContent)===norm(col.name));if(top&&!items.length){used.add(top);frag.appendChild(top);continue}if(!items.length)continue;const d=document.createElement('div');d.className='navDrop';const btn=document.createElement('button');btn.type='button';btn.className='navDropBtn';btn.textContent=col.name+' ▾';const m=document.createElement('div');m.className='navDropMenu';const groups=new Map();for(const x of items){const path=(x.it.group||'').split('>').map(norm).filter(Boolean);if(!path.length){m.appendChild(x.a);continue}let host=m,key='';for(const g of path.slice(0,2)){key+=(key?'>':'')+g;let entry=groups.get(key);if(!entry){const wrap=document.createElement('div');wrap.className='navSubGroup';const gb=document.createElement('button');gb.type='button';gb.textContent=g+' ›';const gi=document.createElement('div');gi.className='navSubItems';wrap.append(gb,gi);host.appendChild(wrap);entry=gi;groups.set(key,entry)}host=entry}host.appendChild(x.a)}d.append(btn,m);frag.appendChild(d)}// REV2: retain authorized links introduced after a saved menu layout was created.
 // Move unmatched anchors to their original section, never recreate a permission-hidden link.
 const newDrops=[...frag.childNodes].filter(x=>x.classList?.contains('navDrop'));
 for(const old of oldDrops){
@@ -184,7 +195,13 @@ for(const old of oldDrops){
   // The legacy template says 'Implantação', while the saved layout says 'Implantação de Hardware'.
   // Without this alias the new Drive link is appended to an extra dropdown instead of the visible one.
   const canonical=n=>norm(n).toLocaleLowerCase('pt-BR').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/ de hardware$/,'');
-  let dest=newDrops.find(d=>canonical(d.querySelector(':scope > .navDropBtn')?.textContent)===canonical(originalName));
+  // REV4: first attach to the personalized column that already received an
+  // anchor from this exact original dropdown. This avoids duplicate sections
+  // even if the administrator renamed the column arbitrarily.
+  const moved=(originalLinks.get(old)||[]).filter(a=>used.has(a));
+  let dest=moved.map(a=>a.closest('.navDrop')).find(d=>d&&newDrops.includes(d));
+  if(!dest)dest=newDrops.find(d=>canonical(d.querySelector(':scope > .navDropBtn')?.textContent)===canonical(originalName));
+  if(!dest&&canonical(originalName)==='implantacao')dest=newDrops.find(d=>/implantac/i.test(d.querySelector(':scope > .navDropBtn')?.textContent||''));
   if(!dest){
     dest=document.createElement('div');dest.className='navDrop';
     const b=document.createElement('button');b.type='button';b.className='navDropBtn';b.textContent=originalName+' ▾';
