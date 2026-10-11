@@ -25064,10 +25064,48 @@ def implantation_repo_upload():
     last=ImplantationRepoFile.query.filter_by(folder_id=folder_id,name=name,deleted_at=None).order_by(ImplantationRepoFile.version.desc()).first()
     version=(last.version+1) if last else 1
     key='repo_'+_repo_uuid4().hex+'_'+name
-    upload.save(str(UPLOAD_DIR/key))
+    if _r2_available():
+        try:
+            _r2_put_bytes('implantacao/drive/'+key,upload.read(),upload.mimetype or 'application/octet-stream')
+        except Exception:
+            app.logger.exception('Falha ao salvar arquivo do Drive no armazenamento persistente')
+            return jsonify(ok=False,error='Falha ao salvar no armazenamento persistente; tente novamente'),503
+        key='r2__implantacao/drive/'+key
+    else:
+        upload.save(str(UPLOAD_DIR/key))
     f=ImplantationRepoFile(folder_id=folder_id,name=name,version=version,storage_key=key,content_type=upload.mimetype,size=size,created_by=session.get('user_id'))
     db.session.add(f);db.session.flush();_repo_audit('REPO_FILE_UPLOAD','implantation_repo_file',f.id,f'{name} v{version}');db.session.commit()
     return jsonify(ok=True,file=_repo_json_file(f))
+
+def _repo_download_content(f):
+    """Load persistent R2 files, local legacy files, or reconstruct signed attendance PDFs."""
+    from pathlib import Path as _RepoPath
+    if f.storage_key.startswith('r2__'):
+        try:
+            return _r2_get_bytes(f.storage_key[4:])
+        except Exception:
+            app.logger.exception('Falha ao recuperar arquivo do R2: id=%s',f.id)
+            return None
+    legacy=_RepoPath(UPLOAD_DIR)/f.storage_key
+    if legacy.is_file():
+        return legacy.read_bytes()
+    # Previous releases stored PDFs on the ephemeral Render filesystem.
+    # Rebuild only if this file belongs to a concluded attendance list.
+    attendance=ImplantationAttendance.query.filter_by(file_id=f.id,status='CONCLUIDA').first()
+    if not attendance:return None
+    people=ImplantationAttendanceParticipant.query.filter_by(attendance_id=attendance.id).order_by(ImplantationAttendanceParticipant.id).all()
+    instructor=None
+    try:
+        instructor=ImplantationAttendanceInstructorSign.query.filter_by(attendance_id=attendance.id).first()
+    except Exception:
+        db.session.rollback()
+        app.logger.warning('Assinatura do instrutor indisponível para lista %s',attendance.id)
+    if not people:return None
+    try:
+        return _att_generate_pdf(attendance,people,instructor)
+    except Exception:
+        app.logger.exception('Falha ao reconstruir PDF da lista %s',attendance.id)
+        return None
 
 @app.get('/api/implantacao/repositorio/arquivos/<int:file_id>/download')
 @login_required
@@ -25075,7 +25113,23 @@ def implantation_repo_download(file_id):
     if not _repo_authorized():abort(403)
     f=db.session.get(ImplantationRepoFile,file_id)
     if not f or f.deleted_at or not _repo_folder(f.folder_id):abort(404)
-    response=send_from_directory(UPLOAD_DIR,f.storage_key,as_attachment=True,download_name=f.name,mimetype='application/octet-stream')
+    content=_repo_download_content(f)
+    if content is None:
+        return jsonify(ok=False,error='Conteúdo do arquivo indisponível no armazenamento. Registro preservado; contate o administrador.'),404
+    # Repair missing legacy attendance PDFs in R2 so subsequent downloads
+    # do not depend on the ephemeral local filesystem.
+    if not f.storage_key.startswith('r2__') and not (Path(UPLOAD_DIR)/f.storage_key).is_file() and _r2_available():
+        try:
+            key='implantacao/drive/recuperado_'+str(f.id)+'_'+_repo_uuid4().hex+'.pdf'
+            _r2_put_bytes(key,content,'application/pdf')
+            f.storage_key='r2__'+key
+            f.size=len(content)
+            _repo_audit('REPO_FILE_RECOVER','implantation_repo_file',f.id,'PDF de lista recuperado em armazenamento persistente')
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            app.logger.exception('Não foi possível persistir PDF recuperado %s',f.id)
+    response=send_file(io.BytesIO(content),as_attachment=True,download_name=f.name,mimetype=f.content_type or 'application/octet-stream')
     response.headers['Cache-Control']='private, no-store'
     return response
 
@@ -25401,13 +25455,24 @@ def implantation_attendance_complete(attendance_id):
     last=ImplantationRepoFile.query.filter_by(folder_id=folder_id,name=filename,deleted_at=None).order_by(ImplantationRepoFile.version.desc()).first()
     key='attendance_'+_repo_uuid4().hex+'.pdf'
     from pathlib import Path as _AttPath
-    (_AttPath(UPLOAD_DIR)/key).write_bytes(content)
+    if _r2_available():
+        try:
+            _r2_put_bytes('implantacao/listas/'+key,content,'application/pdf')
+        except Exception:
+            app.logger.exception('Falha ao persistir PDF da lista %s',row.id)
+            return jsonify(ok=False,error='Não foi possível salvar o PDF no armazenamento persistente'),503
+        key='r2__implantacao/listas/'+key
+    else:
+        (_AttPath(UPLOAD_DIR)/key).write_bytes(content)
     try:
         file=ImplantationRepoFile(folder_id=folder_id,name=filename,version=(last.version+1 if last else 1),storage_key=key,content_type='application/pdf',size=len(content),created_by=session.get('user_id'))
         db.session.add(instructor_sign);db.session.add(file);db.session.flush();_repo_audit('ATTENDANCE_INSTRUCTOR_SIGN','implantation_attendance',row.id,'Assinatura do instrutor registrada');row.folder_id=folder_id;row.file_id=file.id;row.status='CONCLUIDA';row.completed_at=datetime.utcnow()
         _repo_audit('ATTENDANCE_COMPLETE','implantation_attendance',row.id,'PDF '+str(file.id)+' participantes '+str(len(people)))
         db.session.commit()
     except Exception:
-        db.session.rollback();(_AttPath(UPLOAD_DIR)/key).unlink(missing_ok=True);raise
+        db.session.rollback()
+        if not key.startswith('r2__'):
+            (_AttPath(UPLOAD_DIR)/key).unlink(missing_ok=True)
+        raise
     return jsonify(ok=True,row=_att_payload(row,True),download_url='/api/implantacao/repositorio/arquivos/'+str(file.id)+'/download')
 # === /V85.47 ===
