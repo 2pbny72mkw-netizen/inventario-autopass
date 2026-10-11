@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.47 REV1"
+APP_RELEASE = "V85.48"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -9464,6 +9464,28 @@ def create_user():
     return redirect(url_for("users_page"))
 
 
+# V85.48 — thumbnails cache bounded separately from full-size photo bytes.
+_V8548_THUMB_CACHE={}
+_V8548_THUMB_CACHE_BYTES=0
+_V8548_THUMB_CACHE_LOCK=threading.Lock()
+def _v8548_cached_thumbnail(key,raw):
+    global _V8548_THUMB_CACHE_BYTES
+    now=time.monotonic()
+    with _V8548_THUMB_CACHE_LOCK:
+        hit=_V8548_THUMB_CACHE.get(key)
+        if hit and now-hit[0]<600:return hit[1]
+    thumb=_media_thumbnail(raw)
+    if not thumb or len(thumb)>1024*1024:return thumb
+    with _V8548_THUMB_CACHE_LOCK:
+        prior=_V8548_THUMB_CACHE.pop(key,None)
+        if prior:_V8548_THUMB_CACHE_BYTES-=len(prior[1])
+        while _V8548_THUMB_CACHE and (len(_V8548_THUMB_CACHE)>=64 or _V8548_THUMB_CACHE_BYTES+len(thumb)>12*1024*1024):
+            oldest=min(_V8548_THUMB_CACHE,key=lambda k:_V8548_THUMB_CACHE[k][0])
+            _V8548_THUMB_CACHE_BYTES-=len(_V8548_THUMB_CACHE.pop(oldest)[1])
+        _V8548_THUMB_CACHE[key]=(now,thumb)
+        _V8548_THUMB_CACHE_BYTES+=len(thumb)
+    return thumb
+
 @app.get("/usuarios/<int:user_id>/foto")
 @login_required
 def user_photo(user_id):
@@ -9489,7 +9511,12 @@ def user_photo(user_id):
                 _V8543R1_USER_PHOTO_CACHE.pop(oldest,None)
             _V8543R1_USER_PHOTO_CACHE[cache_key]=(now,raw,mime)
         if request.args.get("thumb")=="1":
-            return _cached_media_response(raw,mime,"usuario.jpg",thumb=True)
+            thumb=_v8548_cached_thumbnail(str(user.photo_url),raw) if mime.startswith('image/') else None
+            if thumb:
+                resp=send_file(io.BytesIO(thumb),mimetype='image/jpeg',download_name='usuario-thumb.jpg',max_age=604800)
+                resp.headers['Cache-Control']='private, max-age=604800, immutable'
+                return resp
+            return _cached_media_response(raw,mime,"usuario.jpg",thumb=False)
         return Response(raw,mimetype=mime,headers={"Cache-Control":"private, max-age=86400, stale-while-revalidate=604800"})
     except Exception:
         return "", 404
@@ -22398,13 +22425,26 @@ def _v772_resolve_stock_location(label):
     if loc:return {'company':loc.company or '', 'line':loc.line or '', 'station':loc.location or cleaned}
     return {'company':'','line':'','station':cleaned or str(label or '').strip()}
 
+# V85.48 — cache apenas do JSON oficial imutável, nunca dos overrides editáveis.
+_V8548_ATM_FILE_CACHE = {'stamp':None,'rows':None}
+_V8548_ATM_FILE_LOCK = threading.Lock()
+def _v8548_official_json():
+    path=DATA_DIR / 'atm_official_082026.json'
+    stamp=(path.stat().st_mtime_ns,path.stat().st_size)
+    with _V8548_ATM_FILE_LOCK:
+        if _V8548_ATM_FILE_CACHE['stamp'] != stamp:
+            parsed=json.loads(path.read_text(encoding='utf-8'))
+            _V8548_ATM_FILE_CACHE['rows']=parsed if isinstance(parsed,list) else []
+            _V8548_ATM_FILE_CACHE['stamp']=stamp
+        # Shallow copy prevents mutation of cached official data by downstream code.
+        return list(_V8548_ATM_FILE_CACHE['rows'])
+
 def _v773_official_atm_rows():
     """Fonte soberana do parque ATM: 602 oficiais = 590 instaladas + 12 em estoque.
     Usa a mesma base da Dashboard ATM já validada.
     """
     try:
-        rows=json.loads((DATA_DIR / "atm_official_082026.json").read_text(encoding="utf-8"))
-        rows=rows if isinstance(rows,list) else []
+        rows=_v8548_official_json()
         # REV5: aplica somente o estado atual cadastral. O arquivo oficial permanece imutável.
         try:
             overrides={_v773_norm_atm_id(x.atm_id):x for x in AtmMasterOverride.query.all()}
@@ -22528,6 +22568,7 @@ def v771_bobbin_atm_status():
 @app.post('/api/bobinas/registro')
 @login_required
 def v77_bobbins_register():
+    _v8548_bobbin_started=time.perf_counter()
     if not _has_access('field.bobbins'): abort(403)
     if _activity_request_too_large():return jsonify({'ok':False,'error':'Foto excede o limite permitido.'}),413
     company=(request.form.get('company') or '').strip() or 'METRÔ';line=(request.form.get('line') or '').strip();station=(request.form.get('station') or '').strip();atm=(request.form.get('atm_id') or '').strip()
@@ -22584,7 +22625,13 @@ def v77_bobbins_register():
         ph=AtmBobbinPhoto(reading_id=row.id,storage_key=stored,original_name=secure_filename(photo.filename),content_type=photo.mimetype or 'image/jpeg',expires_at=datetime.utcnow()+timedelta(days=_v771_photo_retention_days()))
         db.session.add(ph)
     db.session.commit()
+    _v8548_commit_ms=(time.perf_counter()-_v8548_bobbin_started)*1000
     if has_photo:_v771_cleanup_photos()
+    _v8548_total_ms=(time.perf_counter()-_v8548_bobbin_started)*1000
+    if _v8548_total_ms>=800:
+        app.logger.warning('PERF_V8548 bobinas_register total_ms=%.1f pre_cleanup_ms=%.1f cleanup_ms=%.1f sql_ms=%.1f queries=%d photo=%s',
+            _v8548_total_ms,_v8548_commit_ms,_v8548_total_ms-_v8548_commit_ms,
+            float(getattr(g,'_perf_sql_ms',0) or 0),int(getattr(g,'_perf_query_count',0) or 0),has_photo)
     return jsonify({'ok':True,'id':row.id,'reserve_after':reserve_qty,'has_photo':has_photo,'photo_retention_days':_v771_photo_retention_days() if has_photo else None,'gps':{'captured':lat is not None and lon is not None,'accuracy':acc,'distance_m':distance}})
 
 @app.get('/api/bobinas/foto/<int:photo_id>')
