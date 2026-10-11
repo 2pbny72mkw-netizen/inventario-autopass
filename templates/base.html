@@ -51,7 +51,7 @@
       {% if can_view('implantation') or can_view('implantation.visits') or can_view('implantation.reports') or can_view('implantation.qr.view') or can_view('implantation.qr.manage') or can_view('implantation.emv') or can_view('implantation.garage') %}
       <div class="navDrop"><button type="button" class="navDropBtn">Implantação ▾</button><div class="navDropMenu">
         {% if can_view('implantation.visits') or can_view('implantation.reports') %}<a data-menu-id="implantation.visits" href="/implantacao-hardware">Visitas / Relatórios</a>{% endif %}
-        {% if can_view('implantation.qr.view') or can_view('implantation.qr.manage') %}<a data-menu-id="implantation.qr.generate" href="/qr-trilhos"><b>Gerar QR Code – Trilhos</b></a>{% endif %}{% if can_view('implantation.qr.manage') %}<a data-menu-id="implantation.qr.config" href="/gestao/configuracoes/qr-trilhos">Configurações QR – Trilhos</a>{% endif %}{% if can_view('implantation.repository.view') %}<a href="/implantacao-hardware/repositorio">Repositório Técnico</a>{% endif %}{% if can_view('implantation.emv') %}<a href="/troca-chips-emv">Troca de Chips EMV - Trilhos</a>{% endif %}{% if can_view('implantation.garage') %}<a href="/troca-chips-garagem">Troca de Chips Garagem</a>{% endif %}
+        {% if can_view('implantation.qr.view') or can_view('implantation.qr.manage') %}<a data-menu-id="implantation.qr.generate" href="/qr-trilhos"><b>Gerar QR Code – Trilhos</b></a>{% endif %}{% if can_view('implantation.qr.manage') %}<a data-menu-id="implantation.qr.config" href="/gestao/configuracoes/qr-trilhos">Configurações QR – Trilhos</a>{% endif %}{% if can_view('implantation.repository.view') %}<a href="/implantacao-hardware/repositorio">Drive Técnico</a>{% endif %}{% if can_view('implantation.emv') %}<a href="/troca-chips-emv">Troca de Chips EMV - Trilhos</a>{% endif %}{% if can_view('implantation.garage') %}<a href="/troca-chips-garagem">Troca de Chips Garagem</a>{% endif %}
       </div></div>{% endif %}
       {% if can_view('teams') or can_view('users') %}
       <div class="navDrop"><button type="button" class="navDropBtn">RH ▾</button><div class="navDropMenu">
@@ -94,7 +94,7 @@ document.getElementById('logoutLink')?.addEventListener('click',()=>{try{navigat
 if('serviceWorker' in navigator && (location.protocol==='https:' || location.hostname==='localhost')){
   window.addEventListener('load',async()=>{
     try{
-      const reg=await navigator.serviceWorker.register('/sw.js?v=v85-44-rev9',{scope:'/',updateViaCache:'none'});
+      const reg=await navigator.serviceWorker.register('/sw.js?v=v85-46-rev1',{scope:'/',updateViaCache:'none'});
       await reg.update();
     }catch(err){console.warn('Falha ao atualizar Service Worker',err);}
   },{once:true});

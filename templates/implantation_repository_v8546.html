@@ -1,24 +1,92 @@
-{% extends "base.html" %}{% block content %}
-<h1>Repositório Técnico — Implantação</h1><p>Pastas, projetos, esquemas elétricos, versões e formulários para técnicos em campo.</p>
-<div id="repoMessage" role="status"></div>
-<div style="display:flex;gap:8px;flex-wrap:wrap;margin:16px 0"><button id="backFolder">← Voltar</button><strong id="path">Raiz</strong><input id="searchRepo" placeholder="Pesquisar pastas e arquivos"></div>
-<div id="actions" hidden style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px"><button id="newFolder">+ Pasta</button><button id="newProject">+ Produto / Projeto</button><label>Enviar arquivo <input type="file" id="uploadRepo"></label></div>
-<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:16px"><section style="border:1px solid #cbd5e1;border-radius:10px;padding:15px"><h2>Pastas</h2><div id="folders"></div></section><section style="border:1px solid #cbd5e1;border-radius:10px;padding:15px"><h2>Arquivos e versões</h2><div id="files"></div></section></div>
-{% endblock %}{% block scripts %}<script>
-(()=>{'use strict';let data={folders:[],files:[]},current=null;
-const $=id=>document.getElementById(id),message=s=>$('repoMessage').textContent=s;
+{% extends "base.html" %}
+{% block title %}Drive Técnico — Implantação{% endblock %}
+{% block head %}
+<style>
+.drive{--ink:#14284d;--blue:#2169ec;--line:#dce5f1;--muted:#64748b;color:var(--ink);padding:12px 0 24px;font-family:inherit}
+.drive *{box-sizing:border-box}.drive button{cursor:pointer;font:inherit}.driveHead{display:flex;gap:18px;align-items:center;justify-content:space-between;margin:4px 0 18px;flex-wrap:wrap}
+.driveTitle{display:flex;align-items:center;gap:14px}.driveTitleIcon{font-size:37px;line-height:1}.drive h1{font-size:26px;line-height:1.15;margin:0 0 5px;color:var(--ink)}.drive p{margin:0;color:var(--muted);font-size:13px}
+.driveSearch{display:flex;align-items:center;background:white;border:1px solid var(--line);border-radius:10px;padding:0 14px;min-width:min(450px,100%);flex:1;max-width:660px;box-shadow:0 2px 9px #17345d0a}
+.driveSearch input{border:0;outline:0;width:100%;padding:13px 10px;background:transparent;font-size:14px}
+.driveShell{display:grid;grid-template-columns:250px minmax(0,1fr);gap:14px;align-items:stretch}
+.drivePanel{border:1px solid var(--line);background:#fff;border-radius:13px;box-shadow:0 3px 18px #1b37640b;overflow:hidden}
+.driveSide{padding:18px 12px;min-height:570px}.driveSide h2{margin:0 8px 14px;font-size:17px}.driveTree{display:flex;flex-direction:column;gap:3px}.driveTree button{display:block;width:100%;border:0;background:transparent;border-radius:8px;text-align:left;padding:9px 8px;font-size:13px;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.driveTree button:hover,.driveTree button.selected{background:#e9f1ff}.driveTree button.selected{font-weight:700}
+.driveWorkspace{min-width:0}.driveToolbar{padding:13px 16px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;border-bottom:1px solid var(--line)}
+.driveCrumb{flex:1;min-width:170px;font-size:13px;color:#4c6285;font-weight:600}.driveActions{display:flex;gap:7px;flex-wrap:wrap}
+.driveBtn{border:1px solid #c9d8f3;background:#fff;color:#1c5cc6;border-radius:8px;padding:9px 12px;font-size:12px;font-weight:700}
+.driveBtn.primary{background:var(--blue);border-color:var(--blue);color:white}.driveBtn:disabled{opacity:.5;cursor:default}
+.driveTabs{display:flex;gap:3px;background:#f3f6fa;border-radius:7px;padding:3px}.driveTabs button{border:0;background:transparent;padding:7px 9px;border-radius:6px;color:#52627b;font-size:12px}.driveTabs button.active{background:#2169ec;color:white}
+.driveMain{display:grid;grid-template-columns:minmax(0,1fr) 245px;min-height:470px}
+.driveListing{padding:17px;min-width:0;background:#f8fbff}.driveGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(145px,1fr));gap:12px}
+.driveTile{background:#fff;border:1px solid var(--line);border-radius:11px;min-height:162px;padding:12px;display:flex;flex-direction:column;gap:6px;position:relative;transition:box-shadow .15s,border-color .15s;text-align:left;min-width:0}
+.driveTile:hover,.driveTile.selected{border-color:#81b2ff;box-shadow:0 4px 15px #2d68b51a}.driveTile .symbol{font-size:48px;line-height:1.25;text-align:center;margin:12px 0 8px}
+.driveTile .name{font-size:12px;font-weight:700;word-break:break-word;color:var(--ink)}.driveTile .meta{font-size:11px;color:var(--muted)}
+.driveList .driveTile{min-height:0;display:grid;grid-template-columns:35px minmax(0,1fr) auto;align-items:center;margin-bottom:7px}.driveList .driveTile .symbol{font-size:27px;margin:0;text-align:left}.driveList .driveTile .meta{text-align:right}
+.driveDetails{border-left:1px solid var(--line);padding:20px 14px;background:#fff}.driveDetails .hero{font-size:48px;text-align:center;margin:12px}.driveDetails h3{font-size:16px;text-align:center;margin:5px 0 8px;overflow-wrap:anywhere}.driveDetails p{text-align:center;font-size:12px}
+.driveDetailActions{display:flex;flex-wrap:wrap;justify-content:center;gap:7px;margin:16px 0}.driveDetailActions button{border:0;border-radius:7px;background:#eef4ff;color:#1d5bc0;padding:9px;font-size:12px}
+.driveInfo{border-top:1px solid var(--line);padding-top:12px;font-size:12px}.driveInfo div{display:flex;justify-content:space-between;gap:9px;margin:12px 0}.driveInfo span:first-child{color:var(--muted)}.driveInfo span:last-child{text-align:right;overflow-wrap:anywhere}
+.driveNotice{font-size:12px;color:#a83e16;padding:0 4px 10px}.driveEmpty{padding:45px 10px;text-align:center;color:#7c8ca5;font-size:13px}
+.driveHiddenFile{display:none}.drivePerm{display:flex;gap:4px;flex-wrap:wrap;margin-top:15px}.drivePerm span{background:#e9f3ff;border-radius:5px;padding:5px 7px;color:#2261b6;font-size:11px}
+@media(max-width:1050px){.driveShell{grid-template-columns:205px minmax(0,1fr)}.driveMain{grid-template-columns:minmax(0,1fr)}.driveDetails{border-left:0;border-top:1px solid var(--line)}}@media(max-width:690px){.driveShell{grid-template-columns:1fr}.driveSide{min-height:0;max-height:220px;overflow:auto}.drive h1{font-size:21px}.driveGrid{grid-template-columns:repeat(2,minmax(0,1fr))}.driveHead{align-items:stretch}.driveSearch{max-width:none}}
+</style>
+{% endblock %}
+{% block content %}
+<main class="drive">
+  <div class="driveHead"><div class="driveTitle"><span class="driveTitleIcon">📁</span><div><h1>Drive Técnico</h1><p>Projetos, documentos, esquemas elétricos, versões e formulários para técnicos em campo.</p></div></div><label class="driveSearch">⌕ <input id="driveSearch" placeholder="Pesquisar pastas e arquivos..." aria-label="Pesquisar pastas e arquivos"></label></div>
+  <div id="driveMessage" class="driveNotice" role="status" aria-live="polite"></div>
+  <div class="driveShell">
+    <aside class="drivePanel driveSide"><h2>Estrutura</h2><div class="driveTree" id="driveTree"></div></aside>
+    <section class="drivePanel driveWorkspace">
+      <div class="driveToolbar"><button class="driveBtn" id="driveBack" title="Voltar">⌂</button><span id="driveBreadcrumb" class="driveCrumb">Implantação de Hardware</span><div class="driveTabs"><button id="driveGridButton" class="active">▦ Grade</button><button id="driveListButton">☷ Lista</button></div></div>
+      <div class="driveToolbar" id="driveActions" hidden><button class="driveBtn" id="driveUploadButton">⇧ Upload</button><button class="driveBtn" id="driveFolderButton">📁 Nova pasta</button><button class="driveBtn primary" id="driveProjectButton">⬡ Novo produto / projeto</button><input type="file" class="driveHiddenFile" id="driveUploadInput" accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.webp,.txt,.csv,.pptx,.zip"></div>
+      <div class="driveMain"><div class="driveListing"><div id="driveItems" class="driveGrid"></div></div><aside class="driveDetails"><div class="hero" id="driveDetailIcon">📁</div><h3 id="driveDetailTitle">Implantação de Hardware</h3><p id="driveDetailSubtitle">Selecione uma pasta ou arquivo</p><div id="driveDetailActions" class="driveDetailActions"></div><div class="driveInfo" id="driveInfo"></div><div class="drivePerm" id="drivePermissions"></div></aside></div>
+    </section>
+  </div>
+</main>
+{% endblock %}
+{% block scripts %}
+<script>
+(()=>{'use strict';
+const $=id=>document.getElementById(id),state={folders:[],files:[],can_manage:false,can_delete:false},selected={kind:'root'},view={folder:null,mode:'grid'};
+const endpoint='/api/implantacao/repositorio',say=x=>$('driveMessage').textContent=x||'';
 const body=x=>({headers:{'Content-Type':'application/json'},body:JSON.stringify(x)});
-async function api(url,options={}){const r=await fetch(url,{credentials:'same-origin',cache:'no-store',...options}),d=await r.json();if(!r.ok||!d.ok)throw Error(d.error||'Erro');return d}
-function button(label,fn){const b=document.createElement('button');b.type='button';b.textContent=label;b.onclick=fn;return b}
-function row(){const e=document.createElement('div');e.style='display:flex;gap:8px;align-items:center;flex-wrap:wrap;border-bottom:1px solid #ddd;padding:10px 0';return e}
-function render(){let f=data.folders.find(x=>x.id===current),parts=[],seen=new Set();while(f&&!seen.has(f.id)){seen.add(f.id);parts.unshift(f.name);f=data.folders.find(x=>x.id===f.parent_id)}$('path').textContent=parts.join(' / ')||'Raiz';$('actions').hidden=!data.can_manage;
-const term=$('searchRepo').value.trim().toLowerCase();$('folders').replaceChildren();$('files').replaceChildren();
-for(const x of data.folders.filter(x=>term?x.name.toLowerCase().includes(term):x.parent_id===current)){const r=row();r.append(button('📁 '+x.name,()=>{current=x.id;$('searchRepo').value='';render()}));if(data.can_manage)r.append(button('Editar',async()=>{const name=prompt('Novo nome',x.name);if(!name)return;try{await api('/api/implantacao/repositorio/pastas/'+x.id,{method:'PATCH',...body({name})});await load()}catch(e){message(e.message)}}));if(data.can_delete)r.append(button('Excluir',async()=>{if(!confirm('Excluir pasta e subpastas?'))return;try{await api('/api/implantacao/repositorio/pastas/'+x.id,{method:'DELETE'});await load()}catch(e){message(e.message)}}));$('folders').append(r)}
-for(const x of data.files.filter(x=>term?x.name.toLowerCase().includes(term):x.folder_id===current)){const r=row(),a=document.createElement('a');a.textContent='📄 '+x.name+' (v'+x.version+')';a.href='/api/implantacao/repositorio/arquivos/'+x.id+'/download';r.append(a);if(data.can_delete)r.append(button('Excluir',async()=>{if(!confirm('Excluir esta versão?'))return;try{await api('/api/implantacao/repositorio/arquivos/'+x.id,{method:'DELETE'});await load()}catch(e){message(e.message)}}));$('files').append(r)}
-}
-async function load(){try{data=await api('/api/implantacao/repositorio');if(current!==null&&!data.folders.some(x=>x.id===current))current=null;render()}catch(e){message(e.message)}}
-$('backFolder').onclick=()=>{current=data.folders.find(x=>x.id===current)?.parent_id??null;$('searchRepo').value='';render()};$('searchRepo').oninput=render;
-$('newFolder').onclick=async()=>{const name=prompt('Nome da pasta');if(!name)return;try{await api('/api/implantacao/repositorio/pastas',{method:'POST',...body({name,parent_id:current})});await load()}catch(e){message(e.message)}};
-$('newProject').onclick=async()=>{const name=prompt('Nome do produto/projeto');if(!name)return;try{await api('/api/implantacao/repositorio/projetos',{method:'POST',...body({name})});await load()}catch(e){message(e.message)}};
-$('uploadRepo').onchange=async e=>{const file=e.target.files[0];if(!file)return;if(current===null){message('Abra uma pasta para enviar arquivos.');e.target.value='';return}const form=new FormData();form.append('folder_id',current);form.append('file',file);try{await api('/api/implantacao/repositorio/arquivos',{method:'POST',body:form});message('Arquivo enviado.');await load()}catch(err){message(err.message)}e.target.value=''};load();})();
-</script>{% endblock %}
+async function api(url,options={}){const r=await fetch(url,{credentials:'same-origin',cache:'no-store',...options}),d=await r.json().catch(()=>({error:'Erro de comunicação'}));if(!r.ok||!d.ok)throw Error(d.error||'Falha na operação');return d}
+const elem=(tag,text,cls)=>{const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e};
+const button=(label,action,cls='driveBtn')=>{const b=elem('button',label,cls);b.type='button';b.addEventListener('click',action);return b};
+const folder=id=>state.folders.find(f=>f.id===id);
+function ancestors(id){const a=[],seen=new Set();let f=folder(id);while(f&&!seen.has(f.id)){a.unshift(f);seen.add(f.id);f=folder(f.parent_id)}return a}
+function fileSymbol(name){const ext=(name.split('.').pop()||'').toLowerCase();return ({pdf:'📕',xls:'📗',xlsx:'📗',doc:'📘',docx:'📘',jpg:'🖼️',jpeg:'🖼️',png:'🖼️',webp:'🖼️',zip:'🗜️',pptx:'📙'})[ext]||'📄'}
+function date(x){if(!x)return '—';const d=new Date(x);return Number.isNaN(d.getTime())?'—':d.toLocaleDateString('pt-BR')}
+function info(label,value){const r=elem('div');r.append(elem('span',label),elem('span',String(value)));$('driveInfo').append(r)}
+function navigate(id){view.folder=id;selected.kind=id===null?'root':'folder';selected.id=id;$('driveSearch').value='';render()}
+function renderTree(){const container=$('driveTree');container.replaceChildren();const root=button('📁 Implantação de Hardware',()=>navigate(null));if(view.folder===null)root.classList.add('selected');container.append(root);
+const visited=new Set();function walk(parent,depth){for(const f of state.folders.filter(x=>x.parent_id===parent)){if(visited.has(f.id))continue;visited.add(f.id);const b=button('📁 '+f.name,()=>navigate(f.id));b.style.paddingLeft=(10+Math.min(depth,7)*15)+'px';if(f.id===view.folder)b.classList.add('selected');container.append(b);walk(f.id,depth+1)}}walk(null,1)}
+function renderDetails(){const item=selected.kind==='file'?state.files.find(x=>x.id===selected.id):selected.kind==='folder'?folder(selected.id):null;const isFile=selected.kind==='file'&&item;
+$('driveDetailIcon').textContent=isFile?fileSymbol(item.name):'📁';$('driveDetailTitle').textContent=item?.name||'Implantação de Hardware';$('driveDetailSubtitle').textContent=isFile?'Documento técnico • Versão '+item.version:item?'Pasta de projeto / documentos':'Raiz do Drive Técnico';
+$('driveDetailActions').replaceChildren();$('driveInfo').replaceChildren();$('drivePermissions').replaceChildren();
+if(isFile){const a=elem('a','⬇ Baixar','driveBtn');a.href=endpoint+'/arquivos/'+item.id+'/download';$('driveDetailActions').append(a);if(state.can_delete)$('driveDetailActions').append(button('🗑 Excluir',()=>deleteFile(item)))}
+if(item&&!isFile){$('driveDetailActions').append(button('📂 Abrir',()=>navigate(item.id)));if(state.can_manage)$('driveDetailActions').append(button('✎ Renomear',()=>renameFolder(item)));if(state.can_delete)$('driveDetailActions').append(button('🗑 Excluir',()=>deleteFolder(item)))}
+if(item){info('Tipo',isFile?'Arquivo':'Pasta');info('Caminho',isFile?ancestors(item.folder_id).map(x=>x.name).join(' / '):ancestors(item.id).map(x=>x.name).join(' / '));if(isFile){info('Versão','v'+item.version);info('Tamanho',Math.ceil((item.size||0)/1024)+' KB')}else{info('Subpastas',state.folders.filter(x=>x.parent_id===item.id).length);info('Arquivos',state.files.filter(x=>x.folder_id===item.id).length)}info('Criado em',date(item.created_at))}
+for(const [label,yes] of [['Visualizar',true],['Adicionar / Editar',state.can_manage],['Excluir',state.can_delete]])if(yes)$('drivePermissions').append(elem('span',label))}
+function tile(item,kind){const b=button('',()=>{selected={kind,id:item.id};renderDetails();renderTiles()},'driveTile');b.dataset.kind=kind;b.dataset.id=item.id;if(selected.kind===kind&&selected.id===item.id)b.classList.add('selected');b.append(elem('span',kind==='folder'?'📁':fileSymbol(item.name),'symbol'),elem('span',item.name,'name'),elem('span',kind==='folder'?state.folders.filter(x=>x.parent_id===item.id).length+' subpastas · '+state.files.filter(x=>x.folder_id===item.id).length+' arquivos':'v'+item.version+' · '+Math.ceil((item.size||0)/1024)+' KB','meta'));b.addEventListener('dblclick',()=>{if(kind==='folder')navigate(item.id);else location.href=endpoint+'/arquivos/'+item.id+'/download'});return b}
+function renderTiles(){const container=$('driveItems'),term=$('driveSearch').value.trim().toLocaleLowerCase('pt-BR');container.className=view.mode==='list'?'driveList':'driveGrid';container.replaceChildren();
+const fs=state.folders.filter(f=>term?f.name.toLocaleLowerCase('pt-BR').includes(term):f.parent_id===view.folder);
+const docs=state.files.filter(f=>term?f.name.toLocaleLowerCase('pt-BR').includes(term):f.folder_id===view.folder);
+for(const f of fs)container.append(tile(f,'folder'));for(const f of docs)container.append(tile(f,'file'));if(!fs.length&&!docs.length)container.append(elem('div',term?'Nenhum resultado encontrado.':'Esta pasta está vazia.','driveEmpty'))}
+function render(){renderTree();$('driveBreadcrumb').textContent=['Implantação de Hardware',...ancestors(view.folder).map(x=>x.name)].join(' › ');$('driveActions').hidden=!state.can_manage;$('driveGridButton').classList.toggle('active',view.mode==='grid');$('driveListButton').classList.toggle('active',view.mode==='list');renderTiles();renderDetails()}
+async function load(){try{Object.assign(state,await api(endpoint));if(view.folder!==null&&!folder(view.folder))view.folder=null;render()}catch(e){say(e.message)}}
+async function renameFolder(f){const name=prompt('Renomear pasta',f.name);if(!name||name===f.name)return;try{await api(endpoint+'/pastas/'+f.id,{method:'PATCH',...body({name})});await load()}catch(e){say(e.message)}}
+async function deleteFolder(f){if(!confirm('Excluir "'+f.name+'" e todas as subpastas e arquivos?'))return;try{await api(endpoint+'/pastas/'+f.id,{method:'DELETE'});if(view.folder===f.id) view.folder=null;selected={kind:'root'};await load()}catch(e){say(e.message)}}
+async function deleteFile(f){if(!confirm('Excluir a versão v'+f.version+' de "'+f.name+'"?'))return;try{await api(endpoint+'/arquivos/'+f.id,{method:'DELETE'});selected={kind:'root'};await load()}catch(e){say(e.message)}}
+$('driveBack').onclick=()=>navigate(folder(view.folder)?.parent_id??null);
+$('driveSearch').oninput=renderTiles;
+$('driveGridButton').onclick=()=>{view.mode='grid';render()};
+$('driveListButton').onclick=()=>{view.mode='list';render()};
+$('driveFolderButton').onclick=async()=>{const name=prompt('Nome da nova pasta');if(!name)return;try{await api(endpoint+'/pastas',{method:'POST',...body({name,parent_id:view.folder})});say('Pasta criada.');await load()}catch(e){say(e.message)}};
+$('driveProjectButton').onclick=async()=>{const name=prompt('Nome do novo produto / projeto (sem subpastas automáticas)');if(!name)return;try{await api(endpoint+'/projetos',{method:'POST',...body({name})});say('Projeto criado sem subpastas automáticas.');await load()}catch(e){say(e.message)}};
+$('driveUploadButton').onclick=()=>{if(view.folder===null){say('Abra uma pasta antes de enviar arquivos.');return}$('driveUploadInput').click()};
+$('driveUploadInput').onchange=async e=>{const f=e.target.files[0];if(!f)return;const form=new FormData();form.append('folder_id',view.folder);form.append('file',f);try{await api(endpoint+'/arquivos',{method:'POST',body:form});say('Arquivo enviado.');await load()}catch(err){say(err.message)}e.target.value=''};
+load();
+})();
+</script>
+{% endblock %}
