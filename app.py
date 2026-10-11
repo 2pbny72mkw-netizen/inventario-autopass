@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.46"
+APP_RELEASE = "V85.46 REV1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -24975,10 +24975,6 @@ def implantation_repo_create_project():
     if existing:return jsonify(ok=False,error='Projeto já existe',id=existing.id),409
     project=ImplantationRepoFolder(parent_id=products.id,name=name,created_by=session.get('user_id'))
     db.session.add(project);db.session.flush()
-    top=ImplantationRepoFolder(parent_id=project.id,name='TOP',created_by=session.get('user_id'))
-    db.session.add(top);db.session.flush()
-    for label in ('Esquema elétrico','Versões'):
-        db.session.add(ImplantationRepoFolder(parent_id=top.id,name=label,created_by=session.get('user_id')))
     _repo_audit('REPO_PROJECT_CREATE','implantation_repo_folder',project.id,name);db.session.commit()
     return jsonify(ok=True,id=project.id)
 
