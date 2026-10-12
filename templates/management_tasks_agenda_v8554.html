@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Agenda de Tarefas{% endblock %}
+{% block content %}
+<section class="dashHero"><h1>Agenda de Tarefas</h1><p>Visão por prazo e responsável · {{ app_release }}</p></section>
+<section class="card">
+  <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
+    <a href="/gestao-tarefas">← Kanban</a><label>Mês <input id="month" type="month"></label>
+    <label>Responsável <select id="owner"><option value="">Todos</option></select></label>
+    <button onclick="load()">Atualizar</button>
+  </div>
+  <div id="status" role="status"></div><div id="agenda"></div>
+</section>
+<script>
+const escapeHtml=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const month=document.getElementById('month'),owner=document.getElementById('owner'),agenda=document.getElementById('agenda'),status=document.getElementById('status');
+month.value=new Date().toISOString().slice(0,7);
+let tasks=[];
+function render(){
+ const m=month.value, uid=owner.value;
+ const list=tasks.filter(t=>(t.due_at||'').startsWith(m)&&(!uid||String(t.assigned_to)===uid))
+   .sort((a,b)=>(a.due_at||'').localeCompare(b.due_at||''));
+ const groups={};
+ for(const t of list)(groups[(t.due_at||'').slice(0,10)]??=[]).push(t);
+ status.textContent=`${list.length} atividades com prazo no mês selecionado`;
+ agenda.innerHTML=Object.entries(groups).map(([date,rows])=>`<div style="margin:12px 0;padding:12px;border:1px solid #dce6f0;border-radius:12px"><h3>${escapeHtml(date.split('-').reverse().join('/'))}</h3>${rows.map(t=>`<div style="padding:8px;border-top:1px solid #eee"><b>${escapeHtml(t.title)}</b> · ${escapeHtml(t.assigned_name)} · ${escapeHtml(t.status)} · ${escapeHtml(t.priority)}</div>`).join('')}</div>`).join('')||'<p>Sem tarefas com prazo nesse período.</p>';
+}
+async function load(){
+ try{
+  const r=await fetch('/api/gestao-tarefas',{credentials:'same-origin'});
+  const data=await r.json();
+  if(!r.ok||!data.ok)throw new Error(data.error||'Erro ao consultar tarefas');
+  tasks=data.tasks||[];
+  const selected=owner.value;
+  owner.innerHTML='<option value="">Todos</option>'+(data.users||[]).map(u=>`<option value="${Number(u.id)}">${escapeHtml(u.name)}</option>`).join('');
+  owner.value=selected;render();
+ }catch(e){status.textContent=e.message;}
+}
+month.addEventListener('change',render);owner.addEventListener('change',render);load();
+</script>
+{% endblock %}

@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Painel Operacional 2.0{% endblock %}
+{% block content %}
+<section class="dashHero"><h1>Painel Operacional 2.0</h1><p>Visão integrada por permissões · {{ app_release }}</p></section>
+<section class="card"><button onclick="load()">Atualizar indicadores</button><span id="info" style="margin-left:12px"></span>
+<div id="cards" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin-top:15px"></div></section>
+<script>
+const cards=document.getElementById('cards'),info=document.getElementById('info');
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function load(){
+ info.textContent='Carregando...';
+ try{
+  const r=await fetch('/api/v8554/indicadores',{credentials:'same-origin'});
+  const j=await r.json();if(!r.ok||!j.ok)throw Error(j.error||'Erro');
+  const titles={field:'Field',implantation:'Implantação',finance:'Financeiro',general:'Visão geral'};
+  let html='';
+  if(j.areas.tasks){
+   const t=j.areas.tasks;
+   html+=`<article class="card"><h3>Gestão de Tarefas</h3><h2>${Number(t.total)}</h2><p>Em atraso: ${Number(t.overdue)}</p><p>Em andamento: ${Number(t.by_status.EM_ANDAMENTO||0)}</p><a href="/gestao-tarefas">Kanban</a> · <a href="/gestao-tarefas/agenda">Agenda</a><p><button onclick="exportTasks()">Exportar CSV em segundo plano</button></p><span id="jobstatus"></span></article>`;
+  }
+  for(const [key,label] of Object.entries(titles))if(j.areas[key]){
+   html+=`<article class="card"><h3>${esc(label)}</h3><p>Indicadores detalhados disponíveis no painel da área.</p><a href="${esc(j.areas[key].url)}">Abrir painel</a></article>`;
+  }
+  cards.innerHTML=html||'<p>Sem áreas habilitadas na Matriz de Permissões.</p>';
+  info.textContent='Atualizado: '+new Date(j.generated_at).toLocaleString('pt-BR');
+ }catch(e){info.textContent=e.message;}
+}
+async function exportTasks(){
+ const el=document.getElementById('jobstatus');el.textContent='Solicitando relatório...';
+ try{
+  let r=await fetch('/api/v8554/relatorios/tarefas',{method:'POST',credentials:'same-origin'});
+  let j=await r.json();if(!r.ok||!j.ok)throw Error(j.error||'Falha');
+  el.textContent='Relatório '+j.id+' aguardando processamento.';
+  const link=document.createElement('a');link.textContent='Consultar andamento';link.href='#';
+  link.onclick=async ev=>{
+   ev.preventDefault();
+   const response=await fetch('/api/v8554/relatorios/'+j.id);
+   const state=await response.json();
+   if(state.status==='DONE')el.innerHTML=`<a href="/api/v8554/relatorios/${j.id}/arquivo">Baixar CSV pronto</a>`;
+   else el.textContent='Status: '+(state.status||state.error||'indisponível');
+  };
+  el.append(' ',link);
+ }catch(e){el.textContent=e.message;}
+}
+load();
+</script>
+{% endblock %}

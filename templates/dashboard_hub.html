@@ -1,6 +1,7 @@
 {% extends "base.html" %}{% block content %}
 <div class="dashHero v44Hero"><div><span class="eyebrow">{{ app_release }} · CENTRAL ANALÍTICA</span><h1>Dashboards</h1><p>Todos os painéis analíticos disponíveis para o seu perfil em um único lugar. As áreas operacionais permanecem em Field, Implantação, RH, Portal, Documentos, Gestão e Financeiro.</p></div></div>
 <style>.dhGrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.dhCard{display:block;text-decoration:none;color:inherit;border-top:4px solid #1d4ed8}.dhCard h2{margin:5px 0}.dhCard b{color:#1d4ed8}.dhGroup{grid-column:1/-1;margin:8px 0 -4px;font-size:12px;font-weight:900;letter-spacing:.08em;color:#64748b}.dhCard:hover{transform:translateY(-1px)}@media(max-width:900px){.dhGrid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:600px){.dhGrid{grid-template-columns:1fr}}</style>
+<p><a class="btn" href="/dashboard/operacional-v2">Painel Operacional 2.0 — V85.54</a></p>
 <div class="dhGrid">
 <div class="dhGroup">GERAL</div>
 {% if can_view('dashboard.general') %}<a class="card dhCard" href="/gerencial"><span class="eyebrow">EXECUTIVO</span><h2>Visão Geral</h2><p class="muted">Indicadores consolidados e leitura executiva.</p><b>Abrir dashboard →</b></a>{% endif %}
