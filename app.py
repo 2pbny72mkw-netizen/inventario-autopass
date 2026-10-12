@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.56 REV1"
+APP_RELEASE = "V85.57"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -3495,6 +3495,17 @@ def a20_bobinas_status():
     return jsonify({'ok':True,'last':_v771_bobbin_json(row) if row else None,
                     'reserve_qty':int(stock.reserve_qty or 0) if stock else 0})
 
+@app.get('/api/mobile/v1/field/bobinas/reserves')
+@mobile_auth_required
+def v8557_mobile_bobbin_reserves():
+    user=request.mobile_user
+    if not _a55_mobile_has(user,'field.bobbins','field.stock_manage'):
+        return jsonify({'ok':False,'error':'Sem permissão para Bobinas.'}),403
+    rows=AtmBobbinAtmStock.query.all()
+    return jsonify({'ok':True,'rows':[{'company':x.company,'line':x.line,
+        'station':x.station,'atm_id':x.atm_id,'reserve_qty':int(x.reserve_qty or 0)}
+        for x in rows],'box_size':6})
+
 @app.post('/api/mobile/v1/field/bobinas/registro')
 @mobile_auth_required
 def a20_bobinas_register():
@@ -3518,10 +3529,17 @@ def a20_bobinas_register():
         company=str(master.get('company') or company).strip()
         line=str(master.get('line') or line).strip()
         station=str(master.get('locality') or station).strip()
+    reserve_mode=(request.form.get('reserve_mode') or 'LEGADO').strip().upper()
+    if reserve_mode not in ('LEGADO','ABASTECIMENTO','INVENTARIO'):
+        return jsonify({'ok':False,'error':'Tipo de movimentação inválido.'}),400
     # A5.8 REV1 — idempotência de registros offline Android.
     # O cliente mantém o mesmo event_id em cada tentativa; nunca duplicar
     # leitura nem ajustar reserva novamente quando o servidor já confirmou.
     client_event_id=(request.form.get('client_event_id') or '').strip()[:80]
+    if reserve_mode != 'LEGADO' and not client_event_id:
+        return jsonify({'ok':False,'error':'Identificador obrigatório para movimentação auditável.'}),400
+    if client_event_id and db.session.get_bind().dialect.name=='postgresql':
+        db.session.execute(text("SELECT pg_advisory_xact_lock(hashtext(:key))"),{'key':'bobbin:'+client_event_id})
     if client_event_id:
         existing=AtmBobbinReading.query.filter_by(technician_id=user.id,client_event_id=client_event_id).first()
         if existing:
@@ -3535,7 +3553,38 @@ def a20_bobinas_register():
     except (ValueError,TypeError):return jsonify({'ok':False,'error':'Quantidade de reservas inválida.'}),400
     if reserve_qty<0:return jsonify({'ok':False,'error':'Reserva não pode ser negativa.'}),400
     stock=_v771_stock(company,line,station,atm,True)
+    if reserve_mode!='LEGADO':
+        db.session.flush()
+        stock=(AtmBobbinAtmStock.query.filter_by(company=company,line=line,station=station,atm_id=atm)
+               .with_for_update().first())
     old_reserve=int(stock.reserve_qty or 0)
+    if reserve_mode=='LEGADO' and reserve_qty>old_reserve:
+        return jsonify({'ok':False,'error':'Abastecimento exige Android A5.8 REV3.4 e saldo em Minha Carga.'}),409
+    if reserve_mode=='ABASTECIMENTO':
+        try:expected=int(request.form.get('reserve_before'))
+        except (TypeError,ValueError):
+            return jsonify({'ok':False,'error':'Reserva anterior não informada.'}),409
+        if expected!=old_reserve:
+            return jsonify({'ok':False,'error':'Reserva ATM alterada no servidor; requer conciliação.'}),409
+        added=reserve_qty-old_reserve
+        if added<=0:
+            return jsonify({'ok':False,'error':'Abastecimento exige aumento da reserva. Para conferência use Inventário.'}),400
+        item=_v771_stock_item('Bobina ATM','UN')
+        db.session.flush()
+        load=(FieldTechnicianLoad.query.filter_by(technician_id=user.id,item_id=item.id)
+              .with_for_update().first())
+        if not load or float(load.qty or 0)<added:
+            return jsonify({'ok':False,'error':'Carga de bobinas insuficiente para abastecer a ATM.'}),409
+        load.qty=float(load.qty or 0)-added
+        load.updated_at=datetime.utcnow()
+        db.session.add(FieldStockMovement(item_id=item.id,movement_type='DESTINACAO',
+            qty=added,technician_id=user.id,destination_company=company,
+            destination_line=line,destination_station=station,destination_asset=atm,
+            justification='Abastecimento reserva ATM (Android offline): '+str(request.form.get('notes') or '')[:300],
+            status='CONCLUIDO'))
+    elif reserve_mode=='INVENTARIO':
+        if not (request.form.get('notes') or '').strip():
+            return jsonify({'ok':False,'error':'Inventário exige observação do material encontrado.'}),400
     stock.reserve_qty=reserve_qty;stock.updated_by=user.id;stock.updated_at=datetime.utcnow()
     db.session.add(stock)
     lat=lon=acc=None;gps_at=None
@@ -3553,8 +3602,8 @@ def a20_bobinas_register():
     if loc and loc.reference_latitude is not None and loc.reference_longitude is not None and lat is not None and lon is not None:
         distance=_v772_haversine_m(lat,lon,loc.reference_latitude,loc.reference_longitude)
     row=AtmBobbinReading(company=company,line=line,station=station,atm_id=atm,
-        percent_available=pct,event_type='TROCA' if replaced else 'LEITURA',
-        bobbin_replaced=replaced,replacement_origin=None,reserve_delta=reserve_qty-old_reserve,
+        percent_available=pct,event_type='INVENTARIO' if reserve_mode=='INVENTARIO' else ('TROCA' if replaced else 'LEITURA'),
+        bobbin_replaced=replaced,replacement_origin=reserve_mode if reserve_mode!='LEGADO' else None,reserve_delta=reserve_qty-old_reserve,
         reserve_after=reserve_qty,notes=(request.form.get('notes') or '').strip(),
         technician_id=user.id,latitude=lat,longitude=lon,gps_accuracy=acc,
         gps_captured_at=gps_at,gps_distance_m=distance,client_event_id=client_event_id or None)
@@ -3888,6 +3937,10 @@ def v8232_mobile_sync_events():
                 qty=float(payload.get('qty') or 0)
                 if not point or not item_stock or not math.isfinite(qty) or not (0 < qty <= 100000):
                     raise ValueError('Localidade, item ou quantidade inválidos.')
+                if payload.get('stock_kind')=='BOBINA_ATM' and (
+                    str(item_stock.description or '').strip().lower()!='bobina atm' or
+                    not float(qty).is_integer() or int(qty)%6!=0):
+                    raise ValueError('Retirada de bobinas deve usar item Bobina ATM e caixas de 6 unidades.')
                 # Lock balance row to serialize withdrawals from concurrent devices.
                 balance=(FieldStockBalance.query.filter_by(point_id=point.id,item_id=item_stock.id)
                          .with_for_update().first())
