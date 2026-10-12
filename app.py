@@ -1,3 +1,4 @@
+import math
 import os
 import smtplib
 from email.message import EmailMessage
@@ -44,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.56"
+APP_RELEASE = "V85.56 REV1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -3879,6 +3880,29 @@ def v8232_mobile_sync_events():
                 # It is NOT a public media URL; access remains restricted to authorized server operators.
                 db.session.add(ArrowActivityExecution(activity_id=aid,user_id=user.id,action='ATENDIMENTO',observation=('ATM '+atm_id+' — ' if atm_id else '')+note,created_at=captured))
                 row.status='APLICADO'; row.applied_at=datetime.utcnow()
+            elif etype=='STOCK_WITHDRAW':
+                if not _a55_mobile_has(user,'field.bobbins','field.stock_manage'):
+                    raise ValueError('Sem permissão para retirar estoque.')
+                point=db.session.get(FieldStockPoint,int(payload.get('point_id') or 0))
+                item_stock=db.session.get(FieldStockItem,int(payload.get('item_id') or 0))
+                qty=float(payload.get('qty') or 0)
+                if not point or not item_stock or not math.isfinite(qty) or not (0 < qty <= 100000):
+                    raise ValueError('Localidade, item ou quantidade inválidos.')
+                # Lock balance row to serialize withdrawals from concurrent devices.
+                balance=(FieldStockBalance.query.filter_by(point_id=point.id,item_id=item_stock.id)
+                         .with_for_update().first())
+                if balance is None or float(balance.qty_good or 0)<qty:
+                    raise ValueError('Saldo insuficiente no servidor; retirada requer conciliação.')
+                balance.qty_good=float(balance.qty_good or 0)-qty
+                balance.updated_by=user.id;balance.updated_at=datetime.utcnow()
+                load=_v771_load(user.id,item_stock)
+                load.qty=float(load.qty or 0)+qty;load.updated_at=datetime.utcnow()
+                db.session.add(FieldStockMovement(item_id=item_stock.id,
+                    movement_type='RETIRADA_DISTRIBUICAO',qty=qty,
+                    source_point_id=point.id,technician_id=user.id,
+                    justification=str(payload.get('justification') or '')[:1000],
+                    status='EM_DISTRIBUICAO'))
+                row.status='APLICADO';row.applied_at=datetime.utcnow()
             elif etype=='GPS_SIGNAL':
                 state=str(payload.get('state') or '').upper()
                 if state not in ('SEM_SINAL','RECUPERADO'):
