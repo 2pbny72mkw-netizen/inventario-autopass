@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.49 REV1"
+APP_RELEASE = "V85.49 REV2"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -6171,6 +6171,34 @@ def hardware_implantation_summary_api():
         by_client[x.client]=by_client.get(x.client,0)+1
     return jsonify({"ok":True,"total":total,"finalized":sum(1 for x in rows if x.status=="FINALIZADO"),"in_progress":sum(1 for x in rows if x.status in ("RASCUNHO","PAUSADO")),"accepted":sum(1 for x in rows if x.client_accepted),"with_pending":sum(1 for x in rows if x.conclusion_status=="CONCLUÍDA COM PENDÊNCIAS"),"by_status":by_status,"by_client":by_client})
 
+@app.get("/api/implantacao-hardware/contatos/sugestoes")
+@hardware_implantation_required
+def hardware_visit_contact_suggestions():
+    """Previously used professional contacts, scoped by client and project."""
+    client=(request.args.get("client") or "").strip()
+    project=(request.args.get("project") or "").strip()
+    term=(request.args.get("q") or "").strip().casefold()
+    if not client or not project or len(term)<2:
+        return jsonify({"ok":True,"contacts":[]})
+    rows=(HardwareFieldVisit.query.filter_by(client=client,project=project)
+          .order_by(HardwareFieldVisit.id.desc()).limit(150).all())
+    found=[];seen=set()
+    for v in rows:
+        try: contacts=json.loads(v.contacts_json or "[]")
+        except (ValueError,TypeError): contacts=[]
+        if v.client_contact:
+            contacts.append({"name":v.client_contact,"company":v.client_company or "","role":v.client_role or "","email":v.client_email or "","phone":v.client_phone or ""})
+        for c in contacts:
+            if not isinstance(c,dict):continue
+            name=str(c.get("name") or "").strip()
+            if not name or term not in (name+" "+str(c.get("company") or "")+" "+str(c.get("email") or "")).casefold():continue
+            key=(name.casefold(),str(c.get("email") or "").casefold())
+            if key in seen:continue
+            seen.add(key)
+            found.append({k:str(c.get(k) or "")[:180] for k in ("name","company","role","email","phone")})
+            if len(found)>=12:return jsonify({"ok":True,"contacts":found})
+    return jsonify({"ok":True,"contacts":found})
+
 @app.post("/api/implantacao-hardware/visitas")
 @hardware_implantation_required
 def hardware_field_visit_save_api():
@@ -6194,6 +6222,21 @@ def hardware_field_visit_save_api():
       client_contact=f.get("client_contact"),client_company=f.get("client_company"),client_role=f.get("client_role"),client_email=f.get("client_email"),client_phone=f.get("client_phone"),
       contacts_json=(f.get("contacts_json") or "[]"),
       client_observations=f.get("client_observations"),client_accepted=f.get("client_accepted")=="1",technician_id=session["user_id"],status=f.get("save_mode") or "RASCUNHO")
+    # One selected contact is the acceptance signer; old standalone fields
+    # remain supported for existing clients and previously saved reports.
+    try: submitted_contacts=json.loads(f.get("contacts_json") or "[]")
+    except (TypeError,ValueError): submitted_contacts=[]
+    if not isinstance(submitted_contacts,list):submitted_contacts=[]
+    chosen=[c for c in submitted_contacts if isinstance(c,dict) and c.get("is_acceptor")]
+    if len(chosen)>1:
+        return jsonify({"ok":False,"error":"Selecione apenas um responsável pelo aceite."}),400
+    if chosen:
+        c=chosen[0]
+        visit.client_contact=str(c.get("name") or "")[:180]
+        visit.client_company=str(c.get("company") or "")[:180]
+        visit.client_role=str(c.get("role") or "")[:120]
+        visit.client_email=str(c.get("email") or "")[:180]
+        visit.client_phone=str(c.get("phone") or "")[:40]
     db.session.add(visit); db.session.flush()
     sig=f.get("signature_data") or ""
     if sig.startswith("data:image/") and "," in sig:
@@ -6208,6 +6251,22 @@ def hardware_field_visit_save_api():
             app.logger.exception("Falha ao persistir assinatura da visita %s",visit.id)
     if visit.status=="FINALIZADO" and not (visit.client_accepted and visit.signature_file):
         db.session.rollback(); return jsonify({"ok":False,"error":"Para finalizar, registre o aceite e a assinatura do cliente."}),400
+    # Technician's handwritten signature uses the existing photo storage
+    # table with a distinct category, avoiding destructive schema migrations.
+    tech_sig=f.get("technician_signature_data") or ""
+    if tech_sig.startswith("data:image/png;base64,"):
+        import base64
+        try:
+            raw=base64.b64decode(tech_sig.split(",",1)[1],validate=True)
+            if len(raw)>2_000_000:raise ValueError("Assinatura acima do limite")
+            name=f"visit_tech_sig_{visit.id}_{uuid.uuid4().hex}.png"
+            if _r2_available():
+                key=f"hardware-visits/{datetime.utcnow().strftime('%Y/%m')}/{name}"
+                _r2_put_bytes(key,raw,"image/png");name="r2__"+key
+            else:(UPLOAD_DIR/name).write_bytes(raw)
+            db.session.add(HardwareFieldVisitPhoto(visit_id=visit.id,stored_name=name,original_name="Assinatura do técnico",category="ASSINATURA_TECNICO"))
+        except Exception:
+            app.logger.exception("Falha ao salvar assinatura do técnico da visita %s",visit.id)
     for ph in request.files.getlist("photos"):
         if not ph or not ph.filename: continue
         ext=Path(secure_filename(ph.filename)).suffix.lower() or ".jpg"; name=f"visit_{visit.id}_{uuid.uuid4().hex}{ext}"
@@ -6287,11 +6346,14 @@ def _visit_media_data_uri(stored_name):
 def hardware_field_visit_report(visit_id):
     v=db.session.get(HardwareFieldVisit,visit_id)
     if not v: return "Relatório não encontrado",404
-    photos=HardwareFieldVisitPhoto.query.filter_by(visit_id=v.id).all()
+    all_media=HardwareFieldVisitPhoto.query.filter_by(visit_id=v.id).order_by(HardwareFieldVisitPhoto.id).all()
+    photos=[p for p in all_media if p.category!="ASSINATURA_TECNICO"]
+    tech_signature=next((p for p in reversed(all_media) if p.category=="ASSINATURA_TECNICO"),None)
+    technician_signature_data_uri=_visit_media_data_uri(tech_signature.stored_name) if tech_signature else None
     photo_media=[{"row":p,"data_uri":_visit_media_data_uri(p.stored_name)} for p in photos]
     signature_data_uri=_visit_media_data_uri(v.signature_file) if v.signature_file else None
     tech=db.session.get(User,v.technician_id)
-    return render_template("hardware_field_visit_report.html",v=v,photos=photos,photo_media=photo_media,signature_data_uri=signature_data_uri,tech=tech)
+    return render_template("hardware_field_visit_report.html",v=v,photos=photos,photo_media=photo_media,signature_data_uri=signature_data_uri,technician_signature_data_uri=technician_signature_data_uri,tech=tech)
 
 def _bytes_human(value):
     try:
