@@ -64,7 +64,7 @@
 <section class="v81SourceHealth" id="v81SourceHealth"><article><small>Programação / realizado</small><b id="v81HealthDaily">—</b></article><article><small>R0050</small><b id="v81HealthR0050">—</b></article><article><small>TB Forte</small><b id="v81HealthTb">—</b></article><article class="primary"><small>Ciclo conciliável até</small><b id="v81HealthUntil">—</b></article><article><small>Completude do período</small><b id="v81HealthPct">—</b></article></section>
 <section class="v81Smart"><div><b>✦ Filtro Inteligente</b><small>Descreva o que deseja analisar. Os cálculos permanecem no backend.</small></div><input id="v81SmartQuery" placeholder="Ex.: quais ATMs estão há mais tempo sem coleta?"/><button id="v81SmartRun">Analisar / Filtrar</button><button id="v81FieldOpen" class="secondary">Monitoramento em Campo</button><span id="v81SmartResult"></span></section>
 <section class="v79Filters" id="monitorFilters">
-<label>Data inicial<input id="fStart" type="date" value="2026-09-01"></label><label>Data final<input id="fEnd" type="date" value="2026-09-30"></label>
+<label>Data inicial<input id="fStart" type="date" ></label><label>Data final<input id="fEnd" type="date" ></label>
 <label>Programação<select id="fProgramming"><option value="">Todas</option><option value="TER">Terça-feira</option><option value="QUA">Quarta-feira</option><option value="QUI">Quinta-feira</option><option value="SEX">Sexta-feira</option></select></label>
 <label>Status<select id="fStatus"><option value="">Todos</option><option value="PROGRAMADA">Programada</option><option value="PENDENTE_COLETA">Pendente de coleta</option><option value="REAGENDADA">Reagendada</option><option value="REALIZADA_NO_PRAZO">Realizada</option><option value="REALIZADA_COM_DIVERGENCIA">Com divergência</option><option value="AGUARDANDO_APURACAO">Aguardando apuração</option><option value="NAO_REALIZADA">Não realizada</option><option value="SEM_PROGRAMACAO">Sem programação</option></select></label>
 <label>Operadora<select id="fCompany"><option value="">Todas</option></select></label><label>Linha<select id="fLine"><option value="">Todas</option></select></label><label>Estação<select id="fStation"><option value="">Todas</option></select></label><label>ATM<input id="fAtm" list="fAtmList" placeholder="Todas · digite ou cole a ATM" autocomplete="off"><datalist id="fAtmList"></datalist></label>
@@ -112,8 +112,22 @@
 <div class="v801Modal" id="v801TxHistoryModal"><div class="v801Card"><div class="v801Head"><div><h2>Histórico de Importações — Transações ATM</h2><p class="muted">Carga incremental: registros já conhecidos são atualizados/ignorados sem duplicação.</p></div><button id="v801TxHistoryClose" class="secondary">Fechar</button></div><div class="v801Body" id="v801TxHistoryBody"></div></div></div>
 <div class="v801Modal" id="v802CycleModal"><div class="v801Card v802Card"><div class="v801Head"><div><span class="eyebrow">V80 REV4 · CONFRONTO DO CICLO</span><h2 id="v802CycleTitle">Transações do ciclo</h2><p class="muted" id="v802CycleSub">Fechamento anterior → fechamento atual.</p></div><button id="v802CycleClose" class="secondary">Fechar</button></div><div class="v801Body" id="v802CycleBody"><div class="v80Loading">Calculando ciclo...</div></div></div></div>
 <div class="v801Modal" id="v81FieldModal"><div class="v801Card"><div class="v801Head"><div><span class="eyebrow">V81 · COORTE DINÂMICA</span><h2>Monitoramento em Campo</h2><p class="muted">Crie grupos e inclua ATMs sem alteração de versão. Encerrar preserva o histórico.</p></div><button id="v81FieldClose" class="secondary">Fechar</button></div><div class="v801Body"><div class="v81FieldCreate"><input id="v81GroupName" placeholder="Nome do grupo, ex.: Operação Assistida Setembro/2026"><button id="v81GroupCreate">Criar grupo</button></div><div id="v81FieldGroups"></div></div></div></div>
+<script>
+// V85.50 REV1: mês corrente no fuso operacional, apenas como filtro inicial.
+// O usuário pode alterar as datas; nenhuma programação é modificada.
+(function(){
+  const parts=new Intl.DateTimeFormat('en-US',{timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());
+  const get=k=>parts.find(x=>x.type===k)?.value;
+  const year=get('year'),month=get('month'),day=get('day');
+  if(year&&month&&day){
+    const start=document.getElementById('fStart'),end=document.getElementById('fEnd');
+    if(start&&!start.value)start.value=`${year}-${month}-01`;
+    if(end&&!end.value)end.value=`${year}-${month}-${day}`;
+  }
+})();
+</script>
 <script src="{{url_for('static',filename='cash_collection.js')}}?v=79.4"></script>
-<script src="{{url_for('static',filename='cash_collection_v79.js')}}?v=85.18.0"></script>
+<script src="{{url_for('static',filename='cash_collection_v79.js')}}?v=85.50.1"></script>
 <script src="{{url_for('static',filename='cash_voucher_v856.js')}}?v=85.6" defer></script>
 
 <style>
