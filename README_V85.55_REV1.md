@@ -1,0 +1,1 @@
+V85.55 REV1: corrige endpoint Android de Bobinas e deduplica por client_event_id/technician_id. Implantar antes do A5.8 REV1. Sem migração nova. Verificar se registros antigos chegaram ao Web antes de reenvio.

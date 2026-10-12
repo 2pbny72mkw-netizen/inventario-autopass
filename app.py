@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.55"
+APP_RELEASE = "V85.55 REV1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -3517,6 +3517,15 @@ def a20_bobinas_register():
         company=str(master.get('company') or company).strip()
         line=str(master.get('line') or line).strip()
         station=str(master.get('locality') or station).strip()
+    # A5.8 REV1 — idempotência de registros offline Android.
+    # O cliente mantém o mesmo event_id em cada tentativa; nunca duplicar
+    # leitura nem ajustar reserva novamente quando o servidor já confirmou.
+    client_event_id=(request.form.get('client_event_id') or '').strip()[:80]
+    if client_event_id:
+        existing=AtmBobbinReading.query.filter_by(technician_id=user.id,client_event_id=client_event_id).first()
+        if existing:
+            return jsonify({'ok':True,'id':existing.id,'duplicate':True,
+                            'reserve_after':existing.reserve_after})
     # V85.44 REV3: evidência fotográfica de Bobinas é opcional também no endpoint Android/offline.
     photo=request.files.get('photo')
     replaced=str(request.form.get('bobbin_replaced') or '').lower() in ('1','true','yes','sim','on')
