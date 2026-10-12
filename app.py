@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.50 REV2"
+APP_RELEASE = "V85.51"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -16140,6 +16140,38 @@ def _v792_cash_payload(start,end,calc_statuses=None):
 
 def _finance_collection_monitor_access():
     return _has_access('finance.collection') or _has_access('finance.monitoring')
+
+# V85.51 — auditoria sob demanda, somente leitura, sem atualização de lançamentos.
+@app.get('/api/financeiro/coletas/v851/auditoria-cronologia')
+@login_required
+def financial_cash_v851_chronology_audit():
+    if not _finance_collection_monitor_access():
+        return jsonify({'ok':False,'error':'Sem permissão.'}),403
+    try:
+        start=date.fromisoformat((request.args.get('start') or '').strip())
+        end=date.fromisoformat((request.args.get('end') or '').strip())
+    except (ValueError,TypeError):
+        return jsonify({'ok':False,'error':'Informe start e end no formato AAAA-MM-DD.'}),400
+    if end<start or (end-start).days>366:
+        return jsonify({'ok':False,'error':'Período inválido; máximo de 366 dias.'}),400
+    try:
+        offset=max(0,int(request.args.get('offset',0)))
+        limit=min(200,max(1,int(request.args.get('limit',100))))
+    except (ValueError,TypeError):
+        return jsonify({'ok':False,'error':'Paginação inválida.'}),400
+    try:
+        from financial_chronology_audit import audit_cash_chronology_rows
+        statuses=_v804_tx_statuses(request.args.get('calc_statuses') if 'calc_statuses' in request.args else None)
+        payload=_v792_cash_payload(start,end,statuses)
+        audit=audit_cash_chronology_rows(payload.get('rows') or [])
+        issues=audit.pop('issues')
+        return jsonify({'ok':True,'release':APP_RELEASE,'start':start.isoformat(),
+                        'end':end.isoformat(),'read_only':True,'summary':audit,
+                        'total_issues':len(issues),'offset':offset,'limit':limit,
+                        'issues':issues[offset:offset+limit]})
+    except Exception:
+        app.logger.exception('V85.51: falha na auditoria financeira')
+        return jsonify({'ok':False,'error':'Falha na auditoria. Consulte os logs do servidor.'}),500
 
 @app.get('/api/financeiro/coletas/v79')
 @login_required
