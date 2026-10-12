@@ -3530,7 +3530,7 @@ def a20_bobinas_register():
         line=str(master.get('line') or line).strip()
         station=str(master.get('locality') or station).strip()
     reserve_mode=(request.form.get('reserve_mode') or 'LEGADO').strip().upper()
-    if reserve_mode not in ('LEGADO','ABASTECIMENTO','INVENTARIO'):
+    if reserve_mode not in ('LEGADO','ABASTECIMENTO','INVENTARIO','LEITURA'):
         return jsonify({'ok':False,'error':'Tipo de movimentação inválido.'}),400
     # A5.8 REV1 — idempotência de registros offline Android.
     # O cliente mantém o mesmo event_id em cada tentativa; nunca duplicar
@@ -3582,6 +3582,18 @@ def a20_bobinas_register():
             destination_line=line,destination_station=station,destination_asset=atm,
             justification='Abastecimento reserva ATM (Android offline): '+str(request.form.get('notes') or '')[:300],
             status='CONCLUIDO'))
+    elif reserve_mode=='LEITURA':
+        # Leitura sem movimentação: exige que o saldo informado seja idêntico
+        # ao saldo real, impedindo qualquer alteração acidental de estoque.
+        if reserve_qty != old_reserve:
+            return jsonify({'ok':False,'error':'Reserva da ATM mudou. Atualize os dados e repita a leitura.'}),409
+        try: expected=int(request.form.get('reserve_before'))
+        except (ValueError,TypeError):
+            return jsonify({'ok':False,'error':'Reserva anterior obrigatória para leitura.'}),409
+        if expected != old_reserve:
+            return jsonify({'ok':False,'error':'Reserva anterior divergente. Atualize a ATM.'}),409
+        if replaced:
+            return jsonify({'ok':False,'error':'Leitura não registra substituição. Use o procedimento de troca.'}),400
     elif reserve_mode=='INVENTARIO':
         if not (request.form.get('notes') or '').strip():
             return jsonify({'ok':False,'error':'Inventário exige observação do material encontrado.'}),400
