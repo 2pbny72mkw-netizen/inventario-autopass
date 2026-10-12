@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.51"
+APP_RELEASE = "V85.54 CONSOLIDADA"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -316,6 +316,20 @@ def _v56b_perf_finish(response):
     return response
 
 
+
+# V85.54 CONSOLIDADA — fila persistente para relatórios de tarefas.
+# O worker é um processo separado; nenhuma thread é criada no processo Web.
+class V8554ReportJob(db.Model):
+    __tablename__ = 'report_jobs_v8554'
+    id = db.Column(db.Integer, primary_key=True)
+    owner_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+    kind = db.Column(db.String(40), nullable=False, default='TASKS_CSV')
+    status = db.Column(db.String(20), nullable=False, default='PENDING', index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    started_at = db.Column(db.DateTime)
+    finished_at = db.Column(db.DateTime)
+    result_csv = db.Column(db.Text)
+    error = db.Column(db.String(500))
 
 # V85.4 - Gestão de Tarefas: vínculo único ao cadastro mestre de usuários.
 class ManagementTask(db.Model):
@@ -24499,6 +24513,82 @@ def v77_bobbins_export():
         for col in sh.columns:sh.column_dimensions[get_column_letter(col[0].column)].width=min(42,max(12,max(len(str(c.value or '')) for c in col)+2))
     bio=io.BytesIO();wb.save(bio);bio.seek(0);return send_file(bio,as_attachment=True,download_name=f"bobinas_atm_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
+
+
+# V85.54 CONSOLIDADA — visão operacional integrada, agenda e exportação assíncrona.
+@app.get('/gestao-tarefas/agenda')
+@login_required
+def v8554_tasks_agenda_page():
+    denied=_v854_task_access('tasks.view')
+    if denied: return denied
+    return render_template('management_tasks_agenda_v8554.html',app_release=APP_RELEASE)
+
+@app.get('/dashboard/operacional-v2')
+@login_required
+def v8554_dashboard_page():
+    if not any(_has_access(p) for p in ('dashboard.general','field.dashboard','implantation.dashboard','finance.dashboard','tasks.view')):
+        return jsonify(ok=False,error='Sem permissão para indicadores operacionais.'),403
+    return render_template('dashboard_operacional_v8554.html',app_release=APP_RELEASE)
+
+@app.get('/api/v8554/indicadores')
+@login_required
+def v8554_indicators_api():
+    # Exibe apenas dados das áreas permitidas pela Matriz.
+    payload={'ok':True,'generated_at':datetime.utcnow().isoformat()+'Z','areas':{}}
+    if _has_access('tasks.view'):
+        q=db.session.query(ManagementTask.status,func.count(ManagementTask.id)).group_by(ManagementTask.status).all()
+        counts={str(k):int(v) for k,v in q}
+        overdue=db.session.query(func.count(ManagementTask.id)).filter(
+            ManagementTask.due_at<datetime.utcnow(),ManagementTask.status!='CONCLUIDA').scalar() or 0
+        payload['areas']['tasks']={'total':sum(counts.values()),'by_status':counts,'overdue':int(overdue)}
+    # Os demais painéis permanecem em suas APIs originais; não misturar
+    # métricas financeiras ou de Field sem aplicar suas regras de acesso.
+    for area,perm,path in (
+        ('field','field.dashboard','/dashboard/field'),
+        ('implantation','implantation.dashboard','/dashboard/implantacao'),
+        ('finance','finance.dashboard','/financeiro/dashboard'),
+        ('general','dashboard.general','/gerencial')):
+        if _has_access(perm):
+            payload['areas'][area]={'url':path,'available':True}
+    return jsonify(payload)
+
+@app.post('/api/v8554/relatorios/tarefas')
+@login_required
+def v8554_enqueue_task_report():
+    denied=_v854_task_access('tasks.view')
+    if denied:return denied
+    uid=int(session['user_id'])
+    # Limite de fila por usuário para evitar consumo ilimitado de banco.
+    queued=V8554ReportJob.query.filter(
+        V8554ReportJob.owner_id==uid,V8554ReportJob.status.in_(['PENDING','RUNNING'])).count()
+    if queued>=3:return jsonify(ok=False,error='Limite de 3 relatórios pendentes por usuário.'),429
+    job=V8554ReportJob(owner_id=uid,kind='TASKS_CSV')
+    db.session.add(job);db.session.commit()
+    return jsonify(ok=True,id=job.id,status=job.status),202
+
+@app.get('/api/v8554/relatorios/<int:job_id>')
+@login_required
+def v8554_task_report_status(job_id):
+    denied=_v854_task_access('tasks.view')
+    if denied:return denied
+    job=db.session.get(V8554ReportJob,job_id)
+    if not job or (job.owner_id!=int(session['user_id']) and not _has_access('tasks.manage')):
+        return jsonify(ok=False,error='Relatório não encontrado.'),404
+    return jsonify(ok=True,id=job.id,status=job.status,error=job.error,
+                   download_url=f'/api/v8554/relatorios/{job.id}/arquivo' if job.status=='DONE' else None)
+
+@app.get('/api/v8554/relatorios/<int:job_id>/arquivo')
+@login_required
+def v8554_task_report_download(job_id):
+    denied=_v854_task_access('tasks.view')
+    if denied:return denied
+    job=db.session.get(V8554ReportJob,job_id)
+    if not job or (job.owner_id!=int(session['user_id']) and not _has_access('tasks.manage')):
+        return jsonify(ok=False,error='Relatório não encontrado.'),404
+    if job.status!='DONE':return jsonify(ok=False,error='Relatório ainda não concluído.'),409
+    return Response('\ufeff'+(job.result_csv or ''),mimetype='text/csv; charset=utf-8',
+                    headers={'Content-Disposition':f'attachment; filename="tarefas_{job.id}.csv"',
+                             'Cache-Control':'no-store'})
 
 # V85.4 — Gestão de Tarefas
 def _v854_task_dict(t, names):
