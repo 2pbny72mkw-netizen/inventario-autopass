@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.49"
+APP_RELEASE = "V85.49 REV1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -22667,7 +22667,15 @@ def v77_bobbins_register():
         db.session.add(ph)
     db.session.commit()
     _v8548_commit_ms=(time.perf_counter()-_v8548_bobbin_started)*1000
-    if has_photo:_v771_cleanup_photos()
+    # REV1: limpeza não bloqueia todo registro; leitura valida expiração.
+    if has_photo:
+        try:
+            app._bobbin_photo_cleanup_counter=getattr(app,'_bobbin_photo_cleanup_counter',0)+1
+            if app._bobbin_photo_cleanup_counter>=24:
+                app._bobbin_photo_cleanup_counter=0
+                _v771_cleanup_photos()
+        except Exception:
+            app.logger.exception('Falha não crítica na limpeza periódica de fotos de bobinas')
     _v8548_total_ms=(time.perf_counter()-_v8548_bobbin_started)*1000
     if _v8548_total_ms>=800:
         app.logger.warning('PERF_V8548 bobinas_register total_ms=%.1f pre_cleanup_ms=%.1f cleanup_ms=%.1f sql_ms=%.1f queries=%d photo=%s',
@@ -22810,11 +22818,20 @@ def v771_bobbin_import():
             db.session.add(AtmBobbinReading(company=x['company'],line=x['line'],station=x['station'],atm_id=x['atm_id'],percent_available=x['percent'],event_type='IMPORTACAO',bobbin_replaced=False,reserve_delta=0,reserve_after=None,notes=note,technician_id=session['user_id'],created_at=x['date']))
         # snapshot dos saldos legados ainda não localizados
         imported_keys=set()
+        # REV1: carrega saldos por empresa em lote; preserva chave e regras.
+        reserve_companies={x['company'] for x in data['reserves']}
+        existing_reserves={}
+        for company in reserve_companies:
+            for existing in AtmBobbinUnlocatedReserve.query.filter_by(company=company).all():
+                existing_reserves[(existing.company,existing.line,existing.station)]=existing
+        reserve_updated_at=datetime.utcnow()
         for x in data['reserves']:
             key=(x['company'],x['line'],x['station']);imported_keys.add(key)
-            row=AtmBobbinUnlocatedReserve.query.filter_by(company=x['company'],line=x['line'],station=x['station']).first()
-            if not row:row=AtmBobbinUnlocatedReserve(company=x['company'],line=x['line'],station=x['station'])
-            row.imported_qty=x['qty'];row.current_qty=x['qty'];row.status='NAO_LOCALIZADA' if x['qty'] else 'CONCILIADA';row.source_sheet=x['sheet'];row.updated_at=datetime.utcnow();db.session.add(row)
+            row=existing_reserves.get(key)
+            if row is None:
+                row=AtmBobbinUnlocatedReserve(company=x['company'],line=x['line'],station=x['station'])
+                existing_reserves[key]=row
+            row.imported_qty=x['qty'];row.current_qty=x['qty'];row.status='NAO_LOCALIZADA' if x['qty'] else 'CONCILIADA';row.source_sheet=x['sheet'];row.updated_at=reserve_updated_at;db.session.add(row)
         item=_v771_stock_item('Bobina ATM','UN')
         for x in data['cabinets']:
             point=_v771_stock_point(f"Armário {x['label']}",'ARMARIO',x['company'],x['line'],x['station']);bal=_v771_balance(point,item);bal.qty_good=x['bobbins'];bal.qty_bad=0;bal.updated_by=session['user_id'];bal.updated_at=datetime.utcnow()
