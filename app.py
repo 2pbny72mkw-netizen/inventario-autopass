@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.49 REV2"
+APP_RELEASE = "V85.50"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -17035,7 +17035,13 @@ def financial_cash_v81_source_health():
         return jsonify(copy.deepcopy(_cached[1]))
     h=_v814_cached_source_health(start,end)
     # completude individual no período: realizado -> R0050 no dia -> TB Forte apurada
-    realized=FinancialCashDailyReport.query.filter(FinancialCashDailyReport.report_date>=start,FinancialCashDailyReport.report_date<=min(end,date.today()),FinancialCashDailyReport.result_status=='RECOLHIDO').all()
+    # V85.50: projetar somente as duas colunas necessárias para a análise.
+    # Mantém a contagem de relatórios (inclusive registros repetidos) intacta.
+    realized=db.session.query(FinancialCashDailyReport.terminal,FinancialCashDailyReport.report_date).filter(
+        FinancialCashDailyReport.report_date>=start,
+        FinancialCashDailyReport.report_date<=min(end,date.today()),
+        FinancialCashDailyReport.result_status=='RECOLHIDO'
+    ).all()
     # V81.3 PERFORMANCE — elimina N+1: duas consultas em lote substituem até 2 queries por coleta realizada.
     keys={(str(x.terminal),x.report_date) for x in realized}
     terminals=sorted({k[0] for k in keys})
