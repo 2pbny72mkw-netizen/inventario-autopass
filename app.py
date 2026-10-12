@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.48"
+APP_RELEASE = "V85.49"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -9506,10 +9506,15 @@ def user_photo(user_id):
         else:
             obj = r2_client().get_object(Bucket=os.environ["R2_BUCKET_NAME"],Key=user.photo_url)
             raw=obj["Body"].read(); mime=obj.get("ContentType") or "image/jpeg"
-            if len(_V8543R1_USER_PHOTO_CACHE) >= 128:
-                oldest=min(_V8543R1_USER_PHOTO_CACHE,key=lambda k:_V8543R1_USER_PHOTO_CACHE[k][0])
-                _V8543R1_USER_PHOTO_CACHE.pop(oldest,None)
-            _V8543R1_USER_PHOTO_CACHE[cache_key]=(now,raw,mime)
+            # V85.49: limite de memória para fotos originais (não só contagem).
+            # Imagens grandes não entram no cache e são liberadas após a resposta.
+            max_photo_cache_bytes=16*1024*1024
+            if len(raw)<=max_photo_cache_bytes//2:
+                used=sum(len(entry[1]) for entry in _V8543R1_USER_PHOTO_CACHE.values())
+                while _V8543R1_USER_PHOTO_CACHE and (len(_V8543R1_USER_PHOTO_CACHE)>=64 or used+len(raw)>max_photo_cache_bytes):
+                    oldest=min(_V8543R1_USER_PHOTO_CACHE,key=lambda k:_V8543R1_USER_PHOTO_CACHE[k][0])
+                    used-=len(_V8543R1_USER_PHOTO_CACHE.pop(oldest)[1])
+                _V8543R1_USER_PHOTO_CACHE[cache_key]=(now,raw,mime)
         if request.args.get("thumb")=="1":
             thumb=_v8548_cached_thumbnail(str(user.photo_url),raw) if mime.startswith('image/') else None
             if thumb:
@@ -22426,6 +22431,28 @@ def _v772_resolve_stock_location(label):
     return {'company':'','line':'','station':cleaned or str(label or '').strip()}
 
 # V85.48 — cache apenas do JSON oficial imutável, nunca dos overrides editáveis.
+# V85.49: Redis opcional e fail-open; apenas dados oficiais públicos/imutáveis.
+# Nunca armazenar resposta autenticada, permissões ou dados financeiros neste cache.
+_V8549_REDIS_CLIENT=None
+_V8549_REDIS_ATTEMPTED=False
+_V8549_REDIS_LOCK=threading.Lock()
+def _v8549_redis():
+    global _V8549_REDIS_CLIENT,_V8549_REDIS_ATTEMPTED
+    if _V8549_REDIS_ATTEMPTED:return _V8549_REDIS_CLIENT
+    with _V8549_REDIS_LOCK:
+        if not _V8549_REDIS_ATTEMPTED:
+            _V8549_REDIS_ATTEMPTED=True
+            url=os.getenv('REDIS_URL','').strip()
+            if url:
+                try:
+                    import redis
+                    _V8549_REDIS_CLIENT=redis.Redis.from_url(url,socket_connect_timeout=0.25,socket_timeout=0.25,decode_responses=True)
+                    _V8549_REDIS_CLIENT.ping()
+                except Exception:
+                    _V8549_REDIS_CLIENT=None
+                    app.logger.warning('V85.49: Redis indisponível; cache local mantido')
+    return _V8549_REDIS_CLIENT
+
 _V8548_ATM_FILE_CACHE = {'stamp':None,'rows':None}
 _V8548_ATM_FILE_LOCK = threading.Lock()
 def _v8548_official_json():
@@ -22433,7 +22460,21 @@ def _v8548_official_json():
     stamp=(path.stat().st_mtime_ns,path.stat().st_size)
     with _V8548_ATM_FILE_LOCK:
         if _V8548_ATM_FILE_CACHE['stamp'] != stamp:
-            parsed=json.loads(path.read_text(encoding='utf-8'))
+            parsed=None
+            cache=_v8549_redis()
+            # Hash do conteúdo faz a invalidação automática em novos deploys.
+            raw=path.read_bytes()
+            redis_key='autopass:v8549:atm-official:'+hashlib.sha256(raw).hexdigest()
+            if cache:
+                try:
+                    cached=cache.get(redis_key)
+                    if cached is not None:parsed=json.loads(cached)
+                except Exception:pass
+            if parsed is None:
+                parsed=json.loads(raw.decode('utf-8'))
+                if cache and isinstance(parsed,list):
+                    try:cache.setex(redis_key,86400,json.dumps(parsed,ensure_ascii=False))
+                    except Exception:pass
             _V8548_ATM_FILE_CACHE['rows']=parsed if isinstance(parsed,list) else []
             _V8548_ATM_FILE_CACHE['stamp']=stamp
         # Shallow copy prevents mutation of cached official data by downstream code.
@@ -23678,7 +23719,7 @@ def v7781_bobbin_technician_history():
     day_rows=base_q.order_by(AtmBobbinReading.created_at.desc()).all()
     q=base_q
     if tech_id:q=q.filter(AtmBobbinReading.technician_id==tech_id)
-    rows=q.order_by(AtmBobbinReading.created_at.desc()).all()
+    rows=q.order_by(AtmBobbinReading.created_at.desc()).all() if tech_id else day_rows
     ids={x.technician_id for x in day_rows if x.technician_id}
     all_ids=[x[0] for x in db.session.query(AtmBobbinReading.technician_id).filter(AtmBobbinReading.technician_id.isnot(None)).distinct().all()]
     users={u.id:u.name for u in User.query.filter(User.id.in_(set(all_ids)|ids)).all()} if (all_ids or ids) else {}
@@ -23692,7 +23733,19 @@ def v7781_bobbin_technician_history():
     point_ids={x.source_point_id for x in moves if x.source_point_id}|{x.destination_point_id for x in moves if x.destination_point_id}
     points={x.id:x.name for x in FieldStockPoint.query.filter(FieldStockPoint.id.in_(point_ids)).all()} if point_ids else {}
     item_ids={x.item_id for x in moves};items={x.id:x.description for x in FieldStockItem.query.filter(FieldStockItem.id.in_(item_ids)).all()} if item_ids else {}
-    out=[_v771_bobbin_json(x,users) for x in rows]
+    # V85.49: fotos e estoque em lote, sem consultas N+1 por leitura.
+    reading_ids=[x.id for x in rows]
+    photo_by_reading={}
+    for offset in range(0,len(reading_ids),500):
+        for ph in AtmBobbinPhoto.query.filter(AtmBobbinPhoto.reading_id.in_(reading_ids[offset:offset+500])).order_by(AtmBobbinPhoto.id.desc()).all():
+            photo_by_reading.setdefault(ph.reading_id,ph)
+    atm_values=list({str(x.atm_id or '') for x in rows})
+    stock_by_key={}
+    for offset in range(0,len(atm_values),500):
+        for stock in AtmBobbinAtmStock.query.filter(AtmBobbinAtmStock.atm_id.in_(atm_values[offset:offset+500])).all():
+            stock_by_key[(str(stock.company or ''),str(stock.line or ''),str(stock.station or ''),str(stock.atm_id or ''))]=stock
+    now=datetime.utcnow()
+    out=[_v771_bobbin_json(x,users,stock_by_key=stock_by_key,photo_by_reading=photo_by_reading,now=now) for x in rows]
     atm_ids={str(x.atm_id or '') for x in rows};stations={(x.company,x.line,x.station) for x in rows}
     summary={'records':len(rows),'atms':len(atm_ids),'stations':len(stations),'replacements':sum(bool(x.bobbin_replaced) for x in rows),'readings':sum(not bool(x.bobbin_replaced) for x in rows),'reserve_changes':sum((x.reserve_delta or 0)!=0 for x in rows),'movements':len(moves)}
     movement_rows=[{'id':x.id,'created_at':x.created_at.isoformat()+'Z' if x.created_at else None,'technician_id':x.technician_id,'technician':users.get(x.technician_id,''),'type':x.movement_type,'qty':x.qty,'item':items.get(x.item_id,''),'source':points.get(x.source_point_id,''),'destination':points.get(x.destination_point_id,'') or x.destination_station or '', 'asset':x.destination_asset or '', 'justification':x.justification or '', 'status':x.status} for x in moves]

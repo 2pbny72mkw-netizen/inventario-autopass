@@ -20,3 +20,6 @@ qrcode[pil]>=7.4,<9
 
 # V85.13 REV2 - driver usado por URLs postgresql+psycopg://
 psycopg[binary]>=3.2,<4
+
+# V85.49 - Redis opcional; sem REDIS_URL opera em memoria local
+redis>=5.0,<7
