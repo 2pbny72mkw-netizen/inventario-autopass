@@ -3490,9 +3490,14 @@ def a20_bobinas_status():
     line=(request.args.get('line') or '').strip()
     station=(request.args.get('station') or '').strip()
     atm=(request.args.get('atm') or '').strip()
-    row=AtmBobbinReading.query.filter_by(company=company,line=line,station=station,atm_id=atm).order_by(AtmBobbinReading.created_at.desc()).first()
+    # REV8: historical operator/line/station labels can differ from today's catalog.
+    # The ATM identifier is the stable key for its latest installed-roll reading.
+    row=(AtmBobbinReading.query.filter_by(atm_id=atm)
+         .order_by(AtmBobbinReading.created_at.desc(),AtmBobbinReading.id.desc()).first()) if atm else None
     stock=_v771_stock(company,line,station,atm)
     return jsonify({'ok':True,'last':_v771_bobbin_json(row) if row else None,
+                    'last_percent_available':int(row.percent_available) if row and row.percent_available is not None else None,
+                    'last_reading_at':row.created_at.isoformat()+'Z' if row and row.created_at else None,
                     'reserve_qty':int(stock.reserve_qty or 0) if stock else 0})
 
 @app.get('/api/mobile/v1/field/bobinas/reserves')
