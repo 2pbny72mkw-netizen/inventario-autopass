@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.55 REV1"
+APP_RELEASE = "V85.56"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -3785,7 +3785,7 @@ def v8232_mobile_sync_events():
                 else:
                     lat=float(payload.get('latitude')); lon=float(payload.get('longitude')); acc=float(payload.get('accuracy')) if payload.get('accuracy') is not None else None
                     if not (-90<=lat<=90 and -180<=lon<=180): raise ValueError('Coordenadas fora do intervalo válido.')
-                    pos=TechnicianPosition(user_id=user.id,latitude=lat,longitude=lon,accuracy=acc,captured_at=captured,source='android_offline')
+                    pos=TechnicianPosition(user_id=user.id,latitude=lat,longitude=lon,accuracy=acc,captured_at=captured,source=('android_'+str(payload.get('source') or 'unknown')[:35]))
                     db.session.add(pos); db.session.flush()
                     try: _v7331_record_station_passage(user,lat,lon,acc,captured,previous_position=None)
                     except Exception: app.logger.exception('V82.32: falha não bloqueante ao correlacionar estação do GPS mobile')
@@ -3878,6 +3878,13 @@ def v8232_mobile_sync_events():
                 # The existing event envelope preserves evidence and metadata without schema changes.
                 # It is NOT a public media URL; access remains restricted to authorized server operators.
                 db.session.add(ArrowActivityExecution(activity_id=aid,user_id=user.id,action='ATENDIMENTO',observation=('ATM '+atm_id+' — ' if atm_id else '')+note,created_at=captured))
+                row.status='APLICADO'; row.applied_at=datetime.utcnow()
+            elif etype=='GPS_SIGNAL':
+                state=str(payload.get('state') or '').upper()
+                if state not in ('SEM_SINAL','RECUPERADO'):
+                    raise ValueError('Estado GPS inválido.')
+                # A ausência de sinal é evidência de diagnóstico, não uma posição.
+                # Mantém-se o envelope original para auditoria, com timestamp e usuário.
                 row.status='APLICADO'; row.applied_at=datetime.utcnow()
             elif etype=='HEARTBEAT':
                 row.status='APLICADO'; row.applied_at=datetime.utcnow()
@@ -25846,3 +25853,19 @@ def implantation_attendance_complete(attendance_id):
         raise
     return jsonify(ok=True,row=_att_payload(row,True),download_url='/api/implantacao/repositorio/arquivos/'+str(file.id)+'/download')
 # === /V85.47 ===
+
+
+# V85.56 — Auditoria de perda/retorno de localização por usuário autenticado.
+@app.get('/api/mobile/v1/gps/signal-history')
+@mobile_auth_required
+def v8556_mobile_gps_signal_history():
+    user=request.mobile_user
+    if not user or not user.active:
+        return jsonify({'ok':False,'error':'Usuário não autorizado.'}),403
+    rows=(MobileSyncEvent.query.filter_by(user_id=user.id,event_type='GPS_SIGNAL')
+          .order_by(MobileSyncEvent.captured_at.desc()).limit(100).all())
+    return jsonify({'ok':True,'release':APP_RELEASE,'events':[
+        {'event_id':r.event_id,'captured_at':r.captured_at.isoformat()+'Z' if r.captured_at else None,
+         'received_at':r.received_at.isoformat()+'Z' if r.received_at else None,
+         'status':r.status,'detail':json.loads(r.payload_json or '{}')}
+        for r in rows]})
