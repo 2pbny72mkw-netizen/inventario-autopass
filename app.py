@@ -44,7 +44,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.50 REV1"
+APP_RELEASE = "V85.50 REV2"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -15897,26 +15897,62 @@ def _v792_cash_payload(start,end,calc_statuses=None):
         _interval_totals[_key]=_result
         return _result
     def _fast_cycle_summary(_ev):
-        if not _ev or not _v805_is_valid_closure(_ev): return {"available":False,"reason":"NAO_FECHAMENTO_VALIDO","cycle_valid":False}
+        if not _ev or not _v805_is_valid_closure(_ev):
+            return {"available":False,"reason":"NAO_FECHAMENTO_VALIDO","cycle_valid":False}
         _final=_fast_closure_info(_ev)
-        # V85.4: mesmo fechamento anterior do detalhamento: coleta válida anterior,
-        # não um R0050 intermediário sem coleta associada. Sem consulta N+1.
-        _candidates=[]
-        if _final:
-            for _previous_event in _closure_events_by_terminal.get(_ev.terminal,[]):
-                if _previous_event.id == _ev.id: continue
-                _previous_info=_fast_closure_info(_previous_event)
-                if _previous_info and _previous_info['at'] < _final['at']:
-                    _candidates.append((_previous_info['at'],_previous_event,_previous_info))
+        if not _final:
+            return {"available":False,"reason":"SEM_FECHAMENTO_FINAL","cycle_valid":False}
+        # REV2: quando o fechamento atual é oficial R0050, a referência
+        # anterior é o R0050 cronologicamente anterior do MESMO terminal,
+        # inclusive se a coleta intermediária não tiver evento manual válido.
+        # Registros manuais sem R0050 continuam com a regra anterior.
         _prev=None
-        if _candidates:
-            _candidates.sort(key=lambda item:item[0],reverse=True)
-            _prev={**_candidates[0][2], 'event_id':_candidates[0][1].id}
-        if not _final or not _prev: return {"available":False,"reason":"SEM_FECHAMENTO_ANTERIOR","cycle_valid":True,"final_source":(_final or {}).get("source","MANUAL")}
+        _legacy_prev=None
+        for _previous_event in _closure_events_by_terminal.get(_ev.terminal,[]):
+            if _previous_event.id==_ev.id: continue
+            _previous_info=_fast_closure_info(_previous_event)
+            if _previous_info and _previous_info['at']<_final['at']:
+                if _legacy_prev is None or _previous_info['at']>_legacy_prev['at']:
+                    _legacy_prev={**_previous_info,'event_id':_previous_event.id}
+        if _final.get('source')=='R0050':
+            _sys_candidates=[_x for _x in _sys_by_terminal.get(_ev.terminal,[])
+                             if _x['at']<_final['at']]
+            if _sys_candidates:
+                _sys_prev=max(_sys_candidates,key=lambda x:x['at'])
+                _prev={**_sys_prev,'event_id':None}
+                # Associar o ID da coleta apenas quando o fechamento coincide.
+                for _pe in _closure_events_by_terminal.get(_ev.terminal,[]):
+                    _pi=_fast_closure_info(_pe)
+                    if _pi and _pi.get('source')=='R0050' and _pi['at']==_sys_prev['at']:
+                        _prev['event_id']=_pe.id
+                        break
+        else:
+            _prev=_legacy_prev
+        if not _prev:
+            return {"available":False,"reason":"SEM_FECHAMENTO_ANTERIOR","cycle_valid":True,
+                    "final_source":_final.get('source'),"chronology_audit":{"status":"SEM_REFERENCIA_R0050" if _final.get('source')=='R0050' else 'MANUAL_SEM_REFERENCIA'}}
         _statuses=list(calc_statuses if calc_statuses is not None else ["A","V"])
-        _count,_total=_fast_interval_agg(_ev.terminal,_prev["at"],_final["at"])
+        _count,_total=_fast_interval_agg(_ev.terminal,_prev['at'],_final['at'])
         _decl=None if _ev.declared_amount is None else round(float(_ev.declared_amount),2)
-        return {"available":True,"cycle_valid":True,"initial_id":_prev.get("event_id"),"final_id":_ev.id,"initial_at":_prev["at"].isoformat(),"final_at":_final["at"].isoformat(),"initial_source":_prev.get("source"),"final_source":_final.get("source"),"initial_collection_code":_prev.get("collection_code") or "","final_collection_code":_final.get("collection_code") or "","manual_final_at":_ev.end_at.isoformat(),"final_diff_minutes":_final.get("diff_minutes",0),"transaction_count":int(_count),"transaction_sum":round(float(_total),2),"difference_tx_declared":None if _decl is None else round(float(_total)-_decl,2),"difference_tx_processed":None if _ev.processed_amount is None else round(float(_total)-float(_ev.processed_amount),2),"calc_statuses":_statuses}
+        _audit_status='OK'
+        if _final.get('source')!='R0050': _audit_status='REFERENCIA_MANUAL'
+        elif _legacy_prev and _legacy_prev['at']!=_prev['at']:
+            _audit_status='REFERENCIA_ANTERIOR_CORRIGIDA'
+        return {"available":True,"cycle_valid":True,"initial_id":_prev.get('event_id'),"final_id":_ev.id,
+                "initial_at":_prev['at'].isoformat(),"final_at":_final['at'].isoformat(),
+                "initial_source":_prev.get('source'),"final_source":_final.get('source'),
+                "initial_collection_code":_prev.get('collection_code') or "",
+                "final_collection_code":_final.get('collection_code') or "",
+                "manual_final_at":_ev.end_at.isoformat(),"final_diff_minutes":_final.get('diff_minutes',0),
+                "transaction_count":int(_count),"transaction_sum":round(float(_total),2),
+                "difference_tx_declared":None if _decl is None else round(float(_total)-_decl,2),
+                "difference_tx_processed":None if _ev.processed_amount is None else round(float(_total)-float(_ev.processed_amount),2),
+                "calc_statuses":_statuses,
+                "chronology_audit":{"status":_audit_status,
+                    "previous_reference_at":_legacy_prev['at'].isoformat() if _legacy_prev else None,
+                    "selected_reference_at":_prev['at'].isoformat(),
+                    "reference_source":_prev.get('source'),
+                    "previous_collection_code":_prev.get('collection_code') or ''}}
     def _fast_system_cycle_summary(_terminal,_final):
         _prev=_fast_prev_info(_terminal,_final["at"]); _statuses=list(calc_statuses if calc_statuses is not None else ["A","V"])
         if not _prev: return {"available":False,"reason":"SEM_FECHAMENTO_ANTERIOR","cycle_valid":True,"final_source":"R0050"}
@@ -16079,9 +16115,27 @@ def _v792_cash_payload(start,end,calc_statuses=None):
             "branch":sch.branch if sch else "","address":sch.collection_address if sch else "","has_schedule":bool(sch),"planned":occurrences,"extra":extra,"next_collection":next_occ,
             "last_collection":None if not last else {"date":last.collection_date.isoformat(),"time":last.end_at.strftime("%H:%M"),"declared_amount":last.declared_amount,"processed_amount":last.processed_amount,"difference":None if last.declared_amount is None or last.processed_amount is None else round(float(last.processed_amount)-float(last.declared_amount),2),"note":last.monitoring_note or ""},
             "days_since_last":days_since_last,"failed_count":int(failed_counts.get(t,0) or 0),"criticality":criticality,"criticality_score":criticality_score,"criticality_reason":reason,"last_failed_note":latest_failed.note if latest_failed else ""})
+    # Auditoria global, calculada somente na leitura; sem alterações no banco.
+    _chronology_counts={"checked":0,"corrected":0,"manual":0,"without_reference":0}
+    _affected_terminals=set()
+    for _row in rows:
+        for _item in (_row.get('planned') or [])+(_row.get('extra') or []):
+            _cy=_item.get('transaction_cycle') or {}
+            _audit=_cy.get('chronology_audit') or {}
+            if not _audit: continue
+            _chronology_counts['checked']+=1
+            _status=_audit.get('status')
+            if _status=='REFERENCIA_ANTERIOR_CORRIGIDA':
+                _chronology_counts['corrected']+=1
+                _affected_terminals.add(_row['terminal'])
+            elif _status=='REFERENCIA_MANUAL': _chronology_counts['manual']+=1
+            elif _status in ('SEM_REFERENCIA_R0050','MANUAL_SEM_REFERENCIA'):
+                _chronology_counts['without_reference']+=1
+    _chronology_counts['affected_atms']=len(_affected_terminals)
     summary={"official_total":602,"cash_card_total":len(official),"scheduled_atms":sum(1 for x in rows if x["has_schedule"]),"without_schedule":sum(1 for x in rows if not x["has_schedule"]),"planned":len(planned_all),
         "done":sum(1 for _,o in planned_all if o["status"].startswith("REALIZADA")),"missing":sum(1 for _,o in planned_all if o["status"]=="NAO_REALIZADA"),"divergences":sum(1 for _,o in planned_all if o["status"]=="REALIZADA_COM_DIVERGENCIA"),"awaiting":sum(1 for _,o in planned_all if o["status"]=="AGUARDANDO_APURACAO"),
         "critical":sum(1 for x in rows if x.get("criticality")=="CRITICA"),"high":sum(1 for x in rows if x.get("criticality")=="ALTA"),"recurrent":sum(1 for x in rows if x.get("failed_count",0)>=2),"maintenance":sum(1 for x in rows if x.get("criticality_reason")=="MANUTENCAO")}
+    summary['chronology_audit']=_chronology_counts
     return {"ok":True,"release":APP_RELEASE,"start":start.isoformat(),"end":end.isoformat(),"summary":summary,"rows":rows}
 
 def _finance_collection_monitor_access():
