@@ -1,0 +1,6 @@
+Web V85.63 — Publicar antes do Android Build 92.
+GET /api/mobile/v1/field/bobinas/offline-snapshot?page=1&limit=100
+Autenticação Bearer e permissão de Bobinas. Resposta paginada com total, pages, returned e rows.
+Inclui todas as ATMs instaladas da base oficial, mesmo sem leitura histórica; nesse caso percent_available ausente.
+O aplicativo valida a quantidade de registros antes de confirmar a pré-carga.
+Não altera banco de dados, movimentações ou permissões.
