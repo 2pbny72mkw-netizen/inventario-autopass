@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.60"
+APP_RELEASE = "V85.61"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -3484,30 +3484,40 @@ def a20_bobinas_options():
 @app.get('/api/mobile/v1/field/bobinas/atm-status')
 @mobile_auth_required
 def a20_bobinas_status():
+    # V85.61: ATM identifier is the stable lookup key; an unknown level is null, never zero.
     if 'field.bobbins' not in _user_access_set(request.mobile_user):
-        return jsonify({'ok':False,'error':'Sem permissão para Bobinas.'}),403
+        return jsonify({'ok':False,'error':'Sem permissão para Bobinas.','release':APP_RELEASE}),403
     company=(request.args.get('company') or '').strip()
     line=(request.args.get('line') or '').strip()
     station=(request.args.get('station') or '').strip()
     atm=(request.args.get('atm') or '').strip()
-    # REV8: historical operator/line/station labels can differ from today's catalog.
-    # The ATM identifier is the stable key for its latest installed-roll reading.
-    row=(AtmBobbinReading.query.filter_by(atm_id=atm)
-         .order_by(AtmBobbinReading.created_at.desc(),AtmBobbinReading.id.desc()).first()) if atm else None
-    stock=_v771_stock(company,line,station,atm)
-    return jsonify({'ok':True,'last':_v771_bobbin_json(row) if row else None,
-                    'last_percent_available':int(row.percent_available) if row and row.percent_available is not None else None,
-                    'last_reading_at':row.created_at.isoformat()+'Z' if row and row.created_at else None,
-                    'reserve_qty':int(stock.reserve_qty or 0) if stock else 0,
-                    'reading_found':bool(row and row.percent_available is not None),
-                    'reading_source':'server' if row and row.percent_available is not None else 'no_history',
-                    'release':APP_RELEASE})
+    if not atm:
+        return jsonify({'ok':False,'error':'Informe a ATM para consultar a última leitura.','release':APP_RELEASE}),400
+    try:
+        row=(AtmBobbinReading.query.filter_by(atm_id=atm)
+             .order_by(AtmBobbinReading.created_at.desc(),AtmBobbinReading.id.desc()).first())
+        stock=_v771_stock(company,line,station,atm)
+        level=int(row.percent_available) if row and row.percent_available is not None else None
+        return jsonify({'ok':True,'last':_v771_bobbin_json(row) if row else None,
+                        'last_percent_available':level,
+                        'last_reading_at':row.created_at.isoformat()+'Z' if row and row.created_at else None,
+                        'reserve_qty':int(stock.reserve_qty or 0) if stock else 0,
+                        'reading_found':level is not None,
+                        'reading_source':'server' if level is not None else 'no_history',
+                        'lookup_atm':atm,'release':APP_RELEASE,
+                        'diagnostics':{'endpoint':'bobinas/atm-status','lookup':'atm_id',
+                                       'history_found':bool(row),'percent_found':level is not None}})
+    except Exception:
+        app.logger.exception('V85.61 bobinas status lookup failed for atm=%s',atm)
+        db.session.rollback()
+        return jsonify({'ok':False,'error':'Falha ao consultar histórico da ATM no servidor.',
+                        'error_code':'BOBINAS_STATUS_QUERY_FAILED','release':APP_RELEASE,'lookup_atm':atm}),500
 
 @app.get('/api/mobile/v1/diagnostics/version')
 @mobile_auth_required
 def mobile_diagnostics_version_v8560():
     return jsonify({'ok':True,'release':APP_RELEASE,'dashboard_release':DASHBOARD_RELEASE,
-                    'bobinas_atm_status':'v85.60','percent_field':'last_percent_available'})
+                    'bobinas_atm_status':'v85.61','percent_field':'last_percent_available'})
 
 @app.get('/api/mobile/v1/field/bobinas/reserves')
 @mobile_auth_required

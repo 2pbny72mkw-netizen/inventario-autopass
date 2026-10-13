@@ -1,0 +1,1 @@
+V85.61: endpoint mobile bobinas/atm-status retorna diagnóstico de consulta, null para percentual sem histórico e HTTP 500 JSON em falha de banco. Publicar Web antes do Android Build 90.
