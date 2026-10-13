@@ -1,0 +1,14 @@
+AUTOPASS WEB V85.71 ENXUTA — deploy sobre a versão existente
+
+Arquivos alterados: app.py
+
+Novidade: eventos SHIFT_START / SHIFT_END no endpoint de sincronização offline,
+com horário original capturado no aparelho, GPS, idempotência por event_id,
+autoria por token e dispositivo, e trilha MobileSyncEvent (received_at).
+
+Atenção: os eventos de ponto rejeitados exigem conciliação administrativa;
+o sistema não altera silenciosamente horários conflitantes. O registro
+exige localização GPS recente e confirmação de identidade no Android.
+
+Publicar a Web antes de distribuir o Android Build 96.
+Faça backup antes do deploy. Não executar migrações destrutivas.

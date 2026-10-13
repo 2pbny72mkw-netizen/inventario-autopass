@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.67"
+APP_RELEASE = "V85.71"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -3362,6 +3362,27 @@ def v8233_mobile_login():
     journey=_v72_journey_status(user)
     if not journey.get('allowed'):
         return jsonify({'ok':False,'error':'Acesso fora da jornada requer autorização.','code':'OUTSIDE_JOURNEY','reason':journey.get('reason')}),403
+    # V85.69: a mesma unidade pode atender usuários diferentes, mas somente
+    # após logout e encerramento do turno anterior. Tokens de outro usuário
+    # no aparelho impedem troca silenciosa de identidade.
+    now=datetime.utcnow()
+    active_other=MobileSessionToken.query.filter(
+        MobileSessionToken.device_id==device_id,
+        MobileSessionToken.user_id!=user.id,
+        MobileSessionToken.revoked_at.is_(None),
+        MobileSessionToken.expires_at>now
+    ).first()
+    if active_other:
+        return jsonify({'ok':False,'code':'DEVICE_SESSION_ACTIVE','error':'Há uma sessão de outro usuário neste dispositivo. Encerre a sessão anterior antes de entrar.'}),409
+    dev_existing=MobileDevice.query.filter_by(device_id=device_id).first()
+    if dev_existing and dev_existing.user_id!=user.id:
+        open_shift=MobileWorkShift.query.filter_by(user_id=dev_existing.user_id,ended_at=None).first()
+        if open_shift:
+            return jsonify({'ok':False,'code':'DEVICE_SHIFT_OPEN','error':'O usuário anterior possui turno aberto. Finalize o turno antes de trocar de usuário.'}),409
+        # O vínculo acompanha o último usuário autenticado, sem excluir histórico.
+        old_user_id=dev_existing.user_id
+        dev_existing.user_id=user.id
+        db.session.add(AuditEvent(user_id=user.id,event_type='MOBILE_DEVICE_USER_SWITCH',entity_type='mobile_device',entity_id=device_id,detail=f'Usuário anterior ID {old_user_id}; novo usuário ID {user.id}'))
     dev,err=_v8232_touch_device(user,device_id,data)
     if err: db.session.rollback(); return jsonify({'ok':False,'error':err}),409
     # Revoga tokens anteriores do mesmo usuário/aparelho para limitar sessões órfãs.
@@ -3376,10 +3397,16 @@ def v8233_mobile_login():
 @app.post('/api/mobile/v1/auth/logout')
 @mobile_auth_required
 def v8233_mobile_logout():
+    user=request.mobile_user
+    if MobileWorkShift.query.filter_by(user_id=user.id,ended_at=None).first():
+        return jsonify({'ok':False,'code':'SHIFT_OPEN','error':'Finalize seu turno antes de encerrar a sessão.'}),409
     raw=_v8233_mobile_token_from_request()
     if raw:
         row=MobileSessionToken.query.filter_by(token_hash=_v8233_token_hash(raw),revoked_at=None).first()
-        if row: row.revoked_at=datetime.utcnow(); db.session.commit()
+        if row:
+            row.revoked_at=datetime.utcnow()
+            db.session.add(AuditEvent(user_id=user.id,event_type='MOBILE_LOGOUT',entity_type='mobile_device',entity_id=row.device_id,detail='Sessão encerrada; dispositivo liberado para novo login'))
+            db.session.commit()
     return jsonify({'ok':True})
 
 
@@ -3789,7 +3816,8 @@ def a55_mobile_stock_withdraw():
     if not _a55_mobile_has(user,'field.bobbins','field.stock_manage'): return jsonify({'ok':False,'error':'Sem permissão.'}),403
     try: point=db.session.get(FieldStockPoint,int(d.get('point_id') or 0));item=db.session.get(FieldStockItem,int(d.get('item_id') or 0));qty=float(d.get('qty') or 0)
     except Exception:return jsonify({'ok':False,'error':'Dados inválidos.'}),400
-    if not point or not item or qty<=0:return jsonify({'ok':False,'error':'Estoque, item e quantidade são obrigatórios.'}),400
+    if not point or not item or not math.isfinite(qty) or qty<=0 or qty>100000:return jsonify({'ok':False,'error':'Estoque, item e quantidade são obrigatórios.'}),400
+    if str(item.description or '').strip().lower()!='bobina atm' or not qty.is_integer():return jsonify({'ok':False,'error':'Retirada permitida somente para Bobina ATM em unidades inteiras.'}),400
     bal=_v771_balance(point,item)
     if float(bal.qty_good or 0)<qty:return jsonify({'ok':False,'error':'Saldo insuficiente no armário.'}),409
     before=float(bal.qty_good or 0);bal.qty_good=before-qty;bal.updated_by=user.id;bal.updated_at=datetime.utcnow();load=_v771_load(user.id,item);load.qty=float(load.qty or 0)+qty;load.updated_at=datetime.utcnow();db.session.add(FieldStockMovement(item_id=item.id,movement_type='RETIRADA_DISTRIBUICAO',qty=qty,source_point_id=point.id,technician_id=user.id,justification=str(d.get('justification') or ''),status='EM_DISTRIBUICAO'));db.session.commit();return jsonify({'ok':True,'stock_after':bal.qty_good,'load_after':load.qty})
@@ -3895,6 +3923,9 @@ def v8232_mobile_sync_events():
     data=request.get_json(silent=True) or {}; device_id=str(data.get('device_id') or '').strip()[:120]
     events=data.get('events') or []
     if not device_id: return jsonify({'ok':False,'error':'device_id obrigatório.'}),400
+    token_row=MobileSessionToken.query.filter_by(token_hash=_v8233_token_hash(_v8233_mobile_token_from_request()),revoked_at=None).first()
+    if not token_row or token_row.device_id!=device_id:
+        return jsonify({'ok':False,'error':'Dispositivo diferente do autenticado.','code':'DEVICE_MISMATCH'}),403
     if not isinstance(events,list): return jsonify({'ok':False,'error':'events deve ser uma lista.'}),400
     if len(events)>100: return jsonify({'ok':False,'error':'Máximo de 100 eventos por lote.'}),413
     dev,err=_v8232_touch_device(user,device_id,data)
@@ -3918,7 +3949,35 @@ def v8232_mobile_sync_events():
         row=MobileSyncEvent(event_id=eid,device_id=device_id,user_id=user.id,event_type=etype,captured_at=captured,received_at=now,payload_json=json.dumps(payload,ensure_ascii=False),status='RECEBIDO')
         db.session.add(row)
         try:
-            if etype=='GPS_POSITION':
+            if etype in ('SHIFT_START','SHIFT_END'):
+                # Offline clock-in/out: immutable capture time, server receipt time in MobileSyncEvent.
+                # A device event_id is idempotent; do not replace captured time with upload time.
+                try:
+                    lat=float(payload['latitude']); lon=float(payload['longitude'])
+                    acc=float(payload.get('accuracy') or 0)
+                except (ValueError, TypeError, KeyError):
+                    raise ValueError('GPS válido é obrigatório para marcação offline.')
+                if not (-90<=lat<=90 and -180<=lon<=180 and 0<=acc<=100000):
+                    raise ValueError('Coordenadas ou precisão GPS inválidas.')
+                if captured>datetime.utcnow()+timedelta(minutes=5):
+                    raise ValueError('Relógio do dispositivo adiantado; requer conferência.')
+                if etype=='SHIFT_START':
+                    open_shift=MobileWorkShift.query.filter_by(user_id=user.id,ended_at=None).first()
+                    if open_shift:
+                        raise ValueError('Já existe turno aberto. Solicite conciliação ao gestor.')
+                    x=MobileWorkShift(user_id=user.id,started_at=captured,start_latitude=lat,
+                        start_longitude=lon,start_accuracy=acc,start_auth='ANDROID_OFFLINE')
+                    db.session.add(x)
+                else:
+                    x=MobileWorkShift.query.filter_by(user_id=user.id,ended_at=None).order_by(MobileWorkShift.started_at.desc()).first()
+                    if not x or captured<x.started_at:
+                        raise ValueError('Saída offline sem entrada anterior válida; requer conciliação.')
+                    x.ended_at=captured;x.end_latitude=lat;x.end_longitude=lon
+                    x.end_accuracy=acc;x.end_auth='ANDROID_OFFLINE'
+                db.session.add(TechnicianPosition(user_id=user.id,latitude=lat,longitude=lon,
+                    accuracy=acc,captured_at=captured,source='mobile_shift_offline'))
+                row.status='APLICADO';row.applied_at=datetime.utcnow()
+            elif etype=='GPS_POSITION':
                 if not bool(user.gps_history_enabled):
                     row.status='IGNORADO'; row.error_message='Histórico GPS desabilitado para o usuário.'
                 else:
@@ -4028,8 +4087,8 @@ def v8232_mobile_sync_events():
                     raise ValueError('Localidade, item ou quantidade inválidos.')
                 if payload.get('stock_kind')=='BOBINA_ATM' and (
                     str(item_stock.description or '').strip().lower()!='bobina atm' or
-                    not float(qty).is_integer() or int(qty)%6!=0):
-                    raise ValueError('Retirada de bobinas deve usar item Bobina ATM e caixas de 6 unidades.')
+                    not float(qty).is_integer()):
+                    raise ValueError('Retirada de bobinas ATM deve usar quantidade inteira de unidades.')
                 # Lock balance row to serialize withdrawals from concurrent devices.
                 balance=(FieldStockBalance.query.filter_by(point_id=point.id,item_id=item_stock.id)
                          .with_for_update().first())
@@ -22806,6 +22865,25 @@ def _v8566_retire_aliases(names,item,user_id):
         count+=1
     return count
 
+def _v8568_deduplicate_canonical_points(names,item,user_id):
+    """Desativa pontos de mesmo nome canônico; preserva IDs e movimentos históricos."""
+    retired=0
+    for official in set(names):
+        canonical_name=f'Armário {official}'
+        matches=FieldStockPoint.query.filter(func.lower(FieldStockPoint.name)==canonical_name.lower()).order_by(FieldStockPoint.id).all()
+        if len(matches)<2:continue
+        keeper=next((x for x in matches if x.active),matches[0])
+        keeper.active=True
+        for point in matches:
+            if point.id==keeper.id or not point.active:continue
+            point.active=False
+            balance=FieldStockBalance.query.filter_by(point_id=point.id,item_id=item.id).first()
+            if balance:
+                balance.qty_good=0;balance.qty_bad=0;balance.updated_by=user_id;balance.updated_at=datetime.utcnow()
+            db.session.add(AuditEvent(user_id=user_id,event_type='BOBINAS_PONTO_DUPLICADO_DESATIVADO',entity_type='field_stock_points',entity_id=str(point.id),detail=json.dumps({'nome':point.name,'destino_id':keeper.id},ensure_ascii=False)))
+            retired+=1
+    return retired
+
 def _v772_resolve_stock_location(label):
     cleaned=_v772_clean_stock_location(label)
     loc=_v772_location_match(station=cleaned)
@@ -23151,6 +23229,7 @@ def _v771_parse_import(upload):
                 c+=2
     # Armários: conversão por caixa configurável (padrão operacional atual = 6). Aceita espaços/acentuação no nome da aba.
     cabinet_sheet=next((name for name in wb.sheetnames if _v771_norm(str(name).strip()) in ('ARMARIOS','ARMARIO')),None)
+    cabinet_invalid=[]
     if cabinet_sheet:
         ws=wb[cabinet_sheet];rows=ws.iter_rows(values_only=True)
         try:next(rows)
@@ -23159,11 +23238,23 @@ def _v771_parse_import(upload):
             vals=list(row);label=str(vals[0] if vals and vals[0] is not None else '').strip()
             if not label:continue
             if _v771_norm(label) in ('LOCAL','LOCALIDADE','ARMARIO','ARMARIOS','CD','NOME','TOTALCAIXAS','TOTALGERAL','TOTAL'):continue
-            try:boxes=int(float(vals[1] or 0)) if len(vals)>1 else 0
-            except Exception:boxes=0
-            try:loose=int(float(vals[2] or 0)) if len(vals)>2 else 0
-            except Exception:loose=0
-            if boxes<0 or loose<0:continue
+            # V85.68: textos como "mude aba azul" NUNCA equivalem a zero.
+            # Não converter reservas por estação em caixas do armário.
+            def _cabinet_qty(raw):
+                if raw is None or (isinstance(raw,str) and not raw.strip()):return 0
+                try:
+                    value=float(raw)
+                    if not math.isfinite(value) or value<0 or not value.is_integer():raise ValueError('não inteiro')
+                    return int(value)
+                except (ValueError,TypeError,OverflowError):return None
+            boxes=_cabinet_qty(vals[1] if len(vals)>1 else None)
+            loose=_cabinet_qty(vals[2] if len(vals)>2 else None)
+            if boxes is None or loose is None:
+                cabinet_invalid.append({'aba':ws.title,'linha':rnum,'localidade':label,
+                    'caixas':str(vals[1] if len(vals)>1 else ''),
+                    'avulsas':str(vals[2] if len(vals)>2 else ''),
+                    'motivo':'Quantidade não numérica: a linha não pode ser gravada como zero.'})
+                continue
             if boxes==0 and loose==0 and _v771_norm(label) in ('QUANTIDADETOTAL','TOTAL'):continue
             label=_v8566_cabinet_name(label)
             resolved=_v772_resolve_stock_location(label)
@@ -23183,7 +23274,7 @@ def _v771_parse_import(upload):
     dedup={}
     for x in readings:dedup[x['atm_id']]=x
     readings=list(dedup.values())
-    return {'readings':readings,'reserves':reserves,'cabinets':cabinets,'cabinet_conflicts':cabinet_conflicts,'cabinet_source':cabinet_source,'cabinet_sheet':cabinet_sheet,'warnings':warnings,'divergences':divergences,'sheets':used_sheets,'official_total':len(official['rows']) or 602,'official_installed':len(official['installed']) or 590,'official_stock':len(official['stock']) or 12}
+    return {'readings':readings,'reserves':reserves,'cabinets':cabinets,'cabinet_conflicts':cabinet_conflicts,'cabinet_invalid':cabinet_invalid,'cabinet_source':cabinet_source,'cabinet_sheet':cabinet_sheet,'warnings':warnings,'divergences':divergences,'sheets':used_sheets,'official_total':len(official['rows']) or 602,'official_installed':len(official['installed']) or 590,'official_stock':len(official['stock']) or 12}
 
 @app.post('/api/bobinas/importar')
 @login_required
@@ -23196,6 +23287,8 @@ def v771_bobbin_import():
         app.logger.exception('V77.7: falha ao ler planilha de bobinas')
         return jsonify({'ok':False,'error':f'Não foi possível ler a planilha: {exc}'}),400
     if data.get('cabinet_conflicts'):return jsonify({'ok':False,'error':'Aliases de armários com saldos divergentes na planilha; nenhuma alteração realizada.','conflicts':data['cabinet_conflicts']}),409
+    if data.get('cabinet_invalid'):
+        return jsonify({'ok':False,'error':'Há quantidades não numéricas na aba Armários. Nenhum saldo foi alterado. Jabaquara contém referência à aba Azul, que não informa a quantidade de caixas do armário.','invalid_rows':data['cabinet_invalid'],'release':APP_RELEASE}),422
     if not data.get('cabinet_sheet'):
         return jsonify({'ok':False,'error':'Aba Armários não encontrada. Nenhum saldo será alterado.'}),400
     mode=(request.form.get('mode') or 'preview').lower()
@@ -23273,6 +23366,7 @@ def v771_bobbin_import():
         for x in data['cabinets']:
             point=_v771_stock_point(f"Armário {x['label']}",'ARMARIO',x['company'],x['line'],x['station']);point.active=True;bal=_v771_balance(point,item);bal.qty_good=x['bobbins'];bal.qty_bad=0;bal.updated_by=session['user_id'];bal.updated_at=datetime.utcnow()
         preview['aliases_desativados']=_v8566_retire_aliases([x['label'] for x in data['cabinets']],item,session['user_id'])
+        preview['duplicados_exatos_desativados']=_v8568_deduplicate_canonical_points([x['label'] for x in data['cabinets']],item,session['user_id'])
         # V85.64: saldos M16 na MESMA transação das bobinas; repetir a importação substitui saldos.
         m16_point=_v771_stock_point('M16','CENTRAL','METRÔ','Linha 2 - Verde','Brigadeiro / M16')
         for mx in m16_rows:
@@ -23305,10 +23399,12 @@ def v771_bobbin_cabinets_import_compat():
     try:data=_v771_parse_import(f)
     except Exception as exc:return jsonify({'ok':False,'error':str(exc)}),400
     if data.get('cabinet_conflicts'):return jsonify({'ok':False,'error':'Aliases de armários com saldos divergentes','conflicts':data['cabinet_conflicts']}),409
+    if data.get('cabinet_invalid'):return jsonify({'ok':False,'error':'Quantidades não numéricas em Armários; nenhuma alteração realizada.','invalid_rows':data['cabinet_invalid']}),422
     item=_v771_stock_item('Bobina ATM','UN');n=0
     for x in data['cabinets']:
         point=_v771_stock_point(f"Armário {x['label']}",'ARMARIO',x['company'],x['line'],x['station']);point.active=True;bal=_v771_balance(point,item);bal.qty_good=x['bobbins'];bal.qty_bad=0;bal.updated_by=session['user_id'];bal.updated_at=datetime.utcnow();n+=1
     _v8566_retire_aliases([x['label'] for x in data['cabinets']],item,session['user_id'])
+    _v8568_deduplicate_canonical_points([x['label'] for x in data['cabinets']],item,session['user_id'])
     db.session.commit();return jsonify({'ok':True,'cabinets':n,'bobbins':sum(x['bobbins'] for x in data['cabinets']),'rule':f"1 caixa = {max(1,int(app.config.get('BOBBIN_ROLLS_PER_BOX',6)))} bobinas",'release':APP_RELEASE})
 
 @app.post('/api/bobinas/conciliar')
