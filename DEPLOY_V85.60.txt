@@ -1,0 +1,1 @@
+Web V85.60: APP_RELEASE corrigida, rota autenticada /api/mobile/v1/diagnostics/version e leitura_found/source no endpoint de status ATM. Implantar antes do Android Build 89.
