@@ -1,0 +1,16 @@
+Autopass V85.67 ENXUTA — implantação incremental sobre V85.66
+
+Arquivos: app.py e templates/bobbin_dashboard_v77.html.
+1. Backup do banco de dados antes da importação.
+2. Substitua os arquivos nos caminhos originais e faça deploy no Render.
+3. Verifique APP_RELEASE V85.67.
+4. Na importação única, valide a prévia cabinet_reconciliation:
+   - CD Ana Rosa: 37 caixas = 222 bobinas (se a planilha selecionada tiver 37).
+   - CD Terminal Jabaquara: 7 caixas = 42 bobinas (se a planilha selecionada tiver 7).
+   - Confirme que a aba Armários está presente, sem conflitos de aliases.
+5. Confirme a gravação. O snapshot substitui os saldos de bobinas das localidades da planilha;
+   aliases são desativados preservando seus IDs/histórico.
+6. Reabra o dashboard e confira um único registro por armário.
+
+IMPORTANTE: não altera o arquivo Excel; o resultado depende dos valores efetivos do arquivo escolhido.
+Não homologado em produção; sem migração de banco.

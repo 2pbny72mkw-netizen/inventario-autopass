@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.66"
+APP_RELEASE = "V85.67"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -22774,8 +22774,9 @@ def _v772_clean_stock_location(label):
     raw=re.sub(r'^(CD|ESTA[CÇ][AÃ]O|TERMINAL)\s+','',raw,flags=re.I).strip()
     return raw
 
-# V85.66 — nomes oficiais de armários definidos pela operação.
+# V85.67 — nomes oficiais de armários definidos pela operação.
 _V8566_CABINETS = {
+ 'CDANAROSA':'CD Ana Rosa','CDESTACAOANAROSA':'CD Ana Rosa','ESTACAOANAROSA':'CD Ana Rosa',
  'CDEUCALIPTOS':'CD Estação Eucaliptos','CDESTACAOEUCALIPTOS':'CD Estação Eucaliptos','ESTACAOEUCALIPTOS':'CD Estação Eucaliptos',
  'CDSAOMATEUS':'CD Estação São Mateus','CDESTACAOSAOMATEUS':'CD Estação São Mateus','ESTACAOSAOMATEUS':'CD Estação São Mateus',
  'ATMSJABAQUARA':'CD Terminal Jabaquara','CDJABAQUARA':'CD Terminal Jabaquara','CDTERMINALJABAQUARA':'CD Terminal Jabaquara',
@@ -22787,20 +22788,23 @@ def _v8566_cabinet_name(label):
  return _V8566_CABINETS.get(_v771_norm(name),name)
 
 def _v8566_retire_aliases(names,item,user_id):
- """Desativa aliases históricos sem excluir seus movimentos; saldo do snapshot novo prevalece."""
- targets=set(names);count=0
- for point in FieldStockPoint.query.filter_by(active=True,point_type='ARMARIO').all():
-  canonical=_v8566_cabinet_name(point.name)
-  if canonical not in targets or point.name==f'Armário {canonical}':continue
-  point.active=False
-  point.notes=((point.notes or '')+'\nV85.66: alias substituído por Armário '+canonical).strip()
-  balance=FieldStockBalance.query.filter_by(point_id=point.id,item_id=item.id).first()
-  old=float(balance.qty_good or 0) if balance else 0
-  if balance:
-   balance.qty_good=0;balance.qty_bad=0;balance.updated_by=user_id;balance.updated_at=datetime.utcnow()
-  db.session.add(AuditEvent(user_id=user_id,event_type='BOBINAS_ALIAS_DESATIVADO',entity_type='field_stock_points',entity_id=str(point.id),detail=json.dumps({'alias':point.name,'destino':canonical,'saldo_anterior':old},ensure_ascii=False)))
-  count+=1
- return count
+    """Desativa aliases legados, sem apagar histórico nem saldos de outros itens.
+
+    O ponto canônico tem nome exatamente 'Armário <nome oficial>'.
+    """
+    targets={_v8566_cabinet_name(n) for n in names};count=0
+    for point in FieldStockPoint.query.filter(FieldStockPoint.active.is_(True),FieldStockPoint.point_type.in_(['ARMARIO','CD','ESTOQUE'])).all():
+        canonical=_v8566_cabinet_name(point.name)
+        if canonical not in targets or point.name==f'Armário {canonical}':continue
+        point.active=False
+        point.notes=((point.notes or '')+'\nV85.67: alias substituído por Armário '+canonical).strip()
+        balance=FieldStockBalance.query.filter_by(point_id=point.id,item_id=item.id).first()
+        old=float(balance.qty_good or 0) if balance else 0
+        if balance:
+            balance.qty_good=0;balance.qty_bad=0;balance.updated_by=user_id;balance.updated_at=datetime.utcnow()
+        db.session.add(AuditEvent(user_id=user_id,event_type='BOBINAS_ALIAS_DESATIVADO',entity_type='field_stock_points',entity_id=str(point.id),detail=json.dumps({'alias':point.name,'destino':canonical,'saldo_anterior':old},ensure_ascii=False)))
+        count+=1
+    return count
 
 def _v772_resolve_stock_location(label):
     cleaned=_v772_clean_stock_location(label)
@@ -23154,6 +23158,7 @@ def _v771_parse_import(upload):
         for rnum,row in enumerate(rows,start=2):
             vals=list(row);label=str(vals[0] if vals and vals[0] is not None else '').strip()
             if not label:continue
+            if _v771_norm(label) in ('LOCAL','LOCALIDADE','ARMARIO','ARMARIOS','CD','NOME','TOTALCAIXAS','TOTALGERAL','TOTAL'):continue
             try:boxes=int(float(vals[1] or 0)) if len(vals)>1 else 0
             except Exception:boxes=0
             try:loose=int(float(vals[2] or 0)) if len(vals)>2 else 0
@@ -23171,11 +23176,14 @@ def _v771_parse_import(upload):
             cabinet_conflicts.append({'armario':cabinet['label'],'saldos':[previous['bobbins'],cabinet['bobbins']]})
         else:cabinet_by_name[key]=cabinet
     cabinets=list(cabinet_by_name.values())
+    # V85.67: auditoria da fonte; números são os da planilha, nunca do saldo antigo.
+    cabinet_source=[{'localidade':x['label'],'caixas':x['boxes'],'avulsas':x['loose'],'total_bobinas':x['bobbins']} for x in cabinets]
+
     # deduplica leituras por ATM: a última ocorrência na planilha é o retrato usado
     dedup={}
     for x in readings:dedup[x['atm_id']]=x
     readings=list(dedup.values())
-    return {'readings':readings,'reserves':reserves,'cabinets':cabinets,'cabinet_conflicts':cabinet_conflicts,'warnings':warnings,'divergences':divergences,'sheets':used_sheets,'official_total':len(official['rows']) or 602,'official_installed':len(official['installed']) or 590,'official_stock':len(official['stock']) or 12}
+    return {'readings':readings,'reserves':reserves,'cabinets':cabinets,'cabinet_conflicts':cabinet_conflicts,'cabinet_source':cabinet_source,'cabinet_sheet':cabinet_sheet,'warnings':warnings,'divergences':divergences,'sheets':used_sheets,'official_total':len(official['rows']) or 602,'official_installed':len(official['installed']) or 590,'official_stock':len(official['stock']) or 12}
 
 @app.post('/api/bobinas/importar')
 @login_required
@@ -23188,11 +23196,13 @@ def v771_bobbin_import():
         app.logger.exception('V77.7: falha ao ler planilha de bobinas')
         return jsonify({'ok':False,'error':f'Não foi possível ler a planilha: {exc}'}),400
     if data.get('cabinet_conflicts'):return jsonify({'ok':False,'error':'Aliases de armários com saldos divergentes na planilha; nenhuma alteração realizada.','conflicts':data['cabinet_conflicts']}),409
+    if not data.get('cabinet_sheet'):
+        return jsonify({'ok':False,'error':'Aba Armários não encontrada. Nenhum saldo será alterado.'}),400
     mode=(request.form.get('mode') or 'preview').lower()
     outside=[d for d in data['divergences'] if d.get('type')=='ATM_NAO_OFICIAL']
     stock_div=[d for d in data['divergences'] if d.get('type')=='ATM_EM_ESTOQUE']
     other_div=[d for d in data['divergences'] if d.get('type') not in ('ATM_NAO_OFICIAL','ATM_EM_ESTOQUE')]
-    preview={'sheets':data['sheets'],'records_found':len(data['readings'])+len(data['divergences']),'atm_readings':len(data['readings']),'official_total':data['official_total'],'official_installed':data['official_installed'],'official_stock':data['official_stock'],'divergences_count':len(data['divergences']),'outside_official_count':len(outside),'stock_atm_count':len(stock_div),'blocking_divergences_count':len(other_div),'load_ready':bool(data['readings']),'divergences':data['divergences'][:100],'unlocated_reserve_total':sum(x['qty'] for x in data['reserves']),'stations_with_unlocated_reserve':len(data['reserves']),'cabinet_points':len(data['cabinets']),'cabinet_bobbins_total':sum(x['bobbins'] for x in data['cabinets']),'warnings':data['warnings'][:100]}
+    preview={'sheets':data['sheets'],'records_found':len(data['readings'])+len(data['divergences']),'atm_readings':len(data['readings']),'official_total':data['official_total'],'official_installed':data['official_installed'],'official_stock':data['official_stock'],'divergences_count':len(data['divergences']),'outside_official_count':len(outside),'stock_atm_count':len(stock_div),'blocking_divergences_count':len(other_div),'load_ready':bool(data['readings']),'divergences':data['divergences'][:100],'unlocated_reserve_total':sum(x['qty'] for x in data['reserves']),'stations_with_unlocated_reserve':len(data['reserves']),'cabinet_points':len(data['cabinets']),'cabinet_bobbins_total':sum(x['bobbins'] for x in data['cabinets']),'cabinet_source':data['cabinet_source'],'cabinet_boxes_total':sum(x['boxes'] for x in data['cabinets']),'cabinet_loose_total':sum(x['loose'] for x in data['cabinets']),'warnings':data['warnings'][:100]}
     # V85.64: a mesma planilha original alimenta Bobinas/Armários e M16, sem alterar o Excel.
     # M16 é o retrato das colunas BOM e RUIM até o marcador ITENS RETIRADOS.
     m16_rows=[];m16_duplicates=[];m16_seen={}
@@ -23218,6 +23228,16 @@ def v771_bobbin_import():
     except Exception as exc:return jsonify({'ok':False,'error':f'Erro ao ler M16: {exc}'}),400
     if m16_duplicates:return jsonify({'ok':False,'error':'Itens repetidos na aba M16; nenhuma alteração realizada.','duplicates':m16_duplicates}),409
     if not m16_rows:return jsonify({'ok':False,'error':'Nenhum item de estoque encontrado na aba M16.'}),400
+    # A prévia inclui o valor existente para conferir diferenças antes de gravar.
+    bobitem=FieldStockItem.query.filter(func.lower(FieldStockItem.description)=='bobina atm').first()
+    active_points=FieldStockPoint.query.filter(FieldStockPoint.active.is_(True),FieldStockPoint.point_type.in_(['ARMARIO','CD','ESTOQUE'])).all()
+    existing_by_canon={}
+    for point in active_points:
+        canon=_v8566_cabinet_name(point.name)
+        if canon not in {x['label'] for x in data['cabinets']}:continue
+        bal=FieldStockBalance.query.filter_by(point_id=point.id,item_id=bobitem.id).first() if bobitem else None
+        existing_by_canon.setdefault(canon,[]).append({'id':point.id,'nome_atual':point.name,'bobinas':int(float(bal.qty_good or 0)) if bal else 0})
+    preview['cabinet_reconciliation']=[{'nome_oficial':x['label'],'caixas_planilha':x['boxes'],'avulsas_planilha':x['loose'],'bobinas_planilha':x['bobbins'],'registros_existentes':existing_by_canon.get(x['label'],[])} for x in data['cabinets']]
     preview['m16_items']=len(m16_rows)
     preview['m16_good_total']=sum(x['good'] for x in m16_rows)
     preview['m16_bad_total']=sum(x['bad'] for x in m16_rows)
@@ -23251,7 +23271,7 @@ def v771_bobbin_import():
             row.imported_qty=x['qty'];row.current_qty=x['qty'];row.status='NAO_LOCALIZADA' if x['qty'] else 'CONCILIADA';row.source_sheet=x['sheet'];row.updated_at=reserve_updated_at;db.session.add(row)
         item=_v771_stock_item('Bobina ATM','UN')
         for x in data['cabinets']:
-            point=_v771_stock_point(f"Armário {x['label']}",'ARMARIO',x['company'],x['line'],x['station']);bal=_v771_balance(point,item);bal.qty_good=x['bobbins'];bal.qty_bad=0;bal.updated_by=session['user_id'];bal.updated_at=datetime.utcnow()
+            point=_v771_stock_point(f"Armário {x['label']}",'ARMARIO',x['company'],x['line'],x['station']);point.active=True;bal=_v771_balance(point,item);bal.qty_good=x['bobbins'];bal.qty_bad=0;bal.updated_by=session['user_id'];bal.updated_at=datetime.utcnow()
         preview['aliases_desativados']=_v8566_retire_aliases([x['label'] for x in data['cabinets']],item,session['user_id'])
         # V85.64: saldos M16 na MESMA transação das bobinas; repetir a importação substitui saldos.
         m16_point=_v771_stock_point('M16','CENTRAL','METRÔ','Linha 2 - Verde','Brigadeiro / M16')
@@ -23287,7 +23307,7 @@ def v771_bobbin_cabinets_import_compat():
     if data.get('cabinet_conflicts'):return jsonify({'ok':False,'error':'Aliases de armários com saldos divergentes','conflicts':data['cabinet_conflicts']}),409
     item=_v771_stock_item('Bobina ATM','UN');n=0
     for x in data['cabinets']:
-        point=_v771_stock_point(f"Armário {x['label']}",'ARMARIO',x['company'],x['line'],x['station']);bal=_v771_balance(point,item);bal.qty_good=x['bobbins'];bal.qty_bad=0;bal.updated_by=session['user_id'];bal.updated_at=datetime.utcnow();n+=1
+        point=_v771_stock_point(f"Armário {x['label']}",'ARMARIO',x['company'],x['line'],x['station']);point.active=True;bal=_v771_balance(point,item);bal.qty_good=x['bobbins'];bal.qty_bad=0;bal.updated_by=session['user_id'];bal.updated_at=datetime.utcnow();n+=1
     _v8566_retire_aliases([x['label'] for x in data['cabinets']],item,session['user_id'])
     db.session.commit();return jsonify({'ok':True,'cabinets':n,'bobbins':sum(x['bobbins'] for x in data['cabinets']),'rule':f"1 caixa = {max(1,int(app.config.get('BOBBIN_ROLLS_PER_BOX',6)))} bobinas",'release':APP_RELEASE})
 
