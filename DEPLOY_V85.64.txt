@@ -1,0 +1,4 @@
+V85.64 ENXUTA - Atualizar somente os arquivos nos mesmos caminhos do repositorio existente:
+- app.py
+- templates/bobbin_dashboard_v77.html
+Nao substituir o repositorio completo por este ZIP; manter demais arquivos e configuracoes.

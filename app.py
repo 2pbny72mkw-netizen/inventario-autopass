@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.63"
+APP_RELEASE = "V85.64"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -23155,6 +23155,35 @@ def v771_bobbin_import():
     stock_div=[d for d in data['divergences'] if d.get('type')=='ATM_EM_ESTOQUE']
     other_div=[d for d in data['divergences'] if d.get('type') not in ('ATM_NAO_OFICIAL','ATM_EM_ESTOQUE')]
     preview={'sheets':data['sheets'],'records_found':len(data['readings'])+len(data['divergences']),'atm_readings':len(data['readings']),'official_total':data['official_total'],'official_installed':data['official_installed'],'official_stock':data['official_stock'],'divergences_count':len(data['divergences']),'outside_official_count':len(outside),'stock_atm_count':len(stock_div),'blocking_divergences_count':len(other_div),'load_ready':bool(data['readings']),'divergences':data['divergences'][:100],'unlocated_reserve_total':sum(x['qty'] for x in data['reserves']),'stations_with_unlocated_reserve':len(data['reserves']),'cabinet_points':len(data['cabinets']),'cabinet_bobbins_total':sum(x['bobbins'] for x in data['cabinets']),'warnings':data['warnings'][:100]}
+    # V85.64: a mesma planilha original alimenta Bobinas/Armários e M16, sem alterar o Excel.
+    # M16 é o retrato das colunas BOM e RUIM até o marcador ITENS RETIRADOS.
+    m16_rows=[];m16_duplicates=[];m16_seen={}
+    try:
+        f.stream.seek(0)
+        m16_wb=load_workbook(f.stream,data_only=True,read_only=True)
+        m16_ws=next((m16_wb[n] for n in m16_wb.sheetnames if n.strip().upper()=='M16'),None)
+        if m16_ws is None:return jsonify({'ok':False,'error':'A planilha deve conter a aba M16.'}),400
+        for rn,row in enumerate(m16_ws.iter_rows(min_row=2,values_only=True),2):
+            desc=str(row[0] or '').strip() if row else ''
+            norm=_v771_norm(desc)
+            if norm=='ITENSRETIRADOS':break
+            if not desc or norm in ('ITEM','ITENS','AR MARIOM16ITENS','ARMARIOM16ITENS') or desc.upper().startswith('EPCS'):continue
+            # Não interpretar títulos/observações como itens de estoque.
+            if not isinstance(row[1] if len(row)>1 else None,(int,float)) and not isinstance(row[2] if len(row)>2 else None,(int,float)):continue
+            good=_v772_qty(row[1] if len(row)>1 else None);bad=_v772_qty(row[2] if len(row)>2 else None)
+            if good<0 or bad<0:return jsonify({'ok':False,'error':f'M16 linha {rn}: saldo negativo.'}),400
+            if norm in m16_seen:
+                m16_duplicates.append({'item':desc,'lines':[m16_seen[norm],rn]});continue
+            m16_seen[norm]=rn
+            m16_rows.append({'item':desc,'unit':'UN','good':good,'bad':bad,'line':rn})
+        m16_wb.close()
+    except Exception as exc:return jsonify({'ok':False,'error':f'Erro ao ler M16: {exc}'}),400
+    if m16_duplicates:return jsonify({'ok':False,'error':'Itens repetidos na aba M16; nenhuma alteração realizada.','duplicates':m16_duplicates}),409
+    if not m16_rows:return jsonify({'ok':False,'error':'Nenhum item de estoque encontrado na aba M16.'}),400
+    preview['m16_items']=len(m16_rows)
+    preview['m16_good_total']=sum(x['good'] for x in m16_rows)
+    preview['m16_bad_total']=sum(x['bad'] for x in m16_rows)
+    preview['m16_sample']=m16_rows[:30]
     if mode!='commit':return jsonify({'ok':True,'preview':preview,'release':APP_RELEASE})
     try:
         batch=AtmBobbinImportBatch(filename=secure_filename(f.filename),imported_by=session['user_id'],rows_imported=len(data['readings']),reserves_imported=sum(x['qty'] for x in data['reserves']),warnings_json=json.dumps({'warnings':data['warnings'][:200],'divergences':data['divergences'][:500]},ensure_ascii=False));db.session.add(batch);db.session.flush()
@@ -23185,6 +23214,13 @@ def v771_bobbin_import():
         item=_v771_stock_item('Bobina ATM','UN')
         for x in data['cabinets']:
             point=_v771_stock_point(f"Armário {x['label']}",'ARMARIO',x['company'],x['line'],x['station']);bal=_v771_balance(point,item);bal.qty_good=x['bobbins'];bal.qty_bad=0;bal.updated_by=session['user_id'];bal.updated_at=datetime.utcnow()
+        # V85.64: saldos M16 na MESMA transação das bobinas; repetir a importação substitui saldos.
+        m16_point=_v771_stock_point('M16','CENTRAL','METRÔ','Linha 2 - Verde','Brigadeiro / M16')
+        for mx in m16_rows:
+            m16_item=_v771_stock_item(mx['item'],mx['unit'])
+            m16_bal=_v771_balance(m16_point,m16_item)
+            m16_bal.qty_good=mx['good'];m16_bal.qty_bad=mx['bad']
+            m16_bal.updated_by=session['user_id'];m16_bal.updated_at=datetime.utcnow()
         for d in data['divergences']:
             db.session.add(AtmBobbinImportDivergence(batch_id=batch.id,sheet=d.get('sheet'),station_sheet=d.get('station_sheet'),atm_id=d.get('atm_id'),divergence_type=d.get('type') or 'DIVERGENCIA',detail=d.get('detail')))
         db.session.commit()
