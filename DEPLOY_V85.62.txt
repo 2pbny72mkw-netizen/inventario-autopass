@@ -1,0 +1,3 @@
+Web V85.62: endpoint autenticado GET /api/mobile/v1/field/bobinas/offline-snapshot.
+Retorna leitura mais recente por ATM, reserva, origem e horário para pré-carga Android Build 91.
+Sem migração de banco de dados. Publicar Web antes do Android.

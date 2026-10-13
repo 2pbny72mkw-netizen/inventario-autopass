@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.61"
+APP_RELEASE = "V85.62"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -3517,7 +3517,38 @@ def a20_bobinas_status():
 @mobile_auth_required
 def mobile_diagnostics_version_v8560():
     return jsonify({'ok':True,'release':APP_RELEASE,'dashboard_release':DASHBOARD_RELEASE,
-                    'bobinas_atm_status':'v85.61','percent_field':'last_percent_available'})
+                    'bobinas_atm_status':'v85.62','percent_field':'last_percent_available'})
+
+@app.get('/api/mobile/v1/field/bobinas/offline-snapshot')
+@mobile_auth_required
+def v8562_bobinas_offline_snapshot():
+    """One read-only snapshot for preloading bobbin readings/reserves before field work."""
+    if not _a55_mobile_has(request.mobile_user, 'field.bobbins', 'field.stock_manage'):
+        return jsonify({'ok':False,'error':'Sem permissão para Bobinas.'}),403
+    try:
+        # Most recent reading per ATM; do not assume zero for missing history.
+        latest={}
+        for row in (AtmBobbinReading.query.order_by(AtmBobbinReading.created_at.desc(),
+                                                      AtmBobbinReading.id.desc()).all()):
+            atm=str(row.atm_id or '').strip()
+            if atm and atm not in latest:
+                latest[atm]={'percent_available':int(row.percent_available) if row.percent_available is not None else None,
+                             'reading_at':row.created_at.isoformat()+'Z' if row.created_at else None}
+        reserves={}
+        for stock in AtmBobbinAtmStock.query.all():
+            atm=str(stock.atm_id or '').strip()
+            if atm:
+                reserves[atm]={'reserve_qty':int(stock.reserve_qty or 0),
+                               'company':stock.company,'line':stock.line,'station':stock.station}
+        ids=set(latest)|set(reserves)
+        return jsonify({'ok':True,'release':APP_RELEASE,'snapshot_at':datetime.utcnow().isoformat()+'Z',
+                        'total':len(ids),'rows':[{'atm_id':atm,**latest.get(atm,{}),**reserves.get(atm,{})}
+                                                     for atm in sorted(ids)]})
+    except Exception:
+        app.logger.exception('V85.62 offline snapshot failed')
+        db.session.rollback()
+        return jsonify({'ok':False,'error':'Falha ao preparar dados offline de bobinas.',
+                        'error_code':'BOBINAS_OFFLINE_SNAPSHOT_FAILED'}),500
 
 @app.get('/api/mobile/v1/field/bobinas/reserves')
 @mobile_auth_required
