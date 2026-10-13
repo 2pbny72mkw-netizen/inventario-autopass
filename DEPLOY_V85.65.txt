@@ -1,0 +1,7 @@
+AUTOPASS WEB V85.65 — ENXUTA
+Base: V85.64
+Arquivos: templates/bobbin_dashboard_v77.html e app.py (backend V85.64 preservado, APP_RELEASE atualizado).
+Substituir nos mesmos caminhos do repositório. Não alterar banco.
+Importação: um único arquivo -> /api/bobinas/importar (preview/commit). Backend processa bobinas, armários e M16 em uma transação.
+ATENÇÃO: cadastros históricos duplicados de armários não são unificados automaticamente. Conferir prévia e fazer backup antes de confirmar.
+Validação: Python compile e ZIP; sem teste com banco de produção.
