@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.65"
+APP_RELEASE = "V85.66"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -22774,6 +22774,34 @@ def _v772_clean_stock_location(label):
     raw=re.sub(r'^(CD|ESTA[CÇ][AÃ]O|TERMINAL)\s+','',raw,flags=re.I).strip()
     return raw
 
+# V85.66 — nomes oficiais de armários definidos pela operação.
+_V8566_CABINETS = {
+ 'CDEUCALIPTOS':'CD Estação Eucaliptos','CDESTACAOEUCALIPTOS':'CD Estação Eucaliptos','ESTACAOEUCALIPTOS':'CD Estação Eucaliptos',
+ 'CDSAOMATEUS':'CD Estação São Mateus','CDESTACAOSAOMATEUS':'CD Estação São Mateus','ESTACAOSAOMATEUS':'CD Estação São Mateus',
+ 'ATMSJABAQUARA':'CD Terminal Jabaquara','CDJABAQUARA':'CD Terminal Jabaquara','CDTERMINALJABAQUARA':'CD Terminal Jabaquara',
+ 'CDSANTOANDRE':'CD Santo André','ESTACAOSANTOANDRE':'CD Santo André','CDTERMINALSANTOANDRE':'CD Santo André',
+ 'TERMINALBORTOLOSSO':'CD Terminal Bortolosso','CDTERMINALBORTOLOSSO':'CD Terminal Bortolosso',
+}
+def _v8566_cabinet_name(label):
+ name=re.sub(r'^ARM[AÁ]RIO\s+','',str(label or '').strip(),flags=re.I).strip()
+ return _V8566_CABINETS.get(_v771_norm(name),name)
+
+def _v8566_retire_aliases(names,item,user_id):
+ """Desativa aliases históricos sem excluir seus movimentos; saldo do snapshot novo prevalece."""
+ targets=set(names);count=0
+ for point in FieldStockPoint.query.filter_by(active=True,point_type='ARMARIO').all():
+  canonical=_v8566_cabinet_name(point.name)
+  if canonical not in targets or point.name==f'Armário {canonical}':continue
+  point.active=False
+  point.notes=((point.notes or '')+'\nV85.66: alias substituído por Armário '+canonical).strip()
+  balance=FieldStockBalance.query.filter_by(point_id=point.id,item_id=item.id).first()
+  old=float(balance.qty_good or 0) if balance else 0
+  if balance:
+   balance.qty_good=0;balance.qty_bad=0;balance.updated_by=user_id;balance.updated_at=datetime.utcnow()
+  db.session.add(AuditEvent(user_id=user_id,event_type='BOBINAS_ALIAS_DESATIVADO',entity_type='field_stock_points',entity_id=str(point.id),detail=json.dumps({'alias':point.name,'destino':canonical,'saldo_anterior':old},ensure_ascii=False)))
+  count+=1
+ return count
+
 def _v772_resolve_stock_location(label):
     cleaned=_v772_clean_stock_location(label)
     loc=_v772_location_match(station=cleaned)
@@ -23132,13 +23160,22 @@ def _v771_parse_import(upload):
             except Exception:loose=0
             if boxes<0 or loose<0:continue
             if boxes==0 and loose==0 and _v771_norm(label) in ('QUANTIDADETOTAL','TOTAL'):continue
+            label=_v8566_cabinet_name(label)
             resolved=_v772_resolve_stock_location(label)
             box_size=max(1,int(app.config.get('BOBBIN_ROLLS_PER_BOX',6)));cabinets.append({'label':label,'company':resolved['company'],'line':resolved['line'],'station':resolved['station'],'boxes':boxes,'loose':loose,'bobbins':boxes*box_size+loose})
+    # Não somar nem escolher arbitrariamente saldos conflitantes de aliases.
+    cabinet_by_name={};cabinet_conflicts=[]
+    for cabinet in cabinets:
+        key=_v771_norm(cabinet['label']);previous=cabinet_by_name.get(key)
+        if previous is not None and previous['bobbins']!=cabinet['bobbins']:
+            cabinet_conflicts.append({'armario':cabinet['label'],'saldos':[previous['bobbins'],cabinet['bobbins']]})
+        else:cabinet_by_name[key]=cabinet
+    cabinets=list(cabinet_by_name.values())
     # deduplica leituras por ATM: a última ocorrência na planilha é o retrato usado
     dedup={}
     for x in readings:dedup[x['atm_id']]=x
     readings=list(dedup.values())
-    return {'readings':readings,'reserves':reserves,'cabinets':cabinets,'warnings':warnings,'divergences':divergences,'sheets':used_sheets,'official_total':len(official['rows']) or 602,'official_installed':len(official['installed']) or 590,'official_stock':len(official['stock']) or 12}
+    return {'readings':readings,'reserves':reserves,'cabinets':cabinets,'cabinet_conflicts':cabinet_conflicts,'warnings':warnings,'divergences':divergences,'sheets':used_sheets,'official_total':len(official['rows']) or 602,'official_installed':len(official['installed']) or 590,'official_stock':len(official['stock']) or 12}
 
 @app.post('/api/bobinas/importar')
 @login_required
@@ -23150,6 +23187,7 @@ def v771_bobbin_import():
     except Exception as exc:
         app.logger.exception('V77.7: falha ao ler planilha de bobinas')
         return jsonify({'ok':False,'error':f'Não foi possível ler a planilha: {exc}'}),400
+    if data.get('cabinet_conflicts'):return jsonify({'ok':False,'error':'Aliases de armários com saldos divergentes na planilha; nenhuma alteração realizada.','conflicts':data['cabinet_conflicts']}),409
     mode=(request.form.get('mode') or 'preview').lower()
     outside=[d for d in data['divergences'] if d.get('type')=='ATM_NAO_OFICIAL']
     stock_div=[d for d in data['divergences'] if d.get('type')=='ATM_EM_ESTOQUE']
@@ -23214,6 +23252,7 @@ def v771_bobbin_import():
         item=_v771_stock_item('Bobina ATM','UN')
         for x in data['cabinets']:
             point=_v771_stock_point(f"Armário {x['label']}",'ARMARIO',x['company'],x['line'],x['station']);bal=_v771_balance(point,item);bal.qty_good=x['bobbins'];bal.qty_bad=0;bal.updated_by=session['user_id'];bal.updated_at=datetime.utcnow()
+        preview['aliases_desativados']=_v8566_retire_aliases([x['label'] for x in data['cabinets']],item,session['user_id'])
         # V85.64: saldos M16 na MESMA transação das bobinas; repetir a importação substitui saldos.
         m16_point=_v771_stock_point('M16','CENTRAL','METRÔ','Linha 2 - Verde','Brigadeiro / M16')
         for mx in m16_rows:
@@ -23245,9 +23284,11 @@ def v771_bobbin_cabinets_import_compat():
     if not f:return jsonify({'ok':False,'error':'Selecione a planilha de bobinas.'}),400
     try:data=_v771_parse_import(f)
     except Exception as exc:return jsonify({'ok':False,'error':str(exc)}),400
+    if data.get('cabinet_conflicts'):return jsonify({'ok':False,'error':'Aliases de armários com saldos divergentes','conflicts':data['cabinet_conflicts']}),409
     item=_v771_stock_item('Bobina ATM','UN');n=0
     for x in data['cabinets']:
         point=_v771_stock_point(f"Armário {x['label']}",'ARMARIO',x['company'],x['line'],x['station']);bal=_v771_balance(point,item);bal.qty_good=x['bobbins'];bal.qty_bad=0;bal.updated_by=session['user_id'];bal.updated_at=datetime.utcnow();n+=1
+    _v8566_retire_aliases([x['label'] for x in data['cabinets']],item,session['user_id'])
     db.session.commit();return jsonify({'ok':True,'cabinets':n,'bobbins':sum(x['bobbins'] for x in data['cabinets']),'rule':f"1 caixa = {max(1,int(app.config.get('BOBBIN_ROLLS_PER_BOX',6)))} bobinas",'release':APP_RELEASE})
 
 @app.post('/api/bobinas/conciliar')
@@ -23463,14 +23504,14 @@ def v8527_bobbin_delivery_locations():
         if (x.name or '').strip(): names.add((x.name or '').strip())
     for x in BobbinDeliverySchedule.query.all():
         if (x.location or '').strip(): names.add((x.location or '').strip())
-    preferred=['CD Itaquera','CD Barra Funda','CD Luz','CD Ana Rosa','CD Tamanduateí','CD SP Morumbi','CD Butantã','CD Capão Redondo','CD Eucaliptos','Terminal Bortolosso','Estação São Mateus','Estação Santo André','ATMS Jabaquara','Terminal Caieiras']
+    preferred=['CD Itaquera','CD Barra Funda','CD Luz','CD Ana Rosa','CD Tamanduateí','CD SP Morumbi','CD Butantã','CD Capão Redondo','CD Estação Eucaliptos','CD Terminal Bortolosso','CD Estação São Mateus','CD Santo André','CD Terminal Jabaquara','Terminal Caieiras']
     aliases={
         'CD CORINTHIANS ITAQUERA':'CD Itaquera','CD ESTACAO BARRA FUNDA':'CD Barra Funda','CD ESTACAO LUZ':'CD Luz','CD ESTACAO ANA ROSA':'CD Ana Rosa',
         'CD ESTACAO TAMANDUATEI':'CD Tamanduateí','CD ESTACAO SP MORUMBI':'CD SP Morumbi','CD ESTACAO EUCALIPTOS':'CD Eucaliptos',
         'CD TERMINAL BORTOLOSSO':'Terminal Bortolosso','CD TERMINAL SAO MATEUS':'Estação São Mateus','CD TERMINAL SANTO ANDRE':'Estação Santo André',
         'CD TERMINAL JABAQUARA':'ATMS Jabaquara','CD JABAQUARA':'ATMS Jabaquara','CD TERMINAL CAIEIRAS':'Terminal Caieiras'
     }
-    def canon(v): return aliases.get(normalize(v),v)
+    def canon(v): return _v8566_cabinet_name(aliases.get(normalize(v),v))
     canon_names={canon(x) for x in names}
     rank={normalize(v):i for i,v in enumerate(preferred)}
     rows=sorted(canon_names,key=lambda x:(rank.get(normalize(x),9999),normalize(x)))
@@ -23485,7 +23526,7 @@ def v85271_bobbin_deliveries_import_history():
     try: wb=load_workbook(f,data_only=True,read_only=True)
     except Exception as exc: return jsonify({'ok':False,'error':f'Não foi possível ler a planilha: {exc}'}),400
     aliases={'CD CORINTHIANS ITAQUERA':'CD Itaquera','CD ESTACAO ITAQUERA':'CD Itaquera','CD ESTACAO BARRA FUNDA':'CD Barra Funda','CD ESTACAO LUZ':'CD Luz','CD ESTACAO ANA ROSA':'CD Ana Rosa','CD ESTACAO TAMANDUATEI':'CD Tamanduateí','CD ESTACAO SP MORUMBI':'CD SP Morumbi','CD ESTACAO BUTANTA':'CD Butantã','CD ESTACAO EUCALIPTOS':'CD Eucaliptos','CD TERMINAL BORTOLOSSO':'Terminal Bortolosso','CD TERMINAL SAO MATEUS':'Estação São Mateus','CD TERMINAL SANTO ANDRE':'Estação Santo André','CD TERMINAL JABAQUARA':'ATMS Jabaquara','CD JABAQUARA':'ATMS Jabaquara','CD TERMINAL CAIEIRAS':'Terminal Caieiras'}
-    preferred=['CD Itaquera','CD Barra Funda','CD Luz','CD Ana Rosa','CD Tamanduateí','CD SP Morumbi','CD Butantã','CD Capão Redondo','CD Eucaliptos','Terminal Bortolosso','Estação São Mateus','Estação Santo André','ATMS Jabaquara','Terminal Caieiras']
+    preferred=['CD Itaquera','CD Barra Funda','CD Luz','CD Ana Rosa','CD Tamanduateí','CD SP Morumbi','CD Butantã','CD Capão Redondo','CD Estação Eucaliptos','CD Terminal Bortolosso','CD Estação São Mateus','CD Santo André','CD Terminal Jabaquara','Terminal Caieiras']
     known={normalize(x):x for x in preferred}
     rows=[]; skipped=[]
     for ws in wb.worksheets:

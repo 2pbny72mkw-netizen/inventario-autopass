@@ -1,0 +1,7 @@
+AUTOPASS V85.66 ENXUTA — BASE V85.65
+Substituir app.py e templates/bobbin_dashboard_v77.html nos mesmos caminhos do projeto.
+De/para oficial: CD Estação Eucaliptos; CD Estação São Mateus; CD Terminal Jabaquara; CD Santo André; CD Terminal Bortolosso.
+Importação única /api/bobinas/importar: planilha original, bobinas + armários + M16, prévia e confirmação.
+Aliases iguais com saldos divergentes na planilha BLOQUEIAM a importação (HTTP 409), sem somar quantidades.
+Após importação confirmada, aliases antigos de armários afetados são desativados e seus saldos Bobina ATM zerados; histórico e IDs preservados, evento de auditoria criado. Fazer BACKUP antes do deploy/importação.
+Sem mudança de schema. Validado por py_compile e integridade ZIP; não testado contra banco de produção.
