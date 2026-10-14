@@ -1,0 +1,1 @@
+V85.72 ENXUTA: app.py — endpoints de reserva SSO. Deploy após backup; manter arquivos existentes. Requer Android Build 99. SSO usa saldo existente de reserva da estação, não cria segundo saldo. Testar com valores pequenos.

@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.71"
+APP_RELEASE = "V85.72"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -3821,6 +3821,68 @@ def a55_mobile_stock_withdraw():
     bal=_v771_balance(point,item)
     if float(bal.qty_good or 0)<qty:return jsonify({'ok':False,'error':'Saldo insuficiente no armário.'}),409
     before=float(bal.qty_good or 0);bal.qty_good=before-qty;bal.updated_by=user.id;bal.updated_at=datetime.utcnow();load=_v771_load(user.id,item);load.qty=float(load.qty or 0)+qty;load.updated_at=datetime.utcnow();db.session.add(FieldStockMovement(item_id=item.id,movement_type='RETIRADA_DISTRIBUICAO',qty=qty,source_point_id=point.id,technician_id=user.id,justification=str(d.get('justification') or ''),status='EM_DISTRIBUICAO'));db.session.commit();return jsonify({'ok':True,'stock_after':bal.qty_good,'load_after':load.qty})
+
+# V85.72 — Reserva física compartilhada na SSO, separada da carga e das reservas em ATMs.
+# Reutiliza AtmBobbinStationStock (reserva da estação) para não duplicar o saldo já existente.
+@app.get('/api/mobile/v1/bobinas/sso')
+@mobile_auth_required
+def v8572_sso_list():
+    user=request.mobile_user
+    if not _a55_mobile_has(user,'field.bobbins','field.stock_manage'):
+        return jsonify({'ok':False,'error':'Sem permissão.'}),403
+    master=_v772_master_atm_map()
+    rows=[]
+    for (company,line,station),_ in sorted(master.items()):
+        stock=AtmBobbinStationStock.query.filter_by(company=company,line=line,station=station).first()
+        rows.append({'company':company,'line':line,'station':station,'sso_qty':int(stock.reserve_qty or 0) if stock else 0})
+    item=FieldStockItem.query.filter(func.lower(FieldStockItem.description)=='bobina atm').first()
+    load=FieldTechnicianLoad.query.filter_by(technician_id=user.id,item_id=item.id).first() if item else None
+    return jsonify({'ok':True,'rows':rows,'item_id':item.id if item else None,'my_load':int(load.qty or 0) if load else 0,'scope':'SSO_ESTACAO','note':'Reserva SSO é estoque da estação, não reserva de ATM.'})
+
+@app.post('/api/mobile/v1/bobinas/sso/movimentar')
+@mobile_auth_required
+def v8572_sso_move():
+    user=request.mobile_user
+    if not _a55_mobile_has(user,'field.bobbins','field.stock_manage'):
+        return jsonify({'ok':False,'error':'Sem permissão.'}),403
+    d=request.get_json(silent=True) or {}
+    company=str(d.get('company') or '').strip();line=str(d.get('line') or '').strip();station=str(d.get('station') or '').strip()
+    direction=str(d.get('direction') or '').strip().upper()
+    try: qty=int(d.get('qty'))
+    except (ValueError,TypeError):return jsonify({'ok':False,'error':'Informe quantidade inteira.'}),400
+    if isinstance(d.get('qty'),bool) or str(d.get('qty')).strip()!=str(qty) or qty<1 or qty>100000:
+        return jsonify({'ok':False,'error':'Quantidade deve ser um inteiro positivo.'}),400
+    if direction not in ('DEPOSITAR','RETIRAR'):
+        return jsonify({'ok':False,'error':'Operação inválida.'}),400
+    if (company,line,station) not in _v772_master_atm_map():
+        return jsonify({'ok':False,'error':'Localidade não pertence à base oficial.'}),409
+    item=FieldStockItem.query.filter(func.lower(FieldStockItem.description)=='bobina atm').first()
+    if not item:return jsonify({'ok':False,'error':'Item Bobina ATM não cadastrado.'}),409
+    try:
+        # Serializa transferências concorrentes na mesma reserva e na carga do técnico.
+        stock=AtmBobbinStationStock.query.filter_by(company=company,line=line,station=station).with_for_update().first()
+        if not stock:
+            stock=AtmBobbinStationStock(company=company,line=line,station=station,reserve_qty=0)
+            db.session.add(stock);db.session.flush()
+        load=FieldTechnicianLoad.query.filter_by(technician_id=user.id,item_id=item.id).with_for_update().first()
+        if not load:
+            load=FieldTechnicianLoad(technician_id=user.id,item_id=item.id,qty=0)
+            db.session.add(load);db.session.flush()
+        before_sso=int(stock.reserve_qty or 0);before_load=float(load.qty or 0)
+        if direction=='DEPOSITAR' and before_load<qty:
+            db.session.rollback();return jsonify({'ok':False,'error':'Carga insuficiente.'}),409
+        if direction=='RETIRAR' and before_sso<qty:
+            db.session.rollback();return jsonify({'ok':False,'error':'Reserva SSO insuficiente.'}),409
+        delta=qty if direction=='DEPOSITAR' else -qty
+        stock.reserve_qty=before_sso+delta;stock.updated_by=user.id;stock.updated_at=datetime.utcnow()
+        load.qty=before_load-delta;load.updated_at=datetime.utcnow()
+        db.session.add(FieldStockMovement(item_id=item.id,movement_type='SSO_DEPOSITO' if delta>0 else 'SSO_RETIRADA',qty=qty,technician_id=user.id,destination_company=company,destination_line=line,destination_station=station,justification=str(d.get('justification') or '').strip()[:500],status='CONCLUIDO'))
+        db.session.add(AuditEvent(user_id=user.id,event_type='BOBINAS_SSO_'+direction,entity_type='atm_bobbin_station_stock',entity_id=f'{company}|{line}|{station}',detail=json.dumps({'qty':qty,'sso_before':before_sso,'sso_after':stock.reserve_qty,'load_before':before_load,'load_after':load.qty},ensure_ascii=False)))
+        db.session.commit()
+        return jsonify({'ok':True,'sso_after':stock.reserve_qty,'load_after':load.qty,'scope':'SSO_ESTACAO'})
+    except Exception:
+        db.session.rollback();app.logger.exception('V85.72 falha na movimentação SSO')
+        return jsonify({'ok':False,'error':'Movimentação não concluída.'}),500
 
 @app.post('/api/mobile/v1/field/stock/destination')
 @mobile_auth_required
