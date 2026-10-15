@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.74"
+APP_RELEASE = "V85.75"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -3822,6 +3822,25 @@ def a55_mobile_stock_withdraw():
     if float(bal.qty_good or 0)<qty:return jsonify({'ok':False,'error':'Saldo insuficiente no armário.'}),409
     before=float(bal.qty_good or 0);bal.qty_good=before-qty;bal.updated_by=user.id;bal.updated_at=datetime.utcnow();load=_v771_load(user.id,item);load.qty=float(load.qty or 0)+qty;load.updated_at=datetime.utcnow();db.session.add(FieldStockMovement(item_id=item.id,movement_type='RETIRADA_DISTRIBUICAO',qty=qty,source_point_id=point.id,technician_id=user.id,justification=str(d.get('justification') or ''),status='EM_DISTRIBUICAO'));db.session.commit();return jsonify({'ok':True,'stock_after':bal.qty_good,'load_after':load.qty})
 
+# V85.75 — Identificador idempotente para sincronismo SSO Android.
+def _v8575_sso_idempotency_begin(payload, user):
+    opid=str(payload.get('operation_id') or '').strip()
+    if not opid:
+        return None, None
+    import uuid
+    try: opid=str(uuid.UUID(opid))
+    except (ValueError,TypeError): raise ValueError('Identificador de operação inválido.')
+    db.session.execute(db.text("CREATE TABLE IF NOT EXISTS mobile_sso_receipts (operation_id VARCHAR(36) PRIMARY KEY, user_id VARCHAR(64) NOT NULL, result_json TEXT NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"))
+    inserted=db.session.execute(db.text("INSERT INTO mobile_sso_receipts (operation_id,user_id,result_json) VALUES (:id,:uid,'{}') ON CONFLICT (operation_id) DO NOTHING RETURNING operation_id"),{'id':opid,'uid':str(user.id)}).first()
+    if inserted:return opid,None
+    prior=db.session.execute(db.text("SELECT user_id,result_json FROM mobile_sso_receipts WHERE operation_id=:id"),{'id':opid}).first()
+    if prior and prior[0]!=str(user.id):raise ValueError('Operação pertence a outro usuário.')
+    return opid,json.loads(prior[1]) if prior else None
+
+def _v8575_sso_idempotency_finish(opid,result):
+    if opid:
+        db.session.execute(db.text("UPDATE mobile_sso_receipts SET result_json=:result WHERE operation_id=:id"),{'result':json.dumps(result,ensure_ascii=False),'id':opid})
+
 # V85.72 — Reserva física compartilhada na SSO, separada da carga e das reservas em ATMs.
 # Reutiliza AtmBobbinStationStock (reserva da estação) para não duplicar o saldo já existente.
 @app.get('/api/mobile/v1/bobinas/sso')
@@ -3859,6 +3878,9 @@ def v8572_sso_move():
     item=FieldStockItem.query.filter(func.lower(FieldStockItem.description)=='bobina atm').first()
     if not item:return jsonify({'ok':False,'error':'Item Bobina ATM não cadastrado.'}),409
     try:
+        opid,prior=_v8575_sso_idempotency_begin(d,user)
+        if prior is not None:
+            db.session.rollback();return jsonify(prior)
         # Serializa transferências concorrentes na mesma reserva e na carga do técnico.
         stock=AtmBobbinStationStock.query.filter_by(company=company,line=line,station=station).with_for_update().first()
         if not stock:
@@ -3878,8 +3900,12 @@ def v8572_sso_move():
         load.qty=before_load-delta;load.updated_at=datetime.utcnow()
         db.session.add(FieldStockMovement(item_id=item.id,movement_type='SSO_DEPOSITO' if delta>0 else 'SSO_RETIRADA',qty=qty,technician_id=user.id,destination_company=company,destination_line=line,destination_station=station,justification=str(d.get('justification') or '').strip()[:500],status='CONCLUIDO'))
         db.session.add(AuditEvent(user_id=user.id,event_type='BOBINAS_SSO_'+direction,entity_type='atm_bobbin_station_stock',entity_id=f'{company}|{line}|{station}',detail=json.dumps({'qty':qty,'sso_before':before_sso,'sso_after':stock.reserve_qty,'load_before':before_load,'load_after':load.qty},ensure_ascii=False)))
+        result={'ok':True,'sso_after':stock.reserve_qty,'load_after':load.qty,'scope':'SSO_ESTACAO'}
+        _v8575_sso_idempotency_finish(opid,result)
         db.session.commit()
-        return jsonify({'ok':True,'sso_after':stock.reserve_qty,'load_after':load.qty,'scope':'SSO_ESTACAO'})
+        return jsonify(result)
+    except ValueError as exc:
+        db.session.rollback();return jsonify({'ok':False,'error':str(exc)}),400
     except Exception:
         db.session.rollback();app.logger.exception('V85.72 falha na movimentação SSO')
         return jsonify({'ok':False,'error':'Movimentação não concluída.'}),500
@@ -3901,6 +3927,9 @@ def v8573_sso_to_atm():
     official={_v773_norm_atm_id(x) for x in _v772_master_atm_map().get((company,line,station),set())}
     if not atm or atm not in official:return jsonify({'ok':False,'error':'ATM não pertence à localidade oficial.'}),409
     try:
+        opid,prior=_v8575_sso_idempotency_begin(d,user)
+        if prior is not None:
+            db.session.rollback();return jsonify(prior)
         sso=AtmBobbinStationStock.query.filter_by(company=company,line=line,station=station).with_for_update().first()
         if sso is None or int(sso.reserve_qty or 0)<qty:
             db.session.rollback();return jsonify({'ok':False,'error':'Reserva SSO insuficiente.'}),409
@@ -3912,8 +3941,12 @@ def v8573_sso_to_atm():
         sso.reserve_qty=before-qty;sso.updated_by=user.id;sso.updated_at=datetime.utcnow()
         target.reserve_qty=int(target.reserve_qty or 0)+qty;target.updated_by=user.id;target.updated_at=datetime.utcnow()
         db.session.add(AuditEvent(user_id=user.id,event_type='BOBINAS_SSO_PARA_ATM',entity_type='atm_bobbin_atm_stock',entity_id=atm,detail=json.dumps({'company':company,'line':line,'station':station,'qty':qty,'sso_before':before,'sso_after':sso.reserve_qty,'atm_after':target.reserve_qty},ensure_ascii=False)))
+        result={'ok':True,'sso_after':sso.reserve_qty,'atm_reserve_after':target.reserve_qty,'atm_id':atm}
+        _v8575_sso_idempotency_finish(opid,result)
         db.session.commit()
-        return jsonify({'ok':True,'sso_after':sso.reserve_qty,'atm_reserve_after':target.reserve_qty,'atm_id':atm})
+        return jsonify(result)
+    except ValueError as exc:
+        db.session.rollback();return jsonify({'ok':False,'error':str(exc)}),400
     except Exception:
         db.session.rollback();app.logger.exception('V85.73 SSO para ATM')
         return jsonify({'ok':False,'error':'Transferência não concluída.'}),500
@@ -25931,10 +25964,10 @@ def implantation_repo_upload():
     if not upload or not upload.filename:return jsonify(ok=False,error='Arquivo obrigatório'),400
     name=_repo_secure_filename(upload.filename)
     if not name or len(name)>220:return jsonify(ok=False,error='Nome de arquivo inválido'),400
-    allowed={'pdf','png','jpg','jpeg','webp','xlsx','xls','docx','doc','txt','csv','pptx','zip'}
-    if '.' not in name or name.rsplit('.',1)[1].lower() not in allowed:return jsonify(ok=False,error='Formato não permitido'),400
+    # V85.75: Drive técnico aceita formatos proprietários, sem allowlist por extensão.
     upload.stream.seek(0,2);size=upload.stream.tell();upload.stream.seek(0)
-    if size>25*1024*1024:return jsonify(ok=False,error='Limite de 25 MB'),413
+    max_mb=max(1,int(app.config.get('TECH_DRIVE_MAX_MB',100)))
+    if size>max_mb*1024*1024:return jsonify(ok=False,error=f'Arquivo excede o limite configurado de {max_mb} MB'),413
     last=ImplantationRepoFile.query.filter_by(folder_id=folder_id,name=name,deleted_at=None).order_by(ImplantationRepoFile.version.desc()).first()
     version=(last.version+1) if last else 1
     key='repo_'+_repo_uuid4().hex+'_'+name
@@ -25946,7 +25979,10 @@ def implantation_repo_upload():
             return jsonify(ok=False,error='Falha ao salvar no armazenamento persistente; tente novamente'),503
         key='r2__implantacao/drive/'+key
     else:
-        upload.save(str(UPLOAD_DIR/key))
+        try: upload.save(str(UPLOAD_DIR/key))
+        except Exception:
+            app.logger.exception('Falha ao gravar arquivo local do Drive Técnico')
+            return jsonify(ok=False,error='Falha de armazenamento do Drive Técnico.'),503
     f=ImplantationRepoFile(folder_id=folder_id,name=name,version=version,storage_key=key,content_type=upload.mimetype,size=size,created_by=session.get('user_id'))
     db.session.add(f);db.session.flush();_repo_audit('REPO_FILE_UPLOAD','implantation_repo_file',f.id,f'{name} v{version}');db.session.commit()
     return jsonify(ok=True,file=_repo_json_file(f))

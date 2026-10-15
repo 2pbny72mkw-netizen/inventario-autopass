@@ -1,0 +1,7 @@
+WEB V85.75 ENXUTA - instalar diretamente sobre V85.74
+- Drive Tecnico: remove bloqueio por extensao; tamanho configuravel TECH_DRIVE_MAX_MB (padrao 100 MB); erros de armazenamento tratados.
+- SSO: operacoes com operation_id UUID opcionais e comprovante persistente no PostgreSQL para reenvio idempotente.
+- Exige banco PostgreSQL com permissao CREATE TABLE para mobile_sso_receipts na primeira sincronizacao.
+- Fazer backup e testar upload, consulta de pastas e duas tentativas com mesmo operation_id antes de producao.
+- Importacao SSO e demais regras V85.74 preservadas.
+- Nenhum teste em Render realizado.
