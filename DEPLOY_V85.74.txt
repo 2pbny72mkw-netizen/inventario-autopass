@@ -1,0 +1,20 @@
+AUTOPASS WEB V85.74 ENXUTA — 15/10/2026
+
+Base: V85.73 REV2 PARCIAL. Atualize app.py e preserve os demais arquivos existentes.
+
+Inclui:
+- Visita técnica sem acompanhamento/aceite obrigatório, conforme REV2 anterior.
+- Importação da planilha Bobinas+Armários+M16: localização física das reservas.
+- SSO: saldo de estação em atm_bobbin_station_stock, substituído pelo retrato da planilha.
+- ATM sem ID físico: reserva fica pendente de identificação, não atribuída a uma ATM arbitrária.
+- ATM E SSO: fica pendente de divisão, sem atribuição arbitrária.
+- Previa JSON: reserva_por_local_fisico, sso_bobinas_importadas, atm_reserva_pendente_identificacao,
+  reserva_mista_pendente_divisao, armarios_invalidos_ignorados.
+- Linhas de armários não numéricas (ex. 'mude aba azul') nunca são zeradas.
+  Armários inválidos são ignorados com aviso na prévia e seus saldos existentes preservados.
+
+ATENÇÃO: Importação por snapshot substitui saldo SSO da estação; se houve movimentações
+após a data da planilha, a importação pode sobrescrevê-las. Faça backup e confira prévia.
+As reservas ATM sem identificação e mistas NÃO entram no saldo físico SSO ou de ATM.
+Não inclui ainda fila Android offline nem atribuição de reserva a ATM sem dado na planilha.
+Não testado em Render/banco de produção. Requer homologação.

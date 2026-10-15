@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.72"
+APP_RELEASE = "V85.74"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -3834,7 +3834,7 @@ def v8572_sso_list():
     rows=[]
     for (company,line,station),_ in sorted(master.items()):
         stock=AtmBobbinStationStock.query.filter_by(company=company,line=line,station=station).first()
-        rows.append({'company':company,'line':line,'station':station,'sso_qty':int(stock.reserve_qty or 0) if stock else 0})
+        rows.append({'company':company,'line':line,'station':station,'sso_qty':int(stock.reserve_qty or 0) if stock else 0,'atms':sorted(list(_),key=str)})
     item=FieldStockItem.query.filter(func.lower(FieldStockItem.description)=='bobina atm').first()
     load=FieldTechnicianLoad.query.filter_by(technician_id=user.id,item_id=item.id).first() if item else None
     return jsonify({'ok':True,'rows':rows,'item_id':item.id if item else None,'my_load':int(load.qty or 0) if load else 0,'scope':'SSO_ESTACAO','note':'Reserva SSO é estoque da estação, não reserva de ATM.'})
@@ -3883,6 +3883,40 @@ def v8572_sso_move():
     except Exception:
         db.session.rollback();app.logger.exception('V85.72 falha na movimentação SSO')
         return jsonify({'ok':False,'error':'Movimentação não concluída.'}),500
+
+# V85.73 — Transferência atômica de reserva física SSO para reserva da ATM.
+@app.post('/api/mobile/v1/bobinas/sso/para-atm')
+@mobile_auth_required
+def v8573_sso_to_atm():
+    user=request.mobile_user
+    if not _a55_mobile_has(user,'field.bobbins','field.stock_manage'):
+        return jsonify({'ok':False,'error':'Sem permissão.'}),403
+    d=request.get_json(silent=True) or {}
+    company=str(d.get('company') or '').strip();line=str(d.get('line') or '').strip();station=str(d.get('station') or '').strip()
+    atm=_v773_norm_atm_id(d.get('atm_id'))
+    try:qty=int(d.get('qty'))
+    except (ValueError,TypeError):return jsonify({'ok':False,'error':'Quantidade inválida.'}),400
+    if isinstance(d.get('qty'),bool) or str(d.get('qty')).strip()!=str(qty) or not 1<=qty<=100000:
+        return jsonify({'ok':False,'error':'Quantidade inteira positiva obrigatória.'}),400
+    official={_v773_norm_atm_id(x) for x in _v772_master_atm_map().get((company,line,station),set())}
+    if not atm or atm not in official:return jsonify({'ok':False,'error':'ATM não pertence à localidade oficial.'}),409
+    try:
+        sso=AtmBobbinStationStock.query.filter_by(company=company,line=line,station=station).with_for_update().first()
+        if sso is None or int(sso.reserve_qty or 0)<qty:
+            db.session.rollback();return jsonify({'ok':False,'error':'Reserva SSO insuficiente.'}),409
+        target=AtmBobbinAtmStock.query.filter_by(company=company,line=line,station=station,atm_id=atm).with_for_update().first()
+        if target is None:
+            target=AtmBobbinAtmStock(company=company,line=line,station=station,atm_id=atm,reserve_qty=0)
+            db.session.add(target)
+        before=int(sso.reserve_qty or 0)
+        sso.reserve_qty=before-qty;sso.updated_by=user.id;sso.updated_at=datetime.utcnow()
+        target.reserve_qty=int(target.reserve_qty or 0)+qty;target.updated_by=user.id;target.updated_at=datetime.utcnow()
+        db.session.add(AuditEvent(user_id=user.id,event_type='BOBINAS_SSO_PARA_ATM',entity_type='atm_bobbin_atm_stock',entity_id=atm,detail=json.dumps({'company':company,'line':line,'station':station,'qty':qty,'sso_before':before,'sso_after':sso.reserve_qty,'atm_after':target.reserve_qty},ensure_ascii=False)))
+        db.session.commit()
+        return jsonify({'ok':True,'sso_after':sso.reserve_qty,'atm_reserve_after':target.reserve_qty,'atm_id':atm})
+    except Exception:
+        db.session.rollback();app.logger.exception('V85.73 SSO para ATM')
+        return jsonify({'ok':False,'error':'Transferência não concluída.'}),500
 
 @app.post('/api/mobile/v1/field/stock/destination')
 @mobile_auth_required
@@ -6566,8 +6600,12 @@ def hardware_field_visit_save_api():
             visit.signature_file=name; visit.signed_at=datetime.utcnow()
         except Exception:
             app.logger.exception("Falha ao persistir assinatura da visita %s",visit.id)
-    if visit.status=="FINALIZADO" and not (visit.client_accepted and visit.signature_file):
-        db.session.rollback(); return jsonify({"ok":False,"error":"Para finalizar, registre o aceite e a assinatura do cliente."}),400
+    # V85.73 REV2: relatórios de visita técnica sem acompanhante não exigem aceite.
+    # Atividades explicitamente classificadas como "Aceite" preservam a exigência formal.
+    formal_acceptance = (visit.reason or "").strip().casefold() == "aceite"
+    if visit.status == "FINALIZADO" and formal_acceptance and not (visit.client_accepted and visit.signature_file):
+        db.session.rollback()
+        return jsonify({"ok":False,"error":"Visitas do tipo Aceite exigem confirmação e assinatura do cliente."}),400
     # Technician's handwritten signature uses the existing photo storage
     # table with a distinct category, avoiding destructive schema migrations.
     tech_sig=f.get("technician_signature_data") or ""
@@ -23226,7 +23264,7 @@ def _v771_parse_import(upload):
     A planilha nunca cria ATM; apenas enriquece equipamentos oficiais instalados.
     """
     wb=load_workbook(upload,data_only=True,read_only=True)
-    readings=[];reserves=[];cabinets=[];warnings=[];divergences=[];used_sheets=[]
+    readings=[];reserves=[];reserve_locations=[];cabinets=[];warnings=[];divergences=[];used_sheets=[]
     official=_v773_official_index(); official_by_id=official['by_id']
     # cache de localização para não consultar banco célula a célula
     loc_rows=[]
@@ -23263,9 +23301,16 @@ def _v771_parse_import(upload):
             reserve_raw=vals[1] if len(vals)>1 else None
             try:reserve=max(0,int(float(reserve_raw))) if reserve_raw not in (None,'') else 0
             except Exception:reserve=0;warnings.append(f'{ws.title}!B{rnum}: reserva inválida')
-            # saldo legado é por localidade da planilha, sem forçar ATM
-            if reserve>0:reserves.append({'company':sheet_company or 'IMPORTADO','line':line,'station':station,'qty':reserve,'sheet':ws.title})
             last_date=vals[3] if len(vals)>3 else None;tech=str(vals[4] if len(vals)>4 and vals[4] is not None else '').strip();local_note=str(vals[2] if len(vals)>2 and vals[2] is not None else '').strip()
+            # V85.74: reserva física é distinta da bobina instalada e do percentual da ATM.
+            # A planilha informa a LOCALIDADE, não qual ATM guarda a reserva.
+            # 'ATM' sem identificação física e 'ATM E SSO' sem divisão não podem ser
+            # atribuídos arbitrariamente a uma ATM nem somados à SSO.
+            normalized_place=_v771_norm(local_note)
+            reserve_type='SSO' if normalized_place=='SSO' else ('ATM_NAO_IDENTIFICADA' if normalized_place=='ATM' else ('MISTA_PENDENTE' if 'ATM' in normalized_place and 'SSO' in normalized_place else 'NAO_CLASSIFICADA'))
+            if reserve>0:
+                entry={'company':sheet_company or 'IMPORTADO','line':line,'station':station,'qty':reserve,'sheet':ws.title,'type':reserve_type,'place_raw':local_note,'row':rnum}
+                reserves.append(entry);reserve_locations.append(entry)
             if isinstance(last_date,(int,float)):
                 try:
                     from openpyxl.utils.datetime import from_excel
@@ -23336,7 +23381,7 @@ def _v771_parse_import(upload):
     dedup={}
     for x in readings:dedup[x['atm_id']]=x
     readings=list(dedup.values())
-    return {'readings':readings,'reserves':reserves,'cabinets':cabinets,'cabinet_conflicts':cabinet_conflicts,'cabinet_invalid':cabinet_invalid,'cabinet_source':cabinet_source,'cabinet_sheet':cabinet_sheet,'warnings':warnings,'divergences':divergences,'sheets':used_sheets,'official_total':len(official['rows']) or 602,'official_installed':len(official['installed']) or 590,'official_stock':len(official['stock']) or 12}
+    return {'readings':readings,'reserves':reserves,'cabinets':cabinets,'cabinet_conflicts':cabinet_conflicts,'cabinet_invalid':cabinet_invalid,'cabinet_source':cabinet_source,'cabinet_sheet':cabinet_sheet,'reserve_locations':reserve_locations,'warnings':warnings,'divergences':divergences,'sheets':used_sheets,'official_total':len(official['rows']) or 602,'official_installed':len(official['installed']) or 590,'official_stock':len(official['stock']) or 12}
 
 @app.post('/api/bobinas/importar')
 @login_required
@@ -23349,15 +23394,33 @@ def v771_bobbin_import():
         app.logger.exception('V77.7: falha ao ler planilha de bobinas')
         return jsonify({'ok':False,'error':f'Não foi possível ler a planilha: {exc}'}),400
     if data.get('cabinet_conflicts'):return jsonify({'ok':False,'error':'Aliases de armários com saldos divergentes na planilha; nenhuma alteração realizada.','conflicts':data['cabinet_conflicts']}),409
-    if data.get('cabinet_invalid'):
-        return jsonify({'ok':False,'error':'Há quantidades não numéricas na aba Armários. Nenhum saldo foi alterado. Jabaquara contém referência à aba Azul, que não informa a quantidade de caixas do armário.','invalid_rows':data['cabinet_invalid'],'release':APP_RELEASE}),422
+    # V85.74: armários com quantidade textual não são alterados;
+    # importação das demais localidades pode prosseguir com aviso na prévia.
     if not data.get('cabinet_sheet'):
         return jsonify({'ok':False,'error':'Aba Armários não encontrada. Nenhum saldo será alterado.'}),400
+    # V85.74: bloquear linhas ambíguas ou duplicadas para a mesma estação.
+    reserve_seen={};reserve_conflicts=[]
+    for r in data['reserve_locations']:
+        k=(_v771_norm(r['line']),_v771_norm(r['station']))
+        if k in reserve_seen:
+            reserve_conflicts.append({'anterior':reserve_seen[k],'atual':r})
+        else:reserve_seen[k]=r
+    if reserve_conflicts:return jsonify({'ok':False,'error':'Reservas repetidas para a mesma estação; nenhuma alteração realizada.','conflicts':reserve_conflicts[:50]}),409
     mode=(request.form.get('mode') or 'preview').lower()
     outside=[d for d in data['divergences'] if d.get('type')=='ATM_NAO_OFICIAL']
     stock_div=[d for d in data['divergences'] if d.get('type')=='ATM_EM_ESTOQUE']
     other_div=[d for d in data['divergences'] if d.get('type') not in ('ATM_NAO_OFICIAL','ATM_EM_ESTOQUE')]
     preview={'sheets':data['sheets'],'records_found':len(data['readings'])+len(data['divergences']),'atm_readings':len(data['readings']),'official_total':data['official_total'],'official_installed':data['official_installed'],'official_stock':data['official_stock'],'divergences_count':len(data['divergences']),'outside_official_count':len(outside),'stock_atm_count':len(stock_div),'blocking_divergences_count':len(other_div),'load_ready':bool(data['readings']),'divergences':data['divergences'][:100],'unlocated_reserve_total':sum(x['qty'] for x in data['reserves']),'stations_with_unlocated_reserve':len(data['reserves']),'cabinet_points':len(data['cabinets']),'cabinet_bobbins_total':sum(x['bobbins'] for x in data['cabinets']),'cabinet_source':data['cabinet_source'],'cabinet_boxes_total':sum(x['boxes'] for x in data['cabinets']),'cabinet_loose_total':sum(x['loose'] for x in data['cabinets']),'warnings':data['warnings'][:100]}
+    preview['armarios_invalidos_ignorados']=data.get('cabinet_invalid',[])
+    preview['alerta_armarios_invalidos']=bool(data.get('cabinet_invalid'))
+    # Reserva de ATM sem ID físico e reserva mista continuam pendentes de classificação.
+    # Nenhuma bobina é inventada ou atribuída a um equipamento por proximidade.
+    preview['reserva_por_local_fisico']=[{'linha':r['line'],'estacao':r['station'],'local':r['type'],'descricao_planilha':r['place_raw'],'bobinas':r['qty'],'aba':r['sheet']} for r in data['reserve_locations']]
+    preview['sso_bobinas_importadas']=sum(r['qty'] for r in data['reserve_locations'] if r['type']=='SSO')
+    preview['atm_reserva_pendente_identificacao']=sum(r['qty'] for r in data['reserve_locations'] if r['type']=='ATM_NAO_IDENTIFICADA')
+    preview['reserva_mista_pendente_divisao']=sum(r['qty'] for r in data['reserve_locations'] if r['type']=='MISTA_PENDENTE')
+    preview['reserva_sem_classificacao']=sum(r['qty'] for r in data['reserve_locations'] if r['type']=='NAO_CLASSIFICADA')
+    preview['criterio']='SSO atualiza estoque da estação; ATM sem ID e ATM E SSO permanecem pendentes de classificação, sem crédito duplicado.'
     # V85.64: a mesma planilha original alimenta Bobinas/Armários e M16, sem alterar o Excel.
     # M16 é o retrato das colunas BOM e RUIM até o marcador ITENS RETIRADOS.
     m16_rows=[];m16_duplicates=[];m16_seen={}
@@ -23423,7 +23486,20 @@ def v771_bobbin_import():
             if row is None:
                 row=AtmBobbinUnlocatedReserve(company=x['company'],line=x['line'],station=x['station'])
                 existing_reserves[key]=row
-            row.imported_qty=x['qty'];row.current_qty=x['qty'];row.status='NAO_LOCALIZADA' if x['qty'] else 'CONCILIADA';row.source_sheet=x['sheet'];row.updated_at=reserve_updated_at;db.session.add(row)
+            row.imported_qty=x['qty']
+            # SSO fica contabilizada no estoque físico; não repetir no legado 'não localizada'.
+            if x['type']=='SSO':
+                row.current_qty=0;row.status='CONCILIADA_SSO'
+            else:
+                row.current_qty=x['qty']
+                row.status={'ATM_NAO_IDENTIFICADA':'ATM_PENDENTE','MISTA_PENDENTE':'MISTA_PENDENTE','NAO_CLASSIFICADA':'NAO_LOCALIZADA'}.get(x['type'],'NAO_LOCALIZADA')
+            row.source_sheet=x['sheet'];row.updated_at=reserve_updated_at;db.session.add(row)
+            if x['type']=='SSO':
+                stock=AtmBobbinStationStock.query.filter_by(company=x['company'],line=x['line'],station=x['station']).with_for_update().first()
+                if stock is None:
+                    stock=AtmBobbinStationStock(company=x['company'],line=x['line'],station=x['station'])
+                    db.session.add(stock)
+                stock.reserve_qty=x['qty'];stock.updated_by=session['user_id'];stock.updated_at=reserve_updated_at
         item=_v771_stock_item('Bobina ATM','UN')
         for x in data['cabinets']:
             point=_v771_stock_point(f"Armário {x['label']}",'ARMARIO',x['company'],x['line'],x['station']);point.active=True;bal=_v771_balance(point,item);bal.qty_good=x['bobbins'];bal.qty_bad=0;bal.updated_by=session['user_id'];bal.updated_at=datetime.utcnow()
