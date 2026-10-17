@@ -94,7 +94,7 @@ def install_v86(app, db, User, can):
     @app.get('/engenharia/estoque')
     @guard('engineering.stock.view')
     def v86_stock_page():
-        return render_template('v86_stock.html',app_release='V86.1',can_stock=can)
+        return render_template('v86_stock.html',app_release='V87.1',can_stock=can)
 
     @app.get('/api/engenharia/estoque')
     @guard('engineering.stock.view')
@@ -116,7 +116,7 @@ def install_v86(app, db, User, can):
             d['by_warehouse']={str(w.id):bm.get((m.id,w.id),0) for w in wh}
             result.append(d)
         movements=Movement.query.filter_by(warehouse_id=wid).count() if wid else Movement.query.count()
-        counts={'items':len(result),'units':sum(x['quantity'] for x in result),'unclassified':sum(not x['classified'] for x in result),
+        counts={'items':sum(x['quantity']>0 for x in result),'units':sum(x['quantity'] for x in result),'unclassified':sum(x['quantity']>0 and not x['classified'] for x in result),
                 'movements':movements}
         return jsonify(ok=True,warehouses=[{'id':w.id,'name':w.name,'active':w.active} for w in wh],items=result,counts=counts)
 

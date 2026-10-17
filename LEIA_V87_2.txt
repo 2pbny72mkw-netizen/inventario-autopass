@@ -1,0 +1,12 @@
+V87.2 — CORREÇÃO MENU ENGENHARIA
+
+Corrige a ausência de Estoque Central no dropdown superior Engenharia.
+1. Inclui Estoque Central na montagem do layout de menu mesmo se o layout anterior estiver salvo em menu_layout_json.
+2. Adiciona link ao dropdown legado HTML, quando ele usa a âncora Codificação.
+3. Fallback para dropdown gerado dinamicamente em JavaScript.
+4. Respeita engineering.stock.view; ADM conserva acesso integral pela lógica existente.
+5. Não modifica dados, estoque, banco, histórico ou regras de movimentação.
+
+INSTALAÇÃO: atualização incremental sobre V87.1. Substitua os arquivos incluídos no ZIP sem apagar o restante do projeto. Limpe cache do navegador (Ctrl+F5).
+
+VALIDAÇÃO: sintaxe Python e integridade ZIP verificadas. Não testado em navegador/Render/PostgreSQL. Caso o menu global seja gerado por outro template externo, o link pode precisar ser incluído nesse template também.

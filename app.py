@@ -7246,6 +7246,17 @@ def _v8522_menu_layout():
     items.insert(insert_at,{"menu_id":"implantation.qr.generate","href":"/qr-trilhos","source":"Gerar QR Code – Trilhos","label":"Gerar QR Code – Trilhos","group":"","order":insert_at+1})
     for i,it in enumerate(items,1):
         if isinstance(it,dict): it["order"]=i
+    # V87.2: insere Estoque Central também nos layouts personalizados já salvos no banco.
+    stock_source="Estoque Central"
+    if not any(isinstance(it,dict) and str(it.get("source") or it.get("label") or "").strip()==stock_source
+               for col in obj.get("columns",[]) for it in col.get("items",[])):
+        eng=next((col for col in obj.get("columns",[]) if str(col.get("name") or "").strip()=="Engenharia"),None)
+        if eng is None:
+            eng={"name":"Engenharia","order":len(obj.get("columns",[]))+1,"items":[]}
+            obj.setdefault("columns",[]).append(eng)
+        eng_items=eng.setdefault("items",[])
+        eng_items.append({"source":stock_source,"label":stock_source,"href":"/engenharia/estoque",
+                          "menu_id":"engineering.stock.view","group":"","order":len(eng_items)+1})
     return obj
 
 def _v8522_menu_save(layout):
@@ -26473,4 +26484,33 @@ def v87_experience_assets(response):
             '<script defer src="/static/v87_experience.js?v=87.0"></script>')
     content=_v87_re.sub(r'</head>',assets+'</head>',content,count=1,flags=_v87_re.I)
     response.set_data(content)
+    return response
+
+
+# V87.2 — Corrige dropdown legado da Engenharia (menu global).
+@app.after_request
+def v872_engineering_dropdown(response):
+    if response.status_code!=200 or response.mimetype!='text/html' or response.direct_passthrough:
+        return response
+    if not session.get('user_id') or not _has_access('engineering.stock.view'):
+        return response
+    if request.path.startswith('/api/'):
+        return response
+    html=response.get_data(as_text=True)
+    if 'Codificação' not in html or 'Engenharia' not in html:
+        return response
+    # Link no próprio dropdown existente, inserido ao lado de Codificação.
+    import re as _v872_re
+    if _v872_re.search(r'<a[^>]*href=["\'](?:/engenharia/estoque)["\']',html,_v872_re.I):
+        return response
+    link='<a href="/engenharia/estoque" class="xp-stock-menu-link">📦 Estoque Central</a>'
+    # Dropdowns que já têm Codificação como âncora.
+    anchor=_v872_re.search(r'(<a\b[^>]*>\s*Codificação\s*</a>)',html,_v872_re.I)
+    if anchor:
+        html=html[:anchor.end()]+link+html[anchor.end():]
+    else:
+        # Fallback seguro: o script insere o link no menu visível, sem duplicá-lo.
+        js="""<script defer src="/static/v87_engineering_menu.js?v=87.2"></script>"""
+        html=_v872_re.sub(r'</body>',js+'</body>',html,count=1,flags=_v872_re.I)
+    response.set_data(html)
     return response

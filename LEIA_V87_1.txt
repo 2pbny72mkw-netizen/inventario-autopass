@@ -1,0 +1,6 @@
+Autopass Experience 3.0 — V87.1 (revisao incremental)
+Corrige tabela Materiais da localidade: somente saldo > 0 e localidade selecionada.
+Itens zerados continuam cadastrados e disponíveis na galeria/pesquisa visual para entradas.
+Indicadores de materiais e pendencias passam a considerar saldo positivo.
+Nao altera banco, fotos, movimentacoes ou regras de negocio.
+Aplicar sobre V87.0; backup antes do deploy. Nao homologado em Render/PostgreSQL.
