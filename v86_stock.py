@@ -1,4 +1,4 @@
-"""V86.0 — Estoque Central multi-localidade (Web responsiva)."""
+"""V86.1 — Estoque Central multi-localidade (Web responsiva)."""
 from datetime import datetime
 from functools import wraps
 from io import BytesIO
@@ -24,6 +24,7 @@ def install_v86(app, db, User, can):
         original_description=db.Column(db.String(300),nullable=False)
         unit=db.Column(db.String(24),default='UN',nullable=False)
         classified=db.Column(db.Boolean,default=False,nullable=False)
+        active=db.Column(db.Boolean,default=True,nullable=False)
         created_by=db.Column(db.Integer,nullable=False)
         created_at=db.Column(db.DateTime,default=datetime.utcnow,nullable=False)
 
@@ -62,6 +63,12 @@ def install_v86(app, db, User, can):
         if initialized:return
         for cls in (Warehouse,Material,Photo,Balance,Movement):
             cls.__table__.create(bind=db.engine,checkfirst=True)
+        # Migração incremental: preserva todas as linhas e fotos existentes.
+        from sqlalchemy import inspect, text
+        columns={x['name'] for x in inspect(db.engine).get_columns('v86_materials')}
+        if 'active' not in columns:
+            with db.engine.begin() as con:
+                con.execute(text('ALTER TABLE v86_materials ADD COLUMN active BOOLEAN NOT NULL DEFAULT TRUE'))
         if not Warehouse.query.first():
             db.session.add_all([Warehouse(name='Liberdade'),Warehouse(name='Guardiã')]);db.session.commit()
         initialized=True
@@ -82,12 +89,12 @@ def install_v86(app, db, User, can):
 
     def payload_material(m):
         return {'id':m.id,'code':m.code,'description':m.description,'original_description':m.original_description,
-                'unit':m.unit,'classified':m.classified,'photo_url':('/api/engenharia/estoque/fotos/'+str(m.id)) if Photo.query.filter_by(material_id=m.id).first() else None}
+                'unit':m.unit,'classified':m.classified,'active':m.active,'photo_url':('/api/engenharia/estoque/fotos/'+str(m.id)) if Photo.query.filter_by(material_id=m.id).first() else None}
 
     @app.get('/engenharia/estoque')
     @guard('engineering.stock.view')
     def v86_stock_page():
-        return render_template('v86_stock.html',app_release='V86.0',can_stock=can)
+        return render_template('v86_stock.html',app_release='V86.1',can_stock=can)
 
     @app.get('/api/engenharia/estoque')
     @guard('engineering.stock.view')
@@ -95,7 +102,7 @@ def install_v86(app, db, User, can):
         wid=request.args.get('warehouse_id',type=int)
         q=(request.args.get('q') or '').strip()[:100]
         wh=Warehouse.query.filter_by(active=True).order_by(Warehouse.name).all()
-        materials=Material.query
+        materials=Material.query.filter_by(active=True)
         if q:
             pattern='%'+q.replace('%','\\%').replace('_','\\_')+'%'
             materials=materials.filter(db.or_(Material.description.ilike(pattern),Material.code.ilike(pattern),Material.original_description.ilike(pattern)))
@@ -108,9 +115,10 @@ def install_v86(app, db, User, can):
             d['quantity']=sum(b.quantity for b in balances if b.material_id==m.id and (not wid or b.warehouse_id==wid))
             d['by_warehouse']={str(w.id):bm.get((m.id,w.id),0) for w in wh}
             result.append(d)
+        movements=Movement.query.filter_by(warehouse_id=wid).count() if wid else Movement.query.count()
         counts={'items':len(result),'units':sum(x['quantity'] for x in result),'unclassified':sum(not x['classified'] for x in result),
-                'movements':Movement.query.count()}
-        return jsonify(ok=True,warehouses=[{'id':w.id,'name':w.name} for w in wh],items=result,counts=counts)
+                'movements':movements}
+        return jsonify(ok=True,warehouses=[{'id':w.id,'name':w.name,'active':w.active} for w in wh],items=result,counts=counts)
 
     @app.post('/api/engenharia/estoque/localidades')
     @guard('engineering.stock.locations')
@@ -120,6 +128,76 @@ def install_v86(app, db, User, can):
         if Warehouse.query.filter(func.lower(Warehouse.name)==name.lower()).first():return jsonify(ok=False,error='Localidade já cadastrada.'),409
         db.session.add(Warehouse(name=name));db.session.commit()
         return jsonify(ok=True)
+
+    @app.patch('/api/engenharia/estoque/localidades/<int:wid>')
+    @guard('engineering.stock.locations')
+    def v861_warehouse_edit(wid):
+        w=db.session.get(Warehouse,wid)
+        if not w:abort(404)
+        d=request.get_json(silent=True) or {}
+        name=str(d.get('name') or '').strip()[:120]
+        if len(name)<2:return jsonify(ok=False,error='Informe o nome da localidade.'),400
+        duplicate=Warehouse.query.filter(Warehouse.id!=wid,func.lower(Warehouse.name)==name.lower()).first()
+        if duplicate:return jsonify(ok=False,error='Localidade já cadastrada.'),409
+        w.name=name
+        db.session.commit()
+        return jsonify(ok=True)
+
+    @app.delete('/api/engenharia/estoque/localidades/<int:wid>')
+    @guard('engineering.stock.locations')
+    def v861_warehouse_remove(wid):
+        w=db.session.get(Warehouse,wid)
+        if not w:abort(404)
+        if Balance.query.filter_by(warehouse_id=wid).first() or Movement.query.filter_by(warehouse_id=wid).first():
+            w.active=False
+            db.session.commit()
+            return jsonify(ok=True,inactivated=True,message='Localidade inativada: histórico preservado.')
+        db.session.delete(w)
+        db.session.commit()
+        return jsonify(ok=True,inactivated=False)
+
+    @app.patch('/api/engenharia/estoque/materiais/<int:mid>')
+    @guard('engineering.stock.classify')
+    def v861_material_edit(mid):
+        m=db.session.get(Material,mid)
+        if not m or not m.active:abort(404)
+        d=request.get_json(silent=True) or {}
+        description=str(d.get('description') or '').strip()[:300]
+        code=str(d.get('code') or '').strip().upper()[:80]
+        if len(description)<3:return jsonify(ok=False,error='Descrição deve ter ao menos 3 caracteres.'),400
+        if code:
+            duplicate=Material.query.filter(Material.id!=mid,func.upper(Material.code)==code).first()
+            if duplicate:return jsonify(ok=False,error='Código já utilizado.'),409
+        previous=f'{m.code} | {m.description}'
+        m.description=description
+        if code:
+            m.code=code
+            m.classified=not code.startswith('PROV-')
+        db.session.add(Movement(warehouse_id=0,material_id=mid,user_id=session['user_id'],
+            kind='EDICAO',quantity=0,before_qty=0,after_qty=0,
+            note=f'{previous} -> {m.code} | {m.description}'[:500]))
+        db.session.commit()
+        return jsonify(ok=True,item=payload_material(m))
+
+    @app.delete('/api/engenharia/estoque/materiais/<int:mid>')
+    @guard('engineering.stock.classify')
+    def v861_material_remove(mid):
+        m=db.session.get(Material,mid)
+        if not m or not m.active:abort(404)
+        has_history=Movement.query.filter_by(material_id=mid).first() is not None
+        has_balance=Balance.query.filter_by(material_id=mid).first() is not None
+        if has_history or has_balance:
+            positive=Balance.query.filter(Balance.material_id==mid,Balance.quantity!=0).first()
+            if positive:return jsonify(ok=False,error='Material possui saldo. Zere o saldo por movimentação auditável antes de inativar.'),409
+            m.active=False
+            db.session.add(Movement(warehouse_id=0,material_id=mid,user_id=session['user_id'],kind='INATIVACAO',
+                quantity=0,before_qty=0,after_qty=0,note='Cadastro inativado, histórico preservado'))
+            db.session.commit()
+            return jsonify(ok=True,inactivated=True)
+        Photo.query.filter_by(material_id=mid).delete()
+        db.session.delete(m)
+        db.session.commit()
+        return jsonify(ok=True,inactivated=False)
 
     def save_photo(m, file):
         if not file or not file.filename:return
@@ -176,7 +254,7 @@ def install_v86(app, db, User, can):
         kind=str(d.get('kind') or '').upper()
         if kind not in ('CONTAGEM','ENTRADA','RETIRADA'):return jsonify(ok=False,error='Tipo de movimento inválido.'),400
         if qty<0 or (kind!='CONTAGEM' and qty==0):return jsonify(ok=False,error='Quantidade inválida.'),400
-        if not db.session.get(Warehouse,wid) or not db.session.get(Material,mid):return jsonify(ok=False,error='Item ou localidade inexistente.'),404
+        if not Warehouse.query.filter_by(id=wid,active=True).first() or not Material.query.filter_by(id=mid,active=True).first():return jsonify(ok=False,error='Item ou localidade inexistente.'),404
         try:
             # Lock de localidade serializa as alterações de saldo, inclusive quando ainda não há linha de balanço.
             Warehouse.query.filter_by(id=wid).with_for_update().first()
@@ -199,7 +277,10 @@ def install_v86(app, db, User, can):
     @app.get('/api/engenharia/estoque/movimentacoes')
     @guard('engineering.stock.view')
     def v86_stock_history():
-        rows=Movement.query.order_by(Movement.id.desc()).limit(300).all()
+        wid=request.args.get('warehouse_id',type=int)
+        query=Movement.query
+        if wid:query=query.filter_by(warehouse_id=wid)
+        rows=query.order_by(Movement.id.desc()).limit(300).all()
         return jsonify(ok=True,rows=[{'id':r.id,'date':r.created_at.isoformat(),'warehouse_id':r.warehouse_id,'material_id':r.material_id,'user_id':r.user_id,'kind':r.kind,'quantity':r.quantity,'before':r.before_qty,'after':r.after_qty,'note':r.note} for r in rows])
 
     @app.get('/api/engenharia/estoque/exportar')

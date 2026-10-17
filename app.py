@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V86.0"
+APP_RELEASE = "V86.1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -7179,7 +7179,7 @@ _V8522_DEFAULT_MENU = {
  "Implantação de Hardware": ["Visitas / Relatórios","Gerar QR Code – Trilhos","Configurações QR – Trilhos","Troca de Chips EMV - Trilhos","Troca de Chips Garagem"],
  "RH": ["Equipes","APT","Usuários"],
  "Portal do Cliente": ["Agendamentos","Recebimentos","Gestão de Agendamentos","Cadastro de Clientes"],
- "Engenharia": ["Cadastro de Itens","Estruturas BOM","Preço de Venda / Locação","Revisões","Codificação"],
+ "Engenharia": ["Cadastro de Itens","Estruturas BOM","Estoque Central","Preço de Venda / Locação","Revisões","Codificação"],
  "Documentos & Materiais": ["Dossiê & Materiais","Raio-X dos Colaboradores"],
  "Gestão": ["Central Operacional","Inteligência Operacional","Chamados","Central 360","Notificações","Diagnóstico","Configurações","Organização do Menu Principal","Localidades Externas","Resumo dos Links","Rastreabilidade & Jornada","Perfis & Permissões","Configuração de Dashboards","Construtor de Dashboards","Saúde da Plataforma"],
  "Financeiro": ["Lançamentos","Coleta de Valores","Monitoramento de Coletas","Apuração"],
@@ -22213,7 +22213,10 @@ def engineering_page():
     response = make_response(render_template("engineering.html",app_release=APP_RELEASE))
     if _has_access("engineering.stock.view"):
         content=response.get_data(as_text=True)
-        content=content.replace('<div class="engTabs">','<div style="margin:12px 0"><a href="/engenharia/estoque" style="display:inline-block;padding:12px 18px;background:#115b8e;color:white;border-radius:10px;font-weight:700;text-decoration:none">📦 Estoque Central</a></div><div class="engTabs">',1)
+        link='<div style="margin:12px 0"><a href="/engenharia/estoque" style="display:inline-block;padding:12px 18px;background:#115b8e;color:white;border-radius:10px;font-weight:700;text-decoration:none">📦 Estoque Central</a></div>'
+        if '<div class="engTabs">' in content:content=content.replace('<div class="engTabs">',link+'<div class="engTabs">',1)
+        elif '</main>' in content:content=content.replace('</main>',link+'</main>',1)
+        else:content=link+content
         response.set_data(content)
     return response
 

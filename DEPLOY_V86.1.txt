@@ -1,0 +1,21 @@
+AUTOPASS WEB V86.1 — REVISAO CORRETIVA DO ESTOQUE CENTRAL
+Base: pacote Web V86.0 incremental.
+
+Copie os arquivos do ZIP sobre o projeto existente. NÃO apague as pastas nem recrie o banco.
+Arquivos principais: app.py, v86_stock.py, templates/v86_stock.html.
+Preserve as variáveis de ambiente e o PostgreSQL do Render.
+
+Correções:
+- Engenharia: link de acesso ao Estoque Central no conteúdo da página, com permissão independente.
+- Indicadores com títulos e detalhamento clicável por modal (materiais, saldos, sem classificação e histórico).
+- Edição e exclusão/inativação de localidades.
+- Edição e exclusão/inativação de materiais com proteção de saldos e histórico.
+- Migração automática idempotente da coluna active em v86_materials.
+- Filtro de movimentações por localidade.
+- Fotos e saldos existentes preservados.
+
+Limitações de validação:
+- Sintaxe Python e integridade do ZIP verificadas.
+- NÃO executado deploy Render, testes PostgreSQL ou navegador real.
+- O link é inserido na página Engenharia; a estrutura exata do menu global depende de templates legados que não integram o pacote incremental.
+- Não incluídas fotos do site Autopass: dependem de seleção e direitos de reutilização.
