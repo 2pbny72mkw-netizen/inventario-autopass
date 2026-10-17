@@ -1,0 +1,26 @@
+AUTOPASS WEB V86.0 — PACOTE ENXUTO INCREMENTAL
+Base obrigatória: V85.75 previamente implantada, com seus templates, static, dependências e banco PostgreSQL existentes.
+Arquivos: app.py, v86_stock.py, templates/v86_stock.html; demais arquivos incrementais V85.75 preservados.
+
+Funcionalidades:
+- Engenharia > Estoque Central: estoques Liberdade, Guardiã e cadastro de localidades.
+- Pesquisa por código/descrição com fotografia (consulta global, saldo filtrado por localidade).
+- Cadastro provisório, foto JPG/PNG/WebP até 2 MB, contagem, entrada, retirada, classificação, histórico e exportação XLSX.
+- Big numbers e galeria de materiais; estoque físico por localidade.
+- RH: status INATIVO, desligamento e bloqueio de login Web/Mobile e sessões existentes; histórico preservado.
+- Matriz de Permissões: engineering.stock.* e usuários existentes.
+
+Implantação:
+1. Faça backup do banco e do deploy atual.
+2. Extraia por cima do projeto V85.75, preservando arquivos que não estão neste ZIP.
+3. Mantenha os pacotes já instalados (Flask, Flask-SQLAlchemy, openpyxl, etc.).
+4. Deploy da aplicação. As novas tabelas são criadas no primeiro acesso autorizado ao Estoque Central.
+5. Conceda permissões engineering.stock.* na Matriz de Permissões. ADM possui acesso integral.
+6. Teste criação de item, foto, contagem, retirada, saldo negativo, Excel e inativação/login Web/Mobile.
+
+LIMITAÇÕES E ATENÇÕES:
+- Não testado em PostgreSQL/Render; apenas sintaxe Python verificada.
+- A V1 não inclui transferência entre estoques, busca automática por imagem ou fluxo de aprovação de contagens divergentes (estas ficam registradas para conferência).
+- Fotos são persistidas no banco, não no filesystem efêmero do Render.
+- Exportação traz links autenticados das fotos, não miniaturas embutidas.
+- Não use este ZIP isoladamente como projeto completo.

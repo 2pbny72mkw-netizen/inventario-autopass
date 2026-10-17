@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V85.75"
+APP_RELEASE = "V86.0"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -2419,7 +2419,7 @@ ACCESS_GROUPS = {
         "materials.my_documents","materials.request","materials.catalog.view","materials.catalog.manage","materials.kits.manage","materials.delivery.create","materials.delivery.manage","materials.dossier.view","materials.access_lists.view","materials.access_lists.manage"
     )),
     "engineering": ("Engenharia", (
-        "engineering.items.view","engineering.items.manage","engineering.bom.view","engineering.bom.manage","engineering.import","engineering.pricing.view","engineering.pricing.manage"
+        "engineering.items.view","engineering.items.manage","engineering.bom.view","engineering.bom.manage","engineering.import","engineering.pricing.view","engineering.pricing.manage","engineering.stock.view","engineering.stock.create","engineering.stock.move","engineering.stock.classify","engineering.stock.locations","engineering.stock.export"
     )),
     "portal": ("Portal do Cliente", ("portal.appointments","portal.receive","portal.manage")),
     "tasks": ("Gestão de Tarefas", ("tasks.view","tasks.create","tasks.edit","tasks.transfer","tasks.manage")),
@@ -2439,6 +2439,7 @@ ACCESS_LABELS = {
  "management.calls":"Chamados","management.360":"Central 360","management.notifications":"Notificações","management.diagnostics":"Diagnóstico","management.health":"Saúde da Plataforma","management.settings":"Configurações","management.dashboard_config":"Configuração de Dashboards","management.profiles":"Perfis & Permissões","management.gps_history":"Histórico GPS por estações","management.work_authorizations":"Autorizações de jornada","management.links":"Resumo dos Links","management.external_locations":"Localidades externas",
  "materials.my_documents":"Meus documentos / Minha carga","materials.request":"Solicitar material","materials.catalog.view":"Visualizar catálogo","materials.catalog.manage":"Cadastrar / editar / inativar materiais","materials.kits.manage":"Gerenciar kits","materials.delivery.create":"Criar e enviar entregas","materials.delivery.manage":"Gerenciar aceites / correções","materials.dossier.view":"Dossiê dos colaboradores","materials.access_lists.view":"Listas de acesso Metrô / CPTM","materials.access_lists.manage":"Gerar / validar listas de acesso",
  "engineering.items.view":"Visualizar cadastro de itens","engineering.items.manage":"Cadastrar / editar itens","engineering.bom.view":"Visualizar estruturas BOM","engineering.bom.manage":"Criar / revisar BOM","engineering.import":"Importar planilhas de Engenharia","engineering.pricing.view":"Visualizar formação de preço","engineering.pricing.manage":"Criar / editar estudos de preço",
+ "engineering.stock.view":"Visualizar Estoque Central","engineering.stock.create":"Cadastrar material provisório","engineering.stock.move":"Inventariar / movimentar estoque","engineering.stock.classify":"Classificar materiais","engineering.stock.locations":"Administrar localidades de estoque","engineering.stock.export":"Exportar Estoque Central",
  "portal.appointments":"Criar / consultar agendamentos","portal.receive":"Receber agendamentos","portal.manage":"Administrar Portal do Cliente",
  "arrow.view":"Visualizar Arrow","arrow.manage":"Gerenciar Arrow / alocações","arrow.edit":"Editar atividade Arrow","arrow.delete":"Excluir atividade Arrow","arrow.dashboard":"Dashboard Arrow","arrow.remote":"TeamViewer / Atendimento Remoto","arrow.create_field":"Criar imprevisto Arrow em campo","arrow.change_status":"Alterar status de atividade Arrow",
  "about.versions":"Histórico / Versões",
@@ -3033,6 +3034,8 @@ def _authenticate_user_credentials(username, password):
             func.lower(User.username) == username,
             User.active.is_(True),
         ).first()
+    if user and (user.personnel_status or "ATIVO").upper() == "INATIVO":
+        return None
     if not user:
         app.logger.warning("AUTH: usuário ativo não localizado para login normalizado=%r", username)
         return None
@@ -3095,8 +3098,10 @@ def v72_enforce_journey_window():
     if request.path.startswith("/static/") or request.path.startswith("/uploads/"):
         return None
     user = db.session.get(User, session.get("user_id"))
-    if not user:
+    if not user or not user.active or (user.personnel_status or "ATIVO").upper() == "INATIVO":
         session.clear()
+        if request.path.startswith("/api/"):
+            return jsonify({"ok":False,"error":"COLABORADOR_INATIVO"}),401
         return redirect(url_for("login"))
     state = _v72_journey_status(user)
     if state.get("controlled") and not state.get("allowed"):
@@ -3328,7 +3333,7 @@ def _v8233_mobile_current_user():
     if not row or row.expires_at <= datetime.utcnow():
         return None
     user=db.session.get(User,row.user_id)
-    if not user or not user.active:
+    if not user or not user.active or (user.personnel_status or "ATIVO").upper() == "INATIVO":
         return None
     row.last_used_at=datetime.utcnow()
     try:
@@ -9823,7 +9828,7 @@ def create_user():
         flash("Somente o Administrador principal pode criar ou atribuir os perfis Gestor, Consulta ou Dispatcher.")
         return redirect(url_for("users_page"))
 
-    allowed_personnel_status = {"ATIVO", "FERIAS", "AFASTADO", "LICENCA", "FOLGA_PROGRAMADA", "OUTRO"}
+    allowed_personnel_status = {"ATIVO", "FERIAS", "AFASTADO", "LICENCA", "FOLGA_PROGRAMADA", "OUTRO", "INATIVO"}
     if personnel_status not in allowed_personnel_status:
         personnel_status = "ATIVO"
 
@@ -9853,7 +9858,7 @@ def create_user():
         username=username,
         password_hash=generate_password_hash(password),
         role=role,
-        active=True,
+        active=(personnel_status != "INATIVO"),
         user_code=user_code,
         email=email,
         phone=phone,
@@ -10005,6 +10010,11 @@ def toggle_user(user_id):
         return redirect(url_for("users_page"))
 
     user.active = not user.active
+    if user.active:
+        user.personnel_status = "ATIVO"
+    else:
+        user.personnel_status = "INATIVO"
+        if not user.termination_date: user.termination_date = date.today()
     db.session.commit()
     flash("Status do usuário atualizado.")
     return redirect(url_for("users_page"))
@@ -10074,7 +10084,7 @@ def edit_user(user_id):
         flash("Seu perfil não possui permissão para atribuir este perfil de acesso.")
         return redirect(url_for("users_page"))
 
-    allowed_personnel_status = {"ATIVO", "FERIAS", "AFASTADO", "LICENCA", "FOLGA_PROGRAMADA", "OUTRO"}
+    allowed_personnel_status = {"ATIVO", "FERIAS", "AFASTADO", "LICENCA", "FOLGA_PROGRAMADA", "OUTRO", "INATIVO"}
     if personnel_status not in allowed_personnel_status:
         personnel_status = "ATIVO"
 
@@ -10162,6 +10172,18 @@ def edit_user(user_id):
     user.company = company
     user.customer_company_ids=json.dumps([int(x) for x in customer_company_ids]) if role=="customer" else None
     user.job_title = job_title
+    # V86 — desligamento bloqueia imediatamente acesso Web e Mobile sem apagar histórico.
+    if personnel_status == "INATIVO":
+        if user.id == session.get("user_id"):
+            flash("Não é permitido inativar o próprio usuário.")
+            return redirect(url_for("users_page"))
+        if user.role == "manager" and _active_manager_count(exclude_user_id=user.id) == 0:
+            flash("Não é possível inativar o último Gestor ativo.")
+            return redirect(url_for("users_page"))
+        if not _has_access("users.activate"):
+            abort(403)
+        user.active = False
+        if not termination_date: termination_date = date.today()
     user.personnel_status = personnel_status
     user.personnel_status_note = personnel_status_note
     user.admission_date = admission_date
@@ -22185,8 +22207,15 @@ def engineering_page():
     user=db.session.get(User,session.get("user_id"))
     role=(getattr(user,"role","") or "").lower() if user else ""
     allowed = _has_access("engineering.items.view") or _has_access("engineering.bom.view") or _has_access("engineering.pricing.view")
+    if not allowed and _has_access("engineering.stock.view"):
+        return redirect(url_for("v86_stock_page"))
     if not allowed: abort(403)
-    return render_template("engineering.html",app_release=APP_RELEASE)
+    response = make_response(render_template("engineering.html",app_release=APP_RELEASE))
+    if _has_access("engineering.stock.view"):
+        content=response.get_data(as_text=True)
+        content=content.replace('<div class="engTabs">','<div style="margin:12px 0"><a href="/engenharia/estoque" style="display:inline-block;padding:12px 18px;background:#115b8e;color:white;border-radius:10px;font-weight:700;text-decoration:none">📦 Estoque Central</a></div><div class="engTabs">',1)
+        response.set_data(content)
+    return response
 
 def _eng_code_seed():
     return {
@@ -26402,3 +26431,25 @@ def v8556_mobile_gps_signal_history():
          'received_at':r.received_at.isoformat()+'Z' if r.received_at else None,
          'status':r.status,'detail':json.loads(r.payload_json or '{}')}
         for r in rows]})
+
+
+# V86.0 — Estoque Central Web, preservando as rotas legadas.
+from v86_stock import install_v86
+install_v86(app, db, User, _has_access)
+
+@app.after_request
+def v86_user_status_select(response):
+    # Injetar somente a opção de RH nos selects existentes, sem substituir o template legado.
+    if request.path != '/usuarios' or response.status_code != 200 or not response.mimetype.startswith('text/html'):
+        return response
+    content=response.get_data(as_text=True)
+    import re as _v86_re
+    def add_option(match):
+        block=match.group(0)
+        if 'value="INATIVO"' in block: return block
+        selected=' selected' if not _v86_re.search(r'<option[^>]*\bselected\b',block,_v86_re.I) else ''
+        option='<option value="INATIVO"'+selected+'>Inativo / Desligado</option>'
+        return block.replace('</select>',option+'</select>')
+    content=_v86_re.sub(r'<select\s+name="personnel_status"[^>]*>.*?</select>',add_option,content,flags=_v86_re.S|_v86_re.I)
+    response.set_data(content)
+    return response
