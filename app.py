@@ -26456,3 +26456,21 @@ def v86_user_status_select(response):
     content=_v86_re.sub(r'<select\s+name="personnel_status"[^>]*>.*?</select>',add_option,content,flags=_v86_re.S|_v86_re.I)
     response.set_data(content)
     return response
+
+
+# V87.0 — visual assets applied to existing HTML, without modifying business rules.
+@app.after_request
+def v87_experience_assets(response):
+    if response.status_code != 200 or response.mimetype != 'text/html' or response.direct_passthrough:
+        return response
+    if request.path.startswith('/api/'):
+        return response
+    content=response.get_data(as_text=True)
+    if '</head>' not in content.lower() or '/static/v87_experience.css' in content:
+        return response
+    import re as _v87_re
+    assets=('<link rel="stylesheet" href="/static/v87_experience.css?v=87.0">'
+            '<script defer src="/static/v87_experience.js?v=87.0"></script>')
+    content=_v87_re.sub(r'</head>',assets+'</head>',content,count=1,flags=_v87_re.I)
+    response.set_data(content)
+    return response

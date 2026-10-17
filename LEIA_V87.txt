@@ -1,0 +1,17 @@
+AUTOPASS WEB V87.0 - EXPERIENCE 3.0 (ENTREGA INCREMENTAL)
+
+Aplicar sobre o projeto Web existente (V86.1). NÃO apagar arquivos do projeto ou banco.
+Conteúdo: app.py, v86_stock.py, templates/v86_stock.html, dois assets static/ e templates auxiliares.
+
+Implementado:
+- Estilo global compartilhado, com melhorias de tipografia, cores, tabelas, estados de foco e microinterações.
+- Estoque Central com tabela por localidade como visualização principal e galeria opcional.
+- Ação Gerenciar por linha, fotografias, saldo, classificação, indicadores coloridos.
+- Botão Adicionar material mais visível, preservando cadastro e API existentes.
+- Respeito à preferência de movimento reduzido do navegador.
+
+Limites:
+- NÃO representa redesenho completo de cada um dos módulos legados; a folha global moderniza elementos comuns.
+- Não inclui imagens extraídas do site Autopass (requer seleção/autorização de uso).
+- Sem validação no Render/PostgreSQL/navegador real.
+- Fazer backup e homologar antes de promover a produção.
