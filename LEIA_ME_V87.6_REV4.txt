@@ -1,0 +1,10 @@
+WEB V87.6 REV4 - PATCH ENXUTO SOBRE V87.6 REV3
+
+Alterados: v874_pos_metro.py, templates/v874_pos_metro.html.
+Preservar todos os demais arquivos da aplicação e fazer backup do banco.
+
+Inclui: numero curto do terminal, coluna de identificacao completa, remocao do botao Trocar redundante, status Pendente/Em andamento/Concluido, serie obrigatoria somente para Concluido, ate 5 fotos opcionais (JPEG/PNG/WEBP; 3MB cada), foto da camera ou galeria, persistencia das fotos no PostgreSQL, modelo XLSX e exportacao com colunas compativeis com reimportacao.
+
+IMPORTANTE: importacao de planilha NAO altera status nem auditoria de atividades executadas; estes campos sao informativos na exportacao. O status deve ser alterado na atividade, com registro de usuario/hora. Historico de fotos e eventos nao e apagado. Novas fotos ficam vinculadas ao evento, mas a interface de consulta das fotos historicas ainda nao esta disponivel.
+
+Verificacoes: sintaxe Python, parse do template Jinja, integridade ZIP. NAO testado em PostgreSQL/Render nem em dispositivo Android. Nao homologado. Aplicar primeiro em ambiente de teste.
