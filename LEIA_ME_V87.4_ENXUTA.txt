@@ -1,0 +1,4 @@
+V87.4 ENXUTA - somente arquivos alterados comparados ao ZIP Web recebido em 18/10/2026.
+Copiar mantendo os caminhos existentes. Fazer backup e homologar em ambiente de testes antes do Render.
+Nao excluir demais arquivos do projeto.
+Nao homologado.

@@ -2397,7 +2397,7 @@ def login_required(fn):
 ACCESS_GROUPS = {
     "dashboard": ("Dashboard Geral", ("dashboard.general",)),
     "field": ("Field", (
-        "field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.firmware_pos_cptm","field.bobbins","field.bobbins_dashboard","field.stock_manage","field.atm_mapping","field.atm_mapping_manage"
+        "field.dashboard","field.inventory","field.calls","field.preventive","field.equipment","field.evidence","field.panorama","field.chip_recarga","field.pos_metro","field.pos_metro.import","field.pos_metro.execute","field.pos_metro.export","field.firmware_pos_cptm","field.bobbins","field.bobbins_dashboard","field.stock_manage","field.atm_mapping","field.atm_mapping_manage"
     )),
     "implantation": ("Implantação de Hardware", (
         "implantation.dashboard","implantation.visits","implantation.reports","implantation.emv","implantation.garage","implantation.qr.view","implantation.qr.manage","implantation.repository.view","implantation.repository.manage","implantation.repository.delete","implantation.attendance.view","implantation.attendance.manage"
@@ -2431,7 +2431,7 @@ ACCESS_SUBMODULES = tuple(k for _g,(_label,children) in ACCESS_GROUPS.items() fo
 ACCESS_ALL = set(ACCESS_MODULES) | set(ACCESS_SUBMODULES)
 ACCESS_LABELS = {
  "dashboard.general":"Dashboard Geral",
- "field.dashboard":"Dashboard Field","field.inventory":"Inventário / Lançamento","field.calls":"Chamados","field.preventive":"Solicitação Preventiva ATM","field.equipment":"Equipamentos","field.evidence":"Evidências","field.panorama":"Visão Panorâmica","field.chip_recarga":"Troca de Chips – Recarga","field.firmware_pos_cptm":"Atualização de Firmware POS – CPTM","field.bobbins":"Atividade Bobinas","field.bobbins_dashboard":"Visualizar Dashboard Bobinas","field.stock_manage":"Alterar estoque consolidado / armários / bobinas","field.atm_mapping":"Mapeamento ATM","field.atm_mapping_manage":"Gerenciar Mapeamento ATM",
+ "field.dashboard":"Dashboard Field","field.inventory":"Inventário / Lançamento","field.calls":"Chamados","field.preventive":"Solicitação Preventiva ATM","field.equipment":"Equipamentos","field.evidence":"Evidências","field.panorama":"Visão Panorâmica","field.chip_recarga":"Troca de Chips – Recarga","field.pos_metro":"Troca de POS Metrô","field.pos_metro.import":"Importar base POS Metrô","field.pos_metro.execute":"Executar troca POS Metrô","field.pos_metro.export":"Exportar POS Metrô","field.firmware_pos_cptm":"Atualização de Firmware POS – CPTM","field.bobbins":"Atividade Bobinas","field.bobbins_dashboard":"Visualizar Dashboard Bobinas","field.stock_manage":"Alterar estoque consolidado / armários / bobinas","field.atm_mapping":"Mapeamento ATM","field.atm_mapping_manage":"Gerenciar Mapeamento ATM",
  "implantation.dashboard":"Dashboard Implantação","implantation.visits":"Visita a Campo / Relatório de Visita","implantation.reports":"Relatórios / Visitas recentes","implantation.emv":"Troca de Chips EMV – Trilhos","implantation.garage":"Troca de Chips Garagem","implantation.qr.view":"Gerador de QR – Trilhos","implantation.qr.manage":"Editar configurações de QR – Trilhos","implantation.repository.view":"Consultar repositório técnico","implantation.repository.manage":"Gerenciar pastas e arquivos técnicos","implantation.repository.delete":"Excluir pastas e arquivos técnicos","implantation.attendance.view":"Consultar listas de presença","implantation.attendance.manage":"Criar e concluir listas de presença",
  "teams.map":"Mapa operacional","teams.today":"Operação de Hoje","teams.schedule":"Escala por dias","teams.manage":"Gestão de equipes / escala","teams.export":"Exportar dados","teams.apt":"APT / Validades",
  "users.view":"Visualizar usuários","users.config.view":"Visualizar configurações de usuários","users.config.manage":"Gerenciar configurações de usuários","users.create":"Criar usuário","users.edit":"Editar usuário","users.activate":"Ativar / Desativar","users.delete":"Excluir / Arquivar","users.password":"Redefinir senha","users.export":"Exportar Excel","users.import":"Importar Excel de configurações","users.roles.manage":"Atribuir perfis administrativos / sensíveis","users.scope.all":"Administrar usuários de todas as empresas",
@@ -26514,3 +26514,7 @@ def v872_engineering_dropdown(response):
         html=_v872_re.sub(r'</body>',js+'</body>',html,count=1,flags=_v872_re.I)
     response.set_data(html)
     return response
+
+# V87.4 POS Metrô — módulo incremental
+from v874_pos_metro import install_pos_metro
+install_pos_metro(app, db, _has_access)
