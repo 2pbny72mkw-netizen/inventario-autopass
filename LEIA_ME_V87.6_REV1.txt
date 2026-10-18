@@ -1,0 +1,1 @@
+Aplicar sobre V87.5 com backup. Arquivos alterados: app.py, v874_pos_metro.py, templates/v874_pos_metro.html. Importar BASE POS INSTALAÇÃO POS(1).xlsx pela tela; não inclui dados. Testes PostgreSQL/Render pendentes.

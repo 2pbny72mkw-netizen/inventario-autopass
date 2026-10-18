@@ -3,7 +3,7 @@ from datetime import datetime
 from io import BytesIO
 from functools import wraps
 from flask import request,session,abort,redirect,jsonify,render_template,send_file
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from openpyxl import load_workbook,Workbook
 
 def install_pos_metro(app,db,can):
@@ -47,22 +47,25 @@ def install_pos_metro(app,db,can):
    v=(request.args.get(arg) or '').strip()
    if v:q=q.filter(col==v)
   search=(request.args.get('q') or '').strip()
-  if search:q=q.filter(db.or_(POS.terminal.ilike('%'+search+'%'),POS.serial.ilike('%'+search+'%'),POS.asset.ilike('%'+search+'%')))
+  if search:q=q.filter(or_(POS.terminal.ilike('%'+search+'%'),POS.serial.ilike('%'+search+'%'),POS.asset.ilike('%'+search+'%')))
   return q
  @app.get('/field/troca-pos-metro')
  @guard('field.pos_metro')
  def pos_page():
   q=selected();items=q.order_by(POS.line,POS.station,POS.terminal).limit(500).all()
-  total=q.count();done=q.filter(POS.status=='Concluído').count();ongoing=q.filter(POS.status=='Em andamento').count()
+  overall=POS.query
+  total=overall.count();done=overall.filter(POS.status=='Concluído').count();ongoing=overall.filter(POS.status=='Em andamento').count()
   lines=[x[0] for x in db.session.query(POS.line).distinct().order_by(POS.line)]
-  stations=[x[0] for x in db.session.query(POS.station).filter(POS.line==request.args.get('linha')).distinct().order_by(POS.station)] if request.args.get('linha') else []
+  stations_q=db.session.query(POS.station)
+  if request.args.get('linha'):stations_q=stations_q.filter(POS.line==request.args['linha'])
+  stations=[x[0] for x in stations_q.distinct().order_by(POS.station)]
   station_name=(request.args.get('estacao') or '').strip()
   station_q=POS.query.filter(POS.station==station_name) if station_name else None
   if station_q is not None and request.args.get('linha'):station_q=station_q.filter(POS.line==request.args['linha'])
   st_total=station_q.count() if station_q is not None else 0
   st_done=station_q.filter(POS.status=='Concluído').count() if station_q is not None else 0
   st_ongoing=station_q.filter(POS.status=='Em andamento').count() if station_q is not None else 0
-  return render_template('v874_pos_metro.html',items=items,total=total,done=done,ongoing=ongoing,lines=lines,stations=stations,can_pos=can,st_total=st_total,st_done=st_done,st_ongoing=st_ongoing)
+  return render_template('v874_pos_metro.html',items=items,total=total,done=done,ongoing=ongoing,lines=lines,stations=stations,can_pos=can,st_total=st_total,st_done=st_done,st_ongoing=st_ongoing,filtered_count=q.count())
  @app.post('/field/troca-pos-metro/importar')
  @guard('field.pos_metro.import')
  def pos_import():
@@ -78,7 +81,7 @@ def install_pos_metro(app,db,can):
   if not header:return jsonify(error='Planilha vazia'),400
   def norm(v):
    import unicodedata
-   return ''.join(c for c in unicodedata.normalize('NFKD',str(v or '').strip().upper()) if not unicodedata.combining(c)).replace('º','').replace('°','').replace(' ','')
+   return ''.join(c for c in unicodedata.normalize('NFKD',str(v or '').strip().upper()) if not unicodedata.combining(c)).replace('º','').replace('°','').replace('°','').replace(' ','').replace('N','N')
   columns={norm(v):i for i,v in enumerate(header)}
   required=['TERMINAL','LINHA','ESTACAO']
   if any(k not in columns for k in required):return jsonify(error='Colunas obrigatórias ausentes: TERMINAL, LINHA, ESTAÇÃO'),400
@@ -109,6 +112,8 @@ def install_pos_metro(app,db,can):
   except Exception:
    db.session.rollback();raise
   finally:wb.close()
+  from flask import flash
+  flash(f'Importação concluída: {len(records)} terminais processados.', 'success')
   return redirect('/field/troca-pos-metro')
  @app.post('/field/troca-pos-metro/<int:pid>/registrar')
  @guard('field.pos_metro.execute')
