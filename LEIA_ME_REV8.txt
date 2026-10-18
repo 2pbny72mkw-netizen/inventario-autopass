@@ -1,0 +1,6 @@
+Autopass Web V87.6 REV8 - pacote enxuto sobre REV7.
+Alterado: app.py.
+Corrige importacao do Excel sem exigir celulas da aba oculta e preserva identidades tecnicas repetidas por ocorrencia.
+Teste local: sintaxe Python e round-trip sintetico de importacao com identidade oculta ausente aprovados.
+Nao validado: PostgreSQL, Render, menu completo real, reorganizacao arbitraria de grupos.
+Faca backup antes de aplicar. Nao homologado.
