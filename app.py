@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV6"
+APP_RELEASE = "V87.6 REV7"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -7202,7 +7202,11 @@ def _v8522_menu_layout():
             cols.append({"name":name,"order":order,"items":[{"source":x,"label":x,"group":"","order":i+1} for i,x in enumerate(items)]})
         obj={"version":1,"columns":cols}
 
-    # REV5: configuração aprovada é a fonte de verdade. Sem reinserções automáticas.
+    # REV7: repair legacy misidentified POS link in memory only (not in DB).
+    for col in obj.get('columns',[]):
+        for it in col.get('items',[]):
+            if (it.get('label') or '').strip()=='Troca de POS Metrô' and (it.get('source') or '').strip()=='Troca de Chips EMV - Trilhos':
+                it['source']='Troca de POS Metrô'
     return obj
 
 # REV5: catálogo técnico das funções efetivamente presentes na navegação.
@@ -7223,22 +7227,19 @@ def _v876_rev5_complete(layout):
     return obj
 
 def _v876_rev5_validate(proposed,current):
-    """REV6: preserve multiplicities of existing technical identities.
-    Repeated names in different navigation groups are not automatically errors.
+    """REV7: validate technical occurrences, not display labels.
+    Export->import round trips are lossless even with duplicate names.
     """
     from collections import Counter
-    baseline=_v876_rev5_complete(current)
-    def identities(layout):
-        return Counter(str(i.get('source') or i.get('label') or '').strip()
-                       for c in layout.get('columns',[]) for i in c.get('items',[]))
-    old=identities(baseline); new=identities(proposed)
+    def counts(layout):
+        return Counter(str(i.get('source') or '').strip() for c in layout.get('columns',[]) for i in c.get('items',[]))
+    old=counts(_v876_rev5_complete(current)); new=counts(proposed)
     errors=[]
     for key,n in new.items():
-        if not key: errors.append('Funcionalidade sem identidade técnica')
-        elif key not in old: errors.append('Identidade não reconhecida: '+key)
-        elif n>old[key]: errors.append('Ocorrências adicionais da identidade '+key+f': {n} (original: {old[key]})')
+        if not key: errors.append('Item sem identidade técnica')
+        elif n>old[key]: errors.append('Identidade adicional: '+key+' ('+str(n)+'/'+str(old[key])+')')
     for key,n in old.items():
-        if new[key]<n: errors.append('Funcionalidade ausente: '+key+f' ({new[key]}/{n})')
+        if new[key]<n: errors.append('Identidade ausente: '+key+' ('+str(new[key])+'/'+str(n)+')')
     if errors: raise ValueError('; '.join(errors)[:900])
 
 def _v8522_menu_save(layout):
@@ -7247,41 +7248,55 @@ def _v8522_menu_save(layout):
     db.session.commit()
 
 def _v8522_menu_from_workbook(fileobj):
+    """REV7: identities are carried by a stable positional sheet, not guessed by name.
+    Older exports use technical rows as a fallback and reject ambiguous edits.
+    """
+    from collections import defaultdict, deque
     wb=load_workbook(fileobj,data_only=True)
-    ws=wb["Menu Visual"] if "Menu Visual" in wb.sheetnames else wb[wb.sheetnames[0]]
-    cols=[]; seen=set()
+    ws=wb['Menu Visual'] if 'Menu Visual' in wb.sheetnames else wb[wb.sheetnames[0]]
+    cols=[]
     for c in range(1,ws.max_column+1):
-        name=str(ws.cell(1,c).value or "").strip()
+        name=str(ws.cell(1,c).value or '').strip()
         if not name: continue
         items=[]
         for r in range(2,ws.max_row+1):
-            val=str(ws.cell(r,c).value or "").strip()
+            val=str(ws.cell(r,c).value or '').strip()
             if not val: continue
-            parts=[x.strip() for x in val.split(">") if x.strip()]
-            label=parts[-1]; group=" > ".join(parts[:-1])
-            # source is resolved from technical sheet when available; otherwise current visible label.
-            source=label
-            items.append({"source":source,"label":label,"group":group,"order":len(items)+1})
-        cols.append({"name":name,"order":len(cols)+1,"items":items})
-    if "Estrutura Técnica" in wb.sheetnames:
-        tws=wb["Estrutura Técnica"]
+            parts=[x.strip() for x in val.split('>') if x.strip()]
+            if not parts: continue
+            items.append({'source':'','label':parts[-1],'group':' > '.join(parts[:-1]),'order':len(items)+1,'_cell':(r,c)})
+        cols.append({'name':name,'order':len(cols)+1,'items':items})
+    if not cols: raise ValueError('A planilha não contém menus.')
+    # A hidden parallel identity grid makes an unchanged export/import exact.
+    identity=wb['Identidades REV7'] if 'Identidades REV7' in wb.sheetnames else None
+    if identity:
+        for col in cols:
+            for it in col['items']:
+                r,c=it.pop('_cell')
+                it['source']=str(identity.cell(r,c).value or '').strip()
+                if not it['source']:
+                    raise ValueError('Identidade técnica ausente em '+col['name']+' / '+it['label']+'. Exporte um modelo novo.')
+    else:
+        # Compatibility for earlier files: use technical-sheet occurrences in order,
+        # never a dictionary that overwrites repeated display labels.
+        tws=wb['Estrutura Técnica'] if 'Estrutura Técnica' in wb.sheetnames else None
+        if tws is None: raise ValueError('Planilha antiga sem identidades técnicas. Exporte um novo modelo REV7.')
         hdr={str(tws.cell(1,c).value or '').strip():c for c in range(1,tws.max_column+1)}
-        if all(k in hdr for k in ("Menu","Funcionalidade","Identidade original")):
-            lookup={}; order_lookup={}
-            order_col=hdr.get('Ordem')
-            for r in range(2,tws.max_row+1):
-                m=str(tws.cell(r,hdr['Menu']).value or '').strip(); lab=str(tws.cell(r,hdr['Funcionalidade']).value or '').strip(); src=str(tws.cell(r,hdr['Identidade original']).value or '').strip()
-                if m and lab and src: lookup[(m,lab)]=src
-                if m and src and order_col:
-                    try: order_lookup[(m,int(tws.cell(r,order_col).value or 0))]=src
-                    except Exception: pass
-            for col in cols:
-                for it in col['items']:
-                    # A identidade original sobrevive a renomeações feitas apenas na aba visual,
-                    # desde que a linha permaneça na mesma posição dentro da coluna exportada.
-                    it['source']=lookup.get((col['name'],it['label']),it['source'])
-    if not cols: raise ValueError("A planilha não contém menus.")
-    return {"version":1,"columns":cols}
+        if not all(k in hdr for k in ('Menu','Funcionalidade','Identidade original')):
+            raise ValueError('Aba Estrutura Técnica incompleta. Exporte um novo modelo REV7.')
+        lookup=defaultdict(deque)
+        for r in range(2,tws.max_row+1):
+            m=str(tws.cell(r,hdr['Menu']).value or '').strip()
+            lab=str(tws.cell(r,hdr['Funcionalidade']).value or '').strip()
+            src=str(tws.cell(r,hdr['Identidade original']).value or '').strip()
+            if m and lab and src: lookup[(m,lab)].append(src)
+        for col in cols:
+            for it in col['items']:
+                it.pop('_cell',None)
+                values=lookup[(col['name'],it['label'])]
+                if not values: raise ValueError('Identidade não localizada para '+col['name']+' / '+it['label']+'. Exporte um novo modelo REV7.')
+                it['source']=values.popleft()
+    return {'version':7,'columns':cols}
 
 @app.context_processor
 def v8522_menu_context():
@@ -7317,6 +7332,13 @@ def v8522_menu_export():
             ws.cell(r,c,(group+' > ' if group else '')+label)
         ws.column_dimensions[get_column_letter(c)].width=max(18,min(42,len(col.get('name',''))+8))
     ws.freeze_panes='A2'
+    # REV7: exact technical identity at the same cell as each visual item.
+    identities=wb.create_sheet('Identidades REV7')
+    for c,col in enumerate(cols,1):
+        identities.cell(1,c,col.get('name',''))
+        for r,it in enumerate(col.get('items',[]),2):
+            identities.cell(r,c,it.get('source') or it.get('label') or '')
+    identities.sheet_state='hidden'
     tech=wb.create_sheet('Estrutura Técnica'); tech.append(['Menu','Grupo / Nível 2','Funcionalidade','Identidade original','Ordem','Permissões'])
     for col in cols:
         for it in col.get('items',[]): tech.append([col.get('name'),it.get('group',''),it.get('label'),it.get('source'),it.get('order'), 'PRESERVADAS — não editado pela importação'])

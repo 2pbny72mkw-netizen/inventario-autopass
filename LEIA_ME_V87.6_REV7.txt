@@ -1,0 +1,6 @@
+AUTOPASS WEB V87.6 REV7 - ENXUTA - PRE-HOMOLOGACAO
+Aplicar sobre REV6 com backup e sem apagar demais arquivos.
+Arquivo alterado: app.py
+Correcoes: versionamento REV7; exportacao com aba oculta Identidades REV7; importacao por celula sem colisao por nomes repetidos; validacao por multiplicidade tecnica; reparo em memoria da identidade incorreta de Troca de POS Metro.
+Importante: utilize Excel recem-exportado na REV7. Nao reorganize linhas na aba Menu Visual sem mover a celula correspondente na aba oculta: a identidade tecnica esta vinculada a posicao. Mover linhas/colunas no Excel sem a aba oculta correspondente ainda nao e suportado com seguranca.
+Nao testado em Render/PostgreSQL. Nao homologado.
