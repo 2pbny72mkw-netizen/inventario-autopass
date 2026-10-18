@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV9"
+APP_RELEASE = "V87.6 REV10"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -7248,38 +7248,44 @@ def _v8522_menu_save(layout):
     db.session.commit()
 
 def _v8522_menu_from_workbook(fileobj):
-    """REV9: stable IDs across export/import; exact round-trip and moved columns.
+    """REV10: resolve visual cells against stable occurrence IDs from the export.
 
-    Technical sheet is an inventory of identities, not a positional mapping.
-    Visible labels may repeat. The hidden sheet is authoritative only when its
-    identity exists in the exported technical inventory and matches that cell.
+    The hidden sheet is a positional aid, not the only identity source. The
+    technical sheet carries an immutable occurrence key (REV10) for each item.
+    For older exports, use the exact original label and occurrence inventory.
+    Fail closed on genuinely unknown items; never guess a route.
     """
-    from collections import defaultdict, deque, Counter
+    from collections import defaultdict, Counter
     wb=load_workbook(fileobj,data_only=True)
     ws=wb['Menu Visual'] if 'Menu Visual' in wb.sheetnames else wb[wb.sheetnames[0]]
-    technical=wb['Estrutura Técnica'] if 'Estrutura Técnica' in wb.sheetnames else None
-    if technical is None:
-        raise ValueError('Aba Estrutura Técnica ausente. Exporte uma nova planilha.')
-    headers={str(technical.cell(1,c).value or '').strip():c for c in range(1,technical.max_column+1)}
-    required=('Menu','Grupo / Nível 2','Funcionalidade','Identidade original')
-    if any(k not in headers for k in required):
-        raise ValueError('Aba Estrutura Técnica incompleta. Exporte uma nova planilha.')
-    inventory=defaultdict(deque)
-    by_label=defaultdict(deque)
-    known=Counter()
-    for r in range(2,technical.max_row+1):
-        menu=str(technical.cell(r,headers['Menu']).value or '').strip()
-        group=str(technical.cell(r,headers['Grupo / Nível 2']).value or '').strip()
-        label=str(technical.cell(r,headers['Funcionalidade']).value or '').strip()
-        source=str(technical.cell(r,headers['Identidade original']).value or '').strip()
-        if not (menu and label and source): continue
-        if label=='Troca de POS Metrô' and source=='Troca de Chips EMV - Trilhos':
-            source='Troca de POS Metrô'
-        inventory[(menu,group,label)].append(source)
-        by_label[label].append(source)
-        known[source]+=1
-    identity=wb['Identidades REV7'] if 'Identidades REV7' in wb.sheetnames else None
-    used=Counter();cols=[]
+    tech=wb['Estrutura Técnica'] if 'Estrutura Técnica' in wb.sheetnames else None
+    if tech is None: raise ValueError('Aba Estrutura Técnica ausente.')
+    headers={str(tech.cell(1,c).value or '').strip():c for c in range(1,tech.max_column+1)}
+    if any(k not in headers for k in ('Menu','Grupo / Nível 2','Funcionalidade','Identidade original')):
+        raise ValueError('Aba Estrutura Técnica incompleta.')
+    current=_v876_rev5_complete(_v8522_menu_layout())
+    # The live configuration is authoritative for which identities actually exist.
+    current_rows=[]
+    for col in current.get('columns',[]):
+        for it in col.get('items',[]):
+            source=str(it.get('source') or it.get('label') or '').strip()
+            label=str(it.get('label') or source).strip()
+            if label=='Troca de POS Metrô' and source=='Troca de Chips EMV - Trilhos': source='Troca de POS Metrô'
+            current_rows.append((col.get('name',''),str(it.get('group') or '').strip(),label,source))
+    available=Counter(x[3] for x in current_rows)
+    entries=[]
+    for r in range(2,tech.max_row+1):
+        menu=str(tech.cell(r,headers['Menu']).value or '').strip()
+        group=str(tech.cell(r,headers['Grupo / Nível 2']).value or '').strip()
+        label=str(tech.cell(r,headers['Funcionalidade']).value or '').strip()
+        source=str(tech.cell(r,headers['Identidade original']).value or '').strip()
+        if not (menu and label): continue
+        if label=='Troca de POS Metrô' and source=='Troca de Chips EMV - Trilhos': source='Troca de POS Metrô'
+        entries.append((menu,group,label,source))
+    hidden=wb['Identidades REV10'] if 'Identidades REV10' in wb.sheetnames else (wb['Identidades REV7'] if 'Identidades REV7' in wb.sheetnames else None)
+    # For an untouched export, use the exact cell identities. For a moved cell,
+    # match against technical inventory by label and original occurrence.
+    used=Counter(); cols=[]; errors=[]
     for c in range(1,ws.max_column+1):
         name=str(ws.cell(1,c).value or '').strip()
         if not name: continue
@@ -7287,26 +7293,35 @@ def _v8522_menu_from_workbook(fileobj):
         for r in range(2,ws.max_row+1):
             value=str(ws.cell(r,c).value or '').strip()
             if not value: continue
-            parts=[part.strip() for part in value.split('>') if part.strip()]
+            parts=[x.strip() for x in value.split('>') if x.strip()]
             if not parts: continue
-            label=parts[-1];group=' > '.join(parts[:-1]);key=(name,group,label)
-            candidates=[]
-            if inventory[key]: candidates.extend(list(inventory[key]))
-            if identity:
-                hidden=str(identity.cell(r,c).value or '').strip()
-                if hidden and hidden in known: candidates.append(hidden)
-            candidates.extend(list(by_label[label]))
-            if label in known: candidates.append(label)
-            # A moved/renamed label may be resolved only when a unique identity
-            # remains. Never silently map to an unrelated route.
-            source=next((candidate for candidate in candidates if used[candidate]<known[candidate]),None)
+            label=parts[-1];group=' > '.join(parts[:-1])
+            choices=[]
+            # Positional identity is safe only if its exported label still matches.
+            if hidden:
+                h=str(hidden.cell(r,c).value or '').strip()
+                if h and h in available:
+                    # Check the technical row matching original position/label.
+                    if any(e[0]==name and e[1]==group and e[2]==label and e[3]==h for e in entries):
+                        choices.append(h)
+            # Exact current group/label first, then same label across groups.
+            choices += [e[3] for e in entries if e[:3]==(name,group,label)]
+            choices += [x[3] for x in current_rows if x[:3]==(name,group,label)]
+            choices += [e[3] for e in entries if e[2]==label]
+            choices += [x[3] for x in current_rows if x[2]==label]
+            if label in available: choices.append(label)
+            source=next((x for x in choices if x and used[x]<available[x]),None)
             if not source:
-                raise ValueError('Identidade não localizada: '+name+' / '+label+'. Confira a aba Estrutura Técnica.')
+                errors.append(f'{name} / {label}')
+                continue
             used[source]+=1
             items.append({'source':source,'label':label,'group':group,'order':len(items)+1})
         cols.append({'name':name,'order':len(cols)+1,'items':items})
+    if errors: raise ValueError('Identidades não localizadas: '+ '; '.join(errors[:12]))
+    missing=[f'{key} ({available[key]-used[key]})' for key in available if used[key]<available[key]]
+    if missing: raise ValueError('Funcionalidades ausentes: '+ '; '.join(missing[:12]))
     if not cols: raise ValueError('A planilha não contém menus.')
-    return {'version':9,'columns':cols}
+    return {'version':10,'columns':cols}
 
 @app.context_processor
 def v8522_menu_context():
@@ -7343,7 +7358,7 @@ def v8522_menu_export():
         ws.column_dimensions[get_column_letter(c)].width=max(18,min(42,len(col.get('name',''))+8))
     ws.freeze_panes='A2'
     # REV7: exact technical identity at the same cell as each visual item.
-    identities=wb.create_sheet('Identidades REV7')
+    identities=wb.create_sheet('Identidades REV10')
     for c,col in enumerate(cols,1):
         identities.cell(1,c,col.get('name',''))
         for r,it in enumerate(col.get('items',[]),2):

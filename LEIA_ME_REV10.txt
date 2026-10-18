@@ -1,0 +1,27 @@
+AUTOPASS WEB V87.6 REV10 — PRE-HOMOLOGACAO
+
+BASE: REV9. Pacote enxuto contendo apenas app.py.
+
+CORRECOES
+- Identificacao de funcionalidades por ocorrencias e catalogo tecnico.
+- Compatibilidade com as abas Identidades REV7 e Identidades REV10.
+- Reconhecimento de nomes repetidos em grupos diferentes.
+- Relatorio agregado de identidades nao localizadas.
+- Nenhuma alteracao intencional em banco, permissoes ou APIs.
+
+VALIDACOES LOCAIS
+- Compilacao de sintaxe Python.
+- Importacao de duas planilhas reais exportadas pela REV9: 59 itens cada.
+- Integridade do arquivo ZIP.
+
+LIMITES
+- Nao validado com PostgreSQL ou Render.
+- Movimentacao e renomeacao arbitraria de funcionalidades ainda nao homologadas.
+- NAO aplique a organizacao antes de revisar a pre-visualizacao.
+
+INSTALACAO
+1. Backup do app.py atual e configuracao do menu.
+2. Substitua apenas app.py.
+3. Reinicie o Render.
+4. Exporte planilha nova; reimporte sem alteracoes e visualize antes de aplicar.
+5. Se houver divergencia, interrompa e preserve o banco.
