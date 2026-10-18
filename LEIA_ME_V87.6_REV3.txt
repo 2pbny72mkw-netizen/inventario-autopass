@@ -1,0 +1,4 @@
+Web V87.6 REV3 - PATCH ENXUTO sobre V87.6 REV2
+Arquivos: v874_pos_metro.py e templates/v874_pos_metro.html
+Inclui 5 KPIs, progresso circular e barras, modais com busca, terminal clicavel, exportacao filtrada e atualizacao da tabela.
+NAO HOMOLOGADO. Backup antes de aplicar. Testar PostgreSQL, permissões, exportacao e interface no Render.

@@ -65,7 +65,10 @@ def install_pos_metro(app,db,can):
   st_total=station_q.count() if station_q is not None else 0
   st_done=station_q.filter(POS.status=='Concluído').count() if station_q is not None else 0
   st_ongoing=station_q.filter(POS.status=='Em andamento').count() if station_q is not None else 0
-  return render_template('v874_pos_metro.html',items=items,total=total,done=done,ongoing=ongoing,lines=lines,stations=stations,can_pos=can,st_total=st_total,st_done=st_done,st_ongoing=st_ongoing,filtered_count=q.count())
+  known_models=[x[0] for x in db.session.query(POS.model).filter(POS.model.isnot(None),POS.model!='').distinct().order_by(POS.model).limit(300)]
+  known_manufacturers=[x[0] for x in db.session.query(POS.manufacturer).filter(POS.manufacturer.isnot(None),POS.manufacturer!='').distinct().order_by(POS.manufacturer).limit(300)]
+  metric_rows=[{'id':x.id,'line':x.line,'station':x.station,'terminal':x.terminal,'model':x.model or '', 'manufacturer':x.manufacturer or '', 'serial':x.serial or '', 'asset':x.asset or '', 'status':x.status} for x in POS.query.order_by(POS.line,POS.station,POS.terminal).all()]
+  return render_template('v874_pos_metro.html',metric_rows=metric_rows,known_models=known_models,known_manufacturers=known_manufacturers,items=items,total=total,done=done,ongoing=ongoing,lines=lines,stations=stations,can_pos=can,st_total=st_total,st_done=st_done,st_ongoing=st_ongoing,filtered_count=q.count())
  @app.post('/field/troca-pos-metro/importar')
  @guard('field.pos_metro.import')
  def pos_import():
@@ -122,8 +125,11 @@ def install_pos_metro(app,db,can):
   if not obj:abort(404)
   serial=(request.form.get('serial') or '').strip()[:120]
   if not serial:return jsonify(error='Número de série obrigatório'),400
-  event=Event(pos_id=pid,old_serial=obj.serial,old_model=obj.model,new_serial=serial,new_model=(request.form.get('modelo') or '')[:120],notes=(request.form.get('observacoes') or '')[:2000],user_id=session['user_id'])
-  db.session.add(event);obj.serial=serial;obj.model=event.new_model;obj.status='Concluído';obj.installed_on=datetime.utcnow();db.session.commit()
+  model=(request.form.get('modelo') or '').strip()[:120]
+  manufacturer=(request.form.get('fabricante') or '').strip()[:120]
+  asset=(request.form.get('patrimonio') or '').strip()[:120]
+  event=Event(pos_id=pid,old_serial=obj.serial,old_model=obj.model,new_serial=serial,new_model=model,notes=(request.form.get('observacoes') or '')[:2000],user_id=session['user_id'])
+  db.session.add(event);obj.serial=serial;obj.model=event.new_model;obj.manufacturer=manufacturer or obj.manufacturer;obj.asset=asset or obj.asset;obj.status='Concluído';obj.installed_on=datetime.utcnow();db.session.commit()
   return redirect('/field/troca-pos-metro')
  @app.get('/field/troca-pos-metro/exportar')
  @guard('field.pos_metro.export')
