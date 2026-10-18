@@ -1,0 +1,6 @@
+WEB V87.6 REV5 — ENXUTA / PRÉ-HOMOLOGAÇÃO
+Base: Web V87.6 REV4. Substituir somente app.py e templates/base.html.
+Correções: exportação inclui Caixinha, Preparação de Acessos e Troca de POS; valida identidades duplicadas/ausentes; não reinjeta itens após aplicar; evita mover links não mapeados para grupo incorreto.
+IMPORTANTE: NÃO aplique a planilha antiga sem revisar sua aba Estrutura Técnica: havia identidade incorreta em Troca de POS. Exporte novo modelo após deploy e ajuste-o.
+Verificado: sintaxe Python, integridade ZIP. NÃO testado: PostgreSQL, Render, permissões e navegação browser.
+Backup antes do deploy. Não homologado.

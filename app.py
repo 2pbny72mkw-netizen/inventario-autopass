@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV1"
+APP_RELEASE = "V86.1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -7202,62 +7202,38 @@ def _v8522_menu_layout():
             cols.append({"name":name,"order":order,"items":[{"source":x,"label":x,"group":"","order":i+1} for i,x in enumerate(items)]})
         obj={"version":1,"columns":cols}
 
-    # REV4: layouts salvos antes desta revisão não continham esta funcionalidade.
-    # O reorganizador remove o dropdown original; por isso o link era descartado.
-    source="Organização do Menu Principal"
-    exists=any(
-        (it.get("source") or it.get("label")) == source
-        for col in obj.get("columns",[])
-        for it in col.get("items",[])
-        if isinstance(it,dict)
-    )
-    if not exists:
-        gestao=next((c for c in obj.get("columns",[]) if str(c.get("name") or "").strip()=="Gestão"),None)
-        if gestao is None:
-            gestao={"name":"Gestão","order":len(obj.get("columns",[]))+1,"items":[]}
-            obj.setdefault("columns",[]).append(gestao)
-        items=gestao.setdefault("items",[])
-        insert_at=next((i+1 for i,x in enumerate(items) if (x.get("source") or x.get("label"))=="Configurações"),len(items))
-        items.insert(insert_at,{"source":source,"label":source,"group":"","order":insert_at+1})
-        for i,x in enumerate(items,1):
-            x["order"]=i
-    # V85.27 REV4 CORRIGIDA — QR Trilhos é um módulo de Implantação com ID técnico estável.
-    # Layouts salvos antigos podem conter rótulos diferentes ("Gerador..."/"Gerar...")
-    # ou o item em Atividades/Field. Removemos apenas essas referências legadas e
-    # reinserimos o módulo em Implantação, preservando toda a customização restante.
-    qr_legacy_labels={"Gerador de QR – Trilhos","Gerar QR Code – Trilhos"}
-    for col in obj.get("columns",[]):
-        items=col.get("items",[]) if isinstance(col,dict) else []
-        col["items"]=[it for it in items if not (
-            isinstance(it,dict) and (
-                str(it.get("menu_id") or "").strip()=="implantation.qr.generate" or
-                str(it.get("source") or it.get("label") or "").strip() in qr_legacy_labels
-            )
-        )]
-        for i,it in enumerate(col.get("items",[]),1):
-            if isinstance(it,dict): it["order"]=i
-    imp=next((c for c in obj.get("columns",[]) if str(c.get("name") or "").strip() in ("Implantação","Implantação de Hardware")),None)
-    if imp is None:
-        imp={"name":"Implantação de Hardware","order":len(obj.get("columns",[]))+1,"items":[]}
-        obj.setdefault("columns",[]).append(imp)
-    items=imp.setdefault("items",[])
-    # Mantém Configurações QR logo após o gerador quando a configuração estiver disponível no layout.
-    insert_at=next((i for i,x in enumerate(items) if str(x.get("source") or x.get("label") or "").strip()=="Configurações QR – Trilhos"),1 if items else 0)
-    items.insert(insert_at,{"menu_id":"implantation.qr.generate","href":"/qr-trilhos","source":"Gerar QR Code – Trilhos","label":"Gerar QR Code – Trilhos","group":"","order":insert_at+1})
-    for i,it in enumerate(items,1):
-        if isinstance(it,dict): it["order"]=i
-    # V87.2: insere Estoque Central também nos layouts personalizados já salvos no banco.
-    stock_source="Estoque Central"
-    if not any(isinstance(it,dict) and str(it.get("source") or it.get("label") or "").strip()==stock_source
-               for col in obj.get("columns",[]) for it in col.get("items",[])):
-        eng=next((col for col in obj.get("columns",[]) if str(col.get("name") or "").strip()=="Engenharia"),None)
-        if eng is None:
-            eng={"name":"Engenharia","order":len(obj.get("columns",[]))+1,"items":[]}
-            obj.setdefault("columns",[]).append(eng)
-        eng_items=eng.setdefault("items",[])
-        eng_items.append({"source":stock_source,"label":stock_source,"href":"/engenharia/estoque",
-                          "menu_id":"engineering.stock.view","group":"","order":len(eng_items)+1})
+    # REV5: configuração aprovada é a fonte de verdade. Sem reinserções automáticas.
     return obj
+
+# REV5: catálogo técnico das funções efetivamente presentes na navegação.
+_V876_REV5_CATALOG = {'Dashboard': '/gerencial', 'Central de Atividades': '/atividades', 'Gestão de Tarefas': '/gestao-tarefas', 'Minhas Atividades Arrow': '/arrow?mine=1#minhas', 'Agenda Arrow': '/arrow#agenda', 'Atividades / Alocações Arrow': '/arrow#gestao', 'Inventário': '/tecnico', 'Preventiva ATM': '/preventivas', 'Atividades de Bobinas': '/field/bobinas', 'Visitas / Relatórios': '/implantacao-hardware', 'Dashboard Bobinas': '/dashboard/bobinas', 'Chamados': '/trabalho', 'Equipamentos': '/patrimonio', 'Evidências': '/evidencias-campo', 'Visão Panorâmica': '/visao-panoramica', 'Troca de Chips Recarga': '/troca-chips', 'Mapeamento ATM': '/field/mapeamento-atm', 'Bobinas': '/field/bobinas', 'Estoque Field': '/field/estoque', 'Troca de POS Metrô': '/field/troca-pos-metro', 'Atualização Firmware POS - CPTM': '/firmware-pos-cptm', 'Gerar QR Code – Trilhos': '/qr-trilhos', 'Configurações QR – Trilhos': '/gestao/configuracoes/qr-trilhos', 'Drive Técnico': '/implantacao-hardware/repositorio', 'Lista de Presença Digital': '/implantacao-hardware/lista-presenca', 'Troca de Chips EMV - Trilhos': '/troca-chips-emv', 'Troca de Chips Garagem': '/troca-chips-garagem', 'Equipes': '/equipes', 'APT': '/rh/apt', 'Usuários': '/usuarios', 'Agendamentos': '/portal-cliente', 'Recebimentos': '/portal-cliente', 'Gestão de Agendamentos': '/portal-cliente/gestao-agendamentos', 'Cadastro de Clientes': '/portal-cliente/cadastro-clientes', 'Cadastro de Itens': '/engenharia#itens', 'Estruturas BOM': '/engenharia#bom', 'Preço de Venda / Locação': '/engenharia#preco', 'Revisões': '/engenharia#revisoes', 'Codificação': '/engenharia#codificacao', 'Estoque Central': '/engenharia/estoque', 'Dossiê & Materiais': '/documentos-materiais', 'Raio-X dos Colaboradores': '/documentos-materiais/raio-x', 'Preparação de Acessos — Metrô / CPTM': '/documentos/acessos', 'Central Operacional': '/central-operacional', 'Inteligência Operacional': '/inteligencia-operacional', 'Central 360': '/gestao-360', 'Notificações 0': '/notificacoes', 'Diagnóstico': '/diagnostico', 'Configurações': '/configuracoes', 'Organização do Menu Principal': '/gestao/organizacao-menu', 'Localidades Externas': '/gestao/localidades-externas', 'Resumo dos Links': '/gestao/resumo-links', 'Rastreabilidade & Jornada': '/gestao/rastreabilidade-jornada', 'Perfis & Permissões': '/perfis', 'Configuração de Dashboards': '/gestao/configuracao-dashboards', 'Construtor de Dashboards': '/configuracoes/dashboards', 'Saúde da Plataforma': '/saude-plataforma', 'Lançamentos': '/financeiro/lancamentos', 'Coleta de Valores': '/financeiro/coleta-valores', 'Monitoramento de Coletas': '/financeiro/monitoramento-coletas', 'Apuração': '/financeiro/apuracao', 'Caixinha': '/financeiro/caixinha', 'Agenda': '/arrow#agenda', 'Minhas atividades': '/arrow?mine=1#minhas', 'Atividades / Alocações': '/arrow#gestao', 'Dashboard Arrow': '/arrow#dashboard', 'Atendimento Remoto / TeamViewer': '/arrow#remoto', 'Meu Perfil': '/meu-perfil', 'Sobre': '/sobre', 'Sair': '/logout'}
+_V876_REV5_GROUPS = {'Caixinha': 'Financeiro', 'Preparação de Acessos — Metrô / CPTM': 'Documentos & Materiais', 'Troca de POS Metrô': 'Field'}
+
+def _v876_rev5_complete(layout):
+    import copy
+    obj=copy.deepcopy(layout)
+    cols=obj.setdefault('columns',[])
+    existing={(str(it.get('source') or it.get('label') or '').strip()) for col in cols for it in col.get('items',[])}
+    for label,group in _V876_REV5_GROUPS.items():
+        if label in existing: continue
+        col=next((c for c in cols if c.get('name')==group),None)
+        if col is None:
+            col={'name':group,'order':len(cols)+1,'items':[]};cols.append(col)
+        col['items'].append({'source':label,'label':label,'href':_V876_REV5_CATALOG[label],'group':'','order':len(col['items'])+1})
+    return obj
+
+def _v876_rev5_validate(proposed,current):
+    known={str(i.get('source') or i.get('label') or '').strip() for c in _v876_rev5_complete(current)['columns'] for i in c.get('items',[])}
+    seen=set(); errors=[]
+    for c in proposed['columns']:
+        for it in c.get('items',[]):
+            src=str(it.get('source') or '').strip()
+            if src not in known: errors.append('Identidade não reconhecida: '+src)
+            if src in seen: errors.append('Identidade duplicada: '+src)
+            seen.add(src)
+    missing=known-seen
+    if missing: errors.append('Funções ausentes: '+', '.join(sorted(missing)))
+    if errors: raise ValueError('; '.join(errors)[:900])
 
 def _v8522_menu_save(layout):
     _v72_save_settings({"menu_layout_json":json.dumps(layout,ensure_ascii=False)})
@@ -7297,7 +7273,7 @@ def _v8522_menu_from_workbook(fileobj):
                 for it in col['items']:
                     # A identidade original sobrevive a renomeações feitas apenas na aba visual,
                     # desde que a linha permaneça na mesma posição dentro da coluna exportada.
-                    it['source']=lookup.get((col['name'],it['label']),order_lookup.get((col['name'],int(it.get('order') or 0)),it['source']))
+                    it['source']=lookup.get((col['name'],it['label']),it['source'])
     if not cols: raise ValueError("A planilha não contém menus.")
     return {"version":1,"columns":cols}
 
@@ -7326,7 +7302,7 @@ def v8523_menu_page_alias():
 @login_required
 def v8522_menu_export():
     if not _v8523_can_manage_menu(): return jsonify({'ok':False,'error':'Sem permissão.'}),403
-    layout=_v8522_menu_layout(); wb=Workbook(); ws=wb.active; ws.title='Menu Visual'
+    layout=_v876_rev5_complete(_v8522_menu_layout()); wb=Workbook(); ws=wb.active; ws.title='Menu Visual'
     cols=layout.get('columns',[])
     for c,col in enumerate(cols,1):
         ws.cell(1,c,col.get('name','')).font=Font(bold=True)
@@ -7360,6 +7336,8 @@ def v8522_menu_import():
     for k,v in new_items.items():
         if k in old_items:
             ov=old_items[k]; changes['moved']+=int(ov[0]!=v[0]); changes['renamed']+=int(ov[1]!=v[1]); changes['regrouped']+=int(ov[2]!=v[2])
+    try: _v876_rev5_validate(proposed,current)
+    except ValueError as exc: return jsonify({'ok':False,'error':str(exc)}),400
     if mode=='apply': _v8522_menu_save(proposed)
     return jsonify({'ok':True,'mode':mode,'changes':changes,'layout':proposed,'note':'Impacto em permissões: 0. A importação altera somente navegação/apresentação.'})
 
