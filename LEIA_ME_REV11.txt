@@ -1,0 +1,7 @@
+Web V87.6 REV11 — pacote incremental sobre REV10.
+Substituir app.py e templates/base.html, preservando demais arquivos e banco.
+Correção: menu superior não recria dropdowns removidos do Menu Visual.
+Identidades, rotas e permissões não são alteradas por este pacote.
+ATENÇÃO: links legados ausentes da configuração não aparecem no menu; a rota permanece disponível segundo permissões.
+Testar com REV10 Excel: importar, pré-visualizar, aplicar e conferir que Implantação e Documentos & Materiais não ressurgem.
+Não testado em Render/PostgreSQL; não homologado.
