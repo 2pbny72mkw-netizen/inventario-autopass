@@ -47,37 +47,68 @@ def install_pos_metro(app,db,can):
    v=(request.args.get(arg) or '').strip()
    if v:q=q.filter(col==v)
   search=(request.args.get('q') or '').strip()
-  if search:q=q.filter(POS.terminal.ilike('%'+search+'%'))
+  if search:q=q.filter(db.or_(POS.terminal.ilike('%'+search+'%'),POS.serial.ilike('%'+search+'%'),POS.asset.ilike('%'+search+'%')))
   return q
  @app.get('/field/troca-pos-metro')
  @guard('field.pos_metro')
  def pos_page():
-  q=selected(); items=q.order_by(POS.line,POS.station,POS.terminal).limit(500).all()
-  total=q.count(); done=q.filter(POS.status=='Concluído').count(); ongoing=q.filter(POS.status=='Em andamento').count()
+  q=selected();items=q.order_by(POS.line,POS.station,POS.terminal).limit(500).all()
+  total=q.count();done=q.filter(POS.status=='Concluído').count();ongoing=q.filter(POS.status=='Em andamento').count()
   lines=[x[0] for x in db.session.query(POS.line).distinct().order_by(POS.line)]
   stations=[x[0] for x in db.session.query(POS.station).filter(POS.line==request.args.get('linha')).distinct().order_by(POS.station)] if request.args.get('linha') else []
-  return render_template('v874_pos_metro.html',items=items,total=total,done=done,ongoing=ongoing,lines=lines,stations=stations,can_pos=can)
+  station_name=(request.args.get('estacao') or '').strip()
+  station_q=POS.query.filter(POS.station==station_name) if station_name else None
+  if station_q is not None and request.args.get('linha'):station_q=station_q.filter(POS.line==request.args['linha'])
+  st_total=station_q.count() if station_q is not None else 0
+  st_done=station_q.filter(POS.status=='Concluído').count() if station_q is not None else 0
+  st_ongoing=station_q.filter(POS.status=='Em andamento').count() if station_q is not None else 0
+  return render_template('v874_pos_metro.html',items=items,total=total,done=done,ongoing=ongoing,lines=lines,stations=stations,can_pos=can,st_total=st_total,st_done=st_done,st_ongoing=st_ongoing)
  @app.post('/field/troca-pos-metro/importar')
  @guard('field.pos_metro.import')
  def pos_import():
   f=request.files.get('arquivo')
-  if not f or not f.filename.lower().endswith('.xlsx'):return jsonify(error='Arquivo XLSX necessário'),400
-  wb=load_workbook(BytesIO(f.read(5_000_001)),read_only=True,data_only=True)
-  if 'INSTALAÇÃO POS 2025_2026' not in wb:return jsonify(error='Aba de origem não encontrada'),400
-  sheet=wb['INSTALAÇÃO POS 2025_2026']; n=0
-  for r in sheet.iter_rows(min_row=6,values_only=True):
-   if len(r)<15 or not r[3] or not r[5] or not r[6]:continue
-   terminal=str(r[3]).strip()[:90]
-   obj=POS.query.filter_by(terminal=terminal).first()
-   if obj is None:obj=POS(terminal=terminal);db.session.add(obj)
-   # Importação não apaga execuções nem regride status de atividades existentes.
-   obj.line=str(r[5]).strip()[:100];obj.station=str(r[6]).strip()[:150]
-   if obj.id is None or not db.session.query(Event.id).filter(Event.pos_id==obj.id).first():
-    obj.serial=str(r[9] or '')[:120];obj.asset=str(r[10] or '')[:120];obj.manufacturer=str(r[11] or '')[:120];obj.model=str(r[12] or '')[:120]
-    obj.status='Concluído' if str(r[13] or '').strip().upper()=='SIM' else 'Pendente'
-    if isinstance(r[14],datetime):obj.installed_on=r[14]
-   n+=1
-  db.session.commit()
+  if not f or not (f.filename or '').lower().endswith('.xlsx'):return jsonify(error='Arquivo XLSX necessário'),400
+  raw=f.read(5_000_001)
+  if len(raw)>5_000_000:return jsonify(error='Arquivo excede 5 MB'),413
+  try:wb=load_workbook(BytesIO(raw),read_only=True,data_only=True)
+  except Exception:return jsonify(error='Planilha inválida'),400
+  if 'Metrô' not in wb:return jsonify(error='Aba Metrô não encontrada'),400
+  sheet=wb['Metrô']; rows=sheet.iter_rows(values_only=True)
+  header=next(rows,None)
+  if not header:return jsonify(error='Planilha vazia'),400
+  def norm(v):
+   import unicodedata
+   return ''.join(c for c in unicodedata.normalize('NFKD',str(v or '').strip().upper()) if not unicodedata.combining(c)).replace('º','').replace('°','').replace(' ','')
+  columns={norm(v):i for i,v in enumerate(header)}
+  required=['TERMINAL','LINHA','ESTACAO']
+  if any(k not in columns for k in required):return jsonify(error='Colunas obrigatórias ausentes: TERMINAL, LINHA, ESTAÇÃO'),400
+  def val(r,k):
+   i=columns.get(k)
+   return str(r[i]).strip() if i is not None and i<len(r) and r[i] is not None else ''
+  records={}
+  for r in rows:
+   terminal=val(r,'TERMINAL')[:90];line=val(r,'LINHA')[:100];station=val(r,'ESTACAO')[:150]
+   if not terminal or not line or not station:continue
+   if terminal in records:return jsonify(error='Terminal duplicado na planilha: '+terminal),400
+   records[terminal]=(line,station,val(r,'MODELO')[:120],val(r,'NSERIE')[:120],val(r,'PATRIMONIO')[:120],val(r,'FABRICANTE')[:120])
+  if not records:return jsonify(error='Nenhum POS válido encontrado'),400
+  try:
+   existing={p.terminal:p for p in POS.query.filter(POS.terminal.in_(list(records))).all()}
+   for terminal,(line,station,model,serial,asset,manufacturer) in records.items():
+    obj=existing.get(terminal)
+    if obj is None:
+     obj=POS(terminal=terminal,status='Pendente');db.session.add(obj)
+    obj.line=line;obj.station=station
+    # Importações subsequentes não sobrescrevem informações executadas em campo.
+    if obj.id is None or not db.session.query(Event.id).filter(Event.pos_id==obj.id).first():
+     if model:obj.model=model
+     if serial:obj.serial=serial
+     if asset:obj.asset=asset
+     if manufacturer:obj.manufacturer=manufacturer
+   db.session.commit()
+  except Exception:
+   db.session.rollback();raise
+  finally:wb.close()
   return redirect('/field/troca-pos-metro')
  @app.post('/field/troca-pos-metro/<int:pid>/registrar')
  @guard('field.pos_metro.execute')

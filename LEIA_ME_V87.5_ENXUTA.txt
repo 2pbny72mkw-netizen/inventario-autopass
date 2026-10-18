@@ -1,0 +1,1 @@
+V87.5 incremental sobre V87.4. Substituir apenas v874_pos_metro.py e templates/v874_pos_metro.html. Importação lê aba Metrô e não regride execuções. Banco permanece preservado. Testar em homologação antes de produção.
