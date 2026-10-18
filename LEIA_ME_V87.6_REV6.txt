@@ -1,0 +1,13 @@
+WEB V87.6 REV6 - PACOTE ENXUTO SOBRE REV5
+
+Arquivos: app.py.
+
+Mudancas:
+- APP_RELEASE atualizado para V87.6 REV6 (dashboard e equipes seguem constantes existentes).
+- Validacao de importacao de menus agora aceita repeticoes preexistentes de identidades tecnicas (ex.: Chamados), mas rejeita novas ocorrencias e omissoes.
+- Nenhuma alteracao em banco ou permissoes.
+
+IMPORTANTE: a correspondencia de identidades ao mover itens repetidos entre grupos ainda exige verificacao manual; a REV6 nao garante reordenacao exata de todos os itens em todas as planilhas.
+
+TESTES PENDENTES: PostgreSQL, Render, exportar/importar sem mudancas, mover itens entre grupos, validar pagina Sobre e menu de cada perfil.
+Backup antes do deploy. Nao homologado.

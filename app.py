@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V86.1"
+APP_RELEASE = "V87.6 REV6"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -7223,16 +7223,22 @@ def _v876_rev5_complete(layout):
     return obj
 
 def _v876_rev5_validate(proposed,current):
-    known={str(i.get('source') or i.get('label') or '').strip() for c in _v876_rev5_complete(current)['columns'] for i in c.get('items',[])}
-    seen=set(); errors=[]
-    for c in proposed['columns']:
-        for it in c.get('items',[]):
-            src=str(it.get('source') or '').strip()
-            if src not in known: errors.append('Identidade não reconhecida: '+src)
-            if src in seen: errors.append('Identidade duplicada: '+src)
-            seen.add(src)
-    missing=known-seen
-    if missing: errors.append('Funções ausentes: '+', '.join(sorted(missing)))
+    """REV6: preserve multiplicities of existing technical identities.
+    Repeated names in different navigation groups are not automatically errors.
+    """
+    from collections import Counter
+    baseline=_v876_rev5_complete(current)
+    def identities(layout):
+        return Counter(str(i.get('source') or i.get('label') or '').strip()
+                       for c in layout.get('columns',[]) for i in c.get('items',[]))
+    old=identities(baseline); new=identities(proposed)
+    errors=[]
+    for key,n in new.items():
+        if not key: errors.append('Funcionalidade sem identidade técnica')
+        elif key not in old: errors.append('Identidade não reconhecida: '+key)
+        elif n>old[key]: errors.append('Ocorrências adicionais da identidade '+key+f': {n} (original: {old[key]})')
+    for key,n in old.items():
+        if new[key]<n: errors.append('Funcionalidade ausente: '+key+f' ({new[key]}/{n})')
     if errors: raise ValueError('; '.join(errors)[:900])
 
 def _v8522_menu_save(layout):
