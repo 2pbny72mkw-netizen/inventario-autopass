@@ -1,0 +1,15 @@
+AUTOPASS WEB V87.6 REV9 — ENXUTA / PRÉ-HOMOLOGAÇÃO
+
+Conteúdo: app.py (substituir somente este arquivo).
+Base: REV8. Faça backup do app.py e do banco antes de aplicar.
+
+Correção: importação de menu reconhece identidades por inventário técnico,
+com fallback por nome visível e ocorrência; suporta funcionalidades presentes
+na exportação mesmo se movidas entre grupos, sem inventar rotas.
+
+Teste obrigatório no Render: exportar Excel novo; reimportar sem editar;
+pré-visualizar; NÃO aplicar se houver divergências; testar mudança de grupo
+em cópia e confirmar persistência e permissões.
+
+Sintaxe e teste isolado: aprovados. PostgreSQL, Render e teste ponta a ponta:
+NÃO realizados. Não homologada.

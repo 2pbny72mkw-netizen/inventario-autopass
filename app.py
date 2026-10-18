@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV8"
+APP_RELEASE = "V87.6 REV9"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -7248,10 +7248,13 @@ def _v8522_menu_save(layout):
     db.session.commit()
 
 def _v8522_menu_from_workbook(fileobj):
-    """REV8: resolve technical IDs from matching technical rows, not blank positional cells.
-    Exact export/reimport is accepted, including repeated labels and legacy POS aliases.
+    """REV9: stable IDs across export/import; exact round-trip and moved columns.
+
+    Technical sheet is an inventory of identities, not a positional mapping.
+    Visible labels may repeat. The hidden sheet is authoritative only when its
+    identity exists in the exported technical inventory and matches that cell.
     """
-    from collections import defaultdict, deque
+    from collections import defaultdict, deque, Counter
     wb=load_workbook(fileobj,data_only=True)
     ws=wb['Menu Visual'] if 'Menu Visual' in wb.sheetnames else wb[wb.sheetnames[0]]
     technical=wb['Estrutura Técnica'] if 'Estrutura Técnica' in wb.sheetnames else None
@@ -7261,20 +7264,22 @@ def _v8522_menu_from_workbook(fileobj):
     required=('Menu','Grupo / Nível 2','Funcionalidade','Identidade original')
     if any(k not in headers for k in required):
         raise ValueError('Aba Estrutura Técnica incompleta. Exporte uma nova planilha.')
-    occurrences=defaultdict(deque)
+    inventory=defaultdict(deque)
+    by_label=defaultdict(deque)
+    known=Counter()
     for r in range(2,technical.max_row+1):
         menu=str(technical.cell(r,headers['Menu']).value or '').strip()
         group=str(technical.cell(r,headers['Grupo / Nível 2']).value or '').strip()
         label=str(technical.cell(r,headers['Funcionalidade']).value or '').strip()
         source=str(technical.cell(r,headers['Identidade original']).value or '').strip()
-        if menu and label and source:
-            if label=='Troca de POS Metrô' and source=='Troca de Chips EMV - Trilhos':
-                source='Troca de POS Metrô'
-            occurrences[(menu,group,label)].append(source)
-    # Positional sheet is used only when its cell has a valid ID for the visible label.
-    # It is never mandatory: earlier REV7 exports may have missing identity cells.
+        if not (menu and label and source): continue
+        if label=='Troca de POS Metrô' and source=='Troca de Chips EMV - Trilhos':
+            source='Troca de POS Metrô'
+        inventory[(menu,group,label)].append(source)
+        by_label[label].append(source)
+        known[source]+=1
     identity=wb['Identidades REV7'] if 'Identidades REV7' in wb.sheetnames else None
-    cols=[]
+    used=Counter();cols=[]
     for c in range(1,ws.max_column+1):
         name=str(ws.cell(1,c).value or '').strip()
         if not name: continue
@@ -7285,19 +7290,23 @@ def _v8522_menu_from_workbook(fileobj):
             parts=[part.strip() for part in value.split('>') if part.strip()]
             if not parts: continue
             label=parts[-1];group=' > '.join(parts[:-1]);key=(name,group,label)
-            source=''
-            if occurrences[key]:
-                source=occurrences[key].popleft()
-            elif identity:
-                candidate=str(identity.cell(r,c).value or '').strip()
-                if candidate==label:
-                    source=candidate
+            candidates=[]
+            if inventory[key]: candidates.extend(list(inventory[key]))
+            if identity:
+                hidden=str(identity.cell(r,c).value or '').strip()
+                if hidden and hidden in known: candidates.append(hidden)
+            candidates.extend(list(by_label[label]))
+            if label in known: candidates.append(label)
+            # A moved/renamed label may be resolved only when a unique identity
+            # remains. Never silently map to an unrelated route.
+            source=next((candidate for candidate in candidates if used[candidate]<known[candidate]),None)
             if not source:
                 raise ValueError('Identidade não localizada: '+name+' / '+label+'. Confira a aba Estrutura Técnica.')
+            used[source]+=1
             items.append({'source':source,'label':label,'group':group,'order':len(items)+1})
         cols.append({'name':name,'order':len(cols)+1,'items':items})
     if not cols: raise ValueError('A planilha não contém menus.')
-    return {'version':8,'columns':cols}
+    return {'version':9,'columns':cols}
 
 @app.context_processor
 def v8522_menu_context():
