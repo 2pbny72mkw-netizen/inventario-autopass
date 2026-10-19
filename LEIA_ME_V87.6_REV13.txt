@@ -1,0 +1,19 @@
+AUTOPASS WEB V87.6 REV13 — MATRIZ BOBINAS (PRÉ-HOMOLOGAÇÃO)
+
+BASE: Web V87.6 REV12.
+ARQUIVOS: app.py e templates/bobbin_dashboard_v77.html.
+
+ALTERAÇÕES:
+- Matriz horizontal por estação, com uma coluna por posição de ATM.
+- Dados da base oficial de ATMs, últimas leituras e estoque de reserva.
+- Alternância Matriz por ATM / Resumo por estação.
+- Filtros existentes de operadora, linha, estação, situação e busca preservados.
+- Clique em ATM abre detalhamento existente.
+- Exportação CSV da matriz filtrada (Excel abre CSV; não é XLSX).
+- Versão atualizada para V87.6 REV13.
+
+ATENÇÃO: Sem alterações de banco, endpoints ou permissões.
+O código foi validado por py_compile e node --check, mas NÃO foi executado contra
+PostgreSQL nem homologado no Render. Verificar correspondência dos IDs oficiais
+com leituras em ambiente real, inclusive equipamentos sem leitura.
+Faça backup e aplique sobre REV12. Não substituir o projeto inteiro.
