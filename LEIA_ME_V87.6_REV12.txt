@@ -1,0 +1,14 @@
+AUTOPASS WEB V87.6 REV12 — RECUPERAÇÃO DA NAVEGAÇÃO (PRÉ-HOMOLOGAÇÃO)
+
+Base: V87.6 REV11.
+Arquivos alterados: app.py, templates/base.html.
+
+Correção: links já autorizados e renderizados pelo Flask que não aparecem no Excel antigo não são mais descartados. Drive Técnico, Lista de Presença Digital e atividades de Implantação são recuperados no menu Implantação de Hardware, quando permitidos pela Matriz. Links de Documentos & Materiais não configurados são recuperados em Field sem recriar aquele grupo.
+
+Limitação: organização livre e integridade completa do Excel ainda exigem testes de integração. Links recuperados ficam após os itens configurados; não há escrita no banco.
+
+Instalação: backup; sobrepor os dois arquivos; deploy; Ctrl+F5. Não importar/reaplicar Excel antes de conferir os menus.
+
+Testes necessários no Render: Drive Técnico, Lista de Presença, atividades EMV/Garagem, permissões por perfil, grupos duplicados, exportar/reimportar.
+
+Status: NÃO HOMOLOGADA.
