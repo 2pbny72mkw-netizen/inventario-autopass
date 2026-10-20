@@ -264,10 +264,8 @@ def install_v86(app, db, User, can):
             before=b.quantity
             after=qty if kind=='CONTAGEM' else before+(qty if kind=='ENTRADA' else -qty)
             if after<0:return jsonify(ok=False,error='Saldo insuficiente para retirada.'),409
-            # Contagem com divergência é registrada como conferência pendente, sem alterar saldo.
-            if kind=='CONTAGEM' and before!=after and before!=0:
-                db.session.add(Movement(warehouse_id=wid,material_id=mid,user_id=session['user_id'],kind='CONTAGEM_DIVERGENTE',quantity=qty,before_qty=before,after_qty=before,note=str(d.get('note') or '')[:500]))
-                db.session.commit();return jsonify(ok=True,pending_review=True,before=before,counted=qty)
+            # REV14: contagem fisica e ajuste efetivo de saldo, com historico auditavel.
+            # A diferenca fica registrada em before_qty/after_qty, inclusive quando negativa.
             b.quantity=after
             db.session.add(Movement(warehouse_id=wid,material_id=mid,user_id=session['user_id'],kind=kind,quantity=qty,before_qty=before,after_qty=after,note=str(d.get('note') or '')[:500]))
             db.session.commit();return jsonify(ok=True,before=before,after=after)
