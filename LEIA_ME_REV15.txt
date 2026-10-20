@@ -1,0 +1,10 @@
+AUTOPASS WEB V87.6 REV15 — PACOTE INCREMENTAL SOBRE REV13/REV14
+1. Aplicar os arquivos nos caminhos indicados na raiz do projeto existente.
+2. Não substituir app.py; preservar os demais módulos e o banco de dados.
+3. Inclui correção da contagem física da REV14 para instalação sobre REV13.
+4. POS Metrô: filtro data inicial/final por POS.installed_on, data da conclusão.
+5. Indicadores Big Numbers abrem modal, sem mudar filtros/tabela principal.
+6. Exportação usa o mesmo filtro de período, sem migração de banco.
+7. Atenção: data não registrada em trocas antigas não é presumida.
+8. Testar em ambiente de homologação antes de publicar em produção.
+9. Não foram executados testes com PostgreSQL real nem Render.

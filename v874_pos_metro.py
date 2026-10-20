@@ -1,5 +1,5 @@
 """V87.4 incremental: atividade POS Metrô. Não altera tabelas legadas."""
-from datetime import datetime
+from datetime import datetime, timedelta
 from io import BytesIO
 from functools import wraps
 from flask import request,session,abort,redirect,jsonify,render_template,send_file
@@ -63,6 +63,22 @@ def install_pos_metro(app,db,can):
     return fn(*args,**kwargs)
    return wrapped
   return deco
+ def date_range():
+  start=(request.args.get('data_inicio') or '').strip();end=(request.args.get('data_fim') or '').strip()
+  try:
+   a=datetime.strptime(start,'%Y-%m-%d') if start else None
+   b=datetime.strptime(end,'%Y-%m-%d')+timedelta(days=1) if end else None
+   if a and b and a>=b:abort(400,description='Data inicial posterior à data final')
+   return a,b
+  except ValueError:abort(400,description='Formato de data inválido')
+ def date_filtered(q):
+  a,b=date_range()
+  if a or b:
+   # Date of actual completion; avoid using the asset registration date.
+   q=q.filter(POS.status=='Concluído',POS.installed_on.isnot(None))
+   if a:q=q.filter(POS.installed_on>=a)
+   if b:q=q.filter(POS.installed_on<b)
+  return q
  def selected():
   q=POS.query
   for arg,col in [('linha',POS.line),('estacao',POS.station),('status',POS.status)]:
@@ -70,7 +86,7 @@ def install_pos_metro(app,db,can):
    if v:q=q.filter(col==v)
   search=(request.args.get('q') or '').strip()
   if search:q=q.filter(or_(POS.terminal.ilike('%'+search+'%'),POS.terminal_number.ilike('%'+search+'%'),POS.serial.ilike('%'+search+'%'),POS.asset.ilike('%'+search+'%')))
-  return q
+  return date_filtered(q)
  @app.get('/field/troca-pos-metro')
  @guard('field.pos_metro')
  def pos_page():
@@ -89,7 +105,7 @@ def install_pos_metro(app,db,can):
   st_ongoing=station_q.filter(POS.status=='Em andamento').count() if station_q is not None else 0
   known_models=[x[0] for x in db.session.query(POS.model).filter(POS.model.isnot(None),POS.model!='').distinct().order_by(POS.model).limit(300)]
   known_manufacturers=[x[0] for x in db.session.query(POS.manufacturer).filter(POS.manufacturer.isnot(None),POS.manufacturer!='').distinct().order_by(POS.manufacturer).limit(300)]
-  metric_rows=[{'id':x.id,'line':x.line,'station':x.station,'terminal':x.terminal,'terminal_number':short_number(x),'model':x.model or '', 'manufacturer':x.manufacturer or '', 'serial':x.serial or '', 'asset':x.asset or '', 'status':x.status} for x in POS.query.order_by(POS.line,POS.station,POS.terminal).all()]
+  metric_rows=[{'id':x.id,'line':x.line,'station':x.station,'terminal':x.terminal,'terminal_number':short_number(x),'model':x.model or '', 'manufacturer':x.manufacturer or '', 'serial':x.serial or '', 'asset':x.asset or '', 'status':x.status,'installed_on':x.installed_on.strftime('%Y-%m-%d') if x.installed_on else ''} for x in POS.query.order_by(POS.line,POS.station,POS.terminal).all()]
   return render_template('v874_pos_metro.html',metric_rows=metric_rows,known_models=known_models,known_manufacturers=known_manufacturers,items=items,short_number=short_number,total=total,done=done,ongoing=ongoing,lines=lines,stations=stations,can_pos=can,st_total=st_total,st_done=st_done,st_ongoing=st_ongoing,filtered_count=q.count())
  @app.post('/field/troca-pos-metro/importar')
  @guard('field.pos_metro.import')
