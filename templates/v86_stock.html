@@ -34,7 +34,25 @@ function openModal(title,rows){$('stModalTitle').textContent=title;let content=$
 $('stModalClose').onclick=()=>{$('stModal').hidden=true};$('stModal').onclick=e=>{if(e.target===$('stModal'))$('stModal').hidden=true};
 for(let k of document.querySelectorAll('.st86 .kpi'))k.onclick=async()=>{let f=k.dataset.filter;if(f==='history'){try{let d=await fetchJson(api+'/movimentacoes?warehouse_id='+encodeURIComponent(local));let rows=d.rows.map(r=>({code:'#'+r.id,description:r.kind,detail:'Item '+r.material_id+' · Usuário '+r.user_id+' · '+r.date.slice(0,16).replace('T',' '),quantity:r.quantity}));openModal('Histórico de movimentações',rows)}catch(e){msg(e.message)}}else{let filtered=items.filter(x=>f==='unclassified'?!x.classified:f==='units'?x.quantity>0:true);openModal(f==='unclassified'?'Materiais sem classificação':f==='units'?'Saldos por material':'Materiais cadastrados',filtered.map(x=>({...x,detail:($('stLocal').selectedOptions[0]?.textContent||'Todas as localidades')})))} };
 if($('stNew')){$('stNew').onclick=()=>{$('stNewPanel').hidden=false;$('stNewPanel').scrollIntoView()};$('stCancel').onclick=()=>{$('stNewPanel').hidden=true};$('stNewForm').onsubmit=async e=>{e.preventDefault();try{let d=await fetchJson(api+'/materiais',{method:'POST',body:new FormData(e.target)});$('stNewPanel').hidden=true;e.target.reset();msg('Material '+d.item.code+' cadastrado. Registre agora a quantidade.');await load();let found=items.find(x=>x.id===d.item.id);if(found)choose(found)}catch(err){msg(err.message)}}}
-if($('stSaveMove'))$('stSaveMove').onclick=async()=>{if(!selected||!local){msg('Selecione uma localidade e um material.');return}let quantity=Number($('stQty').value);if(!Number.isInteger(quantity)||quantity<0){msg('Quantidade deve ser um número inteiro não negativo.');return}try{let d=await fetchJson(api+'/movimentar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({warehouse_id:Number(local),material_id:selected,quantity,kind:$('stKind').value,note:$('stNote').value})});msg(d.pending_review?'Contagem divergente registrada para conferência do gestor.':'Movimentação registrada.');await load()}catch(err){msg(err.message)}};
+if($('stSaveMove'))$('stSaveMove').onclick=async()=>{
+  const btn=$('stSaveMove');if(btn.disabled)return;
+  if(!selected||!local){msg('Selecione uma localidade e um material.');return}
+  const quantity=Number($('stQty').value),kind=$('stKind').value;
+  if(!Number.isInteger(quantity)||quantity<0||(kind!=='CONTAGEM'&&quantity===0)){msg('Informe uma quantidade inteira válida.');return}
+  const item=items.find(x=>x.id===selected),before=Number(item?.quantity??0);
+  if(kind==='CONTAGEM'){
+    const delta=quantity-before;
+    if(!confirm('Confirmar contagem física?\nSaldo anterior: '+before+'\nQuantidade contada: '+quantity+'\nAjuste: '+(delta>0?'+':'')+delta+'\nSaldo final: '+quantity+'\n\nO saldo será atualizado e a operação registrada no histórico.'))return;
+  }
+  btn.disabled=true;
+  try{
+    const d=await fetchJson(api+'/movimentar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({warehouse_id:Number(local),material_id:selected,quantity,kind,note:$('stNote').value})});
+    await load();
+    const refreshed=items.find(x=>x.id===selected);
+    if(refreshed)choose(refreshed);
+    msg(kind==='CONTAGEM'?'Contagem registrada. Saldo anterior: '+d.before+'; saldo atual: '+d.after+'.':'Movimentação registrada. Saldo atual: '+d.after+'.');
+  }catch(err){msg(err.message)}finally{btn.disabled=false}
+};
 if($('stClassify'))$('stClassify').onclick=async()=>{if(!selected){msg('Selecione um item.');return}try{await fetchJson(api+'/materiais/'+selected+'/classificar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:$('stCode').value,description:$('stDescription').value})});msg('Classificação atualizada.');await load()}catch(err){msg(err.message)}};
 if($('stAddLocal'))$('stAddLocal').onclick=async()=>{let name=prompt('Nome da nova localidade');if(!name)return;try{await fetchJson(api+'/localidades',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});await load()}catch(e){msg(e.message)}};
 if($('stEditLocal'))$('stEditLocal').onclick=async()=>{if(!local){msg('Selecione uma localidade.');return}let old=$('stLocal').selectedOptions[0]?.textContent||'';let name=prompt('Novo nome da localidade',old);if(!name||name===old)return;try{await fetchJson(api+'/localidades/'+local,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});await load();msg('Localidade atualizada.')}catch(e){msg(e.message)}};
