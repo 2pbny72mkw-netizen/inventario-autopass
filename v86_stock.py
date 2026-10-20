@@ -23,6 +23,7 @@ def install_v86(app, db, User, can):
         description=db.Column(db.String(300),nullable=False)
         original_description=db.Column(db.String(300),nullable=False)
         unit=db.Column(db.String(24),default='UN',nullable=False)
+        company=db.Column(db.String(120),nullable=False,default='')
         classified=db.Column(db.Boolean,default=False,nullable=False)
         active=db.Column(db.Boolean,default=True,nullable=False)
         created_by=db.Column(db.Integer,nullable=False)
@@ -69,6 +70,9 @@ def install_v86(app, db, User, can):
         if 'active' not in columns:
             with db.engine.begin() as con:
                 con.execute(text('ALTER TABLE v86_materials ADD COLUMN active BOOLEAN NOT NULL DEFAULT TRUE'))
+        if 'company' not in columns:
+            with db.engine.begin() as con:
+                con.execute(text("ALTER TABLE v86_materials ADD COLUMN company VARCHAR(120) NOT NULL DEFAULT ''"))
         if not Warehouse.query.first():
             db.session.add_all([Warehouse(name='Liberdade'),Warehouse(name='Guardiã')]);db.session.commit()
         initialized=True
@@ -89,7 +93,7 @@ def install_v86(app, db, User, can):
 
     def payload_material(m):
         return {'id':m.id,'code':m.code,'description':m.description,'original_description':m.original_description,
-                'unit':m.unit,'classified':m.classified,'active':m.active,'photo_url':('/api/engenharia/estoque/fotos/'+str(m.id)) if Photo.query.filter_by(material_id=m.id).first() else None}
+                'unit':m.unit,'company':m.company or '', 'classified':m.classified,'active':m.active,'photo_url':('/api/engenharia/estoque/fotos/'+str(m.id)) if Photo.query.filter_by(material_id=m.id).first() else None}
 
     @app.get('/engenharia/estoque')
     @guard('engineering.stock.view')
@@ -168,14 +172,16 @@ def install_v86(app, db, User, can):
         if code:
             duplicate=Material.query.filter(Material.id!=mid,func.upper(Material.code)==code).first()
             if duplicate:return jsonify(ok=False,error='Código já utilizado.'),409
-        previous=f'{m.code} | {m.description}'
+        previous=f'{m.code} | {m.description} | Empresa: {m.company or "Não informada"}'
+        company=str(d.get('company') or '').strip()[:120] if 'company' in d else m.company
         m.description=description
+        m.company=company
         if code:
             m.code=code
             m.classified=not code.startswith('PROV-')
         db.session.add(Movement(warehouse_id=0,material_id=mid,user_id=session['user_id'],
             kind='EDICAO',quantity=0,before_qty=0,after_qty=0,
-            note=f'{previous} -> {m.code} | {m.description}'[:500]))
+            note=f'{previous} -> {m.code} | {m.description} | Empresa: {m.company or "Não informada"}'[:500]))
         db.session.commit()
         return jsonify(ok=True,item=payload_material(m))
 
@@ -212,7 +218,7 @@ def install_v86(app, db, User, can):
     def v86_material_add():
         name=(request.form.get('description') or '').strip()[:300]
         if len(name)<3:return jsonify(ok=False,error='Informe a descrição do item.'),400
-        m=Material(description=name,original_description=name,unit='UN',classified=False,created_by=session['user_id'])
+        m=Material(description=name,original_description=name,unit='UN',company=(request.form.get('company') or '').strip()[:120],classified=False,created_by=session['user_id'])
         try:
             db.session.add(m);db.session.flush();m.code='PROV-'+str(m.id).zfill(6)
             save_photo(m,request.files.get('photo'))
@@ -233,7 +239,8 @@ def install_v86(app, db, User, can):
         duplicate=Material.query.filter(Material.id!=mid,func.upper(Material.code)==code).first()
         if duplicate:return jsonify(ok=False,error='Código já cadastrado.'),409
         m.code=code;m.description=name;m.classified=True
-        db.session.add(Movement(warehouse_id=0,material_id=mid,user_id=session['user_id'],kind='CLASSIFICACAO',quantity=0,before_qty=0,after_qty=0,note='Código/descrição revisados'))
+        if 'company' in d:m.company=str(d.get('company') or '').strip()[:120]
+        db.session.add(Movement(warehouse_id=0,material_id=mid,user_id=session['user_id'],kind='CLASSIFICACAO',quantity=0,before_qty=0,after_qty=0,note=f'Código/descrição/empresa revisados. Empresa: {m.company or "Não informada"}'[:500]))
         db.session.commit();return jsonify(ok=True,item=payload_material(m))
 
     @app.get('/api/engenharia/estoque/fotos/<int:mid>')
@@ -279,20 +286,21 @@ def install_v86(app, db, User, can):
         query=Movement.query
         if wid:query=query.filter_by(warehouse_id=wid)
         rows=query.order_by(Movement.id.desc()).limit(300).all()
-        return jsonify(ok=True,rows=[{'id':r.id,'date':r.created_at.isoformat(),'warehouse_id':r.warehouse_id,'material_id':r.material_id,'user_id':r.user_id,'kind':r.kind,'quantity':r.quantity,'before':r.before_qty,'after':r.after_qty,'note':r.note} for r in rows])
+        company_by_id={m.id:(m.company or '') for m in Material.query.filter(Material.id.in_({r.material_id for r in rows})).all()}
+        return jsonify(ok=True,rows=[{'company':company_by_id.get(r.material_id,''),'id':r.id,'date':r.created_at.isoformat(),'warehouse_id':r.warehouse_id,'material_id':r.material_id,'user_id':r.user_id,'kind':r.kind,'quantity':r.quantity,'before':r.before_qty,'after':r.after_qty,'note':r.note} for r in rows])
 
     @app.get('/api/engenharia/estoque/exportar')
     @guard('engineering.stock.export')
     def v86_stock_export():
         wb=Workbook();ws=wb.active;ws.title='Estoque Atual'
-        ws.append(['Código','Descrição','Descrição original','Localidade','Quantidade','Unidade','Classificado','Foto (link interno)'])
+        ws.append(['Código','Descrição','Descrição original','Empresa','Localidade','Quantidade','Unidade','Classificado','Foto (link interno)'])
         for m in Material.query.order_by(Material.description).all():
             for b in Balance.query.filter_by(material_id=m.id).all():
                 w=db.session.get(Warehouse,b.warehouse_id)
-                ws.append([m.code,m.description,m.original_description,w.name if w else '',b.quantity,m.unit,'Sim' if m.classified else 'Não',request.host_url.rstrip('/')+'/api/engenharia/estoque/fotos/'+str(m.id)])
-        hs=wb.create_sheet('Movimentações');hs.append(['Data','Localidade ID','Item ID','Usuário ID','Tipo','Quantidade','Antes','Depois','Observação'])
+                ws.append([m.code,m.description,m.original_description,m.company or '',w.name if w else '',b.quantity,m.unit,'Sim' if m.classified else 'Não',request.host_url.rstrip('/')+'/api/engenharia/estoque/fotos/'+str(m.id)])
+        hs=wb.create_sheet('Movimentações');hs.append(['Data','Localidade ID','Item ID','Empresa','Usuário ID','Tipo','Quantidade','Antes','Depois','Observação'])
         for r in Movement.query.order_by(Movement.id.desc()).limit(20000).all():
-            hs.append([r.created_at.strftime('%d/%m/%Y %H:%M'),r.warehouse_id,r.material_id,r.user_id,r.kind,r.quantity,r.before_qty,r.after_qty,r.note])
+            hs.append([r.created_at.strftime('%d/%m/%Y %H:%M'),r.warehouse_id,r.material_id,(db.session.get(Material,r.material_id).company if db.session.get(Material,r.material_id) else ''),r.user_id,r.kind,r.quantity,r.before_qty,r.after_qty,r.note])
         for sh in wb:
             sh.freeze_panes='A2';sh.auto_filter.ref=sh.dimensions
             for c in sh[1]:c.font=Font(bold=True,color='FFFFFF');c.fill=PatternFill('solid',fgColor='16456D')
