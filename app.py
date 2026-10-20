@@ -18443,12 +18443,30 @@ def _panorama_payload():
 
     # Agrupa apenas aliases seguros: mesma empresa, mesma linha e mesmo nome após
     # retirada do prefixo operacional. Nenhum registro físico é excluído/migrado.
+    # REV13 PANORAMA HOTFIX (pre-homologacao): identidade fisica aprovada.
+    # O mapeamento e EXPLICITO; nao inferir operadora oficial por similaridade.
+    # Moema: ID 284 METRO oficial, ID 74 VIA MOBILIDADE historico.
+    _panorama_official_ids = {74: 284}
+    _panorama_by_id = {loc.id: loc for loc in locations}
+    _panorama_valid_official_ids = {}
+    for historic_id, official_id in _panorama_official_ids.items():
+        historical = _panorama_by_id.get(historic_id)
+        official = _panorama_by_id.get(official_id)
+        if (historical and official
+                and _panorama_line_key(historical.line) == _panorama_line_key(official.line)
+                and _panorama_station_key(historical.location) == _panorama_station_key(official.location)
+                and _v771_norm(official.company) == 'METRO'
+                and _panorama_line_key(official.line) == '05'
+                and _panorama_station_key(official.location) == 'MOEMA'):
+            _panorama_valid_official_ids[historic_id] = official_id
+
     groups={}
     for loc in locations:
         # V77.9.3: identidade canônica preserva a linha operacional.
         # Ex.: LPA - LAPA A (Linha 07) e LAB - LAPA B (Linha 08) continuam localidades distintas,
         # enquanto aliases da mesma linha (LAPA / LPA - LAPA A) podem ser consolidados.
-        key=(_v771_norm(loc.company), _panorama_line_key(loc.line), _panorama_station_key(loc.location))
+        official = _panorama_by_id.get(_panorama_valid_official_ids.get(loc.id, loc.id), loc)
+        key=(_v771_norm(official.company), _panorama_line_key(official.line), _panorama_station_key(official.location))
         groups.setdefault(key,[]).append(loc)
 
     rows=[]
@@ -18458,7 +18476,11 @@ def _panorama_payload():
             photo_count=sum(len(photos_by_point.get(pt.id,[])) for pt in pts)
             return (1 if photo_count else 0, photo_count, len(pts), 1 if (loc.panorama_status_override or '').strip() else 0,
                     1 if loc.reference_latitude is not None and loc.reference_longitude is not None else 0, -loc.id)
-        primary=max(aliases,key=_score)
+        # Em grupos com mapeamento aprovado, o cadastro oficial e sempre
+        # o registro principal, mesmo que o historico contenha mais fotos.
+        mapped_official_ids={_panorama_valid_official_ids[a.id] for a in aliases if a.id in _panorama_valid_official_ids}
+        official_aliases=[a for a in aliases if a.id in mapped_official_ids]
+        primary=max(official_aliases,key=_score) if official_aliases else max(aliases,key=_score)
 
         p_out=[]; total=0
         for loc in aliases:

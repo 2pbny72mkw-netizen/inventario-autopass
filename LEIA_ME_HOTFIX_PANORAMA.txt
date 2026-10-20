@@ -1,0 +1,26 @@
+AUTOPASS — HOTFIX VISÃO PANORÂMICA (BASE V87.6 REV13) — PRÉ-HOMOLOGAÇÃO
+
+ALTERAÇÃO
+- Consolida APENAS o cadastro histórico Moema (ID 74, VIA MOBILIDADE)
+  no cadastro oficial Moema (ID 284, METRO), na apresentação da Visão Panorâmica.
+- Fotografias, pontos, IDs e auditoria permanecem intactos no banco.
+- O cadastro oficial 284 prevalece como ID do grupo consolidado.
+- As demais 29 correspondências não são alteradas automaticamente.
+- O número APP_RELEASE foi mantido em V87.6 REV13, porque esta é a base recebida.
+
+ATENÇÃO
+- Este ZIP substitui apenas app.py e não deve ser aplicado sobre uma
+  versão posterior sem merge e revisão de conflitos.
+- Backup do banco e homologação são obrigatórios antes de implantar.
+- A correção é de CONSOLIDAÇÃO DE VISUALIZAÇÃO, não migra fisicamente fotos
+  nem redireciona novos uploads para o ID oficial. Uma etapa posterior deve
+  implementar a unificação cadastral persistente após homologação.
+- Não foi executada conexão com o banco de produção.
+
+VALIDAÇÃO APÓS IMPLANTAÇÃO
+1. GET /api/panoramas/diagnostico com sessão autenticada.
+2. Verificar Moema: uma linha, ID 284, METRO, linha 05, 1 ponto, 1 foto.
+3. Verificar que evidence_details[0].source_location_id continua 74.
+4. Contagens esperadas SE DADOS NÃO MUDARAM: total 264, concluídas 137,
+   pendentes 127. Se houver mudanças de dados, os totais poderão variar.
+5. Verificar Pirituba, exportações, filtros e permissões.
