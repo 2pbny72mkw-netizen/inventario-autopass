@@ -1,0 +1,10 @@
+AUTOPASS WEB V87.6 REV16 — ENGENHARIA / BOM — SIMULAÇÃO TRIBUTÁRIA
+
+Incremental sobre REV15. Copiar os dois arquivos nos mesmos caminhos.
+- static/engineering_v72.js
+- templates/engineering.html
+
+Inclui ano fiscal, NCM, seleção de tratamento do IPI, IBS estadual/municipal, base de IBS, memória de cálculo e persistência dos parâmetros no JSON de estudo.
+Mantém cenário atual sem reforma e fluxos da BOM. Não altera PostgreSQL.
+ATENÇÃO: Simulação financeira, NÃO homologação tributária. Alíquotas, regimes, bases, ZFM e créditos precisam de validação do contador.
+Não foi testado no Render/PostgreSQL real.
