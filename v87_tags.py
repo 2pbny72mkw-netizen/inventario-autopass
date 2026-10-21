@@ -1,4 +1,4 @@
-"""REV24: TAGs/Produtos — banco próprio, importação pré-validada e exportação."""
+"""REV25: TAGs/Produtos — banco próprio, importação pré-validada e exportação."""
 from datetime import datetime
 from functools import wraps
 from io import BytesIO
@@ -53,6 +53,17 @@ def install_tags(app,db,can):
     before_json=db.Column(db.Text)
     after_json=db.Column(db.Text)
     created_at=db.Column(db.DateTime,default=datetime.utcnow)
+ class ImportIssue(db.Model):
+    __tablename__='v87_product_tag_import_issues'
+    id=db.Column(db.Integer,primary_key=True)
+    produto=db.Column(db.String(160),nullable=False)
+    serial=db.Column(db.String(160),nullable=False)
+    lines=db.Column(db.String(300),default='')
+    detail=db.Column(db.Text,default='')
+    file_name=db.Column(db.String(255),default='')
+    user_id=db.Column(db.Integer,nullable=False)
+    created_at=db.Column(db.DateTime,default=datetime.utcnow)
+    resolved_at=db.Column(db.DateTime,nullable=True)
  initialized=False
  def guard(write=False):
     def outer(fn):
@@ -65,6 +76,7 @@ def install_tags(app,db,can):
       if not initialized:
        Tag.__table__.create(bind=db.engine,checkfirst=True)
        Audit.__table__.create(bind=db.engine,checkfirst=True)
+       ImportIssue.__table__.create(bind=db.engine,checkfirst=True)
        initialized=True
       return fn(*a,**kw)
      return inner
@@ -103,7 +115,8 @@ def install_tags(app,db,can):
       'estoque':sum(1 for t in all_rows if 'ESTOQUE' in norm(t.finalidade)),
       'localidades':len({t.localidade for t in all_rows if t.localidade}),
       'sem_nf':sum(1 for t in all_rows if not t.nf_entrada),
-      'sem_patrimonio':sum(1 for t in all_rows if not t.patrimonio)})
+      'sem_patrimonio':sum(1 for t in all_rows if not t.patrimonio),
+      'divergencias':ImportIssue.query.filter(ImportIssue.resolved_at.is_(None), ImportIssue.produto.in_([t.produto for t in all_rows] or [request.args.get('produto') or 'BF80'])).count()})
  @app.get('/api/engenharia/tags/modelo')
  @guard()
  def tags_model():
@@ -148,7 +161,7 @@ def install_tags(app,db,can):
        if 'serial' in mapping and (best is None or len(mapping)>len(best[2])):best=(ws,ix,mapping)
      if best is None:raise ValueError('Coluna de número de série não identificada. Utilize o modelo padrão de importação.')
      ws,start,mapping=best
-     rows=[];errors=[];seen=set()
+     rows=[];errors=[];seen={};duplicates={}
      for ix,row in enumerate(ws.iter_rows(min_row=start+1,values_only=True),start+1):
       def val(k):
        j=mapping.get(k);v=row[j] if j is not None and j<len(row) else None
@@ -158,25 +171,46 @@ def install_tags(app,db,can):
       item={k:val(k) for k in FIELDS};item['produto']=item['produto'] or request.form.get('produto','BF80').strip() or 'BF80'
       if not any(item.values()) or not item['serial']:continue
       key=(item['produto'].casefold(),item['serial'].casefold())
-      if key in seen:errors.append(f'Linha {ix}: TAG duplicada na planilha: {item["serial"]}')
-      seen.add(key);rows.append(item)
+      if key in seen:
+       duplicates.setdefault(key,{'produto':item['produto'],'serial':item['serial'],'linhas':[seen[key]],'detalhes':[]})['linhas'].append(ix)
+      else:seen[key]=ix
+      rows.append(item)
       if len(rows)>20000:raise ValueError('Limite de 20.000 TAGs por importação.')
-     return rows,errors
+     return rows,[{'produto':v['produto'],'serial':v['serial'],'linhas':v['linhas']} for v in duplicates.values()]
     finally:wb.close()
+ @app.get('/api/engenharia/tags/divergencias')
+ @guard()
+ def tags_issues():
+    q=ImportIssue.query.filter(ImportIssue.resolved_at.is_(None))
+    product=request.args.get('produto','').strip()
+    if product:q=q.filter(ImportIssue.produto==product)
+    rows=q.order_by(ImportIssue.created_at.desc()).limit(1000).all()
+    return jsonify(ok=True,total=len(rows),items=[dict(id=x.id,produto=x.produto,serial=x.serial,linhas=x.lines,descricao=x.detail,arquivo=x.file_name,data=x.created_at.isoformat()) for x in rows])
+ @app.post('/api/engenharia/tags/divergencias/<int:issue_id>/resolver')
+ @guard(True)
+ def tags_resolve_issue(issue_id):
+    issue=ImportIssue.query.get_or_404(issue_id)
+    issue.resolved_at=datetime.utcnow()
+    db.session.commit()
+    return jsonify(ok=True)
  @app.post('/api/engenharia/tags/importar')
  @guard(True)
  def tags_import():
     try:rows,errors=parse_xlsx(request.files.get('arquivo'))
     except Exception as e:return jsonify(ok=False,error=str(e)),400
     if not rows:return jsonify(ok=False,error='Nenhuma TAG encontrada.'),400
-    existing={ (t.produto.casefold(),t.serial.casefold()):t for t in Tag.query.filter(Tag.produto.in_({x['produto'] for x in rows})).all() }
-    inserts=sum((x['produto'].casefold(),x['serial'].casefold()) not in existing for x in rows)
-    updates=len(rows)-inserts
-    if errors:return jsonify(ok=False,error='Há divergências na planilha.',errors=errors[:100],inserts=inserts,updates=updates),400
-    if request.form.get('confirmar')!='sim':return jsonify(ok=True,preview=True,inserts=inserts,updates=updates,total=len(rows),examples=rows[:8])
+    duplicate_keys={(d['produto'].casefold(),d['serial'].casefold()) for d in errors}
+    valid=[x for x in rows if (x['produto'].casefold(),x['serial'].casefold()) not in duplicate_keys]
+    existing={ (t.produto.casefold(),t.serial.casefold()):t for t in Tag.query.filter(Tag.produto.in_({x['produto'] for x in valid})).all() }
+    inserts=sum((x['produto'].casefold(),x['serial'].casefold()) not in existing for x in valid)
+    updates=len(valid)-inserts
+    preview=dict(ok=True,preview=True,inserts=inserts,updates=updates,total=len(rows),validos=len(valid),divergencias=errors,divergencias_count=len(errors),ignorados=len(rows)-len(valid))
+    if request.form.get('confirmar')!='sim':return jsonify(**preview)
+    if errors and request.form.get('ignorar_divergencias')!='sim':
+     return jsonify(ok=False,error='Confirme explicitamente a importação parcial: TAGs duplicadas serão isoladas para conferência.'),409
     uid=int(session['user_id'])
     try:
-     for item in rows:
+     for item in valid:
       key=(item['produto'].casefold(),item['serial'].casefold());t=existing.get(key)
       before=json.dumps(asdict(t),ensure_ascii=False) if t else None
       if not t:
@@ -186,7 +220,13 @@ def install_tags(app,db,can):
        # Em atualização, células vazias não apagam informações existentes.
        if item[k]:setattr(t,k,item[k])
       db.session.add(Audit(tag_id=t.id,user_id=uid,action='UPDATE' if before else 'INSERT',before_json=before,after_json=json.dumps(asdict(t),ensure_ascii=False)))
+     for issue in errors:
+      # Preserva histórico; repetição da mesma planilha não cria alertas duplicados.
+      found=ImportIssue.query.filter_by(produto=issue['produto'],serial=issue['serial'],file_name=(request.files.get('arquivo').filename or '')[:255],resolved_at=None).first()
+      if not found:db.session.add(ImportIssue(produto=issue['produto'],serial=issue['serial'],lines=', '.join(map(str,issue['linhas'])),detail='TAG repetida dentro do Excel; não importada automaticamente',file_name=(request.files.get('arquivo').filename or '')[:255],user_id=uid))
      db.session.commit()
     except Exception:
      db.session.rollback();app.logger.exception('Erro importação TAGs');return jsonify(ok=False,error='Falha ao gravar. Nenhuma alteração foi confirmada.'),500
-    return jsonify(ok=True,inserted=inserts,updated=updates,total=len(rows))
+    return jsonify(ok=True,inserted=inserts,updated=updates,total=len(valid),divergencias_count=len(errors),ignorados=len(rows)-len(valid))
+
+
