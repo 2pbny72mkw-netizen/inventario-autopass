@@ -5,7 +5,7 @@
 </style>{% endblock %}
 {% block content %}
 <div class="tags">
- <div class="flex between"><div><div class="sub">ENGENHARIA E ESTOQUE · DASHBOARD 3.0 · V87.6 REV24</div><h1>Controle de TAGs e Produtos</h1><div class="sub">Rastreabilidade individual, produções, localidades e finalidades comerciais.</div></div><div class="flex"><a class="btn" href="/engenharia/estoque">← Estoque Central</a><a class="btn" href="/api/engenharia/tags/modelo">↓ Modelo Excel</a><button class="btn primary" id="importBtn">↑ Importar Excel</button><button class="btn green" id="exportBtn">↓ Exportar Excel</button></div></div>
+ <div class="flex between"><div><div class="sub">ENGENHARIA E ESTOQUE · DASHBOARD 3.0 · V87.6 REV25</div><div class="flex"><img src="/static/bf80_autopass.png" alt="BF80 Autopass" style="width:68px;height:68px;object-fit:contain;border-radius:12px;background:#f2f6fa"><h1>Controle de TAGs e Produtos</h1></div><div class="sub">Rastreabilidade individual, produções, localidades e finalidades comerciais.</div></div><div class="flex"><a class="btn" href="/engenharia/estoque">← Estoque Central</a><a class="btn" href="/api/engenharia/tags/modelo">↓ Modelo Excel</a><button class="btn primary" id="importBtn">↑ Importar Excel</button><button class="btn green" id="exportBtn">↓ Exportar Excel</button></div></div>
  <div class="panel filters" id="filters"><div><label>Produto</label><select id="produto"><option value="">Todos</option><option value="BF80" selected>Biometria Facial — BF80</option></select></div><div><label>Produção / Lote</label><select id="lote"><option value="">Todos</option></select></div><div><label>Localidade / Projeto</label><select id="localidade"><option value="">Todas</option></select></div><div><label>Empresa</label><select id="empresa"><option value="">Todas</option></select></div><div><label>Finalidade</label><select id="finalidade"><option value="">Todas</option></select></div><div><label>Status operacional</label><select id="status"><option value="">Todos</option></select></div><div style="grid-column:span 3"><label>TAG, patrimônio ou localidade</label><input id="q" placeholder="Buscar número de série, patrimônio ou localidade"></div><div class="flex" style="grid-column:span 3;align-self:end"><button class="btn primary" id="apply">Filtrar</button><button class="btn" id="clear">Limpar</button></div></div>
  <div class="kpis" id="kpis"></div>
  <div class="charts"><div class="panel"><b>Equipamentos por localidade / projeto</b><div id="chartLocal" style="margin-top:15px"></div></div><div class="panel"><b>Distribuição por finalidade</b><div id="chartFin" style="margin-top:15px"></div><hr><b>Produções / Lotes</b><div id="chartLote"></div></div></div>
@@ -13,5 +13,5 @@
  <div id="message" role="status" class="status"></div>
  <div class="modalbg" id="modal"><div class="modal"><div class="flex between"><h3 id="modalTitle">Detalhes</h3><button class="btn" id="closeModal">✕ Fechar</button></div><div id="modalContent"></div></div></div>
 </div>
-<script src="{{url_for('static',filename='v87_tags.js')}}?v=rev24"></script>
+<script src="{{url_for('static',filename='v87_tags.js')}}?v=rev25"></script>
 {% endblock %}
