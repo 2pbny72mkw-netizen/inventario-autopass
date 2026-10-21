@@ -1,0 +1,18 @@
+AUTOPASS WEB V87.6 REV19 CONSOLIDADA — PRÉ-HOMOLOGAÇÃO
+Arquivos: app.py, templates/panorama.html, static/panorama.js, static/app.css.
+
+Inclui correção do modal da Etapa 1 e reconciliação de aliases do Panorama usando
+base oficial de ATMs (_v772_master_atm_map). Compara linha + estação sem exigir sigla.
+Só consolida entre empresas quando a base oficial aponta uma única empresa para a
+mesma estação/linha E existe cadastro Location com essa empresa. Preserva a exceção
+Moema (74 -> 284). Fotos e pontos não são movidos nem apagados; apenas visualização.
+O filtro Empresa inclui empresas da base ATM mesmo sem Location no Panorama.
+
+LIMITAÇÃO: esta revisão NÃO cria automaticamente localidades da base ATM ausentes
+em Location, NÃO migra fotos e NÃO consolida nomes semanticamente distintos.
+Não pressupõe que todos os 30 pares sejam válidos. Conferir /api/panoramas/diagnostico
+após deploy e revisar diferenças com dados reais antes de homologar.
+
+AVISO: app.py completo é necessário para alterar backend; conferir integração
+com a versão efetivamente em produção antes de substituir. Fazer backup e deploy
+controlado. Não testado no PostgreSQL do Render.

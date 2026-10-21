@@ -18441,12 +18441,42 @@ def _panorama_payload():
     points_by_location={}
     for pt in points: points_by_location.setdefault(pt.location_id,[]).append(pt)
 
+    # REV19: referência oficial de ATMs, somente leitura e sem migração de fotos.
+    # A correspondência só é automática quando existe exatamente uma identidade
+    # (linha + estação) na base oficial e um Location da empresa oficial.
+    official_by_station={}
+    official_companies=set()
+    try:
+        for (company,line,station), atm_ids in _v772_master_atm_map().items():
+            if not atm_ids: continue
+            official_companies.add(company)
+            k=(_panorama_line_key(line), _panorama_station_key(station))
+            official_by_station.setdefault(k,set()).add(_v771_norm(company))
+    except Exception:
+        app.logger.exception('REV19: base ATM indisponível; mantendo consolidação histórica')
+    _panorama_by_id={loc.id:loc for loc in locations}
+    loc_by_station={}
+    for loc in locations:
+        k=(_panorama_line_key(loc.line),_panorama_station_key(loc.location))
+        loc_by_station.setdefault(k,[]).append(loc)
+    official_alias_map={}
+    for k, same_station in loc_by_station.items():
+        companies=official_by_station.get(k,set())
+        if len(companies)!=1: continue
+        official_company=next(iter(companies))
+        official_candidates=[x for x in same_station if _v771_norm(x.company)==official_company]
+        if not official_candidates: continue
+        # Para o mesmo nome/linha, escolher cadastro oficial de menor ID.
+        canonical=min(official_candidates,key=lambda x:x.id)
+        for other in same_station:
+            if other.id!=canonical.id: official_alias_map[other.id]=canonical.id
+
     # Agrupa apenas aliases seguros: mesma empresa, mesma linha e mesmo nome após
     # retirada do prefixo operacional. Nenhum registro físico é excluído/migrado.
     # REV13 PANORAMA HOTFIX (pre-homologacao): identidade fisica aprovada.
     # O mapeamento e EXPLICITO; nao inferir operadora oficial por similaridade.
     # Moema: ID 284 METRO oficial, ID 74 VIA MOBILIDADE historico.
-    _panorama_official_ids = {74: 284}
+    _panorama_official_ids = {**official_alias_map, 74: 284}
     _panorama_by_id = {loc.id: loc for loc in locations}
     _panorama_valid_official_ids = {}
     for historic_id, official_id in _panorama_official_ids.items():
@@ -18455,9 +18485,11 @@ def _panorama_payload():
         if (historical and official
                 and _panorama_line_key(historical.line) == _panorama_line_key(official.line)
                 and _panorama_station_key(historical.location) == _panorama_station_key(official.location)
-                and _v771_norm(official.company) == 'METRO'
-                and _panorama_line_key(official.line) == '05'
-                and _panorama_station_key(official.location) == 'MOEMA'):
+                and ((historic_id == 74 and official_id == 284
+                      and _v771_norm(official.company) == 'METRO'
+                      and _panorama_line_key(official.line) == '05'
+                      and _panorama_station_key(official.location) == 'MOEMA')
+                     or official_alias_map.get(historic_id) == official_id)):
             _panorama_valid_official_ids[historic_id] = official_id
 
     groups={}
@@ -18555,7 +18587,13 @@ def panorama_diagnostic_api():
 @app.get("/api/panoramas")
 @login_required
 def panorama_list_api():
-    return jsonify({"ok":True,"locations":_panorama_payload()})
+    rows=_panorama_payload()
+    companies={x.get('company') for x in rows if x.get('company')}
+    try:
+        companies.update(c for c,_,_ in _v772_master_atm_map().keys() if c)
+    except Exception:
+        app.logger.exception('REV19: empresas ATM indisponíveis no filtro')
+    return jsonify({"ok":True,"locations":rows,"companies":sorted(companies)})
 
 @app.get("/api/panoramic/locations")
 @login_required
