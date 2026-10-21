@@ -1,0 +1,8 @@
+AUTOPASS WEB V87.6 REV21 — RESULTADO DA LOCAÇÃO FINANCEIRA
+Pré-homologação. Patch incremental sobre REV20.
+Arquivos alterados: templates/engineering.html e static/engineering_v72.js.
+Novos indicadores: lucro nominal do contrato por lote e por unidade, lucro médio mensal unitário, margem efetiva e retorno nominal sobre custo industrial.
+Fórmula: lucro unitário = mensalidade*meses*(1 - imposto/100) - (manutenção + outros custos)*meses - custo industrial unitário.
+Margem efetiva = lucro unitário/(mensalidade*meses)*100.
+Valor residual não integra lucro nominal até sua realização. Taxa de capital não é deduzida como despesa de caixa.
+Sem alteração de banco. Não inclui outras pendências da Visão Panorâmica.
