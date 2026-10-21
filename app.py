@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV23"
+APP_RELEASE = "V87.6 REV24"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -26541,6 +26541,10 @@ def v8556_mobile_gps_signal_history():
 # V86.0 — Estoque Central Web, preservando as rotas legadas.
 from v86_stock import install_v86
 install_v86(app, db, User, _has_access)
+
+# REV24 — Controle de TAGs e Produtos
+from v87_tags import install_tags
+install_tags(app, db, _has_access)
 
 @app.after_request
 def v86_user_status_select(response):
