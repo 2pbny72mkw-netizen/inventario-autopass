@@ -117,6 +117,44 @@ def install_tags(app,db,can):
       'sem_nf':sum(1 for t in all_rows if not t.nf_entrada),
       'sem_patrimonio':sum(1 for t in all_rows if not t.patrimonio),
       'divergencias':ImportIssue.query.filter(ImportIssue.resolved_at.is_(None), ImportIssue.produto.in_([t.produto for t in all_rows] or [request.args.get('produto') or 'BF80'])).count()})
+ @app.get('/api/engenharia/tags/<int:tag_id>/historico')
+ @guard()
+ def tags_history(tag_id):
+    Tag.query.get_or_404(tag_id)
+    rows=Audit.query.filter_by(tag_id=tag_id).order_by(Audit.created_at.desc(),Audit.id.desc()).limit(300).all()
+    return jsonify(ok=True,items=[dict(id=a.id,usuario_id=a.user_id,acao=a.action,data=a.created_at.isoformat() if a.created_at else '',antes=json.loads(a.before_json) if a.before_json else None,depois=json.loads(a.after_json) if a.after_json else None) for a in rows])
+ @app.post('/api/engenharia/tags/<int:tag_id>/editar')
+ @guard(True)
+ def tags_edit(tag_id):
+    t=Tag.query.get_or_404(tag_id)
+    payload=request.get_json(silent=True) or {}
+    reason=str(payload.get('justificativa') or '').strip()
+    if len(reason)<10:return jsonify(ok=False,error='Informe uma justificativa com pelo menos 10 caracteres.'),400
+    changes=payload.get('alteracoes')
+    if not isinstance(changes,dict):return jsonify(ok=False,error='Alterações inválidas.'),400
+    allowed=set(FIELDS)
+    if not changes or set(changes)-allowed:return jsonify(ok=False,error='Campos inválidos ou nenhuma alteração informada.'),400
+    before=asdict(t);updated={}
+    for field,value in changes.items():
+     if not isinstance(value,(str,int,float)) and value is not None:return jsonify(ok=False,error='Valor inválido: '+field),400
+     value=str(value).strip() if value is not None else ''
+     if len(value)>(4000 if field=='observacao' else 200):return jsonify(ok=False,error='Campo muito longo: '+field),400
+     if field in ('serial','produto') and not value:return jsonify(ok=False,error='Produto e TAG são obrigatórios.'),400
+     if value!=str(getattr(t,field) or ''):updated[field]=value
+    if not updated:return jsonify(ok=False,error='Nenhum valor foi alterado.'),400
+    prod=updated.get('produto',t.produto);serial=updated.get('serial',t.serial)
+    duplicate=Tag.query.filter(func.lower(Tag.produto)==prod.lower(),func.lower(Tag.serial)==serial.lower(),Tag.id!=t.id).first()
+    if duplicate:return jsonify(ok=False,error='Já existe TAG com este produto e número de série.'),409
+    try:
+     for k,v in updated.items():setattr(t,k,v)
+     t.updated_at=datetime.utcnow()
+     after=asdict(t)
+     audit=dict(campos=list(updated),justificativa=reason,registro=after)
+     db.session.add(Audit(tag_id=t.id,user_id=int(session['user_id']),action='EDIT',before_json=json.dumps(before,ensure_ascii=False),after_json=json.dumps(audit,ensure_ascii=False)))
+     db.session.commit()
+     return jsonify(ok=True,tag=asdict(t),campos=list(updated))
+    except Exception:
+     db.session.rollback();app.logger.exception('Falha edição TAG');return jsonify(ok=False,error='Não foi possível salvar a alteração.'),500
  @app.get('/api/engenharia/tags/modelo')
  @guard()
  def tags_model():
