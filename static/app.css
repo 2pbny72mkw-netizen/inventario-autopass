@@ -1842,3 +1842,10 @@ body.mapFullscreenOpen .topbar{z-index:20!important;}
 
 /* V82.29 REV1 drill-down */
 .dashDrillHandle{cursor:move;user-select:none}.dashDrillCard.dashDrillMax{position:fixed!important;inset:8px!important;width:auto!important;max-height:none!important;height:auto!important}.dashDrillCard.dashDrillMax .dashDrillTableWrap{max-height:calc(100vh - 170px)!important}
+
+/* REV19 - janela panoramica acessivel e rolavel */
+#panModal.scheduleModal{display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;overscroll-behavior:contain;padding:12px;box-sizing:border-box}
+#panModal .panoramaModalPanel{width:min(1100px,100%);max-height:calc(100dvh - 24px);overflow-y:auto;overscroll-behavior:contain;position:relative;box-sizing:border-box;margin:auto}
+#panModal .panModalStickyHead{position:sticky;top:-20px;z-index:20;background:#fff;padding:14px 4px;border-bottom:1px solid #dbe4ee;align-items:center}
+#panModal #panClose{flex-shrink:0;cursor:pointer;min-height:40px}
+@media(max-width:640px){#panModal.scheduleModal{padding:4px}#panModal .panoramaModalPanel{max-height:calc(100dvh - 8px);padding:12px}#panModal .panModalStickyHead{top:-12px;padding:12px 2px}}
