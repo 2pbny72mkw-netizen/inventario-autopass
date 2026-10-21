@@ -185,14 +185,29 @@ def install_tags(app,db,can):
     product=request.args.get('produto','').strip()
     if product:q=q.filter(ImportIssue.produto==product)
     rows=q.order_by(ImportIssue.created_at.desc()).limit(1000).all()
-    return jsonify(ok=True,total=len(rows),items=[dict(id=x.id,produto=x.produto,serial=x.serial,linhas=x.lines,descricao=x.detail,arquivo=x.file_name,data=x.created_at.isoformat()) for x in rows])
+    return jsonify(ok=True,total=len(rows),items=[dict(id=x.id,produto=x.produto,serial=x.serial,linhas=x.lines,descricao=x.detail,detalhes_json=x.detail if x.detail.startswith('[') else '[]',arquivo=x.file_name,data=x.created_at.isoformat()) for x in rows])
  @app.post('/api/engenharia/tags/divergencias/<int:issue_id>/resolver')
  @guard(True)
  def tags_resolve_issue(issue_id):
     issue=ImportIssue.query.get_or_404(issue_id)
+    if issue.resolved_at is not None:return jsonify(ok=False,error='Divergência já tratada.'),409
+    payload=request.get_json(silent=True) or {}
+    action=payload.get('acao')
+    if action not in ('same','correct'):return jsonify(ok=False,error='Informe o tipo de tratamento.'),400
+    uid=int(session['user_id'])
+    if action=='correct':
+     corrected=str(payload.get('serial_corrigido') or '').strip()
+     if not corrected or corrected.casefold()==issue.serial.casefold():return jsonify(ok=False,error='A TAG corrigida deve ser diferente da original.'),400
+     if len(corrected)>160:return jsonify(ok=False,error='TAG excede o tamanho permitido.'),400
+     exists=Tag.query.filter(db.func.lower(Tag.produto)==issue.produto.lower(),db.func.lower(Tag.serial)==corrected.lower()).first()
+     if exists:return jsonify(ok=False,error='TAG corrigida já cadastrada. Confira antes de prosseguir.'),409
+     # Registro mínimo, pois as linhas conflitantes originais não foram armazenadas na REV25.
+     tag=Tag(produto=issue.produto,serial=corrected)
+     db.session.add(tag);db.session.flush()
+     db.session.add(Audit(tag_id=tag.id,user_id=uid,action='INSERT',before_json=None,after_json=json.dumps({'produto':issue.produto,'serial':corrected,'origem':'tratamento de divergência','issue_id':issue.id},ensure_ascii=False)))
     issue.resolved_at=datetime.utcnow()
     db.session.commit()
-    return jsonify(ok=True)
+    return jsonify(ok=True,acao=action,complementar_dados=(action=='correct'))
  @app.post('/api/engenharia/tags/importar')
  @guard(True)
  def tags_import():
