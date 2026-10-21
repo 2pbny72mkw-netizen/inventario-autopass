@@ -1,0 +1,9 @@
+AUTOPASS WEB V87.6 REV20 — LOCAÇÃO FINANCEIRA (PRÉ-HOMOLOGAÇÃO)
+Base: ZIP completo fornecido anteriormente (20/10/2026).
+Arquivos alterados: templates/engineering.html e static/engineering_v72.js.
+Aplicar apenas estes arquivos sobre a versão atual após conferir eventuais mudanças posteriores.
+Locação simples substituída por recuperação financeira (PMT com valor residual descontado).
+Campos salvos no JSON existente do estudo: capital, maintenance, other, destination, residual, years, margin, tax.
+A taxa de imposto é premissa de simulação, não orientação tributária.
+Não altera banco, rotas, módulos ou histórico.
+Testes necessários: salvar/reabrir estudo; valor residual/transferência; planilha de exportação (pode não refletir novos campos); resultados financeiros e homologação fiscal.
