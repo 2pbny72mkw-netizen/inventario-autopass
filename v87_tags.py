@@ -65,14 +65,14 @@ def install_tags(app,db,can):
     created_at=db.Column(db.DateTime,default=datetime.utcnow)
     resolved_at=db.Column(db.DateTime,nullable=True)
  initialized=False
- def guard(write=False):
+ def guard(permission="engineering.tags.view"):
     def outer(fn):
      @wraps(fn)
      def inner(*a,**kw):
       nonlocal initialized
       if not session.get('user_id'):
        return (jsonify(ok=False,error='Autenticação necessária'),401) if request.path.startswith('/api/') else redirect(url_for('login'))
-      if not can('engineering.stock.view') or (write and not (can('engineering.stock.create') or can('engineering.stock.classify'))): abort(403)
+      if not can(permission): abort(403)
       if not initialized:
        Tag.__table__.create(bind=db.engine,checkfirst=True)
        Audit.__table__.create(bind=db.engine,checkfirst=True)
@@ -92,7 +92,7 @@ def install_tags(app,db,can):
     return q
  @app.get('/engenharia/tags')
  @guard()
- def tags_page():return render_template('v87_tags.html')
+ def tags_page():return render_template('v87_tags.html',tag_permissions={k:bool(can('engineering.tags.'+k)) for k in ('view','import','edit','bulk','issues','export','audit')})
  @app.get('/api/engenharia/tags')
  @guard()
  def tags_list():
@@ -118,13 +118,13 @@ def install_tags(app,db,can):
       'sem_patrimonio':sum(1 for t in all_rows if not t.patrimonio),
       'divergencias':ImportIssue.query.filter(ImportIssue.resolved_at.is_(None), ImportIssue.produto.in_([t.produto for t in all_rows] or [request.args.get('produto') or 'BF80'])).count()})
  @app.get('/api/engenharia/tags/<int:tag_id>/historico')
- @guard()
+ @guard("engineering.tags.audit")
  def tags_history(tag_id):
     Tag.query.get_or_404(tag_id)
     rows=Audit.query.filter_by(tag_id=tag_id).order_by(Audit.created_at.desc(),Audit.id.desc()).limit(300).all()
     return jsonify(ok=True,items=[dict(id=a.id,usuario_id=a.user_id,acao=a.action,data=a.created_at.isoformat() if a.created_at else '',antes=json.loads(a.before_json) if a.before_json else None,depois=json.loads(a.after_json) if a.after_json else None) for a in rows])
  @app.post('/api/engenharia/tags/<int:tag_id>/editar')
- @guard(True)
+ @guard("engineering.tags.edit")
  def tags_edit(tag_id):
     t=Tag.query.get_or_404(tag_id)
     payload=request.get_json(silent=True) or {}
@@ -156,7 +156,7 @@ def install_tags(app,db,can):
     except Exception:
      db.session.rollback();app.logger.exception('Falha edição TAG');return jsonify(ok=False,error='Não foi possível salvar a alteração.'),500
  @app.get('/api/engenharia/tags/modelo')
- @guard()
+ @guard("engineering.tags.import")
  def tags_model():
     wb=Workbook();ws=wb.active;ws.title='TAGs';ws.append(['Número de Série (TAG)','Patrimônio','Produto','Produção / Lote','Empresa','Local / Projeto','Finalidade','Status Operacional','NF Entrada','NF Saída','Caixa','Observação'])
     ws.append(['BF80-EXEMPLO-001','','BF80','1ª Produção','Autopass','BELÉM','Locação','Instalado','','','','EXEMPLO — excluir antes de importar'])
@@ -166,7 +166,7 @@ def install_tags(app,db,can):
     b=BytesIO();wb.save(b);b.seek(0)
     return send_file(b,as_attachment=True,download_name='Modelo_TAGs_Produtos.xlsx',mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
  @app.get('/api/engenharia/tags/exportar')
- @guard()
+ @guard("engineering.tags.export")
  def tags_export():
     rows=query_filtered().order_by(Tag.produto,Tag.serial).all();wb=Workbook();ws=wb.active;ws.title='TAGs'
     ws.append(['Nº Série (TAG)','Patrimônio','Produto','Produção/Lote','Empresa','Local/Projeto','Finalidade','Status','NF Entrada','NF Saída','Caixa','Observação'])
@@ -217,7 +217,7 @@ def install_tags(app,db,can):
      return rows,[{'produto':v['produto'],'serial':v['serial'],'linhas':v['linhas']} for v in duplicates.values()]
     finally:wb.close()
  @app.get('/api/engenharia/tags/divergencias')
- @guard()
+ @guard("engineering.tags.view")
  def tags_issues():
     q=ImportIssue.query.filter(ImportIssue.resolved_at.is_(None))
     product=request.args.get('produto','').strip()
@@ -225,7 +225,7 @@ def install_tags(app,db,can):
     rows=q.order_by(ImportIssue.created_at.desc()).limit(1000).all()
     return jsonify(ok=True,total=len(rows),items=[dict(id=x.id,produto=x.produto,serial=x.serial,linhas=x.lines,descricao=x.detail,detalhes_json=x.detail if x.detail.startswith('[') else '[]',arquivo=x.file_name,data=x.created_at.isoformat()) for x in rows])
  @app.post('/api/engenharia/tags/divergencias/<int:issue_id>/resolver')
- @guard(True)
+ @guard("engineering.tags.issues")
  def tags_resolve_issue(issue_id):
     issue=ImportIssue.query.get_or_404(issue_id)
     if issue.resolved_at is not None:return jsonify(ok=False,error='Divergência já tratada.'),409
@@ -246,8 +246,84 @@ def install_tags(app,db,can):
     issue.resolved_at=datetime.utcnow()
     db.session.commit()
     return jsonify(ok=True,acao=action,complementar_dados=(action=='correct'))
+ @app.get('/api/engenharia/tags/atualizacao-massa/modelo')
+ @guard("engineering.tags.bulk")
+ def tags_bulk_model():
+    rows=query_filtered().order_by(Tag.produto,Tag.serial).all()
+    wb=Workbook();ws=wb.active;ws.title='Atualizacao_TAGs'
+    ws.append(['ID Interno','Produto','Nº Série (TAG)','Patrimônio','Produção / Lote','Empresa','Local / Projeto','Finalidade','Status Operacional','NF Entrada','NF Saída','Caixa','Observação'])
+    cols=['id','produto','serial','patrimonio','lote','empresa','localidade','finalidade','status','nf_entrada','nf_saida','caixa','observacao']
+    for t in rows:ws.append([getattr(t,k) or '' for k in cols])
+    for c in ws[1]:c.fill=PatternFill('solid',fgColor='17345D');c.font=Font(color='FFFFFF',bold=True)
+    ws.freeze_panes='D2';ws.auto_filter.ref=f'A1:M{max(2,ws.max_row)}'
+    for col in 'ABCDEFGHIJKLM':ws.column_dimensions[col].width=24
+    info=wb.create_sheet('Instrucoes');info.append(['Atualização em massa - Controle de TAGs']);info.append(['Não altere o ID Interno. Produto e TAG são usados para conferir a identidade.']);info.append(['Células vazias NÃO apagam informações.']);info.append(['Altere somente campos necessários. Justificativa será exigida na confirmação.']);info.append(['Para corrigir Produto ou Número de Série, utilize a edição individual auditada.']);info.column_dimensions['A'].width=115
+    b=BytesIO();wb.save(b);b.seek(0)
+    return send_file(b,as_attachment=True,download_name='Atualizacao_Massa_TAGs.xlsx',mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+ @app.post('/api/engenharia/tags/atualizacao-massa')
+ @guard("engineering.tags.bulk")
+ def tags_bulk_update():
+    upload=request.files.get('arquivo')
+    if not upload or not upload.filename.lower().endswith('.xlsx'):return jsonify(ok=False,error='Envie um Excel .xlsx exportado para atualização em massa.'),400
+    data=upload.read()
+    if len(data)>15*1024*1024:return jsonify(ok=False,error='Arquivo acima de 15 MB.'),400
+    try:wb=load_workbook(BytesIO(data),read_only=True,data_only=True)
+    except Exception:return jsonify(ok=False,error='Não foi possível ler a planilha.'),400
+    cols=['id','produto','serial','patrimonio','lote','empresa','localidade','finalidade','status','nf_entrada','nf_saida','caixa','observacao']
+    try:
+     ws=wb['Atualizacao_TAGs'] if 'Atualizacao_TAGs' in wb.sheetnames else wb.active
+     headers=[norm(v) for v in next(ws.iter_rows(min_row=1,max_row=1,values_only=True))]
+     if headers[:3]!=['ID_INTERNO','PRODUTO','N_SERIE_TAG']:
+      return jsonify(ok=False,error='Modelo inválido. Baixe a planilha de Atualização em massa pelo sistema.'),400
+     mapping={k:i for i,k in enumerate(cols)}
+     changes=[];issues=[];seen=set();examined=0;unchanged=0
+     for ix,row in enumerate(ws.iter_rows(min_row=2,values_only=True),2):
+      if not any(v is not None and str(v).strip() for v in row):continue
+      examined+=1
+      if examined>20000:return jsonify(ok=False,error='Limite de 20.000 linhas.'),400
+      try:ident=int(row[0]);assert ident>0
+      except Exception:issues.append({'linha':ix,'motivo':'ID interno inválido'});continue
+      if ident in seen:issues.append({'linha':ix,'motivo':'ID duplicado na planilha'});continue
+      seen.add(ident);t=db.session.get(Tag,ident)
+      if not t:issues.append({'linha':ix,'motivo':'TAG não encontrada no banco'});continue
+      def clean(v):
+       if v is None:return ''
+       if isinstance(v,(int,float)) and float(v).is_integer():return str(int(v))
+       return str(v).strip()
+      product=clean(row[1] if len(row)>1 else None);serial=clean(row[2] if len(row)>2 else None)
+      if product.casefold()!=t.produto.casefold() or serial.casefold()!=t.serial.casefold():
+       issues.append({'linha':ix,'motivo':'Produto ou série diferente do registro de ID '+str(ident)});continue
+      modified={}
+      for k,j in mapping.items():
+       if k in ('id','produto','serial') or j>=len(row):continue
+       v=clean(row[j])
+       if v and v!=str(getattr(t,k) or ''):
+        if len(v)>(2000 if k=='observacao' else 200):issues.append({'linha':ix,'motivo':'Valor excessivamente longo em '+k});modified={};break
+        modified[k]=v
+      if modified:changes.append({'id':ident,'produto':t.produto,'serial':t.serial,'linha':ix,'antes':{k:str(getattr(t,k) or '') for k in modified},'depois':modified,'updated_at':t.updated_at.isoformat() if t.updated_at else ''})
+      else:unchanged+=1
+    finally:wb.close()
+    result=dict(ok=True,preview=True,analisadas=examined,alteradas=len(changes),sem_alteracao=unchanged,divergencias=len(issues),problemas=issues[:200],alteracoes=changes[:200])
+    if request.form.get('confirmar')!='sim':return jsonify(**result)
+    reason=(request.form.get('justificativa') or '').strip()
+    if len(reason)<10:return jsonify(ok=False,error='Justificativa obrigatória com pelo menos 10 caracteres.'),400
+    if issues:return jsonify(ok=False,error='Existem divergências. Corrija a planilha e valide novamente antes de gravar.',problemas=issues[:200]),409
+    if not changes:return jsonify(ok=False,error='Nenhuma alteração identificada.'),400
+    try:
+     for change in changes:
+      t=db.session.get(Tag,change['id'])
+      if not t or (t.updated_at.isoformat() if t.updated_at else '')!=change['updated_at']:
+       db.session.rollback();return jsonify(ok=False,error='Dados alterados durante a importação. Reexporte a planilha e valide novamente.'),409
+      before=asdict(t)
+      for k,v in change['depois'].items():setattr(t,k,v)
+      t.updated_at=datetime.utcnow()
+      db.session.add(Audit(tag_id=t.id,user_id=int(session['user_id']),action='BULK_UPDATE',before_json=json.dumps(before,ensure_ascii=False),after_json=json.dumps({'registro':asdict(t),'campos':list(change['depois']),'justificativa':reason,'arquivo':upload.filename[:255],'linha':change['linha']},ensure_ascii=False)))
+     db.session.commit()
+    except Exception:
+     db.session.rollback();app.logger.exception('Erro na atualização em massa de TAGs');return jsonify(ok=False,error='Falha na gravação. Transação revertida.'),500
+    return jsonify(ok=True,preview=False,atualizadas=len(changes),justificativa=reason)
  @app.post('/api/engenharia/tags/importar')
- @guard(True)
+ @guard("engineering.tags.import")
  def tags_import():
     try:rows,errors=parse_xlsx(request.files.get('arquivo'))
     except Exception as e:return jsonify(ok=False,error=str(e)),400
@@ -257,6 +333,10 @@ def install_tags(app,db,can):
     existing={ (t.produto.casefold(),t.serial.casefold()):t for t in Tag.query.filter(Tag.produto.in_({x['produto'] for x in valid})).all() }
     inserts=sum((x['produto'].casefold(),x['serial'].casefold()) not in existing for x in valid)
     updates=len(valid)-inserts
+    if updates and not can('engineering.tags.bulk'):
+     return jsonify(ok=False,error='A planilha contém TAGs existentes. Atualização requer permissão específica e o fluxo de Atualização em massa.'),403
+    if updates:
+     return jsonify(ok=False,error='Para atualizar TAGs existentes, utilize Atualização em massa com justificativa e auditoria.'),409
     preview=dict(ok=True,preview=True,inserts=inserts,updates=updates,total=len(rows),validos=len(valid),divergencias=errors,divergencias_count=len(errors),ignorados=len(rows)-len(valid))
     if request.form.get('confirmar')!='sim':return jsonify(**preview)
     if errors and request.form.get('ignorar_divergencias')!='sim':
