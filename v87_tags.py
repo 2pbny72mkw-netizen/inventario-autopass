@@ -87,6 +87,16 @@ def install_tags(app,db,can):
     for field in ['produto','empresa','localidade','finalidade','status','lote']:
      val=request.args.get(field,'').strip()
      if val:q=q.filter(getattr(Tag,field)==val)
+    for field,param in [('nf_entrada','nf_entrada_filtro'),('nf_saida','nf_saida_filtro')]:
+     val=request.args.get(param,'').strip()
+     if val:q=q.filter(getattr(Tag,field).ilike('%'+val+'%'))
+    situation=request.args.get('situacao_nf','').strip()
+    has_entry=db.and_(Tag.nf_entrada.isnot(None),db.func.trim(Tag.nf_entrada)!='')
+    has_exit=db.and_(Tag.nf_saida.isnot(None),db.func.trim(Tag.nf_saida)!='')
+    if situation=='entrada':q=q.filter(has_entry)
+    elif situation=='saida':q=q.filter(has_exit)
+    elif situation=='ambas':q=q.filter(has_entry,has_exit)
+    elif situation=='nenhuma':q=q.filter(db.not_(has_entry),db.not_(has_exit))
     search=request.args.get('q','').strip()
     if search:q=q.filter(db.or_(Tag.serial.ilike('%'+search+'%'),Tag.patrimonio.ilike('%'+search+'%'),Tag.localidade.ilike('%'+search+'%')))
     return q
