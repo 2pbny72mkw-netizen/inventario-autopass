@@ -43,6 +43,7 @@ def install_v86(app, db, User, can):
         warehouse_id=db.Column(db.Integer,db.ForeignKey('v86_warehouses.id'),nullable=False)
         material_id=db.Column(db.Integer,db.ForeignKey('v86_materials.id'),nullable=False)
         quantity=db.Column(db.Integer,default=0,nullable=False)
+        address=db.Column(db.String(160),nullable=False,default='')
         __table_args__=(db.UniqueConstraint('warehouse_id','material_id',name='uq_v86_wh_mat'),)
 
     class Movement(db.Model):
@@ -73,6 +74,10 @@ def install_v86(app, db, User, can):
         if 'company' not in columns:
             with db.engine.begin() as con:
                 con.execute(text("ALTER TABLE v86_materials ADD COLUMN company VARCHAR(120) NOT NULL DEFAULT ''"))
+        balance_columns={x['name'] for x in inspect(db.engine).get_columns('v86_stock_balances')}
+        if 'address' not in balance_columns:
+            with db.engine.begin() as con:
+                con.execute(text("ALTER TABLE v86_stock_balances ADD COLUMN address VARCHAR(160) NOT NULL DEFAULT ''"))
         if not Warehouse.query.first():
             db.session.add_all([Warehouse(name='Liberdade'),Warehouse(name='Guardiã')]);db.session.commit()
         initialized=True
@@ -98,7 +103,7 @@ def install_v86(app, db, User, can):
     @app.get('/engenharia/estoque')
     @guard('engineering.stock.view')
     def v86_stock_page():
-        return render_template('v86_stock.html',app_release='V87.1',can_stock=can)
+        return render_template('v86_stock.html',app_release='V87.6 REV33',can_stock=can)
 
     @app.get('/api/engenharia/estoque')
     @guard('engineering.stock.view')
@@ -118,11 +123,36 @@ def install_v86(app, db, User, can):
             d=payload_material(m)
             d['quantity']=sum(b.quantity for b in balances if b.material_id==m.id and (not wid or b.warehouse_id==wid))
             d['by_warehouse']={str(w.id):bm.get((m.id,w.id),0) for w in wh}
+            d['address_by_warehouse']={str(b.warehouse_id):b.address or '' for b in balances if b.material_id==m.id}
+            d['address']=next((b.address or '' for b in balances if b.material_id==m.id and b.warehouse_id==wid),'') if wid else ''
             result.append(d)
         movements=Movement.query.filter_by(warehouse_id=wid).count() if wid else Movement.query.count()
         counts={'items':sum(x['quantity']>0 for x in result),'units':sum(x['quantity'] for x in result),'unclassified':sum(x['quantity']>0 and not x['classified'] for x in result),
                 'movements':movements}
         return jsonify(ok=True,warehouses=[{'id':w.id,'name':w.name,'active':w.active} for w in wh],items=result,counts=counts)
+
+    @app.post('/api/engenharia/estoque/enderecamento')
+    @guard('engineering.stock.move')
+    def v87_stock_address_update():
+        data=request.get_json(silent=True) or {}
+        try:
+            wid=int(data.get('warehouse_id'));mid=int(data.get('material_id'))
+        except (ValueError,TypeError):
+            return jsonify(ok=False,error='Localidade ou material inválido'),400
+        address=str(data.get('address') or '').strip()
+        if len(address)>160:return jsonify(ok=False,error='Endereçamento deve ter até 160 caracteres'),400
+        if not Warehouse.query.filter_by(id=wid,active=True).first() or not Material.query.filter_by(id=mid,active=True).first():
+            return jsonify(ok=False,error='Localidade ou material não encontrado'),404
+        bal=Balance.query.filter_by(warehouse_id=wid,material_id=mid).with_for_update().first()
+        if not bal:return jsonify(ok=False,error='Não há registro de estoque para este material nesta localidade'),404
+        previous=bal.address or ''
+        if previous!=address:
+            reason=str(data.get('reason') or '').strip()
+            if len(reason)<10:return jsonify(ok=False,error='Justificativa obrigatória (mínimo 10 caracteres)'),400
+            bal.address=address
+            db.session.add(Movement(warehouse_id=wid,material_id=mid,user_id=session['user_id'],kind='ENDERECAMENTO',quantity=0,before_qty=bal.quantity,after_qty=bal.quantity,note=('Endereço: '+previous+' -> '+address+'; Justificativa: '+reason)[:500]))
+            db.session.commit()
+        return jsonify(ok=True,address=bal.address)
 
     @app.post('/api/engenharia/estoque/localidades')
     @guard('engineering.stock.locations')
@@ -285,7 +315,16 @@ def install_v86(app, db, User, can):
         wid=request.args.get('warehouse_id',type=int)
         query=Movement.query
         if wid:query=query.filter_by(warehouse_id=wid)
-        rows=query.order_by(Movement.id.desc()).limit(300).all()
+        from datetime import date, timedelta
+        start=(request.args.get('inicio') or '').strip()
+        end=(request.args.get('fim') or '').strip()
+        try:
+            if start:query=query.filter(Movement.created_at>=datetime.combine(date.fromisoformat(start),datetime.min.time()))
+            if end:query=query.filter(Movement.created_at<datetime.combine(date.fromisoformat(end)+timedelta(days=1),datetime.min.time()))
+        except ValueError:return jsonify(ok=False,error='Período inválido'),400
+        material_id=request.args.get('material_id',type=int)
+        if material_id:query=query.filter_by(material_id=material_id)
+        rows=query.order_by(Movement.id.desc()).limit(2000).all()
         company_by_id={m.id:(m.company or '') for m in Material.query.filter(Material.id.in_({r.material_id for r in rows})).all()}
         return jsonify(ok=True,rows=[{'company':company_by_id.get(r.material_id,''),'id':r.id,'date':r.created_at.isoformat(),'warehouse_id':r.warehouse_id,'material_id':r.material_id,'user_id':r.user_id,'kind':r.kind,'quantity':r.quantity,'before':r.before_qty,'after':r.after_qty,'note':r.note} for r in rows])
 
@@ -293,11 +332,11 @@ def install_v86(app, db, User, can):
     @guard('engineering.stock.export')
     def v86_stock_export():
         wb=Workbook();ws=wb.active;ws.title='Estoque Atual'
-        ws.append(['Código','Descrição','Descrição original','Empresa','Localidade','Quantidade','Unidade','Classificado','Foto (link interno)'])
+        ws.append(['Código','Descrição','Descrição original','Empresa','Localidade','Endereçamento','Quantidade','Unidade','Classificado','Foto (link interno)'])
         for m in Material.query.order_by(Material.description).all():
             for b in Balance.query.filter_by(material_id=m.id).all():
                 w=db.session.get(Warehouse,b.warehouse_id)
-                ws.append([m.code,m.description,m.original_description,m.company or '',w.name if w else '',b.quantity,m.unit,'Sim' if m.classified else 'Não',request.host_url.rstrip('/')+'/api/engenharia/estoque/fotos/'+str(m.id)])
+                ws.append([m.code,m.description,m.original_description,m.company or '',w.name if w else '',b.address or '',b.quantity,m.unit,'Sim' if m.classified else 'Não',request.host_url.rstrip('/')+'/api/engenharia/estoque/fotos/'+str(m.id)])
         hs=wb.create_sheet('Movimentações');hs.append(['Data','Localidade ID','Item ID','Empresa','Usuário ID','Tipo','Quantidade','Antes','Depois','Observação'])
         for r in Movement.query.order_by(Movement.id.desc()).limit(20000).all():
             hs.append([r.created_at.strftime('%d/%m/%Y %H:%M'),r.warehouse_id,r.material_id,(db.session.get(Material,r.material_id).company if db.session.get(Material,r.material_id) else ''),r.user_id,r.kind,r.quantity,r.before_qty,r.after_qty,r.note])
