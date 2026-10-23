@@ -117,14 +117,18 @@ def install_v86(app, db, User, can):
             materials=materials.filter(db.or_(Material.description.ilike(pattern),Material.code.ilike(pattern),Material.original_description.ilike(pattern)))
         mats=materials.order_by(Material.description).limit(400).all()
         balances=Balance.query.filter(Balance.material_id.in_([m.id for m in mats])).all() if mats else []
-        bm={(b.material_id,b.warehouse_id):b.quantity for b in balances}
+        # REV34: uma única passagem pelos saldos, evitando N varreduras por material.
+        by_material={}
+        for b in balances:
+            by_material.setdefault(b.material_id,{})[b.warehouse_id]=b
         result=[]
         for m in mats:
+            entries=by_material.get(m.id,{})
             d=payload_material(m)
-            d['quantity']=sum(b.quantity for b in balances if b.material_id==m.id and (not wid or b.warehouse_id==wid))
-            d['by_warehouse']={str(w.id):bm.get((m.id,w.id),0) for w in wh}
-            d['address_by_warehouse']={str(b.warehouse_id):b.address or '' for b in balances if b.material_id==m.id}
-            d['address']=next((b.address or '' for b in balances if b.material_id==m.id and b.warehouse_id==wid),'') if wid else ''
+            d['quantity']=(entries[wid].quantity if wid in entries else 0) if wid else sum(b.quantity for b in entries.values())
+            d['by_warehouse']={str(w.id):entries[w.id].quantity if w.id in entries else 0 for w in wh}
+            d['address_by_warehouse']={str(wid2):b.address or '' for wid2,b in entries.items()}
+            d['address']=entries[wid].address or '' if wid in entries else ''
             result.append(d)
         movements=Movement.query.filter_by(warehouse_id=wid).count() if wid else Movement.query.count()
         counts={'items':sum(x['quantity']>0 for x in result),'units':sum(x['quantity'] for x in result),'unclassified':sum(x['quantity']>0 and not x['classified'] for x in result),
@@ -248,14 +252,37 @@ def install_v86(app, db, User, can):
     def v86_material_add():
         name=(request.form.get('description') or '').strip()[:300]
         if len(name)<3:return jsonify(ok=False,error='Informe a descrição do item.'),400
-        m=Material(description=name,original_description=name,unit='UN',company=(request.form.get('company') or '').strip()[:120],classified=False,created_by=session['user_id'])
+        qty_text=(request.form.get('initial_quantity') or '0').strip()
+        try: qty=int(qty_text)
+        except (TypeError,ValueError):return jsonify(ok=False,error='Quantidade inicial deve ser um número inteiro.'),400
+        if qty<0 or qty>100000000:return jsonify(ok=False,error='Quantidade inicial fora do limite permitido.'),400
+        wid_text=(request.form.get('warehouse_id') or '').strip()
+        try: wid=int(wid_text) if wid_text else None
+        except (TypeError,ValueError):return jsonify(ok=False,error='Localidade inválida.'),400
+        if qty>0 and not wid:return jsonify(ok=False,error='Selecione a localidade para registrar a entrada inicial.'),400
+        if wid and not Warehouse.query.filter_by(id=wid,active=True).first():return jsonify(ok=False,error='Localidade não encontrada.'),404
+        unit=(request.form.get('unit') or 'UN').strip().upper()[:24]
+        if not re.fullmatch(r'[A-Z0-9 ./%-]{1,24}',unit):return jsonify(ok=False,error='Unidade inválida.'),400
+        address=(request.form.get('address') or '').strip()
+        if len(address)>160:return jsonify(ok=False,error='Endereçamento deve ter até 160 caracteres.'),400
+        note=(request.form.get('note') or '').strip()[:400]
+        if address and not wid:return jsonify(ok=False,error='Selecione a localidade para registrar o endereçamento.'),400
+        m=Material(description=name,original_description=name,unit=unit,company=(request.form.get('company') or '').strip()[:120],classified=False,created_by=session['user_id'])
         try:
+            if wid:Warehouse.query.filter_by(id=wid).with_for_update().first()
             db.session.add(m);db.session.flush();m.code='PROV-'+str(m.id).zfill(6)
             save_photo(m,request.files.get('photo'))
+            if wid and (qty>0 or address):
+                b=Balance(warehouse_id=wid,material_id=m.id,quantity=qty,address=address)
+                db.session.add(b)
+            if qty>0:
+                db.session.add(Movement(warehouse_id=wid,material_id=m.id,user_id=session['user_id'],kind='ENTRADA',quantity=qty,before_qty=0,after_qty=qty,note=('Saldo inicial no cadastro. '+note)[:500]))
             db.session.commit()
-            return jsonify(ok=True,item=payload_material(m))
+            return jsonify(ok=True,item=payload_material(m),initial_quantity=qty,warehouse_id=wid)
         except ValueError as e:
             db.session.rollback();return jsonify(ok=False,error=str(e)),400
+        except Exception:
+            db.session.rollback();raise
 
     @app.post('/api/engenharia/estoque/materiais/<int:mid>/classificar')
     @guard('engineering.stock.classify')
