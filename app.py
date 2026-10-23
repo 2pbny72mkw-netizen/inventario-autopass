@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV36"
+APP_RELEASE = "V87.6 REV38"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -19759,6 +19759,42 @@ def v7893_arrow_delete_api(aid):
     db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='ARROW_ATIVIDADE_EXCLUIDA',entity_type='arrow_activity',entity_id=str(x.id),detail=json.dumps(snapshot,ensure_ascii=False)))
     _v7893_arrow_notify(x,'Atividade Arrow excluída',f'{x.activity_date.strftime("%d/%m/%Y")} · {x.title} · {snapshot["location"]}',severity='ATENCAO')
     db.session.commit();return jsonify({'ok':True})
+
+@app.post("/api/arrow/activities/excluir-lote")
+@login_required
+def v8737_arrow_bulk_delete():
+    if not _has_access("arrow.delete"):
+        return jsonify(ok=False,error="Sem permissão para excluir atividades."),403
+    payload=request.get_json(silent=True) or {}
+    ids=payload.get("ids")
+    justification=str(payload.get("justification") or "").strip()
+    if not isinstance(ids,list) or not ids or len(ids)>500:
+        return jsonify(ok=False,error="Selecione de 1 a 500 atividades."),400
+    if len(justification)<5 or len(justification)>1000:
+        return jsonify(ok=False,error="Informe uma justificativa (5 a 1000 caracteres)."),400
+    try:
+        ids=[int(v) for v in ids]
+    except (ValueError,TypeError):
+        return jsonify(ok=False,error="IDs inválidos."),400
+    if len(set(ids))!=len(ids) or any(i<=0 for i in ids):
+        return jsonify(ok=False,error="IDs duplicados ou inválidos."),400
+    rows=ArrowActivity.query.filter(ArrowActivity.id.in_(ids)).with_for_update().all()
+    if len(rows)!=len(ids) or any(x.deleted_at is not None for x in rows):
+        return jsonify(ok=False,error="Atividades inexistentes ou já excluídas. Atualize a agenda."),409
+    now=datetime.utcnow()
+    try:
+        for x in rows:
+            x.deleted_at=now
+            x.deleted_by=session.get("user_id")
+            db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="ARROW_ATIVIDADE_EXCLUIDA_LOTE",
+                entity_type="arrow_activity",entity_id=str(x.id),
+                detail=json.dumps({"activity_id":x.id,"title":x.title,"date":x.activity_date.isoformat(),
+                    "technician_id":x.technician_id,"reason":justification,"batch_ids":ids},ensure_ascii=False)))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        raise
+    return jsonify(ok=True,deleted=len(rows),ids=ids)
 
 @app.get("/api/arrow/dashboard")
 @login_required

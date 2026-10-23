@@ -40,10 +40,42 @@ def install_pos_metro(app,db,can):
   mimetype=db.Column(db.String(40),nullable=False)
   content=db.Column(db.LargeBinary,nullable=False)
   created_at=db.Column(db.DateTime,default=datetime.utcnow,nullable=False)
+ class AP(db.Model):
+  __tablename__='v8738_pos_metro_ap'
+  id=db.Column(db.Integer,primary_key=True)
+  line=db.Column(db.String(100),nullable=False)
+  station=db.Column(db.String(150),nullable=False)
+  manufacturer=db.Column(db.String(50),nullable=False,default='Mercusys')
+  model=db.Column(db.String(50),nullable=False,default='MW301R')
+  status=db.Column(db.String(25),nullable=False,default='Pendente')
+  installed_on=db.Column(db.DateTime)
+  updated_by=db.Column(db.Integer)
+  notes=db.Column(db.Text)
+  __table_args__=(db.UniqueConstraint('line','station',name='uq_v8738_ap_station'),)
+ class APEvent(db.Model):
+  __tablename__='v8738_pos_metro_ap_events'
+  id=db.Column(db.Integer,primary_key=True)
+  ap_id=db.Column(db.Integer,db.ForeignKey('v8738_pos_metro_ap.id'),nullable=False,index=True)
+  status=db.Column(db.String(25),nullable=False)
+  notes=db.Column(db.Text)
+  user_id=db.Column(db.Integer,nullable=False)
+  occurred_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow)
+ class APPhoto(db.Model):
+  __tablename__='v8738_pos_metro_ap_photos'
+  id=db.Column(db.Integer,primary_key=True)
+  ap_id=db.Column(db.Integer,db.ForeignKey('v8738_pos_metro_ap.id'),nullable=False,index=True)
+  filename=db.Column(db.String(160),nullable=False)
+  mimetype=db.Column(db.String(40),nullable=False)
+  content=db.Column(db.LargeBinary,nullable=False)
+  user_id=db.Column(db.Integer,nullable=False)
+  created_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow)
  def ensure_schema():
   POS.__table__.create(bind=db.engine,checkfirst=True)
   Event.__table__.create(bind=db.engine,checkfirst=True)
   Photo.__table__.create(bind=db.engine,checkfirst=True)
+  AP.__table__.create(bind=db.engine,checkfirst=True)
+  APPhoto.__table__.create(bind=db.engine,checkfirst=True)
+  APEvent.__table__.create(bind=db.engine,checkfirst=True)
   if db.engine.dialect.name=='postgresql':
    with db.engine.begin() as conn:
     conn.execute(text('ALTER TABLE v874_pos_metro ADD COLUMN IF NOT EXISTS terminal_number VARCHAR(40)'))
@@ -106,7 +138,12 @@ def install_pos_metro(app,db,can):
   known_models=[x[0] for x in db.session.query(POS.model).filter(POS.model.isnot(None),POS.model!='').distinct().order_by(POS.model).limit(300)]
   known_manufacturers=[x[0] for x in db.session.query(POS.manufacturer).filter(POS.manufacturer.isnot(None),POS.manufacturer!='').distinct().order_by(POS.manufacturer).limit(300)]
   metric_rows=[{'id':x.id,'line':x.line,'station':x.station,'terminal':x.terminal,'terminal_number':short_number(x),'model':x.model or '', 'manufacturer':x.manufacturer or '', 'serial':x.serial or '', 'asset':x.asset or '', 'status':x.status,'installed_on':x.installed_on.strftime('%Y-%m-%d') if x.installed_on else ''} for x in POS.query.order_by(POS.line,POS.station,POS.terminal).all()]
-  return render_template('v874_pos_metro.html',metric_rows=metric_rows,known_models=known_models,known_manufacturers=known_manufacturers,items=items,short_number=short_number,total=total,done=done,ongoing=ongoing,lines=lines,stations=stations,can_pos=can,st_total=st_total,st_done=st_done,st_ongoing=st_ongoing,filtered_count=q.count())
+  ap_station=AP.query.filter_by(line=request.args.get('linha'),station=station_name).first() if station_name and request.args.get('linha') else None
+  if station_name and request.args.get('linha') and st_total:
+   st_total+=1
+   if ap_station and ap_station.status=='Concluído':st_done+=1
+   if ap_station and ap_station.status=='Em andamento':st_ongoing+=1
+  return render_template('v874_pos_metro.html',ap_station=ap_station,metric_rows=metric_rows,known_models=known_models,known_manufacturers=known_manufacturers,items=items,short_number=short_number,total=total,done=done,ongoing=ongoing,lines=lines,stations=stations,can_pos=can,st_total=st_total,st_done=st_done,st_ongoing=st_ongoing,filtered_count=q.count())
  @app.post('/field/troca-pos-metro/importar')
  @guard('field.pos_metro.import')
  def pos_import():
@@ -165,10 +202,12 @@ def install_pos_metro(app,db,can):
   status=(request.form.get('status') or 'Pendente').strip()
   if status not in ('Pendente','Em andamento','Concluído'):return jsonify(error='Status inválido'),400
   serial=(request.form.get('serial') or '').strip()[:120]
-  if status=='Concluído' and not serial:return jsonify(error='Número de série obrigatório para concluir'),400
-  model=(request.form.get('modelo') or '').strip()[:120]
-  manufacturer=(request.form.get('fabricante') or '').strip()[:120]
-  asset=(request.form.get('patrimonio') or '').strip()[:120]
+  # Série e patrimônio não são exigidos para registrar a instalação.
+  manufacturer=(request.form.get('fabricante') or '').strip()
+  models={'Gertec':'G820','Ingenico':'DX8000'}
+  if manufacturer not in models:return jsonify(error='Selecione Gertec ou Ingenico'),400
+  model=models[manufacturer]
+  asset=obj.asset or ''
   photos=request.files.getlist('fotos')
   if len(photos)>5:return jsonify(error='Máximo de 5 fotos'),400
   valid=[]
@@ -183,6 +222,7 @@ def install_pos_metro(app,db,can):
    except Exception:return jsonify(error='Imagem inválida; utilize JPEG, PNG ou WEBP'),400
    mime={'JPEG':'image/jpeg','PNG':'image/png','WEBP':'image/webp'}[im.format]
    valid.append((photo.filename[:160],mime,data))
+  if status=='Concluído' and not valid and not db.session.query(Photo.id).join(Event,Photo.event_id==Event.id).filter(Event.pos_id==pid).first():return jsonify(error='Foto obrigatória para concluir POS'),400
   try:
    event=Event(pos_id=pid,old_serial=obj.serial,old_model=obj.model,new_serial=serial or obj.serial,new_model=model or obj.model,notes=(request.form.get('observacoes') or '')[:2000],user_id=session['user_id'])
    db.session.add(event);db.session.flush()
@@ -197,6 +237,61 @@ def install_pos_metro(app,db,can):
   except Exception:
    db.session.rollback();raise
   return redirect('/field/troca-pos-metro')
+ def validate_photos(files):
+  from PIL import Image
+  result=[]
+  if len(files)>5:abort(400,description='Máximo de 5 fotos')
+  for f in files:
+   if not f.filename:continue
+   data=f.read(3_000_001)
+   if len(data)>3_000_000:abort(400,description='Foto acima de 3 MB')
+   try:
+    im=Image.open(BytesIO(data));im.verify()
+    if im.format not in ('JPEG','PNG','WEBP'):raise ValueError()
+    mime={'JPEG':'image/jpeg','PNG':'image/png','WEBP':'image/webp'}[im.format]
+   except Exception:abort(400,description='Foto inválida; use JPEG, PNG ou WEBP')
+   result.append((f.filename[:160],mime,data))
+  return result
+ @app.post('/field/troca-pos-metro/novo-pos')
+ @guard('field.pos_metro.execute')
+ def pos_new():
+  line=(request.form.get('linha') or '').strip()[:100]
+  station=(request.form.get('estacao') or '').strip()[:150]
+  terminal=(request.form.get('terminal') or '').strip()[:90]
+  if not all([line,station,terminal]):return jsonify(error='Linha, estação e identificação do POS são obrigatórios'),400
+  if not POS.query.filter_by(line=line,station=station).first():return jsonify(error='Estação não encontrada na base POS'),400
+  if POS.query.filter(func.lower(POS.terminal)==terminal.lower()).first():return jsonify(error='POS já cadastrado na base, inclusive em outra estação'),409
+  obj=POS(line=line,station=station,terminal=terminal,terminal_number=(request.form.get('numero') or '').strip()[:40],status='Pendente')
+  db.session.add(obj);db.session.flush()
+  db.session.add(Event(pos_id=obj.id,notes='Cadastro provisório em campo; pendente de validação do gestor',user_id=session['user_id']))
+  db.session.commit()
+  return redirect('/field/troca-pos-metro?linha='+__import__('urllib.parse',fromlist=['quote']).quote(line)+'&estacao='+__import__('urllib.parse',fromlist=['quote']).quote(station))
+ @app.post('/field/troca-pos-metro/ap/registrar')
+ @guard('field.pos_metro.execute')
+ def ap_register():
+  line=(request.form.get('linha') or '').strip()
+  station=(request.form.get('estacao') or '').strip()
+  if not line or not station or not POS.query.filter_by(line=line,station=station).first():return jsonify(error='Selecione uma estação válida'),400
+  status=(request.form.get('status') or 'Pendente').strip()
+  if status not in ('Pendente','Em andamento','Concluído'):return jsonify(error='Status inválido'),400
+  valid=validate_photos(request.files.getlist('fotos'))
+  ap=AP.query.filter_by(line=line,station=station).first()
+  if status=='Concluído' and not valid and not (ap and APPhoto.query.filter_by(ap_id=ap.id).first()):return jsonify(error='Foto obrigatória para concluir o AP'),400
+  if ap is None:
+   ap=AP(line=line,station=station);db.session.add(ap);db.session.flush()
+  ap.status=status;ap.updated_by=session['user_id'];ap.notes=(request.form.get('observacoes') or '')[:2000]
+  db.session.add(APEvent(ap_id=ap.id,status=status,notes=ap.notes,user_id=session['user_id']))
+  if status=='Concluído':ap.installed_on=datetime.utcnow()
+  for name,mime,data in valid:db.session.add(APPhoto(ap_id=ap.id,filename=name,mimetype=mime,content=data,user_id=session['user_id']))
+  db.session.commit()
+  from urllib.parse import urlencode
+  return redirect('/field/troca-pos-metro?'+urlencode({'linha':line,'estacao':station}))
+ @app.get('/field/troca-pos-metro/ap/foto/<int:photo_id>')
+ @guard('field.pos_metro')
+ def ap_photo(photo_id):
+  photo=db.session.get(APPhoto,photo_id)
+  if not photo:abort(404)
+  return send_file(BytesIO(photo.content),mimetype=photo.mimetype,download_name=photo.filename)
  @app.get('/field/troca-pos-metro/foto/<int:photo_id>')
  @guard('field.pos_metro')
  def pos_photo(photo_id):
