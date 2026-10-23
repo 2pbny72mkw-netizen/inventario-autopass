@@ -139,11 +139,12 @@ def install_pos_metro(app,db,can):
   known_manufacturers=[x[0] for x in db.session.query(POS.manufacturer).filter(POS.manufacturer.isnot(None),POS.manufacturer!='').distinct().order_by(POS.manufacturer).limit(300)]
   metric_rows=[{'id':x.id,'line':x.line,'station':x.station,'terminal':x.terminal,'terminal_number':short_number(x),'model':x.model or '', 'manufacturer':x.manufacturer or '', 'serial':x.serial or '', 'asset':x.asset or '', 'status':x.status,'installed_on':x.installed_on.strftime('%Y-%m-%d') if x.installed_on else ''} for x in POS.query.order_by(POS.line,POS.station,POS.terminal).all()]
   ap_station=AP.query.filter_by(line=request.args.get('linha'),station=station_name).first() if station_name and request.args.get('linha') else None
+  ap_has_photo=bool(ap_station and APPhoto.query.filter_by(ap_id=ap_station.id).first())
   if station_name and request.args.get('linha') and st_total:
    st_total+=1
-   if ap_station and ap_station.status=='Concluído':st_done+=1
-   if ap_station and ap_station.status=='Em andamento':st_ongoing+=1
-  return render_template('v874_pos_metro.html',ap_station=ap_station,metric_rows=metric_rows,known_models=known_models,known_manufacturers=known_manufacturers,items=items,short_number=short_number,total=total,done=done,ongoing=ongoing,lines=lines,stations=stations,can_pos=can,st_total=st_total,st_done=st_done,st_ongoing=st_ongoing,filtered_count=q.count())
+   if ap_station and ap_station.status=='Concluído' and ap_has_photo:st_done+=1
+   if ap_station and (ap_station.status=='Em andamento' or (ap_station.status=='Concluído' and not ap_has_photo)):st_ongoing+=1
+  return render_template('v874_pos_metro.html',ap_station=ap_station,ap_has_photo=ap_has_photo,station_complete=bool(st_total and st_done==st_total),metric_rows=metric_rows,known_models=known_models,known_manufacturers=known_manufacturers,items=items,short_number=short_number,total=total,done=done,ongoing=ongoing,lines=lines,stations=stations,can_pos=can,st_total=st_total,st_done=st_done,st_ongoing=st_ongoing,filtered_count=q.count())
  @app.post('/field/troca-pos-metro/importar')
  @guard('field.pos_metro.import')
  def pos_import():
@@ -261,7 +262,10 @@ def install_pos_metro(app,db,can):
   if not all([line,station,terminal]):return jsonify(error='Linha, estação e identificação do POS são obrigatórios'),400
   if not POS.query.filter_by(line=line,station=station).first():return jsonify(error='Estação não encontrada na base POS'),400
   if POS.query.filter(func.lower(POS.terminal)==terminal.lower()).first():return jsonify(error='POS já cadastrado na base, inclusive em outra estação'),409
-  obj=POS(line=line,station=station,terminal=terminal,terminal_number=(request.form.get('numero') or '').strip()[:40],status='Pendente')
+  models={'Gertec':'G820','Ingenico':'DX8000'}
+  manufacturer=(request.form.get('fabricante') or '').strip()
+  if manufacturer and manufacturer not in models:return jsonify(error='Fabricante inválido'),400
+  obj=POS(line=line,station=station,terminal=terminal,terminal_number=(request.form.get('numero') or '').strip()[:40],manufacturer=manufacturer or None,model=models.get(manufacturer),status='Pendente')
   db.session.add(obj);db.session.flush()
   db.session.add(Event(pos_id=obj.id,notes='Cadastro provisório em campo; pendente de validação do gestor',user_id=session['user_id']))
   db.session.commit()
