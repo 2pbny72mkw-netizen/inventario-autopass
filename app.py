@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV34"
+APP_RELEASE = "V87.6 REV35"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -22555,6 +22555,107 @@ def engineering_items_import_api():
         return jsonify({"ok":True,**stats,"official_base":"BASE_CADASTRO_BOHM_V8"})
     except Exception as e:
         db.session.rollback();app.logger.exception("V78.2 REV3 base oficial Engenharia");return jsonify({"ok":False,"error":str(e)}),400
+
+
+# REV35: importacao nao destrutiva da planilha de estoque, separada da base oficial BOHM.
+def _v8735_read_inventory_file(stream):
+    from openpyxl import load_workbook
+    from collections import Counter
+    wb=load_workbook(stream,read_only=True,data_only=True)
+    try:
+        ws=wb.active
+        header=[str(x or '').strip().upper() for x in next(ws.iter_rows(min_row=1,max_row=1,values_only=True))]
+        mandatory={'CODIGO','DESCRICAO'}
+        if not mandatory.issubset(header):
+            raise ValueError('Layout incompatível: são obrigatórias as colunas CODIGO e DESCRICAO.')
+        if len(header)!=len(set(header)):
+            raise ValueError('Cabeçalhos duplicados na planilha.')
+        records=[];issues=[];seen=set()
+        for number,values in enumerate(ws.iter_rows(min_row=2,values_only=True),start=2):
+            if not any(x is not None and str(x).strip() for x in values):continue
+            d={key:str(values[i]).strip() if i<len(values) and values[i] is not None else '' for i,key in enumerate(header)}
+            key=d['CODIGO'].upper()
+            if not key or not d['DESCRICAO']:
+                issues.append({'linha':number,'problema':'Código ou descrição ausente'});continue
+            if key in seen:
+                issues.append({'linha':number,'problema':'Código duplicado na planilha: '+d['CODIGO']});continue
+            if len(key)>80 or len(d['DESCRICAO'])>500:
+                issues.append({'linha':number,'problema':'Código ou descrição excede o limite'});continue
+            seen.add(key);records.append(d)
+            if len(records)>20000:raise ValueError('Limite de 20.000 itens por importação.')
+        return records,issues
+    finally:
+        wb.close()
+
+@app.post('/api/engineering/items/inventory-import')
+@login_required
+def v8735_engineering_inventory_import():
+    if not _has_access('engineering.import') or not _has_access('engineering.items.manage'):
+        return jsonify(ok=False,error='Sem permissão de importação e edição de itens.'),403
+    f=request.files.get('file')
+    if not f:return jsonify(ok=False,error='Selecione a planilha Excel.'),400
+    if not (f.filename or '').lower().endswith('.xlsx'):
+        return jsonify(ok=False,error='Somente arquivos .xlsx são aceitos.'),400
+    if request.content_length and request.content_length>12*1024*1024:
+        return jsonify(ok=False,error='Arquivo acima de 12 MB.'),413
+    mode=(request.form.get('mode') or 'preview').lower()
+    if mode not in ('preview','commit'):return jsonify(ok=False,error='Operação inválida.'),400
+    try:
+        rows,issues=_v8735_read_inventory_file(f.stream)
+        keys=[r['CODIGO'].upper() for r in rows]
+        existing={x.internal_part_number.upper():x for x in EngineeringItem.query.filter(func.upper(EngineeringItem.internal_part_number).in_(keys)).all()}
+        news=[];updates=[];unchanged=[]
+        for d in rows:
+            item=existing.get(d['CODIGO'].upper())
+            if not item:news.append(d)
+            elif (item.description_pt or '').strip()!=d['DESCRICAO'] or (item.category or '').strip()!=d.get('GRUPO_ITEM','') or (item.unit or 'UN').strip()!=(d.get('UNIDADE') or 'UN'):
+                updates.append(d)
+            else:unchanged.append(d)
+        summary={'total':len(rows),'novos':len(news),'alterados':len(updates),'sem_alteracao':len(unchanged),'divergencias':len(issues),
+                 'amostra_divergencias':issues[:30],'amostra_novos':[{'codigo':x['CODIGO'],'descricao':x['DESCRICAO']} for x in news[:15]],
+                 'amostra_alterados':[{'codigo':x['CODIGO'],'descricao':x['DESCRICAO']} for x in updates[:15]],
+                 'estoque_nao_movimentado':True,'registros_nao_excluidos':True}
+        if mode=='preview':return jsonify(ok=True,**summary)
+        if issues:return jsonify(ok=False,error='Corrija as divergências antes de gravar.',**summary),409
+        if not rows:return jsonify(ok=False,error='Nenhum item válido na planilha.'),400
+        from datetime import datetime as _dt
+        try:
+            for d in rows:
+                item=existing.get(d['CODIGO'].upper())
+                if not item:
+                    item=EngineeringItem(internal_part_number=d['CODIGO'],created_by=session.get('user_id'))
+                item.description_pt=d['DESCRICAO']
+                if d.get('GRUPO_ITEM'):item.category=d['GRUPO_ITEM'][:120]
+                if d.get('UNIDADE'):item.unit=d['UNIDADE'][:30]
+                if d.get('FAMILIA_ITEM'):
+                    fam=d['FAMILIA_ITEM'].upper()
+                    if fam in ('NACIONAL','IMPORTADO'):item.default_origin=fam
+                if d.get('CODIGO_INTERNO') and not item.manufacturer_part_number:
+                    # CODIGO_INTERNO e referencia de origem, nao MPN: preservada somente no payload.
+                    pass
+                if not existing.get(d['CODIGO'].upper()):
+                    item.source_sheet='ESTOQUE2310 / IMPORTACAO REV35'
+                    item.source_key=d['CODIGO'][:80]
+                # Preservar a origem anterior e acrescentar a referencia da planilha.
+                previous=item.source_payload_json
+                try: prior=json.loads(previous) if previous else {}
+                except (ValueError,TypeError):prior={'payload_anterior':previous}
+                if not isinstance(prior,dict):prior={'payload_anterior':prior}
+                prior['estoque2310']=d
+                item.source_payload_json=json.dumps(prior,ensure_ascii=False,default=str)
+                db.session.add(item)
+            db.session.flush()
+            db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='ENGINEERING_INVENTORY_BASE_IMPORTED',
+                 entity_type='engineering_items',entity_id='ESTOQUE2310',detail=json.dumps(summary,ensure_ascii=False)))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            raise
+        return jsonify(ok=True,gravados=len(rows),**summary)
+    except Exception as e:
+        db.session.rollback()
+        app.logger.exception('REV35 importacao de estoque engenharia')
+        return jsonify(ok=False,error=str(e)),400
 
 @app.get("/api/engineering/items/import-model.xlsx")
 @login_required
