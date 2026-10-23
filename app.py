@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV35"
+APP_RELEASE = "V87.6 REV36"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -483,6 +483,7 @@ class ArrowLocation(db.Model):
 
 class ArrowActivity(db.Model):
     __tablename__ = "arrow_activities"
+    activity_line = db.Column(db.String(100))
     id = db.Column(db.Integer, primary_key=True)
     activity_date = db.Column(db.Date, nullable=False, index=True, default=date.today)
     start_time = db.Column(db.String(5))
@@ -3467,7 +3468,7 @@ def v8232_mobile_bootstrap():
         for a in q.order_by(ArrowActivity.activity_date.desc()).limit(100).all():
             loc=db.session.get(Location,a.location_id) if a.location_id else None
             aloc=db.session.get(ArrowLocation,a.arrow_location_id) if getattr(a,'arrow_location_id',None) else None
-            activities.append({'id':a.id,'date':a.activity_date.isoformat() if a.activity_date else None,'title':a.title or '', 'status':a.status or '', 'start_time':a.start_time or '', 'end_time':a.end_time or '', 'priority':a.priority or 'NORMAL','operator':a.operator or '', 'company':('OUTROS' if aloc else (loc.company if loc else a.operator or '')),'line':('GARAGEM' if aloc else (loc.line if loc else '')),'location':(aloc.name if aloc else (loc.location if loc else '')),'location_id':a.location_id,'arrow_location_id':getattr(a,'arrow_location_id',None),'technician_id':a.technician_id,'technician':user.name,'notes':a.notes or '','can_execute':a.status in ('PLANEJADA','EM ANDAMENTO'),'can_change_status':True})
+            activities.append({'id':a.id,'date':a.activity_date.isoformat() if a.activity_date else None,'title':a.title or '', 'status':a.status or '', 'start_time':a.start_time or '', 'end_time':a.end_time or '', 'priority':a.priority or 'NORMAL','operator':a.operator or '', 'company':('OUTROS' if aloc else (loc.company if loc else a.operator or '')),'line':(x.activity_line or ('GARAGEM' if aloc else (loc.line if loc else ''))),'location':(aloc.name if aloc else (loc.location if loc else '')),'location_id':a.location_id,'arrow_location_id':getattr(a,'arrow_location_id',None),'technician_id':a.technician_id,'technician':user.name,'notes':a.notes or '','can_execute':a.status in ('PLANEJADA','EM ANDAMENTO'),'can_change_status':True})
     except Exception:
         activities=[]
     return jsonify({'ok':True,'api_version':'mobile-v1-rev1','server_time':datetime.utcnow().isoformat()+'Z','user':{'id':user.id,'name':user.name,'username':user.username,'company':user.company or '','role':user.role,'gps_required':bool(user.gps_required),'gps_history_enabled':bool(user.gps_history_enabled),'journey_control_enabled':bool(user.journey_control_enabled),'work_schedule_type':user.work_schedule_type or '','work_start_time':user.work_start_time or '','work_end_time':user.work_end_time or ''},'permissions':access,'journey':{'controlled':bool(state.get('controlled')),'allowed':bool(state.get('allowed')),'reason':state.get('reason'),'valid_until':state.get('valid_until').isoformat() if state.get('valid_until') else None},'activities':activities,'sync':{'accepted_event_types':['GPS_POSITION','HEARTBEAT','ARROW_ACTION','ARROW_CREATE','FIELD_ATTENDANCE'],'max_batch':100,'idempotency':'event_id','captured_at_required':True}})
@@ -19548,7 +19549,7 @@ def v75_arrow_list_api():
     out=[]
     for x in rows:
         u=uu.get(x.technician_id);loc=ll.get(x.location_id);aloc=aa.get(getattr(x,'arrow_location_id',None));eligible,reason=_v75_arrow_eligibility(u,x.operator) if u else (False,'Colaborador não encontrado')
-        out.append({'id':x.id,'date':x.activity_date.isoformat(),'start_time':x.start_time or '','end_time':x.end_time or '','priority':x.priority or 'NORMAL','title':x.title,'operator':x.operator,'technician_id':x.technician_id,'technician':u.name if u else '—','technician_company':u.company if u else '','location_id':x.location_id,'arrow_location_id':getattr(x,'arrow_location_id',None),'location':(aloc.name if aloc else (loc.location if loc else '—')),'line':('GARAGEM' if aloc else (loc.line if loc else '')),'company':('OUTROS' if aloc else (loc.company if loc else '')),'location_code':(aloc.code if aloc else ''),'address':(aloc.address if aloc else ''),'status':x.status,'remote':x.remote,'teamviewer_id':x.teamviewer_id or '','notes':x.notes or '','eligible':eligible,'eligibility_reason':reason,'created_by':x.created_by,'can_edit':_v7893_arrow_can_edit(x),'can_execute':_v8230r3_arrow_can_execute(x),'can_delete':_v7893_arrow_can_delete(x),'can_change_status':(_has_access('arrow.change_status') or (int(x.technician_id or 0)==int(session.get('user_id') or 0) and _has_access('arrow.view')))})
+        out.append({'id':x.id,'date':x.activity_date.isoformat(),'start_time':x.start_time or '','end_time':x.end_time or '','priority':x.priority or 'NORMAL','title':x.title,'operator':x.operator,'technician_id':x.technician_id,'technician':u.name if u else '—','technician_company':u.company if u else '','location_id':x.location_id,'arrow_location_id':getattr(x,'arrow_location_id',None),'location':(aloc.name if aloc else (loc.location if loc else '—')),'line':('GARAGEM' if aloc else (loc.line if loc else '')),'company':(x.operator or ''),'location_code':(aloc.code if aloc else ''),'address':(aloc.address if aloc else ''),'status':x.status,'remote':x.remote,'teamviewer_id':x.teamviewer_id or '','notes':x.notes or '','eligible':eligible,'eligibility_reason':reason,'created_by':x.created_by,'can_edit':_v7893_arrow_can_edit(x),'can_execute':_v8230r3_arrow_can_execute(x),'can_delete':_v7893_arrow_can_delete(x),'can_change_status':(_has_access('arrow.change_status') or (int(x.technician_id or 0)==int(session.get('user_id') or 0) and _has_access('arrow.view')))})
     return jsonify({'ok':True,'rows':out,'current_user_id':session.get('user_id')})
 
 @app.post("/api/arrow/activities/imprevisto")
@@ -19602,6 +19603,58 @@ def v75_arrow_create_api():
             while cur.weekday()>=5: cur += timedelta(days=1)
         y=ArrowActivity(activity_date=cur,start_time=x.start_time,end_time=x.end_time,priority=x.priority,title=x.title,operator=x.operator,location_id=x.location_id,arrow_location_id=x.arrow_location_id,technician_id=x.technician_id,status='PLANEJADA',remote=x.remote,teamviewer_id=x.teamviewer_id,notes=x.notes,created_by=session['user_id']);db.session.add(y);db.session.flush();created_ids.append(y.id)
     db.session.commit();return jsonify({'ok':True,'id':x.id,'created_ids':created_ids,'created_count':len(created_ids)})
+
+@app.post('/api/arrow/activities/programar')
+@login_required
+def v8736_arrow_programar():
+    if not _has_access('arrow.manage'):abort(403)
+    d=request.get_json(silent=True) or {}
+    try:
+        first=date.fromisoformat(str(d.get('date_from') or ''))
+        last=date.fromisoformat(str(d.get('date_to') or ''))
+    except ValueError:return jsonify(ok=False,error='Informe datas inicial e final válidas.'),400
+    if last<first or (last-first).days>60:return jsonify(ok=False,error='O período deve ter até 61 dias e a data final não pode ser anterior à inicial.'),400
+    op=str(d.get('operator') or '').strip().upper()
+    line=str(d.get('line') or '').strip()
+    title=str(d.get('title') or '').strip()
+    if not op or not line:return jsonify(ok=False,error='Empresa e linha são obrigatórias.'),400
+    if op not in ('METRO','CPTM','MOTIVA','OUTROS'):return jsonify(ok=False,error='Empresa inválida.'),400
+    if not title:return jsonify(ok=False,error='Informe a atividade.'),400
+    if len(title)>220 or len(line)>100:return jsonify(ok=False,error='Título ou linha muito extensos.'),400
+    raw=d.get('technician_ids') or []
+    if not isinstance(raw,list) or len(raw)>40:return jsonify(ok=False,error='Selecione até 40 técnicos.'),400
+    try:uids=list(dict.fromkeys(int(v) for v in raw))
+    except (TypeError,ValueError):return jsonify(ok=False,error='Técnicos inválidos.'),400
+    if not uids:return jsonify(ok=False,error='Selecione pelo menos um técnico.'),400
+    if len(uids)*((last-first).days+1)>200:return jsonify(ok=False,error='Limite de 200 alocações por programação; reduza o período ou a equipe.'),400
+    users={u.id:u for u in User.query.filter(User.id.in_(uids)).all()}
+    if len(users)!=len(uids):return jsonify(ok=False,error='Um dos técnicos não foi encontrado.'),400
+    for uid in uids:
+        eligible,reason=_v75_arrow_eligibility(users[uid],op)
+        if not eligible:return jsonify(ok=False,error=f'{users[uid].name}: {reason}'),409
+    locid=int(d['location_id']) if str(d.get('location_id') or '').isdigit() else None
+    alocid=int(d['arrow_location_id']) if str(d.get('arrow_location_id') or '').isdigit() else None
+    if locid:
+        loc=db.session.get(Location,locid)
+        if not loc or str(loc.line or '').strip()!=line:
+            return jsonify(ok=False,error='Localidade não corresponde à empresa e linha selecionadas.'),400
+    if alocid and not db.session.get(ArrowLocation,alocid):return jsonify(ok=False,error='Localidade não encontrada.'),400
+    created=[]
+    try:
+        for offset in range((last-first).days+1):
+            day=first+timedelta(days=offset)
+            for uid in uids:
+                a=ArrowActivity(activity_date=day,activity_line=line,start_time=str(d.get('start_time') or '')[:5] or None,
+                  end_time=str(d.get('end_time') or '')[:5] or None,priority=str(d.get('priority') or 'NORMAL')[:20],
+                  title=title,operator=op,location_id=locid,arrow_location_id=alocid,technician_id=uid,
+                  status='PLANEJADA',remote=False,notes=str(d.get('notes') or '')[:5000],created_by=session['user_id'])
+                db.session.add(a);db.session.flush();created.append(a.id)
+                _v7893_arrow_notify(a,'Nova atividade Arrow atribuída',f'{day.strftime("%d/%m/%Y")} · {title} · {line}')
+        db.session.add(AuditEvent(user_id=session['user_id'],event_type='ARROW_PROGRAMACAO_MULTIPLA',entity_type='arrow_activity',entity_id=str(created[0]),detail=json.dumps({'ids':created,'tecnicos':uids,'inicio':first.isoformat(),'fim':last.isoformat()},ensure_ascii=False)))
+        db.session.commit()
+    except Exception:
+        db.session.rollback();raise
+    return jsonify(ok=True,created_ids=created,created_count=len(created))
 
 @app.post("/api/arrow/activities/<int:aid>/editar")
 @login_required
@@ -21879,6 +21932,7 @@ with app.app_context():
                 if 'start_time' not in cols: conn.execute(text("ALTER TABLE arrow_activities ADD COLUMN start_time VARCHAR(5)"))
                 if 'end_time' not in cols: conn.execute(text("ALTER TABLE arrow_activities ADD COLUMN end_time VARCHAR(5)"))
                 if 'priority' not in cols: conn.execute(text("ALTER TABLE arrow_activities ADD COLUMN priority VARCHAR(20) DEFAULT 'NORMAL'"))
+                if 'activity_line' not in cols: conn.execute(text("ALTER TABLE arrow_activities ADD COLUMN activity_line VARCHAR(100)"))
         if not SchemaMigration.query.filter_by(version='V76-001').first():
             db.session.add(SchemaMigration(version='V76-001',description='Agenda Arrow 7/30 dias + central de notificações críticas + canal WhatsApp opcional'));db.session.commit()
     except Exception:
@@ -25011,10 +25065,10 @@ def _v824_mapping_export_rows():
 def v824_atm_mapping_export_xlsx():
     if not (_has_access('field.atm_mapping') or _has_access('field.atm_mapping_manage')): abort(403)
     rows=_v824_mapping_export_rows(); wb=Workbook(); ws=wb.active; ws.title='Mapeamento ATM'
-    ws.append(['Operadora','Linha','Estação','ATM','Modelo','Status','Acesso físico','Possui furos','Furos tampados','Porta de cofre traseira','Aceitador','Aceitador fixo?','Aceitador Soldado','Fotos','Técnico','Data/Hora','Observação'])
+    ws.append(['ID','Operadora','Linha','Estação','ATM','Modelo','Status','Acesso físico','Possui furos','Furos tampados','Porta de cofre traseira','Aceitador','Aceitador fixo?','Aceitador Soldado','Fotos','Técnico','Data/Hora','Observação'])
     for x in rows:
         access={'INTERNO':'1 - Acesso interno - dentro dos portões','EXTERNO':'2 - Acesso externo - fora dos portões'}.get(x['physical_access'],'')
-        ws.append([x['company'],x['line'],x['station'],x['atm_id'],'MKNeo' if x['model']=='MKNEO' else x['model'],'Concluído' if x['status']=='CONCLUIDO' else 'Pendente',access,'' if x['has_holes'] is None else ('Sim' if x['has_holes'] else 'Não'),'' if x['has_holes'] is not True else ('Sim' if x['holes_sealed'] else 'Não'),'' if x.get('rear_safe_door') is None else ('Sim' if x['rear_safe_door'] else 'Não'),x.get('bill_acceptor') or '','' if x.get('acceptor_fixed') is None else ('Sim' if x.get('acceptor_fixed') else 'Não'),'Não informado' if x.get('acceptor_welded') is None else ('Sim' if x.get('acceptor_welded') else 'Não'),x['photos'],x['technician'],x['updated_at'],x['notes']])
+        ws.append([x.get('mapping_id') or '',x['company'],x['line'],x['station'],x['atm_id'],'MKNeo' if x['model']=='MKNEO' else x['model'],'Concluído' if x['status']=='CONCLUIDO' else 'Pendente',access,'' if x['has_holes'] is None else ('Sim' if x['has_holes'] else 'Não'),'' if x['has_holes'] is not True else ('Sim' if x['holes_sealed'] else 'Não'),'' if x.get('rear_safe_door') is None else ('Sim' if x['rear_safe_door'] else 'Não'),x.get('bill_acceptor') or '','' if x.get('acceptor_fixed') is None else ('Sim' if x.get('acceptor_fixed') else 'Não'),'Não informado' if x.get('acceptor_welded') is None else ('Sim' if x.get('acceptor_welded') else 'Não'),x['photos'],x['technician'],x['updated_at'],x['notes']])
     for c in ws[1]: c.font=Font(bold=True,color='FFFFFF'); c.fill=PatternFill('solid',fgColor='315F93'); c.alignment=Alignment(horizontal='center')
     ws.freeze_panes='A2'; ws.auto_filter.ref=ws.dimensions
     for col in ws.columns: ws.column_dimensions[get_column_letter(col[0].column)].width=min(48,max(12,max(len(str(c.value or '')) for c in col)+2))
