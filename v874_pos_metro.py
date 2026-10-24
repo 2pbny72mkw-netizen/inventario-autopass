@@ -51,7 +51,9 @@ def install_pos_metro(app,db,can):
   installed_on=db.Column(db.DateTime)
   updated_by=db.Column(db.Integer)
   notes=db.Column(db.Text)
-  __table_args__=(db.UniqueConstraint('line','station',name='uq_v8738_ap_station'),)
+  identifier=db.Column(db.String(80),nullable=False,default='AP 01')
+  location=db.Column(db.String(150),nullable=False,default='')
+  __table_args__=(db.UniqueConstraint('line','station','identifier',name='uq_v8740_ap_identifier'),)
  class APEvent(db.Model):
   __tablename__='v8738_pos_metro_ap_events'
   id=db.Column(db.Integer,primary_key=True)
@@ -79,10 +81,22 @@ def install_pos_metro(app,db,can):
   if db.engine.dialect.name=='postgresql':
    with db.engine.begin() as conn:
     conn.execute(text('ALTER TABLE v874_pos_metro ADD COLUMN IF NOT EXISTS terminal_number VARCHAR(40)'))
+    conn.execute(text("ALTER TABLE v8738_pos_metro_ap ADD COLUMN IF NOT EXISTS identifier VARCHAR(80) DEFAULT 'AP 01'"))
+    conn.execute(text("ALTER TABLE v8738_pos_metro_ap ADD COLUMN IF NOT EXISTS location VARCHAR(150) DEFAULT ''"))
+    conn.execute(text("UPDATE v8738_pos_metro_ap SET identifier='AP 01' WHERE identifier IS NULL OR identifier=''"))
+    conn.execute(text("ALTER TABLE v8738_pos_metro_ap DROP CONSTRAINT IF EXISTS uq_v8738_ap_station"))
+    conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_v8740_ap_identifier ON v8738_pos_metro_ap (line,station,identifier)"))
   elif db.engine.dialect.name=='sqlite':
    with db.engine.begin() as conn:
     columns=[r[1] for r in conn.execute(text('PRAGMA table_info(v874_pos_metro)'))]
     if 'terminal_number' not in columns:conn.execute(text('ALTER TABLE v874_pos_metro ADD COLUMN terminal_number VARCHAR(40)'))
+    apcols=[r[1] for r in conn.execute(text('PRAGMA table_info(v8738_pos_metro_ap)'))]
+    if 'identifier' not in apcols:conn.execute(text("ALTER TABLE v8738_pos_metro_ap ADD COLUMN identifier VARCHAR(80) DEFAULT 'AP 01'"))
+    if 'location' not in apcols:conn.execute(text("ALTER TABLE v8738_pos_metro_ap ADD COLUMN location VARCHAR(150) DEFAULT ''"))
+    conn.execute(text("UPDATE v8738_pos_metro_ap SET identifier='AP 01' WHERE identifier IS NULL OR identifier=''"))
+    # SQLite requires table rebuild to drop the old station-only UNIQUE constraint.
+    # Refuse multi-AP registration until migrated on PostgreSQL.
+
  def short_number(p):
   return p.terminal_number or (re.search(r'(\d+)$',p.terminal).group(1) if re.search(r'(\d+)$',p.terminal) else p.terminal)
  def guard(permission):
@@ -138,13 +152,17 @@ def install_pos_metro(app,db,can):
   known_models=[x[0] for x in db.session.query(POS.model).filter(POS.model.isnot(None),POS.model!='').distinct().order_by(POS.model).limit(300)]
   known_manufacturers=[x[0] for x in db.session.query(POS.manufacturer).filter(POS.manufacturer.isnot(None),POS.manufacturer!='').distinct().order_by(POS.manufacturer).limit(300)]
   metric_rows=[{'id':x.id,'line':x.line,'station':x.station,'terminal':x.terminal,'terminal_number':short_number(x),'model':x.model or '', 'manufacturer':x.manufacturer or '', 'serial':x.serial or '', 'asset':x.asset or '', 'status':x.status,'installed_on':x.installed_on.strftime('%Y-%m-%d') if x.installed_on else ''} for x in POS.query.order_by(POS.line,POS.station,POS.terminal).all()]
-  ap_station=AP.query.filter_by(line=request.args.get('linha'),station=station_name).first() if station_name and request.args.get('linha') else None
-  ap_has_photo=bool(ap_station and APPhoto.query.filter_by(ap_id=ap_station.id).first())
-  if station_name and request.args.get('linha') and st_total:
-   st_total+=1
-   if ap_station and ap_station.status=='Concluído' and ap_has_photo:st_done+=1
-   if ap_station and (ap_station.status=='Em andamento' or (ap_station.status=='Concluído' and not ap_has_photo)):st_ongoing+=1
-  return render_template('v874_pos_metro.html',ap_station=ap_station,ap_has_photo=ap_has_photo,station_complete=bool(st_total and st_done==st_total),metric_rows=metric_rows,known_models=known_models,known_manufacturers=known_manufacturers,items=items,short_number=short_number,total=total,done=done,ongoing=ongoing,lines=lines,stations=stations,can_pos=can,st_total=st_total,st_done=st_done,st_ongoing=st_ongoing,filtered_count=q.count())
+  aps=AP.query.filter_by(line=request.args.get('linha'),station=station_name).order_by(AP.id).all() if station_name and request.args.get('linha') else []
+  photo_ids={r[0] for r in db.session.query(APPhoto.ap_id).filter(APPhoto.ap_id.in_([a.id for a in aps])).distinct().all()} if aps else set()
+  ap_records=[{'ap':a,'has_photo':a.id in photo_ids} for a in aps]
+  ap_total=max(1,len(aps)) if station_name and request.args.get('linha') and st_total else 0
+  if ap_total:
+   st_total+=ap_total
+   for entry in ap_records:
+    a=entry['ap']
+    if a.status=='Concluído' and entry['has_photo']:st_done+=1
+    elif a.status=='Em andamento' or (a.status=='Concluído' and not entry['has_photo']):st_ongoing+=1
+  return render_template('v874_pos_metro.html',ap_records=ap_records,ap_total=ap_total,station_complete=bool(st_total and st_done==st_total),metric_rows=metric_rows,known_models=known_models,known_manufacturers=known_manufacturers,items=items,short_number=short_number,total=total,done=done,ongoing=ongoing,lines=lines,stations=stations,can_pos=can,st_total=st_total,st_done=st_done,st_ongoing=st_ongoing,filtered_count=q.count())
  @app.post('/field/troca-pos-metro/importar')
  @guard('field.pos_metro.import')
  def pos_import():
@@ -279,13 +297,26 @@ def install_pos_metro(app,db,can):
   status=(request.form.get('status') or 'Pendente').strip()
   if status not in ('Pendente','Em andamento','Concluído'):return jsonify(error='Status inválido'),400
   valid=validate_photos(request.files.getlist('fotos'))
-  ap=AP.query.filter_by(line=line,station=station).first()
-  if status=='Concluído' and not valid and not (ap and APPhoto.query.filter_by(ap_id=ap.id).first()):return jsonify(error='Foto obrigatória para concluir o AP'),400
-  if ap is None:
-   ap=AP(line=line,station=station);db.session.add(ap);db.session.flush()
+  ap_id=(request.form.get('ap_id') or '').strip()
+  identifier=(request.form.get('identificacao') or '').strip()[:80]
+  location=(request.form.get('local_instalacao') or '').strip()[:150]
+  if ap_id:
+   try:ap=AP.query.filter_by(id=int(ap_id),line=line,station=station).first()
+   except ValueError:ap=None
+   if ap is None:return jsonify(error='AP não encontrado nesta estação'),404
+  else:
+   if not identifier:return jsonify(error='Identificação do AP é obrigatória'),400
+   if AP.query.filter(func.lower(AP.line)==line.lower(),func.lower(AP.station)==station.lower(),func.lower(AP.identifier)==identifier.lower()).first():return jsonify(error='Identificação de AP já cadastrada nesta estação'),409
+   ap=AP(line=line,station=station,identifier=identifier,location=location)
+   db.session.add(ap);db.session.flush()
+  if status=='Concluído' and not valid and not APPhoto.query.filter_by(ap_id=ap.id).first():return jsonify(error='Foto obrigatória para concluir o AP'),400
+  if identifier and identifier!=ap.identifier:
+   if AP.query.filter(AP.id!=ap.id,AP.line==line,AP.station==station,func.lower(AP.identifier)==identifier.lower()).first():return jsonify(error='Identificação duplicada'),409
+   ap.identifier=identifier
+  ap.location=location or ap.location
   ap.status=status;ap.updated_by=session['user_id'];ap.notes=(request.form.get('observacoes') or '')[:2000]
-  db.session.add(APEvent(ap_id=ap.id,status=status,notes=ap.notes,user_id=session['user_id']))
-  if status=='Concluído':ap.installed_on=datetime.utcnow()
+  db.session.add(APEvent(ap_id=ap.id,status=status,notes=f'[{ap.identifier} | {ap.location}] '+ap.notes,user_id=session['user_id']))
+  ap.installed_on=datetime.utcnow() if status=='Concluído' else None
   for name,mime,data in valid:db.session.add(APPhoto(ap_id=ap.id,filename=name,mimetype=mime,content=data,user_id=session['user_id']))
   db.session.commit()
   from urllib.parse import urlencode
