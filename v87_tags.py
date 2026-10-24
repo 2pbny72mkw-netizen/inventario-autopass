@@ -44,6 +44,15 @@ def install_tags(app,db,can):
     created_at=db.Column(db.DateTime,default=datetime.utcnow)
     updated_at=db.Column(db.DateTime,default=datetime.utcnow,onupdate=datetime.utcnow)
     __table_args__=(db.UniqueConstraint('produto','serial',name='uq_v87_tags_product_serial'),)
+ class Product(db.Model):
+    __tablename__='v87_tag_products'
+    id=db.Column(db.Integer,primary_key=True)
+    modelo=db.Column(db.String(160),unique=True,nullable=False)
+    nome=db.Column(db.String(200),nullable=False)
+    fabricante=db.Column(db.String(160),default='')
+    categoria=db.Column(db.String(160),default='')
+    descricao=db.Column(db.Text,default='')
+    created_at=db.Column(db.DateTime,default=datetime.utcnow)
  class Audit(db.Model):
     __tablename__='v87_product_tag_audit'
     id=db.Column(db.Integer,primary_key=True)
@@ -75,6 +84,7 @@ def install_tags(app,db,can):
       if not can(permission): abort(403)
       if not initialized:
        Tag.__table__.create(bind=db.engine,checkfirst=True)
+       Product.__table__.create(bind=db.engine,checkfirst=True)
        Audit.__table__.create(bind=db.engine,checkfirst=True)
        ImportIssue.__table__.create(bind=db.engine,checkfirst=True)
        initialized=True
@@ -100,6 +110,32 @@ def install_tags(app,db,can):
     search=request.args.get('q','').strip()
     if search:q=q.filter(db.or_(Tag.serial.ilike('%'+search+'%'),Tag.patrimonio.ilike('%'+search+'%'),Tag.localidade.ilike('%'+search+'%')))
     return q
+ @app.get('/api/engenharia/tags/produtos')
+ @guard()
+ def tags_products():
+    registered=Product.query.order_by(Product.nome).all()
+    known={x.modelo.casefold() for x in registered}
+    products=[dict(modelo=x.modelo,nome=x.nome,fabricante=x.fabricante or '',categoria=x.categoria or '',descricao=x.descricao or '') for x in registered]
+    for (modelo,) in db.session.query(Tag.produto).distinct().order_by(Tag.produto).all():
+     if modelo and modelo.casefold() not in known:
+      products.append(dict(modelo=modelo,nome='Biometria Facial' if modelo.upper()=='BF80' else modelo,fabricante='Autopass' if modelo.upper()=='BF80' else '',categoria='Biometria Facial' if modelo.upper()=='BF80' else '',descricao=''))
+    if not any(x['modelo'].upper()=='BF80' for x in products):
+     products.append(dict(modelo='BF80',nome='Biometria Facial',fabricante='Autopass',categoria='Biometria Facial',descricao='Equipamento de reconhecimento facial'))
+    return jsonify(ok=True,items=sorted(products,key=lambda x:x['modelo'].casefold()))
+ @app.post('/api/engenharia/tags/produtos')
+ @guard('engineering.tags.import')
+ def tags_create_product():
+    data=request.get_json(silent=True) or {}
+    modelo=str(data.get('modelo') or '').strip().upper()
+    nome=str(data.get('nome') or '').strip()
+    if not modelo or not nome or len(modelo)>160 or len(nome)>200:
+     return jsonify(ok=False,error='Modelo e nome são obrigatórios (máximo 160/200 caracteres).'),400
+    if Product.query.filter(func.lower(Product.modelo)==modelo.lower()).first() or db.session.query(Tag.id).filter(func.lower(Tag.produto)==modelo.lower()).first():
+     return jsonify(ok=False,error='Modelo já existente. Selecione-o na lista.'),409
+    item=Product(modelo=modelo,nome=nome,fabricante=str(data.get('fabricante') or '').strip()[:160],categoria=str(data.get('categoria') or '').strip()[:160],descricao=str(data.get('descricao') or '').strip()[:2000])
+    db.session.add(item)
+    db.session.commit()
+    return jsonify(ok=True,produto=dict(modelo=item.modelo,nome=item.nome)),201
  @app.get('/engenharia/tags')
  @guard()
  def tags_page():return render_template('v87_tags.html',tag_permissions={k:bool(can('engineering.tags.'+k)) for k in ('view','import','edit','bulk','issues','export','audit')})
@@ -112,21 +148,29 @@ def install_tags(app,db,can):
     q=q.order_by(col.desc() if request.args.get('dir')=='desc' else col.asc(),Tag.id.asc())
     page=max(1,int(request.args.get('page',1)));limit=min(200,max(1,int(request.args.get('limit',30))))
     items=q.offset((page-1)*limit).limit(limit).all()
-    all_rows=query_filtered().all()
+    base=query_filtered().order_by(None)
     groups={}
     for key in ['produto','empresa','localidade','finalidade','status','lote']:
-     counts={}
-     for row in all_rows:
-      v=getattr(row,key) or 'Não informado';counts[v]=counts.get(v,0)+1
-     groups[key]=[{'name':k,'count':v} for k,v in sorted(counts.items(),key=lambda x:(-x[1],x[0]))]
+     col=getattr(Tag,key)
+     result=base.with_entities(col,func.count(Tag.id)).group_by(col).all()
+     groups[key]=[{'name':name or 'Não informado','count':count} for name,count in sorted(result,key=lambda x:(-x[1],x[0] or ''))]
+    from sqlalchemy import case
+    summary_row=base.with_entities(
+     func.sum(case((func.upper(Tag.finalidade).like('%LOC%'),1),else_=0)),
+     func.sum(case((func.upper(Tag.finalidade).like('%VEND%'),1),else_=0)),
+     func.sum(case((func.upper(Tag.finalidade).like('%ESTOQUE%'),1),else_=0)),
+     func.count(func.distinct(func.nullif(Tag.localidade,''))),
+     func.sum(case((db.or_(Tag.nf_entrada.is_(None),Tag.nf_entrada==''),1),else_=0)),
+     func.sum(case((db.or_(Tag.patrimonio.is_(None),Tag.patrimonio==''),1),else_=0))
+    ).first()
+    product_filter=request.args.get('produto','').strip()
+    issue_query=ImportIssue.query.filter(ImportIssue.resolved_at.is_(None))
+    if product_filter:issue_query=issue_query.filter(ImportIssue.produto==product_filter)
     return jsonify(ok=True,total=total,page=page,limit=limit,items=[asdict(t) for t in items],groups=groups,
-      summary={'total':total,'locacao':sum(1 for t in all_rows if 'LOC' in norm(t.finalidade)),
-      'venda':sum(1 for t in all_rows if 'VEND' in norm(t.finalidade)),
-      'estoque':sum(1 for t in all_rows if 'ESTOQUE' in norm(t.finalidade)),
-      'localidades':len({t.localidade for t in all_rows if t.localidade}),
-      'sem_nf':sum(1 for t in all_rows if not t.nf_entrada),
-      'sem_patrimonio':sum(1 for t in all_rows if not t.patrimonio),
-      'divergencias':ImportIssue.query.filter(ImportIssue.resolved_at.is_(None), ImportIssue.produto.in_([t.produto for t in all_rows] or [request.args.get('produto') or 'BF80'])).count()})
+      summary={'total':total,'locacao':int(summary_row[0] or 0),'venda':int(summary_row[1] or 0),
+      'estoque':int(summary_row[2] or 0),'localidades':int(summary_row[3] or 0),
+      'sem_nf':int(summary_row[4] or 0),'sem_patrimonio':int(summary_row[5] or 0),
+      'divergencias':issue_query.count()})
  @app.get('/api/engenharia/tags/<int:tag_id>/historico')
  @guard("engineering.tags.audit")
  def tags_history(tag_id):
