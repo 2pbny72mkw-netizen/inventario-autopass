@@ -55,6 +55,7 @@ def install_tags(app,db,can):
     categoria=db.Column(db.String(160),default='')
     descricao=db.Column(db.Text,default='')
     foto=db.Column(db.LargeBinary,nullable=True)
+    ativo=db.Column(db.Boolean,nullable=False,default=True)
     created_at=db.Column(db.DateTime,default=datetime.utcnow)
  class Audit(db.Model):
     __tablename__='v87_product_tag_audit'
@@ -90,6 +91,7 @@ def install_tags(app,db,can):
        Product.__table__.create(bind=db.engine,checkfirst=True)
        with db.engine.begin() as conn:
         conn.execute(text('ALTER TABLE v87_tag_products ADD COLUMN IF NOT EXISTS foto BYTEA'))
+        conn.execute(text('ALTER TABLE v87_tag_products ADD COLUMN IF NOT EXISTS ativo BOOLEAN NOT NULL DEFAULT TRUE'))
        Audit.__table__.create(bind=db.engine,checkfirst=True)
        ImportIssue.__table__.create(bind=db.engine,checkfirst=True)
        initialized=True
@@ -120,12 +122,12 @@ def install_tags(app,db,can):
  def tags_products():
     registered=Product.query.order_by(Product.nome).all()
     known={x.modelo.casefold() for x in registered}
-    products=[dict(modelo=x.modelo,nome=x.nome,fabricante=x.fabricante or '',categoria=x.categoria or '',descricao=x.descricao or '',tem_foto=bool(x.foto)) for x in registered]
+    products=[dict(modelo=x.modelo,nome=x.nome,fabricante=x.fabricante or '',categoria=x.categoria or '',descricao=x.descricao or '',tem_foto=bool(x.foto),ativo=x.ativo) for x in registered]
     for (modelo,) in db.session.query(Tag.produto).distinct().order_by(Tag.produto).all():
      if modelo and modelo.casefold() not in known:
-      products.append(dict(modelo=modelo,nome='Biometria Facial' if modelo.upper()=='BF80' else modelo,fabricante='Autopass' if modelo.upper()=='BF80' else '',categoria='Biometria Facial' if modelo.upper()=='BF80' else '',descricao=''))
+      products.append(dict(modelo=modelo,nome='Biometria Facial' if modelo.upper()=='BF80' else modelo,fabricante='Autopass' if modelo.upper()=='BF80' else '',categoria='Biometria Facial' if modelo.upper()=='BF80' else '',descricao='',tem_foto=False,ativo=True))
     if not any(x['modelo'].upper()=='BF80' for x in products):
-     products.append(dict(modelo='BF80',nome='Biometria Facial',fabricante='Autopass',categoria='Biometria Facial',descricao='Equipamento de reconhecimento facial'))
+     products.append(dict(modelo='BF80',nome='Biometria Facial',fabricante='Autopass',categoria='Biometria Facial',descricao='Equipamento de reconhecimento facial',tem_foto=False,ativo=True))
     return jsonify(ok=True,items=sorted(products,key=lambda x:x['modelo'].casefold()))
  @app.post('/api/engenharia/tags/produtos')
  @guard('engineering.tags.import')
@@ -159,6 +161,84 @@ def install_tags(app,db,can):
     db.session.add(item)
     db.session.commit()
     return jsonify(ok=True,produto=dict(modelo=item.modelo,nome=item.nome)),201
+ def product_photo_upload(uploaded):
+    if not uploaded or not uploaded.filename:return None, 'Selecione uma fotografia.'
+    raw=uploaded.read(3*1024*1024+1)
+    if len(raw)>3*1024*1024:return None, 'A fotografia excede 3 MB.'
+    try:
+     with Image.open(BytesIO(raw)) as im:
+      if im.format not in ('JPEG','PNG','WEBP'):raise ValueError('Formato inválido')
+      im.verify()
+     with Image.open(BytesIO(raw)) as im:
+      im.thumbnail((1200,1200))
+      if im.mode not in ('RGB','L'):im=im.convert('RGB')
+      output=BytesIO();im.save(output,format='JPEG',quality=85,optimize=True)
+      return output.getvalue(),None
+    except (UnidentifiedImageError,ValueError,OSError,Image.DecompressionBombError):
+     return None,'Envie uma imagem JPG, PNG ou WebP válida.'
+ def product_audit(action,model,before,after):
+    db.session.add(Audit(tag_id=0,user_id=int(session.get('user_id') or 0),action=action,before_json=json.dumps({'modelo':model,**before},ensure_ascii=False),after_json=json.dumps({'modelo':model,**after},ensure_ascii=False)))
+ @app.patch('/api/engenharia/tags/produtos/<path:modelo>')
+ @guard('engineering.tags.edit')
+ def tags_edit_product(modelo):
+    item=Product.query.filter(func.lower(Product.modelo)==modelo.lower()).first()
+    if not item:
+     # Produtos legados aparecem no seletor mesmo sem cadastro de metadados.
+     if not db.session.query(Tag.id).filter(func.lower(Tag.produto)==modelo.lower()).first() and modelo.upper()!='BF80':
+      return jsonify(ok=False,error='Produto não encontrado.'),404
+     item=Product(modelo=modelo.upper(),nome='Biometria Facial' if modelo.upper()=='BF80' else modelo.upper(),fabricante='Autopass' if modelo.upper()=='BF80' else '',categoria='Biometria Facial' if modelo.upper()=='BF80' else '')
+     db.session.add(item)
+    data=request.form
+    before={k:getattr(item,k) for k in ('nome','fabricante','categoria','descricao','ativo')}
+    for k,maxlen in (('nome',200),('fabricante',160),('categoria',160),('descricao',2000)):
+     if k in data:
+      value=str(data.get(k) or '').strip()[:maxlen]
+      if k=='nome' and not value:return jsonify(ok=False,error='Nome do produto obrigatório.'),400
+      setattr(item,k,value)
+    uploaded=request.files.get('foto')
+    if uploaded and uploaded.filename:
+     photo,error=product_photo_upload(uploaded)
+     if error:return jsonify(ok=False,error=error),400
+     item.foto=photo
+    elif data.get('remover_foto')=='sim':item.foto=None
+    after={k:getattr(item,k) for k in ('nome','fabricante','categoria','descricao','ativo')}
+    after['foto_alterada']=bool(uploaded and uploaded.filename) or data.get('remover_foto')=='sim'
+    product_audit('PRODUCT_EDIT',item.modelo,before,after)
+    db.session.commit()
+    return jsonify(ok=True,produto={'modelo':item.modelo,'nome':item.nome,'tem_foto':bool(item.foto),'ativo':item.ativo})
+ @app.delete('/api/engenharia/tags/produtos/<path:modelo>')
+ @guard('engineering.tags.edit')
+ def tags_delete_product(modelo):
+    item=Product.query.filter(func.lower(Product.modelo)==modelo.lower()).first()
+    count=db.session.query(func.count(Tag.id)).filter(func.lower(Tag.produto)==modelo.lower()).scalar() or 0
+    if not item and not count:return jsonify(ok=False,error='Produto não encontrado.'),404
+    if request.args.get('confirmar')!='sim':return jsonify(ok=False,error='Confirmação obrigatória.'),400
+    if count:
+     if not item:
+      item=Product(modelo=modelo.upper(),nome='Biometria Facial' if modelo.upper()=='BF80' else modelo.upper())
+      db.session.add(item)
+     if not item.ativo:return jsonify(ok=False,error='Produto já está inativo.'),409
+     item.ativo=False
+     product_audit('PRODUCT_DISABLE',item.modelo,{'ativo':True,'tags':count},{'ativo':False,'tags':count})
+     db.session.commit()
+     return jsonify(ok=True,acao='inativado',tags=count)
+    # Não excluir registros de divergência pendentes ou histórico do produto.
+    issues=db.session.query(func.count(ImportIssue.id)).filter(func.lower(ImportIssue.produto)==modelo.lower()).scalar() or 0
+    if issues:return jsonify(ok=False,error='Produto possui divergências históricas; inative-o em vez de excluir.'),409
+    if modelo.upper()=='BF80':return jsonify(ok=False,error='BF80 é o produto padrão; não pode ser excluído.'),409
+    product_audit('PRODUCT_DELETE',item.modelo,{'nome':item.nome,'ativo':item.ativo},{'excluido':True})
+    db.session.delete(item)
+    db.session.commit()
+    return jsonify(ok=True,acao='excluido',tags=0)
+ @app.post('/api/engenharia/tags/produtos/<path:modelo>/reativar')
+ @guard('engineering.tags.edit')
+ def tags_reactivate_product(modelo):
+    item=Product.query.filter(func.lower(Product.modelo)==modelo.lower()).first()
+    if not item:return jsonify(ok=False,error='Produto não encontrado.'),404
+    item.ativo=True
+    product_audit('PRODUCT_REACTIVATE',item.modelo,{'ativo':False},{'ativo':True})
+    db.session.commit()
+    return jsonify(ok=True)
  @app.get('/api/engenharia/tags/produtos/foto/<path:modelo>')
  @guard()
  def tags_product_photo(modelo):
