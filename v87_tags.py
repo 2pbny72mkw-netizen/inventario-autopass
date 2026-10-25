@@ -57,6 +57,15 @@ def install_tags(app,db,can):
     foto=db.Column(db.LargeBinary,nullable=True)
     ativo=db.Column(db.Boolean,nullable=False,default=True)
     created_at=db.Column(db.DateTime,default=datetime.utcnow)
+ class TagPhoto(db.Model):
+    __tablename__='v87_product_tag_photos'
+    id=db.Column(db.Integer,primary_key=True)
+    tag_id=db.Column(db.Integer,nullable=False,index=True)
+    image=db.Column(db.LargeBinary,nullable=False)
+    mime=db.Column(db.String(32),nullable=False)
+    description=db.Column(db.String(250),default='')
+    user_id=db.Column(db.Integer,nullable=False)
+    created_at=db.Column(db.DateTime,default=datetime.utcnow)
  class Audit(db.Model):
     __tablename__='v87_product_tag_audit'
     id=db.Column(db.Integer,primary_key=True)
@@ -92,6 +101,7 @@ def install_tags(app,db,can):
        with db.engine.begin() as conn:
         conn.execute(text('ALTER TABLE v87_tag_products ADD COLUMN IF NOT EXISTS foto BYTEA'))
         conn.execute(text('ALTER TABLE v87_tag_products ADD COLUMN IF NOT EXISTS ativo BOOLEAN NOT NULL DEFAULT TRUE'))
+       TagPhoto.__table__.create(bind=db.engine,checkfirst=True)
        Audit.__table__.create(bind=db.engine,checkfirst=True)
        ImportIssue.__table__.create(bind=db.engine,checkfirst=True)
        initialized=True
@@ -411,6 +421,51 @@ def install_tags(app,db,can):
     issue.resolved_at=datetime.utcnow()
     db.session.commit()
     return jsonify(ok=True,acao=action,complementar_dados=(action=='correct'))
+ @app.get('/api/engenharia/tags/<int:tag_id>/fotos')
+ @guard('engineering.tags.view')
+ def tags_photos_list(tag_id):
+    if not db.session.get(Tag,tag_id):return jsonify(ok=False,error='TAG não encontrada'),404
+    rows=TagPhoto.query.filter_by(tag_id=tag_id).order_by(TagPhoto.id.desc()).all()
+    return jsonify(ok=True,items=[dict(id=x.id,descricao=x.description,usuario=x.user_id,data=x.created_at.isoformat() if x.created_at else '') for x in rows])
+ @app.get('/api/engenharia/tags/<int:tag_id>/fotos/<int:photo_id>')
+ @guard('engineering.tags.view')
+ def tags_photo_view(tag_id,photo_id):
+    item=TagPhoto.query.filter_by(id=photo_id,tag_id=tag_id).first_or_404()
+    b=BytesIO(item.image);b.seek(0)
+    response=send_file(b,mimetype=item.mime,as_attachment=False,download_name=f'tag_{tag_id}_foto_{photo_id}')
+    response.headers['Cache-Control']='private, no-store'
+    response.headers['X-Content-Type-Options']='nosniff'
+    return response
+ @app.post('/api/engenharia/tags/<int:tag_id>/fotos')
+ @guard('engineering.tags.edit')
+ def tags_photo_add(tag_id):
+    tag=db.session.get(Tag,tag_id)
+    if not tag:return jsonify(ok=False,error='TAG não encontrada'),404
+    f=request.files.get('foto')
+    if not f:return jsonify(ok=False,error='Selecione uma fotografia'),400
+    data=f.read(3*1024*1024+1)
+    if not data or len(data)>3*1024*1024:return jsonify(ok=False,error='Foto deve ter até 3 MB'),400
+    try:
+     with Image.open(BytesIO(data)) as im:
+      im.verify()
+     with Image.open(BytesIO(data)) as im:
+      fmt=im.format
+    except (UnidentifiedImageError,ValueError,OSError):return jsonify(ok=False,error='Arquivo de imagem inválido'),400
+    mime={'JPEG':'image/jpeg','PNG':'image/png','WEBP':'image/webp'}.get(fmt)
+    if not mime:return jsonify(ok=False,error='Use JPG, PNG ou WebP'),400
+    desc=(request.form.get('descricao') or '').strip()[:250]
+    item=TagPhoto(tag_id=tag_id,image=data,mime=mime,description=desc,user_id=int(session['user_id']))
+    db.session.add(item);db.session.flush()
+    db.session.add(Audit(tag_id=tag_id,user_id=int(session['user_id']),action='PHOTO_ADD',after_json=json.dumps({'foto_id':item.id,'descricao':desc},ensure_ascii=False)))
+    db.session.commit()
+    return jsonify(ok=True,id=item.id),201
+ @app.delete('/api/engenharia/tags/<int:tag_id>/fotos/<int:photo_id>')
+ @guard('engineering.tags.edit')
+ def tags_photo_delete(tag_id,photo_id):
+    item=TagPhoto.query.filter_by(id=photo_id,tag_id=tag_id).first_or_404()
+    db.session.add(Audit(tag_id=tag_id,user_id=int(session['user_id']),action='PHOTO_DELETE',before_json=json.dumps({'foto_id':item.id,'descricao':item.description},ensure_ascii=False)))
+    db.session.delete(item);db.session.commit()
+    return jsonify(ok=True)
  @app.get('/api/engenharia/tags/atualizacao-massa/modelo')
  @guard("engineering.tags.bulk")
  def tags_bulk_model():
@@ -438,15 +493,21 @@ def install_tags(app,db,can):
     try:
      ws=wb['Atualizacao_TAGs'] if 'Atualizacao_TAGs' in wb.sheetnames else wb.active
      headers=[norm(v) for v in next(ws.iter_rows(min_row=1,max_row=1,values_only=True))]
+     # Compatibilidade com o cabeçalho gerado pelo exportador e variações de Excel.
+     headers=[('N_SERIE_TAG' if h in ('N_SERIE_TAG','NO_SERIE_TAG','NUMERO_SERIE_TAG','N_DE_SERIE_TAG') else h) for h in headers]
      if headers[:3]!=['ID_INTERNO','PRODUTO','N_SERIE_TAG']:
-      return jsonify(ok=False,error='Modelo inválido. Baixe a planilha de Atualização em massa pelo sistema.'),400
-     mapping={k:i for i,k in enumerate(cols)}
+      return jsonify(ok=False,error='Cabeçalhos incompatíveis. Esperado: ID Interno, Produto, Nº Série (TAG). Encontrado: '+', '.join(headers[:3])),400
+     expected=['ID_INTERNO','PRODUTO','N_SERIE_TAG','PATRIMONIO','PRODUCAO_LOTE','EMPRESA','LOCAL_PROJETO','FINALIDADE','STATUS_OPERACIONAL','NF_ENTRADA','NF_SAIDA','CAIXA','OBSERVACAO']
+     if any(h not in headers for h in expected):
+      missing=[h for h in expected if h not in headers]
+      return jsonify(ok=False,error='Colunas ausentes ou renomeadas: '+', '.join(missing)),400
+     mapping={k:headers.index(expected[i]) for i,k in enumerate(cols)}
      changes=[];issues=[];seen=set();examined=0;unchanged=0
      for ix,row in enumerate(ws.iter_rows(min_row=2,values_only=True),2):
       if not any(v is not None and str(v).strip() for v in row):continue
       examined+=1
       if examined>20000:return jsonify(ok=False,error='Limite de 20.000 linhas.'),400
-      try:ident=int(row[0]);assert ident>0
+      try:ident=int(row[mapping['id']]);assert ident>0
       except Exception:issues.append({'linha':ix,'motivo':'ID interno inválido'});continue
       if ident in seen:issues.append({'linha':ix,'motivo':'ID duplicado na planilha'});continue
       seen.add(ident);t=db.session.get(Tag,ident)
@@ -455,7 +516,7 @@ def install_tags(app,db,can):
        if v is None:return ''
        if isinstance(v,(int,float)) and float(v).is_integer():return str(int(v))
        return str(v).strip()
-      product=clean(row[1] if len(row)>1 else None);serial=clean(row[2] if len(row)>2 else None)
+      product=clean(row[mapping['produto']] if len(row)>mapping['produto'] else None);serial=clean(row[mapping['serial']] if len(row)>mapping['serial'] else None)
       if product.casefold()!=t.produto.casefold() or serial.casefold()!=t.serial.casefold():
        issues.append({'linha':ix,'motivo':'Produto ou série diferente do registro de ID '+str(ident)});continue
       modified={}
