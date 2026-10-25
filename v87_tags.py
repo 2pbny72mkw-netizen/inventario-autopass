@@ -2,6 +2,8 @@
 from datetime import datetime
 from functools import wraps
 from io import BytesIO
+from PIL import Image, UnidentifiedImageError
+from sqlalchemy import text
 import re, unicodedata, json
 from flask import request, session, jsonify, abort, redirect, url_for, render_template, send_file
 from sqlalchemy import func
@@ -52,6 +54,7 @@ def install_tags(app,db,can):
     fabricante=db.Column(db.String(160),default='')
     categoria=db.Column(db.String(160),default='')
     descricao=db.Column(db.Text,default='')
+    foto=db.Column(db.LargeBinary,nullable=True)
     created_at=db.Column(db.DateTime,default=datetime.utcnow)
  class Audit(db.Model):
     __tablename__='v87_product_tag_audit'
@@ -85,6 +88,8 @@ def install_tags(app,db,can):
       if not initialized:
        Tag.__table__.create(bind=db.engine,checkfirst=True)
        Product.__table__.create(bind=db.engine,checkfirst=True)
+       with db.engine.begin() as conn:
+        conn.execute(text('ALTER TABLE v87_tag_products ADD COLUMN IF NOT EXISTS foto BYTEA'))
        Audit.__table__.create(bind=db.engine,checkfirst=True)
        ImportIssue.__table__.create(bind=db.engine,checkfirst=True)
        initialized=True
@@ -115,7 +120,7 @@ def install_tags(app,db,can):
  def tags_products():
     registered=Product.query.order_by(Product.nome).all()
     known={x.modelo.casefold() for x in registered}
-    products=[dict(modelo=x.modelo,nome=x.nome,fabricante=x.fabricante or '',categoria=x.categoria or '',descricao=x.descricao or '') for x in registered]
+    products=[dict(modelo=x.modelo,nome=x.nome,fabricante=x.fabricante or '',categoria=x.categoria or '',descricao=x.descricao or '',tem_foto=bool(x.foto)) for x in registered]
     for (modelo,) in db.session.query(Tag.produto).distinct().order_by(Tag.produto).all():
      if modelo and modelo.casefold() not in known:
       products.append(dict(modelo=modelo,nome='Biometria Facial' if modelo.upper()=='BF80' else modelo,fabricante='Autopass' if modelo.upper()=='BF80' else '',categoria='Biometria Facial' if modelo.upper()=='BF80' else '',descricao=''))
@@ -125,17 +130,43 @@ def install_tags(app,db,can):
  @app.post('/api/engenharia/tags/produtos')
  @guard('engineering.tags.import')
  def tags_create_product():
-    data=request.get_json(silent=True) or {}
+    data=request.form
     modelo=str(data.get('modelo') or '').strip().upper()
     nome=str(data.get('nome') or '').strip()
     if not modelo or not nome or len(modelo)>160 or len(nome)>200:
      return jsonify(ok=False,error='Modelo e nome são obrigatórios (máximo 160/200 caracteres).'),400
     if Product.query.filter(func.lower(Product.modelo)==modelo.lower()).first() or db.session.query(Tag.id).filter(func.lower(Tag.produto)==modelo.lower()).first():
      return jsonify(ok=False,error='Modelo já existente. Selecione-o na lista.'),409
-    item=Product(modelo=modelo,nome=nome,fabricante=str(data.get('fabricante') or '').strip()[:160],categoria=str(data.get('categoria') or '').strip()[:160],descricao=str(data.get('descricao') or '').strip()[:2000])
+    uploaded=request.files.get('foto')
+    if not uploaded or not uploaded.filename:
+     return jsonify(ok=False,error='Fotografia obrigatória para o novo produto.'),400
+    raw=uploaded.read(3*1024*1024+1)
+    if len(raw)>3*1024*1024:
+     return jsonify(ok=False,error='A fotografia excede 3 MB.'),413
+    try:
+     with Image.open(BytesIO(raw)) as im:
+      if im.format not in ('JPEG','PNG','WEBP'):
+       raise ValueError('Formato inválido')
+      im.verify()
+     with Image.open(BytesIO(raw)) as im:
+      im.thumbnail((1200,1200))
+      if im.mode not in ('RGB','L'):im=im.convert('RGB')
+      output=BytesIO();im.save(output,format='JPEG',quality=85,optimize=True)
+      photo=output.getvalue()
+    except (UnidentifiedImageError,ValueError,OSError,Image.DecompressionBombError):
+     return jsonify(ok=False,error='Envie uma imagem JPG, PNG ou WebP válida.'),400
+    item=Product(modelo=modelo,nome=nome,fabricante=str(data.get('fabricante') or '').strip()[:160],categoria=str(data.get('categoria') or '').strip()[:160],descricao=str(data.get('descricao') or '').strip()[:2000],foto=photo)
     db.session.add(item)
     db.session.commit()
     return jsonify(ok=True,produto=dict(modelo=item.modelo,nome=item.nome)),201
+ @app.get('/api/engenharia/tags/produtos/foto/<path:modelo>')
+ @guard()
+ def tags_product_photo(modelo):
+    item=Product.query.filter(func.lower(Product.modelo)==modelo.lower()).first()
+    if not item or not item.foto:abort(404)
+    response=send_file(BytesIO(item.foto),mimetype='image/jpeg',max_age=3600)
+    response.headers['X-Content-Type-Options']='nosniff'
+    return response
  @app.get('/engenharia/tags')
  @guard()
  def tags_page():return render_template('v87_tags.html',tag_permissions={k:bool(can('engineering.tags.'+k)) for k in ('view','import','edit','bulk','issues','export','audit')})
