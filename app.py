@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV41"
+APP_RELEASE = "V87.6 REV46"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -12080,7 +12080,13 @@ def topdesk_dashboard_api():
     _TOPDESK_DASH_CACHE[cache_key]=(now,payload)
     if len(_TOPDESK_DASH_CACHE)>40:
         for k,v in list(_TOPDESK_DASH_CACHE.items()):
-            if now-v[0] > _TOPDESK_DASH_CACHE_TTL: _TOPDESK_DASH_CACHE.pop(k,None)
+            if now-v[0] > _TOPDESK_DASH_CACHE_TTL:
+                _TOPDESK_DASH_CACHE.pop(k,None)
+        # REV46: limite real de memoria, inclusive quando 40+ filtros ainda estao validos.
+        if len(_TOPDESK_DASH_CACHE)>40:
+            oldest=sorted(_TOPDESK_DASH_CACHE, key=lambda k: _TOPDESK_DASH_CACHE[k][0])
+            for k in oldest[:-40]:
+                _TOPDESK_DASH_CACHE.pop(k,None)
     return jsonify(payload)
 
 
