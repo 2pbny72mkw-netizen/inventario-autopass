@@ -11,8 +11,8 @@
 
 <section class="kpis aboutKpis">
   <article class="kpi primaryKpi"><span>Aplicação</span><b>{{ app_release }}</b><small>Central Operacional</small></article>
-  <article class="kpi successKpi"><span>Dashboard</span><b>{{ app_release }}</b><small>{{ manager_version }}</small></article>
-  <article class="kpi warningKpi"><span>Equipes</span><b>{{ app_release }}</b><small>{{ teams_version }}</small></article>
+  <article class="kpi successKpi"><span>Dashboard</span><b>{{ dashboard_release }}</b><small>{{ manager_version }}</small></article>
+  <article class="kpi warningKpi"><span>Equipes</span><b>{{ teams_version }}</b><small>Central de Equipes</small></article>
   <article class="kpi"><span>Base</span><b>{{ base_version }}</b><small>Base de ativos</small></article>
 </section>
 
@@ -35,6 +35,13 @@
 
 {% if session.get('role') not in ('technician','technician_implantation') %}
 <section class="card aboutHistoryCompact">
+<div class="versionItem featured"><div class="history-item"><strong>V87.6 REV46</strong> — Versão centralizada em Aplicação, Dashboard, Equipes e telemetria; histórico atualizado; limite de memória do cache filtrado TopDesk.</div></div>
+<div class="versionItem"><div class="history-item"><strong>V87.6 REV45</strong> — Controle de TAGs: compatibilidade do Excel em atualização em massa, fotos por TAG, gráficos coloridos e painel de detalhes.</div></div>
+<div class="versionItem"><div class="history-item"><strong>V87.6 REV44</strong> — Edição de produtos e fotografias; exclusão ou inativação segura conforme vínculos.</div></div>
+<div class="versionItem"><div class="history-item"><strong>V87.6 REV43</strong> — Correção do acionamento da atualização em massa e fotografia obrigatória no cadastro de produtos.</div></div>
+<div class="versionItem"><div class="history-item"><strong>V87.6 REV42</strong> — Controle de TAGs multiproduto com dashboard por modelo e cadastro de produtos.</div></div>
+<div class="versionItem"><div class="history-item"><strong>V87.6 REV41</strong> — Ajustes iniciais de performance e telemetria, com cache TopDesk.</div></div>
+
 <div class="versionItem featured"><div class="history-item"><strong>V85.55 REV1</strong> — correção de idempotência no endpoint móvel de Bobinas para sincronização Android A5.8 REV1.</div></div>
 <div class="versionItem featured"><div class="history-item"><strong>V85.55</strong> — Kanban com rolagem horizontal superior sincronizada; RDVT reorganizado (motivo, evidências, aceite); compatibilidade com Android A5.8 e fila GPS offline persistente.</div></div>
 <div class="versionItem featured"><div class="history-item"><strong>V85.54 CONSOLIDADA</strong> — Entrega integrada: fila persistente para exportação CSV de tarefas com worker separado, Painel Operacional 2.0 respeitando permissões e Agenda de Tarefas por mês/responsável. As demais áreas mantêm seus dashboards existentes.</div></div>
