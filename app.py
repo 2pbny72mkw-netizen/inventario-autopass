@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV46"
+APP_RELEASE = "V87.6 REV47"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -288,10 +288,10 @@ def _v56b_perf_finish(response):
             response_bytes=int(response.calculate_content_length() or 0) if not response.direct_passthrough else 0
             # REV41: amostragem deterministica e configuravel para reduzir writes de
             # telemetria. Erros e rotas lentas permanecem sempre registrados.
-            # Padrao 100% preserva a comparabilidade historica; configurar
-            # PERF_SAMPLE_RATE=0.25 somente apos validar o dashboard de metricas.
+            # REV47: padrao 10% reduz escrita. Erros e chamadas >=1s
+            # continuam com amostragem de 100%. Ajustavel via ambiente.
             try:
-                sample_rate=max(0.0,min(1.0,float(os.getenv("PERF_SAMPLE_RATE", "1.0"))))
+                sample_rate=max(0.0,min(1.0,float(os.getenv("PERF_SAMPLE_RATE", "0.10"))))
             except (TypeError, ValueError):
                 sample_rate=1.0
             must_record = response.status_code >= 400 or ms >= 1000
@@ -300,14 +300,9 @@ def _v56b_perf_finish(response):
             if must_record or sampled:
                 db.session.add(PerformanceMetric(route=(request.url_rule.rule if request.url_rule else path)[:220],method=request.method,status_code=response.status_code,duration_ms=round(ms,2),sql_ms=round(float(getattr(g,"_perf_sql_ms",0) or 0),2),query_count=int(getattr(g,"_perf_query_count",0) or 0),response_bytes=response_bytes,request_id=getattr(g,"_perf_request_id",None),release=APP_RELEASE,user_id=session.get("user_id")))
                 db.session.commit()
-            # Limpeza no máximo uma vez/hora, mantendo 7 dias de diagnóstico.
-            global _V8530_LAST_PERF_CLEANUP
-            now_ts=time.time()
-            if now_ts-_V8530_LAST_PERF_CLEANUP >= 3600:
-                _V8530_LAST_PERF_CLEANUP=now_ts
-                cutoff=datetime.utcnow()-timedelta(days=7)
-                PerformanceMetric.query.filter(PerformanceMetric.created_at < cutoff).delete(synchronize_session=False)
-                db.session.commit()
+            # REV47: expurgo foi removido do ciclo HTTP. Executar manutenção
+            # exclusivamente em janela administrativa, em lotes e após backup.
+            # DELETE massivo em requisição causava WAL, locks e pressão de disco.
     except Exception:
         try: db.session.rollback()
         except Exception: pass
@@ -7080,7 +7075,7 @@ def telemetry_summary_api():
         version_history=_v8541_version_history(30)
         index_usage=_v8541_index_usage_snapshot()
         db_growth=_v8541_db_growth_snapshot()
-        return jsonify({"ok":True,"release":APP_RELEASE,"generated_at":datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y %H:%M:%S"),"window_minutes":minutes,"health":health,"avg_ms":avg,"p95_ms":p95,"p99_ms":p99,"slow_1s":slow_1s,"slow_2s":slow_2s,"slow_5s":slow_5s,"max_ms":round(max(vals),1) if vals else 0,"requests":len(rows),"errors_5xx":errors,"active_users_15m":int(active_users),"routes":route_rows[:20],"top5":top5,"timeline":timeline[-24:],"table_counts":table_counts,"storage":storage,"migrations":_v70_migration_snapshot(),"indexes":_v70_index_snapshot(),"t_report_audit":_v8530_treport_audit(),"version_history":version_history,"index_usage":index_usage,"db_growth":db_growth,"telemetry":{"sampling":"100% rotas funcionais","retention_days":7,"request_id":True,"response_bytes":True,"release_tag":True,"architecture":"V85.43 Performance & Data Lifecycle","raw_transaction_policy":"90 dias online propostos; sem exclusão automática nesta versão"}})
+        return jsonify({"ok":True,"release":APP_RELEASE,"generated_at":datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y %H:%M:%S"),"window_minutes":minutes,"health":health,"avg_ms":avg,"p95_ms":p95,"p99_ms":p99,"slow_1s":slow_1s,"slow_2s":slow_2s,"slow_5s":slow_5s,"max_ms":round(max(vals),1) if vals else 0,"requests":len(rows),"errors_5xx":errors,"active_users_15m":int(active_users),"routes":route_rows[:20],"top5":top5,"timeline":timeline[-24:],"table_counts":table_counts,"storage":storage,"migrations":_v70_migration_snapshot(),"indexes":_v70_index_snapshot(),"t_report_audit":_v8530_treport_audit(),"version_history":version_history,"index_usage":index_usage,"db_growth":db_growth,"telemetry":{"sampling":"10% padrao; 100% erros e >=1s (configuravel)","retention_days":"manutencao administrativa; sem expurgo no HTTP","request_id":True,"response_bytes":True,"release_tag":True,"architecture":"V85.43 Performance & Data Lifecycle","raw_transaction_policy":"90 dias online propostos; sem exclusão automática nesta versão"}})
     except Exception as exc:
         return jsonify({"ok":False,"error":str(exc)}),500
 
@@ -12064,9 +12059,10 @@ def topdesk_dashboard_api():
         top_locations=[{'name':k,'count':int(v)} for k,v in db.session.query(Location.location,func.count(TopDeskTicket.id)).join(TopDeskTicket,TopDeskTicket.location_id==Location.id).group_by(Location.location).order_by(func.count(TopDeskTicket.id).desc()).limit(12).all()]
         payload={"ok":True,"cache":"MISS","mode":"SQL_AGG","total":total,"open":max(0,total-resolved),"resolved":resolved,"assigned":assigned,"unassigned":max(0,total-assigned),"by_status":by_status,"by_type":by_type,"top_locations":top_locations}
         _TOPDESK_DASH_CACHE[cache_key]=(now,payload)
-        if len(_TOPDESK_DASH_CACHE)>40:
-            for k,v in list(_TOPDESK_DASH_CACHE.items()):
-                if now-v[0] > _TOPDESK_DASH_CACHE_TTL: _TOPDESK_DASH_CACHE.pop(k,None)
+        if len(_TOPDESK_DASH_CACHE)>20:
+            oldest=sorted(_TOPDESK_DASH_CACHE, key=lambda k: _TOPDESK_DASH_CACHE[k][0])
+            for k in oldest[:-20]:
+                _TOPDESK_DASH_CACHE.pop(k,None)
         return jsonify(payload)
     rows=_td_filter_rows(request.args); tickets=[x[0] for x in rows]; total=len(tickets); openrows=[t for t in tickets if _ticket_open(t)]; resolved=total-len(openrows)
     by_status={}; by_type={}; by_location={}; assigned=0
@@ -12078,15 +12074,14 @@ def topdesk_dashboard_api():
     top_locations=sorted(by_location.items(),key=lambda x:x[1],reverse=True)[:12]
     payload={"ok":True,"cache":"MISS","total":total,"open":len(openrows),"resolved":resolved,"assigned":assigned,"unassigned":total-assigned,"by_status":by_status,"by_type":by_type,"top_locations":[{"name":k,"count":v} for k,v in top_locations]}
     _TOPDESK_DASH_CACHE[cache_key]=(now,payload)
-    if len(_TOPDESK_DASH_CACHE)>40:
-        for k,v in list(_TOPDESK_DASH_CACHE.items()):
-            if now-v[0] > _TOPDESK_DASH_CACHE_TTL:
-                _TOPDESK_DASH_CACHE.pop(k,None)
-        # REV46: limite real de memoria, inclusive quando 40+ filtros ainda estao validos.
-        if len(_TOPDESK_DASH_CACHE)>40:
-            oldest=sorted(_TOPDESK_DASH_CACHE, key=lambda k: _TOPDESK_DASH_CACHE[k][0])
-            for k in oldest[:-40]:
-                _TOPDESK_DASH_CACHE.pop(k,None)
+    # REV47: TTL + limite incondicional; nenhuma chave de filtro fica ilimitada.
+    for k,v in list(_TOPDESK_DASH_CACHE.items()):
+        if now-v[0] > _TOPDESK_DASH_CACHE_TTL:
+            _TOPDESK_DASH_CACHE.pop(k,None)
+    if len(_TOPDESK_DASH_CACHE)>20:
+        oldest=sorted(_TOPDESK_DASH_CACHE, key=lambda k: _TOPDESK_DASH_CACHE[k][0])
+        for k in oldest[:-20]:
+            _TOPDESK_DASH_CACHE.pop(k,None)
     return jsonify(payload)
 
 
