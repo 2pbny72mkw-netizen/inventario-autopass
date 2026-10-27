@@ -172,16 +172,41 @@ def _fin_job_snapshot(job_id):
         job=FIN_IMPORT_JOBS.get(job_id)
         return dict(job) if job else None
 
+def _td_jobs_ready():
+    # Criação isolada e idempotente, sem alterar as tabelas operacionais.
+    db.metadata.create_all(bind=db.engine, tables=[TopDeskImportJob.__table__], checkfirst=True)
+
+
 def _td_job_update(job_id, **changes):
+    import json as _json
+    from sqlalchemy import text as _sql_text
+    now = datetime.utcnow()
     with TOPDESK_IMPORT_LOCK:
         job = TOPDESK_IMPORT_JOBS.setdefault(job_id, {})
         job.update(changes)
-        job["updated_at"] = datetime.utcnow().isoformat() + "Z"
+        job["updated_at"] = now.isoformat() + "Z"
+        payload = _json.dumps(job, ensure_ascii=False, default=str)
+        # Transação própria: status permanece visível durante os commits da importação.
+        with db.engine.begin() as conn:
+            conn.execute(_sql_text("""INSERT INTO topdesk_import_jobs (job_id,user_id,status,payload,updated_at)
+                VALUES (:job_id,:user_id,:status,:payload,:updated_at)
+                ON CONFLICT (job_id) DO UPDATE SET status=EXCLUDED.status,
+                payload=EXCLUDED.payload, updated_at=EXCLUDED.updated_at"""),
+                {"job_id":job_id,"user_id":job.get("user_id"),"status":job.get("status","QUEUED"),"payload":payload,"updated_at":now})
+
 
 def _td_job_snapshot(job_id):
-    with TOPDESK_IMPORT_LOCK:
-        job = TOPDESK_IMPORT_JOBS.get(job_id)
-        return dict(job) if job else None
+    import json as _json
+    from sqlalchemy import text as _sql_text
+    with db.engine.connect() as conn:
+        row=conn.execute(_sql_text("SELECT payload,updated_at FROM topdesk_import_jobs WHERE job_id=:id"),{"id":job_id}).first()
+    if not row:
+        return None
+    job=_json.loads(row[0]); status=job.get('status')
+    if status in ('QUEUED','READING','PROCESSING') and (datetime.utcnow()-row[1]).total_seconds()>180:
+        _td_job_update(job_id,**job,status='INTERRUPTED',phase='Processamento interrompido; reenvie a planilha para atualizar sem duplicar incidentes.',error='Servidor reiniciado ou processamento sem atualização por mais de 3 minutos.',finished_at=datetime.utcnow().isoformat()+'Z')
+        return dict(TOPDESK_IMPORT_JOBS[job_id])
+    return job
 
 # V55: cache curto de analytics TopDesk para evitar recalcular dezenas de milhares
 # de chamados a cada repaint/filtro idêntico. É invalidado ao fim de cada importação.
@@ -1805,6 +1830,16 @@ class TopDeskActivity(db.Model):
     latitude = db.Column(db.Float)
     longitude = db.Column(db.Float)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+
+class TopDeskImportJob(db.Model):
+    """REV48: acompanhamento persistente; não depende da memória do Gunicorn."""
+    __tablename__ = "topdesk_import_jobs"
+    job_id = db.Column(db.String(32), primary_key=True)
+    user_id = db.Column(db.Integer, index=True)
+    status = db.Column(db.String(24), nullable=False, index=True)
+    payload = db.Column(db.Text, nullable=False)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
 
 
 class TopDeskImportBatch(db.Model):
@@ -11668,11 +11703,12 @@ def topdesk_import():
     raw=f.read()
     if not raw:
         return jsonify({"ok":False,"error":"Arquivo vazio."}),400
-    # evita duas cargas simultâneas no mesmo processo
-    with TOPDESK_IMPORT_LOCK:
-        active=[x for x in TOPDESK_IMPORT_JOBS.values() if x.get("status") in ("QUEUED","READING","PROCESSING")]
-        if active:
-            return jsonify({"ok":False,"error":"Já existe uma importação TopDesk em andamento."}),409
+    _td_jobs_ready()
+    from sqlalchemy import text as _sql_text
+    with db.engine.connect() as conn:
+        active=conn.execute(_sql_text("SELECT job_id FROM topdesk_import_jobs WHERE status IN ('QUEUED','READING','PROCESSING') AND updated_at > :cutoff LIMIT 1"),{"cutoff":datetime.utcnow()-timedelta(seconds=180)}).first()
+    if active:
+        return jsonify({"ok":False,"error":"Já existe uma importação TopDesk em andamento."}),409
     job_id=uuid.uuid4().hex
     _td_job_update(job_id,status="QUEUED",phase="Preparando arquivo",filename=secure_filename(f.filename),progress=1,total=0,processed=0,inserted=0,updated=0,ignored=0,errors=0,started_at=datetime.utcnow().isoformat()+"Z",finished_at=None,user_id=session.get("user_id"))
     thread=threading.Thread(target=_topdesk_import_worker,args=(job_id,raw,secure_filename(f.filename),session.get("user_id")),daemon=True,name=f"topdesk-import-{job_id[:8]}")
@@ -11695,10 +11731,24 @@ def _topdesk_import_worker(job_id, raw, filename, user_id):
                 raise ValueError("Formato TopDesk não reconhecido. Use o padrão Campo - Dogma.")
             total=len(rows); inserted=updated=ignored=errors=0
             _td_job_update(job_id,status="PROCESSING",phase="Preparando índices de importação",progress=8,total=total,processed=0)
-            existing={t.ticket_number:t for t in TopDeskTicket.query.all()}
+            # REV48: evita carregar todos os chamados e entidades ORM na memória.
+            existing={}
+            batch_size=500
             loc_cache=[(loc,normalize(loc.location),[x for x in normalize(loc.location).split() if len(x)>=4]) for loc in Location.query.all()]
             _td_job_update(job_id,status="PROCESSING",phase="Importando chamados",progress=10,total=total,processed=0)
             for pos,row in enumerate(rows, start=1):
+                if (pos-1) % batch_size == 0:
+                    batch_rows=rows[pos-1:pos-1+batch_size]
+                    numbers=[]
+                    for br in batch_rows:
+                        bn=str(br.get("Número do incidente") or "").strip()
+                        if not bn:
+                            bo=str(br.get("ID do objeto") or "").strip()
+                            bc=str(br.get("Dia/hora da criação") or "").strip()
+                            stable="|".join([bo,bc,str(br.get("Categoria") or ""),str(br.get("Subcategoria") or "")])
+                            bn="TD-"+hashlib.sha1(stable.encode("utf-8","ignore")).hexdigest()[:16].upper()
+                        numbers.append(bn)
+                    existing={t.ticket_number:t for t in TopDeskTicket.query.filter(TopDeskTicket.ticket_number.in_(numbers)).all()}
                 try:
                     obj=str(row.get("ID do objeto") or "").strip()
                     created=str(row.get("Dia/hora da criação") or "").strip()
@@ -11740,7 +11790,7 @@ def _topdesk_import_worker(job_id, raw, filename, user_id):
                     else: updated+=1
                 except Exception:
                     errors+=1
-                if pos % 1000 == 0:
+                if pos % batch_size == 0:
                     db.session.commit()
                     progress=min(99,10+int(pos/max(total,1)*89))
                     _td_job_update(job_id,processed=pos,inserted=inserted,updated=updated,ignored=ignored,errors=errors,progress=progress,elapsed_seconds=int(time.time()-started))
@@ -11759,6 +11809,7 @@ def _topdesk_import_worker(job_id, raw, filename, user_id):
 @app.get("/api/topdesk/import/<job_id>/status")
 @topdesk_required
 def topdesk_import_status(job_id):
+    _td_jobs_ready()
     job=_td_job_snapshot(job_id)
     if not job:
         return jsonify({"ok":False,"error":"Importação não encontrada ou processo reiniciado."}),404
@@ -11770,11 +11821,15 @@ def topdesk_import_status(job_id):
 def topdesk_import_active():
     """V55: permite acompanhar a carga mesmo navegando para outra tela."""
     uid=session.get('user_id')
-    with TOPDESK_IMPORT_LOCK:
-        active=[dict(v,job_id=k) for k,v in TOPDESK_IMPORT_JOBS.items() if v.get('status') in ('QUEUED','READING','PROCESSING') and (not v.get('user_id') or v.get('user_id')==uid)]
-    if not active: return jsonify({'ok':True,'active':False})
-    active.sort(key=lambda x:x.get('started_at') or '',reverse=True)
-    return jsonify({'ok':True,'active':True,'job':active[0]})
+    _td_jobs_ready()
+    from sqlalchemy import text as _sql_text
+    with db.engine.connect() as conn:
+        rows=conn.execute(_sql_text("SELECT job_id FROM topdesk_import_jobs WHERE status IN ('QUEUED','READING','PROCESSING') AND (user_id=:uid OR user_id IS NULL) ORDER BY updated_at DESC LIMIT 5"),{"uid":uid}).fetchall()
+    for row in rows:
+        job=_td_job_snapshot(row[0])
+        if job and job.get('status') in ('QUEUED','READING','PROCESSING'):
+            return jsonify({'ok':True,'active':True,'job':dict(job,job_id=row[0])})
+    return jsonify({'ok':True,'active':False})
 
 
 @app.get("/api/topdesk/tickets")
