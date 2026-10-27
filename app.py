@@ -11702,34 +11702,57 @@ def topdesk_page():
 @app.post("/topdesk/import")
 @topdesk_required
 def topdesk_import():
-    """V52.8: inicia importação em background e devolve job_id para polling."""
-    f=request.files.get("file")
+    """REV50: recebe arquivo em disco temporário, evitando cópia integral em RAM."""
+    f = request.files.get("file")
     if not f or not f.filename:
-        return jsonify({"ok":False,"error":"Selecione o arquivo exportado do TopDesk."}),400
-    if not f.filename.lower().endswith((".xlsx",".xlsm")):
-        return jsonify({"ok":False,"error":"Use arquivo XLSX exportado do TopDesk."}),400
-    raw=f.read()
-    if not raw:
-        return jsonify({"ok":False,"error":"Arquivo vazio."}),400
+        return jsonify({"ok": False, "error": "Selecione o arquivo exportado do TopDesk."}), 400
+    if not f.filename.lower().endswith((".xlsx", ".xlsm")):
+        return jsonify({"ok": False, "error": "Use arquivo XLSX exportado do TopDesk."}), 400
+    # Limite específico e configurável, evitando upload descontrolado.
+    max_bytes = int(os.getenv("TOPDESK_IMPORT_MAX_MB", "40")) * 1024 * 1024
     _td_jobs_ready()
     from sqlalchemy import text as _sql_text
     with db.engine.connect() as conn:
-        active=conn.execute(_sql_text("SELECT job_id FROM topdesk_import_jobs WHERE status IN ('QUEUED','READING','PROCESSING') AND updated_at > :cutoff LIMIT 1"),{"cutoff":datetime.utcnow()-timedelta(seconds=180)}).first()
+        active = conn.execute(_sql_text("SELECT job_id FROM topdesk_import_jobs WHERE status IN ('QUEUED','READING','PROCESSING') AND updated_at > :cutoff LIMIT 1"), {"cutoff": datetime.utcnow()-timedelta(seconds=180)}).first()
     if active:
-        return jsonify({"ok":False,"error":"Já existe uma importação TopDesk em andamento."}),409
-    job_id=uuid.uuid4().hex
-    _td_job_update(job_id,status="QUEUED",phase="Preparando arquivo",filename=secure_filename(f.filename),progress=1,total=0,processed=0,inserted=0,updated=0,ignored=0,errors=0,started_at=datetime.utcnow().isoformat()+"Z",finished_at=None,user_id=session.get("user_id"))
-    thread=threading.Thread(target=_topdesk_import_worker,args=(job_id,raw,secure_filename(f.filename),session.get("user_id")),daemon=True,name=f"topdesk-import-{job_id[:8]}")
-    thread.start()
-    return jsonify({"ok":True,"job_id":job_id,"status":"QUEUED"}),202
+        return jsonify({"ok": False, "error": "Já existe uma importação TopDesk em andamento."}), 409
+    path = None
+    try:
+        with tempfile.NamedTemporaryFile(prefix="autopass_topdesk_", suffix=".xlsx", delete=False) as tmp:
+            path = tmp.name
+            size = 0
+            while True:
+                chunk = f.stream.read(1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > max_bytes:
+                    return jsonify({"ok": False, "error": "Arquivo excede o limite de importação configurado."}), 413
+                tmp.write(chunk)
+        if not size:
+            return jsonify({"ok": False, "error": "Arquivo vazio."}), 400
+        job_id = uuid.uuid4().hex
+        _td_job_update(job_id, status="QUEUED", phase="Arquivo recebido; aguardando processamento", filename=secure_filename(f.filename), progress=1, total=0, processed=0, inserted=0, updated=0, ignored=0, errors=0, started_at=datetime.utcnow().isoformat()+"Z", finished_at=None, user_id=session.get("user_id"))
+        thread = threading.Thread(target=_topdesk_import_worker, args=(job_id, path, secure_filename(f.filename), session.get("user_id")), daemon=True, name=f"topdesk-import-{job_id[:8]}")
+        thread.start()
+        path = None  # O worker passa a ser responsável pela remoção.
+        return jsonify({"ok": True, "job_id": job_id, "status": "QUEUED"}), 202
+    except Exception:
+        app.logger.exception("Falha ao iniciar importação TopDesk")
+        return jsonify({"ok": False, "error": "Falha ao iniciar a importação. Consulte os logs do Render."}), 500
+    finally:
+        if path and os.path.exists(path):
+            os.unlink(path)
 
 
-def _topdesk_import_worker(job_id, raw, filename, user_id):
+def _topdesk_import_worker(job_id, file_path, filename, user_id):
     started=time.time()
     with app.app_context():
+        source = None
         try:
+            source = open(file_path, "rb")
             _td_job_update(job_id,status="READING",phase="Lendo planilha",progress=5)
-            rows,estimated_total=_read_topdesk_xlsx(io.BytesIO(raw))
+            rows,estimated_total=_read_topdesk_xlsx(source)
             rows=iter(rows)
             first=next(rows,None)
             if first is None:
@@ -11745,7 +11768,7 @@ def _topdesk_import_worker(job_id, raw, filename, user_id):
             _td_job_update(job_id,status="PROCESSING",phase="Preparando índices de importação",progress=8,total=total,processed=0)
             # REV48: evita carregar todos os chamados e entidades ORM na memória.
             existing={}
-            batch_size=500
+            batch_size=150
             loc_cache=[(loc,normalize(loc.location),[x for x in normalize(loc.location).split() if len(x)>=4]) for loc in Location.query.all()]
             _td_job_update(job_id,status="PROCESSING",phase="Importando chamados",progress=10,total=total,processed=0)
             processed_count=0
@@ -11820,6 +11843,12 @@ def _topdesk_import_worker(job_id, raw, filename, user_id):
             _td_job_update(job_id,status="ERROR",phase="Importação interrompida",error=f"{type(exc).__name__}: {exc}",elapsed_seconds=int(time.time()-started),finished_at=datetime.utcnow().isoformat()+"Z")
         finally:
             db.session.remove()
+            if source is not None:
+                source.close()
+            try:
+                os.unlink(file_path)
+            except OSError:
+                pass
 
 
 @app.get("/api/topdesk/import/<job_id>/status")
