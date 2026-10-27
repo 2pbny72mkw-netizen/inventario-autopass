@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV47"
+APP_RELEASE = "V87.6 REV49"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -11626,36 +11626,44 @@ def _cell_text_xml(cell):
 
 
 def _read_topdesk_xlsx(stream):
-    data=stream.read()
-    rows=[]
+    """REV49: iterador de linhas, sem materializar a planilha inteira na RAM."""
+    import itertools
+    stream.seek(0)
     try:
-        wb=load_workbook(io.BytesIO(data), read_only=True, data_only=True)
-        ws=wb.active
-        allrows=list(ws.iter_rows(values_only=True))
-        if not allrows: return []
-        headers=[str(x or "").strip() for x in allrows[0]]
-        for values in allrows[1:]:
-            row={headers[i]: values[i] if i<len(values) else None for i in range(len(headers))}
-            if any(v not in (None,"") for v in row.values()): rows.append(row)
-        return rows
+        wb = load_workbook(stream, read_only=True, data_only=True)
     except Exception:
-        pass
-    # Alguns exports TopDesk trazem XML Excel com caracteres inválidos para parsers estritos.
-    with zipfile.ZipFile(io.BytesIO(data)) as z:
-        xml=z.read("xl/worksheets/sheet1.xml").decode("utf-8","replace")
-    rawrows=re.findall(r"<row\b[^>]*>(.*?)</row>",xml,re.S)
-    matrix=[]
-    for rr in rawrows:
-        vals=[]
-        cells=re.findall(r"<c\b[^>]*>.*?</c>",rr,re.S)
-        for c in cells: vals.append(_cell_text_xml(c))
-        matrix.append(vals)
-    if not matrix: return []
-    headers=[str(x or "").strip() for x in matrix[0]]
-    for vals in matrix[1:]:
-        row={headers[i]: vals[i] if i<len(vals) else None for i in range(len(headers))}
-        if any(v not in (None,"") for v in row.values()): rows.append(row)
-    return rows
+        # Compatibilidade com exports TopDesk não padronizados: fallback legado.
+        stream.seek(0)
+        data = stream.read()
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            xml = z.read("xl/worksheets/sheet1.xml").decode("utf-8", "replace")
+        rawrows = re.findall(r"<row\b[^>]*>(.*?)</row>", xml, re.S)
+        if not rawrows:
+            return iter(()), 0
+        headers = [_cell_text_xml(c) for c in re.findall(r"<c\b[^>]*>.*?</c>", rawrows[0], re.S)]
+        def legacy():
+            for rr in rawrows[1:]:
+                cells = re.findall(r"<c\b[^>]*>.*?</c>", rr, re.S)
+                vals = [_cell_text_xml(c) for c in cells]
+                row = {headers[i]: vals[i] if i < len(vals) else None for i in range(len(headers))}
+                if any(v not in (None, "") for v in row.values()):
+                    yield row
+        return legacy(), max(0, len(rawrows)-1)
+    ws = wb.active
+    estimated = max(0, (ws.max_row or 0)-1)
+    def iterate():
+        try:
+            it = ws.iter_rows(values_only=True)
+            headers = [str(x or "").strip() for x in next(it, ())]
+            if not headers:
+                return
+            for values in it:
+                row = {headers[i]: values[i] if i < len(values) else None for i in range(len(headers))}
+                if any(v not in (None, "") for v in row.values()):
+                    yield row
+        finally:
+            wb.close()
+    return iterate(), estimated
 
 
 def _ticket_open(ticket):
@@ -11721,24 +11729,28 @@ def _topdesk_import_worker(job_id, raw, filename, user_id):
     with app.app_context():
         try:
             _td_job_update(job_id,status="READING",phase="Lendo planilha",progress=5)
-            rows=_read_topdesk_xlsx(io.BytesIO(raw))
-            if not rows:
+            rows,estimated_total=_read_topdesk_xlsx(io.BytesIO(raw))
+            rows=iter(rows)
+            first=next(rows,None)
+            if first is None:
                 raise ValueError("Arquivo sem registros válidos.")
-            headers=set(rows[0].keys())
+            import itertools
+            rows=itertools.chain((first,),rows)
+            headers=set(first.keys())
             novo_padrao={"Dia/hora da criação","Status","ID do objeto","Categoria","Subcategoria","Operador","Nível","Pedido","Ação","Anexos"}
             padrao_antigo="Número do incidente" in headers
             if not padrao_antigo and len(novo_padrao.intersection(headers)) < 6:
                 raise ValueError("Formato TopDesk não reconhecido. Use o padrão Campo - Dogma.")
-            total=len(rows); inserted=updated=ignored=errors=0
+            total=estimated_total; inserted=updated=ignored=errors=0
             _td_job_update(job_id,status="PROCESSING",phase="Preparando índices de importação",progress=8,total=total,processed=0)
             # REV48: evita carregar todos os chamados e entidades ORM na memória.
             existing={}
             batch_size=500
             loc_cache=[(loc,normalize(loc.location),[x for x in normalize(loc.location).split() if len(x)>=4]) for loc in Location.query.all()]
             _td_job_update(job_id,status="PROCESSING",phase="Importando chamados",progress=10,total=total,processed=0)
-            for pos,row in enumerate(rows, start=1):
-                if (pos-1) % batch_size == 0:
-                    batch_rows=rows[pos-1:pos-1+batch_size]
+            processed_count=0
+            for batch_rows in iter(lambda: list(itertools.islice(rows,batch_size)), []):
+                if batch_rows:
                     numbers=[]
                     for br in batch_rows:
                         bn=str(br.get("Número do incidente") or "").strip()
@@ -11749,51 +11761,55 @@ def _topdesk_import_worker(job_id, raw, filename, user_id):
                             bn="TD-"+hashlib.sha1(stable.encode("utf-8","ignore")).hexdigest()[:16].upper()
                         numbers.append(bn)
                     existing={t.ticket_number:t for t in TopDeskTicket.query.filter(TopDeskTicket.ticket_number.in_(numbers)).all()}
-                try:
-                    obj=str(row.get("ID do objeto") or "").strip()
-                    created=str(row.get("Dia/hora da criação") or "").strip()
-                    num=str(row.get("Número do incidente") or "").strip()
-                    if not num:
-                        stable="|".join([obj,created,str(row.get("Categoria") or ""),str(row.get("Subcategoria") or "")])
-                        num="TD-"+hashlib.sha1(stable.encode("utf-8","ignore")).hexdigest()[:16].upper()
-                    if not obj and not str(row.get("Pedido") or "").strip():
-                        ignored+=1
-                        continue
-                    t=existing.get(num)
-                    is_new=t is None
-                    if is_new:
-                        t=TopDeskTicket(ticket_number=num); db.session.add(t); existing[num]=t
-                    t.object_id=obj
-                    t.category=str(row.get("Categoria") or "").strip()
-                    t.subcategory=str(row.get("Subcategoria") or "").strip()
-                    t.incident_type=str(row.get("Tipo de incidente") or row.get("Nível") or "").strip()
-                    t.status=str(row.get("Status") or "").strip()
-                    t.operator=str(row.get("Operador") or "").strip()
-                    t.created_at_text=created
-                    t.created_at=_td_dt(created)
-                    _line,_station,_model=_td_object_parts(obj)
-                    t.line_code=_line or None
-                    t.station_code=_station or None
-                    t.model_code=_model or None
-                    t.sla_target_text=str(row.get("Data alvo do SLA") or "").strip()
-                    t.requester=str(row.get("Nome do solicitante") or "").strip()
-                    t.request_text=str(row.get("Pedido") or "").strip()
-                    t.action_text=str(row.get("Ação") or "").strip()
-                    t.attachments_text=str(row.get("Anexos") or "").strip()
-                    t.source_file=filename[:300]
-                    t.equipment_type=_topdesk_equipment_type(row)
-                    loc=_topdesk_match_location(row,loc_cache)
-                    if loc: t.location_id=loc.id
-                    t.priority="ALTA" if _topdesk_demand_type(t)=="INCIDENTE" else "NORMAL"
-                    t.last_import_at=datetime.utcnow(); t.updated_at=datetime.utcnow()
-                    if is_new: inserted+=1
-                    else: updated+=1
-                except Exception:
-                    errors+=1
-                if pos % batch_size == 0:
+                for row in batch_rows:
+                    processed_count+=1
+                    pos=processed_count
+                    try:
+                        obj=str(row.get("ID do objeto") or "").strip()
+                        created=str(row.get("Dia/hora da criação") or "").strip()
+                        num=str(row.get("Número do incidente") or "").strip()
+                        if not num:
+                            stable="|".join([obj,created,str(row.get("Categoria") or ""),str(row.get("Subcategoria") or "")])
+                            num="TD-"+hashlib.sha1(stable.encode("utf-8","ignore")).hexdigest()[:16].upper()
+                        if not obj and not str(row.get("Pedido") or "").strip():
+                            ignored+=1
+                            continue
+                        t=existing.get(num)
+                        is_new=t is None
+                        if is_new:
+                            t=TopDeskTicket(ticket_number=num); db.session.add(t); existing[num]=t
+                        t.object_id=obj
+                        t.category=str(row.get("Categoria") or "").strip()
+                        t.subcategory=str(row.get("Subcategoria") or "").strip()
+                        t.incident_type=str(row.get("Tipo de incidente") or row.get("Nível") or "").strip()
+                        t.status=str(row.get("Status") or "").strip()
+                        t.operator=str(row.get("Operador") or "").strip()
+                        t.created_at_text=created
+                        t.created_at=_td_dt(created)
+                        _line,_station,_model=_td_object_parts(obj)
+                        t.line_code=_line or None
+                        t.station_code=_station or None
+                        t.model_code=_model or None
+                        t.sla_target_text=str(row.get("Data alvo do SLA") or "").strip()
+                        t.requester=str(row.get("Nome do solicitante") or "").strip()
+                        t.request_text=str(row.get("Pedido") or "").strip()
+                        t.action_text=str(row.get("Ação") or "").strip()
+                        t.attachments_text=str(row.get("Anexos") or "").strip()
+                        t.source_file=filename[:300]
+                        t.equipment_type=_topdesk_equipment_type(row)
+                        loc=_topdesk_match_location(row,loc_cache)
+                        if loc: t.location_id=loc.id
+                        t.priority="ALTA" if _topdesk_demand_type(t)=="INCIDENTE" else "NORMAL"
+                        t.last_import_at=datetime.utcnow(); t.updated_at=datetime.utcnow()
+                        if is_new: inserted+=1
+                        else: updated+=1
+                    except Exception:
+                        errors+=1
+                if batch_rows:
                     db.session.commit()
                     progress=min(99,10+int(pos/max(total,1)*89))
                     _td_job_update(job_id,processed=pos,inserted=inserted,updated=updated,ignored=ignored,errors=errors,progress=progress,elapsed_seconds=int(time.time()-started))
+            total=processed_count
             db.session.commit()
             batch=TopDeskImportBatch(filename=filename,imported_by=user_id,row_count=total,inserted_count=inserted,updated_count=updated,error_count=errors)
             db.session.add(batch); db.session.commit()
