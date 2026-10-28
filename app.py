@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV54"
+APP_RELEASE = "V87.6 REV55"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -238,7 +238,7 @@ def _td_cache_get(key):
 
 def _td_cache_put(key, payload):
     with TOPDESK_ANALYTICS_CACHE_LOCK:
-        if len(TOPDESK_ANALYTICS_CACHE) >= 64:
+        if len(TOPDESK_ANALYTICS_CACHE) >= 4:
             oldest=min(TOPDESK_ANALYTICS_CACHE.items(),key=lambda kv:kv[1][0])[0]
             TOPDESK_ANALYTICS_CACHE.pop(oldest,None)
         TOPDESK_ANALYTICS_CACHE[key]=(time.time(),payload)
@@ -12216,7 +12216,7 @@ def topdesk_dashboard_api():
         top_locations=[{'name':k,'count':int(v)} for k,v in db.session.query(Location.location,func.count(TopDeskTicket.id)).join(TopDeskTicket,TopDeskTicket.location_id==Location.id).group_by(Location.location).order_by(func.count(TopDeskTicket.id).desc()).limit(12).all()]
         payload={"ok":True,"cache":"MISS","mode":"SQL_AGG","total":total,"open":max(0,total-resolved),"resolved":resolved,"assigned":assigned,"unassigned":max(0,total-assigned),"by_status":by_status,"by_type":by_type,"top_locations":top_locations}
         _TOPDESK_DASH_CACHE[cache_key]=(now,payload)
-        if len(_TOPDESK_DASH_CACHE)>20:
+        if len(_TOPDESK_DASH_CACHE)>4:
             oldest=sorted(_TOPDESK_DASH_CACHE, key=lambda k: _TOPDESK_DASH_CACHE[k][0])
             for k in oldest[:-20]:
                 _TOPDESK_DASH_CACHE.pop(k,None)
@@ -12235,7 +12235,7 @@ def topdesk_dashboard_api():
     for k,v in list(_TOPDESK_DASH_CACHE.items()):
         if now-v[0] > _TOPDESK_DASH_CACHE_TTL:
             _TOPDESK_DASH_CACHE.pop(k,None)
-    if len(_TOPDESK_DASH_CACHE)>20:
+    if len(_TOPDESK_DASH_CACHE)>4:
         oldest=sorted(_TOPDESK_DASH_CACHE, key=lambda k: _TOPDESK_DASH_CACHE[k][0])
         for k in oldest[:-20]:
             _TOPDESK_DASH_CACHE.pop(k,None)
@@ -22504,9 +22504,14 @@ with app.app_context():
     migrate_user_v23_columns()
     migrate_user_gps_required_column()
     migrate_financial_v524_columns()
-    try: _v79_seed_cash_module()
-    except Exception:
-        db.session.rollback(); app.logger.exception("V79: falha ao semear Programação/Monitoramento de Coletas")
+    # REV55: não reprocessar históricos TBForte em cada boot do Gunicorn.
+    # A base operacional permanece intacta; carga inicial só mediante opt-in explícito.
+    if os.getenv("AUTOPASS_SEED_CASH_ON_STARTUP", "0").strip().lower() in ("1", "true", "yes"):
+        try: _v79_seed_cash_module()
+        except Exception:
+            db.session.rollback(); app.logger.exception("V79: falha ao semear Programação/Monitoramento de Coletas")
+    else:
+        app.logger.info("REV55: seed histórico TBForte omitido no startup para preservar RAM")
     migrate_v56a3_visit_contacts()
     migrate_base_asset_columns()
     migrate_inventory_validator_columns()
