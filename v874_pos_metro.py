@@ -259,6 +259,25 @@ def install_pos_metro(app,db,can):
   except Exception:
    db.session.rollback();raise
   return redirect('/field/troca-pos-metro')
+ @app.post('/field/troca-pos-metro/<int:pid>/excluir-registro')
+ @guard('field.pos_metro.execute')
+ def pos_reset_registration(pid):
+  # Exclusão lógica da atividade: preservar POS, eventos históricos e fotos.
+  obj=db.session.get(POS,pid)
+  if not obj:abort(404)
+  if (request.form.get('confirmar') or '')!='EXCLUIR':return jsonify(error='Confirmação inválida'),400
+  try:
+   event=Event(pos_id=pid,old_serial=obj.serial,old_model=obj.model,
+    new_serial=obj.serial,new_model=obj.model,
+    notes='[REV61] Exclusão lógica do registro de troca; status anterior: '+(obj.status or '')+'; evidências preservadas.',
+    user_id=session['user_id'])
+   db.session.add(event)
+   obj.status='Pendente'
+   obj.installed_on=None
+   db.session.commit()
+  except Exception:
+   db.session.rollback();raise
+  return redirect('/field/troca-pos-metro')
  def validate_photos(files):
   from PIL import Image
   result=[]
