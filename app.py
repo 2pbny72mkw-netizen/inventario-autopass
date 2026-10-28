@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV55"
+APP_RELEASE = "V87.6 REV56"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -12182,6 +12182,36 @@ def topdesk_analytics_api():
     return jsonify(payload)
 
 
+# REV56: diagnóstico de RAM sem pacotes adicionais e sem consultas ao banco.
+# /proc/self/status informa RSS do processo atual (não representa RAM total do Render).
+def _rev56_rss_mb():
+    try:
+        with open('/proc/self/status', 'r', encoding='ascii') as f:
+            for line in f:
+                if line.startswith('VmRSS:'):
+                    return round(int(line.split()[1]) / 1024, 1)
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+@app.before_request
+def _rev56_topdesk_probe_start():
+    if request.path in ('/api/topdesk/analytics', '/api/topdesk/dashboard'):
+        from flask import g
+        g.rev56_probe_start = time.monotonic()
+        g.rev56_probe_rss_before = _rev56_rss_mb()
+
+@app.after_request
+def _rev56_topdesk_probe_end(response):
+    from flask import g
+    start = getattr(g, 'rev56_probe_start', None)
+    if start is not None:
+        app.logger.warning('REV56_TOPDESK_MEM path=%s status=%s duration_ms=%d rss_before_mb=%s rss_after_mb=%s',
+                           request.path, response.status_code,
+                           round((time.monotonic()-start)*1000),
+                           getattr(g, 'rev56_probe_rss_before', None), _rev56_rss_mb())
+    return response
+
 _TOPDESK_DASH_CACHE = {}
 _TOPDESK_DASH_CACHE_TTL = int(os.getenv("TOPDESK_DASH_CACHE_TTL", "900"))
 
@@ -12216,9 +12246,12 @@ def topdesk_dashboard_api():
         top_locations=[{'name':k,'count':int(v)} for k,v in db.session.query(Location.location,func.count(TopDeskTicket.id)).join(TopDeskTicket,TopDeskTicket.location_id==Location.id).group_by(Location.location).order_by(func.count(TopDeskTicket.id).desc()).limit(12).all()]
         payload={"ok":True,"cache":"MISS","mode":"SQL_AGG","total":total,"open":max(0,total-resolved),"resolved":resolved,"assigned":assigned,"unassigned":max(0,total-assigned),"by_status":by_status,"by_type":by_type,"top_locations":top_locations}
         _TOPDESK_DASH_CACHE[cache_key]=(now,payload)
+        for k,v in list(_TOPDESK_DASH_CACHE.items()):
+            if now-v[0] > _TOPDESK_DASH_CACHE_TTL:
+                _TOPDESK_DASH_CACHE.pop(k,None)
         if len(_TOPDESK_DASH_CACHE)>4:
             oldest=sorted(_TOPDESK_DASH_CACHE, key=lambda k: _TOPDESK_DASH_CACHE[k][0])
-            for k in oldest[:-20]:
+            for k in oldest[:-4]:
                 _TOPDESK_DASH_CACHE.pop(k,None)
         return jsonify(payload)
     rows=_td_filter_rows(request.args); tickets=[x[0] for x in rows]; total=len(tickets); openrows=[t for t in tickets if _ticket_open(t)]; resolved=total-len(openrows)
@@ -12237,7 +12270,7 @@ def topdesk_dashboard_api():
             _TOPDESK_DASH_CACHE.pop(k,None)
     if len(_TOPDESK_DASH_CACHE)>4:
         oldest=sorted(_TOPDESK_DASH_CACHE, key=lambda k: _TOPDESK_DASH_CACHE[k][0])
-        for k in oldest[:-20]:
+        for k in oldest[:-4]:
             _TOPDESK_DASH_CACHE.pop(k,None)
     return jsonify(payload)
 
