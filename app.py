@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV52"
+APP_RELEASE = "V87.6 REV53"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -11896,12 +11896,19 @@ def topdesk_import_active():
     uid=session.get('user_id')
     _td_jobs_ready()
     from sqlalchemy import text as _sql_text
+    # REV53: uma unica leitura de payload evita N+1 consultas e updates no polling.
+    import json as _td_json
     with db.engine.connect() as conn:
-        rows=conn.execute(_sql_text("SELECT job_id FROM topdesk_import_jobs WHERE status IN ('QUEUED','READING','PROCESSING') AND (user_id=:uid OR user_id IS NULL) ORDER BY updated_at DESC LIMIT 5"),{"uid":uid}).fetchall()
-    for row in rows:
-        job=_td_job_snapshot(row[0])
-        if job and job.get('status') in ('QUEUED','READING','PROCESSING'):
-            return jsonify({'ok':True,'active':True,'job':dict(job,job_id=row[0])})
+        jobs=conn.execute(_sql_text("SELECT job_id,payload,updated_at FROM topdesk_import_jobs WHERE status IN ('QUEUED','READING','PROCESSING') AND (user_id=:uid OR user_id IS NULL) ORDER BY updated_at DESC LIMIT 5"),{"uid":uid}).fetchall()
+    for job_id,payload,updated_at in jobs:
+        job=_td_json.loads(payload)
+        if (datetime.utcnow()-updated_at).total_seconds()>180:
+            _td_job_update(job_id,status='INTERRUPTED',phase='Processamento interrompido; reenvie a planilha para atualizar sem duplicar incidentes.',error='Servidor reiniciado ou processamento sem atualização por mais de 3 minutos.',finished_at=datetime.utcnow().isoformat()+'Z')
+            continue
+        if job.get('status') in ('QUEUED','READING','PROCESSING'):
+            response=jsonify({'ok':True,'active':True,'job':dict(job,job_id=job_id)})
+            response.headers['Cache-Control']='no-store'
+            return response
     return jsonify({'ok':True,'active':False})
 
 
@@ -11998,7 +12005,7 @@ def _td_filter_rows(args):
         q=q.filter(db.or_(TopDeskTicket.created_at >= start, TopDeskTicket.created_at.is_(None)))
 
     out=[]
-    for t,loc_line,loc_name in q.all():
+    for t,loc_line,loc_name in q.yield_per(1000):
         dt=t.created_at or _td_dt(t.created_at_text)
         if not dt or dt < start or (end and dt > end.replace(hour=23,minute=59,second=59)):
             continue
@@ -12011,6 +12018,24 @@ def _td_filter_rows(args):
         if modelf and normalize(model)!=modelf: continue
         out.append((t,dt,line,location,model))
     return out
+
+
+def _td_recurrence_multi(rows):
+    """REV53: calcula janelas 1/7/30 dias em uma unica ordenacao por objeto/falha."""
+    groups={}
+    for t,dt,*_ in rows:
+        if dt and t.object_id:
+            groups.setdefault((normalize(t.object_id),normalize(t.subcategory)),[]).append(dt)
+    hits=[0,0,0]; eligible=0
+    for dates in groups.values():
+        dates.sort()
+        for i in range(1,len(dates)):
+            eligible+=1
+            delta=(dates[i]-dates[i-1]).total_seconds()
+            if delta<=86400: hits[0]+=1
+            if delta<=604800: hits[1]+=1
+            if delta<=2592000: hits[2]+=1
+    return [round(n*100/eligible,1) if eligible else 0 for n in hits]
 
 
 def _td_recurrence(rows, days):
@@ -12082,6 +12107,7 @@ def topdesk_analytics_api():
         payload=dict(cached); payload['cache']='HIT'; return jsonify(payload)
 
     rows=_td_filter_rows(request.args); total=len(rows)
+    recurrence24,recurrence7,recurrence30=_td_recurrence_multi(rows)
     objects={normalize(t.object_id) for t,*_ in rows if t.object_id}; locations={normalize(loc) for *_,loc,_ in rows if loc}; operators={normalize(t.operator) for t,*_ in rows if t.operator}
     monthly={}; failures={}; lines={}; models={}; locs={}; hours={}; weekdays={}; heat={}; tech={}; objcount={}
     weekday_names=['Seg','Ter','Qua','Qui','Sex','Sáb','Dom']
@@ -12144,7 +12170,7 @@ def topdesk_analytics_api():
         alerts.append({'level':'critical' if x['level']=='CRÔNICO' else 'warning','title':f"{friendly or x['object_id']} · {x['level']}",'detail':f"{x['count']} chamados · {x['times_average']}× média · {x['share']}% do recorte",'cause':f"Principal: {top_fail[0]} ({top_fail[1]})",'recent':f"30 dias: {recent30} · último: {last}",'object_id':x['object_id']})
 
     payload={'ok':True,'release':APP_RELEASE,'cache':'MISS','reference_label':reference_label,
-      'kpis':{'tickets':total,'objects':len(objects),'locations':len(locations),'operators':len(operators),'per_object':round(total/max(1,len(objects)),1),'recurrence24':_td_recurrence(rows,1),'recurrence7':_td_recurrence(rows,7),'recurrence30':_td_recurrence(rows,30)},
+      'kpis':{'tickets':total,'objects':len(objects),'locations':len(locations),'operators':len(operators),'per_object':round(total/max(1,len(objects)),1),'recurrence24':recurrence24,'recurrence7':recurrence7,'recurrence30':recurrence30},
       'monthly':[{'month':k,'count':monthly[k]} for k in sorted(monthly)],
       'failures':_td_ranked(failures,30,total,prev_failure),'lines':_td_ranked(lines,30,total,prev_line),'locations':_td_ranked(locs,30,total,prev_loc),'models':_td_ranked(models,30,total,prev_model),
       'hours':[{'hour':str(h).zfill(2),'count':hours.get(str(h).zfill(2),0)} for h in range(24)],'weekdays':[{'day':d,'count':weekdays.get(d,0)} for d in weekday_names],
@@ -15982,6 +16008,7 @@ def _v79_seed_cash_module():
         row.bag_type=item.get('bag_type') or '';row.model=item.get('model') or '';row.branch=item.get('branch') or '';row.collection_address=item.get('address') or '';row.active=True;row.updated_at=datetime.utcnow()
     db.session.flush()
     # Sobe os valores históricos da planilha somente enriquecendo a coleta existente; nunca duplica terminal+data.
+    seed_hashes={h for (h,) in db.session.query(FinancialCashCollection.source_hash).all()}
     for item in payload.get('events') or []:
         terminal=str(item.get('terminal') or '').strip(); ds=item.get('date')
         if not terminal or not ds: continue
@@ -15992,6 +16019,8 @@ def _v79_seed_cash_module():
         row=FinancialCashCollection.query.filter(FinancialCashCollection.terminal==terminal,FinancialCashCollection.collection_date==day).order_by(FinancialCashCollection.end_at.desc()).first()
         if not row:
             sig=hashlib.sha256(f'V79|{terminal}|{day.isoformat()}'.encode()).hexdigest()
+            if sig in seed_hashes: continue
+            seed_hashes.add(sig)
             row=FinancialCashCollection(terminal=terminal,point_name=item.get('station') or '',collection_date=day,start_at=end,end_at=end,collected_amount=float(item.get('declared_amount') or 0),source_file=source,source_hash=sig,imported_by=None)
             db.session.add(row)
         if item.get('declared_amount') is not None: row.declared_amount=float(item.get('declared_amount'))
@@ -16011,12 +16040,14 @@ def _v79_seed_cash_module():
                 end=datetime.combine(day,datetime.strptime(f'{hh:02d}:{mm:02d}','%H:%M').time()); gtv=str(item.get('gtv') or '')
                 sig=hashlib.sha256(f"V79.2|TBFORTE|{terminal}|{day.isoformat()}|{gtv}".encode()).hexdigest()
                 row=FinancialCashCollection.query.filter_by(source_hash=sig).first()
+                if not row and sig in seed_hashes: continue
                 if not row:
                     # Não duplica carga V79 anterior da mesma ATM/data; enriquece quando possível.
                     row=FinancialCashCollection.query.filter(FinancialCashCollection.terminal==terminal,FinancialCashCollection.collection_date==day).order_by(FinancialCashCollection.end_at.desc()).first()
                 if not row:
                     row=FinancialCashCollection(terminal=terminal,point_name=item.get('point') or '',collection_date=day,start_at=end,end_at=end,collected_amount=float(item.get('collected_amount') or 0),gtv=gtv,route=str(item.get('route') or ''),municipality=item.get('municipality') or '',source_file=hp.get('source') or 'Extrato TBForte JAN-AGO/2026',source_hash=sig,imported_by=None)
                     db.session.add(row)
+                    seed_hashes.add(sig)
                 row.point_name=item.get('point') or row.point_name; row.collection_date=day; row.end_at=end
                 row.collected_amount=float(item.get('collected_amount') or row.collected_amount or 0); row.gtv=gtv or row.gtv
                 if item.get('declared_amount') is not None: row.declared_amount=float(item.get('declared_amount'))
