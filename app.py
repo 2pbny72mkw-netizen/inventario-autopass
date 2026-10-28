@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV49"
+APP_RELEASE = "V87.6 REV51"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -204,8 +204,16 @@ def _td_job_snapshot(job_id):
         return None
     job=_json.loads(row[0]); status=job.get('status')
     if status in ('QUEUED','READING','PROCESSING') and (datetime.utcnow()-row[1]).total_seconds()>180:
-        _td_job_update(job_id,**job,status='INTERRUPTED',phase='Processamento interrompido; reenvie a planilha para atualizar sem duplicar incidentes.',error='Servidor reiniciado ou processamento sem atualização por mais de 3 minutos.',finished_at=datetime.utcnow().isoformat()+'Z')
-        return dict(TOPDESK_IMPORT_JOBS[job_id])
+        # REV51: não passar status duas vezes (**job e status=...).
+        # Atualizar apenas campos alterados preserva o payload existente no banco.
+        changes = {
+            'status': 'INTERRUPTED',
+            'phase': 'Processamento interrompido; reenvie a planilha para atualizar sem duplicar incidentes.',
+            'error': 'Servidor reiniciado ou processamento sem atualização por mais de 3 minutos.',
+            'finished_at': datetime.utcnow().isoformat() + 'Z',
+        }
+        _td_job_update(job_id, **dict(job, **changes))
+        return dict(job, **changes)
     return job
 
 # V55: cache curto de analytics TopDesk para evitar recalcular dezenas de milhares
@@ -11840,7 +11848,11 @@ def _topdesk_import_worker(job_id, file_path, filename, user_id):
             _td_job_update(job_id,status="DONE",phase="Importação concluída",progress=100,total=total,processed=total,inserted=inserted,updated=updated,ignored=ignored,errors=errors,elapsed_seconds=int(time.time()-started),finished_at=datetime.utcnow().isoformat()+"Z",format="TopDesk legado" if padrao_antigo else "Campo - Dogma")
         except Exception as exc:
             db.session.rollback()
-            _td_job_update(job_id,status="ERROR",phase="Importação interrompida",error=f"{type(exc).__name__}: {exc}",elapsed_seconds=int(time.time()-started),finished_at=datetime.utcnow().isoformat()+"Z")
+            app.logger.exception("TopDesk REV51: falha no processamento job_id=%s", job_id)
+            try:
+                _td_job_update(job_id,status="ERROR",phase="Importação interrompida",error=f"{type(exc).__name__}: {exc}",elapsed_seconds=int(time.time()-started),finished_at=datetime.utcnow().isoformat()+"Z")
+            except Exception:
+                app.logger.exception("TopDesk REV51: falha ao persistir status ERROR job_id=%s", job_id)
         finally:
             db.session.remove()
             if source is not None:
