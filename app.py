@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV57"
+APP_RELEASE = "V87.6 REV58"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -7648,44 +7648,23 @@ def diagnostics_retention_v8519_execute_api():
     bucket=os.environ.get("R2_BUCKET_NAME","").strip()
     if not dry_run and (not _r2_available() or not bucket):
         return jsonify({"ok":False,"error":"R2 não está disponível nesta instância."}),503
-    result=[]; total_photos=0; total_bytes=0; total_errors=0
-    client=r2_client() if not dry_run else None
+    # REV58: endpoint legado agora e exclusivamente uma prévia SQL de baixo custo.
+    # A exclusão efetiva deve ocorrer via /v8522/lote, em lotes pequenos.
+    # Não executar HEAD por foto: ~1.000 chamadas remotas causavam bloqueios de 4 min.
+    if not dry_run:
+        return jsonify({"ok":False,"error":"Execução direta desativada por segurança na REV58. Use a limpeza em lotes.","release":APP_RELEASE}),409
+    result=[]; total_photos=0
     for code in selected:
         label,photo,parent,fk,pk,keycol,completedcol=allowed[code]
-        rows=(db.session.query(photo,parent.completed_at)
-              .join(parent,fk==pk)
-              .filter(parent.completed_at.isnot(None),parent.completed_at<=cutoff)
-              .all())
-        eligible=[]
-        for ph,completed in rows:
-            raw=str(ph.stored_name or "")
-            if not raw or raw.startswith("local:"): continue
-            key=raw[4:] if raw.startswith("r2__") else raw
-            eligible.append((ph,key))
-        bytes_est=0
-        if eligible and _r2_available():
-            head_client=client or r2_client()
-            for _,key in eligible:
-                try: bytes_est+=int(head_client.head_object(Bucket=bucket,Key=key).get("ContentLength") or 0)
-                except Exception: pass
-        deleted=0; errors=[]
-        if not dry_run:
-            for ph,key in eligible:
-                try:
-                    client.delete_object(Bucket=bucket,Key=key)
-                    db.session.delete(ph)
-                    deleted+=1
-                except Exception as exc:
-                    errors.append({"photo_id":ph.id,"error":str(exc)[:180]})
-            db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="RETENTION_EVIDENCE_DELETE",entity_type="evidence_retention",entity_id=code,detail=json.dumps({"release":APP_RELEASE,"module":label,"days":days,"eligible":len(eligible),"deleted":deleted,"estimated_bytes":bytes_est,"errors":len(errors)},ensure_ascii=False)))
-        total_photos+=deleted if not dry_run else len(eligible); total_bytes+=bytes_est; total_errors+=len(errors)
-        result.append({"code":code,"module":label,"eligible":len(eligible),"deleted":deleted,"bytes":bytes_est,"errors":errors[:20]})
-    if not dry_run:
-        try: db.session.commit()
-        except Exception as exc:
-            db.session.rollback(); return jsonify({"ok":False,"error":f"Falha ao registrar limpeza: {str(exc)[:180]}"}),500
-    return jsonify({"ok":True,"release":APP_RELEASE,"dry_run":dry_run,"days":days,"modules":result,"photos":total_photos,"bytes":total_bytes,"errors":total_errors,
-      "note":"Atividades e seus históricos permanecem preservados. A V85.19 remove somente as evidências fotográficas elegíveis de Recarga/EMV e registra auditoria."})
+        eligible=int(db.session.query(db.func.count(photo.id))
+            .join(parent,fk==pk)
+            .filter(completedcol.isnot(None),completedcol<=cutoff,
+                    keycol.isnot(None),keycol!='',~keycol.like('local:%')).scalar() or 0)
+        total_photos+=eligible
+        result.append({"code":code,"module":label,"eligible":eligible,"deleted":0,"bytes":None,"errors":[]})
+    return jsonify({"ok":True,"release":APP_RELEASE,"dry_run":True,"days":days,"modules":result,
+        "photos":total_photos,"bytes":None,"bytes_estimate_available":False,"errors":0,
+        "note":"Prévia rápida por contagem SQL. O tamanho em bytes será medido durante os lotes de exclusão; nenhuma evidência foi alterada."})
 
 
 @app.post("/api/diagnostico/retencao/v8522/lote")
@@ -7694,7 +7673,7 @@ def diagnostics_retention_v8522_batch_api():
     """V85.22 — exclusão retomável em lotes pequenos para evitar timeout 502."""
     if not _has_access("management.diagnostics"): return jsonify({"ok":False,"error":"Sem permissão."}),403
     data=request.get_json(silent=True) or {}
-    try: days=int(data.get("days") or 0); limit=max(1,min(int(data.get("limit") or 25),50))
+    try: days=int(data.get("days") or 0); limit=max(1,min(int(data.get("limit") or 10),20))
     except Exception: return jsonify({"ok":False,"error":"Parâmetros inválidos."}),400
     if days not in (30,60,90): return jsonify({"ok":False,"error":"Retenção deve ser 30, 60 ou 90 dias."}),400
     if str(data.get("confirmation") or "").strip().upper()!="EXCLUIR EVIDENCIAS": return jsonify({"ok":False,"error":"Confirmação inválida."}),400
@@ -7707,7 +7686,8 @@ def diagnostics_retention_v8522_batch_api():
     if not selected: return jsonify({"ok":False,"error":"Selecione Recarga e/ou EMV."}),400
     if not _r2_available() or not os.environ.get("R2_BUCKET_NAME"): return jsonify({"ok":False,"error":"R2 indisponível."}),503
     cutoff=datetime.utcnow()-timedelta(days=days); bucket=os.environ["R2_BUCKET_NAME"]; client=r2_client()
-    # Processa no máximo 'limit' no total da chamada, com commit por foto removida para retomada segura.
+    # REV58: lotes menores, sem HEAD R2 por objeto. Commit individual preserva retomada.
+    # Não altera atividades, apenas fotos elegíveis confirmadas.
     processed=deleted=errors=bytes_deleted=0; details=[]
     for code in selected:
         if processed>=limit: break
@@ -7720,8 +7700,7 @@ def diagnostics_retention_v8522_batch_api():
                 errors+=1; processed+=1; details.append({'photo_id':ph.id,'module':code,'error':'Evidência sem objeto R2 elegível.'}); continue
             key=raw[4:] if raw.startswith('r2__') else raw; sz=0
             try:
-                try: sz=int(client.head_object(Bucket=bucket,Key=key).get('ContentLength') or 0)
-                except Exception: sz=0
+                # Evita uma chamada HEAD remota para cada evidência; bytes não são estimados neste lote.
                 client.delete_object(Bucket=bucket,Key=key)
                 db.session.delete(ph)
                 db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='RETENTION_EVIDENCE_DELETE',entity_type='evidence_retention',entity_id=code,detail=json.dumps({'release':APP_RELEASE,'module':label,'days':days,'photo_id':ph.id,'key':key,'bytes':sz},ensure_ascii=False)))
@@ -7735,7 +7714,8 @@ def diagnostics_retention_v8522_batch_api():
     for code in selected:
         _,photo,parent,fk,pk,completedcol=allowed[code]
         remaining += int(photo.query.join(parent,fk==pk).filter(completedcol.isnot(None),completedcol<=cutoff).count())
-    return jsonify({'ok':True,'release':APP_RELEASE,'processed':processed,'deleted':deleted,'errors':errors,'bytes_deleted':bytes_deleted,'remaining':remaining,'done':remaining==0,'details':details[:10],'batch_limit':limit})
+    app.logger.warning('REV58_RETENTION_BATCH modules=%s days=%s processed=%s deleted=%s errors=%s remaining=%s',','.join(selected),days,processed,deleted,errors,remaining)
+    return jsonify({'ok':True,'release':APP_RELEASE,'processed':processed,'deleted':deleted,'errors':errors,'bytes_deleted':None,'remaining':remaining,'done':remaining==0,'details':details[:10],'batch_limit':limit})
 
 @app.get("/api/diagnostico/performance/v8515")
 @login_required
@@ -12232,7 +12212,7 @@ def _rev56_topdesk_probe_end(response):
     from flask import g
     start = getattr(g, 'rev56_probe_start', None)
     if start is not None:
-        app.logger.warning('REV57_RAM path=%s status=%s duration_ms=%d rss_before_mb=%s rss_after_mb=%s',
+        app.logger.warning('REV58_RAM path=%s status=%s duration_ms=%d rss_before_mb=%s rss_after_mb=%s',
                            request.path, response.status_code,
                            round((time.monotonic()-start)*1000),
                            getattr(g, 'rev56_probe_rss_before', None), _rev56_rss_mb())
