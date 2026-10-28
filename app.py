@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV51"
+APP_RELEASE = "V87.6 REV52"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -11755,8 +11755,20 @@ def topdesk_import():
 
 def _topdesk_import_worker(job_id, file_path, filename, user_id):
     started=time.time()
+    # REV52: heartbeat durante leitura de planilhas grandes; evita classificar
+    # um worker ainda ativo como interrompido após 180 segundos sem progresso.
+    heartbeat_stop = threading.Event()
+    def heartbeat():
+        with app.app_context():
+            while not heartbeat_stop.wait(30):
+                try:
+                    _td_job_update(job_id, elapsed_seconds=int(time.time()-started))
+                except Exception:
+                    app.logger.exception("TopDesk REV52: falha no heartbeat %s", job_id)
     with app.app_context():
         source = None
+        heartbeat_thread = threading.Thread(target=heartbeat, daemon=True, name=f"topdesk-heartbeat-{job_id[:8]}")
+        heartbeat_thread.start()
         try:
             source = open(file_path, "rb")
             _td_job_update(job_id,status="READING",phase="Lendo planilha",progress=5)
@@ -11854,6 +11866,8 @@ def _topdesk_import_worker(job_id, file_path, filename, user_id):
             except Exception:
                 app.logger.exception("TopDesk REV51: falha ao persistir status ERROR job_id=%s", job_id)
         finally:
+            heartbeat_stop.set()
+            heartbeat_thread.join(timeout=2)
             db.session.remove()
             if source is not None:
                 source.close()
@@ -11870,7 +11884,9 @@ def topdesk_import_status(job_id):
     job=_td_job_snapshot(job_id)
     if not job:
         return jsonify({"ok":False,"error":"Importação não encontrada ou processo reiniciado."}),404
-    return jsonify({"ok":True,**job})
+    response = jsonify({"ok":True,**job})
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @app.get("/api/topdesk/import/active")
