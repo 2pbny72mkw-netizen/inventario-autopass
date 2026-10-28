@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV56"
+APP_RELEASE = "V87.6 REV57"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -220,7 +220,8 @@ def _td_job_snapshot(job_id):
 # de chamados a cada repaint/filtro idêntico. É invalidado ao fim de cada importação.
 TOPDESK_ANALYTICS_CACHE = {}
 TOPDESK_ANALYTICS_CACHE_LOCK = threading.Lock()
-TOPDESK_ANALYTICS_TTL = int(os.getenv("TOPDESK_ANALYTICS_TTL", "600"))
+TOPDESK_ANALYTICS_TTL = int(os.getenv("TOPDESK_ANALYTICS_TTL", "300"))
+TOPDESK_ANALYTICS_CACHE_MAX_BYTES = int(os.getenv("TOPDESK_ANALYTICS_CACHE_MAX_BYTES", "262144"))
 
 # V56-A.1: estado operacional do backfill TopDesk.
 # Deve existir antes das rotas, migrações e do startup que o consultam.
@@ -237,8 +238,33 @@ def _td_cache_get(key):
         return row[1]
 
 def _td_cache_put(key, payload):
+    # REV57: não reter respostas analíticas grandes na RAM entre requisições.
+    # A estimativa é calculada sobre o payload já produzido; sem cópia JSON adicional.
+    try:
+        import sys
+        approx_bytes = sys.getsizeof(payload)
+        pending = [payload]
+        visited = set()
+        while pending and approx_bytes <= TOPDESK_ANALYTICS_CACHE_MAX_BYTES:
+            item = pending.pop()
+            ident = id(item)
+            if ident in visited:
+                continue
+            visited.add(ident)
+            if item is not payload:
+                approx_bytes += sys.getsizeof(item)
+            if isinstance(item, dict):
+                pending.extend(item.keys())
+                pending.extend(item.values())
+            elif isinstance(item, (list, tuple, set)):
+                pending.extend(item)
+        if approx_bytes > TOPDESK_ANALYTICS_CACHE_MAX_BYTES:
+            return
+    except (TypeError, ValueError, MemoryError):
+        return
     with TOPDESK_ANALYTICS_CACHE_LOCK:
-        if len(TOPDESK_ANALYTICS_CACHE) >= 4:
+        TOPDESK_ANALYTICS_CACHE.pop(key, None)
+        while len(TOPDESK_ANALYTICS_CACHE) >= 4:
             oldest=min(TOPDESK_ANALYTICS_CACHE.items(),key=lambda kv:kv[1][0])[0]
             TOPDESK_ANALYTICS_CACHE.pop(oldest,None)
         TOPDESK_ANALYTICS_CACHE[key]=(time.time(),payload)
@@ -12196,7 +12222,7 @@ def _rev56_rss_mb():
 
 @app.before_request
 def _rev56_topdesk_probe_start():
-    if request.path in ('/api/topdesk/analytics', '/api/topdesk/dashboard'):
+    if request.path in ('/api/topdesk/analytics', '/api/topdesk/dashboard', '/api/dashboard', '/api/mobile/v1/field/stock/dashboard'):
         from flask import g
         g.rev56_probe_start = time.monotonic()
         g.rev56_probe_rss_before = _rev56_rss_mb()
@@ -12206,7 +12232,7 @@ def _rev56_topdesk_probe_end(response):
     from flask import g
     start = getattr(g, 'rev56_probe_start', None)
     if start is not None:
-        app.logger.warning('REV56_TOPDESK_MEM path=%s status=%s duration_ms=%d rss_before_mb=%s rss_after_mb=%s',
+        app.logger.warning('REV57_RAM path=%s status=%s duration_ms=%d rss_before_mb=%s rss_after_mb=%s',
                            request.path, response.status_code,
                            round((time.monotonic()-start)*1000),
                            getattr(g, 'rev56_probe_rss_before', None), _rev56_rss_mb())
@@ -12254,15 +12280,18 @@ def topdesk_dashboard_api():
             for k in oldest[:-4]:
                 _TOPDESK_DASH_CACHE.pop(k,None)
         return jsonify(payload)
-    rows=_td_filter_rows(request.args); tickets=[x[0] for x in rows]; total=len(tickets); openrows=[t for t in tickets if _ticket_open(t)]; resolved=total-len(openrows)
+    rows=_td_filter_rows(request.args)
+    total=len(rows); open_count=0
     by_status={}; by_type={}; by_location={}; assigned=0
     for t,dt,line,location,model in rows:
+        if _ticket_open(t): open_count+=1
         by_status[t.status or "Sem status"]=by_status.get(t.status or "Sem status",0)+1
         by_type[t.equipment_type or "OUTRO"]=by_type.get(t.equipment_type or "OUTRO",0)+1
         if t.assigned_technician_id: assigned+=1
         if location: by_location[location]=by_location.get(location,0)+1
+    resolved=total-open_count
     top_locations=sorted(by_location.items(),key=lambda x:x[1],reverse=True)[:12]
-    payload={"ok":True,"cache":"MISS","total":total,"open":len(openrows),"resolved":resolved,"assigned":assigned,"unassigned":total-assigned,"by_status":by_status,"by_type":by_type,"top_locations":[{"name":k,"count":v} for k,v in top_locations]}
+    payload={"ok":True,"cache":"MISS","total":total,"open":open_count,"resolved":resolved,"assigned":assigned,"unassigned":total-assigned,"by_status":by_status,"by_type":by_type,"top_locations":[{"name":k,"count":v} for k,v in top_locations]}
     _TOPDESK_DASH_CACHE[cache_key]=(now,payload)
     # REV47: TTL + limite incondicional; nenhuma chave de filtro fica ilimitada.
     for k,v in list(_TOPDESK_DASH_CACHE.items()):
