@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV58"
+APP_RELEASE = "V87.6 REV59"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -7636,10 +7636,12 @@ def diagnostics_retention_v8519_execute_api():
     allowed={
       "recarga":("Troca de Chips – Recarga",ChipSwapPhoto,ChipSwap,ChipSwapPhoto.chip_swap_id,ChipSwap.id,ChipSwapPhoto.stored_name,ChipSwap.completed_at),
       "emv":("Troca de Chips EMV",EmvChipSwapPhoto,EmvChipSwap,EmvChipSwapPhoto.swap_id,EmvChipSwap.id,EmvChipSwapPhoto.stored_name,EmvChipSwap.completed_at),
+      "firmware":("Firmware POS CPTM",PosFirmwareCptmPhoto,PosFirmwareCptm,PosFirmwareCptmPhoto.firmware_id,PosFirmwareCptm.id,PosFirmwareCptmPhoto.stored_name,PosFirmwareCptm.completed_at),
+      "garagem":("Garagem / Chips",GarageChipPhoto,GarageChipSwap,GarageChipPhoto.swap_id,GarageChipSwap.id,GarageChipPhoto.stored_name,GarageChipSwap.completed_at),
     }
     selected=[str(x).strip().lower() for x in modules if str(x).strip().lower() in allowed]
     if not selected:
-        return jsonify({"ok":False,"error":"Selecione Recarga e/ou EMV."}),400
+        return jsonify({"ok":False,"error":"Selecione ao menos um módulo de retenção."}),400
     confirm=str(data.get("confirmation") or "").strip().upper()
     dry_run=bool(data.get("dry_run",True))
     if not dry_run and confirm!="EXCLUIR EVIDENCIAS":
@@ -7681,9 +7683,11 @@ def diagnostics_retention_v8522_batch_api():
     allowed={
       "recarga":("Troca de Chips – Recarga",ChipSwapPhoto,ChipSwap,ChipSwapPhoto.chip_swap_id,ChipSwap.id,ChipSwap.completed_at),
       "emv":("Troca de Chips EMV",EmvChipSwapPhoto,EmvChipSwap,EmvChipSwapPhoto.swap_id,EmvChipSwap.id,EmvChipSwap.completed_at),
+      "firmware":("Firmware POS CPTM",PosFirmwareCptmPhoto,PosFirmwareCptm,PosFirmwareCptmPhoto.firmware_id,PosFirmwareCptm.id,PosFirmwareCptm.completed_at),
+      "garagem":("Garagem / Chips",GarageChipPhoto,GarageChipSwap,GarageChipPhoto.swap_id,GarageChipSwap.id,GarageChipSwap.completed_at),
     }
     selected=[x for x in selected if x in allowed]
-    if not selected: return jsonify({"ok":False,"error":"Selecione Recarga e/ou EMV."}),400
+    if not selected: return jsonify({"ok":False,"error":"Selecione ao menos um módulo de retenção."}),400
     if not _r2_available() or not os.environ.get("R2_BUCKET_NAME"): return jsonify({"ok":False,"error":"R2 indisponível."}),503
     cutoff=datetime.utcnow()-timedelta(days=days); bucket=os.environ["R2_BUCKET_NAME"]; client=r2_client()
     # REV58: lotes menores, sem HEAD R2 por objeto. Commit individual preserva retomada.

@@ -241,7 +241,6 @@ def install_pos_metro(app,db,can):
    except Exception:return jsonify(error='Imagem inválida; utilize JPEG, PNG ou WEBP'),400
    mime={'JPEG':'image/jpeg','PNG':'image/png','WEBP':'image/webp'}[im.format]
    valid.append((photo.filename[:160],mime,data))
-  if status=='Concluído' and not valid and not db.session.query(Photo.id).join(Event,Photo.event_id==Event.id).filter(Event.pos_id==pid).first():return jsonify(error='Foto obrigatória para concluir POS'),400
   try:
    event=Event(pos_id=pid,old_serial=obj.serial,old_model=obj.model,new_serial=serial or obj.serial,new_model=model or obj.model,notes=(request.form.get('observacoes') or '')[:2000],user_id=session['user_id'])
    db.session.add(event);db.session.flush()
@@ -327,6 +326,18 @@ def install_pos_metro(app,db,can):
   photo=db.session.get(APPhoto,photo_id)
   if not photo:abort(404)
   return send_file(BytesIO(photo.content),mimetype=photo.mimetype,download_name=photo.filename)
+ @app.get('/field/troca-pos-metro/<int:pid>/fotos')
+ @guard('field.pos_metro')
+ def pos_photos_list(pid):
+  if not db.session.get(POS,pid):abort(404)
+  # Only metadata: avoid loading large photo BLOBs into the 512MB web worker.
+  rows=(db.session.query(Photo.id,Photo.filename,Photo.created_at)
+        .join(Event,Photo.event_id==Event.id)
+        .filter(Event.pos_id==pid)
+        .order_by(Photo.created_at.desc(),Photo.id.desc()).limit(100).all())
+  return jsonify(ok=True,photos=[{'id':r.id,'filename':r.filename,
+     'created_at':r.created_at.isoformat() if r.created_at else None,
+     'url':'/field/troca-pos-metro/foto/'+str(r.id)} for r in rows])
  @app.get('/field/troca-pos-metro/foto/<int:photo_id>')
  @guard('field.pos_metro')
  def pos_photo(photo_id):
