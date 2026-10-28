@@ -35,6 +35,10 @@
 
 {% if session.get('role') not in ('technician','technician_implantation') %}
 <section class="card aboutHistoryCompact">
+<div class="versionItem featured"><div class="history-item"><strong>V87.6 REV51</strong> — Correção da recuperação de importações TopDesk interrompidas (HTTP 500 por argumento duplicado), registro de falhas no worker e versionamento centralizado. Financeiro: diagnóstico de erro de inserção pendente de mensagem PostgreSQL completa.</div></div>
+<div class="versionItem"><div class="history-item"><strong>V87.6 REV50</strong> — Upload TopDesk em arquivo temporário com leitura em blocos, processamento em lotes de 150 e limpeza de arquivos temporários.</div></div>
+<div class="versionItem"><div class="history-item"><strong>V87.6 REV49</strong> — Importação TopDesk com leitura incremental de planilha e processamento por lotes.</div></div>
+<div class="versionItem"><div class="history-item"><strong>V87.6 REV48</strong> — Persistência do acompanhamento das importações TopDesk no PostgreSQL.</div></div>
 <div class="versionItem featured"><div class="history-item"><strong>V87.6 REV47</strong> — Redução de amostragem de telemetria para 10% (erros e lentas preservados); retirada de expurgo SQL do ciclo HTTP; cache TopDesk limitado; diagnóstico e manutenção SQL manuais sem exclusão automática de transações ATM.</div></div>
 <div class="versionItem featured"><div class="history-item"><strong>V87.6 REV46</strong> — Versão centralizada em Aplicação, Dashboard, Equipes e telemetria; histórico atualizado; limite de memória do cache filtrado TopDesk.</div></div>
 <div class="versionItem"><div class="history-item"><strong>V87.6 REV45</strong> — Controle de TAGs: compatibilidade do Excel em atualização em massa, fotos por TAG, gráficos coloridos e painel de detalhes.</div></div>
