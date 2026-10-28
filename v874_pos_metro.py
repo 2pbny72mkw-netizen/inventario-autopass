@@ -154,7 +154,11 @@ def install_pos_metro(app,db,can):
   metric_rows=[{'id':x.id,'line':x.line,'station':x.station,'terminal':x.terminal,'terminal_number':short_number(x),'model':x.model or '', 'manufacturer':x.manufacturer or '', 'serial':x.serial or '', 'asset':x.asset or '', 'status':x.status,'installed_on':x.installed_on.strftime('%Y-%m-%d') if x.installed_on else ''} for x in POS.query.order_by(POS.line,POS.station,POS.terminal).all()]
   aps=AP.query.filter_by(line=request.args.get('linha'),station=station_name).order_by(AP.id).all() if station_name and request.args.get('linha') else []
   photo_ids={r[0] for r in db.session.query(APPhoto.ap_id).filter(APPhoto.ap_id.in_([a.id for a in aps])).distinct().all()} if aps else set()
-  ap_records=[{'ap':a,'has_photo':a.id in photo_ids} for a in aps]
+  first_photos={}
+  if aps:
+   for ap_id,photo_id in db.session.query(APPhoto.ap_id,func.min(APPhoto.id)).filter(APPhoto.ap_id.in_([a.id for a in aps])).group_by(APPhoto.ap_id):
+    first_photos[ap_id]=photo_id
+  ap_records=[{'ap':a,'has_photo':a.id in photo_ids,'photo_id':first_photos.get(a.id)} for a in aps]
   ap_total=max(1,len(aps)) if station_name and request.args.get('linha') and st_total else 0
   if ap_total:
    st_total+=ap_total
@@ -320,6 +324,14 @@ def install_pos_metro(app,db,can):
   db.session.commit()
   from urllib.parse import urlencode
   return redirect('/field/troca-pos-metro?'+urlencode({'linha':line,'estacao':station}))
+ @app.get('/field/troca-pos-metro/ap/<int:ap_id>/fotos')
+ @guard('field.pos_metro')
+ def ap_photos_list(ap_id):
+  if not db.session.get(AP,ap_id):abort(404)
+  rows=(db.session.query(APPhoto.id,APPhoto.filename)
+        .filter(APPhoto.ap_id==ap_id).order_by(APPhoto.id.desc()).limit(100).all())
+  return jsonify(ok=True,photos=[{'id':r.id,'filename':r.filename,
+   'url':'/field/troca-pos-metro/ap/foto/'+str(r.id)} for r in rows])
  @app.get('/field/troca-pos-metro/ap/foto/<int:photo_id>')
  @guard('field.pos_metro')
  def ap_photo(photo_id):
@@ -355,6 +367,31 @@ def install_pos_metro(app,db,can):
    for x in selected().order_by(POS.line,POS.station,POS.terminal):
     event=Event.query.filter_by(pos_id=x.id).order_by(Event.occurred_at.desc()).first()
     ws.append(['METRÔ',x.line,x.station,short_number(x),x.terminal,x.model,x.manufacturer,x.serial,x.asset,x.status,event.user_id if event else '',event.occurred_at if event else '',event.notes if event else ''])
+  if not empty:
+   apws=wb.create_sheet('Access Points')
+   apws.append(['Cliente','Linha','Estação','Identificação AP','Lado / acesso','Fabricante','Modelo','Status','Data da conclusão','Última observação','Fotos registradas','Referências das fotos'])
+   # Exportar os APs das estações abrangidas pelos filtros, sem limite de paginação.
+   # Filtros de status e período são aplicados também aos APs; a busca textual
+   # abrange os campos próprios do AP.
+   aq=AP.query
+   line=(request.args.get('linha') or '').strip()
+   station=(request.args.get('estacao') or '').strip()
+   status=(request.args.get('status') or '').strip()
+   term=(request.args.get('q') or '').strip()
+   if line:aq=aq.filter(AP.line==line)
+   if station:aq=aq.filter(AP.station==station)
+   if status:aq=aq.filter(AP.status==status)
+   if term:aq=aq.filter(or_(AP.identifier.ilike('%'+term+'%'),AP.location.ilike('%'+term+'%'),AP.model.ilike('%'+term+'%'),AP.manufacturer.ilike('%'+term+'%')))
+   start,end=date_range()
+   if start or end:
+    aq=aq.filter(AP.status=='Concluído',AP.installed_on.isnot(None))
+    if start:aq=aq.filter(AP.installed_on>=start)
+    if end:aq=aq.filter(AP.installed_on<end)
+   # Avoid retrieving photo BLOBs into RAM during Excel export.
+   for ap in aq.order_by(AP.line,AP.station,AP.identifier).yield_per(100):
+    photo_rows=db.session.query(APPhoto.id).filter(APPhoto.ap_id==ap.id).order_by(APPhoto.id).all()
+    photo_urls=['/field/troca-pos-metro/ap/foto/'+str(r.id) for r in photo_rows]
+    apws.append(['METRÔ',ap.line,ap.station,ap.identifier,ap.location,ap.manufacturer,ap.model,ap.status,ap.installed_on if ap.installed_on else '',ap.notes or '',len(photo_urls),' ; '.join(photo_urls)])
   stream=BytesIO();wb.save(stream);stream.seek(0)
   return send_file(stream,as_attachment=True,download_name=('modelo_pos_metro.xlsx' if empty else 'pos_metro_filtrado.xlsx'),mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
  @app.get('/field/troca-pos-metro/exportar')
