@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV53"
+APP_RELEASE = "V87.6 REV54"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -11614,15 +11614,15 @@ def _topdesk_match_location(row, loc_cache=None):
     # V55: a lista de localidades é pré-carregada uma vez por importação.
     # Antes, Location.query.all() era executado para CADA chamado.
     if loc_cache is None:
-        loc_cache=[(loc,normalize(loc.location),[x for x in normalize(loc.location).split() if len(x)>=4]) for loc in Location.query.all()]
+        loc_cache=[(loc_id,normalize(name),[x for x in normalize(name).split() if len(x)>=4]) for loc_id,name in db.session.query(Location.id,Location.location).all()]
     best=None; bestscore=0
-    for loc,name,tokens in loc_cache:
+    for loc_id,name,tokens in loc_cache:
         if name and len(name)>=4 and name in nraw:
             score=100+len(name)
         else:
             score=sum(8 for x in tokens if x in nraw)
         if score>bestscore:
-            bestscore=score; best=loc
+            bestscore=score; best=loc_id
     return best if bestscore>=8 else None
 
 
@@ -11788,8 +11788,8 @@ def _topdesk_import_worker(job_id, file_path, filename, user_id):
             _td_job_update(job_id,status="PROCESSING",phase="Preparando índices de importação",progress=8,total=total,processed=0)
             # REV48: evita carregar todos os chamados e entidades ORM na memória.
             existing={}
-            batch_size=150
-            loc_cache=[(loc,normalize(loc.location),[x for x in normalize(loc.location).split() if len(x)>=4]) for loc in Location.query.all()]
+            batch_size=max(25,min(150,int(os.getenv("TOPDESK_IMPORT_BATCH_SIZE","75"))))
+            loc_cache=[(loc_id,normalize(name),[x for x in normalize(name).split() if len(x)>=4]) for loc_id,name in db.session.query(Location.id,Location.location).all()]
             _td_job_update(job_id,status="PROCESSING",phase="Importando chamados",progress=10,total=total,processed=0)
             processed_count=0
             for batch_rows in iter(lambda: list(itertools.islice(rows,batch_size)), []):
@@ -11841,7 +11841,7 @@ def _topdesk_import_worker(job_id, file_path, filename, user_id):
                         t.source_file=filename[:300]
                         t.equipment_type=_topdesk_equipment_type(row)
                         loc=_topdesk_match_location(row,loc_cache)
-                        if loc: t.location_id=loc.id
+                        if loc: t.location_id=loc
                         t.priority="ALTA" if _topdesk_demand_type(t)=="INCIDENTE" else "NORMAL"
                         t.last_import_at=datetime.utcnow(); t.updated_at=datetime.utcnow()
                         if is_new: inserted+=1
@@ -11850,6 +11850,9 @@ def _topdesk_import_worker(job_id, file_path, filename, user_id):
                         errors+=1
                 if batch_rows:
                     db.session.commit()
+                    # REV54: a identity map não deve acumular 76 mil objetos ORM.
+                    db.session.expunge_all()
+                    existing.clear()
                     progress=min(99,10+int(pos/max(total,1)*89))
                     _td_job_update(job_id,processed=pos,inserted=inserted,updated=updated,ignored=ignored,errors=errors,progress=progress,elapsed_seconds=int(time.time()-started))
             total=processed_count
@@ -16008,7 +16011,7 @@ def _v79_seed_cash_module():
         row.bag_type=item.get('bag_type') or '';row.model=item.get('model') or '';row.branch=item.get('branch') or '';row.collection_address=item.get('address') or '';row.active=True;row.updated_at=datetime.utcnow()
     db.session.flush()
     # Sobe os valores históricos da planilha somente enriquecendo a coleta existente; nunca duplica terminal+data.
-    seed_hashes={h for (h,) in db.session.query(FinancialCashCollection.source_hash).all()}
+    seed_hashes={h for (h,) in db.session.query(FinancialCashCollection.source_hash).filter(FinancialCashCollection.source_hash.isnot(None)).yield_per(1000)}
     for item in payload.get('events') or []:
         terminal=str(item.get('terminal') or '').strip(); ds=item.get('date')
         if not terminal or not ds: continue
@@ -16034,7 +16037,13 @@ def _v79_seed_cash_module():
             for item in hp.get('events') or []:
                 terminal=str(item.get('terminal') or '').strip()
                 if terminal not in official_terms: continue
-                day=date.fromisoformat(item.get('date')); tm=(item.get('end_time') or '12:00')[:5]
+                raw_date=str(item.get('date') or '').strip()
+                try:
+                    day=datetime.strptime(raw_date,'%d/%m/%Y').date() if '/' in raw_date else date.fromisoformat(raw_date)
+                except (ValueError,TypeError):
+                    app.logger.warning('V87.6 REV54: data histórica TBForte inválida: %r',raw_date)
+                    continue
+                tm=(item.get('end_time') or '12:00')[:5]
                 try: hh,mm=[int(x) for x in tm.split(':')[:2]]
                 except Exception: hh,mm=12,0
                 end=datetime.combine(day,datetime.strptime(f'{hh:02d}:{mm:02d}','%H:%M').time()); gtv=str(item.get('gtv') or '')
