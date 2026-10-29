@@ -248,7 +248,7 @@ def install_pos_metro(app,db,can):
      if i is not None and i<len(row) and row[i] is not None:return str(row[i]).strip()
     return ''
    rows=[];seen=set();errors=[]
-   mapping={'PENDENTE':'Pendente','EMANDAMENTO':'Em andamento','CONCLUIDO':'Concluído'}
+   mapping={'PENDENTE':'Pendente','EMANDAMENTO':'Em andamento','CONCLUIDO':'Concluído','NOVOINSTALADO':'Concluído','EMINSTALACAO':'Em andamento','NAOINSTALADO':'Pendente'}
    pilot=(request.form.get('mapear_piloto') or '').strip()
    if pilot not in ('','Pendente','Em andamento','Concluído'):return jsonify(error='Mapeamento de piloto inválido.'),400
    for index,row in enumerate(iterator,2):
