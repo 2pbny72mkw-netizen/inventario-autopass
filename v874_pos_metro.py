@@ -263,33 +263,67 @@ def install_pos_metro(app,db,can):
    wb.close()
    return jsonify(error='Importação cancelada; nenhum registro alterado.',details=errors[:60]),400
   if not records:return jsonify(error='Nenhum POS válido encontrado'),400
+  # REV67: a prévia e a confirmação usam a mesma validação no servidor.
+  mode=(request.form.get('modo_importacao') or 'adicionar').strip()
+  phase=(request.form.get('fase_importacao') or 'validar').strip()
+  if mode not in ('adicionar','adicionar_atualizar','atualizar') or phase not in ('validar','aplicar'):
+   wb.close();return jsonify(error='Modalidade de importação inválida.'),400
   try:
    existing={p.terminal:p for p in POS.query.filter(POS.terminal.in_(list(records))).all()}
-   other_numbers={p.terminal_number:p.terminal for p in POS.query.filter(POS.terminal_number.in_([v[3] for v in records.values()])).all() if p.terminal not in records and p.terminal_number}
-   conflicts=[]
-   for terminal,(client,line,station,number,*_) in records.items():
+   number_values={v[3] for v in records.values() if v[3]}
+   other_numbers={}
+   if number_values:
+    for p in POS.query.filter(POS.terminal_number.in_(list(number_values))).all():
+     if p.terminal not in records:other_numbers.setdefault(p.terminal_number,[]).append(p.terminal)
+   conflicts=[];changes=[];counts={'adicionados':0,'atualizados':0,'ignorados':0}
+   for terminal,(client,line,station,number,model,serial,asset,manufacturer) in records.items():
     obj=existing.get(terminal)
-    if obj and (norm(obj.line)!=norm(line) or norm(obj.station)!=norm(station) or norm(obj.client)!=norm(client)):
-     conflicts.append(f'{terminal}: já cadastrado em {obj.client} / {obj.line} / {obj.station}')
-    if number and number in other_numbers:conflicts.append(f'Nº {number}: já usado em {other_numbers[number]}')
-   if conflicts:return jsonify(error='Conflitos detectados; nenhum registro alterado.',details=conflicts[:60]),409
-   added=0;kept=0
+    if number and number in other_numbers:
+     conflicts.append(f'{terminal}: número {number} já vinculado a outro POS: {", ".join(other_numbers[number])}')
+     continue
+    if obj is None:
+     if mode=='atualizar':counts['ignorados']+=1;changes.append({'terminal':terminal,'acao':'Ignorar (não cadastrado)'});continue
+     counts['adicionados']+=1;changes.append({'terminal':terminal,'acao':'Adicionar','localidade':f'{client} / {line} / {station}'});continue
+    if mode=='adicionar':counts['ignorados']+=1;changes.append({'terminal':terminal,'acao':'Preservar existente'});continue
+    # A identificação completa é a chave estável. Divergência de localidade
+    # exige confirmação explícita da modalidade de atualização.
+    diffs=[]
+    for label,old,newvalue in [('Cliente',obj.client,client),('Linha',obj.line,line),('Estação',obj.station,station)]:
+     if norm(old)!=norm(newvalue):diffs.append(f'{label}: {old or "(vazio)"} → {newvalue}')
+    for label,old,newvalue in [('Número',obj.terminal_number,number),('Modelo',obj.model,model),('Série',obj.serial,serial),('Patrimônio',obj.asset,asset),('Fabricante',obj.manufacturer,manufacturer)]:
+     if newvalue and (old or '')!=newvalue:diffs.append(f'{label}: {old or "(vazio)"} → {newvalue}')
+    if diffs:
+     counts['atualizados']+=1;changes.append({'terminal':terminal,'acao':'Atualizar','alteracoes':diffs})
+    else:
+     counts['ignorados']+=1;changes.append({'terminal':terminal,'acao':'Sem alterações'})
+   if conflicts:return jsonify(error='Conflitos de identidade detectados; nenhum registro alterado.',details=conflicts[:60]),409
+   if phase=='validar':
+    return jsonify(ok=True,preview=True,counts=counts,total=len(records),changes=changes[:200],truncated=len(changes)>200,message='Prévia concluída. Confira os registros e confirme para gravar.'),200
+   # Revalidar toda a planilha e aplicar de forma transacional.
    for terminal,(client,line,station,number,model,serial,asset,manufacturer) in records.items():
     obj=existing.get(terminal)
     if obj is None:
+     if mode=='atualizar':continue
      obj=POS(terminal=terminal,client=client,line=line,station=station,terminal_number=number,status='Pendente')
-     db.session.add(obj);added+=1
+     db.session.add(obj)
      obj.model=model or None;obj.serial=serial or None;obj.asset=asset or None;obj.manufacturer=manufacturer or None
-    else:
-     kept+=1 # Existing records and field evidence remain untouched.
+    elif mode!='adicionar':
+     obj.client=client;obj.line=line;obj.station=station
+     if number:obj.terminal_number=number
+     if model:obj.model=model
+     if serial:obj.serial=serial
+     if asset:obj.asset=asset
+     if manufacturer:obj.manufacturer=manufacturer
+     # Não modificar status, eventos, observações, fotografias ou data de conclusão.
    db.session.commit()
   except Exception:
    db.session.rollback();raise
   finally:wb.close()
   from flask import flash
-  flash(f'Importação incremental concluída: {added} novos POS; {kept} existentes preservados.', 'success')
+  msg=f'Importação concluída: {counts["adicionados"]} adicionados, {counts["atualizados"]} atualizados, {counts["ignorados"]} preservados/ignorados.'
+  flash(msg,'success')
   if request.headers.get('X-Requested-With')=='XMLHttpRequest':
-   return jsonify(ok=True,added=added,kept=kept,message=f'Importação concluída: {added} novos POS; {kept} preservados.')
+   return jsonify(ok=True,counts=counts,message=msg)
   return redirect('/field/troca-pos-metro')
  @app.post('/field/troca-pos-metro/importar-andamento')
  @guard('field.pos_metro.import')
