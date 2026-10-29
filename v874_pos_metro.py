@@ -224,6 +224,24 @@ def install_pos_metro(app,db,can):
   if not obj:abort(404)
   status=(request.form.get('status') or 'Pendente').strip()
   if status not in ('Pendente','Em andamento','Concluído'):return jsonify(error='Status inválido'),400
+  # REV62: troca de ID sem recriar o POS; manter vínculos por chave primária.
+  new_number=(request.form.get('numero_terminal') or '').strip()
+  old_number=short_number(obj)
+  if not new_number or not re.fullmatch(r'[0-9]{1,40}',new_number):
+   return jsonify(error='Informe um ID numérico válido (até 40 dígitos).'),400
+  new_terminal=obj.terminal
+  if new_number!=old_number:
+   match=re.search(r'(\d+)$',obj.terminal or '')
+   if not match:
+    return jsonify(error='Identificação atual sem sufixo numérico; alteração automática indisponível.'),400
+   new_terminal=obj.terminal[:match.start(1)]+new_number
+   if len(new_terminal)>90:return jsonify(error='Identificação gerada excede o limite permitido.'),400
+   # Evita colisão de ID mesmo entre linhas/estações distintas.
+   if POS.query.filter(POS.id!=pid,or_(func.lower(POS.terminal)==new_terminal.lower(),POS.terminal_number==new_number)).first():
+    return jsonify(error='ID já cadastrado em outro POS. Escolha outro número.'),409
+   # Cobrir também cadastros antigos cujo terminal_number não esteja preenchido.
+   if POS.query.filter(POS.id!=pid,POS.terminal.ilike('%-'+new_number)).first():
+    return jsonify(error='ID já utilizado na identificação de outro POS.'),409
   serial=(request.form.get('serial') or '').strip()[:120]
   # Série e patrimônio não são exigidos para registrar a instalação.
   manufacturer=(request.form.get('fabricante') or '').strip()
@@ -246,7 +264,10 @@ def install_pos_metro(app,db,can):
    mime={'JPEG':'image/jpeg','PNG':'image/png','WEBP':'image/webp'}[im.format]
    valid.append((photo.filename[:160],mime,data))
   try:
-   event=Event(pos_id=pid,old_serial=obj.serial,old_model=obj.model,new_serial=serial or obj.serial,new_model=model or obj.model,notes=(request.form.get('observacoes') or '')[:2000],user_id=session['user_id'])
+   if new_number!=old_number:
+    obj.terminal=new_terminal
+    obj.terminal_number=new_number
+   event=Event(pos_id=pid,old_serial=obj.serial,old_model=obj.model,new_serial=serial or obj.serial,new_model=model or obj.model,notes=(('[REV62] ID do POS alterado: '+old_number+' -> '+new_number+'; identificação: '+new_terminal+'\n') if new_number!=old_number else '')+(request.form.get('observacoes') or '')[:2000],user_id=session['user_id'])
    db.session.add(event);db.session.flush()
    for filename,mime,data in valid:db.session.add(Photo(event_id=event.id,filename=filename,mimetype=mime,content=data))
    if serial:obj.serial=serial
@@ -256,8 +277,11 @@ def install_pos_metro(app,db,can):
    obj.status=status
    if status=='Concluído':obj.installed_on=datetime.utcnow()
    db.session.commit()
-  except Exception:
-   db.session.rollback();raise
+  except Exception as exc:
+   db.session.rollback()
+   from sqlalchemy.exc import IntegrityError
+   if isinstance(exc,IntegrityError):return jsonify(error='Identificação já cadastrada. Alteração não realizada.'),409
+   raise
   return redirect('/field/troca-pos-metro')
  @app.post('/field/troca-pos-metro/<int:pid>/excluir-registro')
  @guard('field.pos_metro.execute')
