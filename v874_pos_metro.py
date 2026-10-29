@@ -21,6 +21,7 @@ def install_pos_metro(app,db,can):
   status=db.Column(db.String(25),nullable=False,default='Pendente')
   installed_on=db.Column(db.DateTime)
   terminal_number=db.Column(db.String(40))
+  client=db.Column(db.String(120),nullable=False,default='METRÔ')
  class Event(db.Model):
   __tablename__='v874_pos_metro_events'
   id=db.Column(db.Integer,primary_key=True)
@@ -81,6 +82,7 @@ def install_pos_metro(app,db,can):
   if db.engine.dialect.name=='postgresql':
    with db.engine.begin() as conn:
     conn.execute(text('ALTER TABLE v874_pos_metro ADD COLUMN IF NOT EXISTS terminal_number VARCHAR(40)'))
+    conn.execute(text("ALTER TABLE v874_pos_metro ADD COLUMN IF NOT EXISTS client VARCHAR(120) NOT NULL DEFAULT 'METRÔ'"))
     conn.execute(text("ALTER TABLE v8738_pos_metro_ap ADD COLUMN IF NOT EXISTS identifier VARCHAR(80) DEFAULT 'AP 01'"))
     conn.execute(text("ALTER TABLE v8738_pos_metro_ap ADD COLUMN IF NOT EXISTS location VARCHAR(150) DEFAULT ''"))
     conn.execute(text("UPDATE v8738_pos_metro_ap SET identifier='AP 01' WHERE identifier IS NULL OR identifier=''"))
@@ -90,6 +92,7 @@ def install_pos_metro(app,db,can):
    with db.engine.begin() as conn:
     columns=[r[1] for r in conn.execute(text('PRAGMA table_info(v874_pos_metro)'))]
     if 'terminal_number' not in columns:conn.execute(text('ALTER TABLE v874_pos_metro ADD COLUMN terminal_number VARCHAR(40)'))
+    if 'client' not in columns:conn.execute(text("ALTER TABLE v874_pos_metro ADD COLUMN client VARCHAR(120) NOT NULL DEFAULT 'METRÔ'"))
     apcols=[r[1] for r in conn.execute(text('PRAGMA table_info(v8738_pos_metro_ap)'))]
     if 'identifier' not in apcols:conn.execute(text("ALTER TABLE v8738_pos_metro_ap ADD COLUMN identifier VARCHAR(80) DEFAULT 'AP 01'"))
     if 'location' not in apcols:conn.execute(text("ALTER TABLE v8738_pos_metro_ap ADD COLUMN location VARCHAR(150) DEFAULT ''"))
@@ -127,7 +130,7 @@ def install_pos_metro(app,db,can):
   return q
  def selected():
   q=POS.query
-  for arg,col in [('linha',POS.line),('estacao',POS.station),('status',POS.status)]:
+  for arg,col in [('cliente',POS.client),('linha',POS.line),('estacao',POS.station),('status',POS.status)]:
    v=(request.args.get(arg) or '').strip()
    if v:q=q.filter(col==v)
   search=(request.args.get('q') or '').strip()
@@ -139,13 +142,18 @@ def install_pos_metro(app,db,can):
   q=selected();items=q.order_by(POS.line,POS.station,POS.terminal).limit(500).all()
   overall=POS.query
   total=overall.count();done=overall.filter(POS.status=='Concluído').count();ongoing=overall.filter(POS.status=='Em andamento').count()
-  lines=[x[0] for x in db.session.query(POS.line).distinct().order_by(POS.line)]
+  clients=[x[0] for x in db.session.query(POS.client).distinct().order_by(POS.client)]
+  lines_q=db.session.query(POS.line)
+  if request.args.get('cliente'):lines_q=lines_q.filter(POS.client==request.args['cliente'])
+  lines=[x[0] for x in lines_q.distinct().order_by(POS.line)]
   stations_q=db.session.query(POS.station)
+  if request.args.get('cliente'):stations_q=stations_q.filter(POS.client==request.args['cliente'])
   if request.args.get('linha'):stations_q=stations_q.filter(POS.line==request.args['linha'])
   stations=[x[0] for x in stations_q.distinct().order_by(POS.station)]
   station_name=(request.args.get('estacao') or '').strip()
   station_q=POS.query.filter(POS.station==station_name) if station_name else None
   if station_q is not None and request.args.get('linha'):station_q=station_q.filter(POS.line==request.args['linha'])
+  if station_q is not None and request.args.get('cliente'):station_q=station_q.filter(POS.client==request.args['cliente'])
   st_total=station_q.count() if station_q is not None else 0
   st_done=station_q.filter(POS.status=='Concluído').count() if station_q is not None else 0
   st_ongoing=station_q.filter(POS.status=='Em andamento').count() if station_q is not None else 0
@@ -158,7 +166,7 @@ def install_pos_metro(app,db,can):
    if note.startswith('[REV61]') or note.startswith('[REV62]'):
     continue
    if note.strip():latest_notes[pid]=note.strip()
-  metric_rows=[{'id':x.id,'line':x.line,'station':x.station,'terminal':x.terminal,'terminal_number':short_number(x),'model':x.model or '', 'manufacturer':x.manufacturer or '', 'serial':x.serial or '', 'asset':x.asset or '', 'status':x.status,'installed_on':x.installed_on.strftime('%Y-%m-%d') if x.installed_on else '', 'notes':latest_notes.get(x.id,'')} for x in POS.query.order_by(POS.line,POS.station,POS.terminal).all()]
+  metric_rows=[{'id':x.id,'client':x.client,'line':x.line,'station':x.station,'terminal':x.terminal,'terminal_number':short_number(x),'model':x.model or '', 'manufacturer':x.manufacturer or '', 'serial':x.serial or '', 'asset':x.asset or '', 'status':x.status,'installed_on':x.installed_on.strftime('%Y-%m-%d') if x.installed_on else '', 'notes':latest_notes.get(x.id,'')} for x in POS.query.order_by(POS.line,POS.station,POS.terminal).all()]
   aps=AP.query.filter_by(line=request.args.get('linha'),station=station_name).order_by(AP.id).all() if station_name and request.args.get('linha') else []
   photo_ids={r[0] for r in db.session.query(APPhoto.ap_id).filter(APPhoto.ap_id.in_([a.id for a in aps])).distinct().all()} if aps else set()
   first_photos={}
@@ -173,7 +181,7 @@ def install_pos_metro(app,db,can):
     a=entry['ap']
     if a.status=='Concluído' and entry['has_photo']:st_done+=1
     elif a.status=='Em andamento' or (a.status=='Concluído' and not entry['has_photo']):st_ongoing+=1
-  return render_template('v874_pos_metro.html',ap_records=ap_records,ap_total=ap_total,station_complete=bool(st_total and st_done==st_total),metric_rows=metric_rows,known_models=known_models,known_manufacturers=known_manufacturers,latest_notes=latest_notes,items=items,short_number=short_number,total=total,done=done,ongoing=ongoing,lines=lines,stations=stations,can_pos=can,st_total=st_total,st_done=st_done,st_ongoing=st_ongoing,filtered_count=q.count())
+  return render_template('v874_pos_metro.html',ap_records=ap_records,ap_total=ap_total,station_complete=bool(st_total and st_done==st_total),metric_rows=metric_rows,known_models=known_models,known_manufacturers=known_manufacturers,latest_notes=latest_notes,items=items,short_number=short_number,total=total,done=done,ongoing=ongoing,lines=lines,clients=clients,stations=stations,can_pos=can,st_total=st_total,st_done=st_done,st_ongoing=st_ongoing,filtered_count=q.count())
  @app.post('/field/troca-pos-metro/importar')
  @guard('field.pos_metro.import')
  def pos_import():
@@ -183,46 +191,81 @@ def install_pos_metro(app,db,can):
   if len(raw)>5_000_000:return jsonify(error='Arquivo excede 5 MB'),413
   try:wb=load_workbook(BytesIO(raw),read_only=True,data_only=True)
   except Exception:return jsonify(error='Planilha inválida'),400
-  if 'Metrô' not in wb and 'POS Metrô' not in wb:return jsonify(error='Aba Metrô ou POS Metrô não encontrada'),400
-  sheet=wb['Metrô'] if 'Metrô' in wb else wb['POS Metrô']; rows=sheet.iter_rows(values_only=True)
+  sheet=next((wb[name] for name in ('Metrô','POS Metrô','Equipamentos') if name in wb),None)
+  if sheet is None:return jsonify(error='Aba Metrô, POS Metrô ou Equipamentos não encontrada'),400
+  rows=sheet.iter_rows(values_only=True)
   header=next(rows,None)
   if not header:return jsonify(error='Planilha vazia'),400
+  import unicodedata
   def norm(v):
-   import unicodedata
-   return ''.join(c for c in unicodedata.normalize('NFKD',str(v or '').strip().upper()) if not unicodedata.combining(c)).replace('º','').replace('°','').replace('°','').replace(' ','').replace('N','N')
+   return re.sub(r'[^A-Z0-9]','', ''.join(c for c in unicodedata.normalize('NFKD',str(v or '').upper()) if not unicodedata.combining(c)))
   columns={norm(v):i for i,v in enumerate(header)}
-  required=['TERMINAL','LINHA','ESTACAO']
-  if any(k not in columns for k in required):return jsonify(error='Colunas obrigatórias ausentes: TERMINAL, LINHA, ESTAÇÃO'),400
-  def val(r,k):
-   i=columns.get(k)
-   return str(r[i]).strip() if i is not None and i<len(r) and r[i] is not None else ''
-  records={}
-  for r in rows:
-   terminal=val(r,'TERMINAL')[:90];line=val(r,'LINHA')[:100];station=val(r,'ESTACAO')[:150]
-   if not terminal or not line or not station:continue
-   if terminal in records:return jsonify(error='Terminal duplicado na planilha: '+terminal),400
-   number=(val(r,'NTERMINAL2') or val(r,'NUMEROTERMINAL') or val(r,'NTERMINAL') or (re.search(r'(\d+)$',terminal).group(1) if re.search(r'(\d+)$',terminal) else ''))[:40]
-   records[terminal]=(line,station,number,val(r,'MODELO')[:120],(val(r,'NSERIE') or val(r,'NoSERIE') or val(r,'NUMERODESERIE'))[:120],val(r,'PATRIMONIO')[:120],val(r,'FABRICANTE')[:120])
+  if not {'LINHA','ESTACAO'}.issubset(columns):return jsonify(error='Colunas Linha e Estação obrigatórias'),400
+  if not any(k in columns for k in ('TERMINAL','NTERMINAL2','NTERMINAL','NUMEROTERMINAL')):return jsonify(error='Informe Terminal ou Nº TERMINAL2'),400
+  def val(r,*keys):
+   for k in keys:
+    i=columns.get(k)
+    if i is not None and i<len(r) and r[i] is not None:
+     v=str(r[i]).strip()
+     if v:return v
+   return ''
+  # Station code comes from existing official identifiers or an explicit spreadsheet column.
+  # Never invent station abbreviations for new localities.
+  existing_codes={}
+  for p in db.session.query(POS.client,POS.line,POS.station,POS.terminal).all():
+   m=re.match(r'^L\d{2}-([A-Za-z0-9]+)-POS-\d+$',p.terminal or '')
+   if m:existing_codes[(norm(p.client),norm(p.line),norm(p.station))]=m.group(1).upper()
+  records={};errors=[];numbers={}
+  for index,r in enumerate(rows,start=2):
+   line=val(r,'LINHA')[:100];station=val(r,'ESTACAO')[:150]
+   number=val(r,'NTERMINAL2','NUMEROTERMINAL','NTERMINAL')[:40]
+   terminal=val(r,'TERMINAL')[:90]
+   client=val(r,'CLIENTE','OPERADORA')[:120] or 'METRÔ'
+   if not any((line,station,number,terminal)):continue
+   if not line or not station:errors.append(f'Linha {index}: Linha e Estação são obrigatórias');continue
+   if not number and terminal:
+    m=re.search(r'(\d+)$',terminal)
+    number=m.group(1) if m else ''
+   if not terminal:
+    line_match=re.match(r'^\s*(\d{1,2})',line)
+    code=val(r,'CODIGODAESTACAO','CODIGOESTACAO','SIGLAESTACAO').upper()
+    if not code:code=existing_codes.get((norm(client),norm(line),norm(station)),'')
+    if not line_match or not code or not re.fullmatch(r'[A-Z0-9]{2,12}',code) or not number or not re.fullmatch(r'\d{1,20}',number):
+     errors.append(f'Linha {index}: informe Terminal completo ou Nº TERMINAL2 e Código da estação (sigla oficial)');continue
+    terminal=f'L{int(line_match.group(1)):02d}-{code}-POS-{number}'
+   if terminal in records:errors.append(f'Linha {index}: terminal repetido na planilha: {terminal}');continue
+   if number in numbers and numbers[number]!=terminal:errors.append(f'Linha {index}: Nº terminal {number} repetido com outra identificação');continue
+   numbers[number]=terminal
+   records[terminal]=(client,line,station,number,val(r,'MODELO')[:120],val(r,'NSERIE','NUMERODESERIE')[:120],val(r,'PATRIMONIO')[:120],val(r,'FABRICANTE')[:120])
+  if errors:
+   wb.close()
+   return jsonify(error='Importação cancelada; nenhum registro alterado.',details=errors[:60]),400
   if not records:return jsonify(error='Nenhum POS válido encontrado'),400
   try:
    existing={p.terminal:p for p in POS.query.filter(POS.terminal.in_(list(records))).all()}
-   for terminal,(line,station,number,model,serial,asset,manufacturer) in records.items():
+   other_numbers={p.terminal_number:p.terminal for p in POS.query.filter(POS.terminal_number.in_([v[3] for v in records.values()])).all() if p.terminal not in records and p.terminal_number}
+   conflicts=[]
+   for terminal,(client,line,station,number,*_) in records.items():
+    obj=existing.get(terminal)
+    if obj and (norm(obj.line)!=norm(line) or norm(obj.station)!=norm(station) or norm(obj.client)!=norm(client)):
+     conflicts.append(f'{terminal}: já cadastrado em {obj.client} / {obj.line} / {obj.station}')
+    if number and number in other_numbers:conflicts.append(f'Nº {number}: já usado em {other_numbers[number]}')
+   if conflicts:return jsonify(error='Conflitos detectados; nenhum registro alterado.',details=conflicts[:60]),409
+   added=0;kept=0
+   for terminal,(client,line,station,number,model,serial,asset,manufacturer) in records.items():
     obj=existing.get(terminal)
     if obj is None:
-     obj=POS(terminal=terminal,status='Pendente');db.session.add(obj)
-    obj.line=line;obj.station=station;obj.terminal_number=number
-    # Importações subsequentes não sobrescrevem informações executadas em campo.
-    if obj.id is None or not db.session.query(Event.id).filter(Event.pos_id==obj.id).first():
-     if model:obj.model=model
-     if serial:obj.serial=serial
-     if asset:obj.asset=asset
-     if manufacturer:obj.manufacturer=manufacturer
+     obj=POS(terminal=terminal,client=client,line=line,station=station,terminal_number=number,status='Pendente')
+     db.session.add(obj);added+=1
+     obj.model=model or None;obj.serial=serial or None;obj.asset=asset or None;obj.manufacturer=manufacturer or None
+    else:
+     kept+=1 # Existing records and field evidence remain untouched.
    db.session.commit()
   except Exception:
    db.session.rollback();raise
   finally:wb.close()
   from flask import flash
-  flash(f'Importação concluída: {len(records)} terminais processados.', 'success')
+  flash(f'Importação incremental concluída: {added} novos POS; {kept} existentes preservados.', 'success')
   return redirect('/field/troca-pos-metro')
  @app.post('/field/troca-pos-metro/importar-andamento')
  @guard('field.pos_metro.import')
@@ -487,11 +530,11 @@ def install_pos_metro(app,db,can):
   return build_export(empty=True)
  def build_export(empty=False):
   wb=Workbook();ws=wb.active;ws.title='POS Metrô'
-  ws.append(['Cliente','Linha','Estação','N° TERMINAL2','Terminal','Modelo','Fabricante','Nº Série','Patrimônio','Status','Técnico responsável','Data da atividade','Observações'])
+  ws.append(['Cliente','Linha','Estação','N° TERMINAL2','Terminal','Modelo','Fabricante','Nº Série','Patrimônio','Status','Técnico responsável','Data da atividade','Observações','Código da estação'])
   if not empty:
    for x in selected().order_by(POS.line,POS.station,POS.terminal):
     event=Event.query.filter_by(pos_id=x.id).order_by(Event.occurred_at.desc()).first()
-    ws.append(['METRÔ',x.line,x.station,short_number(x),x.terminal,x.model,x.manufacturer,x.serial,x.asset,x.status,event.user_id if event else '',event.occurred_at if event else '',event.notes if event else ''])
+    ws.append([x.client,x.line,x.station,short_number(x),x.terminal,x.model,x.manufacturer,x.serial,x.asset,x.status,event.user_id if event else '',event.occurred_at if event else '',event.notes if event else '', ''])
   if not empty:
    apws=wb.create_sheet('Access Points')
    apws.append(['Cliente','Linha','Estação','Identificação AP','Lado / acesso','Fabricante','Modelo','Status','Data da conclusão','Última observação','Fotos registradas','Referências das fotos'])
