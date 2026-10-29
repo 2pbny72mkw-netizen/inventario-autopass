@@ -215,7 +215,18 @@ def install_pos_metro(app,db,can):
   for p in db.session.query(POS.client,POS.line,POS.station,POS.terminal).all():
    m=re.match(r'^L\d{2}-([A-Za-z0-9]+)-POS-\d+$',p.terminal or '')
    if m:existing_codes[(norm(p.client),norm(p.line),norm(p.station))]=m.group(1).upper()
-  records={};errors=[];numbers={}
+  # REV66: codes supplied once per new station, with no invented abbreviations.
+  import json
+  try: supplied_codes=json.loads(request.form.get('codigos_estacoes') or '{}')
+  except (TypeError,ValueError):return jsonify(error='Códigos de estação inválidos.'),400
+  if not isinstance(supplied_codes,dict) or len(supplied_codes)>500:return jsonify(error='Mapa de códigos de estação inválido.'),400
+  # Legacy records may use another client spelling; only reuse an unambiguous
+  # code for the exact line and station, never guess from the station name.
+  shared_codes={}
+  for (c,l,st),code in existing_codes.items():
+   shared_codes.setdefault((l,st),set()).add(code)
+  records={};errors=[];numbers={};missing_stations={}
+
   for index,r in enumerate(rows,start=2):
    line=val(r,'LINHA')[:100];station=val(r,'ESTACAO')[:150]
    number=val(r,'NTERMINAL2','NUMEROTERMINAL','NTERMINAL')[:40]
@@ -229,7 +240,15 @@ def install_pos_metro(app,db,can):
    if not terminal:
     line_match=re.match(r'^\s*(\d{1,2})',line)
     code=val(r,'CODIGODAESTACAO','CODIGOESTACAO','SIGLAESTACAO').upper()
+    station_key='|'.join((client,line,station))
     if not code:code=existing_codes.get((norm(client),norm(line),norm(station)),'')
+    if not code and len(shared_codes.get((norm(line),norm(station)),set()))==1:
+     code=next(iter(shared_codes[(norm(line),norm(station))]))
+    if not code:code=str(supplied_codes.get(station_key,'')).strip().upper()
+    if not code:
+     missing_stations[station_key]={'cliente':client,'linha':line,'estacao':station,'linha_planilha':index}
+     continue
+
     if not line_match or not code or not re.fullmatch(r'[A-Z0-9]{2,12}',code) or not number or not re.fullmatch(r'\d{1,20}',number):
      errors.append(f'Linha {index}: informe Terminal completo ou Nº TERMINAL2 e Código da estação (sigla oficial)');continue
     terminal=f'L{int(line_match.group(1)):02d}-{code}-POS-{number}'
@@ -237,6 +256,9 @@ def install_pos_metro(app,db,can):
    if number in numbers and numbers[number]!=terminal:errors.append(f'Linha {index}: Nº terminal {number} repetido com outra identificação');continue
    numbers[number]=terminal
    records[terminal]=(client,line,station,number,val(r,'MODELO')[:120],val(r,'NSERIE','NUMERODESERIE')[:120],val(r,'PATRIMONIO')[:120],val(r,'FABRICANTE')[:120])
+  if missing_stations:
+   wb.close()
+   return jsonify(error='Informe a sigla oficial de cada estação nova. Nenhum registro foi alterado.',missing_stations=list(missing_stations.values()),details=errors[:60]),400
   if errors:
    wb.close()
    return jsonify(error='Importação cancelada; nenhum registro alterado.',details=errors[:60]),400
@@ -266,6 +288,8 @@ def install_pos_metro(app,db,can):
   finally:wb.close()
   from flask import flash
   flash(f'Importação incremental concluída: {added} novos POS; {kept} existentes preservados.', 'success')
+  if request.headers.get('X-Requested-With')=='XMLHttpRequest':
+   return jsonify(ok=True,added=added,kept=kept,message=f'Importação concluída: {added} novos POS; {kept} preservados.')
   return redirect('/field/troca-pos-metro')
  @app.post('/field/troca-pos-metro/importar-andamento')
  @guard('field.pos_metro.import')
