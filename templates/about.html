@@ -35,6 +35,12 @@
 
 {% if session.get('role') not in ('technician','technician_implantation') %}
 <section class="card aboutHistoryCompact">
+<div class="versionItem featured"><div class="history-item"><strong>{{ app_release }}</strong> — REV64: identificação unificada de versão na aplicação, dashboard e equipes; importação de andamento POS com mapeamento de “Novo instalado”, “Em instalação” e “Não instalado”; validação prévia antes de aplicar. Pré-homologação.</div></div>
+<div class="versionItem"><div class="history-item"><strong>V87.6 REV63</strong> — Importação parcial de andamento de POS e recuperação de observações.</div></div>
+<div class="versionItem"><div class="history-item"><strong>V87.6 REV62</strong> — Edição de ID do POS com validação de duplicidade.</div></div>
+<div class="versionItem"><div class="history-item"><strong>V87.6 REV61</strong> — Edição e exclusão lógica de registros de troca de POS.</div></div>
+<div class="versionItem"><div class="history-item"><strong>V87.6 REV60</strong> — Fotos e navegação de Access Points; exportação de POS e AP.</div></div>
+<div class="versionItem"><div class="history-item"><strong>V87.6 REV59</strong> — Galeria de fotografias já registradas na troca de POS e ajustes de retenção.</div></div>
 <div class="versionItem featured"><div class="history-item"><strong>V87.6 REV55</strong> — Emergencial Render Free: histórico TBForte não reprocessado automaticamente a cada inicialização; caches TopDesk limitados a quatro entradas; sem exclusão de dados. Pré-homologação.</div></div>
 <div class="versionItem"><div class="history-item"><strong>V87.6 REV55</strong> — Estabilidade e memória: importação TopDesk com lotes menores e descarte de objetos ORM entre commits; cache de localidades sem instâncias ORM; datas históricas TBForte em formato brasileiro e ISO; diagnóstico de consumo de RAM no Render. Pré-homologação.</div></div>
 <div class="versionItem"><div class="history-item"><strong>V87.6 REV53</strong> — TopDesk: leitura em lotes, cálculo consolidado de reincidência e consulta de importação ativa em uma única leitura. Financeiro: proteção contra reinserção de hashes de coletas no seed de inicialização. Pré-homologação.</div></div>
