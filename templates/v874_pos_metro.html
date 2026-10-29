@@ -20,7 +20,41 @@
 <button type="button" class="posmetric" data-scope="estacao" data-status="Em andamento" onclick="openMetric(this)">Em andamento<b>{{st_ongoing}}</b></button>
 <button type="button" class="posmetric" data-scope="estacao" data-status="Pendente" onclick="openMetric(this)">Pendentes<b>{{st_total-st_done-st_ongoing}}</b></button>
 <button type="button" class="posmetric" data-scope="estacao" data-status="" onclick="openMetric(this)">Progresso<b>{{'%.1f'|format(st_done*100/st_total if st_total else 0)}}%</b></button></div>
-{% if can_pos('field.pos_metro.import') %}<form action="{{url_for('pos_import')}}" method="post" enctype="multipart/form-data" style="margin-top:20px"><label>Adicionar novos POS / localidades (abas Metrô, POS Metrô ou Equipamentos; para estação nova informe Terminal completo ou Código da estação oficial) <input type="file" name="arquivo" accept=".xlsx" required></label><button class="posbtn">Importar base</button></form>{% endif %}
+{% if can_pos('field.pos_metro.import') %}
+<form id="posbaseform" action="{{url_for('pos_import')}}" method="post" enctype="multipart/form-data" style="margin-top:20px">
+ <label>Adicionar novos POS / localidades (abas Metrô, POS Metrô ou Equipamentos)<input type="file" name="arquivo" accept=".xlsx" required></label>
+ <input type="hidden" name="codigos_estacoes" id="posstationcodes" value="{}">
+ <div id="posmissingstations" style="display:none;margin:10px 0;padding:12px;border:1px solid #d5e2ef;border-radius:8px"><strong>Estações novas — informe a sigla oficial uma única vez por estação</strong><p>O sistema não cria siglas automaticamente. Informe a codificação oficial usada na identificação dos POS.</p><div id="posstationfields"></div></div>
+ <button class="posbtn" type="submit" id="posbasebutton">Validar e importar base</button>
+ <div id="posbasefeedback" role="status" aria-live="polite" style="white-space:pre-line;margin-top:10px"></div>
+</form>
+<script>
+(function(){
+ const form=document.getElementById('posbaseform'),feedback=document.getElementById('posbasefeedback'),container=document.getElementById('posmissingstations'),fields=document.getElementById('posstationfields'),codes=document.getElementById('posstationcodes'),button=document.getElementById('posbasebutton');
+ form.querySelector('input[type=file]').addEventListener('change',()=>{fields.replaceChildren();container.style.display='none';codes.value='{}';feedback.textContent='';});
+ form.addEventListener('submit',async function(ev){
+  ev.preventDefault();if(!form.reportValidity())return;
+  const mapping={};fields.querySelectorAll('input[data-station-key]').forEach(input=>{if(input.value.trim())mapping[input.dataset.stationKey]=input.value.trim().toUpperCase();});
+  codes.value=JSON.stringify(mapping);button.disabled=true;feedback.textContent='Validando planilha…';
+  try{
+   const res=await fetch(form.action,{method:'POST',body:new FormData(form),credentials:'same-origin',headers:{'X-Requested-With':'XMLHttpRequest'}});
+   const contentType=res.headers.get('content-type')||'';
+   if(!contentType.includes('application/json')){feedback.textContent='Resposta inesperada do servidor. Verifique a sessão e tente novamente.';return;}
+   const data=await res.json();
+   if(res.ok&&data.ok){feedback.textContent=data.message;window.location.assign('/field/troca-pos-metro');return;}
+   feedback.textContent=(data.error||'Importação não realizada.')+(data.details?.length?'\n'+data.details.slice(0,12).join('\n'):'');
+   if(data.missing_stations?.length){
+    const previous={...mapping};fields.replaceChildren();
+    data.missing_stations.forEach(st=>{
+     const key=[st.cliente,st.linha,st.estacao].join('|');const label=document.createElement('label');label.style.cssText='display:block;margin:8px 0';label.textContent=st.cliente+' / '+st.linha+' / '+st.estacao+' — Código oficial: ';
+     const input=document.createElement('input');input.dataset.stationKey=key;input.maxLength=12;input.required=true;input.pattern='[A-Za-z0-9]{2,12}';input.placeholder='Sigla oficial';input.value=previous[key]||'';input.style.cssText='width:150px;margin-left:8px;padding:7px;border:1px solid #cbd5e1;border-radius:6px';label.appendChild(input);fields.appendChild(label);
+    });container.style.display='block';feedback.textContent+='\nPreencha as siglas acima e clique novamente em Validar e importar base.';
+   }
+  }catch(e){feedback.textContent='Falha de comunicação: '+e.message;}finally{button.disabled=false;}
+ });
+})();
+</script>
+{% endif %}
 {% if can_pos('field.pos_metro.import') %}<section style="margin-top:16px;padding:14px;border:1px solid #cbd9e9;border-radius:10px"><h3>Importar andamento de POS (sem criar equipamentos)</h3><p><small>Equivalências sugeridas na prévia: “Novo instalado” → Concluído; “Em instalação” → Em andamento; “Não instalado” → Pendente. “Em operação (piloto)” exige escolha manual.</small></p><p>Atualiza apenas POS já cadastrados. Permite anexar fotos depois. A prévia valida todos os registros antes da confirmação.</p><form id="posprogressform" enctype="multipart/form-data"><label>Planilha XLSX (aba Equipamentos ou POS Metrô)<input type="file" name="arquivo" accept=".xlsx" required></label><label>Quando a situação for “Em operação (piloto)”<select name="mapear_piloto" required><option value="">Selecione a equivalência</option><option value="Concluído">Concluído</option><option value="Em andamento">Em andamento</option><option value="Pendente">Pendente</option></select></label><button type="button" class="posbtn" onclick="posImportPreview()">Validar e visualizar alterações</button><button type="button" class="posbtn" id="posapplyprogress" onclick="posImportApply()" disabled>Confirmar importação</button></form><div id="posprogressresult" role="status" style="white-space:pre-wrap;margin-top:10px"></div></section>{% endif %}</div>
 <script>
 let posProgressValidated=false;
