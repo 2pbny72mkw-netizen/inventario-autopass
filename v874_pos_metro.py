@@ -151,7 +151,14 @@ def install_pos_metro(app,db,can):
   st_ongoing=station_q.filter(POS.status=='Em andamento').count() if station_q is not None else 0
   known_models=[x[0] for x in db.session.query(POS.model).filter(POS.model.isnot(None),POS.model!='').distinct().order_by(POS.model).limit(300)]
   known_manufacturers=[x[0] for x in db.session.query(POS.manufacturer).filter(POS.manufacturer.isnot(None),POS.manufacturer!='').distinct().order_by(POS.manufacturer).limit(300)]
-  metric_rows=[{'id':x.id,'line':x.line,'station':x.station,'terminal':x.terminal,'terminal_number':short_number(x),'model':x.model or '', 'manufacturer':x.manufacturer or '', 'serial':x.serial or '', 'asset':x.asset or '', 'status':x.status,'installed_on':x.installed_on.strftime('%Y-%m-%d') if x.installed_on else ''} for x in POS.query.order_by(POS.line,POS.station,POS.terminal).all()]
+  latest_notes={}
+  for eid,pid,note in db.session.query(Event.id,Event.pos_id,Event.notes).filter(Event.notes.isnot(None),Event.notes!='').order_by(Event.id.asc()).all():
+   if note.startswith('[REV63 Importação de andamento]'):
+    note=note.split('; ',2)[-1] if '; ' in note else ''
+   if note.startswith('[REV61]') or note.startswith('[REV62]'):
+    continue
+   if note.strip():latest_notes[pid]=note.strip()
+  metric_rows=[{'id':x.id,'line':x.line,'station':x.station,'terminal':x.terminal,'terminal_number':short_number(x),'model':x.model or '', 'manufacturer':x.manufacturer or '', 'serial':x.serial or '', 'asset':x.asset or '', 'status':x.status,'installed_on':x.installed_on.strftime('%Y-%m-%d') if x.installed_on else '', 'notes':latest_notes.get(x.id,'')} for x in POS.query.order_by(POS.line,POS.station,POS.terminal).all()]
   aps=AP.query.filter_by(line=request.args.get('linha'),station=station_name).order_by(AP.id).all() if station_name and request.args.get('linha') else []
   photo_ids={r[0] for r in db.session.query(APPhoto.ap_id).filter(APPhoto.ap_id.in_([a.id for a in aps])).distinct().all()} if aps else set()
   first_photos={}
@@ -166,7 +173,7 @@ def install_pos_metro(app,db,can):
     a=entry['ap']
     if a.status=='Concluído' and entry['has_photo']:st_done+=1
     elif a.status=='Em andamento' or (a.status=='Concluído' and not entry['has_photo']):st_ongoing+=1
-  return render_template('v874_pos_metro.html',ap_records=ap_records,ap_total=ap_total,station_complete=bool(st_total and st_done==st_total),metric_rows=metric_rows,known_models=known_models,known_manufacturers=known_manufacturers,items=items,short_number=short_number,total=total,done=done,ongoing=ongoing,lines=lines,stations=stations,can_pos=can,st_total=st_total,st_done=st_done,st_ongoing=st_ongoing,filtered_count=q.count())
+  return render_template('v874_pos_metro.html',ap_records=ap_records,ap_total=ap_total,station_complete=bool(st_total and st_done==st_total),metric_rows=metric_rows,known_models=known_models,known_manufacturers=known_manufacturers,latest_notes=latest_notes,items=items,short_number=short_number,total=total,done=done,ongoing=ongoing,lines=lines,stations=stations,can_pos=can,st_total=st_total,st_done=st_done,st_ongoing=st_ongoing,filtered_count=q.count())
  @app.post('/field/troca-pos-metro/importar')
  @guard('field.pos_metro.import')
  def pos_import():
@@ -217,6 +224,81 @@ def install_pos_metro(app,db,can):
   from flask import flash
   flash(f'Importação concluída: {len(records)} terminais processados.', 'success')
   return redirect('/field/troca-pos-metro')
+ @app.post('/field/troca-pos-metro/importar-andamento')
+ @guard('field.pos_metro.import')
+ def pos_import_progress():
+  import unicodedata
+  f=request.files.get('arquivo')
+  if not f or not (f.filename or '').lower().endswith('.xlsx'):return jsonify(error='Envie uma planilha XLSX.'),400
+  data=f.read(5_000_001)
+  if len(data)>5_000_000:return jsonify(error='Arquivo maior que 5 MB.'),413
+  try:wb=load_workbook(BytesIO(data),read_only=True,data_only=True)
+  except Exception:return jsonify(error='Planilha XLSX inválida.'),400
+  def norm(v):
+   return ''.join(c for c in unicodedata.normalize('NFKD',str(v or '').upper()) if not unicodedata.combining(c) and c.isalnum())
+  try:
+   ws=wb['Equipamentos'] if 'Equipamentos' in wb else (wb['POS Metrô'] if 'POS Metrô' in wb else wb.active)
+   iterator=ws.iter_rows(values_only=True); header=next(iterator,None)
+   if not header:return jsonify(error='Planilha vazia.'),400
+   cols={norm(v):i for i,v in enumerate(header)}
+   if 'TERMINAL' not in cols or 'SITUACAO' not in cols and 'STATUS' not in cols:return jsonify(error='Colunas obrigatórias: Terminal e Situação (ou Status).'),400
+   def value(row,*keys):
+    for key in keys:
+     i=cols.get(key)
+     if i is not None and i<len(row) and row[i] is not None:return str(row[i]).strip()
+    return ''
+   rows=[];seen=set();errors=[]
+   mapping={'PENDENTE':'Pendente','EMANDAMENTO':'Em andamento','CONCLUIDO':'Concluído'}
+   pilot=(request.form.get('mapear_piloto') or '').strip()
+   if pilot not in ('','Pendente','Em andamento','Concluído'):return jsonify(error='Mapeamento de piloto inválido.'),400
+   for index,row in enumerate(iterator,2):
+    terminal=value(row,'TERMINAL')
+    if not terminal:continue
+    if terminal in seen:errors.append(f'Linha {index}: terminal repetido no arquivo ({terminal}).');continue
+    seen.add(terminal)
+    raw_status=value(row,'SITUACAO','STATUS');key=norm(raw_status)
+    status=mapping.get(key)
+    if status is None and key=='EMOPERACAOPILOTO' and pilot:status=pilot
+    if status is None:errors.append(f'Linha {index}: situação não mapeada ({raw_status}).');continue
+    rows.append({'terminal':terminal,'status':status,'manufacturer':value(row,'FABRICANTE'),'model':value(row,'MODELO'),'serial':value(row,'NSERIE','NUMERODESERIE'),'notes':value(row,'OBSERVACAO')[:2000], 'date':value(row,'DATADEINSTALACAO'), 'station':value(row,'ESTACAO')})
+    if len(rows)>3000:errors.append('Máximo de 3.000 registros por importação.');break
+   existing={x.terminal:x for x in POS.query.filter(POS.terminal.in_([r['terminal'] for r in rows])).all()}
+   changes=[]
+   for r in rows:
+    obj=existing.get(r['terminal'])
+    if not obj:errors.append('Terminal não cadastrado: '+r['terminal']);continue
+    if r['station'] and norm(re.sub(r'\s*\([^)]*\)\s*$', '',r['station'])) != norm(obj.station):
+     errors.append('Estação divergente para '+r['terminal']+': '+r['station']);continue
+    try:
+     dt=None
+     if r['date']:
+      if isinstance(r['date'],datetime):dt=r['date']
+      else:
+       dt=datetime.strptime(r['date'].split(' ')[0],'%d/%m/%Y') if '/' in r['date'] else datetime.strptime(r['date'][:10],'%Y-%m-%d')
+    except ValueError:errors.append('Data inválida para '+r['terminal']+': '+r['date']);continue
+    changes.append((obj,r,dt))
+   if not rows:errors.append('Nenhuma linha de atualização encontrada.')
+   if errors:return jsonify(ok=False,errors=errors[:60],total_errors=len(errors)),400
+   counts={v:sum(r['status']==v for _,r,_ in changes) for v in ('Pendente','Em andamento','Concluído')}
+   preview={'ok':True,'total':len(changes),'counts':counts,'samples':[{'terminal':r['terminal'],'de':obj.status,'para':r['status']} for obj,r,_ in changes[:12]]}
+   if request.form.get('modo')!='aplicar':return jsonify(preview)
+   try:
+    for obj,r,dt in changes:
+     old_status=obj.status
+     old_serial=obj.serial;old_model=obj.model
+     obj.status=r['status']
+     if r['status']=='Concluído':obj.installed_on=dt or (obj.installed_on if old_status=='Concluído' else datetime.utcnow())
+     else:obj.installed_on=None
+     if r['manufacturer']:obj.manufacturer=r['manufacturer'][:120]
+     if r['model']:obj.model=r['model'][:120]
+     if r['serial']:obj.serial=r['serial'][:120]
+     event=Event(pos_id=obj.id,old_serial=old_serial,old_model=old_model,new_serial=obj.serial,new_model=obj.model,notes='[REV63 Importação de andamento] '+('Situação anterior: '+old_status+'; nova: '+r['status']+'; ')+r['notes'],user_id=session['user_id'])
+     db.session.add(event)
+    db.session.commit()
+   except Exception:
+    db.session.rollback();raise
+   return jsonify(preview|{'applied':True})
+  finally:wb.close()
  @app.post('/field/troca-pos-metro/<int:pid>/registrar')
  @guard('field.pos_metro.execute')
  def pos_register(pid):
