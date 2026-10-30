@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV67"
+APP_RELEASE = "V87.6 REV68"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -6193,8 +6193,31 @@ def inventory_atm_dashboard_api():
                 val=str(a.get(attr) or "").strip()
                 if val: candidates.append(val)
         return sorted(set(candidates),key=lambda x:x.casefold())
+    # REV68: visão gerencial de localidades por operadora + linha; contagens calculadas do recorte.
+    # Não confundir 'estoque' com 'inativo': são dimensões distintas na base oficial.
+    park_groups={}
+    for a in rows:
+        company=str(a.get("company") or "Não informado").strip() or "Não informado"
+        line=str(a.get("line") or "Não informado").strip() or "Não informado"
+        loc=str(a.get("locality") or "").strip()
+        key=(company,line)
+        g=park_groups.setdefault(key,{"company":company,"line":line,"atms":0,"locations":set(),"allocated":0,"stock":0})
+        g["atms"]+=1
+        if loc: g["locations"].add(loc.casefold())
+        if a.get("stock"): g["stock"]+=1
+        else: g["allocated"]+=1
+    park_by_line=[{"company":v["company"],"line":v["line"],"atms":v["atms"],"locations":len(v["locations"]),"allocated":v["allocated"],"stock":v["stock"]} for v in park_groups.values()]
+    park_by_line.sort(key=lambda x:(x["company"].casefold(),x["line"].casefold()))
+    park_by_company={}
+    for g in park_by_line:
+        item=park_by_company.setdefault(g["company"],{"company":g["company"],"atms":0,"locations":0,"lines":0})
+        item["atms"]+=g["atms"];item["locations"]+=g["locations"];item["lines"]+=1
+    park_by_company=sorted(park_by_company.values(),key=lambda x:-x["atms"])
+    park_locations=sum(x["locations"] for x in park_by_line)
+    park_statuses=agg("status")
     return jsonify({"ok":True,"release":APP_RELEASE,"source":"INVENTARIO AUTOPASS - EQUIPAMENTOS DE CAMPO - 082026.xlsm / aba ATM",
         "official_total":602,"official_allocated":590,"official_stock":12,"total":len(rows),
+        "park_summary":{"groups":len(park_by_company),"line_groups":len(park_by_line),"locations_by_line":park_locations,"status_counts":park_statuses},"park_by_company":park_by_company,"park_by_line":park_by_line,
         "allocated":sum(1 for x in rows if not x.get("stock")),"stock":sum(1 for x in rows if x.get("stock")),
         "operators":agg("company"),"models":agg("model"),"contracts":agg("contract"),"products":agg("product"),"transactions":agg("transactions"),"ownership":agg("ownership"),"locations":agg("locality"),"lines":agg("line"),
         "cptm_stations":len({str(x.get("locality") or "").strip() for x in rows if str(x.get("company") or "").upper()=="CPTM" and str(x.get("locality") or "").strip()}),
