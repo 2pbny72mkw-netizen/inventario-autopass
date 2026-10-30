@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV69"
+APP_RELEASE = "V87.6 REV70"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -22673,6 +22673,10 @@ def engineering_page():
         elif '</main>' in content:content=content.replace('</main>',link+'</main>',1)
         else:content=link+content
         response.set_data(content)
+    # REV70: cache busting do JavaScript de engenharia sem alterar outros módulos.
+    content=response.get_data(as_text=True)
+    content=content.replace("engineering_v72.js?", "engineering_v72.js?rev70&", 1)
+    response.set_data(content)
     return response
 
 def _eng_code_seed():
