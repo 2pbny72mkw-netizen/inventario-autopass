@@ -151,9 +151,23 @@
     setText('atmKTeamviewer',fmt(d.teamviewer_count));
   }
 
+  function renderParkSummary(d){
+    const park=d.park_summary||{}, companies=d.park_by_company||[], lines=d.park_by_line||[];
+    setText('atmParkTotal',fmt(d.total));setText('atmParkAllocated',fmt(d.allocated));
+    setText('atmParkStock',fmt(d.stock));setText('atmParkGroups',fmt(park.groups));
+    setText('atmParkLocations',fmt(park.locations_by_line));
+    const bar=(name,n,max,action)=>`<button type="button" class="atmParkBar" data-kind="${action}" data-value="${esc(name)}" style="display:grid;grid-template-columns:minmax(110px,1fr) 3fr 40px;gap:8px;align-items:center;width:100%;padding:7px;border:0;background:transparent;text-align:left;cursor:pointer"><span>${esc(name)}</span><span style="height:11px;background:#e8edf4;border-radius:6px;overflow:hidden"><span style="display:block;width:${max?Math.max(2,n/max*100):0}%;height:100%;background:#2878a9"></span></span><b>${fmt(n)}</b></button>`;
+    const maxCompany=Math.max(1,...companies.map(x=>x.atms));
+    setHtml('atmParkOperatorBars',companies.map(x=>bar(x.company,x.atms,maxCompany,'company')).join('')||'<p>Sem registros</p>');
+    const maxLine=Math.max(1,...lines.map(x=>x.atms));
+    setHtml('atmParkLineBars',lines.slice().sort((a,b)=>b.atms-a.atms).map(x=>bar(x.company+' · '+x.line,x.atms,maxLine,'line')).join('')||'<p>Sem registros</p>');
+    setHtml('atmParkCompanyRows',companies.map(x=>`<tr><td>${esc(x.company)}</td><td>${fmt(x.lines)}</td><td>${fmt(x.locations)}</td><td>${fmt(x.atms)}</td></tr>`).join(''));
+    setHtml('atmParkLineRows',lines.map(x=>`<tr><td>${esc(x.company)}</td><td>${esc(x.line)}</td><td>${fmt(x.locations)}</td><td>${fmt(x.atms)}</td><td>${fmt(x.allocated)}</td><td>${fmt(x.stock)}</td></tr>`).join(''));
+  }
+
   function renderAll(d){
     lastPayload=d;
-    renderKpis(d); renderOptions(d); renderOperatorBars(d); renderDonut(d); renderAllocation(d);
+    renderKpis(d); renderParkSummary(d); renderOptions(d); renderOperatorBars(d); renderDonut(d); renderAllocation(d);
     renderLocations(d); renderOwnership(d); renderLines(d); renderContracts(d); renderCoverage(d); renderAssets(d);
     const hint=$('atmDrillHint'); if(hint) hint.textContent=`Base ATM atualizada · ${fmt(d.total)} equipamento(s) no recorte · fonte oficial 08/2026.`;
   }
@@ -225,6 +239,13 @@
     $('atmClear')?.addEventListener('click',()=>{ ['atmFCompany','atmFLine','atmFLocation','atmFModel','atmFContract','atmFProduct','atmFTransactions','atmFOwnership','atmFStatus'].forEach(id=>{if($(id))$(id).value='';}); loadAtmDashboard(); });
     $('atmDashRefresh')?.addEventListener('click',loadAtmDashboard);
     $('atmDashExport')?.addEventListener('click',exportCsv);
+    $('atmParkSummary')?.addEventListener('click',e=>{
+      const btn=e.target.closest('.atmParkBar');if(!btn||!lastPayload)return;
+      const kind=btn.dataset.kind,value=btn.dataset.value;
+      const rows=(lastPayload.assets||[]).filter(a=>kind==='company'?String(a.company||'')===value:(String(a.company||'')+' · '+String(a.line||''))===value);
+      openDrill('Parque ATM · '+value,rows);
+    });
+
     const kpis=[['atmKTotal','Total oficial','total'],['atmKAllocated','Alocados','allocated'],['atmKStock','Estoque','stock'],['atmKCptmStations','Estações CPTM','cptm'],['atmKMetroStations','Estações Metrô','metro'],['atmKTeamviewer','TeamViewer','teamviewer']];
     kpis.forEach(([id,title,kind])=>$(id)?.closest('.kpi')?.addEventListener('click',()=>openDrill(title,kpiRows(kind))));
     document.querySelectorAll('[data-close-drill]').forEach(x=>x.addEventListener('click',closeDrill));
