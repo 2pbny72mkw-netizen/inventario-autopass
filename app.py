@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV68"
+APP_RELEASE = "V87.6 REV69"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -23134,10 +23134,20 @@ def engineering_bom_delete_v788(bid):
     used=[]
     if linked_ids:
         used=db.session.query(EngineeringBomItem,EngineeringBom).join(EngineeringBom,EngineeringBom.id==EngineeringBomItem.bom_id).filter(EngineeringBomItem.item_id.in_(linked_ids),EngineeringBomItem.bom_id!=bid).all()
-    studies=EngineeringPricingStudy.query.filter_by(bom_id=bid).count()
-    if used or studies:
-        refs=[f"{bb.product_code} {bb.revision}" for _,bb in used]
-        return jsonify({"ok":False,"error":"Estrutura possui vínculos e não pode ser excluída.","used_in":refs,"pricing_studies":studies}),409
+    # REV69: dependências explícitas, sem exclusão em cascata de estudos comerciais.
+    pricing=EngineeringPricingStudy.query.filter_by(bom_id=bid).order_by(EngineeringPricingStudy.id).all()
+    studies=len(pricing)
+    derived=EngineeringBom.query.filter_by(source_bom_id=bid).all()
+    refs=sorted(set(f"{bb.product_code} {bb.revision}" for _,bb in used))
+    if used or pricing or derived:
+        details=[]
+        if refs:details.append("Utilizada em: " + ", ".join(refs))
+        if pricing:details.append("Estudos de preço: " + ", ".join(f"#{x.id} {x.study_name}" for x in pricing))
+        if derived:details.append("Revisões/estruturas derivadas: " + ", ".join(f"{x.product_code} {x.revision}" for x in derived))
+        return jsonify({"ok":False,"error":"Exclusão bloqueada por dependências: " + "; ".join(details),
+                        "used_in":refs,"pricing_studies":studies,
+                        "pricing_study_details":[{"id":x.id,"study_name":x.study_name,"updated_at":x.updated_at.isoformat() if x.updated_at else None} for x in pricing],
+                        "derived_boms":[{"id":x.id,"product_code":x.product_code,"revision":x.revision} for x in derived]}),409
     old={"product_code":b.product_code,"product_name":b.product_name,"revision":b.revision,"bom_kind":b.bom_kind}
     EngineeringBomItem.query.filter_by(bom_id=bid).delete(synchronize_session=False)
     for it in linked_items: db.session.delete(it)
@@ -23157,6 +23167,23 @@ def engineering_pricing_list_api():
         except:data={}
         out.append({"id":x.id,"bom_id":x.bom_id,"study_name":x.study_name,"quantity":x.quantity,"data":data,"updated_at":x.updated_at.isoformat() if x.updated_at else None})
     cfg=_v72_settings();return jsonify({"ok":True,"studies":out,"config":{"import_factor":cfg.get("engineering_import_factor",1.8),"usd_brl":cfg.get("engineering_usd_brl",5.4)}})
+
+@app.delete("/api/engineering/pricing/<int:sid>")
+@login_required
+def engineering_pricing_delete_rev69(sid):
+    # Remoção individual, explícita, auditada; nunca é acionada pela exclusão da BOM.
+    if not _has_access("engineering.pricing.manage"):
+        return jsonify({"ok":False,"error":"Sem permissão para gerenciar estudos de preço."}),403
+    x=db.session.get(EngineeringPricingStudy,sid)
+    if not x:return jsonify({"ok":False,"error":"Estudo de preço não encontrado."}),404
+    data=request.get_json(silent=True) or {}
+    if data.get("confirm_study_id") != sid:
+        return jsonify({"ok":False,"error":"Confirme o ID do estudo antes de excluir."}),400
+    old={"id":x.id,"bom_id":x.bom_id,"study_name":x.study_name,"quantity":x.quantity,"data_json":x.data_json}
+    db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="ENGINEERING_PRICING_DELETED",entity_type="engineering_pricing",entity_id=str(x.id),detail=json.dumps(old,ensure_ascii=False)))
+    db.session.delete(x)
+    db.session.commit()
+    return jsonify({"ok":True,"deleted_study_id":sid})
 
 @app.post("/api/engineering/pricing")
 @login_required
