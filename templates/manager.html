@@ -166,6 +166,23 @@
   <section class="card v424FilterCard"><div class="v424Filters atmFilters atmFiltersV7797"><select id="atmFCompany"><option value="">Todas operadoras</option></select><select id="atmFLine"><option value="">Todas linhas</option></select><select id="atmFLocation"><option value="">Todas localidades</option></select><select id="atmFModel"><option value="">Todos modelos</option></select><select id="atmFContract"><option value="">Todos contratos</option></select><select id="atmFProduct"><option value="">Todos produtos</option></select><select id="atmFTransactions"><option value="">Todas transações</option></select><select id="atmFOwnership"><option value="">Todo tipo de posse</option></select><select id="atmFStatus"><option value="">Todos status</option></select><button class="secondary" id="atmClear">Limpar filtros</button></div></section>
   <section class="v424Kpis v430Kpis"><article class="kpi primaryKpi"><span>Total oficial</span><b id="atmKTotal">0</b><small>ATMs no universo filtrado</small></article><article class="kpi successKpi"><span>Alocados</span><b id="atmKAllocated">0</b><small>em operação/localidades</small></article><article class="kpi warningKpi"><span>Estoque</span><b id="atmKStock">0</b><small>equipamentos em estoque</small></article><article class="kpi"><span>Estações CPTM</span><b id="atmKCptmStations">0</b><small>localidades com ATM</small></article><article class="kpi"><span>Estações Metrô</span><b id="atmKMetroStations">0</b><small>localidades com ATM</small></article><article class="kpi"><span>TeamViewer</span><b id="atmKTeamviewer">0</b><small>IDs cadastrados</small></article></section>
 
+  <section class="card" id="atmParkSummary" style="margin:14px 0;padding:18px">
+    <div class="sectionHead"><div><span class="eyebrow">PARQUE ATM · REV68</span><h2>Distribuição por operadora, linha e localidade</h2><p class="muted">Indicadores calculados da base oficial, conforme filtros aplicados. Localidades distintas dentro de cada linha.</p></div></div>
+    <div class="v424Kpis" style="margin:12px 0;display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:10px">
+      <article class="kpi"><span>ATMs no recorte</span><b id="atmParkTotal">0</b></article>
+      <article class="kpi"><span>Alocados</span><b id="atmParkAllocated">0</b></article>
+      <article class="kpi"><span>Em estoque</span><b id="atmParkStock">0</b></article>
+      <article class="kpi"><span>Operadoras / grupos</span><b id="atmParkGroups">0</b></article>
+      <article class="kpi"><span>Localidades por linha</span><b id="atmParkLocations">0</b></article>
+    </div>
+    <p class="muted" style="font-size:12px">Alocados/estoque refletem a classificação da base; não equivalem necessariamente a ativo/inativo.</p>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(310px,1fr));gap:16px">
+      <div><h3>ATMs por operadora / grupo</h3><div id="atmParkOperatorBars" class="statusBars"></div></div>
+      <div><h3>ATMs por linha</h3><div id="atmParkLineBars" class="statusBars"></div></div>
+    </div>
+    <h3>Consolidado por operadora</h3><div class="tableWrap"><table><thead><tr><th>Operadora / grupo</th><th>Linhas / grupos</th><th>Localidades por linha</th><th>ATMs</th></tr></thead><tbody id="atmParkCompanyRows"></tbody></table></div>
+    <details style="margin-top:12px"><summary>Detalhar todas as linhas / grupos</summary><div class="tableWrap"><table><thead><tr><th>Operadora</th><th>Linha / grupo</th><th>Localidades</th><th>ATMs</th><th>Alocados</th><th>Estoque</th></tr></thead><tbody id="atmParkLineRows"></tbody></table></div></details>
+  </section>
   <section class="v430ChartGrid">
     <article class="card v430Chart v430Wide"><div class="sectionHead"><div><h2>ATMs por operação</h2><p class="muted">Barras verticais · clique para filtrar</p></div><span class="tag">OPERAÇÃO</span></div><div id="atmColumnOperator" class="v430Columns"></div></article>
     <article class="card v430Chart"><div class="sectionHead"><div><h2>Mix de modelos</h2><p class="muted">Distribuição do parque</p></div></div><div class="v430DonutWrap"><div id="atmModelDonut" class="v430Donut"><div><b id="atmDonutTotal">0</b><small>ATMs</small></div></div><div id="atmModelLegend" class="v430Legend"></div></div></article>
@@ -603,6 +620,6 @@
 
 <script src="{{url_for('static',filename='manager.js')}}?v=v77-9-6"></script>
 <script src="{{url_for('static',filename='equipment_inventory_dashboards.js')}}?v=v81-2"></script>
-<script src="{{url_for('static',filename='atm_dashboard_v7363.js')}}?v=v77-9-7"></script>
+<script src="{{url_for('static',filename='atm_dashboard_v7363.js')}}?v=v87-6-rev68"></script>
 <script src="{{url_for('static',filename='garage_dashboard_v62.js')}}?v=v72"></script>
 {% endblock %}
