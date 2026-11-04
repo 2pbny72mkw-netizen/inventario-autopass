@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV71"
+APP_RELEASE = "V87.6 REV72"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -15719,16 +15719,26 @@ def _fin_upsert_transaction_batch(mappings):
     hashes=[x["source_hash"] for x in mappings]
     existing={x.source_hash:x for x in FinancialATMTransaction.query.filter(FinancialATMTransaction.source_hash.in_(hashes)).all()}
     fresh=[]; updated=0
+    _r72_keys=set()  # V87.6 REV72: (terminal, dia) afetados, para atualizar o resumo diário
     update_fields=("terminal","transaction_at","status","value","received_value","external_tx_id","product_type","product_name","voucher_generated","voucher_number","status_desc","source_collection_code","source_collection_at","service_open_at","service_close_at","note_2","note_5","note_10","note_20","note_50","note_100","note_200","cpm_id","source_file","imported_by","imported_at")
     for item in mappings:
         row=existing.get(item["source_hash"])
+        try:
+            if item.get("terminal") and item.get("transaction_at"):
+                _r72_keys.add((item["terminal"],item["transaction_at"].date()))
+        except Exception: pass
         if row:
+            try:
+                # chave ANTIGA da linha também precisa ser recalculada (terminal/data podem mudar)
+                if row.terminal and row.transaction_at: _r72_keys.add((row.terminal,row.transaction_at.date()))
+            except Exception: pass
             for key in update_fields:
                 if key in item: setattr(row,key,item.get(key))
             updated+=1
         else:
             fresh.append(item)
     inserted=_fin_bulk_ignore(FinancialATMTransaction,fresh,chunk=1000) if fresh else 0
+    _v87r72_apply_summary_delta(sorted(_r72_keys),inserted)
     return inserted,updated
 
 def _fin_parse_datetime_any(value):
@@ -16441,8 +16451,69 @@ def _v8535_refresh_financial_daily_summary():
         if int(agg_count) != source_count:
             conn.execute(text("UPDATE financial_atm_summary_meta SET status='INVALID',refreshed_at=CURRENT_TIMESTAMP WHERE id=1"))
             return False
+        # V87.6 REV72: validação de VALOR além da contagem (bruto x resumo).
+        raw_amount=float(conn.execute(text("SELECT COALESCE(SUM(COALESCE(received_value,value)),0) FROM financial_atm_transactions")).scalar() or 0)
+        agg_amount=float(conn.execute(text("SELECT COALESCE(SUM(amount),0) FROM financial_atm_daily_summary")).scalar() or 0)
+        if abs(raw_amount-agg_amount) > 0.05:
+            app.logger.error("V87.6 REV72: resumo financeiro INVALID por valor: bruto=%s resumo=%s",raw_amount,agg_amount)
+            conn.execute(text("UPDATE financial_atm_summary_meta SET status='INVALID',refreshed_at=CURRENT_TIMESTAMP WHERE id=1"))
+            return False
         conn.execute(text("UPDATE financial_atm_summary_meta SET status='READY',refreshed_at=CURRENT_TIMESTAMP WHERE id=1"))
     return True
+
+def _v87r72_apply_summary_delta(affected_keys, inserted_count):
+    """V87.6 REV72: atualiza o resumo diário apenas para (terminal, dia) afetados pelo lote.
+    Roda na MESMA transação do lote de importação (o chamador faz o commit), dentro de um
+    SAVEPOINT: se falhar, o lote de importação segue normalmente e o resumo é marcado STALE,
+    o que faz a Coletas voltar à base bruta até a próxima reconstrução completa.
+    A base bruta continua sendo a fonte de verdade.
+    """
+    if not affected_keys: return
+    try:
+        if db.engine.dialect.name != 'postgresql': return
+    except Exception:
+        return
+    try:
+        meta=db.session.execute(text("SELECT status FROM financial_atm_summary_meta WHERE id=1")).first()
+    except Exception:
+        try: db.session.rollback()
+        except Exception: pass
+        return
+    # Sem resumo READY não há o que manter; a reconstrução completa do startup cuida disso.
+    if not meta or str(meta[0])!='READY': return
+    terms=[k[0] for k in affected_keys]; days=[k[1] for k in affected_keys]
+    # Flush FORA do savepoint: erro do próprio lote de importação deve propagar como antes
+    # e nunca ser engolido (nem desfeito) por uma falha do resumo.
+    db.session.flush()
+    try:
+        with db.session.begin_nested():
+            db.session.execute(text("""DELETE FROM financial_atm_daily_summary s
+                USING unnest(CAST(:terms AS varchar[]), CAST(:days AS date[])) AS k(terminal, tx_date)
+                WHERE s.terminal=k.terminal AND s.tx_date=k.tx_date"""),{'terms':terms,'days':days})
+            db.session.execute(text("""INSERT INTO financial_atm_daily_summary(terminal,tx_date,status,tx_count,amount,refreshed_at)
+                SELECT t.terminal, t.transaction_at::date, COALESCE(t.status,''), COUNT(*),
+                       COALESCE(SUM(COALESCE(t.received_value,t.value)),0), CURRENT_TIMESTAMP
+                FROM financial_atm_transactions t
+                JOIN unnest(CAST(:terms AS varchar[]), CAST(:days AS date[])) AS k(terminal, tx_date)
+                  ON t.terminal=k.terminal
+                 AND t.transaction_at>=k.tx_date
+                 AND t.transaction_at<k.tx_date+1
+                GROUP BY t.terminal, t.transaction_at::date, COALESCE(t.status,'')"""),{'terms':terms,'days':days})
+            db.session.execute(text("""UPDATE financial_atm_summary_meta
+                SET source_count=source_count+:ins,
+                    source_max_id=(SELECT COALESCE(MAX(id),0) FROM financial_atm_transactions),
+                    refreshed_at=CURRENT_TIMESTAMP
+                WHERE id=1"""),{'ins':int(inserted_count or 0)})
+    except Exception:
+        app.logger.exception("V87.6 REV72: falha ao atualizar resumo financeiro; marcado STALE (fallback bruto)")
+        try:
+            db.session.execute(text("UPDATE financial_atm_summary_meta SET status='STALE',refreshed_at=CURRENT_TIMESTAMP WHERE id=1"))
+        except Exception:
+            pass
+    finally:
+        # Invalida o cache de "pronto" para que o próximo acesso reflita o estado novo.
+        try: _V8543R1_SUMMARY_READY_CACHE.update({"at":0.0})
+        except Exception: pass
 
 def _v8535_financial_summary_ready():
     # V85.43 REV1 — COUNT(*) sobre ~900k transações não precisa rodar em cada Monitoramento.
