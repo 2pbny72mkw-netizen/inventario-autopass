@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV70"
+APP_RELEASE = "V87.6 REV71"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -2496,7 +2496,7 @@ ACCESS_GROUPS = {
         "materials.my_documents","materials.request","materials.catalog.view","materials.catalog.manage","materials.kits.manage","materials.delivery.create","materials.delivery.manage","materials.dossier.view","materials.access_lists.view","materials.access_lists.manage"
     )),
     "engineering": ("Engenharia", (
-        "engineering.items.view","engineering.items.manage","engineering.bom.view","engineering.bom.manage","engineering.import","engineering.pricing.view","engineering.pricing.manage","engineering.stock.view","engineering.stock.create","engineering.stock.move","engineering.stock.classify","engineering.stock.locations","engineering.stock.export",
+        "engineering.items.view","engineering.items.manage","engineering.bom.view","engineering.bom.manage","engineering.bom.delete","engineering.import","engineering.pricing.view","engineering.pricing.manage","engineering.stock.view","engineering.stock.create","engineering.stock.move","engineering.stock.classify","engineering.stock.locations","engineering.stock.export",
         "engineering.tags.view","engineering.tags.import","engineering.tags.edit","engineering.tags.bulk","engineering.tags.issues","engineering.tags.export","engineering.tags.audit"
     )),
     "portal": ("Portal do Cliente", ("portal.appointments","portal.receive","portal.manage")),
@@ -2516,7 +2516,7 @@ ACCESS_LABELS = {
  "finance.dashboard":"Dashboard Financeira","finance.support":"Suporte a Campo","finance.collection":"Coleta de Valores","finance.monitoring":"Monitoramento de Coletas","finance.apuracao":"Apuração de Numerário","finance.assistance":"Assistência Técnica","finance.implantation":"Implantação de Hardware","finance.entries":"Lançamentos","finance.suppliers":"Empresas / Fornecedores","finance.import":"Importar planilha","finance.edit":"Editar lançamentos","finance.delete":"Excluir lançamentos","finance.petty_cash.view":"Visualizar Caixinha","finance.petty_cash.manage":"Gerenciar Caixinha / despesas","finance.petty_cash.approve1":"Aprovar Caixinha - nível 1","finance.petty_cash.approve2":"Aprovar Caixinha - nível 2",
  "management.calls":"Chamados","management.360":"Central 360","management.notifications":"Notificações","management.diagnostics":"Diagnóstico","management.health":"Saúde da Plataforma","management.settings":"Configurações","management.dashboard_config":"Configuração de Dashboards","management.profiles":"Perfis & Permissões","management.gps_history":"Histórico GPS por estações","management.work_authorizations":"Autorizações de jornada","management.links":"Resumo dos Links","management.external_locations":"Localidades externas",
  "materials.my_documents":"Meus documentos / Minha carga","materials.request":"Solicitar material","materials.catalog.view":"Visualizar catálogo","materials.catalog.manage":"Cadastrar / editar / inativar materiais","materials.kits.manage":"Gerenciar kits","materials.delivery.create":"Criar e enviar entregas","materials.delivery.manage":"Gerenciar aceites / correções","materials.dossier.view":"Dossiê dos colaboradores","materials.access_lists.view":"Listas de acesso Metrô / CPTM","materials.access_lists.manage":"Gerar / validar listas de acesso",
- "engineering.items.view":"Visualizar cadastro de itens","engineering.items.manage":"Cadastrar / editar itens","engineering.bom.view":"Visualizar estruturas BOM","engineering.bom.manage":"Criar / revisar BOM","engineering.import":"Importar planilhas de Engenharia","engineering.pricing.view":"Visualizar formação de preço","engineering.pricing.manage":"Criar / editar estudos de preço",
+ "engineering.items.view":"Visualizar cadastro de itens","engineering.items.manage":"Cadastrar / editar itens","engineering.bom.view":"Visualizar estruturas BOM","engineering.bom.manage":"Criar / revisar BOM","engineering.bom.delete":"Excluir estruturas BOM","engineering.import":"Importar planilhas de Engenharia","engineering.pricing.view":"Visualizar formação de preço","engineering.pricing.manage":"Criar / editar estudos de preço",
  "engineering.stock.view":"Visualizar Estoque Central","engineering.stock.create":"Cadastrar material provisório","engineering.stock.move":"Inventariar / movimentar estoque","engineering.stock.classify":"Classificar materiais","engineering.stock.locations":"Administrar localidades de estoque","engineering.stock.export":"Exportar Estoque Central",
  "engineering.tags.view":"Visualizar Controle de TAGs e Produtos","engineering.tags.import":"Cadastrar / importar TAGs","engineering.tags.edit":"Editar TAGs","engineering.tags.bulk":"Atualizar TAGs em massa","engineering.tags.issues":"Tratar divergências de TAGs","engineering.tags.export":"Exportar TAGs","engineering.tags.audit":"Visualizar auditoria de TAGs",
  "portal.appointments":"Criar / consultar agendamentos","portal.receive":"Receber agendamentos","portal.manage":"Administrar Portal do Cliente",
@@ -22673,9 +22673,18 @@ def engineering_page():
         elif '</main>' in content:content=content.replace('</main>',link+'</main>',1)
         else:content=link+content
         response.set_data(content)
-    # REV70: cache busting do JavaScript de engenharia sem alterar outros módulos.
+    # REV71: autorização de exclusão independente da permissão de criação/revisão.
+    # O template legado só exibe o botão para ADM; a inserção abaixo respeita
+    # a Matriz de Permissões sem substituir templates mais recentes.
     content=response.get_data(as_text=True)
-    content=content.replace("engineering_v72.js?", "engineering_v72.js?rev70&", 1)
+    if _has_access("engineering.bom.delete") and 'id="engDeleteBom"' not in content:
+        content, inserted = re.subn(
+            r'(<button\b[^>]*\bid="engEditBom"[^>]*>.*?</button>)',
+            r'\1<button id="engDeleteBom" class="engDangerBtn">Excluir estrutura</button>',
+            content, count=1, flags=re.DOTALL,
+        )
+    # A API sempre valida a mesma permissão; esconder o botão não é controle de segurança.
+    content=content.replace("engineering_v72.js?", "engineering_v72.js?rev71&", 1)
     response.set_data(content)
     return response
 
@@ -23129,8 +23138,8 @@ def engineering_bom_update_api(bid):
 @app.delete("/api/engineering/boms/<int:bid>")
 @login_required
 def engineering_bom_delete_v788(bid):
-    if session.get("role") != "manager":
-        return jsonify({"ok":False,"error":"Somente ADM pode excluir uma estrutura."}),403
+    if not _has_access("engineering.bom.delete"):
+        return jsonify({"ok":False,"error":"Sem permissão para excluir estruturas BOM."}),403
     b=db.session.get(EngineeringBom,bid)
     if not b:return jsonify({"ok":False,"error":"BOM não encontrada."}),404
     linked_items=EngineeringItem.query.filter_by(linked_bom_id=bid).all()
