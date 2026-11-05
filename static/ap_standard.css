@@ -51,3 +51,25 @@ html.ap-new .kpi b,html.ap-new .kpi strong{font-variant-numeric:tabular-nums}
 html.ap-new table th{background:var(--ap-head);color:var(--ap-text)}
 html.ap-new table td,html.ap-new table th{border-color:var(--ap-border)}
 html.ap-new table tbody tr:hover{background:#F2F6FB}
+
+/* V87.6 REV84 — botões coloridos por significado (atributo data-ap-v posto automaticamente pelo ap_standard.js; nunca sobrescreve botão com fundo próprio). */
+html.ap-new [data-ap-v="primary"]{background:var(--ap-navy)!important;color:#fff!important;border-color:var(--ap-navy)!important}
+html.ap-new [data-ap-v="primary"]:hover{background:var(--ap-navy-hover)!important}
+html.ap-new [data-ap-v="success"]{background:#166B44!important;color:#fff!important;border-color:#166B44!important}
+html.ap-new [data-ap-v="success"]:hover{background:#115535!important}
+html.ap-new [data-ap-v="warn"]{background:#FFC24D!important;color:#3B2A00!important;border-color:#E5A92E!important}
+html.ap-new [data-ap-v="warn"]:hover{background:#F2B031!important}
+html.ap-new [data-ap-v="danger"]{background:#A12622!important;color:#fff!important;border-color:#A12622!important}
+html.ap-new [data-ap-v="danger"]:hover{background:#861E1B!important}
+html.ap-new [data-ap-v="info"]{background:#0072B2!important;color:#fff!important;border-color:#0072B2!important}
+html.ap-new [data-ap-v="info"]:hover{background:#005F96!important}
+html.ap-new [data-ap-v="neutral"]{background:#3F4A57!important;color:#fff!important;border-color:#3F4A57!important}
+html.ap-new [data-ap-v="neutral"]:hover{background:#2F3943!important}
+/* Dentro de tabelas: versão suave, para não poluir a linha */
+html.ap-new td [data-ap-v="success"]{background:var(--ap-ok-bg)!important;color:var(--ap-ok)!important;border-color:#BFE3CE!important}
+html.ap-new td [data-ap-v="warn"]{background:var(--ap-warn-bg)!important;color:var(--ap-warn)!important;border-color:#F2D78F!important}
+html.ap-new td [data-ap-v="danger"]{background:var(--ap-crit-bg)!important;color:var(--ap-crit)!important;border-color:#F0B8B4!important}
+html.ap-new td [data-ap-v="info"]{background:var(--ap-info-bg)!important;color:var(--ap-info)!important;border-color:#BCD3EE!important}
+html.ap-new td [data-ap-v="neutral"]{background:var(--ap-none-bg)!important;color:var(--ap-none)!important;border-color:#D3D9E2!important}
+html.ap-new td [data-ap-v="primary"]{background:var(--ap-head)!important;color:var(--ap-navy)!important;border-color:#C9D6E8!important}
+html.ap-new [data-ap-v]:disabled{opacity:.55;cursor:not-allowed}

@@ -176,4 +176,35 @@
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',start); else start();
 })();
 /* V87.6 REV83 — pré-visualização do visual novo: só liga neste navegador (localStorage), nunca para os demais usuários. */
-(function(){try{if(localStorage.getItem('ap_preview')==='1')document.documentElement.classList.add('ap-new');}catch(e){}})();
+(function(){
+  /* V87.6 REV84 — visual novo ligado por padrão; "0" no navegador desliga só nele. */
+  try{ if(localStorage.getItem('ap_preview')!=='0') document.documentElement.classList.add('ap-new'); }catch(e){ document.documentElement.classList.add('ap-new'); }
+  var RULES=[
+    ['danger',/^(excluir|apagar|remover|deletar|descartar|arquivar|compactar|desativar|inativar|bloquear|encerrar)/],
+    ['success',/^(aprovar|concluir|confirmar|receber|finalizar|liberar|autorizar|aceitar|iniciar|ativar|reativar)/],
+    ['warn',/^(reabrir|pausar|reprocessar|devolver|reverter|desfazer|revisar|reenviar|recalcular)/],
+    ['info',/^(importar|exportar|baixar|download|sincronizar|imprimir|anexar|upload|ver plano|simular)/],
+    ['neutral',/^(voltar|cancelar|fechar|dispensar|ignorar)/],
+    ['primary',/^(salvar|registrar|gerar|enviar|criar|novo|nova|adicionar|cadastrar|entrar|aplicar|publicar|solicitar|atribuir|alocar)/]
+  ];
+  var SKIP='.navDropBtn,.navInstall,.ap-th-btn,.navDropMenu,[role="tab"],[class*="tab"],.on,.active,th';
+  function label(el){ var t=(el.value&&el.tagName==='INPUT'?el.value:el.textContent)||''; return t.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/^[^a-zA-Z]+/,'').trim().toLowerCase(); }
+  function tag(el){
+    if(el.hasAttribute('data-ap-v')) return;
+    if(el.matches(SKIP)||el.closest('.navDropMenu,.tabs,[role="tablist"]')) return;
+    var st=el.getAttribute('style')||''; if(/background/i.test(st)) return;
+    var t=label(el); if(!t) return;
+    for(var i=0;i<RULES.length;i++){ if(RULES[i][1].test(t)){ el.setAttribute('data-ap-v',RULES[i][0]); return; } }
+  }
+  function scanButtons(root){
+    if(!document.documentElement.classList.contains('ap-new')) return;
+    var list=root.querySelectorAll?root.querySelectorAll('button,input[type="button"],input[type="submit"],a.btn'):[];
+    Array.prototype.forEach.call(list,tag);
+    if(root.matches&&root.matches('button,input[type="button"],input[type="submit"],a.btn')) tag(root);
+  }
+  function startBtns(){
+    scanButtons(document);
+    new MutationObserver(function(muts){ muts.forEach(function(m){ m.addedNodes.forEach(function(n){ if(n.nodeType===1) scanButtons(n); }); }); }).observe(document.body,{childList:true,subtree:true});
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',startBtns); else startBtns();
+})();
