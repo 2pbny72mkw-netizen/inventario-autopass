@@ -1,0 +1,141 @@
+{# V87.6 REV74 — formulário de edição carregado sob demanda por /usuarios/<id>/editar-form #}
+    <div class="card" style="margin:8px 0;background:#fafbfc">
+      <div class="sectionHead">
+        <div>
+          <h2 style="margin-bottom:4px">Editar {{ u.name }}</h2>
+          <p class="muted">Código, login, e-mail e celular não podem se repetir.</p>
+        </div>
+        <button type="button" class="secondary closeEditBtn" data-target="edit-user-{{ u.id }}">Fechar</button>
+      </div>
+
+      <form method="post" action="/usuarios/{{ u.id }}/editar" enctype="multipart/form-data" class="editUserForm">
+        <div class="grid3">
+          <div>
+            <label>Nome completo *</label>
+            <input name="name" value="{{ u.name }}" required>
+          </div>
+          <div>
+            <label>Login *</label>
+            <input name="username" value="{{ u.username }}" required autocomplete="off">
+          </div>
+          <div>
+            <label>Perfil *</label>
+            <select name="role" class="editRoleSelect" required>
+              <option value="technician" {% if u.role == "technician" %}selected{% endif %}>Técnico Field</option>
+              <option value="technician_implantation" {% if u.role == "technician_implantation" %}selected{% endif %}>Técnico Implantação</option>
+              {% if can_assign_sensitive_roles %}<option value="manager_field" {% if u.role == "manager_field" %}selected{% endif %}>Gestor Field</option><option value="atm_financial_admin" {% if u.role == "atm_financial_admin" %}selected{% endif %}>ADM Financeiro</option>{% endif %}
+              {% if not is_hr_admin %}{% if can_assign_sensitive_roles %}<option value="manager" {% if u.role == "manager" %}selected{% endif %}>Gestor</option>
+              <option value="consultation" {% if u.role == "consultation" %}selected{% endif %}>Consulta</option><option value="dispatcher" {% if u.role == "dispatcher" %}selected{% endif %}>Dispatcher</option>{% elif u.role in ("manager","consultation","dispatcher") %}<option value="{{ u.role }}" selected disabled>{{ {"manager":"Gestor","consultation":"Consulta","dispatcher":"Dispatcher"}.get(u.role,u.role) }}</option>{% endif %}
+              
+              <option value="hr" {% if u.role == "hr" and not u.system_profile_id %}selected{% endif %}>RH</option>{% endif %}
+              {% if system_profiles %}<optgroup label="Perfis personalizados">{% for p in system_profiles %}{% if can_assign_sensitive_roles or p.base_role in ('none','technician','technician_implantation') or u.system_profile_id==p.id %}<option value="custom:{{p.id}}" data-base-role="{{p.base_role if p.base_role!='none' else 'technician'}}" {% if u.system_profile_id==p.id %}selected{% endif %}>{{p.name}}</option>{% endif %}{% endfor %}</optgroup>{% endif %}
+            </select>
+          </div>
+          <div class="editExtended">
+            <div class="companyFreeField"><label>Empresa</label><input name="company" value="{{ u.company or '' }}"></div>
+            <div class="customerCompanyField" style="display:none"><label>Empresa(s) vinculada(s) ao Cliente *</label><select name="customer_company_ids" multiple size="{{ 4 if can_assign_sensitive_roles else 1 }}" style="width:100%">{% for c in customer_companies %}<option value="{{c.id}}" {% if c.id in customer_company_map.get(u.id,[]) %}selected{% endif %}>{{c.trade_name or c.legal_name}} · {{c.cnpj or 'sem CNPJ'}}</option>{% endfor %}</select><small>{% if can_assign_sensitive_roles %}ADM pode liberar uma ou mais empresas.{% else %}Apenas ADM pode liberar múltiplas empresas.{% endif %}</small></div>
+          </div>
+          <div class="editExtended">
+            <label>Cargo</label>
+            <input name="job_title" value="{{ u.job_title or '' }}" placeholder="Função profissional">
+          </div>
+          <div class="editExtended">
+            <label>Situação do colaborador</label>
+            <select name="personnel_status">
+              {% for st,label in [('ATIVO','Ativo'),('FERIAS','Férias'),('AFASTADO','Afastado'),('LICENCA','Licença'),('FOLGA_PROGRAMADA','Folga programada'),('OUTRO','Outro')] %}
+              <option value="{{ st }}" {% if (u.personnel_status or 'ATIVO') == st %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="editExtended">
+            <label>Observação da situação</label>
+            <input name="personnel_status_note" value="{{ u.personnel_status_note or '' }}">
+          </div>
+          <div class="editExtended"><label>Data de admissão</label><input name="admission_date" type="date" value="{{ u.admission_date.isoformat() if u.admission_date else '' }}"></div>
+          <div class="editExtended"><label>Data de desligamento</label><input name="termination_date" type="date" value="{{ u.termination_date.isoformat() if u.termination_date else '' }}"></div>
+          <div class="editExtended"><label>Locais de atuação</label><div class="locationChecks">{% for v,lbl in [('METRO','Metrô'),('CPTM','CPTM'),('L4','Linha 4'),('L5','Linha 5'),('OUTROS','Outros')] %}<label><input type="checkbox" name="operating_locations" value="{{v}}" {% if ('\"' ~ v ~ '\"') in (u.operating_locations_json or '') %}checked{% endif %}> {{lbl}}</label>{% endfor %}</div><small>Marque para habilitar; desmarque para desabilitar.</small></div>
+          <div class="editExtended operAccessBox"><b>Acessos operacionais</b><label><input type="checkbox" name="access_metro" value="1" {% if u.access_metro %}checked{% endif %}> Acesso Metrô</label><label><input type="checkbox" name="access_cptm" value="1" {% if u.access_cptm %}checked{% endif %}> Acesso CPTM</label><label><input type="checkbox" name="access_motiva_apt" value="1" {% if u.access_motiva_apt %}checked{% endif %}> Acesso Motiva (APT)</label><small>A habilitação é operacional; a regularidade documental é validada separadamente.</small></div>
+          <div class="editExtended gpsField">
+            <label style="display:flex;gap:8px;align-items:center;margin-top:26px"><input type="checkbox" name="gps_required" value="1" style="width:auto" {% if u.gps_required %}checked{% endif %}> Exigir GPS operacional</label>
+            <label style="display:flex;gap:8px;align-items:center;margin-top:26px"><input type="checkbox" name="gps_history_enabled" value="1" style="width:auto" {% if u.gps_history_enabled %}checked{% endif %}> Histórico GPS por estações</label>
+            <label style="display:flex;gap:8px;align-items:center;margin-top:26px"><input type="checkbox" name="journey_control_enabled" value="1" style="width:auto" {% if u.journey_control_enabled %}checked{% endif %} {% if u.role == 'technician_implantation' %}disabled{% endif %}> Controle de jornada / bloquear fora da escala</label>
+            <small>{% if u.role == 'technician_implantation' %}Técnico Implantação é isento do bloqueio de jornada; GPS e histórico permanecem disponíveis.{% else %}Desative, por exemplo, para usuário em home office. A alteração fica auditada.{% endif %}</small>
+          </div>
+          <div class="editExtended scheduleField">
+            <label>Escala</label>
+            <select name="work_schedule_type"><option value="12x36" {% if (u.work_schedule_type or '12x36') == '12x36' %}selected{% endif %}>12x36</option><option value="5x2" {% if u.work_schedule_type == '5x2' %}selected{% endif %}>5x2</option></select>
+          </div>
+          <div class="editExtended scheduleField">
+            <label>Horário inicial</label>
+            <input name="work_start_time" type="time" step="60" value="{{ u.work_start_time or (u.work_shift.split('-')[0] if u.work_shift and '-' in u.work_shift else '05:00') }}">
+          </div>
+          <div class="editExtended scheduleField">
+            <label>Horário final</label>
+            <input name="work_end_time" type="time" step="60" value="{{ u.work_end_time or (u.work_shift.split('-')[-1] if u.work_shift and '-' in u.work_shift else '17:00') }}">
+            <small>Jornadas que atravessam a meia-noite são aceitas automaticamente.</small>
+          </div>
+          <div class="editExtended scheduleField anchorField">
+            <label>Data referência</label>
+            <input name="work_anchor_date" type="date" value="{{ u.work_anchor_date.isoformat() if u.work_anchor_date else '' }}">
+          </div>
+          <div class="editExtended scheduleField anchorField">
+            <label>Situação na data referência</label>
+            <select name="work_anchor_status"><option value="TRABALHA" {% if (u.work_anchor_status or 'TRABALHA') == 'TRABALHA' %}selected{% endif %}>Trabalha</option><option value="FOLGA" {% if u.work_anchor_status == 'FOLGA' %}selected{% endif %}>Folga</option></select>
+          </div>
+          <div class="editExtended"><label>CPF</label><input name="cpf" value="{{ u.cpf or '' }}" placeholder="000.000.000-00"></div>
+          <div class="editExtended"><label>RG</label><input name="rg" value="{{ u.rg or '' }}" placeholder="RG"></div>
+          <div>
+            <label>Código *</label>
+            <input name="user_code" value="{{ u.user_code or '' }}" required maxlength="30">
+            <small>Identificador operacional permanente do usuário.</small>
+          </div>
+          <div>
+            <label>ID do sistema</label>
+            <input value="{{ u.id }}" readonly tabindex="-1" style="background:#f1f5f9;font-weight:800">
+            <small>Chave técnica do banco · somente leitura · útil para suporte/debug.</small>
+          </div>
+          <div>
+            <label>E-mail corporativo</label>
+            <input name="email" type="email" value="{{ u.email or '' }}">
+          </div>
+          <div class="editExtended">
+            <label>Celular</label>
+            <input name="phone" type="tel" value="{{ u.phone or '' }}">
+          </div>
+          <div class="editExtended">
+            <label>Nova foto</label>
+            <input name="photo" type="file" accept="image/*">
+            <small>Opcional • até 3 MB.</small>
+          </div>
+          <div class="full accessBox" data-access-box><input type="hidden" name="access_config_present" value="1"><b>Acessos / visualização</b><div class="accessToolbar"><button type="button" class="secondary accessAll">Marcar todas permitidas</button><button type="button" class="secondary accessClear">Limpar</button><button type="button" class="secondary accessDefaults">Restaurar padrão do perfil</button><button type="button" class="secondary accessCollapse">Recolher acessos</button></div>{% set ua = user_access(u) %}{% for group,(glabel,children) in access_groups.items() %}<details class="accessGroup" data-group="{{group}}" open><summary><input type="checkbox" class="accessGroupToggle" data-group="{{group}}"> <span>{{glabel}}</span><span class="accessGroupCount"></span></summary><div class="accessChildren">{% for key in children %}<label><input type="checkbox" name="access_modules" value="{{key}}" data-child-group="{{group}}" {% if key in ua %}checked{% endif %}> {{access_labels.get(key,key)}}</label>{% endfor %}</div></details>{% endfor %}<small>O ADM pode liberar ou retirar subatividades individualmente. Restrições de segurança continuam aplicadas no backend.</small></div>
+          {% if u.photo_url %}
+          <div>
+            <label style="display:flex;gap:8px;align-items:center;margin-top:28px">
+              <input type="checkbox" name="remove_photo" value="1" style="width:auto">
+              Remover foto atual
+            </label>
+          </div>
+          {% endif %}
+        </div>
+
+        {% if u.id == session.get('user_id') %}
+        <div class="notice" style="margin-top:12px">
+          Seu próprio acesso não pode ser desativado, e o perfil de Gestor não pode ser removido enquanto você estiver conectado.
+        </div>
+        {% endif %}
+
+        <div class="actions">
+          <button class="primary" type="submit">Salvar alterações</button>
+        </div>
+      </form>
+
+      <hr style="border:0;border-top:1px solid #e5e7eb;margin:18px 0">
+
+      {% if can_view('users.password') %}<form method="post" action="/usuarios/{{u.id}}/senha" style="display:flex;gap:8px;align-items:end;flex-wrap:wrap">
+        <div style="min-width:260px;flex:1">
+          <label>Redefinir senha</label>
+          <input name="password" type="password" minlength="8" required placeholder="Nova senha • mínimo 8 caracteres">
+        </div>
+        <button class="secondary" type="submit">Alterar senha</button>
+      </form>{% endif %}
+    </div>
