@@ -23,9 +23,9 @@
 {% endif %}
 
 {% if can_view('management.work_authorizations') %}
-<section class="card v72Auth" style="margin-top:14px"><div class="sectionHead"><div><h2>Autorizações de jornada</h2><p class="muted">Aprovação por tempo determinado, com auditoria. Autorizações vencidas aparecem apenas no histórico.</p></div><button class="secondary" id="authReload">Atualizar</button></div><div class="tableWrap"><table><thead><tr><th>Técnico</th><th>Solicitado</th><th>Motivo</th><th>Status</th><th>Data</th><th>Ação</th></tr></thead><tbody id="authRows"></tbody></table></div></section>
+<section class="card v72Auth" style="margin-top:14px"><div class="sectionHead"><div><h2>Autorizações de jornada</h2><p class="muted">Aprovação por tempo determinado, com auditoria. Autorizações vencidas aparecem apenas no histórico.</p></div><button class="secondary" id="authReload">Atualizar</button></div><div class="tableWrap"><table data-ap-table><thead><tr><th>Técnico</th><th>Solicitado</th><th>Motivo</th><th>Status</th><th>Data</th><th>Ação</th></tr></thead><tbody id="authRows"></tbody></table></div></section>
 {% endif %}
-{% if can_view('management.work_authorizations') %}<section class="card v72Auth" style="margin-top:14px"><div class="sectionHead"><div><h2>Folgas e trocas de folga</h2><p class="muted">Trocas só chegam para aprovação depois do aceite do outro colaborador.</p></div><button class="secondary" id="scheduleReload">Atualizar</button></div><div class="tableWrap"><table><thead><tr><th>Solicitante</th><th>Tipo</th><th>Data</th><th>Troca com</th><th>Colega</th><th>Gestão</th><th>Ação</th></tr></thead><tbody id="scheduleRows"></tbody></table></div></section>{% endif %}
+{% if can_view('management.work_authorizations') %}<section class="card v72Auth" style="margin-top:14px"><div class="sectionHead"><div><h2>Folgas e trocas de folga</h2><p class="muted">Trocas só chegam para aprovação depois do aceite do outro colaborador.</p></div><button class="secondary" id="scheduleReload">Atualizar</button></div><div class="tableWrap"><table data-ap-table><thead><tr><th>Solicitante</th><th>Tipo</th><th>Data</th><th>Troca com</th><th>Colega</th><th>Gestão</th><th>Ação</th></tr></thead><tbody id="scheduleRows"></tbody></table></div></section>{% endif %}
 </div>
 {% endblock %}
 {% block scripts %}
