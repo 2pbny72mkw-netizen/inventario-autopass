@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV74"
+APP_RELEASE = "V87.6 REV75"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -7596,7 +7596,7 @@ def _v70_migration_snapshot():
 
 def _v70_index_snapshot():
     targets={
-      "performance_metrics":{"ix_perf_created_route","ix_perf_route_created_status"},
+      "performance_metrics":{"ix_perf_created_route"},
       "topdesk_tickets":{"ix_topdesk_status_created","ix_topdesk_line_station_status"},
       "material_requests":{"ix_material_req_user_status"},
       "collaborator_documents":{"ix_collab_doc_user_status"},
@@ -7619,7 +7619,7 @@ def _v8530_treport_audit():
     """Diagnóstico não destrutivo da massa de transações (T-Report/R0050)."""
     try:
         cols=[c["name"] for c in db.inspect(db.engine).get_columns("financial_atm_transactions")]
-        total=db.session.query(func.count(FinancialATMTransaction.id)).scalar() or 0
+        total=_v75_slow_cached("tx_total",lambda:db.session.query(func.count(FinancialATMTransaction.id)).scalar() or 0)
         latest=db.session.query(func.max(FinancialATMTransaction.imported_at)).scalar()
         latest_file=None
         if latest:
@@ -7628,7 +7628,7 @@ def _v8530_treport_audit():
         cutoff90=datetime.utcnow()-timedelta(days=90)
         oldest_tx=db.session.query(func.min(FinancialATMTransaction.transaction_at)).scalar()
         latest_tx=db.session.query(func.max(FinancialATMTransaction.transaction_at)).scalar()
-        archive_candidates=db.session.query(func.count(FinancialATMTransaction.id)).filter(FinancialATMTransaction.transaction_at < cutoff90).scalar() or 0
+        archive_candidates=_v75_slow_cached("tx_archive90",lambda:db.session.query(func.count(FinancialATMTransaction.id)).filter(FinancialATMTransaction.transaction_at < cutoff90).scalar() or 0)
         summary_rows=0
         summary_min=None; summary_max=None
         try:
@@ -7733,7 +7733,7 @@ def telemetry_summary_api():
         active_since=datetime.utcnow()-timedelta(minutes=15)
         active_users=db.session.query(func.count(func.distinct(SessionEvent.user_id))).filter(SessionEvent.created_at>=active_since).scalar() or 0
         table_counts={
-          "Transações ATM":FinancialATMTransaction.query.count(),"Coletas":FinancialCashCollection.query.count(),"Inventário":Inventory.query.count(),"Posições GPS":TechnicianPosition.query.count(),"Chamados":TopDeskTicket.query.count(),"Auditoria":AuditEvent.query.count()
+          "Transações ATM":_v75_slow_cached("tx_total",lambda:FinancialATMTransaction.query.count()),"Coletas":FinancialCashCollection.query.count(),"Inventário":Inventory.query.count(),"Posições GPS":TechnicianPosition.query.count(),"Chamados":TopDeskTicket.query.count(),"Auditoria":AuditEvent.query.count()
         }
         errors=sum(1 for x in rows if x.status_code>=500); avg=round(sum(vals)/len(vals),1) if vals else 0; p95=pct(vals,.95); p99=pct(vals,.99)
         slow_1s=sum(v>=1000 for v in vals); slow_2s=sum(v>=2000 for v in vals); slow_5s=sum(v>=5000 for v in vals)
@@ -8162,6 +8162,140 @@ def diagnostics_storage_api():
 
 
 
+# V87.6 REV75 — Política de retenção de fotos autorizada por atividade (Diagnóstico).
+# Nada é apagado por esta política: ela apenas AUTORIZA (ou não) a limpeza em lotes já existente
+# (/api/diagnostico/retencao/v8522/lote) e define a idade mínima das evidências.
+_V75_RET_DAYS = (30, 60, 90, 180, 365)
+_V75_RET_NOT_ELIGIBLE = [
+    {"code": "panorama", "label": "Visão Panorâmica", "reason": "Sem conclusão inequívoca por atividade."},
+    {"code": "visitas", "label": "Implantação / Relatórios de Visita", "reason": "Exige regra de retenção própria (relatório entregue ao cliente)."},
+    {"code": "bobinas", "label": "Bobinas ATM", "reason": "Já possui expires_at/deleted_at e política própria."},
+]
+_v75_ret_ready = False
+_v75_ttl_store = {}
+_v75_ttl_lock = threading.Lock()
+
+
+def _v75_slow_cached(key, loader, ttl=600):
+    """Cache curto para contagens caras (diagnóstico/exportação). Falha de loader não é guardada."""
+    now = time.monotonic()
+    with _v75_ttl_lock:
+        hit = _v75_ttl_store.get(key)
+        if hit and now - hit[0] < ttl:
+            return hit[1]
+    val = loader()
+    with _v75_ttl_lock:
+        _v75_ttl_store[key] = (time.monotonic(), val)
+    return val
+
+
+def _v75_ret_specs():
+    return {
+        "recarga": ("Troca de Chips – Recarga", ChipSwapPhoto, ChipSwap, ChipSwapPhoto.chip_swap_id, ChipSwap.id, ChipSwapPhoto.stored_name, ChipSwap.completed_at),
+        "emv": ("Troca de Chips EMV", EmvChipSwapPhoto, EmvChipSwap, EmvChipSwapPhoto.swap_id, EmvChipSwap.id, EmvChipSwapPhoto.stored_name, EmvChipSwap.completed_at),
+        "firmware": ("Firmware POS CPTM", PosFirmwareCptmPhoto, PosFirmwareCptm, PosFirmwareCptmPhoto.firmware_id, PosFirmwareCptm.id, PosFirmwareCptmPhoto.stored_name, PosFirmwareCptm.completed_at),
+        "garagem": ("Garagem / Chips", GarageChipPhoto, GarageChipSwap, GarageChipPhoto.swap_id, GarageChipSwap.id, GarageChipPhoto.stored_name, GarageChipSwap.completed_at),
+    }
+
+
+def _v75_ret_ensure():
+    global _v75_ret_ready
+    if _v75_ret_ready:
+        return
+    db.session.execute(text(
+        "CREATE TABLE IF NOT EXISTS v75_retention_policy ("
+        "module_code VARCHAR(40) PRIMARY KEY, authorized BOOLEAN NOT NULL DEFAULT FALSE, "
+        "retention_days INTEGER NOT NULL DEFAULT 90, authorized_by INTEGER, authorized_at TIMESTAMP, updated_at TIMESTAMP)"))
+    db.session.commit()
+    _v75_ret_ready = True
+
+
+def _v75_ret_policy_map():
+    """{código: {authorized, days, authorized_by, authorized_at}}. Em qualquer falha: NADA autorizado."""
+    out = {c: {"authorized": False, "days": 90, "authorized_by": None, "authorized_at": None} for c in _v75_ret_specs()}
+    try:
+        _v75_ret_ensure()
+        for code, auth, days, by, at in db.session.execute(text(
+                "SELECT module_code, authorized, retention_days, authorized_by, authorized_at FROM v75_retention_policy")).all():
+            if code in out:
+                out[code] = {"authorized": bool(auth), "days": int(days or 90), "authorized_by": by,
+                             "authorized_at": (at.isoformat() + "Z") if hasattr(at, "isoformat") else at}
+    except Exception:
+        app.logger.exception("REV75: política de retenção indisponível; nenhuma limpeza autorizada")
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+        for v in out.values():
+            v["authorized"] = False
+    return out
+
+
+@app.get("/api/diagnostico/retencao/v75/politica")
+@login_required
+def v75_retention_policy_get():
+    if not _has_access("management.diagnostics"):
+        return jsonify({"ok": False, "error": "Sem permissão."}), 403
+    pol = _v75_ret_policy_map()
+    names = {}
+    ids = {p["authorized_by"] for p in pol.values() if p["authorized_by"]}
+    if ids:
+        names = {u.id: u.name for u in User.query.filter(User.id.in_(ids)).all()}
+    now = datetime.utcnow()
+    rows = []
+    for code, (label, photo, parent, fk, pk, keycol, completedcol) in _v75_ret_specs().items():
+        p = pol[code]
+        try:
+            total = int(db.session.query(db.func.count(photo.id)).join(parent, fk == pk)
+                        .filter(completedcol.isnot(None), keycol.isnot(None), keycol != "", ~keycol.like("local:%")).scalar() or 0)
+            eligible = int(db.session.query(db.func.count(photo.id)).join(parent, fk == pk)
+                           .filter(completedcol.isnot(None), completedcol <= now - timedelta(days=p["days"]),
+                                   keycol.isnot(None), keycol != "", ~keycol.like("local:%")).scalar() or 0)
+        except Exception:
+            db.session.rollback(); total = eligible = None
+        rows.append({"code": code, "module": label, "authorized": p["authorized"], "days": p["days"],
+                     "authorized_by": names.get(p["authorized_by"], ""), "authorized_at": p["authorized_at"],
+                     "completed_photos": total, "eligible_now": eligible})
+    return jsonify({"ok": True, "release": APP_RELEASE, "allowed_days": list(_V75_RET_DAYS), "modules": rows,
+                    "not_eligible": _V75_RET_NOT_ELIGIBLE,
+                    "note": "Autorizar NÃO apaga nada. A exclusão continua exigindo a simulação e a confirmação 'EXCLUIR EVIDENCIAS' em lotes."})
+
+
+@app.post("/api/diagnostico/retencao/v75/politica")
+@login_required
+def v75_retention_policy_set():
+    if not _has_access("management.diagnostics") or session.get("role") != "manager":
+        return jsonify({"ok": False, "error": "Somente o Gestor pode alterar a política de retenção."}), 403
+    data = request.get_json(silent=True) or {}
+    code = str(data.get("module") or "").strip().lower()
+    if code not in _v75_ret_specs():
+        return jsonify({"ok": False, "error": "Módulo inválido."}), 400
+    try:
+        days = int(data.get("days") or 90)
+    except Exception:
+        days = 0
+    if days not in _V75_RET_DAYS:
+        return jsonify({"ok": False, "error": "Prazo deve ser " + ", ".join(str(d) for d in _V75_RET_DAYS) + " dias."}), 400
+    authorized = bool(data.get("authorized"))
+    now = datetime.utcnow(); uid = session.get("user_id")
+    try:
+        _v75_ret_ensure()
+        res = db.session.execute(text(
+            "UPDATE v75_retention_policy SET authorized=:a, retention_days=:d, authorized_by=:u, authorized_at=:t, updated_at=:t WHERE module_code=:c"),
+            {"a": authorized, "d": days, "u": uid, "t": now if authorized else None, "c": code})
+        if not res.rowcount:
+            db.session.execute(text(
+                "INSERT INTO v75_retention_policy (module_code, authorized, retention_days, authorized_by, authorized_at, updated_at) "
+                "VALUES (:c,:a,:d,:u,:t,:n)"), {"c": code, "a": authorized, "d": days, "u": uid, "t": now if authorized else None, "n": now})
+        db.session.add(AuditEvent(user_id=uid, event_type="RETENTION_POLICY_SET", entity_type="evidence_retention", entity_id=code,
+                                  detail=json.dumps({"release": APP_RELEASE, "authorized": authorized, "days": days}, ensure_ascii=False)))
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback(); app.logger.exception("REV75: falha ao gravar política")
+        return jsonify({"ok": False, "error": f"Não foi possível gravar a política: {str(exc)[:160]}"}), 500
+    return jsonify({"ok": True, "module": code, "authorized": authorized, "days": days})
+
+
 @app.get("/api/diagnostico/retencao/v8515")
 @login_required
 def diagnostics_retention_v8515_api():
@@ -8284,7 +8418,7 @@ def diagnostics_retention_v8522_batch_api():
     data=request.get_json(silent=True) or {}
     try: days=int(data.get("days") or 0); limit=max(1,min(int(data.get("limit") or 10),20))
     except Exception: return jsonify({"ok":False,"error":"Parâmetros inválidos."}),400
-    if days not in (30,60,90): return jsonify({"ok":False,"error":"Retenção deve ser 30, 60 ou 90 dias."}),400
+    if days not in _V75_RET_DAYS: return jsonify({"ok":False,"error":"Retenção deve ser 30, 60, 90, 180 ou 365 dias."}),400
     if str(data.get("confirmation") or "").strip().upper()!="EXCLUIR EVIDENCIAS": return jsonify({"ok":False,"error":"Confirmação inválida."}),400
     selected=[str(x).strip().lower() for x in (data.get("modules") or [])]
     allowed={
@@ -8295,6 +8429,14 @@ def diagnostics_retention_v8522_batch_api():
     }
     selected=[x for x in selected if x in allowed]
     if not selected: return jsonify({"ok":False,"error":"Selecione ao menos um módulo de retenção."}),400
+    # REV75 — a política precisa autorizar o módulo e o prazo pedido não pode ser menor que o autorizado.
+    _pol=_v75_ret_policy_map(); _blocked=[]
+    for _c in list(selected):
+        _p=_pol.get(_c) or {}
+        if not _p.get("authorized"): _blocked.append({"module":_c,"reason":"Limpeza não autorizada na política de retenção."}); selected.remove(_c)
+        elif days<int(_p.get("days") or 90): _blocked.append({"module":_c,"reason":f"Prazo autorizado é de {_p.get('days')} dias; pedido de {days} dias é menor."}); selected.remove(_c)
+    if not selected:
+        return jsonify({"ok":False,"error":"Nenhum módulo selecionado está autorizado para este prazo na política de retenção (Diagnóstico).","blocked":_blocked}),403
     if not _r2_available() or not os.environ.get("R2_BUCKET_NAME"): return jsonify({"ok":False,"error":"R2 indisponível."}),503
     cutoff=datetime.utcnow()-timedelta(days=days); bucket=os.environ["R2_BUCKET_NAME"]; client=r2_client()
     # REV58: lotes menores, sem HEAD R2 por objeto. Commit individual preserva retomada.
@@ -8326,7 +8468,7 @@ def diagnostics_retention_v8522_batch_api():
         _,photo,parent,fk,pk,completedcol=allowed[code]
         remaining += int(photo.query.join(parent,fk==pk).filter(completedcol.isnot(None),completedcol<=cutoff).count())
     app.logger.warning('REV58_RETENTION_BATCH modules=%s days=%s processed=%s deleted=%s errors=%s remaining=%s',','.join(selected),days,processed,deleted,errors,remaining)
-    return jsonify({'ok':True,'release':APP_RELEASE,'processed':processed,'deleted':deleted,'errors':errors,'bytes_deleted':None,'remaining':remaining,'done':remaining==0,'details':details[:10],'batch_limit':limit})
+    return jsonify({'ok':True,'release':APP_RELEASE,'processed':processed,'deleted':deleted,'errors':errors,'bytes_deleted':None,'remaining':remaining,'done':remaining==0,'details':details[:10],'batch_limit':limit,'blocked':_blocked})
 
 @app.get("/api/diagnostico/performance/v8515")
 @login_required
@@ -14737,16 +14879,17 @@ def chip_swap_dashboard_api():
     total = sum(x["total"] for x in rows); done = sum(x["concluded"] for x in rows)
     progress = sum(x["in_progress"] for x in rows); pending = sum(x["pending"] for x in rows)
 
-    swaps = ChipSwap.query.order_by(ChipSwap.updated_at.desc()).all()
-    user_ids = {sw.technician_id for sw in swaps if sw.technician_id}
+    agg_rows = db.session.query(ChipSwap.technician_id, ChipSwap.status, func.count(ChipSwap.id)).group_by(ChipSwap.technician_id, ChipSwap.status).all()
+    user_ids = {tid for tid, _st, _n in agg_rows if tid}
     users = {u.id: u for u in User.query.filter(User.id.in_(user_ids)).all()} if user_ids else {}
     tech = {}
-    for sw in swaps:
-        u = users.get(sw.technician_id); name = u.name if u else "—"
+    for tid, st, n in agg_rows:
+        u = users.get(tid); name = u.name if u else "—"
         t = tech.setdefault(name, {"name": name, "concluded": 0, "in_progress": 0, "total": 0})
-        t["total"] += 1
-        t["concluded"] += 1 if sw.status == "CONCLUÍDA" else 0
-        t["in_progress"] += 1 if sw.status == "EM ANDAMENTO" else 0
+        n = int(n or 0)
+        t["total"] += n
+        t["concluded"] += n if st == "CONCLUÍDA" else 0
+        t["in_progress"] += n if st == "EM ANDAMENTO" else 0
     result_labels = {
         "TESTADO_OK": "Testado - OK",
         "TESTADO_COM_DEFEITO": "Testado - com defeito",
@@ -15540,6 +15683,8 @@ def _cleanup_activity_photos(kind):
     perm='field.chip_recarga' if kind=='recarga' else 'implantation.emv'
     if not _has_access(perm):
         return jsonify({'ok':False,'error':'Sem permissão para limpar evidências desta atividade.'}),403
+    if not (_v75_ret_policy_map().get('recarga' if kind=='recarga' else 'emv') or {}).get('authorized'):
+        return jsonify({'ok':False,'error':'Limpeza não autorizada. O Gestor deve autorizar esta atividade em Diagnóstico > Política de retenção de fotos.'}),403
     data=request.get_json(silent=True) or {}; confirm=str(data.get('confirm') or '').strip().upper()
     if confirm!='CONFIRMAR': return jsonify({'ok':False,'error':'Digite CONFIRMAR para remover as evidências temporárias.'}),400
     if kind=='recarga':
@@ -15622,7 +15767,6 @@ def migrate_financial_v524_columns():
             commands.extend([
                 "CREATE INDEX IF NOT EXISTS ix_fin_tx_imported_at ON financial_atm_transactions (imported_at)",
                 "CREATE INDEX IF NOT EXISTS ix_fin_tx_source_file ON financial_atm_transactions (source_file)",
-                "CREATE INDEX IF NOT EXISTS ix_fin_tx_external_id ON financial_atm_transactions (external_tx_id)",
                 "CREATE INDEX IF NOT EXISTS ix_fin_tx_collection_at ON financial_atm_transactions (terminal, source_collection_at)",
             ])
         commands.extend([
@@ -22589,7 +22733,6 @@ def v8510_assistance_pending():
 def _apply_v70_migrations():
     migrations=[
       ("V70-001", "Índices de performance e operação", (
-        "CREATE INDEX IF NOT EXISTS ix_perf_route_created_status ON performance_metrics (route, created_at, status_code)",
         "CREATE INDEX IF NOT EXISTS ix_topdesk_status_created ON topdesk_tickets (status, created_at)",
         "CREATE INDEX IF NOT EXISTS ix_topdesk_line_station_status ON topdesk_tickets (line_code, station_code, status)",
         "CREATE INDEX IF NOT EXISTS ix_material_req_user_status ON material_requests (user_id, status)",
@@ -22739,10 +22882,7 @@ with app.app_context():
                 if "response_bytes" not in cols: conn.execute(text("ALTER TABLE performance_metrics ADD COLUMN response_bytes INTEGER DEFAULT 0"))
                 if "request_id" not in cols: conn.execute(text("ALTER TABLE performance_metrics ADD COLUMN request_id VARCHAR(36)"))
                 if "release" not in cols: conn.execute(text("ALTER TABLE performance_metrics ADD COLUMN release VARCHAR(40)"))
-                try: conn.execute(text("CREATE INDEX IF NOT EXISTS ix_perf_request_id ON performance_metrics (request_id)"))
-                except Exception: pass
-                try: conn.execute(text("CREATE INDEX IF NOT EXISTS ix_perf_release_created ON performance_metrics (release, created_at)"))
-                except Exception: pass
+                # REV75: ix_perf_request_id e ix_perf_release_created não eram lidos (27 MB em 23 mil linhas); não são mais criados.
     except Exception:
         try: db.session.rollback()
         except Exception: pass
