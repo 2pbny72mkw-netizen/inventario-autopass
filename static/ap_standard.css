@@ -24,3 +24,6 @@ table[data-ap-table] td.ap-num,table[data-ap-table] th.ap-num{text-align:right;f
 [data-ap-href]:hover{box-shadow:0 2px 10px rgba(31,58,104,.14);border-color:var(--ap-navy)}
 [data-ap-href]:focus-visible{outline:3px solid var(--ap-focus);outline-offset:2px}
 [data-ap-href]::after{content:"↗";float:right;font-size:12px;color:var(--ap-muted);opacity:.7}
+.ap-tools .ap-export{font:inherit;font-weight:600;min-height:40px;padding:8px 14px;border-radius:8px;border:1px solid #C9D6E8;background:var(--ap-head);color:var(--ap-navy);cursor:pointer}
+.ap-tools .ap-export:hover{background:var(--ap-head-hover)}
+.ap-tools .ap-export:focus-visible{outline:3px solid var(--ap-focus);outline-offset:2px}

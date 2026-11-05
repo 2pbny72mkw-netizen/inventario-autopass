@@ -46,6 +46,18 @@
     if(n&&num/n>=0.8) return 'num'; if(n&&dt/n>=0.8) return 'date'; return 'text';
   }
 
+  function exportCsv(table,ths){
+    function q(v){v=String(v==null?'':v).replace(/\s+/g,' ').trim();return '"'+v.replace(/"/g,'""')+'"';}
+    var lines=[ths.map(function(th){return q(th.textContent.replace(/[⇅▲▼]/g,''));}).join(';')];
+    Array.prototype.forEach.call(table.tBodies[0].rows,function(tr){
+      if(tr.classList.contains('ap-hidden')||tr.hasAttribute('data-ap-detail')) return;
+      lines.push(Array.prototype.map.call(tr.cells,function(td){return q(td.textContent);}).join(';'));
+    });
+    var blob=new Blob(['\ufeff'+lines.join('\r\n')],{type:'text/csv;charset=utf-8'});
+    var a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+    a.download='tabela_'+new Date().toISOString().slice(0,10)+'.csv';
+    document.body.appendChild(a); a.click(); setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},500);
+  }
   function enhance(table){
     if(table.__ap) return; 
     var thead=table.tHead; if(!thead||thead.rows.length!==1) return;
@@ -124,6 +136,11 @@
       counter=document.createElement('span'); counter.className='ap-count'; counter.setAttribute('aria-live','polite');
       inp.addEventListener('input',function(){st.q=inp.value;filter();});
       tools.appendChild(inp); tools.appendChild(counter);
+      if(opts.includes('export')){
+        var ex=document.createElement('button'); ex.type='button'; ex.className='ap-export'; ex.textContent='Exportar CSV';
+        ex.addEventListener('click',function(){exportCsv(table,ths);});
+        tools.appendChild(ex);
+      }
       var host=table.parentElement&&/(^|\s)(tableWrap|table-wrap)(\s|$)/.test(table.parentElement.className)?table.parentElement:table;
       host.parentNode.insertBefore(tools,host);
       filter();
