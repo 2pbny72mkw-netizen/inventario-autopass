@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV72"
+APP_RELEASE = "V87.6 REV73"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -303,6 +303,8 @@ def _perf_sql_after(conn, cursor, statement, parameters, context, executemany):
             sql_elapsed=(time.perf_counter()-started)*1000.0
             if sql_elapsed > float(getattr(g,"_perf_sql_max_ms",0) or 0):
                 g._perf_sql_max_ms=sql_elapsed
+            if sql_elapsed >= _V73_SLOW_SQL_MS:
+                _v73_slow_sql_note(statement, sql_elapsed)
     except Exception:
         pass
 
@@ -312,6 +314,527 @@ with app.app_context():
         event.listen(_perf_engine, "before_cursor_execute", _perf_sql_before)
     if not event.contains(_perf_engine, "after_cursor_execute", _perf_sql_after):
         event.listen(_perf_engine, "after_cursor_execute", _perf_sql_after)
+
+# =============================================================================
+# V87.6 REV73 — Eficiência e observabilidade
+#  1) Cache curto (TTL) para configuração/menu/dashboards, com invalidação ao salvar.
+#  2) Contadores agregados de uso por tela / usuário / canal (web x Android), em memória,
+#     descarregados em lote (a cada V73_USAGE_FLUSH_SECONDS) — sem 1 INSERT por requisição.
+#  3) Presença (usuários conectados), SQL lento e abas novas na exportação de telemetria.
+# Nada aqui altera regra de negócio. Leituras pesadas só ocorrem na exportação.
+# =============================================================================
+_V73_BOOT_AT = time.time()
+_V73_CACHE = {}
+_V73_CACHE_LOCK = threading.Lock()
+_V73_CACHE_STATS = {"hit": 0, "miss": 0, "clear": 0}
+_V73_CACHE_TTL = max(5, int(os.getenv("V73_CACHE_TTL", "60") or 60))
+
+
+def _v73_cache_get(key, loader):
+    now = time.time()
+    with _V73_CACHE_LOCK:
+        ent = _V73_CACHE.get(key)
+        if ent and now - ent[0] < _V73_CACHE_TTL:
+            _V73_CACHE_STATS["hit"] += 1
+            return ent[1]
+    value = loader()
+    with _V73_CACHE_LOCK:
+        _V73_CACHE[key] = (time.time(), value)
+        _V73_CACHE_STATS["miss"] += 1
+    return value
+
+
+def _v73_cache_clear(*keys):
+    with _V73_CACHE_LOCK:
+        if keys:
+            for k in keys:
+                _V73_CACHE.pop(k, None)
+        else:
+            _V73_CACHE.clear()
+        _V73_CACHE_STATS["clear"] += 1
+
+
+def _v73_load_builtin_saved():
+    from types import SimpleNamespace
+    return {
+        x.dashboard_key: SimpleNamespace(
+            dashboard_key=x.dashboard_key, visible=x.visible,
+            order_index=x.order_index, allowed_roles_json=x.allowed_roles_json)
+        for x in BuiltinDashboardSetting.query.all()
+    }
+
+
+# ----------------------------- uso / presença ------------------------------
+_V73_USAGE_LOCK = threading.Lock()
+_V73_FLUSH_LOCK = threading.Lock()
+_V73_HOURLY = {}    # (hour_ts, route, channel) -> [hits,err5,err4,total_ms,sql_ms,max_ms,queries,bytes,b100,b300,b1000,b3000,bover]
+_V73_DAILY = {}     # (day, user_id, route, channel) -> [hits,err5,err4,total_ms,max_ms]
+_V73_PRESENCE = {}  # user_id -> (datetime_utc, route, channel, app_version)
+_V73_SLOW_SQL = {}  # sql normalizado -> [chamadas, total_ms, max_ms, rota, ultimo_epoch]
+_V73_SLOW_SQL_MS = float(os.getenv("V73_SLOW_SQL_MS", "200") or 200)
+_V73_FLUSH_EVERY = max(30, int(os.getenv("V73_USAGE_FLUSH_SECONDS", "300") or 300))
+_V73_RETENTION_DAYS = max(7, int(os.getenv("V73_USAGE_RETENTION_DAYS", "90") or 90))
+_V73_STATE = {"last_flush": 0.0, "last_purge": 0.0, "tables_ok": False, "flushes": 0,
+              "errors": 0, "last_error": "", "last_rows": 0}
+
+_V73_DDL = (
+    """CREATE TABLE IF NOT EXISTS v73_usage_hourly (
+        hour_ts TIMESTAMP NOT NULL, route VARCHAR(220) NOT NULL, channel VARCHAR(8) NOT NULL,
+        hits BIGINT NOT NULL DEFAULT 0, err5 BIGINT NOT NULL DEFAULT 0, err4 BIGINT NOT NULL DEFAULT 0,
+        total_ms DOUBLE PRECISION NOT NULL DEFAULT 0, sql_ms DOUBLE PRECISION NOT NULL DEFAULT 0,
+        max_ms DOUBLE PRECISION NOT NULL DEFAULT 0, queries BIGINT NOT NULL DEFAULT 0,
+        resp_bytes BIGINT NOT NULL DEFAULT 0, b100 BIGINT NOT NULL DEFAULT 0, b300 BIGINT NOT NULL DEFAULT 0,
+        b1000 BIGINT NOT NULL DEFAULT 0, b3000 BIGINT NOT NULL DEFAULT 0, bover BIGINT NOT NULL DEFAULT 0,
+        PRIMARY KEY (hour_ts, route, channel))""",
+    """CREATE TABLE IF NOT EXISTS v73_usage_daily (
+        day DATE NOT NULL, user_id INTEGER NOT NULL, route VARCHAR(220) NOT NULL, channel VARCHAR(8) NOT NULL,
+        hits BIGINT NOT NULL DEFAULT 0, err5 BIGINT NOT NULL DEFAULT 0, err4 BIGINT NOT NULL DEFAULT 0,
+        total_ms DOUBLE PRECISION NOT NULL DEFAULT 0, max_ms DOUBLE PRECISION NOT NULL DEFAULT 0,
+        PRIMARY KEY (day, user_id, route, channel))""",
+    """CREATE TABLE IF NOT EXISTS v73_presence (
+        user_id INTEGER PRIMARY KEY, last_seen_at TIMESTAMP NOT NULL, last_route VARCHAR(220),
+        channel VARCHAR(8), app_version VARCHAR(40))""",
+)
+
+_V73_HOURLY_SQL = """INSERT INTO v73_usage_hourly
+ (hour_ts,route,channel,hits,err5,err4,total_ms,sql_ms,max_ms,queries,resp_bytes,b100,b300,b1000,b3000,bover)
+ VALUES (:hour_ts,:route,:channel,:hits,:err5,:err4,:total_ms,:sql_ms,:max_ms,:queries,:resp_bytes,:b100,:b300,:b1000,:b3000,:bover)
+ ON CONFLICT (hour_ts,route,channel) DO UPDATE SET
+ hits=v73_usage_hourly.hits+excluded.hits, err5=v73_usage_hourly.err5+excluded.err5,
+ err4=v73_usage_hourly.err4+excluded.err4, total_ms=v73_usage_hourly.total_ms+excluded.total_ms,
+ sql_ms=v73_usage_hourly.sql_ms+excluded.sql_ms,
+ max_ms=CASE WHEN excluded.max_ms>v73_usage_hourly.max_ms THEN excluded.max_ms ELSE v73_usage_hourly.max_ms END,
+ queries=v73_usage_hourly.queries+excluded.queries, resp_bytes=v73_usage_hourly.resp_bytes+excluded.resp_bytes,
+ b100=v73_usage_hourly.b100+excluded.b100, b300=v73_usage_hourly.b300+excluded.b300,
+ b1000=v73_usage_hourly.b1000+excluded.b1000, b3000=v73_usage_hourly.b3000+excluded.b3000,
+ bover=v73_usage_hourly.bover+excluded.bover"""
+
+_V73_DAILY_SQL = """INSERT INTO v73_usage_daily
+ (day,user_id,route,channel,hits,err5,err4,total_ms,max_ms)
+ VALUES (:day,:user_id,:route,:channel,:hits,:err5,:err4,:total_ms,:max_ms)
+ ON CONFLICT (day,user_id,route,channel) DO UPDATE SET
+ hits=v73_usage_daily.hits+excluded.hits, err5=v73_usage_daily.err5+excluded.err5,
+ err4=v73_usage_daily.err4+excluded.err4, total_ms=v73_usage_daily.total_ms+excluded.total_ms,
+ max_ms=CASE WHEN excluded.max_ms>v73_usage_daily.max_ms THEN excluded.max_ms ELSE v73_usage_daily.max_ms END"""
+
+_V73_PRESENCE_SQL = """INSERT INTO v73_presence (user_id,last_seen_at,last_route,channel,app_version)
+ VALUES (:user_id,:last_seen_at,:last_route,:channel,:app_version)
+ ON CONFLICT (user_id) DO UPDATE SET last_seen_at=excluded.last_seen_at,
+ last_route=excluded.last_route, channel=excluded.channel, app_version=excluded.app_version"""
+
+
+def _v73_channel(path):
+    return "android" if str(path or "").startswith("/api/mobile/") else "web"
+
+
+def _v73_uid():
+    """Usuário da requisição: sessão web ou, no Android, o usuário do token Bearer."""
+    try:
+        uid = session.get("user_id")
+        if uid:
+            return int(uid)
+        mu = getattr(request, "mobile_user", None)
+        if mu is not None:
+            return int(mu.id)
+    except Exception:
+        pass
+    return 0
+
+
+def _v73_usage_record(route, path, status, ms, sql_ms, queries, resp_bytes):
+    """Soma em memória (O(1)); nenhuma consulta ao banco por requisição."""
+    try:
+        if path == "/health":
+            return
+        now = datetime.utcnow()
+        hour = now.replace(minute=0, second=0, microsecond=0)
+        ch = _v73_channel(path)
+        uid = _v73_uid()
+        route = str(route or path or "")[:220]
+        e5 = 1 if status >= 500 else 0
+        e4 = 1 if 400 <= status < 500 else 0
+        with _V73_USAGE_LOCK:
+            h = _V73_HOURLY.get((hour, route, ch))
+            if h is None:
+                h = _V73_HOURLY[(hour, route, ch)] = [0, 0, 0, 0.0, 0.0, 0.0, 0, 0, 0, 0, 0, 0, 0]
+            h[0] += 1; h[1] += e5; h[2] += e4; h[3] += ms; h[4] += sql_ms
+            if ms > h[5]:
+                h[5] = ms
+            h[6] += int(queries or 0); h[7] += int(resp_bytes or 0)
+            h[8 if ms <= 100 else 9 if ms <= 300 else 10 if ms <= 1000 else 11 if ms <= 3000 else 12] += 1
+            d = _V73_DAILY.get((now.date(), uid, route, ch))
+            if d is None:
+                d = _V73_DAILY[(now.date(), uid, route, ch)] = [0, 0, 0, 0.0, 0.0]
+            d[0] += 1; d[1] += e5; d[2] += e4; d[3] += ms
+            if ms > d[4]:
+                d[4] = ms
+            if uid:
+                ver = ""
+                try:
+                    ver = (request.headers.get("X-App-Version") or "")[:40]
+                except Exception:
+                    pass
+                _V73_PRESENCE[uid] = (now, route, ch, ver)
+    except Exception:
+        pass
+
+
+def _v73_slow_sql_note(statement, elapsed):
+    try:
+        s = re.sub(r"\s+", " ", str(statement or "")).strip()
+        if "v73_usage" in s or "v73_presence" in s:
+            return
+        s = re.sub(r"\bIN \([^)]*\)", "IN (…)", s)[:400]
+        route = ""
+        if has_request_context():
+            route = (request.url_rule.rule if request.url_rule else request.path)[:120]
+        with _V73_USAGE_LOCK:
+            e = _V73_SLOW_SQL.get(s)
+            if e is None:
+                if len(_V73_SLOW_SQL) >= 150:
+                    oldest = min(_V73_SLOW_SQL, key=lambda k: _V73_SLOW_SQL[k][4])
+                    _V73_SLOW_SQL.pop(oldest, None)
+                e = _V73_SLOW_SQL[s] = [0, 0.0, 0.0, route, time.time()]
+            e[0] += 1; e[1] += elapsed
+            if elapsed > e[2]:
+                e[2] = elapsed
+            e[3] = route; e[4] = time.time()
+    except Exception:
+        pass
+
+
+def _v73_merge_back(hourly, daily):
+    with _V73_USAGE_LOCK:
+        for k, v in hourly.items():
+            cur = _V73_HOURLY.get(k)
+            if cur is None:
+                _V73_HOURLY[k] = v
+            else:
+                for i, x in enumerate(v):
+                    cur[i] = max(cur[i], x) if i == 5 else cur[i] + x
+        for k, v in daily.items():
+            cur = _V73_DAILY.get(k)
+            if cur is None:
+                _V73_DAILY[k] = v
+            else:
+                for i, x in enumerate(v):
+                    cur[i] = max(cur[i], x) if i == 4 else cur[i] + x
+
+
+def _v73_ensure_tables(conn):
+    if _V73_STATE["tables_ok"]:
+        return
+    for ddl in _V73_DDL:
+        conn.execute(text(ddl))
+    _V73_STATE["tables_ok"] = True
+
+
+def _v73_usage_flush(force=False):
+    """Descarrega os contadores em lote. Uma única thread por vez; falha nunca afeta o usuário."""
+    now = time.time()
+    if not force and now - _V73_STATE["last_flush"] < _V73_FLUSH_EVERY:
+        return False
+    if not _V73_FLUSH_LOCK.acquire(blocking=False):
+        return False
+    hourly = daily = None
+    try:
+        _V73_STATE["last_flush"] = now
+        with _V73_USAGE_LOCK:
+            hourly = dict(_V73_HOURLY); _V73_HOURLY.clear()
+            daily = dict(_V73_DAILY); _V73_DAILY.clear()
+            presence = dict(_V73_PRESENCE)
+        if not hourly and not daily and not presence:
+            return True
+        hrows = [dict(hour_ts=k[0], route=k[1], channel=k[2], hits=v[0], err5=v[1], err4=v[2],
+                      total_ms=round(v[3], 2), sql_ms=round(v[4], 2), max_ms=round(v[5], 2), queries=v[6],
+                      resp_bytes=v[7], b100=v[8], b300=v[9], b1000=v[10], b3000=v[11], bover=v[12])
+                 for k, v in hourly.items()]
+        drows = [dict(day=k[0], user_id=k[1], route=k[2], channel=k[3], hits=v[0], err5=v[1], err4=v[2],
+                      total_ms=round(v[3], 2), max_ms=round(v[4], 2)) for k, v in daily.items()]
+        since = datetime.utcnow() - timedelta(seconds=_V73_FLUSH_EVERY * 2)
+        prows = [dict(user_id=u, last_seen_at=p[0], last_route=p[1], channel=p[2], app_version=p[3])
+                 for u, p in presence.items() if p[0] >= since]
+        try:
+            with db.engine.begin() as conn:
+                _v73_ensure_tables(conn)
+                if hrows:
+                    conn.execute(text(_V73_HOURLY_SQL), hrows)
+                if drows:
+                    conn.execute(text(_V73_DAILY_SQL), drows)
+                if prows:
+                    conn.execute(text(_V73_PRESENCE_SQL), prows)
+                if now - _V73_STATE["last_purge"] > 86400:
+                    _V73_STATE["last_purge"] = now
+                    cut = datetime.utcnow() - timedelta(days=_V73_RETENTION_DAYS)
+                    conn.execute(text("DELETE FROM v73_usage_hourly WHERE hour_ts < :c"), {"c": cut})
+                    conn.execute(text("DELETE FROM v73_usage_daily WHERE day < :c"), {"c": cut.date()})
+            _V73_STATE["flushes"] += 1
+            _V73_STATE["last_rows"] = len(hrows) + len(drows) + len(prows)
+        except Exception as exc:
+            _V73_STATE["errors"] += 1
+            _V73_STATE["last_error"] = str(exc)[:200]
+            _v73_merge_back(hourly, daily)
+            return False
+        return True
+    finally:
+        _V73_FLUSH_LOCK.release()
+
+
+try:
+    import atexit as _v73_atexit
+    _v73_atexit.register(lambda: _v73_usage_flush(True))
+except Exception:
+    pass
+
+
+# ----------------------- abas novas da exportação Excel -----------------------
+def _v73_rows(sql, params=None):
+    try:
+        return [dict(r) for r in db.session.execute(text(sql), params or {}).mappings().all()]
+    except Exception:
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+        return None
+
+
+def _v73_dt(x):
+    """Aceita datetime (PostgreSQL) ou texto ISO (SQLite local)."""
+    if isinstance(x, str):
+        try:
+            return datetime.fromisoformat(x.replace("Z", "")[:26])
+        except Exception:
+            return None
+    return x
+
+
+def _v73_sp(dt):
+    try:
+        dt = _v73_dt(dt)
+        return dt.replace(tzinfo=ZoneInfo("UTC")).astimezone(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y %H:%M")
+    except Exception:
+        return ""
+
+
+def _v73_p95_label(b100, b300, b1000, b3000, bover):
+    total = b100 + b300 + b1000 + b3000 + bover
+    if not total:
+        return ""
+    acc = 0
+    for lim, n in (("≤100", b100), ("≤300", b300), ("≤1000", b1000), ("≤3000", b3000)):
+        acc += n
+        if acc / total >= 0.95:
+            return lim
+    return ">3000"
+
+
+def _v73_add_telemetry_sheets(wb, style_header, days=30):
+    pg = database_url.startswith("postgresql")
+    try:
+        _v73_usage_flush(True)
+    except Exception:
+        pass
+
+    def sheet(title, header, rows, note=None):
+        ws = wb.create_sheet(title[:31])
+        if note:
+            ws.append([note])
+            ws["A1"].font = Font(italic=True)
+        ws.append(header)
+        style_header(ws, 2 if note else 1)
+        for r in rows:
+            ws.append(list(r))
+        return ws
+
+    since = datetime.utcnow() - timedelta(days=days)
+    names = {}
+    try:
+        for u in db.session.query(User.id, User.name, User.role, User.user_code).all():
+            names[u.id] = (u.name or "", u.role or "", u.user_code or "")
+    except Exception:
+        db.session.rollback()
+
+    # 1) uso por tela
+    hrows = _v73_rows("""SELECT route,channel,SUM(hits) hits,SUM(err5) err5,SUM(err4) err4,SUM(total_ms) total_ms,
+        SUM(sql_ms) sql_ms,MAX(max_ms) max_ms,SUM(queries) queries,SUM(resp_bytes) resp_bytes,SUM(b100) b100,
+        SUM(b300) b300,SUM(b1000) b1000,SUM(b3000) b3000,SUM(bover) bover
+        FROM v73_usage_hourly WHERE hour_ts>=:s GROUP BY route,channel ORDER BY SUM(total_ms) DESC LIMIT 400""", {"s": since})
+    ucount = {}
+    for r in _v73_rows("""SELECT route,channel,COUNT(DISTINCT user_id) u FROM v73_usage_daily
+        WHERE day>=:d AND user_id>0 GROUP BY route,channel""", {"d": since.date()}) or []:
+        ucount[(r["route"], r["channel"])] = r["u"]
+    out = []
+    for r in hrows or []:
+        n = int(r["hits"] or 0) or 1
+        out.append([r["route"], r["channel"], int(r["hits"] or 0), ucount.get((r["route"], r["channel"]), 0),
+                    int(r["err5"] or 0), int(r["err4"] or 0), round(float(r["total_ms"] or 0) / n, 1),
+                    _v73_p95_label(int(r["b100"] or 0), int(r["b300"] or 0), int(r["b1000"] or 0), int(r["b3000"] or 0), int(r["bover"] or 0)),
+                    round(float(r["max_ms"] or 0), 1), round(float(r["sql_ms"] or 0) / n, 1),
+                    round(float(r["queries"] or 0) / n, 1), round(float(r["total_ms"] or 0) / 1000.0, 1),
+                    round(float(r["resp_bytes"] or 0) / 1048576.0, 2)])
+    sheet("Uso por tela (30d)", ["Rota", "Canal", "Acessos", "Usuários distintos", "Erros 5xx", "Erros 4xx", "Média ms",
+                                  "P95 aprox. ms", "Máx ms", "SQL médio ms", "Queries/req", "Tempo total gasto (s)", "MB enviados"],
+          out, "Contagem real (sem amostragem). Ordenado por tempo total gasto: o que mais pesa no servidor.")
+
+    # 2) uso por usuário
+    urows = _v73_rows("""SELECT user_id,SUM(hits) hits,SUM(err5) err5,SUM(err4) err4,SUM(total_ms) total_ms,MAX(max_ms) max_ms,
+        COUNT(DISTINCT day) days,COUNT(DISTINCT route) routes FROM v73_usage_daily WHERE day>=:d
+        GROUP BY user_id ORDER BY SUM(hits) DESC LIMIT 400""", {"d": since.date()})
+    top = {}
+    for r in _v73_rows("""SELECT user_id,route,SUM(hits) h FROM v73_usage_daily WHERE day>=:d AND user_id>0
+        GROUP BY user_id,route""", {"d": since.date()}) or []:
+        cur = top.get(r["user_id"])
+        if cur is None or int(r["h"] or 0) > cur[1]:
+            top[r["user_id"]] = (r["route"], int(r["h"] or 0))
+    seen = {r["user_id"]: r["last_seen_at"] for r in (_v73_rows("SELECT user_id,last_seen_at FROM v73_presence") or [])}
+    out = []
+    for r in urows or []:
+        uid = r["user_id"]
+        nm = names.get(uid, ("(sem login / anônimo)" if uid == 0 else f"usuário {uid}", "", ""))
+        n = int(r["hits"] or 0) or 1
+        out.append([uid, nm[0], nm[1], nm[2], int(r["hits"] or 0), int(r["days"] or 0), int(r["routes"] or 0),
+                    int(r["err5"] or 0), int(r["err4"] or 0), round(float(r["total_ms"] or 0) / n, 1),
+                    round(float(r["max_ms"] or 0), 1), (top.get(uid) or ("", 0))[0], _v73_sp(seen.get(uid)) if seen.get(uid) else ""])
+    sheet("Uso por usuário (30d)", ["ID", "Nome", "Perfil", "Código", "Acessos", "Dias ativos", "Telas distintas",
+                                     "Erros 5xx", "Erros 4xx", "Média ms", "Máx ms", "Tela mais usada", "Última atividade"],
+          out, "Inclui web e Android. Linha 'anônimo' = login, páginas públicas e chamadas sem sessão.")
+
+    # 3) conectados agora (últimos 15 min)
+    cut = datetime.utcnow() - timedelta(minutes=15)
+    out = []
+    for r in _v73_rows("""SELECT user_id,last_seen_at,last_route,channel,app_version FROM v73_presence
+        WHERE last_seen_at>=:c ORDER BY last_seen_at DESC""", {"c": cut}) or []:
+        nm = names.get(r["user_id"], (f"usuário {r['user_id']}", "", ""))
+        mins = round((datetime.utcnow() - _v73_dt(r["last_seen_at"])).total_seconds() / 60.0, 1)
+        out.append([nm[0], nm[1], r["channel"], r["last_route"], _v73_sp(r["last_seen_at"]), mins, r["app_version"] or ""])
+    sheet("Conectados (15 min)", ["Usuário", "Perfil", "Canal", "Última tela", "Última atividade", "Há (min)", "Versão do app"],
+          out, "Versão do app só aparece quando o Android enviar o cabeçalho X-App-Version (previsto no próximo build Android).")
+
+    # 4) horários de pico
+    buckets = {h: [0, 0.0] for h in range(24)}
+    for r in _v73_rows("SELECT hour_ts,SUM(hits) hits,SUM(total_ms) tm FROM v73_usage_hourly WHERE hour_ts>=:s GROUP BY hour_ts", {"s": since}) or []:
+        try:
+            hh = _v73_dt(r["hour_ts"]).replace(tzinfo=ZoneInfo("UTC")).astimezone(ZoneInfo("America/Sao_Paulo")).hour
+            buckets[hh][0] += int(r["hits"] or 0); buckets[hh][1] += float(r["tm"] or 0)
+        except Exception:
+            pass
+    sheet("Horários de pico (30d)", ["Hora (Brasília)", "Acessos", "Média ms"],
+          [[f"{h:02d}h", v[0], round(v[1] / v[0], 1) if v[0] else 0] for h, v in buckets.items()],
+          "Use para escolher a hora de importações pesadas e de deploy.")
+
+    # 5) importações
+    out = []
+    for cname, label in (("AtmBobbinImportBatch", "Bobinas"), ("TopDeskImportBatch", "TopDesk (chamados)")):
+        cls = globals().get(cname)
+        if cls is None:
+            continue
+        try:
+            for b in cls.query.order_by(cls.id.desc()).limit(100).all():
+                nm = names.get(getattr(b, "imported_by", None), ("", "", ""))[0]
+                rows_n = getattr(b, "row_count", None)
+                if rows_n is None:
+                    rows_n = getattr(b, "rows_imported", None)
+                out.append([label, _v73_sp(b.created_at), nm, getattr(b, "filename", ""), rows_n,
+                            getattr(b, "inserted_count", ""), getattr(b, "updated_count", ""), getattr(b, "error_count", "")])
+        except Exception:
+            db.session.rollback()
+    ws = sheet("Importações", ["Módulo", "Quando (Brasília)", "Usuário", "Arquivo", "Linhas", "Inseridas", "Atualizadas", "Erros"],
+               out, "Últimos lotes registrados. Abaixo: tempo gasto nas rotas de importação (todas as rotas com 'import').")
+    ws.append([])
+    ws.append(["Rota de importação", "Canal", "Acessos", "Média ms", "Máx ms", "Erros 5xx", "Erros 4xx"])
+    style_header(ws, ws.max_row)
+    for r in _v73_rows("""SELECT route,channel,SUM(hits) hits,SUM(total_ms) tm,MAX(max_ms) mx,SUM(err5) e5,SUM(err4) e4
+        FROM v73_usage_daily WHERE day>=:d AND LOWER(route) LIKE '%import%' GROUP BY route,channel ORDER BY SUM(total_ms) DESC""",
+                       {"d": since.date()}) or []:
+        n = int(r["hits"] or 0) or 1
+        ws.append([r["route"], r["channel"], int(r["hits"] or 0), round(float(r["tm"] or 0) / n, 1),
+                   round(float(r["mx"] or 0), 1), int(r["e5"] or 0), int(r["e4"] or 0)])
+
+    if pg:
+        # 6) índices
+        rows = _v73_rows("""SELECT s.relname t,s.indexrelname i,s.idx_scan sc,pg_relation_size(s.indexrelid) b,
+            i.indisunique u,i.indisprimary p FROM pg_stat_user_indexes s JOIN pg_index i ON i.indexrelid=s.indexrelid
+            ORDER BY pg_relation_size(s.indexrelid) DESC LIMIT 150""")
+        reset = _v73_rows("SELECT stats_reset FROM pg_stat_database WHERE datname=current_database()")
+        out = []
+        for r in rows or []:
+            flag = "PK" if r["p"] else ("ÚNICO (garante regra)" if r["u"] else ("SEM USO OBSERVADO" if int(r["sc"] or 0) == 0 else "OK"))
+            out.append([r["t"], r["i"], int(r["sc"] or 0), int(r["b"] or 0), round(int(r["b"] or 0) / 1048576.0, 1), flag])
+        sheet("Índices (uso)", ["Tabela", "Índice", "Leituras", "Bytes", "MB", "Situação"], out,
+              "Estatísticas do PostgreSQL desde: " + str((reset[0]["stats_reset"] if reset and reset[0].get("stats_reset") else "último reinício")) +
+              ". 'SEM USO OBSERVADO' só indica candidato; confirmar em mais de um ciclo antes de remover.")
+        # 7) tabelas
+        out = []
+        for r in _v73_rows("""SELECT relname,n_live_tup,n_dead_tup,seq_scan,seq_tup_read,idx_scan,n_tup_ins,n_tup_upd,n_tup_del,
+            last_autovacuum,last_autoanalyze,pg_total_relation_size(relid) sz FROM pg_stat_user_tables
+            ORDER BY pg_total_relation_size(relid) DESC LIMIT 80""") or []:
+            out.append([r["relname"], round(int(r["sz"] or 0) / 1048576.0, 1), int(r["n_live_tup"] or 0), int(r["n_dead_tup"] or 0),
+                        int(r["seq_scan"] or 0), int(r["seq_tup_read"] or 0), int(r["idx_scan"] or 0), int(r["n_tup_ins"] or 0),
+                        int(r["n_tup_upd"] or 0), int(r["n_tup_del"] or 0), str(r["last_autovacuum"] or ""), str(r["last_autoanalyze"] or "")])
+        sheet("Tabelas (estatísticas)", ["Tabela", "MB total", "Linhas vivas", "Linhas mortas", "Leituras sequenciais",
+                                          "Linhas lidas (seq)", "Leituras por índice", "Inserções", "Atualizações", "Exclusões",
+                                          "Último autovacuum", "Última análise"], out,
+              "Muitas leituras sequenciais em tabela grande = falta de índice ou consulta sem filtro. Linhas mortas altas = inchaço.")
+        # 8) por versão
+        out = []
+        for r in _v73_rows("""SELECT COALESCE(release,'(sem versão)') rel,COUNT(*) n,AVG(duration_ms) a,
+            percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms) p95,AVG(sql_ms) s,AVG(query_count) q,
+            MIN(created_at) d0,MAX(created_at) d1 FROM performance_metrics GROUP BY release ORDER BY MIN(created_at)""") or []:
+            out.append([r["rel"], int(r["n"] or 0), round(float(r["a"] or 0), 1), round(float(r["p95"] or 0), 1),
+                        round(float(r["s"] or 0), 1), round(float(r["q"] or 0), 1), _v73_sp(r["d0"]), _v73_sp(r["d1"])])
+        sheet("Por versão (amostras)", ["Versão", "Amostras", "Média ms", "P95 ms", "SQL médio ms", "Queries/req", "Primeira", "Última"], out,
+              "Compara o desempenho entre releases com os mesmos indicadores (dados retidos de performance_metrics).")
+
+    # 9) SQL lento (memória do processo) + pg_stat_statements quando disponível
+    with _V73_USAGE_LOCK:
+        slow = sorted(_V73_SLOW_SQL.items(), key=lambda kv: kv[1][1], reverse=True)[:60]
+    out = [[s, e[0], round(e[1], 1), round(e[1] / e[0], 1), round(e[2], 1), e[3]] for s, e in slow]
+    ws = sheet("SQL lento", ["Comando (normalizado)", "Chamadas", "Total ms", "Média ms", "Máx ms", "Última rota"], out,
+               f"Comandos acima de {int(_V73_SLOW_SQL_MS)} ms desde o último reinício do servidor (sem valores/parâmetros).")
+    if pg:
+        ss = _v73_rows("""SELECT query,calls,total_exec_time tt,mean_exec_time mt,rows FROM pg_stat_statements
+            WHERE query NOT ILIKE '%pg_stat%' ORDER BY total_exec_time DESC LIMIT 30""")
+        ws.append([])
+        if ss is None:
+            ws.append(["pg_stat_statements: extensão não habilitada neste banco (opcional)."])
+        else:
+            ws.append(["pg_stat_statements — comando", "Chamadas", "Total ms", "Média ms", "Linhas"])
+            style_header(ws, ws.max_row)
+            for r in ss:
+                ws.append([re.sub(r"\s+", " ", str(r["query"]))[:400], int(r["calls"] or 0), round(float(r["tt"] or 0), 1),
+                           round(float(r["mt"] or 0), 2), int(r["rows"] or 0)])
+
+    # 10) processo, caches e coleta
+    try:
+        rss = _rev56_rss_mb()
+    except Exception:
+        rss = None
+    try:
+        pool = db.engine.pool.status()
+    except Exception:
+        pool = ""
+    import gc as _gc
+    tot = _V73_CACHE_STATS["hit"] + _V73_CACHE_STATS["miss"]
+    rows = [
+        ["Release", APP_RELEASE], ["PID", os.getpid()],
+        ["Iniciado em", _v73_sp(datetime.utcfromtimestamp(_V73_BOOT_AT))],
+        ["Tempo ligado (min)", round((time.time() - _V73_BOOT_AT) / 60.0, 1)],
+        ["RAM do processo (MB)", rss], ["Threads ativas", threading.active_count()],
+        ["Coletor de lixo (contagens)", str(_gc.get_count())], ["Pool de conexões", pool],
+        ["Cache v73: acertos", _V73_CACHE_STATS["hit"]], ["Cache v73: faltas", _V73_CACHE_STATS["miss"]],
+        ["Cache v73: taxa de acerto %", round(100.0 * _V73_CACHE_STATS["hit"] / tot, 1) if tot else ""],
+        ["Cache v73: limpezas", _V73_CACHE_STATS["clear"]], ["Cache v73: TTL (s)", _V73_CACHE_TTL],
+        ["Cache financeiro: TTL (s)", _V8543R1_READ_CACHE_TTL],
+        ["Amostragem de performance_metrics", os.getenv("PERF_SAMPLE_RATE", "0.10")],
+        ["Contadores de uso: descargas", _V73_STATE["flushes"]], ["Contadores de uso: erros de descarga", _V73_STATE["errors"]],
+        ["Contadores de uso: último erro", _V73_STATE["last_error"]],
+        ["Contadores de uso: linhas na última descarga", _V73_STATE["last_rows"]],
+        ["Contadores de uso: intervalo (s)", _V73_FLUSH_EVERY], ["Contadores de uso: retenção (dias)", _V73_RETENTION_DAYS],
+        ["Contadores em memória (hora/dia)", f"{len(_V73_HOURLY)}/{len(_V73_DAILY)}"],
+    ]
+    sheet("Processo e caches", ["Item", "Valor"], rows, "Leitura do próprio processo no momento da exportação.")
+
 
 # V56-B — telemetria leve. Não registra arquivos estáticos nem a própria API de telemetria.
 @app.before_request
@@ -356,9 +879,14 @@ def _v56b_perf_finish(response):
             must_record = response.status_code >= 400 or ms >= 1000
             request_uuid=getattr(g,"_perf_request_id","") or ""
             sampled = (int(request_uuid.replace("-", "")[:8],16)/0xffffffff < sample_rate) if request_uuid else True
+            # V87.6 REV73: contadores agregados (memória) — contagem real, sem amostragem.
+            _v73_usage_record(request.url_rule.rule if request.url_rule else path, path, response.status_code, ms, sql_ms,
+                              int(getattr(g,"_perf_query_count",0) or 0), response_bytes)
             if must_record or sampled:
-                db.session.add(PerformanceMetric(route=(request.url_rule.rule if request.url_rule else path)[:220],method=request.method,status_code=response.status_code,duration_ms=round(ms,2),sql_ms=round(float(getattr(g,"_perf_sql_ms",0) or 0),2),query_count=int(getattr(g,"_perf_query_count",0) or 0),response_bytes=response_bytes,request_id=getattr(g,"_perf_request_id",None),release=APP_RELEASE,user_id=session.get("user_id")))
+                db.session.add(PerformanceMetric(route=(request.url_rule.rule if request.url_rule else path)[:220],method=request.method,status_code=response.status_code,duration_ms=round(ms,2),sql_ms=round(float(getattr(g,"_perf_sql_ms",0) or 0),2),query_count=int(getattr(g,"_perf_query_count",0) or 0),response_bytes=response_bytes,request_id=getattr(g,"_perf_request_id",None),release=APP_RELEASE,user_id=(_v73_uid() or None)))
                 db.session.commit()
+            # V87.6 REV73: descarga em lote dos contadores (no máx. 1 vez a cada V73_USAGE_FLUSH_SECONDS).
+            _v73_usage_flush()
             # REV47: expurgo foi removido do ciclo HTTP. Executar manutenção
             # exclusivamente em janela administrativa, em lotes e após backup.
             # DELETE massivo em requisição causava WAL, locks e pressão de disco.
@@ -2829,15 +3357,21 @@ def _v72_defaults():
     }
 
 def _v72_settings():
+    # V87.6 REV73: lê a configuração do banco no máximo 1 vez por TTL (invalidada ao salvar).
+    def _load():
+        row = db.session.get(V72SystemConfig, 1)
+        raw = {}
+        if row:
+            parsed = json.loads(row.settings_json or "{}")
+            if isinstance(parsed, dict):
+                raw = parsed
+        return raw
     out = _v72_defaults()
     try:
-        row = db.session.get(V72SystemConfig, 1)
-        if row:
-            raw = json.loads(row.settings_json or "{}")
-            if isinstance(raw, dict):
-                for k in out:
-                    if k in raw:
-                        out[k] = raw[k]
+        raw = _v73_cache_get("v72_settings", _load)
+        for k in out:
+            if k in raw:
+                out[k] = copy.deepcopy(raw[k])
     except Exception:
         try: db.session.rollback()
         except Exception: pass
@@ -2853,6 +3387,7 @@ def _v72_save_settings(values):
     row.updated_by = session.get("user_id")
     row.updated_at = datetime.utcnow()
     db.session.add(row)
+    _v73_cache_clear("v72_settings")
     return current
 
 def _v72_parse_shift(value):
@@ -3414,11 +3949,14 @@ def _v8233_mobile_current_user():
     user=db.session.get(User,row.user_id)
     if not user or not user.active or (user.personnel_status or "ATIVO").upper() == "INATIVO":
         return None
-    row.last_used_at=datetime.utcnow()
-    try:
-        db.session.commit()
-    except Exception:
-        db.session.rollback()
+    # V87.6 REV73: 1 escrita por minuto por token, em vez de 1 commit por chamada do app.
+    _now_v73=datetime.utcnow()
+    if (not row.last_used_at) or (_now_v73-row.last_used_at).total_seconds()>=60:
+        row.last_used_at=_now_v73
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
     return user
 
 
@@ -7256,6 +7794,12 @@ def telemetry_export_xlsx():
         diag="CRÍTICO" if p95>5000 else ("LENTO" if p95>3000 else ("ATENÇÃO" if p95>1500 else "OK"))
         wsr.append([x.get("route"),x.get("avg_ms"),x.get("p95_ms"),x.get("p99_ms"),x.get("max_ms"),x.get("avg_sql_ms"),x.get("avg_queries"),x.get("slow_1s"),x.get("slow_2s"),x.get("slow_5s"),x.get("count"),x.get("errors"),diag])
 
+    # V87.6 REV73: abas de uso, presença, importações, índices, tabelas, SQL lento e processo.
+    try:
+        _v73_add_telemetry_sheets(wb, style_header)
+    except Exception:
+        app.logger.exception("V87.6 REV73: falha ao montar abas adicionais da telemetria")
+
     # Ajuste de largura para facilitar leitura e upload/análise posterior.
     for sh in wb.worksheets:
         sh.freeze_panes = "A2" if sh.max_row > 1 else None
@@ -7907,7 +8451,7 @@ def offline_page():
 def health():
     try:
         db.session.execute(db.text("SELECT 1"))
-        return jsonify({"ok": True, "database": "connected", "release": "v6.0-central-operacional"})
+        return jsonify({"ok": True, "database": "connected", "release": APP_RELEASE})
     except Exception as exc:
         return jsonify({"ok": False, "database": "error", "detail": str(exc)}), 500
 
@@ -20359,9 +20903,14 @@ def _dashboard_visible(row):
 
 @app.context_processor
 def _v62_dashboard_context():
+    # V87.6 REV73: lista publicada em cache (TTL); a permissão continua avaliada por usuário.
     try:
-        rows=DashboardDefinition.query.filter_by(published=True).order_by(DashboardDefinition.name).all() if session.get("user_id") else []
-        return {"custom_dashboards":[_dash_cfg(x) for x in rows if _dashboard_visible(x)]}
+        if not session.get("user_id") or not _has_access("dashboard.general"):
+            return {"custom_dashboards":[]}
+        def _load():
+            rows=DashboardDefinition.query.filter_by(published=True).order_by(DashboardDefinition.name).all()
+            return [_dash_cfg(x) for x in rows if x.published]
+        return {"custom_dashboards":_v73_cache_get("custom_dashboards",_load)}
     except Exception:
         return {"custom_dashboards":[]}
 
@@ -20398,7 +20947,7 @@ BUILTIN_DASHBOARD_PERMISSIONS = {
 }
 
 def _builtin_dashboard_menu_items():
-    try: saved={x.dashboard_key:x for x in BuiltinDashboardSetting.query.all()}
+    try: saved=_v73_cache_get("builtin_dash_saved",_v73_load_builtin_saved)
     except Exception: saved={}
     out=[]
     for idx,item in enumerate(BUILTIN_DASHBOARD_CATALOG,1):
@@ -20431,10 +20980,11 @@ def builtin_dashboard_settings_page():
             except Exception: row.order_index=idx*10
             roles=[x for x in request.form.getlist(f'roles__{key}') if x in ('manager','manager_field','technician','technician_implantation','consultation','hr','dispatcher','atm_financial_admin')]
             row.allowed_roles_json=json.dumps(roles,ensure_ascii=False); row.updated_by=session.get('user_id')
-        db.session.commit()
+        db.session.commit(); _v73_cache_clear("builtin_dash_saved")
         if not any(x.visible for x in BuiltinDashboardSetting.query.all()):
             first=BuiltinDashboardSetting.query.filter_by(dashboard_key='overview').first(); first.visible=True; db.session.commit(); flash('Visão Geral foi mantida ativa para evitar uma Central vazia.')
         else: flash('Configuração de dashboards atualizada.')
+        _v73_cache_clear("builtin_dash_saved")
         return redirect('/gestao/configuracao-dashboards')
     saved={x.dashboard_key:x for x in BuiltinDashboardSetting.query.all()}; rows=[]
     for idx,item in enumerate(BUILTIN_DASHBOARD_CATALOG,1):
@@ -20469,7 +21019,7 @@ def dashboard_configs_save():
         row=DashboardDefinition(name=name,slug=slug,created_by=session['user_id']); db.session.add(row)
     row.name=name; row.data_source=str(p.get('data_source') or 'TOPDESK').upper(); row.config_json=json.dumps(p.get('config') or {},ensure_ascii=False)
     row.published=bool(p.get('published')); row.tv_enabled=bool(p.get('tv_enabled')); row.tv_order=int(p.get('tv_order') or 0); row.tv_seconds=max(10,min(600,int(p.get('tv_seconds') or 30)))
-    row.allowed_roles_json=json.dumps(p.get('allowed_roles') or [],ensure_ascii=False); row.updated_at=datetime.utcnow(); db.session.commit()
+    row.allowed_roles_json=json.dumps(p.get('allowed_roles') or [],ensure_ascii=False); row.updated_at=datetime.utcnow(); db.session.commit(); _v73_cache_clear("custom_dashboards")
     return jsonify({'ok':True,'dashboard':_dash_cfg(row)})
 
 @app.delete('/api/dashboard-configs/<int:dashboard_id>')
@@ -20477,7 +21027,7 @@ def dashboard_configs_save():
 def dashboard_configs_delete(dashboard_id):
     _dashboard_admin_required(); row=db.session.get(DashboardDefinition,dashboard_id)
     if not row: return jsonify({'error':'Dashboard não encontrada.'}),404
-    db.session.delete(row); db.session.commit(); return jsonify({'ok':True})
+    db.session.delete(row); db.session.commit(); _v73_cache_clear("custom_dashboards"); return jsonify({'ok':True})
 
 @app.get('/dashboards/<slug>')
 @login_required
