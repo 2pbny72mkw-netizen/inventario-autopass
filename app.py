@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV77"
+APP_RELEASE = "V87.6 REV78"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -8490,6 +8490,45 @@ def diagnostics_performance_v8515_api():
         out["tables"]=[dict(r) for r in rs]
     except Exception as exc:
         db.session.rollback(); out["note"]=f"Estatística parcial: {str(exc)[:160]}"
+    return jsonify(out)
+
+@app.get("/api/diagnostico/indices-auditoria/v78")
+@login_required
+def diagnostics_index_audit_v78_api():
+    """V87.6 REV78 — auditoria SOMENTE LEITURA dos índices: definição, unicidade, vínculo com constraint, scans e tamanho.
+    Índice UNIQUE/PRIMARY/constraint nunca é candidato a remoção (protege duplicidade mesmo com 0 scans)."""
+    if not _has_access("management.diagnostics"):
+        return jsonify({"ok":False,"error":"Sem permissão."}),403
+    out={"ok":True,"release":APP_RELEASE,"read_only":True,"stats_reset":None,"rows":[]}
+    if not database_url.startswith('postgresql'):
+        out["note"]="Auditoria de índices disponível apenas no PostgreSQL."
+        return jsonify(out)
+    try:
+        out["stats_reset"]=db.session.execute(text("SELECT stats_reset FROM pg_stat_database WHERE datname=current_database()")).scalar()
+        if out["stats_reset"] is not None:
+            out["stats_reset"]=out["stats_reset"].astimezone(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y %H:%M")
+        rs=db.session.execute(text("""
+          SELECT s.relname AS tabela, s.indexrelname AS indice, COALESCE(s.idx_scan,0) AS scans,
+                 pg_relation_size(s.indexrelid) AS bytes, i.indisunique AS e_unico, i.indisprimary AS e_primario,
+                 EXISTS (SELECT 1 FROM pg_constraint c WHERE c.conindid=s.indexrelid) AS e_constraint,
+                 pg_get_indexdef(s.indexrelid) AS definicao
+          FROM pg_stat_user_indexes s JOIN pg_index i ON i.indexrelid=s.indexrelid
+          ORDER BY pg_relation_size(s.indexrelid) DESC LIMIT 60
+        """)).mappings().all()
+        rows=[]
+        for r in rs:
+            protegido=bool(r["e_unico"] or r["e_primario"] or r["e_constraint"])
+            scans=int(r["scans"] or 0)
+            if protegido: cls="PROTEGIDO"
+            elif scans==0: cls="CANDIDATO"
+            else: cls="EM USO"
+            rows.append({"tabela":r["tabela"],"indice":r["indice"],"scans":scans,"mb":round(int(r["bytes"] or 0)/1048576,1),
+                         "unico":bool(r["e_unico"]),"constraint":bool(r["e_constraint"] or r["e_primario"]),"classe":cls,"definicao":r["definicao"]})
+        out["rows"]=rows
+        out["candidatos_mb"]=round(sum(x["mb"] for x in rows if x["classe"]=="CANDIDATO"),1)
+        out["protegidos_sem_uso_mb"]=round(sum(x["mb"] for x in rows if x["classe"]=="PROTEGIDO" and x["scans"]==0),1)
+    except Exception as exc:
+        db.session.rollback(); out["note"]=f"Auditoria parcial: {str(exc)[:160]}"
     return jsonify(out)
 
 @app.get("/api/diagnostico/armazenamento/v812")
