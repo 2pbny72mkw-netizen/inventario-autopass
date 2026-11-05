@@ -96,9 +96,12 @@ def install_v86(app, db, User, can):
             return inner
         return outer
 
-    def payload_material(m):
+    def payload_material(m,photo_ids=None):
+        # REV83: a listagem passa o conjunto de materiais com foto (1 consulta);
+        # chamadas avulsas continuam consultando apenas o material em questão.
+        has_photo=(m.id in photo_ids) if photo_ids is not None else bool(Photo.query.filter_by(material_id=m.id).first())
         return {'id':m.id,'code':m.code,'description':m.description,'original_description':m.original_description,
-                'unit':m.unit,'company':m.company or '', 'classified':m.classified,'active':m.active,'photo_url':('/api/engenharia/estoque/fotos/'+str(m.id)) if Photo.query.filter_by(material_id=m.id).first() else None}
+                'unit':m.unit,'company':m.company or '', 'classified':m.classified,'active':m.active,'photo_url':('/api/engenharia/estoque/fotos/'+str(m.id)) if has_photo else None}
 
     @app.get('/engenharia/estoque')
     @guard('engineering.stock.view')
@@ -121,10 +124,11 @@ def install_v86(app, db, User, can):
         by_material={}
         for b in balances:
             by_material.setdefault(b.material_id,{})[b.warehouse_id]=b
+        photo_ids={r[0] for r in db.session.query(Photo.material_id).filter(Photo.material_id.in_([m.id for m in mats])).distinct().all()} if mats else set()
         result=[]
         for m in mats:
             entries=by_material.get(m.id,{})
-            d=payload_material(m)
+            d=payload_material(m,photo_ids)
             d['quantity']=(entries[wid].quantity if wid in entries else 0) if wid else sum(b.quantity for b in entries.values())
             d['by_warehouse']={str(w.id):entries[w.id].quantity if w.id in entries else 0 for w in wh}
             d['address_by_warehouse']={str(wid2):b.address or '' for wid2,b in entries.items()}

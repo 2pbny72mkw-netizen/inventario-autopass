@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV82"
+APP_RELEASE = "V87.6 REV83"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -8832,6 +8832,154 @@ def v82_treport_compact():
                          "started_at": datetime.utcnow().isoformat(), "finished_at": None})
     threading.Thread(target=_v82_compact_worker, daemon=True).start()
     return jsonify({"ok": True, "started": True})
+
+# V87.6 REV83 — Retenção do histórico técnico (somente Gestor, sob demanda, com plano e confirmação digitada).
+# Tabelas: mobile_sync_events (apenas eventos já APLICADOS) e performance_metrics (telemetria). Nada roda sozinho.
+_V83_TABLES = {
+    "sync": {"table": "mobile_sync_events", "col": "received_at", "extra": " AND status = 'APLICADO'", "label": "Eventos de sincronização do app (somente já aplicados)"},
+    "metrics": {"table": "performance_metrics", "col": "created_at", "extra": "", "label": "Amostras de telemetria de desempenho"},
+}
+_V83_JOB = {"state": "idle", "step": "", "message": "", "table": "", "deleted": 0, "total": 0, "error": "", "started_at": None, "finished_at": None}
+_V83_LOCK = threading.Lock()
+
+
+def _v83_guard():
+    if not _has_access("management.diagnostics") or session.get("role") != "manager":
+        return jsonify({"ok": False, "error": "Somente o Gestor."}), 403
+    if not database_url.startswith("postgresql"):
+        return jsonify({"ok": False, "error": "Disponível apenas no PostgreSQL."}), 400
+    return None
+
+
+def _v83_parse(src):
+    key = str(src.get("tabela") or "").strip()
+    spec = _V83_TABLES.get(key)
+    try:
+        days = int(src.get("days") or 90)
+    except Exception:
+        days = 0
+    if not spec:
+        return None, None, None, "Tabela inválida."
+    if days not in (30, 60, 90, 180):
+        return None, None, None, "Prazo deve ser 30, 60, 90 ou 180 dias."
+    return key, spec, days, ""
+
+
+def _v83_set(**kw):
+    with _V83_LOCK:
+        _V83_JOB.update(kw)
+
+
+@app.get("/api/diagnostico/retencao-historico/plano/v83")
+@login_required
+def v83_retention_plan():
+    g = _v83_guard()
+    if g:
+        return g
+    key, spec, days, err = _v83_parse(request.args)
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    try:
+        cut = datetime.utcnow() - timedelta(days=days)
+        t, c, x = spec["table"], spec["col"], spec["extra"]
+        total = int(db.session.execute(text(f"SELECT COUNT(*) FROM {t}")).scalar() or 0)
+        elig = int(db.session.execute(text(f"SELECT COUNT(*) FROM {t} WHERE {c} < :cut{x}"), {"cut": cut}).scalar() or 0)
+        size = int(db.session.execute(text("SELECT pg_total_relation_size(CAST(:t AS regclass))"), {"t": t}).scalar() or 0)
+        return jsonify({"ok": True, "tabela": key, "label": spec["label"], "days": days, "cutoff": cut.isoformat(timespec="seconds"),
+                        "total": total, "to_delete": elig, "to_keep": total - elig, "size_mb": round(size / 1048576, 1), "job": dict(_V83_JOB)})
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({"ok": False, "error": f"Falha ao montar o plano: {str(exc)[:160]}"}), 500
+
+
+@app.get("/api/diagnostico/retencao-historico/status/v83")
+@login_required
+def v83_retention_status():
+    g = _v83_guard()
+    if g:
+        return g
+    return jsonify({"ok": True, "job": dict(_V83_JOB)})
+
+
+def _v83_worker(key, days):
+    with app.app_context():
+        spec = _V83_TABLES[key]
+        t, c, x = spec["table"], spec["col"], spec["extra"]
+        try:
+            cut = datetime.utcnow() - timedelta(days=days)
+            total = int(db.session.execute(text(f"SELECT COUNT(*) FROM {t} WHERE {c} < :cut{x}"), {"cut": cut}).scalar() or 0)
+            _v83_set(step="apagando em lotes", total=total, deleted=0)
+            done = 0
+            while True:
+                n = db.session.execute(text(f"DELETE FROM {t} WHERE id IN (SELECT id FROM {t} WHERE {c} < :cut{x} ORDER BY id LIMIT 5000)"), {"cut": cut}).rowcount or 0
+                db.session.commit()
+                done += n
+                _v83_set(deleted=done)
+                if n < 5000:
+                    break
+                time.sleep(0.05)
+            _v83_set(state="done", step="concluído", finished_at=datetime.utcnow().isoformat(),
+                     message=f"{done} linha(s) apagadas de {t}. Use Compactar para devolver o espaço em disco, fora do horário de uso.")
+        except Exception as exc:
+            db.session.rollback()
+            app.logger.exception("REV83: falha na retenção")
+            _v83_set(state="error", error=f"Falha: {str(exc)[:200]}")
+
+
+@app.post("/api/diagnostico/retencao-historico/executar/v83")
+@login_required
+def v83_retention_run():
+    g = _v83_guard()
+    if g:
+        return g
+    data = request.get_json(silent=True) or {}
+    key, spec, days, err = _v83_parse(data)
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    if str(data.get("confirmation") or "").strip().upper() != "EXCLUIR HISTORICO":
+        return jsonify({"ok": False, "error": "Confirmação textual ausente."}), 400
+    with _V83_LOCK:
+        if _V83_JOB["state"] in ("running", "compacting"):
+            return jsonify({"ok": False, "error": "Já existe uma operação em andamento."}), 409
+        _V83_JOB.update({"state": "running", "step": "iniciando", "message": "", "table": spec["table"], "deleted": 0, "total": 0, "error": "",
+                         "started_at": datetime.utcnow().isoformat(), "finished_at": None})
+    threading.Thread(target=_v83_worker, args=(key, days), daemon=True).start()
+    return jsonify({"ok": True, "started": True})
+
+
+def _v83_compact_worker(key):
+    with app.app_context():
+        t = _V83_TABLES[key]["table"]
+        try:
+            with db.engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+                conn.execute(text("SET lock_timeout = '30s'"))
+                conn.execute(text(f"VACUUM (FULL, ANALYZE) {t}"))
+            _v83_set(state="done", step="compactado", message=f"Tabela {t} compactada.", finished_at=datetime.utcnow().isoformat())
+        except Exception as exc:
+            app.logger.exception("REV83: falha ao compactar")
+            _v83_set(state="error", error=f"Falha ao compactar: {str(exc)[:200]}")
+
+
+@app.post("/api/diagnostico/retencao-historico/compactar/v83")
+@login_required
+def v83_retention_compact():
+    g = _v83_guard()
+    if g:
+        return g
+    data = request.get_json(silent=True) or {}
+    key = str(data.get("tabela") or "").strip()
+    if key not in _V83_TABLES:
+        return jsonify({"ok": False, "error": "Tabela inválida."}), 400
+    if str(data.get("confirmation") or "").strip().upper() != "COMPACTAR HISTORICO":
+        return jsonify({"ok": False, "error": "Confirmação textual ausente."}), 400
+    with _V83_LOCK:
+        if _V83_JOB["state"] in ("running", "compacting"):
+            return jsonify({"ok": False, "error": "Já existe uma operação em andamento."}), 409
+        _V83_JOB.update({"state": "compacting", "step": "compactando", "message": "VACUUM FULL em andamento; a tabela fica bloqueada por alguns instantes.",
+                         "table": _V83_TABLES[key]["table"], "error": "", "started_at": datetime.utcnow().isoformat(), "finished_at": None})
+    threading.Thread(target=_v83_compact_worker, args=(key,), daemon=True).start()
+    return jsonify({"ok": True, "started": True})
+
 
 @app.get("/api/diagnostico/indices-auditoria/v78")
 @login_required
