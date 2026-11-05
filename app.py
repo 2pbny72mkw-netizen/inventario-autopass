@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV80"
+APP_RELEASE = "V87.6 REV81"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -8135,18 +8135,8 @@ def diagnostics_storage_api():
     sizes={}
     if r2["enabled"]:
         try:
-            client=r2_client(); token=None; pages=0
-            while True:
-                kw={"Bucket":os.environ["R2_BUCKET_NAME"],"MaxKeys":1000}
-                if token: kw["ContinuationToken"]=token
-                resp=client.list_objects_v2(**kw); pages+=1
-                for obj in resp.get("Contents",[]):
-                    key=str(obj.get("Key") or ''); sz=int(obj.get("Size") or 0)
-                    if key: sizes[key]=sz; r2["objects"]+=1; r2["bytes"]+=sz
-                if not resp.get("IsTruncated"): break
-                token=resp.get("NextContinuationToken")
-                if not token or pages>=100:
-                    r2["complete"]=False; r2["note"]="Leitura limitada às primeiras 100.000 mídias."; break
+            sizes,_cmp,_nt=_v81_r2_sizes(request.args.get("fresh")=="1")
+            r2["objects"]=len(sizes); r2["bytes"]=sum(sizes.values()); r2["complete"]=_cmp; r2["note"]=_nt
         except Exception as exc:
             r2["note"]=f"R2 indisponível para medição: {str(exc)[:160]}"
     else: r2["note"]="R2 não configurado nesta instância."
@@ -8556,6 +8546,92 @@ def v79_whatsapp_retention_run():
     remaining = int(q.count())
     return jsonify({"ok": True, "days": days, "deleted": deleted, "errors": errors, "remaining": remaining, "done": remaining == 0 or deleted == 0})
 
+# V87.6 REV81 — Limpeza controlada de índices sem uso + listagem do R2 em cache curto.
+_V81_DROPPABLE = (
+    "ix_fin_tx_external_id", "ix_perf_route_created_status", "ix_perf_request_id", "ix_perf_release_created",
+    "ix_fin_tx_source_file", "ix_financial_atm_transactions_terminal", "ix_topdesk_operator_created",
+    "ix_performance_metrics_duration_ms", "ix_mobile_sync_events_captured_at", "ix_topdesk_created_text",
+    "ix_topdesk_status_created", "ix_mobile_sync_events_received_at", "ix_topdesk_model_created",
+    "ix_topdesk_station_created", "ix_topdesk_line_created", "ix_performance_metrics_route",
+    "ix_performance_metrics_user_id", "ix_mobile_sync_events_device_id", "ix_mobile_sync_events_event_type",
+    "ix_performance_metrics_status_code", "ix_mobile_sync_events_user_id", "ix_mobile_sync_events_status",
+    "ix_topdesk_category_subcategory", "ix_topdesk_equipment_status",
+)
+
+
+def _v81_r2_sizes(fresh=False, ttl=300):
+    """({chave: tamanho}, completo, nota). A listagem completa do R2 leva ~10 s; fica em cache por 5 min (?fresh=1 força nova leitura)."""
+    def _load():
+        client = r2_client(); token = None; pages = 0; sizes = {}; complete = True; note = None
+        while True:
+            kw = {"Bucket": os.environ["R2_BUCKET_NAME"], "MaxKeys": 1000}
+            if token: kw["ContinuationToken"] = token
+            resp = client.list_objects_v2(**kw); pages += 1
+            for obj in resp.get("Contents", []):
+                key = str(obj.get("Key") or "")
+                if key: sizes[key] = int(obj.get("Size") or 0)
+            if not resp.get("IsTruncated"): break
+            token = resp.get("NextContinuationToken")
+            if not token or pages >= 100:
+                complete = False; note = "Leitura limitada às primeiras 100.000 mídias."; break
+        return (sizes, complete, note)
+    if fresh:
+        with _v75_ttl_lock:
+            _v75_ttl_store.pop("v81_r2_sizes", None)
+    return _v75_slow_cached("v81_r2_sizes", _load, ttl)
+
+
+@app.post("/api/diagnostico/indices-remocao/v81")
+@login_required
+def v81_index_cleanup():
+    """Remove SOMENTE índices da lista fechada _V81_DROPPABLE que, no momento da execução, continuam comuns (não únicos, não chave, sem constraint) e com 0 scans.
+    Exige Gestor e confirmação 'EXCLUIR INDICES'. dry_run apenas informa o que seria feito. Um índice por vez, com lock_timeout de 3 s. Auditado."""
+    if not _has_access("management.diagnostics") or session.get("role") != "manager":
+        return jsonify({"ok": False, "error": "Somente o Gestor pode remover índices."}), 403
+    if not database_url.startswith("postgresql"):
+        return jsonify({"ok": False, "error": "Disponível apenas no PostgreSQL."}), 400
+    data = request.get_json(silent=True) or {}
+    dry = bool(data.get("dry_run"))
+    if not dry and str(data.get("confirmation") or "").strip().upper() != "EXCLUIR INDICES":
+        return jsonify({"ok": False, "error": "Confirmação textual ausente."}), 400
+    results = []; freed = 0.0
+    for name in _V81_DROPPABLE:
+        if not re.fullmatch(r"[a-z0-9_]+", name):
+            continue
+        try:
+            row = db.session.execute(text("""
+                SELECT COALESCE(s.idx_scan,0) AS scans, pg_relation_size(s.indexrelid) AS bytes, i.indisunique AS u, i.indisprimary AS p,
+                       EXISTS (SELECT 1 FROM pg_constraint c WHERE c.conindid=s.indexrelid) AS k
+                FROM pg_stat_user_indexes s JOIN pg_index i ON i.indexrelid=s.indexrelid WHERE s.indexrelname=:n"""), {"n": name}).mappings().first()
+            db.session.rollback()
+        except Exception as exc:
+            db.session.rollback(); results.append({"indice": name, "acao": "erro", "detalhe": str(exc)[:100]}); continue
+        if not row:
+            results.append({"indice": name, "acao": "ausente", "mb": 0}); continue
+        mb = round(int(row["bytes"] or 0) / 1048576, 1)
+        if row["u"] or row["p"] or row["k"]:
+            results.append({"indice": name, "acao": "protegido", "mb": mb}); continue
+        if int(row["scans"] or 0) > 0:
+            results.append({"indice": name, "acao": "em_uso", "mb": mb, "scans": int(row["scans"])}); continue
+        if dry:
+            results.append({"indice": name, "acao": "removeria", "mb": mb}); continue
+        try:
+            db.session.execute(text("SET LOCAL lock_timeout = '3s'"))
+            db.session.execute(text(f'DROP INDEX IF EXISTS "{name}"'))
+            db.session.commit()
+            freed += mb; results.append({"indice": name, "acao": "removido", "mb": mb})
+        except Exception as exc:
+            db.session.rollback(); results.append({"indice": name, "acao": "bloqueado", "mb": mb, "detalhe": str(exc)[:100]})
+    if not dry:
+        try:
+            db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="INDEX_CLEANUP", entity_type="database_indexes", entity_id="v81",
+                                      detail=json.dumps({"release": APP_RELEASE, "freed_mb": round(freed, 1), "results": results}, ensure_ascii=False)[:3800]))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+    return jsonify({"ok": True, "dry_run": dry, "freed_mb": round(freed, 1),
+                    "potential_mb": round(sum(r.get("mb", 0) for r in results if r["acao"] == "removeria"), 1), "results": results})
+
 @app.get("/api/diagnostico/indices-auditoria/v78")
 @login_required
 def diagnostics_index_audit_v78_api():
@@ -8629,13 +8705,9 @@ def diagnostics_storage_v812_api():
     groups={}; samples={}; total=0; total_bytes=0
     if _r2_available():
         try:
-            client=r2_client(); token=None; pages=0
+            _sizes_c=_v81_r2_sizes(request.args.get("fresh")=="1")[0]
             while True:
-                kw={"Bucket":os.environ["R2_BUCKET_NAME"],"MaxKeys":1000}
-                if token: kw['ContinuationToken']=token
-                resp=client.list_objects_v2(**kw); pages+=1
-                for obj in resp.get('Contents',[]):
-                    key=str(obj.get('Key') or ''); sz=int(obj.get('Size') or 0)
+                for key,sz in _sizes_c.items():
                     if not key or key in referenced: continue
                     total+=1; total_bytes+=sz
                     prefix=key.split('/',1)[0].lower() if '/' in key else '(raiz)'
@@ -8646,9 +8718,7 @@ def diagnostics_storage_v812_api():
                     g['objects']+=1; g['bytes']+=sz
                     samples.setdefault(gkey,[])
                     if len(samples[gkey])<5: samples[gkey].append(key)
-                if not resp.get('IsTruncated'): break
-                token=resp.get('NextContinuationToken')
-                if not token or pages>=100: break
+                break
         except Exception as exc:
             return jsonify({'ok':False,'error':f'Falha ao classificar R2: {str(exc)[:180]}'}),500
     rows=[]
@@ -15877,7 +15947,6 @@ def migrate_financial_v524_columns():
                 if col not in tx_cols: commands.append(f"ALTER TABLE financial_atm_transactions ADD COLUMN {col} {sql}")
             commands.extend([
                 "CREATE INDEX IF NOT EXISTS ix_fin_tx_imported_at ON financial_atm_transactions (imported_at)",
-                "CREATE INDEX IF NOT EXISTS ix_fin_tx_source_file ON financial_atm_transactions (source_file)",
                 "CREATE INDEX IF NOT EXISTS ix_fin_tx_collection_at ON financial_atm_transactions (terminal, source_collection_at)",
             ])
         commands.extend([
@@ -21155,13 +21224,7 @@ def migrate_v56a_topdesk_dimensions():
     commands=[
       'CREATE INDEX IF NOT EXISTS ix_topdesk_operator ON topdesk_tickets (operator)',
       'CREATE INDEX IF NOT EXISTS ix_topdesk_location_status ON topdesk_tickets (location_id, status)',
-      'CREATE INDEX IF NOT EXISTS ix_topdesk_equipment_status ON topdesk_tickets (equipment_type, status)',
-      'CREATE INDEX IF NOT EXISTS ix_topdesk_category_subcategory ON topdesk_tickets (category, subcategory)',
       'CREATE INDEX IF NOT EXISTS ix_topdesk_created_at ON topdesk_tickets (created_at)',
-      'CREATE INDEX IF NOT EXISTS ix_topdesk_line_created ON topdesk_tickets (line_code, created_at)',
-      'CREATE INDEX IF NOT EXISTS ix_topdesk_station_created ON topdesk_tickets (station_code, created_at)',
-      'CREATE INDEX IF NOT EXISTS ix_topdesk_model_created ON topdesk_tickets (model_code, created_at)',
-      'CREATE INDEX IF NOT EXISTS ix_topdesk_operator_created ON topdesk_tickets (operator, created_at)',
     ]
     try:
         with db.engine.begin() as conn:
@@ -22844,7 +22907,6 @@ def v8510_assistance_pending():
 def _apply_v70_migrations():
     migrations=[
       ("V70-001", "Índices de performance e operação", (
-        "CREATE INDEX IF NOT EXISTS ix_topdesk_status_created ON topdesk_tickets (status, created_at)",
         "CREATE INDEX IF NOT EXISTS ix_topdesk_line_station_status ON topdesk_tickets (line_code, station_code, status)",
         "CREATE INDEX IF NOT EXISTS ix_material_req_user_status ON material_requests (user_id, status)",
         "CREATE INDEX IF NOT EXISTS ix_collab_doc_user_status ON collaborator_documents (user_id, status)",
