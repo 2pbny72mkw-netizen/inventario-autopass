@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV78"
+APP_RELEASE = "V87.6 REV80"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -8114,7 +8114,9 @@ def diagnostics_storage_api():
         ("Implantação / Relatórios de Visita", HardwareFieldVisitPhoto, "stored_name"),
         ("Firmware POS CPTM", PosFirmwareCptmPhoto, "stored_name"),
         ("Garagem / Chips", GarageChipPhoto, "stored_name"),
-        ("Bobinas ATM", AtmBobbinPhoto, "storage_key")]
+        ("Bobinas ATM", AtmBobbinPhoto, "storage_key"),
+        ("Mapeamento ATM", AtmMappingPhoto, "storage_key"),
+        ("Evidências de campo (WhatsApp)", FieldEvidenceMedia, "storage_key")]
     modules=[]; referenced={}
     for label, model, field in specs:
         try:
@@ -8212,7 +8214,7 @@ def _v75_ret_ensure():
 
 def _v75_ret_policy_map():
     """{código: {authorized, days, authorized_by, authorized_at}}. Em qualquer falha: NADA autorizado."""
-    out = {c: {"authorized": False, "days": 90, "authorized_by": None, "authorized_at": None} for c in _v75_ret_specs()}
+    out = {c: {"authorized": False, "days": 90, "authorized_by": None, "authorized_at": None} for c in (*_v75_ret_specs(), "whatsapp")}
     try:
         _v75_ret_ensure()
         for code, auth, days, by, at in db.session.execute(text(
@@ -8256,6 +8258,16 @@ def v75_retention_policy_get():
         rows.append({"code": code, "module": label, "authorized": p["authorized"], "days": p["days"],
                      "authorized_by": names.get(p["authorized_by"], ""), "authorized_at": p["authorized_at"],
                      "completed_photos": total, "eligible_now": eligible})
+    try:
+        wp = pol["whatsapp"]
+        w_total = int(FieldEvidenceMedia.query.filter(FieldEvidenceMedia.storage_kind == "r2", FieldEvidenceMedia.storage_key.like("whatsapp/%")).count())
+        w_elig = int(FieldEvidenceMedia.query.filter(FieldEvidenceMedia.storage_kind == "r2", FieldEvidenceMedia.storage_key.like("whatsapp/%"),
+                                                     FieldEvidenceMedia.created_at <= now - timedelta(days=wp["days"])).count())
+    except Exception:
+        db.session.rollback(); wp = pol["whatsapp"]; w_total = w_elig = None
+    rows.append({"code": "whatsapp", "module": "Evidências de campo (WhatsApp) — contado desde a importação", "authorized": wp["authorized"], "days": wp["days"],
+                 "authorized_by": names.get(wp["authorized_by"], ""), "authorized_at": wp["authorized_at"],
+                 "completed_photos": w_total, "eligible_now": w_elig})
     return jsonify({"ok": True, "release": APP_RELEASE, "allowed_days": list(_V75_RET_DAYS), "modules": rows,
                     "not_eligible": _V75_RET_NOT_ELIGIBLE,
                     "note": "Autorizar NÃO apaga nada. A exclusão continua exigindo a simulação e a confirmação 'EXCLUIR EVIDENCIAS' em lotes."})
@@ -8268,7 +8280,7 @@ def v75_retention_policy_set():
         return jsonify({"ok": False, "error": "Somente o Gestor pode alterar a política de retenção."}), 403
     data = request.get_json(silent=True) or {}
     code = str(data.get("module") or "").strip().lower()
-    if code not in _v75_ret_specs():
+    if code not in _v75_ret_specs() and code != "whatsapp":
         return jsonify({"ok": False, "error": "Módulo inválido."}), 400
     try:
         days = int(data.get("days") or 90)
@@ -8492,6 +8504,58 @@ def diagnostics_performance_v8515_api():
         db.session.rollback(); out["note"]=f"Estatística parcial: {str(exc)[:160]}"
     return jsonify(out)
 
+# V87.6 REV79 — Retenção opcional das mídias de evidências de campo (WhatsApp). NADA é apagado sem autorização do Gestor.
+@app.post("/api/diagnostico/retencao/v79/whatsapp")
+@login_required
+def v79_whatsapp_retention_run():
+    """Exclui do R2 as mídias importadas do WhatsApp com mais de N dias (N = prazo da política), em lotes pequenos.
+    Exige: Gestor, política 'whatsapp' AUTORIZADA e confirmação textual. Visitas e itens de auditoria são preservados;
+    só a mídia é removida (a linha fica marcada como 'purged' e a tela mostra aviso em vez da imagem)."""
+    if not _has_access("management.diagnostics") or session.get("role") != "manager":
+        return jsonify({"ok": False, "error": "Somente o Gestor pode executar a limpeza."}), 403
+    data = request.get_json(silent=True) or {}
+    pol = _v75_ret_policy_map().get("whatsapp") or {}
+    if not pol.get("authorized"):
+        return jsonify({"ok": False, "error": "Limpeza das evidências do WhatsApp não está autorizada na Política de retenção."}), 403
+    days = int(pol.get("days") or 90)
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    q = FieldEvidenceMedia.query.filter(FieldEvidenceMedia.storage_kind == "r2",
+                                        FieldEvidenceMedia.storage_key.like("whatsapp/%"),
+                                        FieldEvidenceMedia.created_at <= cutoff)
+    eligible = int(q.count())
+    if data.get("dry_run"):
+        return jsonify({"ok": True, "dry_run": True, "days": days, "eligible": eligible})
+    if str(data.get("confirmation") or "").strip().upper() != "EXCLUIR EVIDENCIAS":
+        return jsonify({"ok": False, "error": "Confirmação textual ausente."}), 400
+    if not _r2_available() or not os.environ.get("R2_BUCKET_NAME"):
+        return jsonify({"ok": False, "error": "R2 indisponível."}), 503
+    try:
+        limit = min(max(int(data.get("limit") or 20), 1), 50)
+    except Exception:
+        limit = 20
+    rows = q.order_by(FieldEvidenceMedia.id).limit(limit).all()
+    deleted = errors = 0; ids = []
+    for m in rows:
+        try:
+            r2_client().delete_object(Bucket=os.environ["R2_BUCKET_NAME"], Key=m.storage_key)
+            m.storage_kind = "purged"
+            m.storage_key = "local:purged:" + str(m.sha256)
+            deleted += 1; ids.append(m.id)
+        except Exception:
+            errors += 1
+            app.logger.exception("REV79: falha ao excluir mídia id=%s", m.id)
+    try:
+        if ids:
+            db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="RETENTION_WHATSAPP_PURGE",
+                                      entity_type="field_evidence_media", entity_id=f"{ids[0]}-{ids[-1]}",
+                                      detail=json.dumps({"release": APP_RELEASE, "days": days, "deleted": deleted, "errors": errors, "ids": ids}, ensure_ascii=False)))
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback(); app.logger.exception("REV79: falha ao registrar lote")
+        return jsonify({"ok": False, "error": f"Objetos podem ter sido excluídos do R2 mas o registro falhou: {str(exc)[:140]}"}), 500
+    remaining = int(q.count())
+    return jsonify({"ok": True, "days": days, "deleted": deleted, "errors": errors, "remaining": remaining, "done": remaining == 0 or deleted == 0})
+
 @app.get("/api/diagnostico/indices-auditoria/v78")
 @login_required
 def diagnostics_index_audit_v78_api():
@@ -8544,7 +8608,9 @@ def diagnostics_storage_v812_api():
         ("Implantação / Relatórios de Visita", HardwareFieldVisitPhoto, "stored_name"),
         ("Firmware POS CPTM", PosFirmwareCptmPhoto, "stored_name"),
         ("Garagem / Chips", GarageChipPhoto, "stored_name"),
-        ("Bobinas ATM", AtmBobbinPhoto, "storage_key")]
+        ("Bobinas ATM", AtmBobbinPhoto, "storage_key"),
+        ("Mapeamento ATM", AtmMappingPhoto, "storage_key"),
+        ("Evidências de campo (WhatsApp)", FieldEvidenceMedia, "storage_key")]
     referenced=set()
     for _,model,field in specs:
         try:
@@ -8558,7 +8624,8 @@ def diagnostics_storage_v812_api():
     prefix_map={
         'panorama':'Visão Panorâmica','chip_swap':'Troca de Chips – Recarga','chip-swaps':'Troca de Chips – Recarga',
         'emv':'Troca de Chips EMV','garage':'Garagem / Chips','hardware':'Implantação / Relatórios de Visita',
-        'field_visit':'Implantação / Relatórios de Visita','pos_firmware':'Firmware POS CPTM','bobbin':'Bobinas ATM'}
+        'field_visit':'Implantação / Relatórios de Visita','pos_firmware':'Firmware POS CPTM','bobbin':'Bobinas ATM',
+        'atm_mapping':'Mapeamento ATM','whatsapp':'Evidências de campo (WhatsApp)'}
     groups={}; samples={}; total=0; total_bytes=0
     if _r2_available():
         try:
@@ -13268,22 +13335,25 @@ def field_evidence_page():
         .distinct().order_by(FieldEvidenceItem.audit_status).all()
     ]
 
+    # V87.6 REV80 — elimina N+1: contagens por visita em 3 consultas agrupadas (antes: 3 contagens + 1 Location por visita, até ~1000 consultas).
+    _ok_status = ("CONFORME / JÁ INVENTARIADO", "CONFIRMADO EM CAMPO / FALTA PROMOVER", "EVIDÊNCIA FORA DO PARQUE OFICIAL")
+    _vids = [v.id for v in visits]
+    item_counts, media_counts, review_counts = {}, {}, {}
+    if _vids:
+        item_counts = dict(db.session.query(FieldEvidenceItem.visit_id, func.count(FieldEvidenceItem.id))
+                           .filter(FieldEvidenceItem.visit_id.in_(_vids)).group_by(FieldEvidenceItem.visit_id).all())
+        media_counts = dict(db.session.query(FieldEvidenceMedia.visit_id, func.count(FieldEvidenceMedia.id))
+                            .filter(FieldEvidenceMedia.visit_id.in_(_vids)).group_by(FieldEvidenceMedia.visit_id).all())
+        review_counts = dict(db.session.query(FieldEvidenceItem.visit_id, func.count(FieldEvidenceItem.id))
+                             .filter(FieldEvidenceItem.visit_id.in_(_vids), ~FieldEvidenceItem.audit_status.in_(_ok_status))
+                             .group_by(FieldEvidenceItem.visit_id).all())
+    _loc_ids = {v.location_id for v in visits if v.location_id}
+    _locs = {l.id: l for l in Location.query.filter(Location.id.in_(_loc_ids)).all()} if _loc_ids else {}
     visit_cards = []
     for visit in visits:
-        item_count = FieldEvidenceItem.query.filter_by(visit_id=visit.id).count()
-        media_count = FieldEvidenceMedia.query.filter_by(visit_id=visit.id).count()
-        review_count = FieldEvidenceItem.query.filter(
-            FieldEvidenceItem.visit_id == visit.id,
-            ~FieldEvidenceItem.audit_status.in_((
-                "CONFORME / JÁ INVENTARIADO",
-                "CONFIRMADO EM CAMPO / FALTA PROMOVER",
-                "EVIDÊNCIA FORA DO PARQUE OFICIAL",
-            ))
-        ).count()
-        loc = db.session.get(Location, visit.location_id) if visit.location_id else None
         visit_cards.append({
-            "visit": visit, "items": item_count, "media": media_count,
-            "review": review_count, "location": loc
+            "visit": visit, "items": int(item_counts.get(visit.id, 0)), "media": int(media_counts.get(visit.id, 0)),
+            "review": int(review_counts.get(visit.id, 0)), "location": _locs.get(visit.location_id) if visit.location_id else None
         })
 
     return render_template(
@@ -13306,6 +13376,8 @@ def field_evidence_media(media_id):
     media = db.session.get(FieldEvidenceMedia, media_id)
     if not media:
         return "Mídia não encontrada.", 404
+    if media.storage_kind == "purged":
+        return "Mídia removida pela política de retenção. Reimportar a fonte restaura o arquivo.", 410
 
     if media.storage_kind == "r2":
         try:
