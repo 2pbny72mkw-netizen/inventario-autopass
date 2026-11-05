@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV81"
+APP_RELEASE = "V87.6 REV82"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -8631,6 +8631,207 @@ def v81_index_cleanup():
             db.session.rollback()
     return jsonify({"ok": True, "dry_run": dry, "freed_mb": round(freed, 1),
                     "potential_mb": round(sum(r.get("mb", 0) for r in results if r["acao"] == "removeria"), 1), "results": results})
+
+# V87.6 REV82 — Arquivamento controlado do detalhe do T-Report (financial_atm_transactions).
+# Fluxo: plano -> verificação do consolidado diário -> exporta CSV.gz para o R2 -> confere tamanho/linhas -> apaga em lotes -> compactação opcional.
+# O consolidado diário (financial_atm_daily_summary) NUNCA é apagado; um marcador impede que o boot o reconstrua a partir do detalhe restante.
+_V82_COLS = ("id","terminal","transaction_at","status","value","cpm_id","source_file","source_hash","imported_by","imported_at","received_value","external_tx_id",
+             "product_type","product_name","voucher_generated","voucher_number","status_desc","source_collection_code","note_2","note_5","note_10","note_20",
+             "note_50","note_100","note_200","source_collection_at","service_open_at","service_close_at")
+_V82_JOB = {"state": "idle", "step": "", "message": "", "exported": 0, "total": 0, "deleted": 0, "error": "", "archive_key": "", "started_at": None, "finished_at": None}
+_V82_LOCK = threading.Lock()
+
+
+def _v82_marker_ensure():
+    with db.engine.begin() as conn:
+        conn.execute(text("CREATE TABLE IF NOT EXISTS v82_treport_purge (id SERIAL PRIMARY KEY, cutoff TIMESTAMP, purged_rows BIGINT, archive_key TEXT, done_at TIMESTAMP)"))
+
+
+def _v82_cutoff(days):
+    """Corte alinhado à meia-noite, contado a partir da ÚLTIMA transação (a importação parou; contar de hoje apagaria demais)."""
+    latest = db.session.query(func.max(FinancialATMTransaction.transaction_at)).scalar()
+    if not latest:
+        return None, None
+    d = latest.date() - timedelta(days=int(days))
+    return latest, datetime(d.year, d.month, d.day)
+
+
+def _v82_summary_mismatch(cutoff):
+    """Dias antes do corte em que o consolidado NÃO reproduz o detalhe (contagem ou valor). Deve ser 0 para apagar."""
+    return int(db.session.execute(text("""
+        SELECT COUNT(*) FROM (
+          SELECT terminal, transaction_at::date AS d, COALESCE(status,'') AS s, COUNT(*) AS c, COALESCE(SUM(COALESCE(received_value,value)),0) AS a
+          FROM financial_atm_transactions WHERE transaction_at < :cut GROUP BY 1,2,3) r
+        LEFT JOIN financial_atm_daily_summary m ON m.terminal=r.terminal AND m.tx_date=r.d AND m.status=r.s
+        WHERE m.tx_count IS NULL OR m.tx_count<>r.c OR ABS(m.amount-r.a)>0.05"""), {"cut": cutoff}).scalar() or 0)
+
+
+@app.get("/api/diagnostico/treport/plano/v82")
+@login_required
+def v82_treport_plan():
+    if not _has_access("management.diagnostics") or session.get("role") != "manager":
+        return jsonify({"ok": False, "error": "Somente o Gestor."}), 403
+    if not database_url.startswith("postgresql"):
+        return jsonify({"ok": False, "error": "Disponível apenas no PostgreSQL."}), 400
+    try:
+        days = int(request.args.get("days") or 90)
+    except Exception:
+        days = 90
+    if days not in (30, 60, 90, 180):
+        return jsonify({"ok": False, "error": "Prazo deve ser 30, 60, 90 ou 180 dias."}), 400
+    try:
+        latest, cutoff = _v82_cutoff(days)
+        if not latest:
+            return jsonify({"ok": True, "empty": True})
+        total = int(db.session.query(func.count(FinancialATMTransaction.id)).scalar() or 0)
+        purge = int(db.session.query(func.count(FinancialATMTransaction.id)).filter(FinancialATMTransaction.transaction_at < cutoff).scalar() or 0)
+        mism = _v82_summary_mismatch(cutoff)
+        marker = int(db.session.execute(text("SELECT COUNT(*) FROM v82_treport_purge")).scalar() or 0) if db.session.execute(text("SELECT to_regclass('public.v82_treport_purge')")).scalar() else 0
+        return jsonify({"ok": True, "days": days, "latest_transaction_at": latest.isoformat(), "cutoff": cutoff.isoformat(), "total": total,
+                        "to_archive_and_delete": purge, "to_keep": total - purge, "summary_mismatch_days": mism, "previous_purges": marker,
+                        "job": dict(_V82_JOB)})
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({"ok": False, "error": f"Falha ao montar o plano: {str(exc)[:160]}"}), 500
+
+
+@app.get("/api/diagnostico/treport/status/v82")
+@login_required
+def v82_treport_status():
+    if not _has_access("management.diagnostics") or session.get("role") != "manager":
+        return jsonify({"ok": False, "error": "Somente o Gestor."}), 403
+    return jsonify({"ok": True, "job": dict(_V82_JOB)})
+
+
+def _v82_set(**kw):
+    with _V82_LOCK:
+        _V82_JOB.update(kw)
+
+
+def _v82_worker(days, user_id):
+    with app.app_context():
+        path = None
+        try:
+            latest, cutoff = _v82_cutoff(days)
+            if not latest:
+                _v82_set(state="error", error="T-Report vazio."); return
+            _v82_set(step="verificando", message="Conferindo o consolidado diário…")
+            if _v82_summary_mismatch(cutoff) != 0:
+                _v82_set(state="error", error="O consolidado diário não reproduz o detalhe em alguns dias. Nada foi exportado nem apagado."); return
+            total = int(db.session.query(func.count(FinancialATMTransaction.id)).filter(FinancialATMTransaction.transaction_at < cutoff).scalar() or 0)
+            if total == 0:
+                _v82_set(state="done", step="concluído", message="Nada anterior ao corte."); return
+            _v82_set(total=total, step="exportando", message="Exportando para arquivo compactado…")
+            fd, path = tempfile.mkstemp(prefix="treport_", suffix=".csv.gz"); os.close(fd)
+            written = 0
+            cols = ",".join(_V82_COLS)
+            with db.engine.connect().execution_options(stream_results=True) as conn:
+                res = conn.execute(text(f"SELECT {cols} FROM financial_atm_transactions WHERE transaction_at < :cut ORDER BY id"), {"cut": cutoff})
+                with gzip.open(path, "wt", encoding="utf-8", newline="") as gz:
+                    w = csv.writer(gz, delimiter=";"); w.writerow(_V82_COLS)
+                    while True:
+                        chunk = res.fetchmany(5000)
+                        if not chunk: break
+                        w.writerows(chunk); written += len(chunk)
+                        _v82_set(exported=written)
+            if written != total:
+                _v82_set(state="error", error=f"Exportadas {written} linhas, esperado {total}. Nada foi apagado."); return
+            if not _r2_available() or not os.environ.get("R2_BUCKET_NAME"):
+                _v82_set(state="error", error="R2 indisponível. Nada foi apagado."); return
+            key = f"arquivos/treport/financial_atm_transactions_ate_{cutoff:%Y%m%d}_{datetime.utcnow():%Y%m%d%H%M%S}.csv.gz"
+            _v82_set(step="enviando", message="Enviando o arquivo ao R2…")
+            r2_client().upload_file(path, os.environ["R2_BUCKET_NAME"], key)
+            head = r2_client().head_object(Bucket=os.environ["R2_BUCKET_NAME"], Key=key)
+            if int(head.get("ContentLength") or 0) != os.path.getsize(path):
+                _v82_set(state="error", error="O arquivo no R2 não confere com o local. Nada foi apagado."); return
+            _v82_set(archive_key=key, step="conferindo", message="Arquivo conferido. Reconferindo contagem antes de apagar…")
+            again = int(db.session.query(func.count(FinancialATMTransaction.id)).filter(FinancialATMTransaction.transaction_at < cutoff).scalar() or 0)
+            if again != total:
+                _v82_set(state="error", error="A contagem mudou durante o arquivamento. Nada foi apagado; rode de novo."); return
+            _v82_marker_ensure()
+            _v82_set(step="apagando", message="Apagando em lotes…")
+            deleted = 0
+            while True:
+                with db.engine.begin() as conn:
+                    r = conn.execute(text("DELETE FROM financial_atm_transactions WHERE id IN (SELECT id FROM financial_atm_transactions WHERE transaction_at < :cut ORDER BY id LIMIT 5000)"), {"cut": cutoff})
+                    n = int(r.rowcount or 0)
+                if n <= 0: break
+                deleted += n; _v82_set(deleted=deleted); time.sleep(0.05)
+            with db.engine.begin() as conn:
+                conn.execute(text("INSERT INTO v82_treport_purge(cutoff,purged_rows,archive_key,done_at) VALUES(:c,:n,:k,:t)"), {"c": cutoff, "n": deleted, "k": key, "t": datetime.utcnow()})
+                conn.execute(text("UPDATE financial_atm_summary_meta SET source_count=(SELECT COUNT(*) FROM financial_atm_transactions), source_max_id=(SELECT COALESCE(MAX(id),0) FROM financial_atm_transactions), status='READY', refreshed_at=CURRENT_TIMESTAMP WHERE id=1"))
+            for k in ("tx_total", "tx_archive90"):
+                with _v75_ttl_lock: _v75_ttl_store.pop(k, None)
+            try:
+                db.session.add(AuditEvent(user_id=user_id, event_type="TREPORT_ARCHIVE_PURGE", entity_type="financial_atm_transactions", entity_id="v82",
+                                          detail=json.dumps({"release": APP_RELEASE, "days": days, "cutoff": cutoff.isoformat(), "rows": deleted, "archive_key": key}, ensure_ascii=False)))
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+            _v82_set(state="done", step="concluído", message=f"{deleted} linhas arquivadas e removidas. Use 'Compactar tabela' em horário de pouco uso para devolver o espaço.", finished_at=datetime.utcnow().isoformat())
+        except Exception as exc:
+            app.logger.exception("REV82: falha no arquivamento do T-Report")
+            _v82_set(state="error", error=f"Falha: {str(exc)[:200]}")
+        finally:
+            if path:
+                try: os.unlink(path)
+                except Exception: pass
+
+
+@app.post("/api/diagnostico/treport/arquivar/v82")
+@login_required
+def v82_treport_archive():
+    if not _has_access("management.diagnostics") or session.get("role") != "manager":
+        return jsonify({"ok": False, "error": "Somente o Gestor."}), 403
+    if not database_url.startswith("postgresql"):
+        return jsonify({"ok": False, "error": "Disponível apenas no PostgreSQL."}), 400
+    data = request.get_json(silent=True) or {}
+    try:
+        days = int(data.get("days") or 90)
+    except Exception:
+        days = 0
+    if days not in (30, 60, 90, 180):
+        return jsonify({"ok": False, "error": "Prazo deve ser 30, 60, 90 ou 180 dias."}), 400
+    if str(data.get("confirmation") or "").strip().upper() != "ARQUIVAR E EXCLUIR TREPORT":
+        return jsonify({"ok": False, "error": "Confirmação textual ausente."}), 400
+    with _V82_LOCK:
+        if _V82_JOB["state"] in ("running", "compacting"):
+            return jsonify({"ok": False, "error": "Já existe uma operação em andamento."}), 409
+        _V82_JOB.update({"state": "running", "step": "iniciando", "message": "", "exported": 0, "total": 0, "deleted": 0, "error": "", "archive_key": "",
+                         "started_at": datetime.utcnow().isoformat(), "finished_at": None})
+    threading.Thread(target=_v82_worker, args=(days, session.get("user_id")), daemon=True).start()
+    return jsonify({"ok": True, "started": True})
+
+
+def _v82_compact_worker():
+    with app.app_context():
+        try:
+            with db.engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+                conn.execute(text("SET lock_timeout = '30s'"))
+                conn.execute(text("VACUUM (FULL, ANALYZE) financial_atm_transactions"))
+            _v82_set(state="done", step="compactado", message="Tabela compactada.", finished_at=datetime.utcnow().isoformat())
+        except Exception as exc:
+            app.logger.exception("REV82: falha ao compactar")
+            _v82_set(state="error", error=f"Falha ao compactar: {str(exc)[:200]}")
+
+
+@app.post("/api/diagnostico/treport/compactar/v82")
+@login_required
+def v82_treport_compact():
+    if not _has_access("management.diagnostics") or session.get("role") != "manager":
+        return jsonify({"ok": False, "error": "Somente o Gestor."}), 403
+    if not database_url.startswith("postgresql"):
+        return jsonify({"ok": False, "error": "Disponível apenas no PostgreSQL."}), 400
+    data = request.get_json(silent=True) or {}
+    if str(data.get("confirmation") or "").strip().upper() != "COMPACTAR TREPORT":
+        return jsonify({"ok": False, "error": "Confirmação textual ausente."}), 400
+    with _V82_LOCK:
+        if _V82_JOB["state"] in ("running", "compacting"):
+            return jsonify({"ok": False, "error": "Já existe uma operação em andamento."}), 409
+        _V82_JOB.update({"state": "compacting", "step": "compactando", "message": "VACUUM FULL em andamento; a tabela fica bloqueada por alguns instantes.", "error": "",
+                         "started_at": datetime.utcnow().isoformat(), "finished_at": None})
+    threading.Thread(target=_v82_compact_worker, daemon=True).start()
+    return jsonify({"ok": True, "started": True})
 
 @app.get("/api/diagnostico/indices-auditoria/v78")
 @login_required
@@ -17353,6 +17554,13 @@ def _v8535_refresh_financial_daily_summary():
     """
     if db.engine.dialect.name != 'postgresql':
         return False
+    # V87.6 REV82: após arquivar o detalhe antigo, o consolidado diário é a única fonte dos dias antigos e não pode ser reconstruído.
+    try:
+        with db.engine.connect() as _c82:
+            if _c82.execute(text("SELECT to_regclass('public.v82_treport_purge')")).scalar() and int(_c82.execute(text("SELECT COUNT(*) FROM v82_treport_purge")).scalar() or 0) > 0:
+                return True
+    except Exception:
+        pass
     with db.engine.begin() as conn:
         conn.execute(text("""CREATE TABLE IF NOT EXISTS financial_atm_daily_summary (
             terminal VARCHAR(40) NOT NULL,
@@ -27047,7 +27255,7 @@ def _qr_config_proto(values):
     return bytes(out)
 
 
-def _qr_rail_base_configs():
+def _qr_rail_base_configs_uncached():
     """V85.27 — hierarquia soberana da mesma BaseAsset usada no Dashboard Bloqueio.
     Empresa -> Linha -> Estação -> Bloqueio vêm da base oficial; a tabela técnica apenas complementa rede.
     """
@@ -27098,6 +27306,10 @@ def _qr_rail_base_configs():
             'Dns1':str(net.get('dns1') or ''),'Dns2':str(net.get('dns2') or ''),'LineId':line_id,'TermGrpId':group,
             'LabelApnChip1':'','LabelApnChip2':'','installation':str(net.get('installation') or '')})
     return rows
+
+def _qr_rail_base_configs():
+    return _v75_slow_cached("qr_rail_base", _qr_rail_base_configs_uncached, ttl=300)
+
 
 def _qr_rail_effective_configs():
     # Base operacional é a fonte padrão. Cadastro administrativo substitui o mesmo terminal quando existir.
