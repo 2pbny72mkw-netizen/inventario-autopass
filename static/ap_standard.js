@@ -128,7 +128,7 @@
         var ok=!q||txt.indexOf(q)>=0; total++; if(ok) shown++;
         g.rows.forEach(function(r){ if(ok) r.classList.remove('ap-hidden'); else r.classList.add('ap-hidden'); });
       });
-      if(counter) counter.textContent = total? ('Mostrando '+shown.toLocaleString('pt-BR')+' de '+total.toLocaleString('pt-BR')) : '';
+      if(counter) counter.textContent = total? (shown===0 ? ('Nenhum registro encontrado para “'+(st.q||'')+'”. Limpe a busca para ver os '+total.toLocaleString('pt-BR')+' registros.') : ('Mostrando '+shown.toLocaleString('pt-BR')+' de '+total.toLocaleString('pt-BR'))) : '';
     }
     if(opts.includes('search')){
       var tools=document.createElement('div'); tools.className='ap-tools';
@@ -175,3 +175,5 @@
   }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',start); else start();
 })();
+/* V87.6 REV83 — pré-visualização do visual novo: só liga neste navegador (localStorage), nunca para os demais usuários. */
+(function(){try{if(localStorage.getItem('ap_preview')==='1')document.documentElement.classList.add('ap-new');}catch(e){}})();

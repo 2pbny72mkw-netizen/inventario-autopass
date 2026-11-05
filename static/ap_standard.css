@@ -27,3 +27,27 @@ table[data-ap-table] td.ap-num,table[data-ap-table] th.ap-num{text-align:right;f
 .ap-tools .ap-export{font:inherit;font-weight:600;min-height:40px;padding:8px 14px;border-radius:8px;border:1px solid #C9D6E8;background:var(--ap-head);color:var(--ap-navy);cursor:pointer}
 .ap-tools .ap-export:hover{background:var(--ap-head-hover)}
 .ap-tools .ap-export:focus-visible{outline:3px solid var(--ap-focus);outline-offset:2px}
+
+/* V87.6 REV83 — VISUAL NOVO (pré-visualização). Tudo abaixo só vale com <html class="ap-new">; sem a chave, nada muda. */
+html.ap-new body{background:var(--ap-bg);color:var(--ap-text)}
+html.ap-new .card{border:1px solid var(--ap-border);border-radius:12px;background:var(--ap-card);box-shadow:0 1px 2px rgba(31,58,104,.06)}
+/* Botões: primário, secundário, perigo */
+html.ap-new button:where(:not(.navDropBtn):not(.navInstall):not(.ap-th-btn):not([class*="tab"]):not(.on)){min-height:40px;padding:8px 14px;border-radius:8px;border:1px solid var(--ap-navy);background:var(--ap-card);color:var(--ap-navy);font-weight:600;transition:background .12s}
+html.ap-new button:where(:not(.navDropBtn):not(.navInstall):not(.ap-th-btn):not([class*="tab"]):not(.on)):hover{background:var(--ap-head)}
+html.ap-new button.primary,html.ap-new button[type="submit"]{background:var(--ap-navy);color:#fff}
+html.ap-new button.primary:hover,html.ap-new button[type="submit"]:hover{background:var(--ap-navy-hover)}
+html.ap-new button.danger,html.ap-new button.dangerBtn,html.ap-new button.btnDanger{border-color:var(--ap-crit);color:var(--ap-crit)}
+html.ap-new button.danger:hover,html.ap-new button.dangerBtn:hover,html.ap-new button.btnDanger:hover{background:var(--ap-crit-bg)}
+html.ap-new button:focus-visible,html.ap-new a:focus-visible,html.ap-new input:focus-visible,html.ap-new select:focus-visible{outline:3px solid var(--ap-focus);outline-offset:2px}
+html.ap-new button:disabled{opacity:.55;cursor:not-allowed}
+/* Indicadores (KPI): mesmo cartão, cor de status vinda da paleta central */
+html.ap-new .kpi,html.ap-new .kpi71{border:1px solid var(--ap-border);border-left:5px solid var(--ap-info);border-radius:12px;background:var(--ap-card);box-shadow:0 1px 2px rgba(31,58,104,.06)}
+html.ap-new .kpi.successKpi{border-left-color:var(--ap-ok);background:var(--ap-ok-bg)}
+html.ap-new .kpi.warningKpi{border-left-color:var(--ap-warn);background:var(--ap-warn-bg)}
+html.ap-new .kpi.dangerKpi{border-left-color:var(--ap-crit);background:var(--ap-crit-bg)}
+html.ap-new .kpi.primaryKpi{border-left-color:var(--ap-navy)}
+html.ap-new .kpi b,html.ap-new .kpi strong{font-variant-numeric:tabular-nums}
+/* Tabelas */
+html.ap-new table th{background:var(--ap-head);color:var(--ap-text)}
+html.ap-new table td,html.ap-new table th{border-color:var(--ap-border)}
+html.ap-new table tbody tr:hover{background:#F2F6FB}
