@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV73"
+APP_RELEASE = "V87.6 REV74"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -2876,9 +2876,23 @@ Index("idx_field_evidence_location", FieldEvidenceVisit.location_id)
 Index("idx_field_evidence_item_audit", FieldEvidenceItem.audit_status)
 
 
-def normalize(value):
+def _normalize_uncached(value):
     value = unicodedata.normalize("NFD", value or "").encode("ascii", "ignore").decode()
     return " ".join(value.upper().strip().split())
+
+
+# V87.6 REV74 — função pura chamada milhões de vezes ao casar ativos x estações.
+from functools import lru_cache as _v74_lru
+@_v74_lru(maxsize=8192)
+def _normalize_cached(value):
+    return _normalize_uncached(value)
+
+
+def normalize(value):
+    try:
+        return _normalize_cached(value)
+    except TypeError:  # valor não hashável: comportamento antigo
+        return _normalize_uncached(value)
 
 
 def seed_data():
@@ -4363,22 +4377,48 @@ def _a55_mobile_has(user,*keys):
     access=_user_access_set(user)
     return any(k in access for k in keys)
 
+def _v74_latest_bobbin_readings():
+    """Última leitura por (empresa, linha, estação, ATM) em UMA consulta.
+    Antes carregava todo o histórico de leituras em memória a cada chamada."""
+    R=AtmBobbinReading
+    try:
+        rn=func.row_number().over(partition_by=[R.company,R.line,R.station,R.atm_id],
+                                  order_by=[R.created_at.desc(),R.id.desc()]).label('rn')
+        sq=db.session.query(R.id.label('rid'),rn).subquery()
+        rows=R.query.join(sq,R.id==sq.c.rid).filter(sq.c.rn==1).all()
+    except Exception:
+        app.logger.exception('REV74: janela indisponível; usando leitura completa')
+        db.session.rollback()
+        rows=R.query.order_by(R.created_at.desc(),R.id.desc()).all()
+    latest={}
+    for x in rows:
+        key=(x.company,x.line,x.station,str(x.atm_id))
+        if key not in latest: latest[key]=x
+    return latest
+
+
+def _v74_atm_stock_map():
+    """Reserva por ATM carregada de uma vez (antes: 1 SELECT por ATM, ~590 por chamada)."""
+    out={}
+    for st in AtmBobbinAtmStock.query.order_by(AtmBobbinAtmStock.id).all():
+        out.setdefault((st.company,st.line,st.station,str(st.atm_id)),st)
+    return out
+
+
 @app.get('/api/mobile/v1/field/bobinas/visao')
 @mobile_auth_required
 def a55_mobile_bobinas_visao():
     user=request.mobile_user
     if not _a55_mobile_has(user,'field.bobbins','field.bobbins_dashboard'): return jsonify({'ok':False,'error':'Sem permissão para Bobinas.'}),403
-    readings=AtmBobbinReading.query.order_by(AtmBobbinReading.created_at.desc()).all();latest={}
-    for x in readings:
-        key=(x.company,x.line,x.station,str(x.atm_id))
-        if key not in latest: latest[key]=x
+    latest=_v74_latest_bobbin_readings()
+    stock_map=_v74_atm_stock_map()
     names={u.id:u.name for u in User.query.filter(User.id.in_({x.technician_id for x in latest.values()})).all()} if latest else {}
     rows=[]; hierarchy=[]
     master=_v772_master_atm_map()
     for (company,line,station),ids in master.items():
         hierarchy.append({'company':company,'line':line,'station':station})
         for atm in ids:
-            key=(company,line,station,str(atm));x=latest.get(key);stock=_v771_stock(company,line,station,str(atm))
+            key=(company,line,station,str(atm));x=latest.get(key);stock=stock_map.get(key)
             pct=int(x.percent_available or 0) if x else 0;sev='critical' if pct<=10 else ('attention' if pct<=30 else 'normal')
             rows.append({'company':company,'line':line,'station':station,'atm_id':str(atm),'percent_available':pct,'severity':sev,'situation':'Crítica' if sev=='critical' else ('Atenção' if sev=='attention' else 'Normal'),'reserve_qty':int(stock.reserve_qty or 0) if stock else 0,'last_at':x.created_at.isoformat()+'Z' if x and x.created_at else None,'last_tech':names.get(x.technician_id,'') if x else ''})
     return jsonify({'ok':True,'rows':rows,'hierarchy':hierarchy,'release':APP_RELEASE})
@@ -8490,6 +8530,7 @@ def _normalize_line_key(value):
     return re.sub(r"^L(?=\d{2}\s*-)", "", normalize(value))
 
 
+@_v74_lru(maxsize=8192)
 def _station_match_key(value):
     """Normaliza nome de estação para casar nomes abreviados e comerciais.
 
@@ -8502,6 +8543,7 @@ def _station_match_key(value):
     return tuple(token for token in text_value.split() if token and token not in stopwords)
 
 
+@_v74_lru(maxsize=16384)
 def _station_matches(asset_locality, asset_code, location_name):
     station_text = normalize(location_name)
     station_name = normalize(asset_locality)
@@ -10403,7 +10445,7 @@ def users_page():
         can_assign_sensitive_roles=(session.get("role")=="manager" or _has_access("users.roles.manage")),
         is_hr_admin=(session.get("role") != "manager" and not _has_access("users.scope.all")),
         customer_companies=CustomerCompany.query.filter_by(active=True).order_by(CustomerCompany.legal_name).all(),
-        customer_company_map={u.id:_customer_company_ids(u) for u in active_users},
+        customer_company_map={},
         system_profiles=SystemProfile.query.filter_by(active=True).order_by(SystemProfile.name).all(),
     )
 
@@ -10600,7 +10642,7 @@ def _v8548_cached_thumbnail(key,raw):
     now=time.monotonic()
     with _V8548_THUMB_CACHE_LOCK:
         hit=_V8548_THUMB_CACHE.get(key)
-        if hit and now-hit[0]<600:return hit[1]
+        if hit and now-hit[0]<21600:return hit[1]
     thumb=_media_thumbnail(raw)
     if not thumb or len(thumb)>1024*1024:return thumb
     with _V8548_THUMB_CACHE_LOCK:
@@ -10625,6 +10667,13 @@ def user_photo(user_id):
         return "", 404
 
     try:
+        # REV74 — miniatura já em memória: não busca a foto original no R2 (~1 s por foto).
+        if request.args.get("thumb")=="1":
+            _t=_V8548_THUMB_CACHE.get(str(user.photo_url))
+            if _t and time.monotonic()-_t[0] < 21600:
+                resp=send_file(io.BytesIO(_t[1]),mimetype='image/jpeg',download_name='usuario-thumb.jpg',max_age=604800)
+                resp.headers['Cache-Control']='private, max-age=604800, immutable'
+                return resp
         # V85.43 REV1 — evita buscar a mesma foto no R2 a cada refresh da Central de Equipes.
         # Cache é somente leitura, curto e limitado; a chave inclui o object_key imutável.
         now=time.time(); cache_key=str(user.photo_url); cached=_V8543R1_USER_PHOTO_CACHE.get(cache_key)
@@ -10652,6 +10701,28 @@ def user_photo(user_id):
         return Response(raw,mimetype=mime,headers={"Cache-Control":"private, max-age=86400, stale-while-revalidate=604800"})
     except Exception:
         return "", 404
+
+
+@app.get("/usuarios/<int:user_id>/editar-form")
+@user_admin_required
+def user_edit_form_fragment(user_id):
+    """REV74 — HTML do formulário de edição (inclui a matriz de acessos) de UM usuário.
+    A listagem deixou de embutir esse formulário para todos os usuários."""
+    if not _has_access("users.edit"): abort(403)
+    user = db.session.get(User, user_id)
+    if not user or user.role == "customer" or user.archived_at is not None: abort(404)
+    if not _hr_target_allowed(user): abort(403)
+    resp = make_response(render_template(
+        "_user_edit_card.html",
+        u=user,
+        can_assign_sensitive_roles=(session.get("role")=="manager" or _has_access("users.roles.manage")),
+        is_hr_admin=(session.get("role") != "manager" and not _has_access("users.scope.all")),
+        customer_companies=CustomerCompany.query.filter_by(active=True).order_by(CustomerCompany.legal_name).all(),
+        customer_company_map={user.id:_customer_company_ids(user)},
+        system_profiles=SystemProfile.query.filter_by(active=True).order_by(SystemProfile.name).all(),
+    ))
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 def _active_manager_count(exclude_user_id=None):
@@ -24671,6 +24742,22 @@ def v771_bobbin_import():
     if not _has_access('field.bobbins_dashboard'):abort(403)
     f=request.files.get('file')
     if not f or not f.filename:return jsonify({'ok':False,'error':'Selecione a planilha de controle de bobinas.'}),400
+    # REV74 — a mesma planilha foi importada 6 vezes em minutos (~210 consultas cada).
+    # Se o conteúdo é idêntico ao do último lote (<12 h), o commit não reprocessa nada.
+    _v74_raw=f.read(); f.stream.seek(0)
+    _v74_hash=hashlib.sha256(_v74_raw).hexdigest(); del _v74_raw
+    _v74_same=False; _v74_last=None
+    try:
+        _v74_last=AtmBobbinImportBatch.query.order_by(AtmBobbinImportBatch.id.desc()).first()
+        if _v74_last and _v74_last.warnings_json and _v74_last.created_at and datetime.utcnow()-_v74_last.created_at < timedelta(hours=12):
+            _v74_same=(json.loads(_v74_last.warnings_json).get('file_sha256')==_v74_hash)
+    except Exception:
+        _v74_same=False
+    if _v74_same and (request.form.get('mode') or 'preview').lower()=='commit' and request.form.get('force')!='1':
+        return jsonify({'ok':True,'committed':True,'unchanged':True,'batch_id':_v74_last.id,
+                        'batch_code':f'IMP-BOB-{_v74_last.created_at.strftime("%Y%m%d")}-{_v74_last.id:04d}',
+                        'message':'Arquivo idêntico ao último importado há menos de 12 horas; nenhuma alteração foi feita.',
+                        'preview':{},'release':APP_RELEASE})
     try:data=_v771_parse_import(f)
     except Exception as exc:
         app.logger.exception('V77.7: falha ao ler planilha de bobinas')
@@ -24702,6 +24789,7 @@ def v771_bobbin_import():
     preview['atm_reserva_pendente_identificacao']=sum(r['qty'] for r in data['reserve_locations'] if r['type']=='ATM_NAO_IDENTIFICADA')
     preview['reserva_mista_pendente_divisao']=sum(r['qty'] for r in data['reserve_locations'] if r['type']=='MISTA_PENDENTE')
     preview['reserva_sem_classificacao']=sum(r['qty'] for r in data['reserve_locations'] if r['type']=='NAO_CLASSIFICADA')
+    preview['arquivo_identico_ao_ultimo']=_v74_same
     preview['criterio']='SSO atualiza estoque da estação; ATM sem ID e ATM E SSO permanecem pendentes de classificação, sem crédito duplicado.'
     # V85.64: a mesma planilha original alimenta Bobinas/Armários e M16, sem alterar o Excel.
     # M16 é o retrato das colunas BOM e RUIM até o marcador ITENS RETIRADOS.
@@ -24744,7 +24832,7 @@ def v771_bobbin_import():
     preview['m16_sample']=m16_rows[:30]
     if mode!='commit':return jsonify({'ok':True,'preview':preview,'release':APP_RELEASE})
     try:
-        batch=AtmBobbinImportBatch(filename=secure_filename(f.filename),imported_by=session['user_id'],rows_imported=len(data['readings']),reserves_imported=sum(x['qty'] for x in data['reserves']),warnings_json=json.dumps({'warnings':data['warnings'][:200],'divergences':data['divergences'][:500]},ensure_ascii=False));db.session.add(batch);db.session.flush()
+        batch=AtmBobbinImportBatch(filename=secure_filename(f.filename),imported_by=session['user_id'],rows_imported=len(data['readings']),reserves_imported=sum(x['qty'] for x in data['reserves']),warnings_json=json.dumps({'warnings':data['warnings'][:200],'divergences':data['divergences'][:500],'file_sha256':_v74_hash},ensure_ascii=False));db.session.add(batch);db.session.flush()
         # A importação é um retrato. Substitui apenas leituras IMPORTACAO anteriores; nunca toca registros de campo.
         # V77.7: snapshot por escopo. A última importação manda somente nas linhas/estações presentes no arquivo.
         imported_scopes={(x['company'],x['line']) for x in data['readings']}
@@ -27337,12 +27425,6 @@ def implantation_repo_delete_file(file_id):
 import base64 as _att_b64
 import io as _att_io
 import re as _att_re
-from reportlab.platypus import SimpleDocTemplate as _AttDoc, Table as _AttTable, TableStyle as _AttTableStyle, Paragraph as _AttParagraph, Spacer as _AttSpacer, KeepTogether as _AttKeep
-from reportlab.lib import colors as _att_colors
-from reportlab.lib.styles import getSampleStyleSheet as _att_styles
-from reportlab.lib.pagesizes import landscape as _att_landscape, A4 as _AttA4
-from reportlab.lib.utils import ImageReader as _AttImageReader
-from reportlab.platypus import Image as _AttImage
 from xml.sax.saxutils import escape as _att_escape
 
 def _att_access(manage=False):
@@ -27440,6 +27522,12 @@ def implantation_attendance_sign(attendance_id):
 def _att_generate_pdf(row,people,instructor_sign=None):
     """A4 landscape attendance record, approved Autopass visual identity."""
     from pathlib import Path as _AttPath
+    # REV74: importação preguiçosa (reportlab ocupava memória em todo boot).
+    from reportlab.platypus import SimpleDocTemplate as _AttDoc, Table as _AttTable, TableStyle as _AttTableStyle, Paragraph as _AttParagraph, Spacer as _AttSpacer, KeepTogether as _AttKeep
+    from reportlab.lib import colors as _att_colors
+    from reportlab.lib.styles import getSampleStyleSheet as _att_styles
+    from reportlab.lib.pagesizes import landscape as _att_landscape, A4 as _AttA4
+    from reportlab.platypus import Image as _AttImage
     from reportlab.lib.styles import ParagraphStyle as _AttParagraphStyle
     from reportlab.lib.enums import TA_CENTER
     from reportlab.lib.utils import ImageReader as _AttImageReader
