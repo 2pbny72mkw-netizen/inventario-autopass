@@ -73,3 +73,89 @@ html.ap-new td [data-ap-v="info"]{background:var(--ap-info-bg)!important;color:v
 html.ap-new td [data-ap-v="neutral"]{background:var(--ap-none-bg)!important;color:var(--ap-none)!important;border-color:#D3D9E2!important}
 html.ap-new td [data-ap-v="primary"]{background:var(--ap-head)!important;color:var(--ap-navy)!important;border-color:#C9D6E8!important}
 html.ap-new [data-ap-v]:disabled{opacity:.55;cursor:not-allowed}
+
+/* ============================================================================
+   V87.6 REV85 — recursos atrás de chaves globais (Diagnóstico > Recursos). Sem a classe no <html>, nada abaixo age.
+   ============================================================================ */
+
+/* --- Menu lateral (html.ap-side) — só telas largas; no celular segue o menu atual --- */
+.ap-side-search,.ap-side-toggle,.ap-side-reopen{display:none}
+@media(min-width:981px){
+  html.ap-side body{padding-left:248px}
+  html.ap-side.ap-side-collapsed body{padding-left:0}
+  html.ap-side header.topbar{position:fixed!important;left:0;top:0;bottom:0;width:248px;overflow-y:auto!important;overflow-x:hidden!important;z-index:50000!important;border-bottom:0!important;border-right:1px solid var(--ap-border);background:#0F1E3D!important;box-shadow:none!important}
+  html.ap-side.ap-side-collapsed header.topbar{display:none!important}
+  html.ap-side header.topbar .wrap.nav{display:flex!important;flex-direction:column!important;align-items:stretch!important;width:100%!important;max-width:none!important;margin:0!important;padding:14px 10px!important;gap:10px}
+  html.ap-side header.topbar .wrap.nav,html.ap-side header.topbar .wrap.nav:before,html.ap-side header.topbar .wrap.nav:after{background:none!important;box-shadow:none!important}
+  html.ap-side header.topbar .brand{display:flex!important;flex-direction:column!important;align-items:flex-start!important;gap:6px;padding:4px 6px 10px;border-bottom:1px solid #243a66}
+  html.ap-side header.topbar .brand img{width:120px!important;background:#fff;border-radius:8px;padding:4px}
+  html.ap-side header.topbar .brandtext{display:block!important}
+  html.ap-side header.topbar .brandtext b{color:#fff!important;font-size:14px}
+  html.ap-side header.topbar .brandtext small{color:#9FB0D0!important}
+  html.ap-side header.topbar .mobileNavToggle{display:none!important}
+  html.ap-side .mainNavV424{display:flex!important;flex-direction:column!important;align-items:stretch!important;gap:2px!important;position:static!important;width:100%!important;max-height:none!important;overflow:visible!important;background:transparent!important}
+  html.ap-side .mainNavV424>a,html.ap-side .mainNavV424>.navInstall{display:block!important;color:#E4EAF7!important;padding:9px 12px!important;border-radius:8px;font-size:14px;font-weight:600;text-decoration:none}
+  html.ap-side .mainNavV424>a:hover{background:#1C3166!important}
+  html.ap-side .mainNavV424>a.navRightStart{margin-left:0!important}
+  html.ap-side .mainNavV424>.navDrop{display:block!important;position:static!important;z-index:auto!important}
+  html.ap-side .mainNavV424>.navDrop>.navDropBtn{display:flex!important;justify-content:space-between;width:100%;text-align:left;color:#E4EAF7!important;background:transparent!important;border:0!important;padding:9px 12px!important;border-radius:8px;font-size:14px;font-weight:700;min-height:0!important}
+  html.ap-side .mainNavV424>.navDrop>.navDropBtn:hover,html.ap-side .mainNavV424>.navDrop.open>.navDropBtn{background:#1C3166!important}
+  html.ap-side .mainNavV424>.navDrop>.navDropMenu,html.ap-side .mainNavV424>.navDrop:hover>.navDropMenu,html.ap-side .mainNavV424>.navDrop:focus-within>.navDropMenu{display:none!important;position:static!important;box-shadow:none!important;background:transparent!important;border:0!important;padding:2px 0 6px 10px!important;min-width:0!important;width:auto!important;max-height:none!important}
+  html.ap-side .mainNavV424>.navDrop.open>.navDropMenu{display:block!important}
+  html.ap-side .mainNavV424 .navDropMenu a{display:block!important;color:#C9D4EC!important;padding:7px 12px!important;border-radius:6px;font-size:13px;font-weight:500;white-space:normal}
+  html.ap-side .mainNavV424 .navDropMenu a:hover{background:#1C3166!important;color:#fff!important}
+  html.ap-side .mainNavV424 .navSubItems{position:static!important;display:block!important;box-shadow:none!important;background:transparent!important}
+  html.ap-side .ap-side-search{display:block;width:100%;box-sizing:border-box;min-height:38px;border:1px solid #2A4378;border-radius:8px;padding:7px 10px;font:inherit;font-size:13px;background:#162B54;color:#fff}
+  html.ap-side .ap-side-search::placeholder{color:#9FB0D0}
+  html.ap-side .ap-side-toggle{display:block;position:fixed;left:248px;top:12px;z-index:50001;width:26px;height:34px;border:0;border-radius:0 8px 8px 0;background:#0F1E3D;color:#fff;cursor:pointer;padding:0;font-size:14px;min-height:0}
+  html.ap-side.ap-side-collapsed .ap-side-toggle{left:0}
+  /* painel Gerencial tinha altura/posição contada a partir da barra superior */
+  html.ap-side .v23Sidebar{top:14px!important;height:calc(100vh - 28px)!important}
+  html.ap-side main.wrap .v31CommandCenter,html.ap-side main.wrap .v32CommandCenter,html.ap-side main.wrap .v33CommandCenter,html.ap-side main.wrap .v34CommandCenter{width:auto!important;max-width:100%!important}
+  html.ap-side main.wrap:has(.v32CommandCenter){width:100%!important}
+  html.ap-side body.v23TvMode{padding-left:0}
+}
+@media(max-width:980px){html.ap-side .ap-side-search,html.ap-side .ap-side-toggle{display:none}}
+
+/* --- Gerencial em tema claro (html.ap-ger-claro) --- */
+html.ap-ger-claro body[data-dashboard-view] .v23DashboardShell,
+html.ap-ger-claro .v23DashboardShell.v34CommandCenter,html.ap-ger-claro .v23DashboardShell.v33CommandCenter,
+html.ap-ger-claro .v23DashboardShell.v32CommandCenter,html.ap-ger-claro .v23DashboardShell.v31CommandCenter,html.ap-ger-claro .v23DashboardShell{background:#F5F7FA!important;color:var(--ap-text)!important;box-shadow:none!important}
+html.ap-ger-claro .v23DashboardShell .v23Sidebar{background:#fff!important;border:1px solid var(--ap-border)!important;box-shadow:none!important}
+html.ap-ger-claro .v23DashboardShell .v23SidebarBrand b,html.ap-ger-claro .v23DashboardShell .v23SidebarBrand small,html.ap-ger-claro .v23DashboardShell .v42SideGroup{color:var(--ap-navy)!important}
+html.ap-ger-claro .v23DashboardShell .v23Nav{background:transparent!important;color:var(--ap-navy)!important;border:1px solid transparent!important;box-shadow:none!important}
+html.ap-ger-claro .v23DashboardShell .v23Nav:hover{background:var(--ap-head)!important}
+html.ap-ger-claro .v23DashboardShell .v23Nav.active{background:var(--ap-head)!important;border-color:var(--ap-navy)!important;color:var(--ap-navy)!important;box-shadow:none!important}
+html.ap-ger-claro .v23DashboardShell .v23Panel,html.ap-ger-claro .v23DashboardShell .card{background:#fff!important;color:var(--ap-text)!important;border:1px solid var(--ap-border)!important;box-shadow:0 1px 2px rgba(31,58,104,.06)!important}
+html.ap-ger-claro .v23DashboardShell .v23Panel h1,html.ap-ger-claro .v23DashboardShell .v23Panel h2,html.ap-ger-claro .v23DashboardShell .v23Panel h3,html.ap-ger-claro .v23DashboardShell .v23Panel p,html.ap-ger-claro .v23DashboardShell .v23Panel span,html.ap-ger-claro .v23DashboardShell .v23Panel small,html.ap-ger-claro .v23DashboardShell .v23Panel label{color:var(--ap-text)}
+html.ap-ger-claro .v23DashboardShell .dashboardKpis .kpi{background:#fff!important;color:var(--ap-text)!important;border:1px solid var(--ap-border)!important;border-left:5px solid var(--ap-info)!important;box-shadow:0 1px 2px rgba(31,58,104,.06)!important}
+html.ap-ger-claro .v23DashboardShell .dashboardKpis .kpi.successKpi{border-left-color:var(--ap-ok)!important}
+html.ap-ger-claro .v23DashboardShell .dashboardKpis .kpi.warningKpi{border-left-color:var(--ap-warn)!important}
+html.ap-ger-claro .v23DashboardShell .dashboardKpis .kpi.dangerKpi{border-left-color:var(--ap-crit)!important}
+html.ap-ger-claro .v23DashboardShell .dashboardKpis .kpi.primaryKpi{border-left-color:var(--ap-navy)!important}
+html.ap-ger-claro .v23DashboardShell .dashboardKpis .kpi b,html.ap-ger-claro .v23DashboardShell .dashboardKpis .kpi span,html.ap-ger-claro .v23DashboardShell .dashboardKpis .kpi small{color:var(--ap-text)!important}
+html.ap-ger-claro .v23DashboardShell .v29ProgressHero,html.ap-ger-claro .v23DashboardShell .v29Pulse,html.ap-ger-claro .v23DashboardShell .v29InsightRail{background:#fff!important;color:var(--ap-text)!important;border:1px solid var(--ap-border)!important}
+html.ap-ger-claro .v23DashboardShell .v29ProgressHero *,html.ap-ger-claro .v23DashboardShell .v29Pulse *,html.ap-ger-claro .v23DashboardShell .v29InsightRail *{color:var(--ap-text)!important}
+html.ap-ger-claro .v23DashboardShell .v29MegaTrack{background:var(--ap-head)!important}
+html.ap-ger-claro .v23DashboardShell .v23DashboardContent{background:none!important}
+html.ap-ger-claro .v23DashboardShell .v35Panel{background:#fff!important;color:var(--ap-text)!important;border:1px solid var(--ap-border)!important;box-shadow:0 1px 2px rgba(31,58,104,.06)!important}
+html.ap-ger-claro .v23DashboardShell .v35CoveragePanel h2,html.ap-ger-claro .v23DashboardShell .v35CoveragePanel h3,html.ap-ger-claro .v23DashboardShell .v35CoveragePanel p,html.ap-ger-claro .v23DashboardShell .v35CoveragePanel span,html.ap-ger-claro .v23DashboardShell .v35CoveragePanel small,html.ap-ger-claro .v23DashboardShell .v35CoveragePanel b,html.ap-ger-claro .v23DashboardShell .v35CoveragePanel strong{color:var(--ap-text)!important}
+html.ap-ger-claro .v23DashboardShell .v34Radial{background:#fff!important}
+
+/* --- Gráficos na paleta única (html.ap-paleta): barras e rosca CSS dos painéis --- */
+html.ap-paleta .garageStack #dStackDone,html.ap-paleta .garageLegend .gDone:before{background:var(--ap-ok)!important}
+html.ap-paleta .garageStack #dStackProg,html.ap-paleta .garageLegend .gProg:before{background:var(--ap-c2)!important}
+html.ap-paleta .garageStack #dStackPend,html.ap-paleta .garageLegend .gPend:before{background:var(--ap-crit)!important}
+html.ap-paleta .v62BarRow i,html.ap-paleta .td27Bars i{background:var(--ap-c1)!important}
+
+/* --- Janela de indicador (html.ap-kpi-janela) --- */
+html.ap-kpi-janela [data-ap-window]{cursor:pointer}
+html.ap-kpi-janela [data-ap-window]:hover{box-shadow:0 2px 10px rgba(31,58,104,.18)}
+html.ap-kpi-janela [data-ap-window]:focus-visible{outline:3px solid var(--ap-focus);outline-offset:2px}
+.ap-win-back{position:fixed;inset:0;background:rgba(15,30,61,.5);z-index:100000;display:flex;align-items:center;justify-content:center;padding:16px}
+.ap-win{background:#fff;border-radius:14px;max-width:1100px;width:100%;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(15,30,61,.35)}
+.ap-win header{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:16px 20px;border-bottom:1px solid var(--ap-border)}
+.ap-win header h2{margin:0;font-size:18px}
+.ap-win header small{display:block;color:var(--ap-muted);margin-top:2px}
+.ap-win .ap-win-body{padding:8px 20px 16px;overflow:auto}
+.ap-win .ap-win-x{border:0;background:transparent;font-size:24px;line-height:1;cursor:pointer;min-height:0;padding:4px 8px}
