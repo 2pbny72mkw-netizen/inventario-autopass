@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV84"
+APP_RELEASE = "V87.6 REV85"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -8079,6 +8079,96 @@ def v8522_menu_import():
     except ValueError as exc: return jsonify({'ok':False,'error':str(exc)}),400
     if mode=='apply': _v8522_menu_save(proposed)
     return jsonify({'ok':True,'mode':mode,'changes':changes,'layout':proposed,'note':'Impacto em permissões: 0. A importação altera somente navegação/apresentação.'})
+
+# V87.6 REV85 — Painel de recursos (chaves globais). Recursos novos nascem DESLIGADOS; o Gestor liga/desliga no Diagnóstico, sem novo deploy.
+# Armazenamento em tabela própria (v85_feature_flags): salvar as Configurações do sistema não apaga as chaves.
+_V85_FLAGS = [
+    {"id": "menu_lateral", "label": "Menu lateral", "desc": "Troca a barra de menus suspensos por um menu lateral recolhível, com busca. Os mesmos itens e permissões."},
+    {"id": "gerencial_claro", "label": "Gerencial em tema claro", "desc": "Painel Gerencial no padrão claro dos demais, no lugar do fundo escuro."},
+    {"id": "tabelas_v85", "label": "Tabelas padronizadas (telas restantes)", "desc": "Ordenação por coluna, busca e contador nas tabelas que ainda não tinham."},
+    {"id": "kpi_janela", "label": "Indicadores clicáveis (janela)", "desc": "Clicar no número abre uma janela com os registros que o compõem, com ordenação, busca e exportação."},
+    {"id": "graficos_paleta", "label": "Gráficos na paleta única", "desc": "Cores dos gráficos migradas para a paleta central (seguras para daltonismo)."},
+]
+_V85_IDS = {f["id"] for f in _V85_FLAGS}
+_V85_STATE = {"ready": False}
+
+
+def _v85_ensure():
+    if _V85_STATE["ready"]:
+        return
+    with db.engine.begin() as conn:
+        conn.execute(text("CREATE TABLE IF NOT EXISTS v85_feature_flags (flag_key VARCHAR(60) PRIMARY KEY, enabled BOOLEAN NOT NULL DEFAULT FALSE, updated_by INTEGER, updated_at TIMESTAMP)"))
+    _V85_STATE["ready"] = True
+
+
+def _v85_flags():
+    """{id: bool}. Nunca levanta exceção: em qualquer falha devolve tudo desligado (o sistema segue como antes)."""
+    def _load():
+        out = {f["id"]: False for f in _V85_FLAGS}
+        try:
+            _v85_ensure()
+            for k, v in db.session.execute(text("SELECT flag_key, enabled FROM v85_feature_flags")).fetchall():
+                if k in out:
+                    out[k] = bool(v)
+        except Exception:
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
+        return out
+    try:
+        return dict(_v73_cache_get("v85_flags", _load))
+    except Exception:
+        return {f["id"]: False for f in _V85_FLAGS}
+
+
+@app.context_processor
+def inject_v85_flags():
+    return {"ap_flags": _v85_flags()}
+
+
+def _v85_guard():
+    if not session.get("user_id") or session.get("role") != "manager" or not _has_access("management.diagnostics"):
+        return jsonify({"ok": False, "error": "Somente o Gestor."}), 403
+    if not database_url.startswith("postgresql"):
+        return jsonify({"ok": False, "error": "Disponível apenas no PostgreSQL."}), 400
+    return None
+
+
+@app.get("/api/diagnostico/recursos/v85")
+@login_required
+def v85_flags_get():
+    g = _v85_guard()
+    if g:
+        return g
+    cur = _v85_flags()
+    return jsonify({"ok": True, "flags": [dict(f, on=bool(cur.get(f["id"]))) for f in _V85_FLAGS]})
+
+
+@app.post("/api/diagnostico/recursos/v85")
+@login_required
+def v85_flags_set():
+    g = _v85_guard()
+    if g:
+        return g
+    data = request.get_json(silent=True) or {}
+    key = str(data.get("id") or "")
+    if key not in _V85_IDS:
+        return jsonify({"ok": False, "error": "Recurso inválido."}), 400
+    on = bool(data.get("on"))
+    try:
+        _v85_ensure()
+        db.session.execute(text("""INSERT INTO v85_feature_flags(flag_key, enabled, updated_by, updated_at) VALUES(:k,:e,:u,:t)
+            ON CONFLICT (flag_key) DO UPDATE SET enabled=EXCLUDED.enabled, updated_by=EXCLUDED.updated_by, updated_at=EXCLUDED.updated_at"""),
+            {"k": key, "e": on, "u": session.get("user_id"), "t": datetime.utcnow()})
+        db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="FEATURE_FLAG", entity_type="v85_feature_flags", entity_id=key, detail=("ligado" if on else "desligado")))
+        db.session.commit()
+        _v73_cache_clear("v85_flags")
+        return jsonify({"ok": True, "id": key, "on": on})
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({"ok": False, "error": f"Falha ao salvar: {str(exc)[:160]}"}), 500
+
 
 @app.get("/diagnostico")
 @login_required
