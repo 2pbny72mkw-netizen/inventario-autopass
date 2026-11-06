@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV85"
+APP_RELEASE = "V87.6 REV86"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -3045,6 +3045,7 @@ ACCESS_GROUPS = {
     "tasks": ("Gestão de Tarefas", ("tasks.view","tasks.create","tasks.edit","tasks.transfer","tasks.manage")),
     "arrow": ("Arrow", ("arrow.view","arrow.manage","arrow.edit","arrow.delete","arrow.dashboard","arrow.remote","arrow.create_field","arrow.change_status")),
     "about_versions": ("Sobre / Versões", ("about.versions",)),
+    "admin": ("Administração do sistema", ("admin.system","admin.import","admin.delete")),
 }
 ACCESS_MODULES = tuple(ACCESS_GROUPS.keys())
 ACCESS_SUBMODULES = tuple(k for _g,(_label,children) in ACCESS_GROUPS.items() for k in children)
@@ -3064,6 +3065,7 @@ ACCESS_LABELS = {
  "portal.appointments":"Criar / consultar agendamentos","portal.receive":"Receber agendamentos","portal.manage":"Administrar Portal do Cliente",
  "arrow.view":"Visualizar Arrow","arrow.manage":"Gerenciar Arrow / alocações","arrow.edit":"Editar atividade Arrow","arrow.delete":"Excluir atividade Arrow","arrow.dashboard":"Dashboard Arrow","arrow.remote":"TeamViewer / Atendimento Remoto","arrow.create_field":"Criar imprevisto Arrow em campo","arrow.change_status":"Alterar status de atividade Arrow",
  "about.versions":"Histórico / Versões",
+ "admin.system":"Ferramentas de administração / migrações / diagnóstico técnico","admin.import":"Importações em lote (Excel / WhatsApp)","admin.delete":"Exclusões administrativas (inventário, visitas, evidências, GPS de teste)",
 }
 
 def _expand_legacy_access(values):
@@ -3105,12 +3107,12 @@ def _user_access_set(user=None):
         user=db.session.get(User,uid) if uid else None
     if not user:
         return set()
-    if getattr(user, "role", None) == "manager":
+    if getattr(user, "role", None) == "manager" and (not _v86_strict() or _v86_user_is_principal(user)):
         access=set(ACCESS_SUBMODULES)
         if current_lookup and has_request_context(): g._autopass_access_set=access
         return access
     try:
-        if getattr(user,"system_profile_id",None):
+        if getattr(user,"system_profile_id",None) and not _v86_strict():
             prof=db.session.get(SystemProfile,user.system_profile_id)
             if prof and prof.active:
                 custom=json.loads(prof.access_json or "[]")
@@ -3131,7 +3133,9 @@ def _has_access(permission):
     if not session.get("user_id"): return False
     # V82.2 — ADM/Gestor administrativo sempre possui acesso integral.
     # Demais perfis continuam exclusivamente sob a Matriz de Permissões.
-    if (session.get("role") or "").strip().lower() in {"manager", "admin", "adm", "administrator", "administrador", "gestor"}: return True
+    if _v86_strict():
+        if _v86_is_principal(): return True
+    elif (session.get("role") or "").strip().lower() in {"manager", "admin", "adm", "administrator", "administrador", "gestor"}: return True
     access=_user_access_set()
     if permission in ACCESS_GROUPS:
         return permission in access or any(x in access for x in ACCESS_GROUPS[permission][1])
@@ -3157,12 +3161,24 @@ def _parse_access_form(role=None):
 def inject_access_helpers():
     return {"can_view": _has_access, "access_modules": ACCESS_MODULES, "access_groups": ACCESS_GROUPS, "access_labels": ACCESS_LABELS, "user_access": _user_access_set}
 
+_V86_ROUTE_PERM = {
+    "teams_profile_create_api": "management.profiles", "teams_profile_update_api": "management.profiles", "teams_profile_remove_api": "management.profiles",
+    "reset_user_password": "users.password", "v50_settings_page": "management.settings", "v50_settings_api": "management.settings",
+    "delete_inventory": "admin.delete", "hardware_field_visit_delete_api": "admin.delete", "delete_evidence_visit": "admin.delete",
+    "panorama_delete_photo_api": "admin.delete", "cleanup_test_gps": "admin.delete",
+    "import_excel_v34": "admin.import", "import_whatsapp_batch_v344": "admin.import", "import_whatsapp": "admin.import", "panorama_import_whatsapp_api": "admin.import",
+}
+
 def manager_required(fn):
     @wraps(fn)
     def inner(*args, **kwargs):
         if not session.get("user_id"):
             return redirect(url_for("login"))
-        if session.get("role") != "manager":
+        if _v86_strict():
+            ok = _has_access(_V86_ROUTE_PERM.get(fn.__name__, "admin.system"))
+        else:
+            ok = session.get("role") == "manager"
+        if not ok:
             return redirect(_v789_landing_for_user())
         return fn(*args, **kwargs)
     return inner
@@ -8087,6 +8103,7 @@ _V85_FLAGS = [
     {"id": "gerencial_claro", "label": "Gerencial em tema claro", "desc": "Painel Gerencial no padrão claro dos demais, no lugar do fundo escuro."},
     {"id": "tabelas_v85", "label": "Tabelas padronizadas (telas restantes)", "desc": "Ordenação por coluna, busca e contador nas tabelas que ainda não tinham."},
     {"id": "kpi_janela", "label": "Indicadores clicáveis (janela)", "desc": "Clicar no número abre uma janela com os registros que o compõem, com ordenação, busca e exportação."},
+    {"id": "acesso_liberacoes", "label": "Acesso somente por liberações (perfil = só cargo)", "desc": "O cargo/perfil deixa de dar acesso: vale só a matriz de liberações de cada usuário. Só liga depois de gravar o retrato; só o administrador principal liga."},
     {"id": "graficos_paleta", "label": "Gráficos na paleta única", "desc": "Cores dos gráficos migradas para a paleta central (seguras para daltonismo)."},
 ]
 _V85_IDS = {f["id"] for f in _V85_FLAGS}
@@ -8128,7 +8145,7 @@ def inject_v85_flags():
 
 
 def _v85_guard():
-    if not session.get("user_id") or session.get("role") != "manager" or not _has_access("management.diagnostics"):
+    if not session.get("user_id") or not _v86_role_ok() or not _has_access("management.diagnostics"):
         return jsonify({"ok": False, "error": "Somente o Gestor."}), 403
     if not database_url.startswith("postgresql"):
         return jsonify({"ok": False, "error": "Disponível apenas no PostgreSQL."}), 400
@@ -8156,6 +8173,12 @@ def v85_flags_set():
     if key not in _V85_IDS:
         return jsonify({"ok": False, "error": "Recurso inválido."}), 400
     on = bool(data.get("on"))
+    if key == "acesso_liberacoes" and on:
+        if not _v86_is_principal():
+            return jsonify({"ok": False, "error": "Somente o administrador principal liga esta chave."}), 403
+        row = db.session.execute(text("SELECT enabled FROM v85_feature_flags WHERE flag_key='acesso_retrato'")).fetchone()
+        if not (row and row[0]):
+            return jsonify({"ok": False, "error": "Grave o retrato de acessos antes de ligar."}), 400
     try:
         _v85_ensure()
         db.session.execute(text("""INSERT INTO v85_feature_flags(flag_key, enabled, updated_by, updated_at) VALUES(:k,:e,:u,:t)
@@ -8168,6 +8191,226 @@ def v85_flags_set():
     except Exception as exc:
         db.session.rollback()
         return jsonify({"ok": False, "error": f"Falha ao salvar: {str(exc)[:160]}"}), 500
+
+
+# V87.6 REV86 — acesso somente por liberações
+# V87.6 REV86 — "Acesso só por liberações": o cargo (papel) deixa de dar acesso; só a matriz de liberações vale.
+# Tudo atrás da chave `acesso_liberacoes` (nasce DESLIGADA). Desligada = comportamento idêntico ao da REV85.
+def _v86_strict():
+    try:
+        return bool(_v85_flags().get("acesso_liberacoes"))
+    except Exception:
+        return False
+
+
+def _v86_is_principal():
+    """Trava de segurança: o administrador principal nunca perde o acesso integral."""
+    try:
+        return bool(_current_user_is_superadmin())
+    except Exception:
+        return False
+
+
+def _v86_user_is_principal(user):
+    try:
+        if not user or user.role != "manager":
+            return False
+        expected = os.getenv("SUPERADMIN_USERNAME", "admin").strip().lower()
+        return (user.username or "").strip().lower() == expected or user.id == 1
+    except Exception:
+        return False
+
+
+def _v86_role_ok():
+    """Guardas antigas 'role == manager': no modo estrito vale somente a matriz (a checagem de matriz continua ao lado)."""
+    return session.get("role") == "manager" or _v86_strict()
+
+
+def perm_required(permission):
+    """Substitui @manager_required. Com a chave desligada: exige o papel Gestor (igual a antes).
+    Com a chave ligada: exige a liberação `permission` na matriz."""
+    def deco(fn):
+        @wraps(fn)
+        def inner(*args, **kwargs):
+            if not session.get("user_id"):
+                return redirect(url_for("login"))
+            ok = _has_access(permission) if _v86_strict() else (session.get("role") == "manager")
+            if not ok:
+                return redirect(_v789_landing_for_user())
+            return fn(*args, **kwargs)
+        return inner
+    return deco
+
+# V87.6 REV86 — Retrato de acessos (Diagnóstico) e tempos do registro de bobinas.
+_V86_STATE = {"ready": False}
+_V86_BOBBIN_TIMES = []
+
+
+def _v86_ensure():
+    if _V86_STATE["ready"]:
+        return
+    with db.engine.begin() as conn:
+        conn.execute(text("CREATE TABLE IF NOT EXISTS v86_access_backup (id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL, old_access_json TEXT, old_profile_id INTEGER, saved_at TIMESTAMP, batch VARCHAR(40))"))
+    _V86_STATE["ready"] = True
+
+
+def _v86_effective_legacy(u):
+    """Acesso efetivo do usuário COMO É HOJE (modo anterior): Gestor = tudo; perfil vinculado; senão access_json."""
+    if u.role == "manager":
+        return set(ACCESS_SUBMODULES)
+    try:
+        if u.system_profile_id:
+            prof = db.session.get(SystemProfile, u.system_profile_id)
+            if prof and prof.active:
+                raw = json.loads(prof.access_json or "[]")
+                return _expand_legacy_access({x for x in raw if x in ACCESS_ALL}) if isinstance(raw, list) else set()
+    except Exception:
+        pass
+    try:
+        raw = json.loads(u.access_json or "[]")
+        return _expand_legacy_access({x for x in raw if x in ACCESS_ALL}) if isinstance(raw, list) else set()
+    except Exception:
+        return set()
+
+
+def _v86_stored(u):
+    try:
+        raw = json.loads(u.access_json or "[]")
+        return _expand_legacy_access({x for x in raw if x in ACCESS_ALL}) if isinstance(raw, list) else set()
+    except Exception:
+        return set()
+
+
+def _v86_snapshot_plan():
+    users = User.query.filter(User.archived_at.is_(None)).order_by(User.id).all()
+    rows = []
+    for u in users:
+        eff = {x for x in _v86_effective_legacy(u) if x in ACCESS_SUBMODULES}
+        cur = {x for x in _v86_stored(u) if x in ACCESS_SUBMODULES}
+        if eff != cur:
+            rows.append({"id": u.id, "name": u.name, "username": u.username, "role": u.role, "has_profile": bool(u.system_profile_id),
+                         "stored": len(cur), "will_have": len(eff), "adds": len(eff - cur), "removes": len(cur - eff), "_new": sorted(eff)})
+    return users, rows
+
+
+def _v86_guard(principal=False):
+    g = _v85_guard()
+    if g:
+        return g
+    if principal and not _v86_is_principal():
+        return jsonify({"ok": False, "error": "Somente o administrador principal."}), 403
+    return None
+
+
+@app.get("/api/diagnostico/acessos/retrato/v86")
+@login_required
+def v86_access_snapshot_plan():
+    g = _v86_guard()
+    if g:
+        return g
+    users, rows = _v86_snapshot_plan()
+    _v86_ensure()
+    marker = db.session.execute(text("SELECT enabled FROM v85_feature_flags WHERE flag_key='acesso_retrato'")).fetchone()
+    by_role = {}
+    for u in users:
+        by_role[u.role or "—"] = by_role.get(u.role or "—", 0) + 1
+    return jsonify({"ok": True, "applied": bool(marker and marker[0]), "principal": _v86_is_principal(), "users_active": len(users), "by_role": by_role,
+                    "to_change": len(rows), "strict": _v86_strict(),
+                    "rows": [{k: v for k, v in r.items() if k != "_new"} for r in rows[:200]]})
+
+
+@app.post("/api/diagnostico/acessos/retrato/v86")
+@login_required
+def v86_access_snapshot_apply():
+    g = _v86_guard(principal=True)
+    if g:
+        return g
+    data = request.get_json(silent=True) or {}
+    if str(data.get("confirm") or "").strip().upper() != "GRAVAR":
+        return jsonify({"ok": False, "error": 'Digite GRAVAR para confirmar.'}), 400
+    try:
+        _v86_ensure()
+        users, rows = _v86_snapshot_plan()
+        by_id = {u.id: u for u in users}
+        batch = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+        for r in rows:
+            u = by_id[r["id"]]
+            db.session.execute(text("INSERT INTO v86_access_backup(user_id, old_access_json, old_profile_id, saved_at, batch) VALUES(:u,:a,:p,:t,:b)"),
+                               {"u": u.id, "a": u.access_json, "p": u.system_profile_id, "t": datetime.utcnow(), "b": batch})
+            u.access_json = json.dumps(r["_new"])
+        db.session.execute(text("""INSERT INTO v85_feature_flags(flag_key, enabled, updated_by, updated_at) VALUES('acesso_retrato', TRUE, :u, :t)
+            ON CONFLICT (flag_key) DO UPDATE SET enabled=TRUE, updated_by=EXCLUDED.updated_by, updated_at=EXCLUDED.updated_at"""), {"u": session.get("user_id"), "t": datetime.utcnow()})
+        db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="ACCESS_SNAPSHOT", entity_type="users", entity_id=batch, detail=f"{len(rows)} usuário(s) gravados"))
+        db.session.commit()
+        _v73_cache_clear("v85_flags")
+        return jsonify({"ok": True, "written": len(rows), "batch": batch})
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({"ok": False, "error": f"Falha: {str(exc)[:160]}"}), 500
+
+
+@app.post("/api/diagnostico/acessos/retrato/v86/desfazer")
+@login_required
+def v86_access_snapshot_revert():
+    g = _v86_guard(principal=True)
+    if g:
+        return g
+    data = request.get_json(silent=True) or {}
+    if str(data.get("confirm") or "").strip().upper() != "DESFAZER":
+        return jsonify({"ok": False, "error": 'Digite DESFAZER para confirmar.'}), 400
+    try:
+        _v86_ensure()
+        db.session.execute(text("UPDATE v85_feature_flags SET enabled=FALSE, updated_at=:t WHERE flag_key='acesso_liberacoes'"), {"t": datetime.utcnow()})
+        rows = db.session.execute(text("SELECT user_id, old_access_json FROM v86_access_backup WHERE id IN (SELECT MIN(id) FROM v86_access_backup GROUP BY user_id)")).fetchall()
+        n = 0
+        for uid, old in rows:
+            u = db.session.get(User, uid)
+            if u is not None:
+                u.access_json = old
+                n += 1
+        db.session.execute(text("DELETE FROM v86_access_backup"))
+        db.session.execute(text("UPDATE v85_feature_flags SET enabled=FALSE, updated_at=:t WHERE flag_key='acesso_retrato'"), {"t": datetime.utcnow()})
+        db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="ACCESS_SNAPSHOT_REVERT", entity_type="users", entity_id="all", detail=f"{n} usuário(s) restaurados; chave desligada"))
+        db.session.commit()
+        _v73_cache_clear("v85_flags")
+        return jsonify({"ok": True, "restored": n})
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({"ok": False, "error": f"Falha: {str(exc)[:160]}"}), 500
+
+
+def _v86_record_bobbin_time(total_ms, upload_ms, has_photo, sql_ms, queries):
+    try:
+        _V86_BOBBIN_TIMES.append({"at": datetime.utcnow().strftime("%d/%m %H:%M:%S"), "total_ms": round(total_ms), "upload_ms": round(upload_ms),
+                                  "other_ms": round(total_ms - upload_ms), "sql_ms": round(sql_ms), "queries": int(queries), "photo": bool(has_photo)})
+        del _V86_BOBBIN_TIMES[:-60]
+    except Exception:
+        pass
+
+
+@app.get("/api/diagnostico/bobinas-tempos/v86")
+@login_required
+def v86_bobbin_times():
+    g = _v85_guard()
+    if g:
+        return g
+    return jsonify({"ok": True, "rows": list(reversed(_V86_BOBBIN_TIMES)), "note": "Memória do servidor: zera ao reiniciar. Mostra os últimos 60 registros desde o último deploy/reinício."})
+
+
+@app.get("/api/rede-ferroviaria/v86")
+@login_required
+def v86_rail_network():
+    """Rede única para todos os mapas (Gerencial, Equipes, Rastreabilidade, Modo TV): estações com coordenada, payload leve e em cache."""
+    if not any(_has_access(p) for p in ("teams.map", "management.gps_history", "dashboard.general", "dashboard")):
+        abort(403)
+    def _load():
+        rows = (db.session.query(Location.id, Location.company, Location.line, Location.location, Location.reference_latitude, Location.reference_longitude)
+                .filter(Location.reference_latitude.isnot(None), Location.reference_longitude.isnot(None)).order_by(Location.line, Location.location).all())
+        return [{"id": r.id, "company": r.company or "", "line": r.line or "", "location": r.location or "",
+                 "reference_latitude": float(r.reference_latitude), "reference_longitude": float(r.reference_longitude)} for r in rows]
+    resp = jsonify(_v73_cache_get("v86_rail_network", _load))
+    resp.headers["Cache-Control"] = "private, max-age=60"
+    return resp
 
 
 @app.get("/diagnostico")
@@ -8356,8 +8599,8 @@ def v75_retention_policy_get():
 @app.post("/api/diagnostico/retencao/v75/politica")
 @login_required
 def v75_retention_policy_set():
-    if not _has_access("management.diagnostics") or session.get("role") != "manager":
-        return jsonify({"ok": False, "error": "Somente o Gestor pode alterar a política de retenção."}), 403
+    if not _has_access("management.diagnostics") or not _v86_role_ok():
+        return jsonify({"ok": False, "error": "Sem permissão para alterar a política de retenção."}), 403
     data = request.get_json(silent=True) or {}
     code = str(data.get("module") or "").strip().lower()
     if code not in _v75_ret_specs() and code != "whatsapp":
@@ -25282,6 +25525,7 @@ def v771_bobbin_atm_status():
 @login_required
 def v77_bobbins_register():
     _v8548_bobbin_started=time.perf_counter()
+    _v86_upload_ms=0.0
     if not _has_access('field.bobbins'): abort(403)
     if _activity_request_too_large():return jsonify({'ok':False,'error':'Foto excede o limite permitido.'}),413
     company=(request.form.get('company') or '').strip() or 'METRÔ';line=(request.form.get('line') or '').strip();station=(request.form.get('station') or '').strip();atm=(request.form.get('atm_id') or '').strip()
@@ -25333,8 +25577,10 @@ def v77_bobbins_register():
     db.session.add(row);db.session.flush()
     if has_photo:
         ext=Path(secure_filename(photo.filename)).suffix.lower() or '.jpg';stored_name=f"bobina_{row.id}_{uuid.uuid4().hex[:10]}{ext}"
+        _v86_t0=time.perf_counter()
         try:stored=_store_uploaded_file(photo,'bobinas',stored_name,photo.mimetype,max_mb=12)
         except Exception as exc:db.session.rollback();return jsonify({'ok':False,'error':str(exc)}),400
+        _v86_upload_ms=(time.perf_counter()-_v86_t0)*1000
         ph=AtmBobbinPhoto(reading_id=row.id,storage_key=stored,original_name=secure_filename(photo.filename),content_type=photo.mimetype or 'image/jpeg',expires_at=datetime.utcnow()+timedelta(days=_v771_photo_retention_days()))
         db.session.add(ph)
     db.session.commit()
@@ -25349,6 +25595,7 @@ def v77_bobbins_register():
         except Exception:
             app.logger.exception('Falha não crítica na limpeza periódica de fotos de bobinas')
     _v8548_total_ms=(time.perf_counter()-_v8548_bobbin_started)*1000
+    _v86_record_bobbin_time(_v8548_total_ms,_v86_upload_ms,has_photo,float(getattr(g,'_perf_sql_ms',0) or 0),int(getattr(g,'_perf_query_count',0) or 0))
     if _v8548_total_ms>=800:
         app.logger.warning('PERF_V8548 bobinas_register total_ms=%.1f pre_cleanup_ms=%.1f cleanup_ms=%.1f sql_ms=%.1f queries=%d photo=%s',
             _v8548_total_ms,_v8548_commit_ms,_v8548_total_ms-_v8548_commit_ms,
