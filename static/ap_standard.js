@@ -162,7 +162,8 @@
   }
 
   /* REV85: tabela com data-ap-flag só é ativada se a chave global estiver ligada (Diagnóstico > Recursos). */
-  function flagOk(t){ var f=t.getAttribute('data-ap-flag'); return !f || !!((window.AP_FLAGS||{})[f]); }
+  function ownSort(t){ var h=t.tHead; return !!(h && (h.querySelector('[data-sort],[data-psort],[data-priority-sort],[data-col],[role=button],[onclick],button,.opSortable,.xp-sort') || /\u2195/.test(h.textContent))); }
+  function flagOk(t){ var f=t.getAttribute('data-ap-flag'); if(!f) return true; if(!((window.AP_FLAGS||{})[f])) return false; return !ownSort(t); }  /* tabela que ja ordena por conta propria nao e tocada */
   function scan(root){
     (root.querySelectorAll?root.querySelectorAll('table[data-ap-table]'):[]).forEach(function(t){ if(flagOk(t)) enhance(t); });
     (root.querySelectorAll?root.querySelectorAll('[data-ap-href]'):[]).forEach(enhanceKpi);
