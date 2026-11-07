@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV86 HF1"
+APP_RELEASE = "V87.6 REV86 HF2"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -7614,7 +7614,7 @@ def _v70_migration_snapshot():
 def _v70_index_snapshot():
     targets={
       "performance_metrics":{"ix_perf_created_route"},
-      "topdesk_tickets":{"ix_topdesk_status_created","ix_topdesk_line_station_status"},
+      "topdesk_tickets":{"ix_topdesk_line_station_status"},
       "material_requests":{"ix_material_req_user_status"},
       "collaborator_documents":{"ix_collab_doc_user_status"},
       "technician_positions":{"ix_techpos_user_captured"},
@@ -7754,7 +7754,8 @@ def telemetry_summary_api():
         }
         errors=sum(1 for x in rows if x.status_code>=500); avg=round(sum(vals)/len(vals),1) if vals else 0; p95=pct(vals,.95); p99=pct(vals,.99)
         slow_1s=sum(v>=1000 for v in vals); slow_2s=sum(v>=2000 for v in vals); slow_5s=sum(v>=5000 for v in vals)
-        health="CRÍTICO" if (p95>=5000 or slow_5s>0 or errors>=3) else ("ATENÇÃO" if (p95>=1500 or slow_2s>0 or errors>0) else "NORMAL")
+        _v86_small=len(vals)<30
+        health="CRÍTICO" if (errors>=3 or ((p95>=5000 or slow_5s>0) and not _v86_small)) else ("ATENÇÃO" if (p95>=1500 or slow_2s>0 or errors>0 or (_v86_small and (p95>=5000 or slow_5s>0))) else "NORMAL")
         top5=[dict(x,app_ms=max(0,round(float(x.get("avg_ms") or 0)-float(x.get("avg_sql_ms") or 0),1))) for x in route_rows[:5]]
         with PANORAMA_EXPORT_LOCK:
             _jobs=list(PANORAMA_EXPORT_JOBS.values())
@@ -8425,6 +8426,14 @@ def v86_rail_network():
     resp.headers["Cache-Control"] = "private, max-age=60"
     return resp
 
+
+# V87.6 REV86 HF2 — índice de posições (user_id, captured_at) em transação própria; tabela pequena, criação rápida.
+try:
+    if database_url.startswith("postgresql"):
+        with db.engine.begin() as _v86_conn:
+            _v86_conn.execute(text("CREATE INDEX IF NOT EXISTS ix_techpos_user_captured ON technician_positions (user_id, captured_at)"))
+except Exception:
+    app.logger.exception("REV86 HF2: falha ao criar ix_techpos_user_captured (não crítica)")
 
 @app.get("/diagnostico")
 @login_required
