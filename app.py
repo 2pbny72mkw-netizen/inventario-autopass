@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV88"
+APP_RELEASE = "V87.6 REV88 HF1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -7748,6 +7748,15 @@ def platform_health_page():
     if not _has_access("management.health"): abort(403)
     return render_template("telemetry.html", app_release=APP_RELEASE)
 
+_V88HF_ADMIN_PREFIXES = ("/api/diagnostico", "/diagnostico", "/api/telemetria", "/telemetria", "/saude-plataforma", "/api/alertas/v88/calcular")
+
+
+def _v88hf_admin_route(route):
+    r = str(route or "")
+    r = r.split(" ", 1)[1] if " " in r and r.split(" ", 1)[0].isupper() else r
+    return r.startswith(_V88HF_ADMIN_PREFIXES)
+
+
 @app.get("/api/telemetria/resumo")
 @login_required
 def telemetry_summary_api():
@@ -7781,8 +7790,11 @@ def telemetry_summary_api():
         }
         errors=sum(1 for x in rows if x.status_code>=500); avg=round(sum(vals)/len(vals),1) if vals else 0; p95=pct(vals,.95); p99=pct(vals,.99)
         slow_1s=sum(v>=1000 for v in vals); slow_2s=sum(v>=2000 for v in vals); slow_5s=sum(v>=5000 for v in vals)
-        _v86_small=len(vals)<30
-        health="CRÍTICO" if (errors>=3 or ((p95>=5000 or slow_5s>=max(3,int(len(vals)*0.01))) and not _v86_small)) else ("ATENÇÃO" if (p95>=1500 or slow_2s>0 or errors>0 or (_v86_small and (p95>=5000 or slow_5s>0))) else "NORMAL")
+        # HF1: rotas de ferramentas de diagnóstico/telemetria (uso do Gestor, lentas por natureza) não entram no cálculo da saúde
+        _hv=[float(x.duration_ms or 0) for x in rows if not _v88hf_admin_route(x.route)]
+        _hp95=pct(_hv,.95); _hs2=sum(v>=2000 for v in _hv); _hs5=sum(v>=5000 for v in _hv)
+        _v86_small=len(_hv)<30
+        health="CRÍTICO" if (errors>=3 or ((_hp95>=5000 or _hs5>=max(3,int(len(_hv)*0.01))) and not _v86_small)) else ("ATENÇÃO" if (_hp95>=1500 or _hs2>0 or errors>0 or (_v86_small and (_hp95>=5000 or _hs5>0))) else "NORMAL")
         top5=[dict(x,app_ms=max(0,round(float(x.get("avg_ms") or 0)-float(x.get("avg_sql_ms") or 0),1))) for x in route_rows[:5]]
         with PANORAMA_EXPORT_LOCK:
             _jobs=list(PANORAMA_EXPORT_JOBS.values())
@@ -8619,6 +8631,26 @@ _V88_INDEXES = [
 ]
 
 
+def _v88hf_index_state(conn):
+    """nome -> True (válido) / False (inválido). Consulta pg_index, que enxerga índice que ficou INVALID após falha do CONCURRENTLY."""
+    rows = conn.execute(text(
+        "SELECT c.relname, i.indisvalid FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid "
+        "JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public'")).fetchall()
+    return {r[0]: bool(r[1]) for r in rows}
+
+
+def _v88hf_blockers(conn, table):
+    """Transações longas (> 30 s) que podem segurar a criação do índice; só informação, nada é encerrado."""
+    try:
+        rows = conn.execute(text(
+            "SELECT pid, state, EXTRACT(EPOCH FROM (now()-xact_start))::int AS seg, left(query,80) FROM pg_stat_activity "
+            "WHERE datname=current_database() AND pid<>pg_backend_pid() AND xact_start IS NOT NULL "
+            "AND now()-xact_start > interval '30 seconds' ORDER BY xact_start LIMIT 5")).fetchall()
+        return [f"pid {r[0]} {r[1]} há {r[2]} s: {r[3]}" for r in rows]
+    except Exception:
+        return []
+
+
 @app.get("/api/diagnostico/indices/v88")
 @login_required
 def v88_indexes_get():
@@ -8626,17 +8658,19 @@ def v88_indexes_get():
     if g:
         return g
     try:
-        have = {r[0] for r in db.session.execute(text("SELECT indexname FROM pg_indexes WHERE schemaname='public'")).fetchall()}
+        st = _v88hf_index_state(db.session)
+        db.session.rollback()
     except Exception as exc:
         db.session.rollback()
         return jsonify({"ok": False, "error": str(exc)[:200]}), 500
-    return jsonify({"ok": True, "indices": [{"nome": n, "tabela": t, "colunas": c, "existe": n in have} for n, t, c in _V88_INDEXES]})
+    return jsonify({"ok": True, "indices": [{"nome": n, "tabela": t, "colunas": c, "existe": n in st, "valido": bool(st.get(n))} for n, t, c in _V88_INDEXES]})
 
 
 @app.post("/api/diagnostico/indices/v88")
 @login_required
 def v88_indexes_create():
-    """Cria os índices que faltam, um por vez, cada um em conexão própria (AUTOCOMMIT): a falha de um não afeta os outros e o erro volta no relatório."""
+    """Cria os índices que faltam ou estão inválidos, um por vez, cada um em conexão própria (AUTOCOMMIT).
+    Índice INVALID (sobra de tentativa que falhou) é removido com DROP INDEX CONCURRENTLY e recriado; se a criação falhar, a sobra é removida."""
     g = _v85_guard()
     if g:
         return g
@@ -8645,13 +8679,31 @@ def v88_indexes_create():
         item = {"nome": name, "tabela": table}
         try:
             with db.engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
-                conn.execute(text("SET statement_timeout = '120s'"))
-                exists = conn.execute(text("SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname=:n"), {"n": name}).first()
-                if exists:
-                    item["resultado"] = "já existia"
+                conn.execute(text("SET lock_timeout = '20s'"))
+                conn.execute(text("SET statement_timeout = '240s'"))
+                st = _v88hf_index_state(conn)
+                if st.get(name):
+                    item["resultado"] = "já existia (válido)"
                 else:
-                    conn.execute(text(f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {name} ON {table} {cols}"))
-                    item["resultado"] = "criado"
+                    if name in st:
+                        conn.execute(text(f"DROP INDEX CONCURRENTLY IF EXISTS {name}"))
+                        item["limpou_invalido"] = True
+                    try:
+                        conn.execute(text(f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {name} ON {table} {cols}"))
+                        ok_now = _v88hf_index_state(conn).get(name)
+                        item["resultado"] = "criado" if ok_now else "erro"
+                        if not ok_now:
+                            item["erro"] = "índice ficou inválido"
+                            conn.execute(text(f"DROP INDEX CONCURRENTLY IF EXISTS {name}"))
+                    except Exception:
+                        try:
+                            if _v88hf_index_state(conn).get(name) is False:
+                                conn.execute(text(f"DROP INDEX CONCURRENTLY IF EXISTS {name}"))
+                                item["limpou_sobra"] = True
+                        except Exception:
+                            pass
+                        item["bloqueios"] = _v88hf_blockers(conn, table)
+                        raise
         except Exception as exc:
             item["resultado"] = "erro"
             item["erro"] = str(exc).strip().splitlines()[0][:220] if str(exc).strip() else exc.__class__.__name__
