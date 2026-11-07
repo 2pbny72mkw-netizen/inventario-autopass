@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV88 HF1"
+APP_RELEASE = "V87.6 REV88 HF2"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -8716,6 +8716,110 @@ def v88_indexes_create():
     return jsonify({"ok": True, "resultado": res})
 
 
+# ---------------------------------------------------------------------------
+# HF2: composição e retenção de mobile_sync_events; compactação sob demanda
+# ---------------------------------------------------------------------------
+_V88H2_SYNC_DELETABLE = ("GPS_SIGNAL",)  # só tipos cujo dado já está guardado em outra tabela; os demais são registro de campo
+_V88H2_COMPACT_TABLES = ("mobile_sync_events", "technician_positions")
+
+
+@app.get("/api/diagnostico/sync-eventos/v88")
+@login_required
+def v88h2_sync_get():
+    g = _v85_guard()
+    if g:
+        return g
+    try:
+        now = datetime.utcnow()
+        rows = db.session.execute(text(
+            "SELECT event_type, status, COUNT(*), COALESCE(SUM(octet_length(payload_json)),0), MIN(received_at), "
+            "COUNT(*) FILTER (WHERE received_at < :d7), COUNT(*) FILTER (WHERE received_at < :d30) "
+            "FROM mobile_sync_events GROUP BY event_type, status ORDER BY COUNT(*) DESC"),
+            {"d7": now - timedelta(days=7), "d30": now - timedelta(days=30)}).fetchall()
+        size = db.session.execute(text("SELECT pg_total_relation_size('mobile_sync_events')")).scalar() or 0
+        db.session.rollback()
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({"ok": False, "error": str(exc)[:200]}), 500
+    return jsonify({"ok": True, "tabela_mb": round(size / 1048576.0, 1), "apagaveis": list(_V88H2_SYNC_DELETABLE),
+                    "tipos": [{"tipo": r[0], "status": r[1], "qtd": int(r[2]), "payload_mb": round(int(r[3]) / 1048576.0, 2),
+                               "mais_antigo": (r[4].isoformat() + "Z") if r[4] else None, "mais_de_7d": int(r[5]), "mais_de_30d": int(r[6]),
+                               "apagavel": r[0] in _V88H2_SYNC_DELETABLE} for r in rows]})
+
+
+@app.post("/api/diagnostico/sync-eventos/v88")
+@login_required
+def v88h2_sync_cleanup():
+    g = _v85_guard()
+    if g:
+        return g
+    if not _v86_is_principal():
+        return jsonify({"ok": False, "error": "Somente o administrador principal."}), 403
+    data = request.get_json(silent=True) or {}
+    if str(data.get("confirmacao") or "").strip() != "LIMPAR EVENTOS":
+        return jsonify({"ok": False, "error": "Digite LIMPAR EVENTOS para confirmar."}), 400
+    tipo = str(data.get("tipo") or "GPS_SIGNAL").strip().upper()
+    if tipo not in _V88H2_SYNC_DELETABLE:
+        return jsonify({"ok": False, "error": "Tipo não autorizado para limpeza: " + tipo[:40]}), 400
+    try:
+        dias = max(7, min(365, int(data.get("dias") or 7)))
+    except (TypeError, ValueError):
+        dias = 7
+    cutoff = datetime.utcnow() - timedelta(days=dias)
+    removed = 0
+    try:
+        for _ in range(10):
+            ids = [r[0] for r in db.session.query(MobileSyncEvent.id).filter(MobileSyncEvent.event_type == tipo, MobileSyncEvent.received_at < cutoff)
+                   .order_by(MobileSyncEvent.id).limit(5000).all()]
+            if not ids:
+                break
+            removed += MobileSyncEvent.query.filter(MobileSyncEvent.id.in_(ids)).delete(synchronize_session=False)
+            db.session.commit()
+        db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="SYNC_EVENTS_RETENTION_V88", entity_type="mobile_sync_events",
+                                  entity_id=tipo, detail=f"removidos={removed}; tipo={tipo}; dias={dias}"))
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        app.logger.exception("V88H2: falha na limpeza de mobile_sync_events")
+        return jsonify({"ok": False, "error": str(exc)[:200], "removidos": removed}), 500
+    return jsonify({"ok": True, "removidos": removed, "tipo": tipo, "dias": dias, "faltam_mais": removed >= 50000})
+
+
+@app.post("/api/diagnostico/compactar/v88")
+@login_required
+def v88h2_compact():
+    """VACUUM FULL de uma tabela: devolve ao banco o espaço de linhas apagadas (o tamanho cobrado só cai assim).
+    Bloqueia a tabela por alguns segundos; use em horário calmo. Falha rápida (lock_timeout 10 s) se a tabela estiver em uso."""
+    g = _v85_guard()
+    if g:
+        return g
+    if not _v86_is_principal():
+        return jsonify({"ok": False, "error": "Somente o administrador principal."}), 403
+    data = request.get_json(silent=True) or {}
+    if str(data.get("confirmacao") or "").strip() != "COMPACTAR":
+        return jsonify({"ok": False, "error": "Digite COMPACTAR para confirmar."}), 400
+    tabela = str(data.get("tabela") or "").strip()
+    if tabela not in _V88H2_COMPACT_TABLES:
+        return jsonify({"ok": False, "error": "Tabela não autorizada."}), 400
+    try:
+        with db.engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+            before = conn.execute(text(f"SELECT pg_total_relation_size('{tabela}')")).scalar() or 0
+            conn.execute(text("SET lock_timeout = '10s'"))
+            conn.execute(text("SET statement_timeout = '300s'"))
+            conn.execute(text(f"VACUUM (FULL) {tabela}"))
+            after = conn.execute(text(f"SELECT pg_total_relation_size('{tabela}')")).scalar() or 0
+    except Exception as exc:
+        msg = str(exc).strip().splitlines()[0][:220] if str(exc).strip() else exc.__class__.__name__
+        return jsonify({"ok": False, "error": msg}), 500
+    try:
+        db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="COMPACT_V88", entity_type=tabela, entity_id="-",
+                                  detail=f"antes_mb={before/1048576.0:.1f}; depois_mb={after/1048576.0:.1f}"))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+    return jsonify({"ok": True, "tabela": tabela, "antes_mb": round(before / 1048576.0, 1), "depois_mb": round(after / 1048576.0, 1)})
+
+
 @app.get("/api/diagnostico/tabelas/v88")
 @login_required
 def v88_table_sizes():
@@ -8846,9 +8950,10 @@ def _v88_collection_alerts(rows, baseline, z_min=3.0, div_pct=2.0, div_min=50.0)
         if declared is not None and processed is not None:
             diff = float(processed) - float(declared)
             limit = max(div_min, abs(float(declared)) * div_pct / 100.0)
-            if abs(diff) >= limit:
+            # HF2: apurado zerado (ainda não apurado) e declarado de preenchimento (>= R$ 1.000.000) não são divergência real
+            if float(processed) > 0 and abs(float(declared)) < 1000000 and abs(diff) >= limit:
                 pct = abs(diff) / abs(float(declared)) * 100 if declared else 100.0
-                out.append({"kind": "COLETA_DIVERGENCIA", "ref_key": f"COLETA_DIVERGENCIA:{cid}", "subject": terminal, "severity": "ALTA" if pct >= 10 else "MEDIA", "score": round(pct, 1), "event_date": day,
+                out.append({"kind": "COLETA_DIVERGENCIA", "ref_key": f"COLETA_DIVERGENCIA:{cid}", "subject": terminal, "severity": "ALTA" if (pct >= 10 and abs(diff) >= 200) else "MEDIA", "score": round(pct, 1), "event_date": day,
                             "title": f"Divergência declarado × apurado — {terminal}",
                             "detail": f"Declarado {_v88_money(declared)}; apurado {_v88_money(processed)}; diferença {_v88_money(diff)} ({pct:.1f}%)."})
     return out
@@ -8891,6 +8996,7 @@ def _v88_alerts_compute(days=45):
     """Calcula e grava alertas novos. Não notifica ninguém e não altera dados de origem."""
     _v88_alerts_ensure()
     found = []
+    _supersede_div = None
     d0 = (datetime.utcnow() - timedelta(days=int(days))).date()
     try:
         base_rows = db.session.execute(text(
@@ -8901,7 +9007,12 @@ def _v88_alerts_compute(days=45):
         rows = db.session.execute(text(
             "SELECT id, terminal, collection_date, collected_amount, declared_amount, processed_amount FROM financial_cash_collections "
             "WHERE soft_deleted=FALSE AND collection_date >= :d0 ORDER BY collection_date DESC LIMIT 5000"), {"d0": d0}).fetchall()
-        found += _v88_collection_alerts([tuple(r) for r in rows], baseline)
+        _coll = _v88_collection_alerts([tuple(r) for r in rows], baseline)
+        found += _coll
+        if rows and len(rows) < 5000:
+            _div_keys = [a["ref_key"] for a in _coll if a["kind"] == "COLETA_DIVERGENCIA"]
+            _div_from = min(r[2] for r in rows if r[2] is not None)
+            _supersede_div = (_div_keys, _div_from)
     except Exception:
         db.session.rollback()
         app.logger.exception("V88: falha ao calcular alertas de coleta")
@@ -8918,7 +9029,14 @@ def _v88_alerts_compute(days=45):
         db.session.rollback()
         app.logger.exception("V88: falha ao calcular alertas de bobinas")
     created = {}
+    superseded = 0
     with db.engine.begin() as conn:
+        # HF2: divergência antiga, sem revisão, que a regra atual não considera mais, sai da fila (status SUPERADO; nada é apagado)
+        if _supersede_div is not None:
+            _ks, _from = _supersede_div
+            superseded = conn.execute(text(
+                "UPDATE v88_alerts SET status='SUPERADO' WHERE kind='COLETA_DIVERGENCIA' AND status='NOVO' AND review IS NULL "
+                "AND event_date >= :f AND NOT (ref_key = ANY(:ks))"), {"f": _from, "ks": _ks}).rowcount
         # alerta de reposição antigo da mesma ATM é superado pelo mais recente
         for a in found:
             if a["kind"] == "BOBINA_REPOSICAO":
@@ -8928,7 +9046,7 @@ def _v88_alerts_compute(days=45):
                 "INSERT INTO v88_alerts (kind, ref_key, subject, severity, score, title, detail, event_date) VALUES (:kind,:ref_key,:subject,:severity,:score,:title,:detail,:event_date) ON CONFLICT (ref_key) DO NOTHING"), a).rowcount
             if n:
                 created[a["kind"]] = created.get(a["kind"], 0) + 1
-    return {"encontrados": len(found), "novos": created}
+    return {"encontrados": len(found), "novos": created, "superados": int(superseded or 0)}
 
 
 def _v88_alerts_precision(conn_rows):
