@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV89"
+APP_RELEASE = "V87.6 REV90"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -291,6 +291,18 @@ db = SQLAlchemy(app)
 # V56-B REV — mede custo SQL por requisição sem gravar payloads/dados sensíveis.
 # IMPORTANTE: db.engine exige application context no Flask-SQLAlchemy 3.x.
 # Os listeners são registrados uma única vez dentro do contexto para não impedir o boot do Gunicorn.
+# V90 — consultas repetidas por tela (memória do processo; zera ao reiniciar; não guarda valores nem dados).
+_V90_QSTATS = {}
+_V90_QLOCK = threading.Lock()
+_V90_RE_PARAM = re.compile(r"%\(\w+\)s|\$\d+|\b\d+\b|'[^']*'")
+_V90_RE_LIST = re.compile(r"(\?\s*,\s*)+\?")
+
+def _v90_fingerprint(statement):
+    s = re.sub(r"\s+", " ", statement or "").strip()
+    s = _V90_RE_PARAM.sub("?", s)
+    s = _V90_RE_LIST.sub("?", s)
+    return s[:220]
+
 def _perf_sql_before(conn, cursor, statement, parameters, context, executemany):
     context._v56_sql_started = time.perf_counter()
 
@@ -303,6 +315,18 @@ def _perf_sql_after(conn, cursor, statement, parameters, context, executemany):
             sql_elapsed=(time.perf_counter()-started)*1000.0
             if sql_elapsed > float(getattr(g,"_perf_sql_max_ms",0) or 0):
                 g._perf_sql_max_ms=sql_elapsed
+            try:
+                _fp=_v90_fingerprint(statement)
+                _q=getattr(g,"_v90_q",None)
+                if _q is None:
+                    _q=g._v90_q={}
+                _e=_q.get(_fp)
+                if _e is None:
+                    if len(_q)<80: _q[_fp]=[1,sql_elapsed]
+                else:
+                    _e[0]+=1; _e[1]+=sql_elapsed
+            except Exception:
+                pass
             if sql_elapsed >= _V73_SLOW_SQL_MS:
                 _v73_slow_sql_note(statement, sql_elapsed)
     except Exception:
@@ -8846,6 +8870,56 @@ def v88h2_compact():
 # ---------------------------------------------------------------------------
 # V89: saúde das tabelas (somente leitura): espaço morto estimado e colunas mais pesadas
 # ---------------------------------------------------------------------------
+@app.after_request
+def _v90_qstats_finish(response):
+    try:
+        path = request.path or ""
+        q = getattr(g, "_v90_q", None)
+        if not q or path.startswith(("/static/", "/uploads/", "/api/telemetria", "/api/diagnostico/consultas-repetidas")):
+            return response
+        route = (request.url_rule.rule if request.url_rule else path)[:120]
+        with _V90_QLOCK:
+            r = _V90_QSTATS.get(route)
+            if r is None:
+                if len(_V90_QSTATS) >= 90:
+                    return response
+                r = _V90_QSTATS[route] = {"req": 0, "q": 0, "fps": {}}
+            r["req"] += 1
+            for fp, (c, ms) in q.items():
+                r["q"] += c
+                e = r["fps"].get(fp)
+                if e is None:
+                    if len(r["fps"]) >= 60:
+                        continue
+                    r["fps"][fp] = [c, ms, c]
+                else:
+                    e[0] += c; e[1] += ms
+                    if c > e[2]: e[2] = c
+    except Exception:
+        pass
+    return response
+
+
+@app.get("/api/diagnostico/consultas-repetidas/v90")
+@login_required
+def v90_repeated_queries():
+    gd = _v85_guard()
+    if gd:
+        return gd
+    out = []
+    with _V90_QLOCK:
+        for route, r in _V90_QSTATS.items():
+            if r["req"] < 1:
+                continue
+            fps = sorted(r["fps"].items(), key=lambda kv: -kv[1][0])[:6]
+            out.append({
+                "rota": route, "requisicoes": r["req"], "consultas_por_requisicao": round(r["q"] / r["req"], 1),
+                "top": [{"consulta": fp, "vezes_por_requisicao": round(v[0] / r["req"], 1), "max_numa_requisicao": v[2], "ms_por_requisicao": round(v[1] / r["req"], 1)} for fp, v in fps],
+            })
+    out.sort(key=lambda x: -x["consultas_por_requisicao"])
+    return jsonify({"ok": True, "desde_o_ultimo_reinicio": True, "rotas": out[:40]})
+
+
 @app.get("/api/diagnostico/tabelas-saude/v89")
 @login_required
 def v89_table_health():
@@ -9298,6 +9372,77 @@ def v88_merge_apply():
         db.session.rollback()
     _v73_cache_clear()
     return jsonify({"ok": True, "mesclagem": mid, "linhas_movidas": sum(len(v) for v in moved.values())})
+
+
+def _v90_name_norm(t):
+    import unicodedata
+    return re.sub(r"\s+", " ", "".join(c for c in unicodedata.normalize("NFD", t or "") if unicodedata.category(c) != "Mn")).strip().upper()
+
+
+def _v90_pair_name_ok(p):
+    """Par 'seguro': o nome da duplicada aparece no nome da mantida (ou o contrário, sem a sigla). Os demais ficam para conferência manual."""
+    com, sem = _v90_name_norm(p["com_nome"]), _v90_name_norm(p["sem_nome"])
+    com_sem_sigla = com.split(" - ", 1)[1] if " - " in com else com
+    return bool(sem) and (sem in com or com_sem_sigla in sem)
+
+
+def _v90_merge_one(dup_id, keeper_id):
+    """Mesma regra da mesclagem individual (uma transação por par, desfazível); levanta exceção sem alterar nada em caso de erro."""
+    with db.engine.begin() as conn:
+        _v88_merge_ensure(conn)
+        refs = _v88_location_refs(conn)
+        cols = [r[0] for r in conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='locations' ORDER BY ordinal_position")).fetchall()]
+        row = conn.execute(text("SELECT " + ",".join(f'"{c}"' for c in cols) + " FROM locations WHERE id=:i"), {"i": dup_id}).first()
+        if not row:
+            raise RuntimeError("Localidade duplicada não existe mais.")
+        dup_row = {c: (v.isoformat() if hasattr(v, "isoformat") else v) for c, v in zip(cols, row)}
+        moved = {}
+        for t, c in refs:
+            has_id = conn.execute(text("SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name=:t AND column_name='id'"), {"t": t}).first()
+            ids = [r[0] for r in conn.execute(text(f'SELECT id FROM "{t}" WHERE "{c}"=:i'), {"i": dup_id}).fetchall()] if has_id else []
+            n_total = conn.execute(text(f'SELECT COUNT(*) FROM "{t}" WHERE "{c}"=:i'), {"i": dup_id}).scalar() or 0
+            if n_total and not has_id:
+                raise RuntimeError(f"Tabela {t} não tem coluna id; mesclagem desfazível não é possível.")
+            if ids:
+                conn.execute(text(f'UPDATE "{t}" SET "{c}"=:k WHERE "{c}"=:d'), {"k": keeper_id, "d": dup_id})
+                moved[f"{t}|{c}"] = ids
+        conn.execute(text("DELETE FROM locations WHERE id=:i"), {"i": dup_id})
+        mid = conn.execute(text("INSERT INTO v88_location_merges (keeper_id, dup_id, dup_row, moved, created_by) VALUES (:k,:d,:r,:m,:u) RETURNING id"),
+                           {"k": keeper_id, "d": dup_id, "r": json.dumps(dup_row, ensure_ascii=False, default=str), "m": json.dumps(moved), "u": session.get("user_id")}).scalar()
+    try:
+        db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="V88_MERGE_LOCATION", entity_type="locations", entity_id=str(keeper_id), detail=f"merge #{mid} (lote): {dup_id} -> {keeper_id}; tabelas: {', '.join(moved)}"[:900]))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+    return mid, sum(len(v) for v in moved.values())
+
+
+@app.post("/api/diagnostico/rede/mesclar-lote/v90")
+@login_required
+def v90_merge_batch():
+    gd = _v85_guard()
+    if gd:
+        return gd
+    if not _v86_is_principal():
+        return jsonify({"ok": False, "error": "Somente o administrador principal."}), 403
+    if not _v85_flags().get("mesclar_estacoes"):
+        return jsonify({"ok": False, "error": "Ligue a chave 'Mesclar estações duplicadas' em Recursos."}), 409
+    data = request.get_json(silent=True) or {}
+    if (data.get("confirmacao") or "").strip() != "MESCLAR TUDO":
+        return jsonify({"ok": False, "error": "Digite MESCLAR TUDO para confirmar."}), 400
+    pares = _v87_rede_quality()["pares"]
+    seguros = [p for p in pares if _v90_pair_name_ok(p)]
+    fora = [p for p in pares if not _v90_pair_name_ok(p)]
+    feitos, erros = [], []
+    for p in seguros[:10]:
+        try:
+            mid, n = _v90_merge_one(p["sem_id"], p["com_id"])
+            feitos.append({"mesclagem": mid, "estacao": p["com_nome"], "duplicada": p["sem_id"], "linhas_movidas": n})
+        except Exception as exc:
+            erros.append({"estacao": p["com_nome"], "duplicada": p["sem_id"], "erro": (str(exc).strip().splitlines() or [exc.__class__.__name__])[0][:160]})
+    _v73_cache_clear()
+    return jsonify({"ok": True, "feitos": feitos, "erros": erros, "restantes_seguros": max(0, len(seguros) - len(feitos)),
+                    "para_conferir": [{"mantida": p["com_nome"], "duplicada": p["sem_nome"], "linha": p["linha"], "dup_id": p["sem_id"], "keeper_id": p["com_id"]} for p in fora]})
 
 
 @app.post("/api/diagnostico/rede/mesclar/desfazer/v88")
