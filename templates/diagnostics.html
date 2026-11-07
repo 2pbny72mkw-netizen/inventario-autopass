@@ -109,4 +109,18 @@ $('acRevert').onclick=async()=>{const c=prompt('Para desfazer e desligar a chave
 async function btLoad(){try{const r=await (await fetch('/api/diagnostico/bobinas-tempos/v86',{cache:'no-store'})).json();$('btBody').innerHTML=(r.rows||[]).map(x=>'<tr><td>'+esc(x.at)+'</td><td>'+nf(x.total_ms)+'</td><td>'+nf(x.upload_ms)+'</td><td>'+nf(x.other_ms)+'</td><td>'+nf(x.sql_ms)+'</td><td>'+nf(x.queries)+'</td><td>'+(x.photo?'sim':'não')+'</td></tr>').join('')||'<tr><td colspan="7">Sem registros desde o último reinício.</td></tr>'}catch(e){$('btBody').innerHTML='<tr><td colspan="7">Erro: '+esc(e.message)+'</td></tr>'}}
 $('btReload').onclick=btLoad;acLoad();btLoad()})();</script>
 
+<section class="card"><div class="sectionHead"><div><h2>Qualidade da rede ferroviária — V87.6 REV87</h2><p class="muted">Somente leitura: nada é alterado. Mostra as estações das linhas numeradas que ainda não têm coordenada e os prováveis cadastros duplicados (mesma linha e mesmo nome, um com coordenada e outro sem). Use para decidir a limpeza dos dados.</p></div><button class="btn" id="rqReload" type="button">Atualizar</button></div>
+<div id="rqInfo" class="muted">Carregando…</div>
+<div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0"><a class="btn" href="/api/diagnostico/rede/qualidade/v87?format=csv&tipo=pares">Baixar CSV: prováveis duplicados</a><a class="btn" href="/api/diagnostico/rede/qualidade/v87?format=csv&tipo=sem_par">Baixar CSV: sem coordenada e sem par</a></div>
+<h3 style="margin:10px 0 4px">Sem coordenada, por linha (sem par encontrado)</h3><div id="rqLinhas" class="muted"></div>
+<h3 style="margin:10px 0 4px">Prováveis duplicados (o cadastro sem coordenada tem um par com coordenada)</h3>
+<div style="overflow:auto;max-height:300px"><table class="ap-table" style="width:100%"><thead><tr><th>Operadora / linha</th><th>Sem coordenada (id)</th><th>Com coordenada (id)</th><th>Inventário sem</th><th>Inventário com</th></tr></thead><tbody id="rqPares"></tbody></table></div></section>
+<script>(()=>{const $=id=>document.getElementById(id),nf=n=>Number(n||0).toLocaleString('pt-BR');
+function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+async function rq(){try{const r=await (await fetch('/api/diagnostico/rede/qualidade/v87',{cache:'no-store'})).json();if(!r.ok){$('rqInfo').textContent=r.error||'Falha';return}
+$('rqInfo').textContent=nf(r.ferroviarias)+' estações em linhas numeradas · '+nf(r.com_coordenada)+' com coordenada · '+nf(r.sem_coordenada)+' sem · '+nf(r.pares.length)+' prováveis duplicados · '+nf(r.sem_par.length)+' sem par · outras localidades sem coordenada (não ferroviárias): '+nf(r.outras_sem_coordenada);
+$('rqLinhas').innerHTML=Object.entries(r.sem_par_por_linha).map(([k,v])=>esc(k)+': <b>'+nf(v)+'</b>').join(' · ')||'—';
+$('rqPares').innerHTML=r.pares.map(p=>'<tr><td>'+esc(p.operadora)+' / '+esc(p.linha)+'</td><td>'+esc(p.sem_nome)+' ('+p.sem_id+')</td><td>'+esc(p.com_nome)+' ('+p.com_id+')</td><td>'+nf(p.inv_sem)+'</td><td>'+nf(p.inv_com)+'</td></tr>').join('')||'<tr><td colspan="5">Nenhum.</td></tr>'}catch(e){$('rqInfo').textContent='Erro: '+e.message}}
+$('rqReload').onclick=rq;rq()})();</script>
+
 {% endblock %}
