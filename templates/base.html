@@ -102,6 +102,12 @@ main.wrap{position:relative;z-index:1}
  .mainNavV424>.navDrop>.navDropMenu{z-index:90001!important;background:#fff!important;box-shadow:0 16px 34px #17345d33!important}
  .mainNavV424>.navDrop>.navDropMenu a{position:relative;z-index:1}
 }
+/* REV89 HF5: no celular o texto do menu aberto precisa ficar sempre legível (cor escura fixa sobre fundo branco). */
+@media(max-width:760px){
+ .mainNavV424 .navDropMenu{background:#fff!important;color-scheme:light;max-height:70vh;overflow-y:auto!important}
+ .mainNavV424 .navDropMenu a,.mainNavV424 .navDropMenu a *,.mainNavV424 .navDropMenu .apL3Panel a{color:#0F1E3D!important;-webkit-text-fill-color:#0F1E3D!important;opacity:1!important;visibility:visible!important;text-shadow:none!important;mix-blend-mode:normal!important;transition:none!important}
+ .mainNavV424 .navDropMenu a:active,.mainNavV424 .navDropMenu a:focus{background:#E8EEF8!important}
+}
 </style>
 <main class="wrap">
 {% with msgs=get_flashed_messages(with_categories=true) %}{% for cat,m in msgs %}<div class="alert v73flash {{cat if cat in ['success','error','warning','info'] else ('success' if 'sucesso' in m|lower or 'atualizado' in m|lower or 'salva' in m|lower else 'error')}}">{{m}}</div>{% endfor %}{% endwith %}
