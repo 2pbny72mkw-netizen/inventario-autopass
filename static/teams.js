@@ -525,7 +525,7 @@ function v3978ApplySelectedCollaborator(){
 v396LoadCollaborators();
 
 // V38 — malha metroferroviária também no mapa de equipes
-async function v38DrawRailNetwork(){try{const locs=await fetch('/api/rede-ferroviaria/v86',{cache:'no-store'}).then(r=>r.json());const colors={'1':'#005ca9','2':'#008c5a','3':'#ee3338','4':'#f4b800','5':'#7651a2','6':'#f28c00','7':'#9b0058','8':'#8b8b8b','9':'#008c7d','10':'#00a5b5','11':'#e94b24','12':'#1455a0','13':'#008b68','15':'#9a9a9a','17':'#8a7627'};const groups={};(locs||[]).forEach(x=>{if(x.reference_latitude==null||x.reference_longitude==null)return;const m=String(x.line||'').match(/(?:^|\D)(1[0-7]|[1-9])(?:\D|$)/);if(!m)return;(groups[m[1]]??=[]).push(x)});Object.entries(groups).forEach(([n,a])=>{if(a.length<2)return;const pts=a.map(x=>[Number(x.reference_latitude),Number(x.reference_longitude)]);L.polyline(pts,{color:colors[n]||'#64748b',weight:5,opacity:.85}).addTo(teamMap)})}catch(e){console.warn('V38 trilhos equipes',e)}}
+async function v38DrawRailNetwork(){try{const locs=await fetch('/api/equipes/rail-network',{cache:'no-store'}).then(r=>r.json());const colors={'1':'#005ca9','2':'#008c5a','3':'#ee3338','4':'#f4b800','5':'#7651a2','6':'#f28c00','7':'#9b0058','8':'#8b8b8b','9':'#008c7d','10':'#00a5b5','11':'#e94b24','12':'#1455a0','13':'#008b68','15':'#9a9a9a','17':'#8a7627'};const groups={};(locs||[]).forEach(x=>{if(x.reference_latitude==null||x.reference_longitude==null)return;const m=String(x.line||'').match(/(?:^|\D)(1[0-7]|[1-9])(?:\D|$)/);if(!m)return;(groups[m[1]]??=[]).push(x)});Object.entries(groups).forEach(([n,a])=>{if(a.length<2)return;const pts=a.map(x=>[Number(x.reference_latitude),Number(x.reference_longitude)]);L.polyline(pts,{color:colors[n]||'#64748b',weight:5,opacity:.85}).addTo(teamMap)})}catch(e){console.warn('V38 trilhos equipes',e)}}
 function v38ApplyTeamFilter(){const q=String($('v38TeamSearch')?.value||'').toLowerCase(),cat=$('v38TeamCategory')?.value||'',gps=$('v38TeamGps')?.value||'';document.querySelectorAll('#todayTeamTable tr').forEach(tr=>{const txt=tr.textContent.toLowerCase();tr.style.display=(!q||txt.includes(q))&&(!cat||txt.includes(cat.toLowerCase()))&&(!gps||txt.includes(gps.toLowerCase()))?'':'none'});document.querySelectorAll('#teamCards > *').forEach(el=>{const txt=el.textContent.toLowerCase();el.style.display=(!q||txt.includes(q))&&(!cat||txt.includes(cat.toLowerCase()))&&(!gps||txt.includes(gps.toLowerCase()))?'':'none'})}
 ['v38TeamSearch','v38TeamCategory','v38TeamGps'].forEach(id=>$(id)?.addEventListener(id==='v38TeamSearch'?'input':'change',()=>{if(id==='v38TeamSearch')v3978ApplySelectedCollaborator();v38ApplyTeamFilter();}));$('v38ClearTeam')?.addEventListener('click',()=>{['v38TeamSearch','v38TeamCategory','v38TeamGps'].forEach(id=>$(id).value='');v38ApplyTeamFilter()});
 
@@ -610,7 +610,7 @@ async function v391BuildRails(){
   v39710DrawLeafletRails('fallback local');
   try{
     let locs=[];
-    const r=await fetch('/api/rede-ferroviaria/v86',{cache:'no-store'});if(r.ok)locs=await r.json();
+    const r=await fetch('/api/equipes/rail-network',{cache:'no-store'});if(r.ok)locs=await r.json();
     // Se a API leve não possui coordenadas, usamos /api/locations apenas para obter nomes/linhas e distribuir os marcadores sobre a malha local.
     if(!Array.isArray(locs)||!locs.length){const rr=await fetch('/api/locations',{cache:'no-store'});if(rr.ok)locs=await rr.json();}
     const groups={};
@@ -631,7 +631,7 @@ function v391SetupTeamMap(){
 function v396SyncRailChecks(){const map=teamMap;if(!map)return;v391SetupTeamMap();[['teamShowStations',v391Stations],['teamShowNames',v391StationNames],['teamShowTechs',v391TechLayer]].forEach(([id,layer])=>{const el=$(id);if(!el||!layer)return;const sync=()=>{if(!layer)return;if(el.checked&&!map.hasLayer(layer))map.addLayer(layer);if(!el.checked&&map.hasLayer(layer))map.removeLayer(layer)};el.addEventListener('change',sync);sync()});const lines=$('teamShowLines');if(lines&&v391RailLines){const sync=()=>{const layer=v391RailLines;if(!layer)return;if(lines.checked&&!map.hasLayer(layer))map.addLayer(layer);if(!lines.checked&&map.hasLayer(layer))map.removeLayer(layer)};lines.addEventListener('change',sync);sync()}v391BuildRails()}
 
 // V40: Equipes reutiliza o componente metroferroviário compartilhado.
-async function v40AttachSharedRail(){if(!teamMap||!window.AutopassRailMap)return;try{const locs=await fetch('/api/rede-ferroviaria/v86',{cache:'no-store'}).then(r=>r.json());[v391RailLines,v391Stations,v391StationNames].forEach(l=>{try{if(l&&teamMap.hasLayer(l))teamMap.removeLayer(l)}catch(_){}});const sh=window.AutopassRailMap.attach(teamMap,locs||[]);if(!sh)return;v391RailLines=sh.lines;v391Stations=sh.stations;v391StationNames=sh.labels;const bind=(id,key)=>{const el=$(id),layer=sh[key];if(!el||!layer)return;const sync=()=>el.checked?(!teamMap.hasLayer(layer)&&teamMap.addLayer(layer)):(teamMap.hasLayer(layer)&&teamMap.removeLayer(layer));el.addEventListener('change',sync);sync()};bind('teamShowLines','lines');bind('teamShowStations','stations');bind('teamShowNames','labels');const st=sh.stats||{};v3978RailDiag(`V40.1.2 · ${st.segmentCount||0} segmento(s) · ${st.pointCount||0} pontos válidos · ${st.rejected||0} rejeitado(s)`,true)}catch(e){console.error('V40 mapa compartilhado',e);v3978RailDiag('V40 · falha ao carregar mapa compartilhado',false)}}
+async function v40AttachSharedRail(){if(!teamMap||!window.AutopassRailMap)return;try{const locs=await fetch('/api/equipes/rail-network',{cache:'no-store'}).then(r=>r.json());[v391RailLines,v391Stations,v391StationNames].forEach(l=>{try{if(l&&teamMap.hasLayer(l))teamMap.removeLayer(l)}catch(_){}});const sh=window.AutopassRailMap.attach(teamMap,locs||[]);if(!sh)return;v391RailLines=sh.lines;v391Stations=sh.stations;v391StationNames=sh.labels;const bind=(id,key)=>{const el=$(id),layer=sh[key];if(!el||!layer)return;const sync=()=>el.checked?(!teamMap.hasLayer(layer)&&teamMap.addLayer(layer)):(teamMap.hasLayer(layer)&&teamMap.removeLayer(layer));el.addEventListener('change',sync);sync()};bind('teamShowLines','lines');bind('teamShowStations','stations');bind('teamShowNames','labels');const st=sh.stats||{};v3978RailDiag(`V40.1.2 · ${st.segmentCount||0} segmento(s) · ${st.pointCount||0} pontos válidos · ${st.rejected||0} rejeitado(s)`,true)}catch(e){console.error('V40 mapa compartilhado',e);v3978RailDiag('V40 · falha ao carregar mapa compartilhado',false)}}
 // REV4: rail-network dedicado já fornece os dados necessários; evita /api/locations pesado.
 // setTimeout(v40AttachSharedRail,900);
 
@@ -662,7 +662,7 @@ async function v58StartTeams(){
   }
 
   // 3) Atualização periódica só depois da primeira carga concluída.
-  setInterval(()=>loadTeams().catch(err=>console.error('[V59] atualização periódica de Equipes',err)),15000);
+  setInterval(()=>{if(document.hidden)return;loadTeams().catch(err=>console.error('[V59] atualização periódica de Equipes',err))},15000);
 }
 
 if(document.readyState==='loading'){

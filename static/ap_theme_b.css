@@ -1,0 +1,68 @@
+/* V87.6 REV88 — Visual direção B (azul-marinho + faixa verde-água + cores de status).
+   Só vale com a chave "Visual direção B" ligada (classe html.ap-b). Desligada, nada muda.
+   Telas escuras (Gerencial escuro, Modo TV, mapas) não são afetadas: usam variáveis próprias. */
+html.ap-b{
+  --navy:#0F1E3D;--navy2:#0B5FB3;--orange:#2BA6A0;--orangeSoft:#E3F4F3;--bg:#F3F5F9;--card:#fff;--text:#14203A;--muted:#5A6678;--line:#DDE3EC;
+  --green:#0E7A5A;--greenSoft:#E3F4EC;--amber:#8A5A00;--amberSoft:#FFF1CC;--red:#C23B2E;--redSoft:#FBE5E2;
+  --shadow:0 1px 2px rgba(15,30,61,.06),0 4px 14px rgba(15,30,61,.05);
+  --ap-navy:#0F1E3D;--ap-navy-hover:#0A1630;--ap-bg:#F3F5F9;--ap-head:#E8EEF8;--ap-head-hover:#DCE6F5;--ap-text:#14203A;--ap-muted:#5A6678;
+  --ap-ok:#0E7A5A;--ap-ok-bg:#E3F4EC;--ap-warn:#8A5A00;--ap-warn-bg:#FFF1CC;--ap-crit:#C23B2E;--ap-crit-bg:#FBE5E2;--ap-info:#0B5FB3;--ap-info-bg:#E8EEF8;
+  --ap-c1:#0B5FB3;--ap-c3:#0E7A5A;
+}
+html.ap-b body{font-family:'IBM Plex Sans',Inter,Arial,Helvetica,sans-serif;background:var(--bg);color:var(--text)}
+/* Cabeçalho do sistema */
+html.ap-b header.topbar,html.ap-b header.topbar .wrap.nav{background:#0F1E3D!important;box-shadow:none!important}
+html.ap-b header.topbar .wrap.nav:before,html.ap-b header.topbar .wrap.nav:after{background:none!important}
+html.ap-b:not(.ap-side) header.topbar{border-bottom:3px solid #2BA6A0!important;box-shadow:0 2px 12px rgba(15,30,61,.25)!important}
+html.ap-b header.topbar .brand img{background:#fff;border-radius:8px;padding:4px 8px}
+html.ap-b header.topbar .brandtext b{color:#fff!important}html.ap-b header.topbar .brandtext small{color:#B9C7DD!important}
+html.ap-b header.topbar .nav a,html.ap-b header.topbar .navDropBtn,html.ap-b header.topbar .mobileNavToggle{color:#fff!important;background:transparent}
+html.ap-b header.topbar .nav a:hover,html.ap-b header.topbar .navDropBtn:hover{background:rgba(255,255,255,.14)!important}
+html.ap-b header.topbar .navDropMenu{background:#fff!important}
+html.ap-b header.topbar .navDropMenu a{color:#0F1E3D!important}html.ap-b header.topbar .navDropMenu a:hover{background:#E8EEF8!important}
+/* Cartões e títulos */
+html.ap-b .card{border:0;border-radius:14px;box-shadow:var(--shadow)}
+html.ap-b h1,html.ap-b h2{color:#0F1E3D}
+html.ap-b .eyebrow{color:#2BA6A0}
+html.ap-b .summary{border-left-color:#2BA6A0;background:#F3F9F9}
+/* Indicadores: faixa de status no topo */
+html.ap-b .kpi{background:#fff!important;border:0;border-top:4px solid #0B5FB3;border-radius:12px;box-shadow:var(--shadow)}
+html.ap-b .kpi:before{display:none}
+html.ap-b .kpi b,html.ap-b .kpi .num{color:#14203A;font-variant-numeric:tabular-nums}
+html.ap-b .primaryKpi{border-top-color:#0B5FB3}html.ap-b .successKpi{border-top-color:#0E7A5A}html.ap-b .warningKpi{border-top-color:#F2A900}html.ap-b .dangerKpi{border-top-color:#C23B2E}
+html.ap-b .dangerKpi b{color:#C23B2E}html.ap-b .warningKpi b{color:#8A5A00}html.ap-b .successKpi b{color:#0E7A5A}
+html.ap-b [data-kpi]:focus-visible,html.ap-b button:focus-visible,html.ap-b a:focus-visible{outline:3px solid #56B4E9;outline-offset:2px}
+/* Tabelas */
+html.ap-b th{background:#E8EEF8;color:#3B4659}
+html.ap-b table[data-ap-table] th[aria-sort="ascending"],html.ap-b table[data-ap-table] th[aria-sort="descending"]{background:#DCE6F5}
+html.ap-b td{border-bottom-color:#E6EAF1}
+/* Botões */
+html.ap-b .primary,html.ap-b .btn.primary{background:#0F1E3D;color:#fff;border-color:#0F1E3D}
+html.ap-b .secondary{background:#E8EEF8;color:#0F1E3D}
+html.ap-b .danger{background:#FBE5E2;color:#C23B2E}
+/* Situação (etiquetas) */
+html.ap-b .status,html.ap-b .tag{font-weight:700}
+html.ap-b .sCONCLUIDA{background:#E3F4EC;color:#0E7A5A}html.ap-b .sEMANDAMENTO{background:#FFF1CC;color:#8A5A00}html.ap-b .sPENDENTE{background:#FBE5E2;color:#C23B2E}
+/* Janela de indicador (kpi_janela) */
+html.ap-b .ap-kpi-head,html.ap-b .ap-modal-head,html.ap-b .imhead{background:#0F1E3D;color:#fff;border-left:6px solid #2BA6A0}
+html.ap-b .ap-kpi-head *,html.ap-b .ap-modal-head *,html.ap-b .imhead *{color:#fff}
+/* Dashboard de Bobinas (página própria .v776) */
+html.ap-b body{background:#F3F5F9!important}
+html.ap-b .v776 .head{background:#0F1E3D;color:#fff;border-radius:12px;padding:14px 16px;border-left:6px solid #2BA6A0;align-items:center}
+html.ap-b .v776 .head h1,html.ap-b .v776 .head p{color:#fff}
+html.ap-b .v776 .kpi{border:0!important;border-top:4px solid #0B5FB3!important;box-shadow:var(--shadow)!important;border-radius:12px!important}
+html.ap-b .v776 .kpi[data-kpi="critical"]{border-top-color:#C23B2E!important}html.ap-b .v776 .kpi[data-kpi="critical"] .num{color:#C23B2E}
+html.ap-b .v776 .kpi[data-kpi="attention"]{border-top-color:#F2A900!important}html.ap-b .v776 .kpi[data-kpi="attention"] .num{color:#8A5A00}
+html.ap-b .v776 .kpi[data-kpi="replacements"],html.ap-b .v776 .kpi[data-kpi="total"],html.ap-b .v776 .kpi[data-kpi="atmreserve"]{border-top-color:#0E7A5A!important}
+html.ap-b .v776 .panel{border:0;box-shadow:var(--shadow);border-radius:14px}
+html.ap-b .v776 .tbl th,html.ap-b .v776 .kpiRows th{background:#E8EEF8}
+html.ap-b .v776 .lineph h3{color:#0F1E3D;border-left-color:#2BA6A0}
+html.ap-b .v776 .green{background:#E3F4EC;color:#0E7A5A}html.ap-b .v776 .yellow{background:#FFF1CC;color:#8A5A00}html.ap-b .v776 .red{background:#FBE5E2;color:#C23B2E}html.ap-b .v776 .orange{background:#FFE9D2;color:#8A4A00}
+html.ap-b .v776 .btn.primary{background:#0B5FB3;border-color:#0B5FB3}
+html.ap-b .v776 .imhead{border-radius:14px 14px 0 0}
+/* Janela de indicador (kpi_janela) */
+html.ap-b .ap-win{border-top:6px solid #2BA6A0;border-radius:14px}
+html.ap-b .ap-win h2{color:#0F1E3D}
+html.ap-b .ap-win-x{color:#0F1E3D}
+html.ap-b .v776 .head [data-ap-v="primary"]{background:#0B5FB3!important;border-color:#fff!important;color:#fff!important}
+html.ap-b .v776 .head .btn{border-color:rgba(255,255,255,.6)}
