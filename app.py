@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV87"
+APP_RELEASE = "V87.6 REV88"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -330,11 +330,12 @@ _V73_CACHE_STATS = {"hit": 0, "miss": 0, "clear": 0}
 _V73_CACHE_TTL = max(5, int(os.getenv("V73_CACHE_TTL", "60") or 60))
 
 
-def _v73_cache_get(key, loader):
+def _v73_cache_get(key, loader, ttl=None):
     now = time.time()
+    _ttl = _V73_CACHE_TTL if ttl is None else ttl
     with _V73_CACHE_LOCK:
         ent = _V73_CACHE.get(key)
-        if ent and now - ent[0] < _V73_CACHE_TTL:
+        if ent and now - ent[0] < _ttl:
             _V73_CACHE_STATS["hit"] += 1
             return ent[1]
     value = loader()
@@ -3620,7 +3621,10 @@ def _v7331_record_station_passage(user, lat, lon, accuracy=None, captured_at=Non
     captured_at=captured_at or datetime.utcnow()
     radius=max(50,min(2000,int(_v72_settings().get("gps_history_radius_m",250) or 250)))
     nearest=None
-    for loc_id,company,line,station,slat,slon in _v72_station_refs():
+    if _v88b_on("gps_otimizado"):
+        nearest=_v88b_nearest(lat,lon,_v72_station_refs())
+    else:
+      for loc_id,company,line,station,slat,slon in _v72_station_refs():
         dist=_haversine_m(lat,lon,slat,slon)
         if nearest is None or dist < nearest[-1]:
             nearest=(loc_id,company,line,station,slat,slon,dist)
@@ -4266,6 +4270,7 @@ def v8557_mobile_bobbin_reserves():
 @app.post('/api/mobile/v1/field/bobinas/registro')
 @mobile_auth_required
 def a20_bobinas_register():
+    _v88_t0=time.perf_counter()
     user=request.mobile_user
     if 'field.bobbins' not in _user_access_set(user):
         return jsonify({'ok':False,'error':'Sem permissão para Bobinas.'}),403
@@ -4385,7 +4390,11 @@ def a20_bobinas_register():
         db.session.add(AtmBobbinPhoto(reading_id=row.id,storage_key=stored,
             original_name=secure_filename(photo.filename),content_type=photo.mimetype or 'image/jpeg',
             expires_at=datetime.utcnow()+timedelta(days=_v771_photo_retention_days())))
-    db.session.commit();_v771_cleanup_photos()
+    db.session.commit()
+    _v88_t1=time.perf_counter()
+    _v771_cleanup_photos()
+    _v87_bob_invalidate()
+    _v86_record_bobbin_time((time.perf_counter()-_v88_t0)*1000,0,bool(photo and photo.filename),float(getattr(g,'_perf_sql_ms',0) or 0),int(getattr(g,'_perf_query_count',0) or 0),origin='app')
     return jsonify({'ok':True,'id':row.id,'reserve_after':reserve_qty})
 
 
@@ -5060,10 +5069,14 @@ def v72_gps_history_api():
     positions=TechnicianPosition.query.filter(TechnicianPosition.user_id==user_id,TechnicianPosition.captured_at>=start_utc,TechnicianPosition.captured_at<end_utc).order_by(TechnicianPosition.captured_at).all()
     station_rows=TechnicianStationHistory.query.filter(TechnicianStationHistory.user_id==user_id,TechnicianStationHistory.captured_at>=start_utc,TechnicianStationHistory.captured_at<end_utc).order_by(TechnicianStationHistory.captured_at).all()
     refs=_v72_station_refs();radius=float(_v72_settings().get("gps_history_radius_m",250) or 250);events=[]
-    last_kept_position=None
+    last_kept_position=None;_gpsopt=_v88b_on("gps_otimizado")
     for x in positions:
         local_dt=x.captured_at.replace(tzinfo=ZoneInfo("UTC")).astimezone(V72_TZ);nearest=None
-        for lid,co,li,st,slat,slon in refs:
+        if _gpsopt:
+            _n=_v88b_nearest(x.latitude,x.longitude,refs)
+            if _n:nearest=(_n[0],_n[1],_n[2],_n[3],_n[6])
+        else:
+          for lid,co,li,st,slat,slon in refs:
             d=_haversine_m(x.latitude,x.longitude,slat,slon)
             if nearest is None or d<nearest[-1]:nearest=(lid,co,li,st,d)
         lid,co,li,st,d=nearest if nearest else (None,"","","",None)
@@ -5645,6 +5658,8 @@ def technician_position_update():
     uid=session["user_id"]; user=db.session.get(User,uid)
     previous=TechnicianPosition.query.filter_by(user_id=uid).order_by(TechnicianPosition.captured_at.desc()).first()
     captured_at=datetime.utcnow(); heartbeat_only=bool(data.get("heartbeat_only"))
+    if not heartbeat_only and _v88b_on("gps_otimizado"):
+        captured_at=_v88b_client_time(data.get("client_captured_at"),captured_at)
     row=TechnicianPosition(user_id=uid,latitude=lat,longitude=lon,accuracy=acc,captured_at=captured_at,source=str(data.get("source") or "session_periodic")[:40])
     db.session.add(row)
     station_result={"heartbeat_only":True} if heartbeat_only else _v7331_record_station_passage(user,lat,lon,acc,captured_at,previous_position=previous)
@@ -5728,6 +5743,11 @@ def technician_checkin():
 @app.get("/api/equipes/status")
 @teams_view_required
 def teams_status_api():
+    if not (_has_access("teams.today") or _has_access("teams.map")): abort(403)
+    return _v88b_equipes_status(_teams_status_compute)
+
+
+def _teams_status_compute():
     if not (_has_access("teams.today") or _has_access("teams.map")): abort(403)
     _ensure_team_schedule_profiles()
     local_now=datetime.now(ZoneInfo("America/Sao_Paulo"))
@@ -6348,6 +6368,13 @@ def v7_locations_api():
             Location.location.ilike(like), Location.line.ilike(like), Location.company.ilike(like)
         ))
     rows=query.order_by(Location.company,Location.line,Location.location).limit(500).all()
+    if _v85_flags().get("localidades_lote"):
+        try:
+            return jsonify({"ok":True,"locations":_v88_locations_payload(rows)})
+        except Exception:
+            db.session.rollback()
+            app.logger.exception("REV88: localidades em lote falhou; usando método antigo")
+            rows=query.order_by(Location.company,Location.line,Location.location).limit(500).all()
     return jsonify({"ok":True,"locations":[_location_360_payload(x) for x in rows]})
 
 
@@ -7755,7 +7782,7 @@ def telemetry_summary_api():
         errors=sum(1 for x in rows if x.status_code>=500); avg=round(sum(vals)/len(vals),1) if vals else 0; p95=pct(vals,.95); p99=pct(vals,.99)
         slow_1s=sum(v>=1000 for v in vals); slow_2s=sum(v>=2000 for v in vals); slow_5s=sum(v>=5000 for v in vals)
         _v86_small=len(vals)<30
-        health="CRÍTICO" if (errors>=3 or ((p95>=5000 or slow_5s>0) and not _v86_small)) else ("ATENÇÃO" if (p95>=1500 or slow_2s>0 or errors>0 or (_v86_small and (p95>=5000 or slow_5s>0))) else "NORMAL")
+        health="CRÍTICO" if (errors>=3 or ((p95>=5000 or slow_5s>=max(3,int(len(vals)*0.01))) and not _v86_small)) else ("ATENÇÃO" if (p95>=1500 or slow_2s>0 or errors>0 or (_v86_small and (p95>=5000 or slow_5s>0))) else "NORMAL")
         top5=[dict(x,app_ms=max(0,round(float(x.get("avg_ms") or 0)-float(x.get("avg_sql_ms") or 0),1))) for x in route_rows[:5]]
         with PANORAMA_EXPORT_LOCK:
             _jobs=list(PANORAMA_EXPORT_JOBS.values())
@@ -8106,9 +8133,17 @@ _V85_FLAGS = [
     {"id": "tabelas_v85", "label": "Tabelas padronizadas (telas restantes)", "desc": "Ordenação por coluna, busca e contador nas tabelas que ainda não tinham."},
     {"id": "kpi_janela", "label": "Indicadores clicáveis (janela)", "desc": "Clicar no número abre uma janela com os registros que o compõem, com ordenação, busca e exportação."},
     {"id": "acesso_liberacoes", "label": "Acesso somente por liberações (perfil = só cargo)", "desc": "O cargo/perfil deixa de dar acesso: vale só a matriz de liberações de cada usuário. Só liga depois de gravar o retrato; só o administrador principal liga."},
-    {"id": "cache_bobinas", "label": "Dashboard de Bobinas com cache (60 s)", "desc": "O dashboard de Bobinas deixa de recalcular tudo a cada abertura: reutiliza o resultado por até 60 s e atualiza na hora quando alguém registra uma leitura. Desligar volta ao cálculo direto."},
+    {"id": "cache_bobinas", "label": "Dashboard de Bobinas com cache (120 s)", "desc": "O dashboard de Bobinas deixa de recalcular tudo a cada abertura: reutiliza o resultado por até 120 s e atualiza na hora quando alguém registra uma leitura (web ou app). Desligar volta ao cálculo direto."},
     {"id": "foto_reduzida", "label": "Fotos de Bobinas reduzidas no celular", "desc": "A foto é reduzida (até 1600 px, JPEG) antes do envio, deixando o registro mais rápido. Se falhar, envia a original. Desligar volta ao envio sem redução."},
+    {"id": "localidades_lote", "label": "Patrimônio: localidades em lote", "desc": "A tela de Patrimônio (/api/v7/localidades) passa a buscar tudo em poucas consultas (antes ~2.500 por abertura). Mesmo conteúdo; se algo falhar, volta ao método antigo sozinho. Desligar volta ao método antigo."},
+    {"id": "visual_b", "label": "Visual direção B (azul-marinho + status)", "desc": "Novo visual em todas as telas claras: cabeçalho azul-marinho com faixa verde-água, indicadores com faixa de status, tabelas e etiquetas padronizadas. Não muda dados nem permissões. Desligar volta ao visual atual na hora."},
+    {"id": "central_alertas", "label": "Central de Alertas (tela /alertas)", "desc": "Mostra a tela de alertas estatísticos (coletas fora do padrão, divergências, reposição de bobinas) para o Gestor. Os alertas são calculados em modo sombra mesmo com a chave desligada e ninguém é notificado."},
+    {"id": "mesclar_estacoes", "label": "Mesclar estações duplicadas", "desc": "Libera o botão 'Mesclar' no Diagnóstico (somente administrador principal, com confirmação digitada e opção de desfazer). Ligue só depois de fazer backup do banco."},
     {"id": "graficos_paleta", "label": "Gráficos na paleta única", "desc": "Cores dos gráficos migradas para a paleta central (seguras para daltonismo)."},
+    {"id": "gps_otimizado", "label": "GPS: menos contas e consultas", "desc": "Busca da estação mais próxima mais rápida (mesmo resultado), sugestão de técnico do TopDesk sem carregar todo o histórico, contagem de técnicos do dia usando índice e hora real da captura nas posições enviadas pelo navegador. Desligar volta ao método anterior."},
+    {"id": "bobinas_fotos_limpeza", "label": "Fotos de Bobinas: limpeza automática em segundo plano", "desc": "Fotos de Bobinas vencidas (7 dias, conforme a configuração) são apagadas do armazenamento em lote, no máximo a cada hora e fora do registro do técnico. A foto só é marcada como apagada quando o armazenamento confirma. O registro da atividade permanece. Desligar volta ao método anterior."},
+    {"id": "api_cache", "label": "Equipes: resposta compartilhada por 10 s", "desc": "A tela de Equipes passa a reaproveitar por até 10 s o resultado já calculado para outro usuário, em vez de refazer ~16 consultas a cada atualização."},
+    {"id": "apt_otimizado", "label": "APT: consultas em lote e arquivos sem sobra", "desc": "Verificação de APT vigente e importação em poucas consultas, contagem do painel feita no banco, PDF aberto direto do armazenamento e arquivo antigo apagado quando o PDF é trocado ou a APT é excluída."},
 ]
 _V85_IDS = {f["id"] for f in _V85_FLAGS}
 _V85_STATE = {"ready": False}
@@ -8395,9 +8430,9 @@ def v86_access_snapshot_revert():
         return jsonify({"ok": False, "error": f"Falha: {str(exc)[:160]}"}), 500
 
 
-def _v86_record_bobbin_time(total_ms, upload_ms, has_photo, sql_ms, queries):
+def _v86_record_bobbin_time(total_ms, upload_ms, has_photo, sql_ms, queries, origin=""):
     try:
-        _V86_BOBBIN_TIMES.append({"at": datetime.utcnow().strftime("%d/%m %H:%M:%S"), "total_ms": round(total_ms), "upload_ms": round(upload_ms),
+        _V86_BOBBIN_TIMES.append({"at": datetime.utcnow().strftime("%d/%m %H:%M:%S") + (" (app)" if origin == "app" else ""), "total_ms": round(total_ms), "upload_ms": round(upload_ms),
                                   "other_ms": round(total_ms - upload_ms), "sql_ms": round(sql_ms), "queries": int(queries), "photo": bool(has_photo)})
         del _V86_BOBBIN_TIMES[:-60]
     except Exception:
@@ -8490,6 +8525,1132 @@ def v87_rede_quality_api():
         resp.headers["Content-Disposition"] = f"attachment; filename=rede_{which}.csv"
         return resp
     return jsonify(data)
+
+
+# V87.6 REV88 — Fundação de dados e desempenho + alertas estatísticos (modo sombra).
+# Tudo que muda comportamento está atrás de chave global (Diagnóstico → Recursos), desligada.
+
+def _v88_chunks(seq, n=1000):
+    seq = list(seq)
+    for i in range(0, len(seq), n):
+        yield seq[i:i + n]
+
+
+def _v88_locations_payload(rows):
+    """Mesmo conteúdo de _location_360_payload, porém em lote: ~12 consultas no total em vez de ~5 por localidade + 1 por equipamento."""
+    ids = [x.id for x in rows]
+    if not ids:
+        return []
+    inv_by, visit_by = {}, {}
+    for part in _v88_chunks(ids):
+        for x in Inventory.query.filter(Inventory.location_id.in_(part)).order_by(Inventory.created_at.desc(), Inventory.id.desc()).all():
+            inv_by.setdefault(x.location_id, []).append(x)
+        for v in FieldEvidenceVisit.query.filter(FieldEvidenceVisit.location_id.in_(part)).order_by(FieldEvidenceVisit.id.desc()).all():
+            visit_by.setdefault(v.location_id, []).append(v)
+    expected_all = _expected_assets_by_location()
+    all_visit_ids = [v.id for lst in visit_by.values() for v in lst]
+    shown_visit_ids = [v.id for lst in visit_by.values() for v in lst[:100]]
+    media_count = {}
+    for part in _v88_chunks(all_visit_ids):
+        for vid, n in db.session.query(FieldEvidenceMedia.visit_id, func.count(FieldEvidenceMedia.id)).filter(FieldEvidenceMedia.visit_id.in_(part)).group_by(FieldEvidenceMedia.visit_id).all():
+            media_count[vid] = int(n)
+    vmedia = {}
+    for part in _v88_chunks(shown_visit_ids):
+        for m in FieldEvidenceMedia.query.filter(FieldEvidenceMedia.visit_id.in_(part)).order_by(FieldEvidenceMedia.id).all():
+            vmedia.setdefault(m.visit_id, []).append(m)
+    shown_inv = [x for lst in inv_by.values() for x in lst[:250]]
+    atts = {}
+    for part in _v88_chunks([x.id for x in shown_inv]):
+        for a in Attachment.query.filter(Attachment.inventory_id.in_(part)).order_by(Attachment.id).all():
+            atts.setdefault(a.inventory_id, []).append(a)
+    tech_ids = {x.technician_id for x in shown_inv if x.technician_id}
+    users = {}
+    for part in _v88_chunks(tech_ids):
+        for u in User.query.filter(User.id.in_(part)).all():
+            users[u.id] = u
+    can_manage = session.get("role") == "manager"
+    out = []
+    for loc in rows:
+        inventories = inv_by.get(loc.id, [])
+        visits = visit_by.get(loc.id, [])
+        bucket = expected_all.get(loc.id, {})
+        expected = sum(int(bucket.get(t, 0) or 0) for t in ("ATM", "VALIDADOR", "POS", "TDI", "BLOQUEIO"))
+        inventoried = len(inventories)
+        outside_base = sum(1 for x in inventories if normalize(x.in_base) in ("NAO", "NÃO", "NO", "FORA DA BASE") or _canonical_equipment_type(x.equipment_type) == "OUTRO")
+        divergences = sum(1 for x in inventories if (x.divergence or "").strip())
+        inoperative = sum(1 for x in inventories if normalize(x.operational_status) not in ("", "OPERACIONAL", "OK"))
+        media_total = sum(media_count.get(v.id, 0) for v in visits)
+        equipment = []
+        for x in inventories[:250]:
+            u = users.get(x.technician_id)
+            equipment.append({
+                "id": x.id, "type": x.equipment_type, "identifier": x.asset_identifier,
+                "serial": x.serial, "model": x.model, "supplier": x.supplier,
+                "status": x.operational_status, "divergence": x.divergence, "in_base": x.in_base,
+                "notes": x.notes, "technician_id": x.technician_id,
+                "creator": (u.name if u else None) or "—",
+                "creator_username": (u.username if u else None) or "",
+                "created_at": x.created_at.isoformat() + "Z" if x.created_at else None,
+                "media": [{"id": a.id, "name": a.original_name, "mime": a.mime_type, "url": url_for("uploaded", name=a.stored_name)} for a in atts.get(x.id, [])]})
+        evidence_visits = []
+        for v in visits[:100]:
+            evidence_visits.append({
+                "id": v.id, "date": v.source_date, "time": v.source_time, "author": v.author,
+                "confidence": v.match_confidence, "report": v.report_text,
+                "media": [{"id": m.id, "name": m.original_name, "mime": m.mime_type, "url": url_for("field_evidence_media", media_id=m.id)} for m in vmedia.get(v.id, [])]})
+        out.append({
+            "id": loc.id, "company": loc.company, "line": loc.line, "location": loc.location,
+            "survey_status": loc.survey_status,
+            "expected": expected, "inventoried": inventoried, "missing": max(0, expected - inventoried),
+            "coverage_pct": round((inventoried / expected * 100), 1) if expected else 0,
+            "divergences": divergences, "inoperative": inoperative,
+            "visits": len(visits), "media": media_total, "outside_base": outside_base,
+            "latitude": loc.reference_latitude, "longitude": loc.reference_longitude,
+            "can_manage": can_manage, "equipment": equipment, "evidence_visits": evidence_visits})
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Índices (relatório + criação sob demanda, cada um em transação própria) e tamanho das tabelas
+# ---------------------------------------------------------------------------
+_V88_INDEXES = [
+    ("ix_techpos_user_captured", "technician_positions", "(user_id, captured_at)"),
+    ("ix_fin_cash_terminal_date", "financial_cash_collections", "(terminal, collection_date)"),
+]
+
+
+@app.get("/api/diagnostico/indices/v88")
+@login_required
+def v88_indexes_get():
+    g = _v85_guard()
+    if g:
+        return g
+    try:
+        have = {r[0] for r in db.session.execute(text("SELECT indexname FROM pg_indexes WHERE schemaname='public'")).fetchall()}
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({"ok": False, "error": str(exc)[:200]}), 500
+    return jsonify({"ok": True, "indices": [{"nome": n, "tabela": t, "colunas": c, "existe": n in have} for n, t, c in _V88_INDEXES]})
+
+
+@app.post("/api/diagnostico/indices/v88")
+@login_required
+def v88_indexes_create():
+    """Cria os índices que faltam, um por vez, cada um em conexão própria (AUTOCOMMIT): a falha de um não afeta os outros e o erro volta no relatório."""
+    g = _v85_guard()
+    if g:
+        return g
+    res = []
+    for name, table, cols in _V88_INDEXES:
+        item = {"nome": name, "tabela": table}
+        try:
+            with db.engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+                conn.execute(text("SET statement_timeout = '120s'"))
+                exists = conn.execute(text("SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname=:n"), {"n": name}).first()
+                if exists:
+                    item["resultado"] = "já existia"
+                else:
+                    conn.execute(text(f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {name} ON {table} {cols}"))
+                    item["resultado"] = "criado"
+        except Exception as exc:
+            item["resultado"] = "erro"
+            item["erro"] = str(exc).strip().splitlines()[0][:220] if str(exc).strip() else exc.__class__.__name__
+        res.append(item)
+    try:
+        db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="V88_INDEXES", entity_type="database", entity_id="v88", detail=json.dumps(res, ensure_ascii=False)[:900]))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+    return jsonify({"ok": True, "resultado": res})
+
+
+@app.get("/api/diagnostico/tabelas/v88")
+@login_required
+def v88_table_sizes():
+    g = _v85_guard()
+    if g:
+        return g
+    try:
+        total = db.session.execute(text("SELECT pg_database_size(current_database())")).scalar() or 0
+        rows = db.session.execute(text(
+            "SELECT c.relname, pg_total_relation_size(c.oid) AS total, pg_relation_size(c.oid) AS tabela, c.reltuples::bigint AS linhas "
+            "FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relkind='r' AND n.nspname='public' "
+            "ORDER BY pg_total_relation_size(c.oid) DESC LIMIT 20")).fetchall()
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({"ok": False, "error": str(exc)[:200]}), 500
+    mb = lambda b: round(float(b or 0) / 1048576, 1)
+    return jsonify({"ok": True, "banco_mb": mb(total), "tabelas": [{"tabela": r[0], "total_mb": mb(r[1]), "dados_mb": mb(r[2]), "indices_mb": mb((r[1] or 0) - (r[2] or 0)), "linhas_aprox": int(r[3] or 0)} for r in rows],
+                    "nota": "Linhas aproximadas (estatística do PostgreSQL). Somente leitura: nada é apagado."})
+
+
+# ---------------------------------------------------------------------------
+# Camada de dados diária (base para alertas e previsões)
+# ---------------------------------------------------------------------------
+_V88_FACTS_READY = {"ok": False}
+
+
+def _v88_facts_ensure():
+    if _V88_FACTS_READY["ok"]:
+        return
+    with db.engine.begin() as conn:
+        conn.execute(text("CREATE TABLE IF NOT EXISTS v88_daily_facts (day DATE NOT NULL, metric VARCHAR(40) NOT NULL, dim VARCHAR(160) NOT NULL DEFAULT '', value DOUBLE PRECISION NOT NULL DEFAULT 0, refreshed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (day, metric, dim))"))
+    _V88_FACTS_READY["ok"] = True
+
+
+_V88_FACT_QUERIES = [
+    ("coletas_qtd", "SELECT collection_date AS d, '' AS dim, COUNT(*)::float AS v FROM financial_cash_collections WHERE soft_deleted = FALSE AND collection_date >= :d0 GROUP BY 1"),
+    ("coletas_valor", "SELECT collection_date AS d, '' AS dim, COALESCE(SUM(collected_amount),0)::float AS v FROM financial_cash_collections WHERE soft_deleted = FALSE AND collection_date >= :d0 GROUP BY 1"),
+    ("coletas_divergencia", "SELECT collection_date AS d, '' AS dim, COALESCE(SUM(ABS(processed_amount - declared_amount)),0)::float AS v FROM financial_cash_collections WHERE soft_deleted = FALSE AND processed_amount IS NOT NULL AND declared_amount IS NOT NULL AND collection_date >= :d0 GROUP BY 1"),
+    ("bobinas_leituras", "SELECT (created_at - interval '3 hours')::date AS d, '' AS dim, COUNT(*)::float AS v FROM atm_bobbin_readings WHERE (created_at - interval '3 hours')::date >= :d0 GROUP BY 1"),
+    ("bobinas_trocas", "SELECT (created_at - interval '3 hours')::date AS d, '' AS dim, COUNT(*)::float AS v FROM atm_bobbin_readings WHERE bobbin_replaced = TRUE AND (created_at - interval '3 hours')::date >= :d0 GROUP BY 1"),
+    ("chamados_abertos", "SELECT (created_at - interval '3 hours')::date AS d, COALESCE(category,'') AS dim, COUNT(*)::float AS v FROM topdesk_tickets WHERE created_at IS NOT NULL AND (created_at - interval '3 hours')::date >= :d0 GROUP BY 1,2"),
+    ("gps_posicoes", "SELECT (captured_at - interval '3 hours')::date AS d, '' AS dim, COUNT(*)::float AS v FROM technician_positions WHERE captured_at IS NOT NULL AND (captured_at - interval '3 hours')::date >= :d0 GROUP BY 1"),
+]
+
+
+def _v88_facts_refresh(days=60):
+    """Recalcula os últimos N dias de cada métrica. Cada métrica em transação própria; devolve o relatório (nunca levanta)."""
+    _v88_facts_ensure()
+    d0 = (datetime.utcnow() - timedelta(days=int(days))).date()
+    report = []
+    for metric, sql in _V88_FACT_QUERIES:
+        item = {"metrica": metric}
+        try:
+            with db.engine.begin() as conn:
+                conn.execute(text("DELETE FROM v88_daily_facts WHERE metric=:m AND day >= :d0"), {"m": metric, "d0": d0})
+                n = conn.execute(text("INSERT INTO v88_daily_facts (day, metric, dim, value) SELECT d, :m, dim, v FROM (" + sql + ") q WHERE d IS NOT NULL"), {"m": metric, "d0": d0}).rowcount
+                item["linhas"] = int(n or 0)
+        except Exception as exc:
+            item["erro"] = (str(exc).strip().splitlines() or [exc.__class__.__name__])[0][:200]
+        report.append(item)
+    return report
+
+
+@app.post("/api/diagnostico/camada-diaria/v88")
+@login_required
+def v88_facts_refresh_api():
+    g = _v85_guard()
+    if g:
+        return g
+    try:
+        days = max(7, min(400, int((request.get_json(silent=True) or {}).get("dias") or 60)))
+    except (TypeError, ValueError):
+        days = 60
+    return jsonify({"ok": True, "dias": days, "resultado": _v88_facts_refresh(days)})
+
+
+@app.get("/api/diagnostico/camada-diaria/v88")
+@login_required
+def v88_facts_summary_api():
+    g = _v85_guard()
+    if g:
+        return g
+    try:
+        _v88_facts_ensure()
+        rows = db.session.execute(text("SELECT metric, COUNT(*), MIN(day), MAX(day), MAX(refreshed_at) FROM v88_daily_facts GROUP BY metric ORDER BY metric")).fetchall()
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({"ok": False, "error": str(exc)[:200]}), 500
+    return jsonify({"ok": True, "metricas": [{"metrica": r[0], "linhas": int(r[1]), "de": r[2].isoformat() if r[2] else None, "ate": r[3].isoformat() if r[3] else None, "atualizado": r[4].isoformat() + "Z" if r[4] else None} for r in rows]})
+
+
+# ---------------------------------------------------------------------------
+# Alertas estatísticos (modo sombra): coletas fora do padrão e reposição de bobinas
+# ---------------------------------------------------------------------------
+_V88_ALERTS_READY = {"ok": False}
+
+
+def _v88_alerts_ensure():
+    if _V88_ALERTS_READY["ok"]:
+        return
+    with db.engine.begin() as conn:
+        conn.execute(text("""CREATE TABLE IF NOT EXISTS v88_alerts (
+            id SERIAL PRIMARY KEY, kind VARCHAR(30) NOT NULL, ref_key VARCHAR(160) NOT NULL UNIQUE, subject VARCHAR(160),
+            severity VARCHAR(10) NOT NULL DEFAULT 'MEDIA', score DOUBLE PRECISION, title VARCHAR(220), detail TEXT, event_date DATE,
+            status VARCHAR(20) NOT NULL DEFAULT 'NOVO', review VARCHAR(20), reviewed_by INTEGER, reviewed_at TIMESTAMP,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"""))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_v88_alerts_kind_status ON v88_alerts (kind, status, event_date)"))
+    _V88_ALERTS_READY["ok"] = True
+
+
+def _v88_money(v):
+    s = f"{float(v):,.2f}"
+    return "R$ " + s.replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def _v88_collection_alerts(rows, baseline, z_min=3.0, div_pct=2.0, div_min=50.0):
+    """rows: [(id, terminal, date, collected, declared, processed)]; baseline: {terminal: (n, mean, std)}.
+    Função pura (testável): devolve lista de alertas."""
+    out = []
+    for cid, terminal, day, collected, declared, processed in rows:
+        base = baseline.get(terminal)
+        if collected is not None and base and base[0] >= 6 and base[2] and base[2] > 0:
+            z = (float(collected) - base[1]) / base[2]
+            if abs(z) >= z_min:
+                out.append({"kind": "COLETA_VALOR", "ref_key": f"COLETA_VALOR:{cid}", "subject": terminal, "severity": "ALTA" if abs(z) >= z_min + 1 else "MEDIA", "score": round(z, 2), "event_date": day,
+                            "title": f"Coleta {'acima' if z > 0 else 'abaixo'} do padrão — {terminal}",
+                            "detail": f"Valor {_v88_money(collected)}; média do terminal {_v88_money(base[1])} (desvio {_v88_money(base[2])}, {base[0]} coletas). Distância: {abs(z):.1f} desvios."})
+        if declared is not None and processed is not None:
+            diff = float(processed) - float(declared)
+            limit = max(div_min, abs(float(declared)) * div_pct / 100.0)
+            if abs(diff) >= limit:
+                pct = abs(diff) / abs(float(declared)) * 100 if declared else 100.0
+                out.append({"kind": "COLETA_DIVERGENCIA", "ref_key": f"COLETA_DIVERGENCIA:{cid}", "subject": terminal, "severity": "ALTA" if pct >= 10 else "MEDIA", "score": round(pct, 1), "event_date": day,
+                            "title": f"Divergência declarado × apurado — {terminal}",
+                            "detail": f"Declarado {_v88_money(declared)}; apurado {_v88_money(processed)}; diferença {_v88_money(diff)} ({pct:.1f}%)."})
+    return out
+
+
+def _v88_bobbin_alerts(readings, today, horizon_days=7):
+    """readings: {atm_id: [(id, created_at, percent, replaced, company, line, station)]} em ordem cronológica.
+    Estima consumo (pontos percentuais/dia) pela mediana das quedas entre leituras sem troca e projeta quando chega a 10%."""
+    out = []
+    for atm, lst in readings.items():
+        if not lst:
+            continue
+        last = lst[-1]
+        pct = int(last[2])
+        rates = []
+        for a, b in zip(lst, lst[1:]):
+            if b[3]:
+                continue
+            dt = (b[1] - a[1]).total_seconds() / 86400.0
+            drop = int(a[2]) - int(b[2])
+            if dt >= 0.25 and drop > 0:
+                rates.append(drop / dt)
+        rate = None
+        if len(rates) >= 2:
+            rates.sort()
+            rate = rates[len(rates) // 2]
+        days_left = None
+        if rate and rate > 0:
+            days_left = max(0.0, (pct - 10) / rate)
+        if pct <= 10 or (pct <= 40 and days_left is not None and days_left <= horizon_days):
+            sev = "ALTA" if pct <= 10 or (days_left is not None and days_left <= 2) else "MEDIA"
+            when = "já está no nível crítico" if pct <= 10 else f"deve chegar a 10% em cerca de {days_left:.1f} dia(s)"
+            out.append({"kind": "BOBINA_REPOSICAO", "ref_key": f"BOBINA:{atm}:{last[0]}", "subject": str(atm), "severity": sev, "score": round(days_left, 1) if days_left is not None else 0.0,
+                        "event_date": last[1].date(), "title": f"Reposição de bobina — ATM {atm}",
+                        "detail": f"{last[6]} · {last[5]}: {pct}% na última leitura; consumo estimado {('%.1f' % rate) + ' p.p./dia' if rate else 'sem histórico suficiente'}; {when}."})
+    return out
+
+
+def _v88_alerts_compute(days=45):
+    """Calcula e grava alertas novos. Não notifica ninguém e não altera dados de origem."""
+    _v88_alerts_ensure()
+    found = []
+    d0 = (datetime.utcnow() - timedelta(days=int(days))).date()
+    try:
+        base_rows = db.session.execute(text(
+            "SELECT terminal, COUNT(collected_amount), AVG(collected_amount), STDDEV_SAMP(collected_amount) FROM financial_cash_collections "
+            "WHERE soft_deleted=FALSE AND collected_amount IS NOT NULL AND collection_date < :d0 AND collection_date >= :d1 GROUP BY terminal"),
+            {"d0": d0, "d1": d0 - timedelta(days=120)}).fetchall()
+        baseline = {r[0]: (int(r[1] or 0), float(r[2] or 0), float(r[3] or 0)) for r in base_rows}
+        rows = db.session.execute(text(
+            "SELECT id, terminal, collection_date, collected_amount, declared_amount, processed_amount FROM financial_cash_collections "
+            "WHERE soft_deleted=FALSE AND collection_date >= :d0 ORDER BY collection_date DESC LIMIT 5000"), {"d0": d0}).fetchall()
+        found += _v88_collection_alerts([tuple(r) for r in rows], baseline)
+    except Exception:
+        db.session.rollback()
+        app.logger.exception("V88: falha ao calcular alertas de coleta")
+    try:
+        r0 = datetime.utcnow() - timedelta(days=60)
+        rr = db.session.execute(text(
+            "SELECT id, created_at, percent_available, bobbin_replaced, company, line, station, atm_id FROM atm_bobbin_readings "
+            "WHERE created_at >= :r0 AND event_type <> 'IMPORTACAO' ORDER BY atm_id, created_at, id"), {"r0": r0}).fetchall()
+        by = {}
+        for r in rr:
+            by.setdefault(str(r[7]), []).append((r[0], r[1], r[2], bool(r[3]), r[4], r[5], r[6]))
+        found += _v88_bobbin_alerts(by, datetime.utcnow().date())
+    except Exception:
+        db.session.rollback()
+        app.logger.exception("V88: falha ao calcular alertas de bobinas")
+    created = {}
+    with db.engine.begin() as conn:
+        # alerta de reposição antigo da mesma ATM é superado pelo mais recente
+        for a in found:
+            if a["kind"] == "BOBINA_REPOSICAO":
+                conn.execute(text("UPDATE v88_alerts SET status='SUPERADO' WHERE kind='BOBINA_REPOSICAO' AND subject=:s AND status='NOVO' AND ref_key<>:k"), {"s": a["subject"], "k": a["ref_key"]})
+        for a in found[:3000]:
+            n = conn.execute(text(
+                "INSERT INTO v88_alerts (kind, ref_key, subject, severity, score, title, detail, event_date) VALUES (:kind,:ref_key,:subject,:severity,:score,:title,:detail,:event_date) ON CONFLICT (ref_key) DO NOTHING"), a).rowcount
+            if n:
+                created[a["kind"]] = created.get(a["kind"], 0) + 1
+    return {"encontrados": len(found), "novos": created}
+
+
+def _v88_alerts_precision(conn_rows):
+    util = sum(n for r, n in conn_rows if r == "UTIL")
+    falso = sum(n for r, n in conn_rows if r == "FALSO")
+    return {"util": util, "falso": falso, "revisados": util + falso, "precisao_pct": round(util * 100.0 / (util + falso), 1) if util + falso else None}
+
+
+@app.post("/api/alertas/v88/calcular")
+@login_required
+def v88_alerts_calc():
+    g = _v85_guard()
+    if g:
+        return g
+    try:
+        days = max(7, min(180, int((request.get_json(silent=True) or {}).get("dias") or 45)))
+    except (TypeError, ValueError):
+        days = 45
+    try:
+        return jsonify({"ok": True, "dias": days, "resultado": _v88_alerts_compute(days)})
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({"ok": False, "error": str(exc)[:200]}), 500
+
+
+@app.get("/api/alertas/v88")
+@login_required
+def v88_alerts_list():
+    g = _v85_guard()
+    if g:
+        return g
+    try:
+        _v88_alerts_ensure()
+        kind = (request.args.get("tipo") or "").strip().upper()
+        status = (request.args.get("status") or "NOVO").strip().upper()
+        where, params = ["1=1"], {}
+        if kind:
+            where.append("kind=:k"); params["k"] = kind
+        if status != "TODOS":
+            where.append("status=:s"); params["s"] = status
+        rows = db.session.execute(text("SELECT id, kind, subject, severity, score, title, detail, event_date, status, review, created_at FROM v88_alerts WHERE " + " AND ".join(where) + " ORDER BY CASE severity WHEN 'ALTA' THEN 0 ELSE 1 END, event_date DESC NULLS LAST, id DESC LIMIT 500"), params).fetchall()
+        rev = db.session.execute(text("SELECT review, COUNT(*) FROM v88_alerts WHERE review IS NOT NULL GROUP BY review")).fetchall()
+        tot = db.session.execute(text("SELECT kind, status, COUNT(*) FROM v88_alerts GROUP BY kind, status")).fetchall()
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({"ok": False, "error": str(exc)[:200]}), 500
+    return jsonify({"ok": True, "alertas": [{"id": r[0], "tipo": r[1], "assunto": r[2], "gravidade": r[3], "pontuacao": r[4], "titulo": r[5], "detalhe": r[6], "data": r[7].isoformat() if r[7] else None, "status": r[8], "revisao": r[9], "criado": r[10].isoformat() + "Z" if r[10] else None} for r in rows],
+                    "qualidade": _v88_alerts_precision([(r[0], int(r[1])) for r in rev]),
+                    "totais": [{"tipo": r[0], "status": r[1], "qtd": int(r[2])} for r in tot], "visivel": bool(_v85_flags().get("central_alertas"))})
+
+
+@app.post("/api/alertas/v88/<int:alert_id>/revisar")
+@login_required
+def v88_alert_review(alert_id):
+    g = _v85_guard()
+    if g:
+        return g
+    rv = ((request.get_json(silent=True) or {}).get("revisao") or "").strip().upper()
+    if rv not in ("UTIL", "FALSO", "LIMPAR"):
+        return jsonify({"ok": False, "error": "Revisão inválida."}), 400
+    try:
+        n = db.session.execute(text("UPDATE v88_alerts SET review=:r, reviewed_by=:u, reviewed_at=:t, status=:st WHERE id=:i"),
+                               {"r": None if rv == "LIMPAR" else rv, "u": session.get("user_id"), "t": datetime.utcnow(), "st": "NOVO" if rv == "LIMPAR" else "REVISADO", "i": alert_id}).rowcount
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({"ok": False, "error": str(exc)[:200]}), 500
+    return jsonify({"ok": bool(n)})
+
+
+@app.get("/alertas")
+@login_required
+def v88_alerts_page():
+    if not _has_access("management.diagnostics") or not _v85_flags().get("central_alertas"):
+        return redirect(_v789_landing_for_user())
+    return render_template("alertas_v88.html", app_release=APP_RELEASE)
+
+
+# ---------------------------------------------------------------------------
+# Mesclagem de estações duplicadas (chave desligada; só administrador principal; confirmação digitada; desfazer)
+# ---------------------------------------------------------------------------
+def _v88_location_refs(conn):
+    """(tabela, coluna) que apontam para locations.id: chaves estrangeiras + colunas chamadas location_id."""
+    refs = set()
+    for t, c in conn.execute(text(
+            "SELECT tc.table_name, kcu.column_name FROM information_schema.table_constraints tc "
+            "JOIN information_schema.key_column_usage kcu ON tc.constraint_name=kcu.constraint_name AND tc.table_schema=kcu.table_schema "
+            "JOIN information_schema.constraint_column_usage ccu ON ccu.constraint_name=tc.constraint_name AND ccu.table_schema=tc.table_schema "
+            "WHERE tc.constraint_type='FOREIGN KEY' AND tc.table_schema='public' AND ccu.table_name='locations' AND ccu.column_name='id'")).fetchall():
+        refs.add((t, c))
+    for t, c in conn.execute(text("SELECT table_name, column_name FROM information_schema.columns WHERE table_schema='public' AND column_name='location_id'")).fetchall():
+        refs.add((t, c))
+    refs.discard(("locations", "id"))
+    return sorted(r for r in refs if not r[0].startswith("v88_"))
+
+
+def _v88_merge_pair_ok(dup_id, keeper_id):
+    data = _v87_rede_quality()
+    return any(p["sem_id"] == dup_id and p["com_id"] == keeper_id for p in data["pares"])
+
+
+def _v88_merge_ensure(conn):
+    conn.execute(text("""CREATE TABLE IF NOT EXISTS v88_location_merges (
+        id SERIAL PRIMARY KEY, keeper_id INTEGER NOT NULL, dup_id INTEGER NOT NULL, dup_row TEXT NOT NULL, moved TEXT NOT NULL,
+        created_by INTEGER, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, undone_at TIMESTAMP)"""))
+
+
+@app.get("/api/diagnostico/rede/mesclar/v88")
+@login_required
+def v88_merge_preview():
+    g = _v85_guard()
+    if g:
+        return g
+    try:
+        dup_id, keeper_id = int(request.args.get("dup")), int(request.args.get("keeper"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Informe dup e keeper."}), 400
+    if not _v88_merge_pair_ok(dup_id, keeper_id):
+        return jsonify({"ok": False, "error": "Par não consta na lista de prováveis duplicados."}), 400
+    try:
+        with db.engine.connect() as conn:
+            refs = _v88_location_refs(conn)
+            impact = []
+            for t, c in refs:
+                n = conn.execute(text(f'SELECT COUNT(*) FROM "{t}" WHERE "{c}"=:i'), {"i": dup_id}).scalar() or 0
+                if n:
+                    impact.append({"tabela": t, "coluna": c, "linhas": int(n)})
+            names = {r[0]: r[1:] for r in conn.execute(text("SELECT id, company, line, location, reference_latitude, reference_longitude, expected_atm, expected_validator, expected_pos FROM locations WHERE id IN (:a,:b)"), {"a": dup_id, "b": keeper_id}).fetchall()}
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)[:200]}), 500
+    d, k = names.get(dup_id), names.get(keeper_id)
+    if not d or not k:
+        return jsonify({"ok": False, "error": "Localidade não encontrada."}), 404
+    return jsonify({"ok": True, "duplicado": {"id": dup_id, "operadora": d[0], "linha": d[1], "estacao": d[2], "esperado": list(d[5:8])},
+                    "mantida": {"id": keeper_id, "operadora": k[0], "linha": k[1], "estacao": k[2], "lat": k[3], "lon": k[4], "esperado": list(k[5:8])},
+                    "referencias_movidas": impact, "total_linhas": sum(x["linhas"] for x in impact),
+                    "aviso": "A localidade duplicada será removida depois que todas as referências forem movidas para a mantida. É possível desfazer."})
+
+
+@app.post("/api/diagnostico/rede/mesclar/v88")
+@login_required
+def v88_merge_apply():
+    g = _v85_guard()
+    if g:
+        return g
+    if not _v86_is_principal():
+        return jsonify({"ok": False, "error": "Somente o administrador principal."}), 403
+    if not _v85_flags().get("mesclar_estacoes"):
+        return jsonify({"ok": False, "error": "Ligue a chave 'Mesclar estações duplicadas' em Recursos."}), 409
+    data = request.get_json(silent=True) or {}
+    if (data.get("confirmacao") or "").strip() != "MESCLAR":
+        return jsonify({"ok": False, "error": "Digite MESCLAR para confirmar."}), 400
+    try:
+        dup_id, keeper_id = int(data.get("dup")), int(data.get("keeper"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Informe dup e keeper."}), 400
+    if not _v88_merge_pair_ok(dup_id, keeper_id):
+        return jsonify({"ok": False, "error": "Par não consta na lista de prováveis duplicados."}), 400
+    try:
+        with db.engine.begin() as conn:
+            _v88_merge_ensure(conn)
+            refs = _v88_location_refs(conn)
+            cols = [r[0] for r in conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='locations' ORDER BY ordinal_position")).fetchall()]
+            row = conn.execute(text("SELECT " + ",".join(f'"{c}"' for c in cols) + " FROM locations WHERE id=:i"), {"i": dup_id}).first()
+            if not row:
+                return jsonify({"ok": False, "error": "Localidade duplicada não existe mais."}), 404
+            dup_row = {c: (v.isoformat() if hasattr(v, "isoformat") else v) for c, v in zip(cols, row)}
+            moved = {}
+            for t, c in refs:
+                has_id = conn.execute(text("SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name=:t AND column_name='id'"), {"t": t}).first()
+                ids = [r[0] for r in conn.execute(text(f'SELECT id FROM "{t}" WHERE "{c}"=:i'), {"i": dup_id}).fetchall()] if has_id else []
+                n_total = conn.execute(text(f'SELECT COUNT(*) FROM "{t}" WHERE "{c}"=:i'), {"i": dup_id}).scalar() or 0
+                if n_total and not has_id:
+                    raise RuntimeError(f"Tabela {t} não tem coluna id; mesclagem desfazível não é possível.")
+                if ids:
+                    conn.execute(text(f'UPDATE "{t}" SET "{c}"=:k WHERE "{c}"=:d'), {"k": keeper_id, "d": dup_id})
+                    moved[f"{t}|{c}"] = ids
+            conn.execute(text("DELETE FROM locations WHERE id=:i"), {"i": dup_id})
+            mid = conn.execute(text("INSERT INTO v88_location_merges (keeper_id, dup_id, dup_row, moved, created_by) VALUES (:k,:d,:r,:m,:u) RETURNING id"),
+                               {"k": keeper_id, "d": dup_id, "r": json.dumps(dup_row, ensure_ascii=False, default=str), "m": json.dumps(moved), "u": session.get("user_id")}).scalar()
+    except Exception as exc:
+        return jsonify({"ok": False, "error": "Nada foi alterado. Motivo: " + (str(exc).strip().splitlines() or [exc.__class__.__name__])[0][:220]}), 500
+    try:
+        db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="V88_MERGE_LOCATION", entity_type="locations", entity_id=str(keeper_id), detail=f"merge #{mid}: {dup_id} -> {keeper_id}; tabelas: {', '.join(moved)}"[:900]))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+    _v73_cache_clear()
+    return jsonify({"ok": True, "mesclagem": mid, "linhas_movidas": sum(len(v) for v in moved.values())})
+
+
+@app.post("/api/diagnostico/rede/mesclar/desfazer/v88")
+@login_required
+def v88_merge_undo():
+    g = _v85_guard()
+    if g:
+        return g
+    if not _v86_is_principal():
+        return jsonify({"ok": False, "error": "Somente o administrador principal."}), 403
+    data = request.get_json(silent=True) or {}
+    if (data.get("confirmacao") or "").strip() != "DESFAZER":
+        return jsonify({"ok": False, "error": "Digite DESFAZER para confirmar."}), 400
+    try:
+        mid = int(data.get("mesclagem"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Informe a mesclagem."}), 400
+    try:
+        with db.engine.begin() as conn:
+            rec = conn.execute(text("SELECT keeper_id, dup_id, dup_row, moved, undone_at FROM v88_location_merges WHERE id=:i"), {"i": mid}).first()
+            if not rec:
+                return jsonify({"ok": False, "error": "Mesclagem não encontrada."}), 404
+            if rec[4]:
+                return jsonify({"ok": False, "error": "Esta mesclagem já foi desfeita."}), 409
+            dup_row, moved = json.loads(rec[2]), json.loads(rec[3])
+            if conn.execute(text("SELECT 1 FROM locations WHERE id=:i"), {"i": rec[1]}).first():
+                return jsonify({"ok": False, "error": "Já existe uma localidade com o id original."}), 409
+            cols = list(dup_row.keys())
+            conn.execute(text("INSERT INTO locations (" + ",".join(f'"{c}"' for c in cols) + ") VALUES (" + ",".join(f":p{i}" for i in range(len(cols))) + ")"),
+                         {f"p{i}": dup_row[c] for i, c in enumerate(cols)})
+            for key, ids in moved.items():
+                t, c = key.split("|")
+                for part in _v88_chunks(ids):
+                    conn.execute(text(f'UPDATE "{t}" SET "{c}"=:d WHERE id = ANY(:ids)'), {"d": rec[1], "ids": part})
+            conn.execute(text("UPDATE v88_location_merges SET undone_at=CURRENT_TIMESTAMP WHERE id=:i"), {"i": mid})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": "Nada foi alterado. Motivo: " + (str(exc).strip().splitlines() or [exc.__class__.__name__])[0][:220]}), 500
+    try:
+        db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="V88_MERGE_UNDO", entity_type="locations", entity_id=str(mid), detail=f"merge #{mid} desfeito"))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+    _v73_cache_clear()
+    return jsonify({"ok": True})
+
+
+@app.get("/api/diagnostico/rede/mesclagens/v88")
+@login_required
+def v88_merge_list():
+    g = _v85_guard()
+    if g:
+        return g
+    try:
+        with db.engine.begin() as conn:
+            _v88_merge_ensure(conn)
+            rows = conn.execute(text("SELECT id, keeper_id, dup_id, dup_row, created_at, undone_at FROM v88_location_merges ORDER BY id DESC LIMIT 100")).fetchall()
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)[:200]}), 500
+    out = []
+    for r in rows:
+        try:
+            d = json.loads(r[3])
+        except Exception:
+            d = {}
+        out.append({"id": r[0], "mantida": r[1], "duplicada": r[2], "estacao": d.get("location"), "linha": d.get("line"), "em": r[4].isoformat() + "Z" if r[4] else None, "desfeita": bool(r[5])})
+    return jsonify({"ok": True, "mesclagens": out})
+
+
+# ---------------------------------------------------------------------------
+# V87.6 REV88 (parte B) — GPS, fotos de Bobinas, Equipes, APT e mapa do R2.
+# Tudo atrás de chaves (padrão: desligadas). Falha em qualquer item => comportamento anterior.
+# ---------------------------------------------------------------------------
+def _v88b_on(flag_id):
+    try:
+        return bool(_v85_flags().get(flag_id))
+    except Exception:
+        return False
+
+
+# ---- GPS (chave gps_otimizado) --------------------------------------------
+def _v88b_nearest(lat, lon, refs):
+    """Estação de referência mais próxima. Pré-seleção por distância plana (sem trigonometria) e
+    confirmação por haversine nos 4 melhores: mesmo resultado do laço completo, com bem menos contas.
+    Devolve (id, empresa, linha, estação, lat, lon, distância_m) ou None."""
+    if not refs:
+        return None
+    import heapq
+    from math import cos, radians
+    k = cos(radians(lat))
+    cand = []
+    for i, r in enumerate(refs):
+        dlat = r[4] - lat
+        dlon = (r[5] - lon) * k
+        cand.append((dlat * dlat + dlon * dlon, i))
+    best = None
+    for _, i in sorted(heapq.nsmallest(4, cand), key=lambda t: t[1]):
+        r = refs[i]
+        d = _haversine_m(lat, lon, r[4], r[5])
+        if best is None or d < best[6]:
+            best = (r[0], r[1], r[2], r[3], r[4], r[5], d)
+    return best
+
+
+def _v88b_latest_positions(user_ids):
+    """Última posição de cada usuário em uma consulta (substitui carregar todo o histórico)."""
+    ids = list(user_ids)
+    if not ids:
+        return {}
+    sub = (db.session.query(TechnicianPosition.user_id.label("uid"), func.max(TechnicianPosition.captured_at).label("mx"))
+           .filter(TechnicianPosition.user_id.in_(ids)).group_by(TechnicianPosition.user_id).subquery())
+    out = {}
+    q = db.session.query(TechnicianPosition).join(sub, and_(TechnicianPosition.user_id == sub.c.uid, TechnicianPosition.captured_at == sub.c.mx))
+    for p in q.all():
+        out.setdefault(p.user_id, p)
+    return out
+
+
+def _v88b_client_time(raw, fallback):
+    """Hora real da captura enviada pelo navegador, aceita só entre 6 h atrás e 2 min à frente."""
+    try:
+        s = str(raw or "").strip()
+        if not s:
+            return fallback
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        t = datetime.fromisoformat(s)
+        if t.tzinfo is not None:
+            t = t.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+        now = datetime.utcnow()
+        if now - timedelta(hours=6) <= t <= now + timedelta(minutes=2):
+            return t
+    except Exception:
+        pass
+    return fallback
+
+
+def _v88b_gps_retention_days():
+    try:
+        return max(1, int(_v50_settings().get("gps_history_retention_days", 7) or 7))
+    except Exception:
+        return 7
+
+
+@app.get("/api/diagnostico/gps/v88")
+@login_required
+def v88b_gps_status():
+    g = _v85_guard()
+    if g:
+        return g
+    days = _v88b_gps_retention_days()
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    total = TechnicianPosition.query.count()
+    old = TechnicianPosition.query.filter(TechnicianPosition.captured_at < cutoff).count()
+    oldest = db.session.query(func.min(TechnicianPosition.captured_at)).scalar()
+    return jsonify({"ok": True, "retencao_dias": days, "total": int(total), "vencidas": int(old),
+                    "mais_antiga": (oldest.isoformat() + "Z") if oldest else None})
+
+
+@app.post("/api/diagnostico/gps/v88")
+@login_required
+def v88b_gps_cleanup():
+    g = _v85_guard()
+    if g:
+        return g
+    if not _v86_is_principal():
+        return jsonify({"ok": False, "error": "Somente o administrador principal."}), 403
+    data = request.get_json(silent=True) or {}
+    if str(data.get("confirmacao") or "").strip() != "LIMPAR GPS":
+        return jsonify({"ok": False, "error": "Digite LIMPAR GPS para confirmar."}), 400
+    days = _v88b_gps_retention_days()
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    removed = 0
+    try:
+        for _ in range(10):
+            ids = [r[0] for r in db.session.query(TechnicianPosition.id).filter(TechnicianPosition.captured_at < cutoff)
+                   .order_by(TechnicianPosition.id).limit(5000).all()]
+            if not ids:
+                break
+            removed += TechnicianPosition.query.filter(TechnicianPosition.id.in_(ids)).delete(synchronize_session=False)
+            db.session.commit()
+        db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="GPS_RETENTION_V88", entity_type="technician_positions",
+                                  entity_id="-", detail=f"removidas={removed}; retencao_dias={days}"))
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        app.logger.exception("V88B: falha na limpeza de posições GPS")
+        return jsonify({"ok": False, "error": str(exc)[:200], "removidas": removed}), 500
+    return jsonify({"ok": True, "removidas": removed, "retencao_dias": days})
+
+
+# ---- R2: exclusão confirmada ----------------------------------------------
+def _v88b_r2_delete_many(keys):
+    """Exclui chaves no R2 e devolve o conjunto CONFIRMADO. Falha de uma chave não esconde as demais."""
+    done = set()
+    keys = list(keys or [])
+    if not keys or not _r2_available():
+        return done
+    client = r2_client()
+    bucket = os.environ["R2_BUCKET_NAME"]
+    for i in range(0, len(keys), 500):
+        chunk = keys[i:i + 500]
+        try:
+            resp = client.delete_objects(Bucket=bucket, Delete={"Objects": [{"Key": k} for k in chunk], "Quiet": False})
+            bad = {e.get("Key") for e in (resp.get("Errors") or [])}
+            done.update(k for k in chunk if k not in bad)
+            continue
+        except Exception:
+            app.logger.warning("V88B: delete_objects indisponível; excluindo um a um")
+        for k in chunk:
+            try:
+                client.delete_object(Bucket=bucket, Key=k)
+                done.add(k)
+            except Exception:
+                app.logger.exception("V88B: falha ao excluir %s do R2", k)
+    return done
+
+
+def _v88b_r2_delete_quiet(key):
+    """Exclusão única, sem levantar exceção. True se confirmou."""
+    if not key or not _r2_available():
+        return False
+    try:
+        r2_client().delete_object(Bucket=os.environ["R2_BUCKET_NAME"], Key=key)
+        return True
+    except Exception:
+        app.logger.exception("V88B: falha ao excluir arquivo antigo %s", key)
+        return False
+
+
+# ---- Fotos de Bobinas (chave bobinas_fotos_limpeza) ------------------------
+_V88B_BOB = {"last": 0.0, "tick": 0.0, "running": False, "last_result": None, "last_at": None}
+_V88B_BOB_LOCK = threading.Lock()
+
+
+def _v88b_bob_expired_filter(now=None):
+    now = now or datetime.utcnow()
+    ret = _v771_photo_retention_days()
+    return and_(AtmBobbinPhoto.deleted_at.is_(None),
+                or_(AtmBobbinPhoto.expires_at <= now, AtmBobbinPhoto.created_at <= now - timedelta(days=ret)))
+
+
+def _v88b_bob_cleanup_run(limit=500):
+    """Apaga fotos de Bobinas vencidas em lote. Só marca 'apagada' quando o arquivo realmente saiu."""
+    now = datetime.utcnow()
+    rows = (AtmBobbinPhoto.query.filter(_v88b_bob_expired_filter(now))
+            .order_by(AtmBobbinPhoto.expires_at).limit(limit).all())
+    res = {"selecionadas": len(rows), "apagadas": 0, "falhas": 0}
+    if not rows:
+        return res
+    r2_rows, ok_rows = {}, []
+    for ph in rows:
+        s = ph.storage_key or ""
+        if not s:
+            ok_rows.append(ph)
+        elif s.startswith("r2__"):
+            r2_rows.setdefault(s[4:], []).append(ph)
+        else:
+            try:
+                fp = UPLOAD_DIR / s
+                if fp.exists():
+                    fp.unlink()
+                ok_rows.append(ph)
+            except Exception:
+                app.logger.exception("V88B: falha ao excluir foto local de Bobinas")
+                res["falhas"] += 1
+    if r2_rows:
+        done = _v88b_r2_delete_many(list(r2_rows))
+        for k, phs in r2_rows.items():
+            if k in done:
+                ok_rows.extend(phs)
+            else:
+                res["falhas"] += len(phs)
+    for ph in ok_rows:
+        ph.deleted_at = now
+    try:
+        db.session.commit()
+        res["apagadas"] = len(ok_rows)
+    except Exception:
+        db.session.rollback()
+        app.logger.exception("V88B: falha ao registrar fotos apagadas")
+        res["apagadas"] = 0
+        res["falhas"] += len(ok_rows)
+    _V88B_BOB["last_result"] = res
+    _V88B_BOB["last_at"] = datetime.utcnow().isoformat() + "Z"
+    return res
+
+
+def _v88b_bob_cleanup_kick():
+    """Dispara a limpeza em segundo plano, no máximo uma vez por hora. Nunca bloqueia a requisição."""
+    if not _v88b_on("bobinas_fotos_limpeza"):
+        return False
+    now = time.time()
+    with _V88B_BOB_LOCK:
+        if _V88B_BOB["running"] or now - _V88B_BOB["last"] < 3600:
+            return False
+        _V88B_BOB["running"] = True
+        _V88B_BOB["last"] = now
+
+    def _job():
+        try:
+            with app.app_context():
+                try:
+                    for _ in range(10):
+                        r = _v88b_bob_cleanup_run(500)
+                        if r["selecionadas"] < 500 or r["apagadas"] == 0:
+                            break
+                finally:
+                    db.session.remove()
+        except Exception:
+            app.logger.exception("V88B: falha na limpeza em segundo plano das fotos de Bobinas")
+        finally:
+            _V88B_BOB["running"] = False
+
+    threading.Thread(target=_job, name="v88b-bob-cleanup", daemon=True).start()
+    return True
+
+
+@app.before_request
+def _v88b_tick():
+    # No máximo uma checagem a cada 10 min por processo; a limpeza em si respeita 1 h.
+    try:
+        now = time.time()
+        if now - _V88B_BOB["tick"] < 600:
+            return None
+        _V88B_BOB["tick"] = now
+        _v88b_bob_cleanup_kick()
+    except Exception:
+        pass
+    return None
+
+
+@app.get("/api/diagnostico/fotos-bobinas/v88")
+@login_required
+def v88b_bob_photos_status():
+    g = _v85_guard()
+    if g:
+        return g
+    now = datetime.utcnow()
+    pend = AtmBobbinPhoto.query.filter(_v88b_bob_expired_filter(now)).count()
+    ativas = AtmBobbinPhoto.query.filter(AtmBobbinPhoto.deleted_at.is_(None)).count()
+    oldest = db.session.query(func.min(AtmBobbinPhoto.expires_at)).filter(_v88b_bob_expired_filter(now)).scalar()
+    return jsonify({"ok": True, "retencao_dias": _v771_photo_retention_days(), "com_arquivo": int(ativas),
+                    "vencidas_pendentes": int(pend), "vencimento_mais_antigo": (oldest.isoformat() + "Z") if oldest else None,
+                    "limpeza_automatica": _v88b_on("bobinas_fotos_limpeza"),
+                    "ultima_execucao": _V88B_BOB.get("last_at"), "ultimo_resultado": _V88B_BOB.get("last_result")})
+
+
+@app.post("/api/diagnostico/fotos-bobinas/v88")
+@login_required
+def v88b_bob_photos_cleanup():
+    g = _v85_guard()
+    if g:
+        return g
+    data = request.get_json(silent=True) or {}
+    if str(data.get("confirmacao") or "").strip() != "LIMPAR FOTOS":
+        return jsonify({"ok": False, "error": "Digite LIMPAR FOTOS para confirmar."}), 400
+    try:
+        res = _v88b_bob_cleanup_run(200)
+        db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="BOBINAS_PHOTO_CLEANUP_V88", entity_type="atm_bobbin_photos",
+                                  entity_id="-", detail=json.dumps(res, ensure_ascii=False)))
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        app.logger.exception("V88B: falha na limpeza manual das fotos de Bobinas")
+        return jsonify({"ok": False, "error": str(exc)[:200]}), 500
+    return jsonify({"ok": True, "resultado": res})
+
+
+# ---- Equipes: resposta compartilhada por 10 s (chave api_cache) -------------
+class _V88bNoCache(Exception):
+    def __init__(self, resp):
+        super().__init__("no-cache")
+        self.resp = resp
+
+
+def _v88b_equipes_status(compute):
+    if not _v88b_on("api_cache"):
+        return compute()
+    date_raw = (request.args.get("date") or "").strip()
+    today = datetime.now(ZoneInfo("America/Sao_Paulo")).date().isoformat()
+    if date_raw not in ("", today):
+        return compute()
+
+    def _loader():
+        r = compute()
+        if getattr(r, "status_code", 200) != 200 or not hasattr(r, "get_data"):
+            raise _V88bNoCache(r)
+        return r.get_data()
+
+    try:
+        raw = _v73_cache_get("v88b:equipes:status:" + today, _loader, ttl=10)
+    except _V88bNoCache as e:
+        return e.resp
+    resp = Response(raw, mimetype="application/json")
+    resp.headers["X-Autopass-Cache"] = "10s"
+    return resp
+
+
+# ---- APT (chave apt_otimizado) ----------------------------------------------
+def _v88b_valid_apt_user_ids(user_ids=None):
+    """Usuários com APT ativa e vigente (dia de Brasília), em uma consulta."""
+    today = datetime.now(V72_TZ).date()
+    q = db.session.query(AptRecord.user_id).filter(AptRecord.active.is_(True), AptRecord.valid_until.isnot(None),
+                                                   AptRecord.valid_until >= today, AptRecord.user_id.isnot(None))
+    if user_ids is not None:
+        ids = list(user_ids)
+        if not ids:
+            return set()
+        q = q.filter(AptRecord.user_id.in_(ids))
+    return {r[0] for r in q.distinct().all()}
+
+
+# ---- Mapa completo do R2 (somente leitura) -------------------------------------
+_V88B_REF_PAT = re.compile(r"(photo|foto|file|arquivo|key|stored|pdf|signature|assinatura|storage|upload|attach|anexo|media|image|imagem|logo|avatar|derived|thumb)", re.I)
+
+
+def _v88b_keys_from_value(v):
+    s = str(v).strip()
+    if not s:
+        return []
+    out = []
+
+    def _norm(x):
+        x = str(x).strip()
+        if not x or x.startswith("local:"):
+            return None
+        if x.startswith("r2__"):
+            x = x[4:]
+        return x.lstrip("/") or None
+
+    if s[0] in "[{":
+        try:
+            def _walk(o):
+                if isinstance(o, str):
+                    k = _norm(o)
+                    if k:
+                        out.append(k)
+                elif isinstance(o, dict):
+                    for z in o.values():
+                        _walk(z)
+                elif isinstance(o, list):
+                    for z in o:
+                        _walk(z)
+            _walk(json.loads(s))
+            return out
+        except Exception:
+            pass
+    k = _norm(s)
+    return [k] if k else []
+
+
+def _v88b_r2_listing(fresh=False, ttl=600):
+    def _load():
+        client = r2_client()
+        token = None
+        pages = 0
+        items = {}
+        complete = True
+        while True:
+            kw = {"Bucket": os.environ["R2_BUCKET_NAME"], "MaxKeys": 1000}
+            if token:
+                kw["ContinuationToken"] = token
+            resp = client.list_objects_v2(**kw)
+            pages += 1
+            for o in resp.get("Contents", []):
+                k = str(o.get("Key") or "")
+                if k:
+                    lm = o.get("LastModified")
+                    items[k] = (int(o.get("Size") or 0), lm.isoformat() if hasattr(lm, "isoformat") else None)
+            if not resp.get("IsTruncated"):
+                break
+            token = resp.get("NextContinuationToken")
+            if not token or pages >= 100:
+                complete = False
+                break
+        return (items, complete)
+    if fresh:
+        with _v75_ttl_lock:
+            _v75_ttl_store.pop("v88b_r2_list", None)
+    return _v75_slow_cached("v88b_r2_list", _load, ttl)
+
+
+def _v88b_reference_map():
+    """({chave: {coluna}}, {coluna: {chaves}}). Varre as colunas de texto dos modelos cujo nome sugere arquivo."""
+    from sqlalchemy import String as _SaString
+    seen, cols = set(), []
+    for mapper in db.Model.registry.mappers:
+        t = mapper.local_table
+        for c in t.columns:
+            if isinstance(c.type, _SaString) and _V88B_REF_PAT.search(c.name) and (t.name, c.name) not in seen:
+                seen.add((t.name, c.name))
+                cols.append((t.name, c.name))
+    refs, col_keys = {}, {}
+    for tname, cname in cols:
+        try:
+            rows = db.session.execute(text('SELECT DISTINCT "%s" FROM "%s" WHERE "%s" IS NOT NULL AND "%s" <> \'\' LIMIT 300000'
+                                           % (cname, tname, cname, cname))).fetchall()
+        except Exception:
+            db.session.rollback()
+            continue
+        label = tname + "." + cname
+        ks = col_keys.setdefault(label, set())
+        for (v,) in rows:
+            for k in _v88b_keys_from_value(v):
+                ks.add(k)
+                refs.setdefault(k, set()).add(label)
+    return refs, col_keys
+
+
+@app.get("/api/diagnostico/armazenamento/mapa/v88")
+@login_required
+def v88b_r2_map():
+    g = _v85_guard()
+    if g:
+        return g
+    if not _r2_available():
+        return jsonify({"ok": False, "error": "R2 não configurado nesta instância."}), 400
+    try:
+        items, complete = _v88b_r2_listing(request.args.get("fresh") == "1")
+    except Exception as exc:
+        return jsonify({"ok": False, "error": "R2 indisponível: " + str(exc)[:160]}), 502
+    refs, col_keys = _v88b_reference_map()
+    try:
+        min_days = max(0, int(request.args.get("dias") or 7))
+    except ValueError:
+        min_days = 7
+    now = datetime.now(ZoneInfo("UTC"))
+
+    def _age(lm):
+        try:
+            return (now - datetime.fromisoformat(lm)).days
+        except Exception:
+            return None
+
+    pastas, unref_list = {}, []
+    tot = {"objetos": 0, "bytes": 0, "ref_objetos": 0, "sem_ref_objetos": 0, "sem_ref_bytes": 0, "sem_ref_antigos_objetos": 0, "sem_ref_antigos_bytes": 0}
+    for key, (size, lm) in items.items():
+        pasta = key.split("/")[0] if "/" in key else "(raiz)"
+        p = pastas.setdefault(pasta, {"pasta": pasta, "objetos": 0, "bytes": 0, "sem_ref_objetos": 0, "sem_ref_bytes": 0,
+                                      "sem_ref_antigos_objetos": 0, "sem_ref_antigos_bytes": 0, "mais_antigo": None, "mais_novo": None, "exemplos": []})
+        tot["objetos"] += 1
+        tot["bytes"] += size
+        p["objetos"] += 1
+        p["bytes"] += size
+        if key in refs:
+            tot["ref_objetos"] += 1
+            continue
+        tot["sem_ref_objetos"] += 1
+        tot["sem_ref_bytes"] += size
+        p["sem_ref_objetos"] += 1
+        p["sem_ref_bytes"] += size
+        if lm:
+            if p["mais_antigo"] is None or lm < p["mais_antigo"]:
+                p["mais_antigo"] = lm
+            if p["mais_novo"] is None or lm > p["mais_novo"]:
+                p["mais_novo"] = lm
+        age = _age(lm)
+        if age is not None and age >= min_days:
+            tot["sem_ref_antigos_objetos"] += 1
+            tot["sem_ref_antigos_bytes"] += size
+            p["sem_ref_antigos_objetos"] += 1
+            p["sem_ref_antigos_bytes"] += size
+            unref_list.append((key, size, lm, pasta))
+        if len(p["exemplos"]) < 3:
+            p["exemplos"].append(key)
+    if request.args.get("formato") == "csv":
+        import csv as _csv
+        buf = io.StringIO()
+        w = _csv.writer(buf, delimiter=";")
+        w.writerow(["chave", "tamanho_bytes", "modificado_em", "pasta"])
+        for row in sorted(unref_list, key=lambda r: (r[3], r[2] or ""))[:50000]:
+            w.writerow(row)
+        return Response("﻿" + buf.getvalue(), mimetype="text/csv",
+                       headers={"Content-Disposition": "attachment; filename=r2_sem_referencia.csv"})
+    colunas = []
+    for label, ks in col_keys.items():
+        pres = sum(1 for k in ks if k in items)
+        if pres == 0:
+            continue
+        colunas.append({"coluna": label, "valores": len(ks), "no_r2": pres, "ausentes_no_r2": len(ks) - pres})
+    colunas.sort(key=lambda c: -c["no_r2"])
+    lista = sorted(pastas.values(), key=lambda p: -p["sem_ref_bytes"])[:40]
+    return jsonify({"ok": True, "release": APP_RELEASE, "somente_leitura": True, "listagem_completa": bool(complete),
+                    "dias_minimos": min_days, "totais": tot, "por_pasta": lista, "colunas": colunas,
+                    "aviso": "Arquivos usados por colunas que este mapa não reconhece aparecem como sem referência. Nada é apagado por esta tela; confira as pastas antes de qualquer limpeza."})
 
 
 @app.get("/api/rede-ferroviaria/v86")
@@ -11178,8 +12339,10 @@ def _v741_access_flag(user,operator):
 
 def _v741_sync_access_pendings():
     # Controle preventivo Motiva: todo elegível sem APT válida gera pendência.
-    for u in User.query.filter(User.archived_at.is_(None),User.active.is_(True),User.access_motiva_apt.is_(True)).all():
-        if not _v741_has_valid_apt(u.id): _v741_queue_access_pending(u,"MOTIVA","Acesso Motiva (APT) habilitado sem APT válida/formalizada")
+    _v88b_us=User.query.filter(User.archived_at.is_(None),User.active.is_(True),User.access_motiva_apt.is_(True)).all()
+    _v88b_valid=_v88b_valid_apt_user_ids([u.id for u in _v88b_us]) if _v88b_on("apt_otimizado") else None
+    for u in _v88b_us:
+        if not ((u.id in _v88b_valid) if _v88b_valid is not None else _v741_has_valid_apt(u.id)): _v741_queue_access_pending(u,"MOTIVA","Acesso Motiva (APT) habilitado sem APT válida/formalizada")
 
 def _v741_access_users(operator):
     col=User.access_metro if operator=="METRO" else User.access_cptm
@@ -13431,7 +14594,10 @@ def _topdesk_suggestions(ticket, limit=5):
     latest={}
     if techs:
         ids=[u.id for u in techs]
-        for p in TechnicianPosition.query.filter(TechnicianPosition.user_id.in_(ids)).order_by(TechnicianPosition.captured_at.desc()).all():
+        if _v88b_on("gps_otimizado"):
+            latest=_v88b_latest_positions(ids)
+        else:
+          for p in TechnicianPosition.query.filter(TechnicianPosition.user_id.in_(ids)).order_by(TechnicianPosition.captured_at.desc()).all():
             latest.setdefault(p.user_id,p)
     out=[]
     for u in techs:
@@ -20893,7 +22059,11 @@ def v50_command_center_today():
     visits_final_today=HardwareFieldVisit.query.filter(HardwareFieldVisit.visit_date==today,HardwareFieldVisit.status=="FINALIZADO").count()
     emv_today=EmvChipSwap.query.filter(func.date(EmvChipSwap.started_at)==today).count()
     emv_done_today=EmvChipSwap.query.filter(func.date(EmvChipSwap.completed_at)==today).count()
-    tech_today=db.session.query(TechnicianPosition.user_id).filter(func.date(TechnicianPosition.captured_at)==today).distinct().count()
+    if _v88b_on("gps_otimizado"):
+        _d0=datetime.combine(today,datetime.min.time())
+        tech_today=db.session.query(TechnicianPosition.user_id).filter(TechnicianPosition.captured_at>=_d0,TechnicianPosition.captured_at<_d0+timedelta(days=1)).distinct().count()
+    else:
+        tech_today=db.session.query(TechnicianPosition.user_id).filter(func.date(TechnicianPosition.captured_at)==today).distinct().count()
     return jsonify({"ok":True,"date":today.isoformat(),"field":{"inventory":inv_today,"chip_started":chip_today,"chip_done":chip_done_today,"technicians":tech_today},"implantation":{"visits":visits_today,"visits_finalized":visits_final_today,"emv_started":emv_today,"emv_done":emv_done_today}})
 
 
@@ -21312,14 +22482,14 @@ def v73_apt_import():
                     try:return datetime.strptime(str(v).strip(),fmt).date()
                     except:pass
             return None
-        users=User.query.all();um={normalize(u.name):u for u in users};created=updated=0
+        users=User.query.all();um={normalize(u.name):u for u in users};created=updated=0;_exist=({(a.collaborator_name,a.line,a.apt_number):a for a in AptRecord.query.all()} if _v88b_on("apt_otimizado") else None)
         for r in rows:
             name=str(pick(r,"COLABORADOR","NOME","FUNCIONARIO","FUNCIONÁRIO") or "").strip();line=str(pick(r,"LINHA","LOCAL","LOCALIDADE") or "").strip();apt=str(pick(r,"APT","APT'S","APTS","Nº APT","NUMERO APT","NÚMERO APT") or "").strip()
             if not name or not apt:continue
             nums=re.findall(r'APT[-–][A-Z0-9-]+(?:\s+[CS]/A)?',apt.upper()) or [apt]
             for num in nums:
-                x=AptRecord.query.filter_by(collaborator_name=name,line=line,apt_number=num.strip()).first()
-                if not x:x=AptRecord(collaborator_name=name,line=line,apt_number=num.strip());created+=1
+                x=(_exist.get((name,line,num.strip())) if _exist is not None else AptRecord.query.filter_by(collaborator_name=name,line=line,apt_number=num.strip()).first())
+                if not x:x=AptRecord(collaborator_name=name,line=line,apt_number=num.strip());created+=1;(_exist.__setitem__((name,line,num.strip()),x) if _exist is not None else None)
                 else:updated+=1
                 u=um.get(normalize(name));x.user_id=u.id if u else None;x.company=str(pick(r,"EMPRESA") or (u.company if u else "") or "").strip();x.valid_until=parsed(pick(r,"VALIDADE APT","VALIDADE","VENCIMENTO APT","VENCIMENTO APT'S"));x.nr10_valid_until=parsed(pick(r,'VENCIMENTO NR10','VALIDADE NR10','NR10 VENCIMENTO'));x.nr35_valid_until=parsed(pick(r,'VENCIMENTO NR35','VALIDADE NR35','NR35 VENCIMENTO'));x.aso_scheduled_at=parsed(pick(r,'AGENDAMENTO ASO','DATA AGENDAMENTO ASO'));x.aso_valid_until=parsed(pick(r,'VENCIMENTO ASO','VALIDADE ASO'));x.integration_scheduled_at=parsed(pick(r,'AGENDAMENTO INTEGRACAO','AGENDAMENTO INTEGRAÇÃO','DATA AGENDAMENTO INTEGRACAO'));x.integration_valid_until=parsed(pick(r,'VENCIMENTO INTEGRACAO','VENCIMENTO INTEGRAÇÃO','VALIDADE INTEGRACAO'));x.process_status=str(pick(r,"STATUS","ANDAMENTO") or x.process_status or "AGUARDANDO").upper();x.active=True;db.session.add(x)
         db.session.commit();return jsonify({"ok":True,"created":created,"updated":updated})
@@ -21357,7 +22527,10 @@ def v828_apt_delete(rid):
     detail={"user_id":x.user_id,"line":x.line,"apt_number":x.apt_number}
     # Exclusão administrativa do registro; demais PT/APT do mesmo usuário são preservadas.
     db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='APT_RECORD_DELETED',entity_type='apt_record',entity_id=str(x.id),detail=json.dumps(detail,ensure_ascii=False)))
-    db.session.delete(x);db.session.commit();return jsonify({"ok":True})
+    _old_pdf=x.pdf_key
+    db.session.delete(x);db.session.commit()
+    if _old_pdf and _v88b_on("apt_otimizado"):_v88b_r2_delete_quiet(_old_pdf)
+    return jsonify({"ok":True})
 
 @app.post("/api/rh/apt/<int:rid>/pdf")
 @login_required
@@ -21365,6 +22538,12 @@ def v73_apt_pdf(rid):
     if not _has_access("teams.apt"):abort(403)
     x=db.session.get(AptRecord,rid) or abort(404);f=request.files.get("pdf")
     if not f or not (f.filename or "").lower().endswith(".pdf"):return jsonify({"ok":False,"error":"Envie um PDF."}),400
+    if _v88b_on("apt_otimizado"):
+        raw=f.read()
+        if len(raw)>15*1024*1024:return jsonify({"ok":False,"error":"PDF acima de 15 MB."}),413
+        old=x.pdf_key;key=f"apt/{x.id}/{uuid.uuid4().hex}-{secure_filename(f.filename)}";_r2_put_bytes(key,raw,"application/pdf");x.pdf_key=key;db.session.commit()
+        if old and old!=key:_v88b_r2_delete_quiet(old)
+        return jsonify({"ok":True})
     key=f"apt/{x.id}/{uuid.uuid4().hex}-{secure_filename(f.filename)}";_r2_put_bytes(key,f.read(),"application/pdf");x.pdf_key=key;db.session.commit();return jsonify({"ok":True})
 
 @app.delete('/api/rh/apt/<int:rid>/pdf')
@@ -21384,6 +22563,12 @@ def v73_apt_pdf_get(rid):
     x=db.session.get(AptRecord,rid) or abort(404)
     if not _has_access("teams.apt") and x.user_id!=session.get("user_id"):abort(403)
     if not x.pdf_key:abort(404)
+    if _v88b_on("apt_otimizado") and _r2_available():
+        try:
+            _nm=re.sub(r'[^A-Za-z0-9._-]+','_',str(x.apt_number or 'apt'))
+            return redirect(r2_client().generate_presigned_url('get_object',Params={'Bucket':os.environ['R2_BUCKET_NAME'],'Key':x.pdf_key,'ResponseContentType':'application/pdf','ResponseContentDisposition':'inline; filename="%s.pdf"'%_nm},ExpiresIn=300))
+        except Exception:
+            app.logger.exception('V88B: link direto do PDF da APT indisponível; usando o método anterior')
     return send_file(io.BytesIO(_r2_get_bytes(x.pdf_key)),mimetype="application/pdf",download_name=f"{x.apt_number}.pdf")
 
 @app.get("/api/rh/apt/export.xlsx")
@@ -21911,7 +23096,7 @@ def v50_notifications_api():
     emv_pending=EmvChipSwap.query.filter(~func.upper(func.coalesce(EmvChipSwap.status,"" )).startswith("CONCLU")).count()
     work_pending=WorkAccessRequest.query.filter_by(status="PENDENTE").count()
     schedule_pending=ScheduleChangeRequest.query.filter(ScheduleChangeRequest.manager_status=="PENDENTE").count()
-    apt_due=sum(1 for x in AptRecord.query.filter(AptRecord.active.is_(True),AptRecord.valid_until.isnot(None)).all() if (x.valid_until-datetime.now(V72_TZ).date()).days<=40)
+    apt_due=(AptRecord.query.filter(AptRecord.active.is_(True),AptRecord.valid_until.isnot(None),AptRecord.valid_until<=datetime.now(V72_TZ).date()+timedelta(days=40)).count() if _v88b_on("apt_otimizado") else sum(1 for x in AptRecord.query.filter(AptRecord.active.is_(True),AptRecord.valid_until.isnot(None)).all() if (x.valid_until-datetime.now(V72_TZ).date()).days<=40))
     items=[
       {"domain":"JORNADA","severity":"ATENÇÃO","title":"Autorizações de jornada aguardando decisão","count":work_pending,"url":"/gestao/rastreabilidade-jornada"},
       {"domain":"RH","severity":"ATENÇÃO","title":"Folgas/trocas aguardando aprovação","count":schedule_pending,"url":"/gestao/rastreabilidade-jornada"},
@@ -25334,6 +26519,14 @@ def _v771_delete_storage(stored):
     except Exception:app.logger.exception('V77.1: falha ao excluir foto temporária')
 
 def _v771_cleanup_photos(force=False):
+    if _v88b_on("bobinas_fotos_limpeza"):
+        # REV88: a limpeza sai do caminho da requisição (segundo plano, em lote, exclusão confirmada).
+        if force:
+            try:_v88b_bob_cleanup_run(50)
+            except Exception:
+                db.session.rollback();app.logger.exception('V88B: falha na limpeza imediata de foto vencida')
+        else:_v88b_bob_cleanup_kick()
+        return
     now=datetime.utcnow(); rows=AtmBobbinPhoto.query.filter(AtmBobbinPhoto.deleted_at.is_(None),AtmBobbinPhoto.expires_at<=now).limit(100).all()
     for ph in rows:
         _v771_delete_storage(ph.storage_key);ph.deleted_at=now;db.session.add(ph)
@@ -26472,7 +27665,7 @@ def v77_bobbins_dashboard_api():
                 _v73_cache_clear(_V87_BOB_KEYS.pop(0))
         return data
     try:
-        data = _v73_cache_get(key, _load)
+        data = _v73_cache_get(key, _load, ttl=max(_V73_CACHE_TTL, 120))
     except Exception:
         return _v87_bobbins_dashboard_compute()
     out = jsonify(data)
