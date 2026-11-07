@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV86 HF2"
+APP_RELEASE = "V87.6 REV87"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -8106,6 +8106,8 @@ _V85_FLAGS = [
     {"id": "tabelas_v85", "label": "Tabelas padronizadas (telas restantes)", "desc": "Ordenação por coluna, busca e contador nas tabelas que ainda não tinham."},
     {"id": "kpi_janela", "label": "Indicadores clicáveis (janela)", "desc": "Clicar no número abre uma janela com os registros que o compõem, com ordenação, busca e exportação."},
     {"id": "acesso_liberacoes", "label": "Acesso somente por liberações (perfil = só cargo)", "desc": "O cargo/perfil deixa de dar acesso: vale só a matriz de liberações de cada usuário. Só liga depois de gravar o retrato; só o administrador principal liga."},
+    {"id": "cache_bobinas", "label": "Dashboard de Bobinas com cache (60 s)", "desc": "O dashboard de Bobinas deixa de recalcular tudo a cada abertura: reutiliza o resultado por até 60 s e atualiza na hora quando alguém registra uma leitura. Desligar volta ao cálculo direto."},
+    {"id": "foto_reduzida", "label": "Fotos de Bobinas reduzidas no celular", "desc": "A foto é reduzida (até 1600 px, JPEG) antes do envio, deixando o registro mais rápido. Se falhar, envia a original. Desligar volta ao envio sem redução."},
     {"id": "graficos_paleta", "label": "Gráficos na paleta única", "desc": "Cores dos gráficos migradas para a paleta central (seguras para daltonismo)."},
 ]
 _V85_IDS = {f["id"] for f in _V85_FLAGS}
@@ -8411,18 +8413,92 @@ def v86_bobbin_times():
     return jsonify({"ok": True, "rows": list(reversed(_V86_BOBBIN_TIMES)), "note": "Memória do servidor: zera ao reiniciar. Mostra os últimos 60 registros desde o último deploy/reinício."})
 
 
+def _v87_rail_rows():
+    """Fonte única da rede ferroviária (estações com coordenada), em cache de 60 s."""
+    def _load():
+        rows = (db.session.query(Location.id, Location.company, Location.line, Location.location, Location.reference_latitude, Location.reference_longitude)
+                .filter(Location.reference_latitude.isnot(None), Location.reference_longitude.isnot(None)).order_by(Location.line, Location.location).all())
+        return [{"id": r.id, "company": r.company or "", "line": r.line or "", "location": r.location or "",
+                 "reference_latitude": float(r.reference_latitude), "reference_longitude": float(r.reference_longitude)} for r in rows]
+    return _v73_cache_get("v86_rail_network", _load)
+
+
+# V87.6 REV87 — Qualidade da rede ferroviária (SOMENTE LEITURA): estações sem coordenada e prováveis cadastros duplicados.
+def _v87_norm_station(txt):
+    import unicodedata
+    t = unicodedata.normalize("NFD", str(txt or ""))
+    t = "".join(c for c in t if unicodedata.category(c) != "Mn").upper()
+    t = re.sub(r"[^A-Z0-9 ]", " ", t)
+    t = re.sub(r"\b(ESTACAO|EST|TERMINAL|TERM)\b", " ", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return re.sub(r"^[A-Z]{2,4} (?=[A-Z0-9]{3,} )", "", t).strip()
+
+
+def _v87_line_number(line):
+    m = re.match(r"^\s*(\d{1,2})", str(line or ""))
+    return m.group(1) if m else ""
+
+
+def _v87_rede_quality():
+    locs = Location.query.order_by(Location.company, Location.line, Location.location).all()
+    inv = dict(db.session.query(Inventory.location_id, func.count(Inventory.id)).group_by(Inventory.location_id).all())
+    rail = [x for x in locs if _v87_line_number(x.line)]
+    has = lambda x: x.reference_latitude is not None and x.reference_longitude is not None
+    with_c = [x for x in rail if has(x)]
+    without = [x for x in rail if not has(x)]
+    idx = {}
+    for x in with_c:
+        idx.setdefault(_v87_line_number(x.line) + "|" + _v87_norm_station(x.location), []).append(x)
+    pairs, rest = [], []
+    for x in without:
+        m = idx.get(_v87_line_number(x.line) + "|" + _v87_norm_station(x.location)) or []
+        if len(m) == 1:
+            y = m[0]
+            pairs.append({"sem_id": x.id, "sem_nome": x.location, "com_id": y.id, "com_nome": y.location, "operadora": x.company, "linha": x.line,
+                          "inv_sem": int(inv.get(x.id, 0)), "inv_com": int(inv.get(y.id, 0))})
+        else:
+            rest.append({"id": x.id, "operadora": x.company, "linha": x.line, "estacao": x.location, "inventario": int(inv.get(x.id, 0)), "candidatos": len(m)})
+    by_line = {}
+    for r in rest:
+        k = f"{r['operadora']} | {r['linha']}"
+        by_line[k] = by_line.get(k, 0) + 1
+    return {"ok": True, "total_localidades": len(locs), "ferroviarias": len(rail), "com_coordenada": len(with_c), "sem_coordenada": len(without),
+            "outras_sem_coordenada": len([x for x in locs if not _v87_line_number(x.line) and not has(x)]),
+            "pares": pairs, "sem_par": rest, "sem_par_por_linha": by_line}
+
+
+@app.get("/api/diagnostico/rede/qualidade/v87")
+@login_required
+def v87_rede_quality_api():
+    if not _has_access("management.diagnostics"):
+        return jsonify({"ok": False, "error": "Sem permissão."}), 403
+    data = _v87_rede_quality()
+    fmt = request.args.get("format")
+    if fmt == "csv":
+        import csv, io as _io
+        which = request.args.get("tipo") or "sem_par"
+        buf = _io.StringIO(); w = csv.writer(buf, delimiter=";")
+        if which == "pares":
+            w.writerow(["id_sem_coordenada", "estacao_sem_coordenada", "id_com_coordenada", "estacao_com_coordenada", "operadora", "linha", "inventario_sem", "inventario_com"])
+            for p in data["pares"]:
+                w.writerow([p["sem_id"], p["sem_nome"], p["com_id"], p["com_nome"], p["operadora"], p["linha"], p["inv_sem"], p["inv_com"]])
+        else:
+            w.writerow(["id", "operadora", "linha", "estacao", "inventario", "candidatos"])
+            for r in data["sem_par"]:
+                w.writerow([r["id"], r["operadora"], r["linha"], r["estacao"], r["inventario"], r["candidatos"]])
+        resp = Response("﻿" + buf.getvalue(), mimetype="text/csv; charset=utf-8")
+        resp.headers["Content-Disposition"] = f"attachment; filename=rede_{which}.csv"
+        return resp
+    return jsonify(data)
+
+
 @app.get("/api/rede-ferroviaria/v86")
 @login_required
 def v86_rail_network():
     """Rede única para todos os mapas (Gerencial, Equipes, Rastreabilidade, Modo TV): estações com coordenada, payload leve e em cache."""
     if not any(_has_access(p) for p in ("teams.map", "management.gps_history", "dashboard.general", "dashboard")):
         abort(403)
-    def _load():
-        rows = (db.session.query(Location.id, Location.company, Location.line, Location.location, Location.reference_latitude, Location.reference_longitude)
-                .filter(Location.reference_latitude.isnot(None), Location.reference_longitude.isnot(None)).order_by(Location.line, Location.location).all())
-        return [{"id": r.id, "company": r.company or "", "line": r.line or "", "location": r.location or "",
-                 "reference_latitude": float(r.reference_latitude), "reference_longitude": float(r.reference_longitude)} for r in rows]
-    resp = jsonify(_v73_cache_get("v86_rail_network", _load))
+    resp = jsonify(_v87_rail_rows())
     resp.headers["Cache-Control"] = "private, max-age=60"
     return resp
 
@@ -21365,8 +21441,7 @@ def v732h3_nearest_destinations():
 @login_required
 def v732h3_tracking_network():
     if not _has_access("management.gps_history"): abort(403)
-    rows=Location.query.filter(Location.reference_latitude.isnot(None),Location.reference_longitude.isnot(None)).order_by(Location.line,Location.location).all()
-    return jsonify({"ok":True,"rows":[{"id":x.id,"company":x.company or "","line":x.line or "","location":x.location or "","reference_latitude":x.reference_latitude,"reference_longitude":x.reference_longitude} for x in rows]})
+    return jsonify({"ok":True,"rows":_v87_rail_rows()})
 
 @app.get("/api/equipes/tecnicos-proximos")
 @login_required
@@ -25616,6 +25691,7 @@ def v77_bobbins_register():
                 _v771_cleanup_photos()
         except Exception:
             app.logger.exception('Falha não crítica na limpeza periódica de fotos de bobinas')
+    _v87_bob_invalidate()
     _v8548_total_ms=(time.perf_counter()-_v8548_bobbin_started)*1000
     _v86_record_bobbin_time(_v8548_total_ms,_v86_upload_ms,has_photo,float(getattr(g,'_perf_sql_ms',0) or 0),int(getattr(g,'_perf_query_count',0) or 0))
     if _v8548_total_ms>=800:
@@ -26362,9 +26438,49 @@ def v85274_bobbin_deliveries_bulk_update():
         db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='BOBINAS_STATUS_MASSA',entity_type='bobbin_delivery_schedule',entity_id=str(x.id),detail=json.dumps({'de':old,'para':status,'location':x.location},ensure_ascii=False)))
     db.session.commit();return jsonify({'ok':True,'updated':len(rows),'field':'status','status':status})
 
+_V87_BOB_KEYS = []
+
+
+def _v87_bob_invalidate():
+    try:
+        keys = list(_V87_BOB_KEYS)
+        del _V87_BOB_KEYS[:]
+        if keys:
+            _v73_cache_clear(*keys)
+    except Exception:
+        pass
+
+
 @app.get('/api/bobinas/dashboard')
 @login_required
 def v77_bobbins_dashboard_api():
+    if not _has_access('field.bobbins_dashboard'): abort(403)
+    if not _v85_flags().get('cache_bobinas'):
+        return _v87_bobbins_dashboard_compute()
+    key = 'v87_bobdash:' + '&'.join(f"{k}={request.args.get(k, '')}" for k in sorted(request.args)) + ':' + ('1' if _has_access('field.stock_manage') else '0')
+    hit = {'v': True}
+
+    def _load():
+        hit['v'] = False
+        resp = _v87_bobbins_dashboard_compute()
+        data = resp.get_json() if hasattr(resp, 'get_json') else None
+        if not data:
+            raise RuntimeError('dashboard sem corpo')
+        if key not in _V87_BOB_KEYS:
+            _V87_BOB_KEYS.append(key)
+            while len(_V87_BOB_KEYS) > 12:
+                _v73_cache_clear(_V87_BOB_KEYS.pop(0))
+        return data
+    try:
+        data = _v73_cache_get(key, _load)
+    except Exception:
+        return _v87_bobbins_dashboard_compute()
+    out = jsonify(data)
+    out.headers['X-Autopass-Cache'] = 'HIT' if hit['v'] else 'MISS'
+    return out
+
+
+def _v87_bobbins_dashboard_compute():
     if not _has_access('field.bobbins_dashboard'): abort(403)
     _v771_cleanup_photos()
     company=(request.args.get('company') or '').strip();line=(request.args.get('line') or '').strip();station=(request.args.get('station') or '').strip();atm=(request.args.get('atm') or '').strip();situation=(request.args.get('situation') or '').strip().upper();replacement=(request.args.get('replacement') or '').strip().upper()
