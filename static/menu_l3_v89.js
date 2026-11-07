@@ -31,7 +31,7 @@
  // Vai até a seção pelo título (ou abre a aba com esse nome). Tenta por até ~4 s porque várias telas montam o conteúdo depois.
  const nz=t=>(t||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/\s+/g,' ').trim();
  const goto=()=>{const m=/#ap-ir=(.+)$/.exec(location.hash);if(!m)return;let want;try{want=nz(decodeURIComponent(m[1]))}catch(e){return}
-  let tries=0;const run=()=>{tries++;const cand=[...document.querySelectorAll('main h1,main h2,main h3,main summary,main [role=tab],main button[data-tab],main .tabs button,main .tabBtn,main a[data-tab]')];
+  let tries=0;const run=()=>{tries++;const cand=[...document.querySelectorAll('main h1,main h2,main h3,main summary,main [role=tab],main button[data-tab],main .tabs button,main .tabBtn,main a[data-tab],main button[data-view]')];
    const el=cand.find(e=>nz(e.textContent).startsWith(want));
    if(el){if(/^(BUTTON|A)$/.test(el.tagName)||el.getAttribute('role')==='tab'){el.click()}
     const box=el.closest('details')||el.closest('section,.card')||el;if(box.tagName==='DETAILS')box.open=true;
