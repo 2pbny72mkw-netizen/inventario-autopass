@@ -1,6 +1,14 @@
 {% extends "base.html" %}
 {% block title %}Diagnóstico | {{ app_release }}{% endblock %}
 {% block content %}
+<style>
+.apFold{margin-left:auto;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.apFoldBar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 10px}
+section.card.apCollapsed>:not(.sectionHead){display:none!important}
+section.card.apCollapsed>.sectionHead{margin-bottom:0}
+section.card.apCollapsed>.sectionHead p{display:none}
+section.card.apCollapsed>.sectionHead>:not(:first-child):not(.apFold){display:none!important}
+</style>
 <div class="dashHero v44Hero"><div><span class="eyebrow">{{ app_release }} · ADMINISTRAÇÃO</span><h1>Central de Diagnóstico</h1><p>Auditoria técnica para apoiar investigação de erros sem expor detalhes sensíveis aos usuários operacionais.</p></div><div class="heroActions"><button class="secondary" id="diagRefresh">Atualizar</button></div></div>
 <section class="v424Kpis"><article class="kpi primaryKpi" data-ap-href="/usuarios"><span>Usuários</span><b id="dgUsers">0</b></article><article class="kpi"><span>Inventários</span><b id="dgInv">0</b></article><article class="kpi successKpi"><span>Relatórios de visita</span><b id="dgVisits">0</b></article><article class="kpi warningKpi"><span>Eventos de auditoria</span><b id="dgEvents">0</b></article></section>
 <section class="v424Kpis"><article class="kpi" data-ap-href="/topdesk"><span>Chamados TopDesk</span><b id="dgTopdesk">0</b></article><article class="kpi"><span>Arquivos locais</span><b id="dgMediaFiles">0</b></article><article class="kpi"><span>Armazenamento local</span><b id="dgMediaBytes">0 MB</b></article><article class="kpi"><span>Fotos temporárias EMV/Recarga</span><b id="dgTempPhotos">0</b></article></section>
@@ -219,4 +227,15 @@ if(a==='merge'){const t=prompt('Mesclar a duplicada ('+b.dataset.d+') na mantida
 if(a==='undo'){const t=prompt('Desfazer a mesclagem #'+b.dataset.m+'. Digite DESFAZER para confirmar:');if(t===null)return;const r=await P('/api/diagnostico/rede/mesclar/desfazer/v88',{mesclagem:+b.dataset.m,confirmacao:t});$('v88MgPrev').textContent=r.ok?'Mesclagem desfeita.':(r.error||'Falha');mg()}});
 })();</script>
 
+<script>(()=>{
+/* HF4: botão Recolher/Expandir em cada seção do Diagnóstico + Recolher tudo / Expandir tudo; o estado fica lembrado neste navegador. */
+const KEY='ap_diag_fold_v1';let st={};try{st=JSON.parse(localStorage.getItem(KEY)||'{}')||{}}catch(e){st={}}
+const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(st))}catch(e){}};
+const secs=[...document.querySelectorAll('section.card')].filter(s=>s.querySelector(':scope>.sectionHead h2'));
+const idOf=(s,i)=>s.id||('s'+i+'_'+(s.querySelector('h2').textContent||'').trim().slice(0,28));
+const apply=(s,btn,fold)=>{s.classList.toggle('apCollapsed',fold);btn.textContent=fold?'Expandir ▼':'Recolher ▲';btn.setAttribute('aria-expanded',fold?'false':'true')};
+const items=secs.map((s,i)=>{const id=idOf(s,i);const head=s.querySelector(':scope>.sectionHead');const b=document.createElement('button');b.type='button';b.className='btn apFold';b.setAttribute('aria-label','Recolher ou expandir a seção '+(s.querySelector('h2').textContent||'').trim());head.appendChild(b);b.onclick=()=>{const f=!s.classList.contains('apCollapsed');st[id]=f?1:0;save();apply(s,b,f)};apply(s,b,!!st[id]);return {s,b,id}});
+if(secs.length){const bar=document.createElement('div');bar.className='apFoldBar';bar.innerHTML='<button type="button" class="btn" id="apFoldAll">Recolher tudo</button><button type="button" class="btn" id="apFoldNone">Expandir tudo</button><span class="muted">Cada seção lembra se estava recolhida.</span>';secs[0].parentNode.insertBefore(bar,secs[0]);
+const all=f=>{items.forEach(x=>{st[x.id]=f?1:0;apply(x.s,x.b,f)});save()};document.getElementById('apFoldAll').onclick=()=>all(true);document.getElementById('apFoldNone').onclick=()=>all(false)}
+})();</script>
 {% endblock %}
