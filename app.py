@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV88 HF4"
+APP_RELEASE = "V87.6 REV89"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -7273,9 +7273,31 @@ def hardware_implantation_technicians_api():
     rows=User.query.filter(User.id.in_(ids)).order_by(User.name).all() if ids else []
     return jsonify({"ok":True,"technicians":[{"id":u.id,"name":u.name} for u in rows]})
 
+def _v89_hw_summary_sql():
+    """Mesmo resultado do cálculo antigo, agregado no banco (não carrega o texto completo de todos os relatórios)."""
+    V = HardwareFieldVisit
+    k = func.coalesce(func.nullif(V.conclusion_status, ""), func.nullif(V.status, ""), "PENDENTE")
+    by_status = {r[0]: int(r[1]) for r in db.session.query(k, func.count(V.id)).group_by(k).all()}
+    by_client = {r[0]: int(r[1]) for r in db.session.query(V.client, func.count(V.id)).group_by(V.client).all()}
+    one = db.session.query(
+        func.count(V.id),
+        func.sum(case((V.status == "FINALIZADO", 1), else_=0)),
+        func.sum(case((V.status.in_(("RASCUNHO", "PAUSADO")), 1), else_=0)),
+        func.sum(case((V.client_accepted.is_(True), 1), else_=0)),
+        func.sum(case((V.conclusion_status == "CONCLUÍDA COM PENDÊNCIAS", 1), else_=0))).one()
+    return {"ok": True, "total": int(one[0] or 0), "finalized": int(one[1] or 0), "in_progress": int(one[2] or 0), "accepted": int(one[3] or 0),
+            "with_pending": int(one[4] or 0), "by_status": by_status, "by_client": by_client}
+
+
 @app.get("/api/implantacao-hardware/resumo")
 @hardware_implantation_required
 def hardware_implantation_summary_api():
+    if _v88b_on("api_cache"):
+        try:
+            return jsonify(_v73_cache_get("v89_hw_summary", _v89_hw_summary_sql, ttl=30))
+        except Exception:
+            db.session.rollback()
+            app.logger.exception("V89: resumo de implantação em SQL falhou; usando método antigo")
     rows=HardwareFieldVisit.query.all(); total=len(rows)
     by_status={}
     by_client={}
@@ -8156,6 +8178,7 @@ _V85_FLAGS = [
     {"id": "bobinas_fotos_limpeza", "label": "Fotos de Bobinas: limpeza automática em segundo plano", "desc": "Fotos de Bobinas vencidas (7 dias, conforme a configuração) são apagadas do armazenamento em lote, no máximo a cada hora e fora do registro do técnico. A foto só é marcada como apagada quando o armazenamento confirma. O registro da atividade permanece. Desligar volta ao método anterior."},
     {"id": "api_cache", "label": "Equipes: resposta compartilhada por 10 s", "desc": "A tela de Equipes passa a reaproveitar por até 10 s o resultado já calculado para outro usuário, em vez de refazer ~16 consultas a cada atualização."},
     {"id": "apt_otimizado", "label": "APT: consultas em lote e arquivos sem sobra", "desc": "Verificação de APT vigente e importação em poucas consultas, contagem do painel feita no banco, PDF aberto direto do armazenamento e arquivo antigo apagado quando o PDF é trocado ou a APT é excluída."},
+    {"id": "menu_terceiro_nivel", "label": "Menus com terceiro nível + índice do Diagnóstico", "desc": "Em Gestão › Diagnóstico, abre um painel ao lado com as seções da página (vai direto a cada uma) e mostra um índice fixo no topo do Diagnóstico. Mesmas permissões; desligar volta ao menu atual."},
 ]
 _V85_IDS = {f["id"] for f in _V85_FLAGS}
 _V85_STATE = {"ready": False}
@@ -8720,7 +8743,7 @@ def v88_indexes_create():
 # HF2: composição e retenção de mobile_sync_events; compactação sob demanda
 # ---------------------------------------------------------------------------
 _V88H2_SYNC_DELETABLE = ("GPS_SIGNAL", "GPS_POSITION")  # só tipos cujo dado já está guardado em outra tabela (ou que foi ignorado); os demais são registro de campo
-_V88H2_COMPACT_TABLES = ("mobile_sync_events", "technician_positions")
+_V88H2_COMPACT_TABLES = ("mobile_sync_events", "technician_positions", "performance_metrics", "topdesk_tickets", "financial_atm_transactions")
 
 
 @app.get("/api/diagnostico/sync-eventos/v88")
@@ -8818,6 +8841,45 @@ def v88h2_compact():
     except Exception:
         db.session.rollback()
     return jsonify({"ok": True, "tabela": tabela, "antes_mb": round(before / 1048576.0, 1), "depois_mb": round(after / 1048576.0, 1)})
+
+
+# ---------------------------------------------------------------------------
+# V89: saúde das tabelas (somente leitura): espaço morto estimado e colunas mais pesadas
+# ---------------------------------------------------------------------------
+@app.get("/api/diagnostico/tabelas-saude/v89")
+@login_required
+def v89_table_health():
+    g = _v85_guard()
+    if g:
+        return g
+    try:
+        rows = db.session.execute(text(
+            "SELECT c.relname, pg_total_relation_size(c.oid), pg_relation_size(c.oid), COALESCE(s.n_live_tup,0), COALESCE(s.n_dead_tup,0), "
+            "s.last_autovacuum, s.last_vacuum FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
+            "LEFT JOIN pg_stat_user_tables s ON s.relid=c.oid WHERE c.relkind='r' AND n.nspname='public' "
+            "ORDER BY pg_total_relation_size(c.oid) DESC LIMIT 12")).fetchall()
+        names = [r[0] for r in rows[:5]]
+        cols = db.session.execute(text(
+            "SELECT tablename, attname, avg_width FROM pg_stats WHERE schemaname='public' AND tablename = ANY(:t) ORDER BY avg_width DESC"),
+            {"t": names}).fetchall()
+        db.session.rollback()
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({"ok": False, "error": str(exc)[:200]}), 500
+    heavy = {}
+    live = {r[0]: int(r[3]) for r in rows}
+    for t, a, w in cols:
+        if len(heavy.setdefault(t, [])) < 5 and int(w or 0) >= 40:
+            heavy[t].append({"coluna": a, "bytes_medio": int(w), "mb_estimado": round(int(w) * live.get(t, 0) / 1048576.0, 1)})
+    out = []
+    for r in rows:
+        total, tab, lv, dead = int(r[1]), int(r[2]), int(r[3]), int(r[4])
+        ratio = dead / float(lv + dead) if (lv + dead) else 0.0
+        out.append({"tabela": r[0], "total_mb": round(total / 1048576.0, 1), "dados_mb": round(tab / 1048576.0, 1), "vivas": lv, "mortas": dead,
+                    "pct_mortas": round(ratio * 100, 1), "recuperavel_mb_estimado": round(tab * ratio / 1048576.0, 1),
+                    "ultima_limpeza": (r[5] or r[6]).isoformat() + "Z" if (r[5] or r[6]) else None,
+                    "compactavel": r[0] in _V88H2_COMPACT_TABLES, "colunas_pesadas": heavy.get(r[0], [])})
+    return jsonify({"ok": True, "tabelas": out})
 
 
 @app.get("/api/diagnostico/tabelas/v88")
