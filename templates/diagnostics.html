@@ -123,4 +123,91 @@ $('rqLinhas').innerHTML=Object.entries(r.sem_par_por_linha).map(([k,v])=>esc(k)+
 $('rqPares').innerHTML=r.pares.map(p=>'<tr><td>'+esc(p.operadora)+' / '+esc(p.linha)+'</td><td>'+esc(p.sem_nome)+' ('+p.sem_id+')</td><td>'+esc(p.com_nome)+' ('+p.com_id+')</td><td>'+nf(p.inv_sem)+'</td><td>'+nf(p.inv_com)+'</td></tr>').join('')||'<tr><td colspan="5">Nenhum.</td></tr>'}catch(e){$('rqInfo').textContent='Erro: '+e.message}}
 $('rqReload').onclick=rq;rq()})();</script>
 
+<section class="card" id="v88bPanel"><div class="sectionHead"><div><h2>Arquivos e GPS — V87.6 REV88 (parte B)</h2><p class="muted">Ferramentas do Gestor. Cada ação que apaga algo pede confirmação digitada e fica no registro de auditoria. O mapa do armazenamento é somente leitura.</p></div></div>
+
+<h3 style="margin:12px 0 4px">Fotos de Bobinas (retenção de 7 dias)</h3>
+<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><button class="btn" id="v88bBobLoad">Ver situação</button><button class="btn primary" id="v88bBobRun">Limpar vencidas agora</button><span class="muted" id="v88bBobInfo"></span></div>
+
+<h3 style="margin:14px 0 4px">Posições de GPS vencidas</h3>
+<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><button class="btn" id="v88bGpsLoad">Ver situação</button><button class="btn primary" id="v88bGpsRun">Apagar posições vencidas</button><span class="muted" id="v88bGpsInfo"></span></div>
+
+<h3 style="margin:14px 0 4px">Mapa do armazenamento (R2) — somente leitura</h3>
+<p class="muted" style="margin:0 0 6px">Compara os arquivos do R2 com todas as colunas do banco que apontam para arquivo. "Sem referência" é um teto: arquivos usados por colunas que o mapa não reconhece também aparecem. Nada é apagado aqui.</p>
+<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><button class="btn" id="v88bMapLoad">Gerar mapa</button><button class="btn" id="v88bMapFresh">Reler o R2</button><a class="btn" id="v88bMapCsv" href="/api/diagnostico/armazenamento/mapa/v88?formato=csv&dias=7">Baixar lista sem referência (&gt; 7 dias, CSV)</a><span class="muted" id="v88bMapInfo"></span></div>
+<div style="overflow:auto;max-height:340px"><table class="ap-table" style="width:100%"><thead><tr><th>Pasta</th><th>Arquivos</th><th>MB</th><th>Sem referência</th><th>MB sem ref.</th><th>Mais antigo</th><th>Exemplo</th></tr></thead><tbody id="v88bMapBody"></tbody></table></div>
+<h4 style="margin:8px 0 4px">Colunas do banco que apontam para o R2</h4>
+<div style="overflow:auto;max-height:220px"><table class="ap-table" style="width:100%"><thead><tr><th>Coluna</th><th>Valores</th><th>No R2</th><th>Ausentes no R2</th></tr></thead><tbody id="v88bColBody"></tbody></table></div>
+</section>
+<script>(()=>{const $=id=>document.getElementById(id),nf=n=>Number(n||0).toLocaleString('pt-BR');
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const J=async(u,o)=>{try{const r=await fetch(u,Object.assign({cache:'no-store',headers:{'Content-Type':'application/json'}},o||{}));return await r.json()}catch(e){return {ok:false,error:'Falha de rede'}}};
+const P=(u,b)=>J(u,{method:'POST',body:JSON.stringify(b||{})});
+const dt=s=>s?new Date(s).toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo'}):'—';
+const mb=b=>nf(Math.round((b||0)/1048576*10)/10);
+async function bob(){const r=await J('/api/diagnostico/fotos-bobinas/v88');$('v88bBobInfo').textContent=r.ok?('Retenção '+r.retencao_dias+' dias · com arquivo: '+nf(r.com_arquivo)+' · vencidas pendentes: '+nf(r.vencidas_pendentes)+' · limpeza automática: '+(r.limpeza_automatica?'ligada':'desligada')+(r.ultima_execucao?(' · última: '+dt(r.ultima_execucao)):'')):(r.error||'Falha')}
+$('v88bBobLoad').onclick=bob;
+$('v88bBobRun').onclick=async()=>{const t=prompt('Apagar do armazenamento até 200 fotos de Bobinas já vencidas (o registro da atividade permanece). Digite LIMPAR FOTOS para confirmar:');if(t===null)return;$('v88bBobInfo').textContent='Limpando…';const r=await P('/api/diagnostico/fotos-bobinas/v88',{confirmacao:t});if(!r.ok){$('v88bBobInfo').textContent=r.error||'Falha';return}$('v88bBobInfo').textContent='Apagadas: '+r.resultado.apagadas+' · falhas: '+r.resultado.falhas;setTimeout(bob,2500)};
+async function gps(){const r=await J('/api/diagnostico/gps/v88');$('v88bGpsInfo').textContent=r.ok?('Retenção '+r.retencao_dias+' dias · total: '+nf(r.total)+' · vencidas: '+nf(r.vencidas)+(r.mais_antiga?(' · mais antiga: '+dt(r.mais_antiga)):'')):(r.error||'Falha')}
+$('v88bGpsLoad').onclick=gps;
+$('v88bGpsRun').onclick=async()=>{const t=prompt('Apagar as posições de GPS mais antigas que a retenção configurada (somente administrador principal). Digite LIMPAR GPS para confirmar:');if(t===null)return;$('v88bGpsInfo').textContent='Apagando…';const r=await P('/api/diagnostico/gps/v88',{confirmacao:t});if(!r.ok){$('v88bGpsInfo').textContent=r.error||'Falha';return}$('v88bGpsInfo').textContent='Removidas: '+nf(r.removidas);setTimeout(gps,2500)};
+async function map(fresh){$('v88bMapInfo').textContent='Lendo o R2 (pode levar ~10 s)…';const r=await J('/api/diagnostico/armazenamento/mapa/v88'+(fresh?'?fresh=1':''));if(!r.ok){$('v88bMapInfo').textContent=r.error||'Falha';return}const t=r.totais;$('v88bMapInfo').textContent=nf(t.objetos)+' arquivos · '+mb(t.bytes)+' MB · sem referência: '+nf(t.sem_ref_objetos)+' ('+mb(t.sem_ref_bytes)+' MB) · destes, com mais de '+r.dias_minimos+' dias: '+nf(t.sem_ref_antigos_objetos)+' ('+mb(t.sem_ref_antigos_bytes)+' MB)'+(r.listagem_completa?'':' · leitura incompleta');
+$('v88bMapBody').innerHTML=r.por_pasta.map(p=>'<tr><td>'+esc(p.pasta)+'</td><td>'+nf(p.objetos)+'</td><td>'+mb(p.bytes)+'</td><td>'+nf(p.sem_ref_objetos)+'</td><td>'+mb(p.sem_ref_bytes)+'</td><td>'+dt(p.mais_antigo)+'</td><td>'+esc((p.exemplos||[])[0]||'')+'</td></tr>').join('')||'<tr><td colspan="7">Sem dados.</td></tr>';
+$('v88bColBody').innerHTML=r.colunas.map(c=>'<tr><td>'+esc(c.coluna)+'</td><td>'+nf(c.valores)+'</td><td>'+nf(c.no_r2)+'</td><td>'+nf(c.ausentes_no_r2)+'</td></tr>').join('')||'<tr><td colspan="4">Nenhuma.</td></tr>'}
+$('v88bMapLoad').onclick=()=>map(false);$('v88bMapFresh').onclick=()=>map(true);
+})();</script>
+
+<section class="card" id="v88Panel"><div class="sectionHead"><div><h2>Fundação de dados e alertas — V87.6 REV88</h2><p class="muted">Ferramentas do Gestor. Nada é apagado; ações que alteram dados pedem confirmação digitada e ficam no registro de auditoria.</p></div></div>
+
+<h3 style="margin:12px 0 4px">Índices do banco</h3>
+<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><button class="btn" id="v88IxLoad">Ver índices</button><button class="btn primary" id="v88IxMake">Criar índices que faltam</button><span class="muted" id="v88IxInfo"></span></div>
+<div style="overflow:auto"><table class="ap-table" style="width:100%"><thead><tr><th>Índice</th><th>Tabela</th><th>Colunas</th><th>Situação</th></tr></thead><tbody id="v88IxBody"></tbody></table></div>
+
+<h3 style="margin:14px 0 4px">Tamanho das tabelas (somente leitura)</h3>
+<div style="display:flex;gap:8px;align-items:center"><button class="btn" id="v88TbLoad">Medir agora</button><span class="muted" id="v88TbInfo"></span></div>
+<div style="overflow:auto;max-height:320px"><table class="ap-table" style="width:100%"><thead><tr><th>Tabela</th><th>Total (MB)</th><th>Dados (MB)</th><th>Índices (MB)</th><th>Linhas (aprox.)</th></tr></thead><tbody id="v88TbBody"></tbody></table></div>
+
+<h3 style="margin:14px 0 4px">Camada de dados diária</h3>
+<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn" id="v88FtLoad">Ver situação</button><button class="btn primary" id="v88FtRun">Atualizar últimos 60 dias</button><span class="muted" id="v88FtInfo"></span></div>
+<div style="overflow:auto"><table class="ap-table" style="width:100%"><thead><tr><th>Métrica</th><th>Linhas</th><th>De</th><th>Até</th><th>Atualizado</th></tr></thead><tbody id="v88FtBody"></tbody></table></div>
+
+<h3 style="margin:14px 0 4px">Alertas estatísticos (modo sombra)</h3>
+<p class="muted" style="margin:0 0 6px">Coletas fora do padrão, divergência declarado × apurado e reposição de bobinas. Calculam e ficam guardados; ninguém é notificado. Marque cada alerta como útil ou falso alarme para medir o acerto.</p>
+<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn primary" id="v88AlRun">Calcular agora</button><button class="btn" id="v88AlLoad">Ver alertas novos</button><a class="btn" id="v88AlPage" href="/alertas" style="display:none">Abrir Central de Alertas</a><span class="muted" id="v88AlInfo"></span></div>
+<div style="overflow:auto;max-height:340px"><table class="ap-table" style="width:100%"><thead><tr><th>Gravidade</th><th>Tipo</th><th>Assunto</th><th>Detalhe</th><th>Data</th><th>Revisão</th></tr></thead><tbody id="v88AlBody"></tbody></table></div>
+
+<h3 style="margin:14px 0 4px">Mesclagem de estações duplicadas</h3>
+<p class="muted" style="margin:0 0 6px">Funciona só com a chave "Mesclar estações duplicadas" ligada e só para o administrador principal. A localidade sem coordenada é fundida na que tem coordenada; é possível desfazer. Faça backup do banco antes.</p>
+<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn" id="v88MgLoad">Carregar pares e histórico</button><span class="muted" id="v88MgInfo"></span></div>
+<div style="overflow:auto;max-height:320px"><table class="ap-table" style="width:100%"><thead><tr><th>Operadora / linha</th><th>Duplicada (sem coordenada)</th><th>Mantida (com coordenada)</th><th>Ações</th></tr></thead><tbody id="v88MgBody"></tbody></table></div>
+<div id="v88MgPrev" class="muted" style="margin:6px 0"></div>
+<h4 style="margin:8px 0 4px">Histórico de mesclagens</h4>
+<div style="overflow:auto;max-height:220px"><table class="ap-table" style="width:100%"><thead><tr><th>#</th><th>Estação</th><th>Mantida (id)</th><th>Duplicada (id)</th><th>Em</th><th>Situação</th></tr></thead><tbody id="v88MgHist"></tbody></table></div>
+</section>
+<script>(()=>{const $=id=>document.getElementById(id),nf=n=>Number(n||0).toLocaleString('pt-BR');
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const J=async(u,o)=>{try{const r=await fetch(u,Object.assign({cache:'no-store',headers:{'Content-Type':'application/json'}},o||{}));return await r.json()}catch(e){return {ok:false,error:'Falha de rede'}}};
+const P=(u,b)=>J(u,{method:'POST',body:JSON.stringify(b||{})});
+const dt=s=>s?new Date(s).toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo'}):'—';
+async function ix(keep){const r=await J('/api/diagnostico/indices/v88');if(!r.ok){$('v88IxInfo').textContent=r.error||'Falha';return}if(!keep)$('v88IxInfo').textContent='';$('v88IxBody').innerHTML=r.indices.map(i=>'<tr><td>'+esc(i.nome)+'</td><td>'+esc(i.tabela)+'</td><td>'+esc(i.colunas)+'</td><td>'+(i.existe?'● existe':'▲ falta')+'</td></tr>').join('')}
+$('v88IxLoad').onclick=()=>ix();
+$('v88IxMake').onclick=async()=>{$('v88IxInfo').textContent='Criando…';const r=await P('/api/diagnostico/indices/v88');if(!r.ok){$('v88IxInfo').textContent=r.error||'Falha';return}$('v88IxInfo').textContent=r.resultado.map(x=>x.nome+': '+x.resultado+(x.erro?' ('+x.erro+')':'')).join(' · ');ix(true)};
+$('v88TbLoad').onclick=async()=>{$('v88TbInfo').textContent='Medindo…';const r=await J('/api/diagnostico/tabelas/v88');if(!r.ok){$('v88TbInfo').textContent=r.error||'Falha';return}$('v88TbInfo').textContent='Banco inteiro: '+nf(r.banco_mb)+' MB';$('v88TbBody').innerHTML=r.tabelas.map(t=>'<tr><td>'+esc(t.tabela)+'</td><td>'+nf(t.total_mb)+'</td><td>'+nf(t.dados_mb)+'</td><td>'+nf(t.indices_mb)+'</td><td>'+nf(t.linhas_aprox)+'</td></tr>').join('')};
+async function ft(keep){const r=await J('/api/diagnostico/camada-diaria/v88');if(!r.ok){$('v88FtInfo').textContent=r.error||'Falha';return}if(!keep)$('v88FtInfo').textContent=r.metricas.length?'':'Ainda não calculada.';$('v88FtBody').innerHTML=r.metricas.map(m=>'<tr><td>'+esc(m.metrica)+'</td><td>'+nf(m.linhas)+'</td><td>'+esc(m.de||'—')+'</td><td>'+esc(m.ate||'—')+'</td><td>'+dt(m.atualizado)+'</td></tr>').join('')}
+$('v88FtLoad').onclick=()=>ft();
+$('v88FtRun').onclick=async()=>{$('v88FtInfo').textContent='Calculando…';const r=await P('/api/diagnostico/camada-diaria/v88',{dias:60});if(!r.ok){$('v88FtInfo').textContent=r.error||'Falha';return}$('v88FtInfo').textContent=r.resultado.filter(x=>x.erro).map(x=>x.metrica+': '+x.erro).join(' · ')||'Concluído.';ft(true)};
+async function al(){const r=await J('/api/alertas/v88');if(!r.ok){$('v88AlInfo').textContent=r.error||'Falha';return}const q=r.qualidade||{};$('v88AlInfo').textContent=r.alertas.length+' novo(s) · revisados: '+(q.revisados||0)+(q.precisao_pct!=null?' · acerto: '+q.precisao_pct+'%':'');$('v88AlPage').style.display=r.visivel?'inline-block':'none';
+$('v88AlBody').innerHTML=r.alertas.slice(0,60).map(a=>'<tr><td>'+(a.gravidade==='ALTA'?'■ Alta':'▲ Média')+'</td><td>'+esc(a.tipo)+'</td><td>'+esc(a.assunto)+'</td><td>'+esc(a.detalhe)+'</td><td>'+esc(a.data||'')+'</td><td><button class="btn" data-id="'+a.id+'" data-r="UTIL">Útil</button> <button class="btn" data-id="'+a.id+'" data-r="FALSO">Falso alarme</button></td></tr>').join('')||'<tr><td colspan="6">Nenhum alerta novo.</td></tr>'}
+$('v88AlLoad').onclick=al;
+$('v88AlBody').onclick=async e=>{const b=e.target.closest('button[data-id]');if(!b)return;await P('/api/alertas/v88/'+b.dataset.id+'/revisar',{revisao:b.dataset.r});al()};
+$('v88AlRun').onclick=async()=>{$('v88AlInfo').textContent='Calculando…';const r=await P('/api/alertas/v88/calcular',{dias:45});if(!r.ok){$('v88AlInfo').textContent=r.error||'Falha';return}al()};
+async function mg(){$('v88MgInfo').textContent='Carregando…';const [q,h]=await Promise.all([J('/api/diagnostico/rede/qualidade/v87'),J('/api/diagnostico/rede/mesclagens/v88')]);if(!q.ok){$('v88MgInfo').textContent=q.error||'Falha';return}$('v88MgInfo').textContent=nf(q.pares.length)+' prováveis duplicados';
+$('v88MgBody').innerHTML=q.pares.map(p=>'<tr><td>'+esc(p.operadora)+' / '+esc(p.linha)+'</td><td>'+esc(p.sem_nome)+' ('+p.sem_id+')</td><td>'+esc(p.com_nome)+' ('+p.com_id+')</td><td><button class="btn" data-a="prev" data-d="'+p.sem_id+'" data-k="'+p.com_id+'">Prévia</button> <button class="btn" data-a="merge" data-d="'+p.sem_id+'" data-k="'+p.com_id+'">Mesclar</button></td></tr>').join('')||'<tr><td colspan="4">Nenhum.</td></tr>';
+$('v88MgHist').innerHTML=(h.mesclagens||[]).map(m=>'<tr><td>'+m.id+'</td><td>'+esc(m.estacao||'')+' '+esc(m.linha||'')+'</td><td>'+m.mantida+'</td><td>'+m.duplicada+'</td><td>'+dt(m.em)+'</td><td>'+(m.desfeita?'desfeita':'<button class="btn" data-a="undo" data-m="'+m.id+'">Desfazer</button>')+'</td></tr>').join('')||'<tr><td colspan="6">Sem mesclagens.</td></tr>'}
+$('v88MgLoad').onclick=mg;
+$('v88Panel').addEventListener('click',async e=>{const b=e.target.closest('button[data-a]');if(!b)return;const a=b.dataset.a;
+if(a==='prev'){const r=await J('/api/diagnostico/rede/mesclar/v88?dup='+b.dataset.d+'&keeper='+b.dataset.k);$('v88MgPrev').textContent=r.ok?('Duplicada '+r.duplicado.estacao+' ('+r.duplicado.id+') → mantida '+r.mantida.estacao+' ('+r.mantida.id+'). Linhas que serão movidas: '+nf(r.total_linhas)+' em '+r.referencias_movidas.map(x=>x.tabela+'.'+x.coluna+'='+x.linhas).join('; ')):(r.error||'Falha')}
+if(a==='merge'){const t=prompt('Mesclar a duplicada ('+b.dataset.d+') na mantida ('+b.dataset.k+'). Esta ação altera dados (dá para desfazer). Digite MESCLAR para confirmar:');if(t===null)return;const r=await P('/api/diagnostico/rede/mesclar/v88',{dup:+b.dataset.d,keeper:+b.dataset.k,confirmacao:t});$('v88MgPrev').textContent=r.ok?('Mesclagem #'+r.mesclagem+' feita; '+nf(r.linhas_movidas)+' linha(s) movidas.'):(r.error||'Falha');mg()}
+if(a==='undo'){const t=prompt('Desfazer a mesclagem #'+b.dataset.m+'. Digite DESFAZER para confirmar:');if(t===null)return;const r=await P('/api/diagnostico/rede/mesclar/desfazer/v88',{mesclagem:+b.dataset.m,confirmacao:t});$('v88MgPrev').textContent=r.ok?'Mesclagem desfeita.':(r.error||'Falha');mg()}});
+})();</script>
+
 {% endblock %}

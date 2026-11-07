@@ -8,8 +8,9 @@
 <link rel="stylesheet" href="{{url_for('static',filename='app.css')}}?v=v85-18">
 <link rel="stylesheet" href="{{url_for('static',filename='mobile_v84.css')}}?v=84">
 <script>try{if(localStorage.getItem("ap_preview")!=="0")document.documentElement.classList.add("ap-new")}catch(e){document.documentElement.classList.add("ap-new")}</script>
-<script>window.AP_FLAGS={{ (ap_flags|default({}))|tojson }};(function(){var d=document.documentElement,f=window.AP_FLAGS||{};try{if(f.menu_lateral){d.classList.add("ap-side");if(localStorage.getItem("ap_side_collapsed")==="1")d.classList.add("ap-side-collapsed")}}catch(e){if(f.menu_lateral)d.classList.add("ap-side")}if(f.gerencial_claro)d.classList.add("ap-ger-claro");if(f.graficos_paleta)d.classList.add("ap-paleta");if(f.kpi_janela)d.classList.add("ap-kpi-janela")})()</script>
+<script>window.AP_FLAGS={{ (ap_flags|default({}))|tojson }};(function(){var d=document.documentElement,f=window.AP_FLAGS||{};try{if(f.menu_lateral){d.classList.add("ap-side");if(localStorage.getItem("ap_side_collapsed")==="1")d.classList.add("ap-side-collapsed")}}catch(e){if(f.menu_lateral)d.classList.add("ap-side")}if(f.gerencial_claro)d.classList.add("ap-ger-claro");if(f.graficos_paleta)d.classList.add("ap-paleta");if(f.kpi_janela)d.classList.add("ap-kpi-janela");if(f.visual_b){d.classList.add("ap-b");var l=document.createElement("link");l.rel="stylesheet";l.href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap";document.head.appendChild(l)}})()</script>
 <link rel="stylesheet" href="{{url_for('static',filename='ap_standard.css')}}?v=85">
+<link rel="stylesheet" href="{{url_for('static',filename='ap_theme_b.css')}}?v=88">
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#17345d">
 {% block head %}{% endblock %}

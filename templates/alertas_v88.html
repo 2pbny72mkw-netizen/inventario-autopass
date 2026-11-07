@@ -1,0 +1,25 @@
+{% extends "base.html" %}{% block title %}Central de Alertas{% endblock %}
+{% block content %}
+<div class="wrap" style="max-width:1320px">
+<div class="dashHero"><div><div class="eyebrow">ALERTAS ESTATÍSTICOS</div><h1>Central de Alertas</h1><p>Coletas fora do padrão, divergências e reposição de bobinas. Sugestões para revisão humana: nada é alterado nos dados originais.</p></div><div class="heroActions"><button class="primary" id="alCalc">Recalcular agora</button></div></div>
+<div class="kpis" style="grid-template-columns:repeat(4,1fr)">
+<div class="kpi dangerKpi" data-ap-window="#alTable" data-ap-window-filter="0:Alta"><span>Gravidade alta</span><b id="kAlta">0</b><small>novos</small></div>
+<div class="kpi warningKpi"><span>Gravidade média</span><b id="kMedia">0</b><small>novos</small></div>
+<div class="kpi successKpi"><span>Revisados como úteis</span><b id="kUtil">0</b><small id="kPrec">acerto —</small></div>
+<div class="kpi"><span>Falsos alarmes</span><b id="kFalso">0</b><small>revisados</small></div></div>
+<div class="card" style="padding:0"><div style="padding:12px 16px;display:flex;gap:10px;flex-wrap:wrap;align-items:center"><label style="margin:0">Tipo <select id="alTipo" style="width:auto"><option value="">Todos</option><option value="COLETA_VALOR">Coleta fora do padrão</option><option value="COLETA_DIVERGENCIA">Divergência declarado × apurado</option><option value="BOBINA_REPOSICAO">Reposição de bobina</option></select></label><label style="margin:0">Situação <select id="alStatus" style="width:auto"><option value="NOVO">Novos</option><option value="REVISADO">Revisados</option><option value="TODOS">Todos</option></select></label><span class="muted" id="alInfo"></span></div>
+<div class="tableWrap"><table id="alTable" data-ap-table><thead><tr><th>Gravidade</th><th>Tipo</th><th>Assunto</th><th>Detalhe</th><th>Data</th><th>Revisão</th></tr></thead><tbody id="alBody"><tr><td colspan="6">Carregando…</td></tr></tbody></table></div></div>
+</div>
+<script>(()=>{const $=id=>document.getElementById(id),esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const J=async(u,o)=>{try{return await (await fetch(u,Object.assign({cache:'no-store',headers:{'Content-Type':'application/json'}},o||{}))).json()}catch(e){return {ok:false}}};
+const TIPO={COLETA_VALOR:'Coleta fora do padrão',COLETA_DIVERGENCIA:'Divergência declarado × apurado',BOBINA_REPOSICAO:'Reposição de bobina'};
+async function load(){const r=await J('/api/alertas/v88?tipo='+encodeURIComponent($('alTipo').value)+'&status='+$('alStatus').value);if(!r.ok){$('alBody').innerHTML='<tr><td colspan="6">Sem acesso ou falha ao carregar.</td></tr>';return}
+const q=r.qualidade||{};let alta=0,media=0;(r.totais||[]).forEach(t=>{if(t.status==='NOVO'){}});
+r.alertas.forEach(a=>{if(a.status==='NOVO'){a.gravidade==='ALTA'?alta++:media++}});
+$('kAlta').textContent=alta;$('kMedia').textContent=media;$('kUtil').textContent=q.util||0;$('kFalso').textContent=q.falso||0;$('kPrec').textContent='acerto '+(q.precisao_pct!=null?q.precisao_pct+'%':'—');$('alInfo').textContent=r.alertas.length+' registro(s)';
+$('alBody').innerHTML=r.alertas.map(a=>'<tr><td>'+(a.gravidade==='ALTA'?'■ Alta':'▲ Média')+'</td><td>'+esc(TIPO[a.tipo]||a.tipo)+'</td><td>'+esc(a.assunto)+'</td><td>'+esc(a.detalhe)+'</td><td>'+esc(a.data||'')+'</td><td>'+(a.revisao?esc(a.revisao==='UTIL'?'Útil':'Falso alarme')+' <button class="secondary" data-id="'+a.id+'" data-r="LIMPAR">Reabrir</button>':'<button class="secondary" data-id="'+a.id+'" data-r="UTIL">Útil</button> <button class="secondary" data-id="'+a.id+'" data-r="FALSO">Falso alarme</button>')+'</td></tr>').join('')||'<tr><td colspan="6">Nenhum alerta.</td></tr>'}
+$('alBody').onclick=async e=>{const b=e.target.closest('button[data-id]');if(!b)return;await J('/api/alertas/v88/'+b.dataset.id+'/revisar',{method:'POST',body:JSON.stringify({revisao:b.dataset.r})});load()};
+$('alTipo').onchange=$('alStatus').onchange=load;
+$('alCalc').onclick=async()=>{$('alCalc').disabled=true;await J('/api/alertas/v88/calcular',{method:'POST',body:JSON.stringify({dias:45})});$('alCalc').disabled=false;load()};
+load()})();</script>
+{% endblock %}
