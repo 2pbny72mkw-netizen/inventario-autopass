@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV88 HF2"
+APP_RELEASE = "V87.6 REV88 HF3"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -8719,7 +8719,7 @@ def v88_indexes_create():
 # ---------------------------------------------------------------------------
 # HF2: composição e retenção de mobile_sync_events; compactação sob demanda
 # ---------------------------------------------------------------------------
-_V88H2_SYNC_DELETABLE = ("GPS_SIGNAL",)  # só tipos cujo dado já está guardado em outra tabela; os demais são registro de campo
+_V88H2_SYNC_DELETABLE = ("GPS_SIGNAL", "GPS_POSITION")  # só tipos cujo dado já está guardado em outra tabela (ou que foi ignorado); os demais são registro de campo
 _V88H2_COMPACT_TABLES = ("mobile_sync_events", "technician_positions")
 
 
