@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV86"
+APP_RELEASE = "V87.6 REV86 HF1"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -3065,6 +3065,7 @@ ACCESS_LABELS = {
  "portal.appointments":"Criar / consultar agendamentos","portal.receive":"Receber agendamentos","portal.manage":"Administrar Portal do Cliente",
  "arrow.view":"Visualizar Arrow","arrow.manage":"Gerenciar Arrow / alocações","arrow.edit":"Editar atividade Arrow","arrow.delete":"Excluir atividade Arrow","arrow.dashboard":"Dashboard Arrow","arrow.remote":"TeamViewer / Atendimento Remoto","arrow.create_field":"Criar imprevisto Arrow em campo","arrow.change_status":"Alterar status de atividade Arrow",
  "about.versions":"Histórico / Versões",
+ "tasks.view":"Visualizar tarefas","tasks.create":"Criar tarefas","tasks.edit":"Editar tarefas","tasks.transfer":"Transferir tarefas","tasks.manage":"Administrar Gestão de Tarefas",
  "admin.system":"Ferramentas de administração / migrações / diagnóstico técnico","admin.import":"Importações em lote (Excel / WhatsApp)","admin.delete":"Exclusões administrativas (inventário, visitas, evidências, GPS de teste)",
 }
 
@@ -8281,6 +8282,17 @@ def _v86_stored(u):
         return set()
 
 
+def _v86_group_items(keys):
+    """Agrupa chaves de liberação por módulo, com rótulos legíveis (somente leitura)."""
+    out = []
+    keys = set(keys)
+    for _g, (glabel, children) in ACCESS_GROUPS.items():
+        items = [ACCESS_LABELS.get(k, k) for k in children if k in keys]
+        if items:
+            out.append({"group": glabel, "items": items})
+    return out
+
+
 def _v86_snapshot_plan():
     users = User.query.filter(User.archived_at.is_(None)).order_by(User.id).all()
     rows = []
@@ -8289,7 +8301,8 @@ def _v86_snapshot_plan():
         cur = {x for x in _v86_stored(u) if x in ACCESS_SUBMODULES}
         if eff != cur:
             rows.append({"id": u.id, "name": u.name, "username": u.username, "role": u.role, "has_profile": bool(u.system_profile_id),
-                         "stored": len(cur), "will_have": len(eff), "adds": len(eff - cur), "removes": len(cur - eff), "_new": sorted(eff)})
+                         "stored": len(cur), "will_have": len(eff), "adds": len(eff - cur), "removes": len(cur - eff), "_new": sorted(eff),
+                         "_adds": sorted(eff - cur), "_removes": sorted(cur - eff)})
     return users, rows
 
 
@@ -8316,7 +8329,7 @@ def v86_access_snapshot_plan():
         by_role[u.role or "—"] = by_role.get(u.role or "—", 0) + 1
     return jsonify({"ok": True, "applied": bool(marker and marker[0]), "principal": _v86_is_principal(), "users_active": len(users), "by_role": by_role,
                     "to_change": len(rows), "strict": _v86_strict(),
-                    "rows": [{k: v for k, v in r.items() if k != "_new"} for r in rows[:200]]})
+                    "rows": [dict({k: v for k, v in r.items() if not k.startswith("_")}, gain=_v86_group_items(r["_adds"]), lose=_v86_group_items(r["_removes"])) for r in rows[:50]]})
 
 
 @app.post("/api/diagnostico/acessos/retrato/v86")
