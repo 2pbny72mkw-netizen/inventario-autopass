@@ -3,7 +3,41 @@
 (()=>{try{
  if(!(window.AP_FLAGS&&window.AP_FLAGS.menu_terceiro_nivel))return;
  const SECS=window.AP_DIAG_SECS||[];
+ const OTHER={
+  '/patrimonio':['Busca global','Filtros de Equipamentos','Central Executiva do Inventário','Saúde e confiabilidade do parque','Situação do parque por localidade'],
+  '/documentos/acessos':['Gerar documento oficial','Motiva (APT)','Pendências de atualização','Revisões geradas'],
+  '/visao-panoramica':['Importar ZIP do WhatsApp','Diagnóstico da Visão Panorâmica','Rastreamento das Evidências','Progresso das visões panorâmicas','Localidades'],
+  '/documentos-materiais':['Meus documentos','Minhas APTs','Minha carga atual','Solicitação de material','Entrega de Materiais / Ferramentas','Dossiê dos colaboradores','Devolução de Materiais / Ferramentas','Cadastro de Materiais / Ferramentas / Consumíveis','Kits configuráveis'],
+  '/equipes':['Filtros de equipes','Técnico mais próximo','Mapa operacional','Escala por dias','Operação por data','Gerenciar equipe e escala'],
+  '/usuarios':['Novo usuário','Perfis de acesso','Usuários cadastrados','Usuários arquivados'],
+  '/portal-cliente/gestao-agendamentos':['Solicitados hoje','Programados / recebimentos de hoje','Aguardando recebimento','Cancelados','Todos'],
+  '/portal-cliente/cadastro-clientes':['Novo cliente / empresa','Empresas e garagens cadastradas','Acessos externos do Portal do Cliente'],
+  '/engenharia/estoque':['Materiais da localidade','Novo material provisório','Detalhamento','Movimentações recentes'],
+  '/troca-chips':['Atualizar base por planilha','Troca de Chip Recarga','Ativos da base'],
+  '/troca-chips-emv':['Atualizar base por planilha','Bloqueio não encontrado na base','Bloqueios / pendências'],
+  '/central-operacional':['Alertas operacionais','Distribuição da operação','Equipe operacional'],
+  '/inteligencia-operacional':['Previsão de capacidade','Prioridade automática','Anomalias'],
+  '/topdesk':['Filtros de análise','Evolução mensal','Central de Atenção','Principais falhas','Equipamentos crônicos','Chamados por linha','Localidades críticas','Mapa de calor','Produtividade técnica','Produtividade × reincidência','Importação TopDesk'],
+  '/gestao-360':['O que precisa de atenção?','Ir direto para a ação','Atividade recente da plataforma'],
+  '/gestao/rastreabilidade-jornada':['Histórico GPS por estações','Autorizações de jornada','Folgas e trocas de folga'],
+  '/saude-plataforma':['Saúde do sistema','Resposta ao longo do tempo','Volume das principais bases','Capacidade e armazenamento','Índices críticos','Migrações de banco','Ciclo de vida T-Reports','Top 5 gargalos','Comparativo por versão','Auditoria de índices PostgreSQL','Raio-X das rotas'],
+  '/financeiro/lancamentos':['Empresas / fornecedores','Pendências de cadastros','Lançamentos da competência','Novo lançamento mensal','Histórico de competências','Cadastro de fornecedor'],
+  '/financeiro/coleta-valores':['Visão Geral / Custos','Programação de Coletas','Fila de Prioridades','Monitoramento'],
+  '/financeiro/apuracao':['Importar bases','Legenda de conceitos','Comparativo entre coletas','Comparativo geral','Análise inteligente do período','Detalhamento da apuração'],
+  '/atividades':['Dashboard','Minhas Atividades','Todas as Atividades','Concluídas / Histórico']
+ };
  const MAP={'/diagnostico':SECS.map(s=>({label:s.label,href:'/diagnostico#sec-'+s.k}))};
+ for(const [h,l] of Object.entries(OTHER))MAP[h]=l.map(t=>({label:t,href:h+'#ap-ir='+encodeURIComponent(t)}));
+ // Vai até a seção pelo título (ou abre a aba com esse nome). Tenta por até ~4 s porque várias telas montam o conteúdo depois.
+ const nz=t=>(t||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/\s+/g,' ').trim();
+ const goto=()=>{const m=/#ap-ir=(.+)$/.exec(location.hash);if(!m)return;let want;try{want=nz(decodeURIComponent(m[1]))}catch(e){return}
+  let tries=0;const run=()=>{tries++;const cand=[...document.querySelectorAll('main h1,main h2,main h3,main summary,main [role=tab],main button[data-tab],main .tabs button,main .tabBtn,main a[data-tab]')];
+   const el=cand.find(e=>nz(e.textContent).startsWith(want));
+   if(el){if(/^(BUTTON|A)$/.test(el.tagName)||el.getAttribute('role')==='tab'){el.click()}
+    const box=el.closest('details')||el.closest('section,.card')||el;if(box.tagName==='DETAILS')box.open=true;
+    box.scrollIntoView({behavior:'smooth',block:'start'});const o=box.style.outline;box.style.outline='3px solid #2BA6A0';setTimeout(()=>{box.style.outline=o},1800);return}
+   if(tries<16)setTimeout(run,250)};run()};
+ window.addEventListener('hashchange',goto);if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',goto);else goto();
  const root=document.getElementById('mainNavV424');if(!root)return;
  const st=document.createElement('style');
  st.textContent='.apL3Item{position:relative;display:block}.apL3Item>a{display:block;padding-right:34px!important}'
