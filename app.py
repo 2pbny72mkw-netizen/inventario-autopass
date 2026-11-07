@@ -3271,11 +3271,20 @@ def _current_user_is_superadmin():
     uid = session.get("user_id")
     if not uid:
         return False
+    # V90: o resultado vale para a requisição inteira (antes cada can_view() do menu relia o usuário no banco: ~93 consultas por tela).
+    if has_request_context():
+        _c = getattr(g, "_v90_su", None)
+        if _c is not None and _c[0] == uid:
+            return _c[1]
     user = db.session.get(User, uid)
     if not user or user.role != "manager":
-        return False
-    expected = os.getenv("SUPERADMIN_USERNAME", "admin").strip().lower()
-    return (user.username or "").strip().lower() == expected or user.id == 1
+        res = False
+    else:
+        expected = os.getenv("SUPERADMIN_USERNAME", "admin").strip().lower()
+        res = (user.username or "").strip().lower() == expected or user.id == 1
+    if has_request_context():
+        g._v90_su = (uid, res)
+    return res
 
 
 def _role_assignment_allowed(role):
@@ -3771,6 +3780,7 @@ def v72_enforce_journey_window():
     if request.path.startswith("/static/") or request.path.startswith("/uploads/"):
         return None
     user = db.session.get(User, session.get("user_id"))
+    g._v90_user = user  # V90: referência forte durante a requisição (o mapa de identidade só guarda referência fraca)
     if not user or not user.active or (user.personnel_status or "ATIVO").upper() == "INATIVO":
         session.clear()
         if request.path.startswith("/api/"):
