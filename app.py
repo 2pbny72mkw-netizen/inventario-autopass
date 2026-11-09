@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV97"
+APP_RELEASE = "V87.6 REV98"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -9808,8 +9808,8 @@ def v92_manual_merge_apply():
 
 # --- histórico da padronização por lote -----------------------------------
 # ---------------------------------------------------------------------------
-# REV96/REV97 — Planejamento semanal (Gestão): gerenciador de projetos por área, com acesso por usuário (ver / editar)
-# decidido só pelo administrador principal.
+# REV96/REV97/REV98 — Planejamento semanal (Gestão): gerenciador de projetos por área, com acesso por usuário (ver / editar)
+# decidido só pelo administrador principal. REV98: cadastro de projetos, atividade em várias áreas, exportação Excel/PowerPoint, agenda de 5 semanas.
 # ---------------------------------------------------------------------------
 _V96_STATUS = ("nao", "and", "agu", "blq", "ok")
 _V97_HOMOLOG = ("na", "pend", "teste", "ok", "nok")
@@ -9821,9 +9821,11 @@ _V97_NEW_COLS = (
     "started_at TIMESTAMP", "status_since TIMESTAMP", "completed_at TIMESTAMP", "stop_reason VARCHAR(300) NOT NULL DEFAULT ''",
     "predecessors VARCHAR(400) NOT NULL DEFAULT '[]'", "docs_json VARCHAR(2000) NOT NULL DEFAULT '[]'", "doc_notes VARCHAR(1000) NOT NULL DEFAULT ''",
     "homolog VARCHAR(6) NOT NULL DEFAULT 'na'", "homolog_resp VARCHAR(120) NOT NULL DEFAULT ''", "homolog_date DATE", "homolog_obs VARCHAR(300) NOT NULL DEFAULT ''",
+    # REV98: projeto (cadastro próprio) e áreas adicionais (a área principal continua em "front")
+    "project_id INTEGER", "fronts_extra VARCHAR(300) NOT NULL DEFAULT '[]'",
 )
 _V97_COLS = ("id, front, title, status, responsible, deadline, obs, position, updated_at, kind, progress, start_date, forecast_date, started_at, status_since, "
-             "completed_at, stop_reason, predecessors, docs_json, doc_notes, homolog, homolog_resp, homolog_date, homolog_obs")
+             "completed_at, stop_reason, predecessors, docs_json, doc_notes, homolog, homolog_resp, homolog_date, homolog_obs, project_id, fronts_extra")
 
 
 def _v96_ensure(conn):
@@ -9840,6 +9842,9 @@ def _v96_ensure(conn):
         "CREATE TABLE IF NOT EXISTS v96_plan_access (user_id INTEGER PRIMARY KEY, can_edit BOOLEAN NOT NULL DEFAULT FALSE, granted_by INTEGER, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)",
         "CREATE TABLE IF NOT EXISTS v96_plan_events (id SERIAL PRIMARY KEY, week_id INTEGER, item_id INTEGER, user_id INTEGER, action VARCHAR(40) NOT NULL, detail VARCHAR(600) NOT NULL DEFAULT '', created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)",
         "CREATE INDEX IF NOT EXISTS ix_v96_plan_events_week ON v96_plan_events (week_id, id)",
+        "CREATE TABLE IF NOT EXISTS v96_plan_projects (id SERIAL PRIMARY KEY, code VARCHAR(20) NOT NULL DEFAULT '', name VARCHAR(120) NOT NULL, responsible VARCHAR(120) NOT NULL DEFAULT '', "
+        "active BOOLEAN NOT NULL DEFAULT TRUE, created_by INTEGER, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_v96_plan_projects_name ON v96_plan_projects (LOWER(name))",
     ):
         conn.execute(text(ddl))
     for col in _V97_NEW_COLS:
@@ -9851,6 +9856,8 @@ def _v96_ensure(conn):
     if conn.execute(text("SELECT 1 FROM v96_plan_fronts WHERE fkey='pend'")).first():
         conn.execute(text("UPDATE v96_plan_items SET kind='pend', front='hw' WHERE front='pend'"))
         conn.execute(text("DELETE FROM v96_plan_fronts WHERE fkey='pend'"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_v96_plan_items_deadline ON v96_plan_items (deadline)"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_v96_plan_items_project ON v96_plan_items (project_id)"))
     conn.execute(text("UPDATE v96_plan_items SET progress=100 WHERE status='ok' AND progress<100"))
     conn.execute(text("UPDATE v96_plan_items SET started_at=created_at WHERE status<>'nao' AND started_at IS NULL"))
     conn.execute(text("UPDATE v96_plan_items SET status_since=updated_at WHERE status_since IS NULL"))
@@ -9956,7 +9963,11 @@ def _v96_item_row(r):
         docs = json.loads(r[18] or "[]")
     except Exception:
         docs = []
-    return {"id": r[0], "front": r[1], "title": r[2], "status": r[3], "responsible": r[4], "deadline": _v97_iso(r[5]) or "", "obs": r[6], "position": r[7],
+    try:
+        extra = [str(x) for x in json.loads(r[25] or "[]")]
+    except Exception:
+        extra = []
+    return {"id": r[0], "front": r[1], "areas": [r[1]] + [x for x in extra if x != r[1]], "project_id": r[24], "title": r[2], "status": r[3], "responsible": r[4], "deadline": _v97_iso(r[5]) or "", "obs": r[6], "position": r[7],
             "updated_at": _v97_iso(r[8]), "kind": r[9], "progress": int(r[10] or 0), "start_date": _v97_iso(r[11]) or "", "forecast_date": _v97_iso(r[12]) or "",
             "started_at": _v97_iso(r[13]), "status_since": _v97_iso(r[14]), "completed_at": _v97_iso(r[15]), "stop_reason": r[16] or "", "predecessors": preds,
             "docs": docs, "doc_notes": r[19] or "", "homolog": r[20] or "na", "homolog_resp": r[21] or "", "homolog_date": _v97_iso(r[22]) or "", "homolog_obs": r[23] or ""}
@@ -9992,7 +10003,7 @@ def v97_plan_menu_link(response):
     if not _v97_plan_menu_ok():
         return response
     html = response.get_data(as_text=True)
-    if "/gestao/planejamento-semanal" in html or "/gestao/organizacao-menu" not in html:
+    if 'data-v97-plan' in html or "/gestao/organizacao-menu" not in html:
         return response
     m = re.search(r'(<a\b[^>]*href=["\']/gestao/organizacao-menu["\'][^>]*>.*?</a>)', html, re.I | re.S)
     if not m:
@@ -10022,23 +10033,51 @@ def v96_plan_state():
     with db.engine.begin() as conn:
         _v96_ensure(conn)
         _v96_seed(conn)
-        weeks = conn.execute(text("SELECT id, week_start, label FROM v96_plan_weeks ORDER BY week_start DESC LIMIT 60")).fetchall()
+        weeks = conn.execute(text("SELECT id, week_start, label, milestone_date, milestone_label FROM v96_plan_weeks ORDER BY week_start DESC LIMIT 60")).fetchall()
         if not weeks:
             return jsonify({"ok": True, "weeks": [], "week": None})
         cur = next((w for w in weeks if w[0] == wk), weeks[0])
         w = conn.execute(text("SELECT id, week_start, label, milestone_date, milestone_label, notes_json, updated_at FROM v96_plan_weeks WHERE id=:i"), {"i": cur[0]}).first()
         items = conn.execute(text(f"SELECT {_V97_COLS} FROM v96_plan_items WHERE week_id=:w ORDER BY position, id"), {"w": cur[0]}).fetchall()
         fronts = conn.execute(text("SELECT fkey, name FROM v96_plan_fronts ORDER BY position, fkey")).fetchall()
+        projects = conn.execute(text("SELECT id, code, name, responsible, active FROM v96_plan_projects ORDER BY LOWER(name)")).fetchall()
+        # agenda de 5 semanas: 2 antes, a atual e 2 depois (atividades de todas as semanas, sem repetir as que foram copiadas de uma semana para outra)
+        ag = conn.execute(text("SELECT id, week_id, title, status, deadline, front, fronts_extra, project_id, kind FROM v96_plan_items WHERE deadline BETWEEN :a AND :b "
+                               "ORDER BY deadline, week_id DESC, position, id"), {"a": w[1] - timedelta(days=14), "b": w[1] + timedelta(days=20)}).fetchall()
+    agenda = _v98_agenda(ag, cur[0])
     try:
         notes = json.loads(w[5] or "[]")
     except Exception:
         notes = []
     users = [u.name for u in User.query.filter(User.active.is_(True)).order_by(User.name).limit(400).all()] if acc[1] else []
     return jsonify({"ok": True, "me": {"can_edit": acc[1], "is_admin": acc[2]}, "now": datetime.utcnow().isoformat(),
-                    "weeks": [{"id": x[0], "start": x[1].isoformat(), "label": x[2]} for x in weeks],
+                    "weeks": [{"id": x[0], "start": x[1].isoformat(), "label": x[2], "milestone_date": x[3].isoformat() if x[3] else "", "milestone_label": x[4] or ""} for x in weeks],
                     "week": {"id": w[0], "start": w[1].isoformat(), "label": w[2], "milestone_date": w[3].isoformat() if w[3] else "", "milestone_label": w[4], "notes": notes,
                              "updated_at": w[6].isoformat() if w[6] else None},
-                    "fronts": [{"key": f[0], "name": f[1]} for f in fronts], "items": [_v96_item_row(r) for r in items], "users": users})
+                    "fronts": [{"key": f[0], "name": f[1]} for f in fronts], "items": [_v96_item_row(r) for r in items], "users": users,
+                    "projects": [{"id": p[0], "code": p[1], "name": p[2], "responsible": p[3], "active": bool(p[4])} for p in projects], "agenda": agenda})
+
+
+def _v98_agenda(rows, cur_week):
+    """Prazos das 5 semanas. Uma atividade copiada de uma semana para outra aparece uma vez: vale a da semana aberta; senão, a da semana mais recente."""
+    groups = {}
+    for r in rows:
+        groups.setdefault(((r[2] or "").strip().lower(), r[4]), []).append(r)
+    out = []
+    for lst in groups.values():
+        weeks = {x[1] for x in lst}
+        pick = cur_week if cur_week in weeks else max(weeks)
+        for x in lst:
+            if x[1] != pick:
+                continue
+            try:
+                extra = [str(v) for v in json.loads(x[6] or "[]")]
+            except Exception:
+                extra = []
+            out.append({"id": x[0], "week_id": x[1], "title": x[2], "status": x[3], "deadline": x[4].isoformat(), "areas": [x[5]] + [v for v in extra if v != x[5]],
+                        "project_id": x[7], "kind": x[8]})
+    out.sort(key=lambda a: (a["deadline"], a["id"]))
+    return out
 
 
 def _v97_has_cycle(preds_by_id):
@@ -10070,6 +10109,31 @@ def _v96_item_fields(data, conn, partial, week_id=None, item_id=None):
         if not conn.execute(text("SELECT 1 FROM v96_plan_fronts WHERE fkey=:k"), {"k": f}).first():
             raise ValueError("Frente inválida.")
         out["front"] = f
+    if "areas" in data:
+        ks = []
+        for k in (data.get("areas") or [])[:12]:
+            k = str(k).strip()
+            if k and k not in ks:
+                ks.append(k)
+        if not ks:
+            raise ValueError("Escolha ao menos uma área.")
+        ok = {r[0] for r in conn.execute(text("SELECT fkey FROM v96_plan_fronts WHERE fkey = ANY(:k)"), {"k": ks}).fetchall()}
+        if ok != set(ks):
+            raise ValueError("Área inválida.")
+        out["front"] = ks[0]
+        out["fronts_extra"] = json.dumps(ks[1:])
+    if "project_id" in data:
+        pid = data.get("project_id")
+        if pid in (None, "", 0, "0"):
+            out["project_id"] = None
+        else:
+            try:
+                pid = int(pid)
+            except (TypeError, ValueError):
+                raise ValueError("Projeto inválido.")
+            if not conn.execute(text("SELECT 1 FROM v96_plan_projects WHERE id=:i AND active"), {"i": pid}).first():
+                raise ValueError("Projeto não cadastrado (ou inativo). Peça ao administrador para cadastrar.")
+            out["project_id"] = pid
     if "kind" in data:
         k = (data.get("kind") or "ativ").strip()
         if k not in ("ativ", "pend"):
@@ -10138,12 +10202,15 @@ def v96_plan_item_create():
             if not conn.execute(text("SELECT 1 FROM v96_plan_weeks WHERE id=:i"), {"i": wid}).first():
                 return jsonify({"ok": False, "error": "Semana não encontrada."}), 404
             f = _v96_item_fields({k: v for k, v in data.items() if k not in ("predecessors", "progress")}, conn, partial=False, week_id=wid)
+            f.setdefault("project_id", None)
+            f.setdefault("fronts_extra", "[]")
             pos = conn.execute(text("SELECT COALESCE(MAX(position),0)+1 FROM v96_plan_items WHERE week_id=:w"), {"w": wid}).scalar()
             now = datetime.utcnow()
-            iid = conn.execute(text("INSERT INTO v96_plan_items (week_id,front,title,status,responsible,deadline,obs,position,created_by,updated_by,kind,start_date,status_since) "
-                                    "VALUES (:w,:f,:t,:s,:r,CAST(:d AS DATE),:o,:p,:u,:u,:k,CAST(:sd AS DATE),:now) RETURNING id"),
+            iid = conn.execute(text("INSERT INTO v96_plan_items (week_id,front,title,status,responsible,deadline,obs,position,created_by,updated_by,kind,start_date,status_since,project_id,fronts_extra) "
+                                    "VALUES (:w,:f,:t,:s,:r,CAST(:d AS DATE),:o,:p,:u,:u,:k,CAST(:sd AS DATE),:now,:pj,:fx) RETURNING id"),
                                {"w": wid, "f": f["front"], "t": f["title"], "s": f["status"], "r": f.get("responsible", ""), "d": f.get("deadline"), "o": f.get("obs", ""),
-                                "p": pos, "u": session.get("user_id"), "k": f.get("kind", "ativ"), "sd": f.get("start_date"), "now": now}).scalar()
+                                "p": pos, "u": session.get("user_id"), "k": f.get("kind", "ativ"), "sd": f.get("start_date"), "now": now,
+                                "pj": f["project_id"], "fx": f["fronts_extra"]}).scalar()
             _v96_event(conn, wid, iid, "CRIOU", f["title"])
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
@@ -10183,7 +10250,7 @@ def v96_plan_item_update(item_id):
                     if old_status == "ok" and f.get("progress", old_prog) >= 100:
                         f["progress"] = 90
                 if f["status"] in ("agu", "blq") and not (f.get("stop_reason") or "").strip():
-                    raise ValueError("Informe o motivo da parada.")
+                    raise ValueError("Informe o motivo da parada (campo stop_reason).")
                 if f["status"] not in ("agu", "blq") and "stop_reason" not in f:
                     f["stop_reason"] = ""
             elif "progress" in f:
@@ -10257,15 +10324,15 @@ def v96_plan_week_create():
             if src:
                 # o projeto continua: datas, progresso, início, motivo, documentos e homologação seguem; as predecessoras são remapeadas
                 rows = conn.execute(text("SELECT id, front, title, status, responsible, deadline, obs, position, kind, progress, start_date, forecast_date, started_at, status_since, "
-                                         "stop_reason, predecessors, docs_json, doc_notes, homolog, homolog_resp, homolog_date, homolog_obs FROM v96_plan_items "
+                                         "stop_reason, predecessors, docs_json, doc_notes, homolog, homolog_resp, homolog_date, homolog_obs, project_id, fronts_extra FROM v96_plan_items "
                                          "WHERE week_id=:s AND status<>'ok' ORDER BY position, id"), {"s": src}).fetchall()
                 idmap = {}
                 for r in rows:
                     idmap[r[0]] = conn.execute(text("INSERT INTO v96_plan_items (week_id,front,title,status,responsible,deadline,obs,position,created_by,updated_by,kind,progress,start_date,forecast_date,"
-                                                    "started_at,status_since,stop_reason,docs_json,doc_notes,homolog,homolog_resp,homolog_date,homolog_obs) VALUES "
-                                                    "(:w,:f,:t,:s,:r,:d,:o,:p,:u,:u,:k,:pg,:sd,:fd,:sa,:ss,:sr,:dj,:dn,:h,:hr,:hd,:ho) RETURNING id"),
+                                                    "started_at,status_since,stop_reason,docs_json,doc_notes,homolog,homolog_resp,homolog_date,homolog_obs,project_id,fronts_extra) VALUES "
+                                                    "(:w,:f,:t,:s,:r,:d,:o,:p,:u,:u,:k,:pg,:sd,:fd,:sa,:ss,:sr,:dj,:dn,:h,:hr,:hd,:ho,:pj,:fx) RETURNING id"),
                                                {"w": wid, "f": r[1], "t": r[2], "s": r[3], "r": r[4], "d": r[5], "o": r[6], "p": r[7], "u": session.get("user_id"), "k": r[8], "pg": r[9],
-                                                "sd": r[10], "fd": r[11], "sa": r[12], "ss": r[13], "sr": r[14], "dj": r[16], "dn": r[17], "h": r[18], "hr": r[19], "hd": r[20], "ho": r[21]}).scalar()
+                                                "sd": r[10], "fd": r[11], "sa": r[12], "ss": r[13], "sr": r[14], "dj": r[16], "dn": r[17], "h": r[18], "hr": r[19], "hd": r[20], "ho": r[21], "pj": r[22], "fx": r[23]}).scalar()
                 for r in rows:
                     try:
                         mapped = [idmap[int(x)] for x in json.loads(r[15] or "[]") if int(x) in idmap]
@@ -10390,6 +10457,683 @@ def v96_plan_access_set():
     except Exception:
         db.session.rollback()
     return jsonify({"ok": True})
+
+
+# ---- REV98: cadastro de projetos (só o administrador principal) ----------------------------------------------------
+@app.post("/api/planejamento-semanal/v96/projeto")
+@login_required
+def v98_plan_project_save():
+    gd, acc = _v96_gate(need_admin=True)
+    if gd:
+        return gd
+    data = request.get_json(silent=True) or {}
+    name = (data.get("name") or "").strip()[:120]
+    code = (data.get("code") or "").strip()[:20]
+    resp = (data.get("responsible") or "").strip()[:120]
+    active = bool(data.get("active", True))
+    if not name:
+        return jsonify({"ok": False, "error": "Informe o nome do projeto."}), 400
+    try:
+        pid = int(data.get("id")) if data.get("id") not in (None, "", 0) else None
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Projeto inválido."}), 400
+    with db.engine.begin() as conn:
+        _v96_ensure(conn)
+        if pid:
+            dup = conn.execute(text("SELECT id FROM v96_plan_projects WHERE id<>:i AND (LOWER(name)=LOWER(:n) OR (:c<>'' AND LOWER(code)=LOWER(:c)))"), {"i": pid, "n": name, "c": code}).first()
+        else:
+            dup = conn.execute(text("SELECT id FROM v96_plan_projects WHERE LOWER(name)=LOWER(:n) OR (:c<>'' AND LOWER(code)=LOWER(:c))"), {"n": name, "c": code}).first()
+        if dup:
+            return jsonify({"ok": False, "error": "Já existe um projeto com esse nome ou código."}), 409
+        if pid:
+            if not conn.execute(text("SELECT 1 FROM v96_plan_projects WHERE id=:i"), {"i": pid}).first():
+                return jsonify({"ok": False, "error": "Projeto não encontrado."}), 404
+            conn.execute(text("UPDATE v96_plan_projects SET name=:n, code=:c, responsible=:r, active=:a WHERE id=:i"), {"n": name, "c": code, "r": resp, "a": active, "i": pid})
+        else:
+            pid = conn.execute(text("INSERT INTO v96_plan_projects (name,code,responsible,active,created_by) VALUES (:n,:c,:r,:a,:u) RETURNING id"),
+                               {"n": name, "c": code, "r": resp, "a": active, "u": session.get("user_id")}).scalar()
+        _v96_event(conn, None, None, "PROJETO", f"{code} {name} ativo={active}".strip())
+    return jsonify({"ok": True, "id": pid})
+
+
+# ---- REV98: exportação (Excel e PowerPoint) ------------------------------------------------------------------------
+def _v98_export_ctx():
+    """Carrega a semana e monta o contexto das exportações. Só lê. 'ids' (opcional) limita às atividades filtradas na tela."""
+    data = request.get_json(silent=True) or {}
+    try:
+        wid = int(data.get("week_id") or 0)
+    except (TypeError, ValueError):
+        wid = 0
+    raw = data.get("ids")
+    ids = None
+    if isinstance(raw, list):
+        try:
+            ids = {int(x) for x in raw[:3000]}
+        except (TypeError, ValueError):
+            ids = None
+    with db.engine.begin() as conn:
+        _v96_ensure(conn)
+        w = conn.execute(text("SELECT id, week_start, label, milestone_date, milestone_label, notes_json FROM v96_plan_weeks WHERE id=:i"), {"i": wid}).first()
+        if not w:
+            return None
+        rows = conn.execute(text(f"SELECT {_V97_COLS} FROM v96_plan_items WHERE week_id=:w ORDER BY position, id"), {"w": wid}).fetchall()
+        fronts = conn.execute(text("SELECT fkey, name FROM v96_plan_fronts ORDER BY position, fkey")).fetchall()
+        projects = conn.execute(text("SELECT id, code, name, responsible, active FROM v96_plan_projects ORDER BY LOWER(name)")).fetchall()
+        _v96_event(conn, wid, None, "EXPORTOU", (data.get("formato") or "")[:20] + (f" · filtros: {str(data.get('filters') or '')[:300]}" if data.get("filters") else ""))
+    try:
+        notes = json.loads(w[5] or "[]")
+    except Exception:
+        notes = []
+    all_items = [_v96_item_row(r) for r in rows]
+    items = [i for i in all_items if ids is None or i["id"] in ids]
+    uname = ""
+    try:
+        u = db.session.get(User, session.get("user_id"))
+        uname = u.name if u else ""
+    except Exception:
+        uname = ""
+    return {"week": {"id": w[0], "start": w[1].isoformat(), "label": w[2], "milestone_date": w[3].isoformat() if w[3] else "", "milestone_label": w[4] or ""},
+            "fronts": [{"key": f[0], "name": f[1]} for f in fronts], "projects": [{"id": p[0], "code": p[1], "name": p[2], "responsible": p[3], "active": bool(p[4])} for p in projects],
+            "items": items, "all_items": all_items, "notes": notes, "filters": str(data.get("filters") or "")[:400], "user": uname, "now": datetime.utcnow()}
+
+
+@app.post("/api/planejamento-semanal/v98/exportar-xlsx")
+@login_required
+def v98_plan_export_xlsx():
+    gd, acc = _v96_gate()
+    if gd:
+        return gd
+    ctx = _v98_export_ctx()
+    if not ctx:
+        return jsonify({"ok": False, "error": "Semana não encontrada."}), 404
+    try:
+        blob = v98_build_xlsx(ctx)
+    except Exception as exc:
+        app.logger.exception("V98 export xlsx")
+        return jsonify({"ok": False, "error": "Não foi possível gerar o Excel: " + str(exc)[:160]}), 500
+    return send_file(io.BytesIO(blob), as_attachment=True, download_name=f"planejamento-semanal-{ctx['week']['start']}.xlsx",
+                     mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+@app.post("/api/planejamento-semanal/v98/exportar-pptx")
+@login_required
+def v98_plan_export_pptx():
+    gd, acc = _v96_gate()
+    if gd:
+        return gd
+    try:
+        import pptx  # noqa: F401
+    except Exception:
+        return jsonify({"ok": False, "error": "A biblioteca de PowerPoint (python-pptx) não está instalada neste servidor. Use o Excel ou o CSV."}), 501
+    ctx = _v98_export_ctx()
+    if not ctx:
+        return jsonify({"ok": False, "error": "Semana não encontrada."}), 404
+    try:
+        blob = v98_build_pptx(ctx)
+    except Exception as exc:
+        app.logger.exception("V98 export pptx")
+        return jsonify({"ok": False, "error": "Não foi possível gerar a apresentação: " + str(exc)[:160]}), 500
+    return send_file(io.BytesIO(blob), as_attachment=True, download_name=f"planejamento-semanal-{ctx['week']['start']}.pptx",
+                     mimetype="application/vnd.openxmlformats-officedocument.presentationml.presentation")
+
+
+# ---------------------------------------------------------------------------
+# REV98 — exportação do Planejamento semanal para Excel (.xlsx) e PowerPoint (.pptx).
+# Funções puras (sem Flask/banco): recebem um dicionário já carregado e devolvem os bytes do arquivo.
+# ---------------------------------------------------------------------------
+_V98_ST_LABEL = {"nao": "Não iniciado", "and": "Em andamento", "agu": "Aguardando definição", "blq": "Bloqueado", "ok": "Concluído"}
+_V98_ST_COLOR = {"nao": "8A8984", "and": "2A78D6", "agu": "C98A00", "blq": "D03B3B", "ok": "0A8F3C"}
+_V98_HM_LABEL = {"na": "Não se aplica", "pend": "Pendente", "teste": "Em teste", "ok": "Aprovada", "nok": "Reprovada"}
+
+
+def _v98_pd(v):
+    try:
+        return datetime.strptime(str(v)[:10], "%Y-%m-%d").date() if v else None
+    except ValueError:
+        return None
+
+
+def _v98_dt(v):
+    try:
+        return datetime.fromisoformat(str(v).replace("Z", "")) if v else None
+    except ValueError:
+        return None
+
+
+def _v98_forecast(it, now):
+    """Mesma regra da tela: previsão manual > concluída > ritmo (progresso x tempo decorrido) > prazo planejado."""
+    if it["status"] == "ok":
+        c = _v98_dt(it.get("completed_at"))
+        return ((c - timedelta(hours=3)).date() if c else None), "concluída"
+    fd = _v98_pd(it.get("forecast_date"))
+    if fd:
+        return fd, "manual"
+    s, p = _v98_dt(it.get("started_at")), int(it.get("progress") or 0)
+    if s and 0 < p < 100:
+        try:
+            el = max(1.0, (now - s).total_seconds() / 86400)
+            return (s + timedelta(days=el * 100 / p) - timedelta(hours=3)).date(), "ritmo"
+        except (OverflowError, ValueError):
+            pass
+    dl = _v98_pd(it.get("deadline"))
+    if dl:
+        return dl, "planejado"
+    return None, ""
+
+
+def _v98_cut(s, n):
+    s = str(s or "")
+    return s if len(s) <= n else s[:max(1, n - 1)].rstrip() + "…"
+
+
+def _v98_avg(items):
+    return int(sum(int(i.get("progress") or 0) for i in items) / len(items) + 0.5) if items else 0
+
+
+def _v98_counts(items):
+    c = {k: 0 for k in _V98_ST_LABEL}
+    for i in items:
+        c[i["status"]] = c.get(i["status"], 0) + 1
+    return c
+
+
+def _v98_is_late(it, today):
+    dl = _v98_pd(it.get("deadline"))
+    return bool(dl and it["status"] != "ok" and dl < today)
+
+
+def _v98_ctx_maps(ctx):
+    fmap = {f["key"]: f["name"] for f in ctx["fronts"]}
+    pmap = {p["id"]: p for p in ctx["projects"]}
+    return fmap, pmap
+
+
+def _v98_area_names(it, fmap):
+    return " / ".join(fmap.get(k, k) for k in it.get("areas") or [it.get("front")])
+
+
+def _v98_fmt_date(d):
+    return d.strftime("%d/%m/%Y") if d else ""
+
+
+# ------------------------------- Excel --------------------------------------
+def v98_build_xlsx(ctx):
+    from io import BytesIO
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+
+    now = ctx["now"]
+    today = (now - timedelta(hours=3)).date()
+    items, all_items = ctx["items"], ctx.get("all_items") or ctx["items"]
+    fmap, pmap = _v98_ctx_maps(ctx)
+    byid = {i["id"]: i for i in all_items}
+    head_fill = PatternFill("solid", fgColor="16335C")
+    head_font = Font(bold=True, color="FFFFFF")
+
+    def put(ws, r, c, v, fmt=None, bold=False, color=None, fill=None, wrap=False, align=None):
+        cell = ws.cell(row=r, column=c, value=v)
+        if isinstance(v, str) and v.startswith("="):
+            cell.data_type = "s"  # nunca interpretar texto do usuário como fórmula
+        if fmt:
+            cell.number_format = fmt
+        if bold or color:
+            cell.font = Font(bold=bold, color=color)
+        if fill:
+            cell.fill = PatternFill("solid", fgColor=fill)
+        if wrap or align:
+            cell.alignment = Alignment(wrap_text=wrap, vertical="top", horizontal=align)
+        return cell
+
+    def header(ws, cols):
+        for c, (name, width) in enumerate(cols, 1):
+            h = ws.cell(row=1, column=c, value=name)
+            h.fill, h.font = head_fill, head_font
+            h.alignment = Alignment(vertical="center", wrap_text=True)
+            ws.column_dimensions[get_column_letter(c)].width = width
+        ws.row_dimensions[1].height = 30
+        ws.freeze_panes = "A2"
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Atividades"
+    header(ws, [("Áreas", 26), ("Projeto", 22), ("Tipo", 11), ("Atividade", 50), ("Status", 20), ("Progresso", 11), ("Responsável", 20), ("Início", 12),
+                ("Término planejado", 13), ("Previsão", 12), ("Origem da previsão", 13), ("Desvio (dias)", 11), ("Em andamento há (dias)", 13), ("Parada há (dias)", 11),
+                ("Motivo da parada", 36), ("Predecessoras", 36), ("Homologação", 16), ("Documentos", 40), ("Observação", 36)])
+    for r, it in enumerate(items, 2):
+        fc, src = _v98_forecast(it, now)
+        dl, st = _v98_pd(it.get("deadline")), _v98_dt(it.get("started_at"))
+        since = _v98_dt(it.get("status_since"))
+        desvio = (fc - dl).days if (fc and dl and it["status"] != "ok") else None
+        prj = pmap.get(it.get("project_id"))
+        preds = " | ".join(byid[p]["title"] for p in it.get("predecessors") or [] if p in byid)
+        docs = " | ".join(f"{d.get('t', '')} {d.get('u', '')}".strip() for d in it.get("docs") or [])
+        sc = _V98_ST_COLOR.get(it["status"], "8A8984")
+        put(ws, r, 1, _v98_area_names(it, fmap), wrap=True)
+        put(ws, r, 2, (prj["name"] if prj else ""), wrap=True)
+        put(ws, r, 3, "Pendência" if it.get("kind") == "pend" else "Atividade")
+        put(ws, r, 4, it["title"], wrap=True)
+        put(ws, r, 5, _V98_ST_LABEL.get(it["status"], it["status"]), bold=True, color=sc)
+        put(ws, r, 6, int(it.get("progress") or 0) / 100, fmt="0%")
+        put(ws, r, 7, it.get("responsible") or "")
+        put(ws, r, 8, _v98_pd(it.get("start_date")), fmt="DD/MM/YYYY")
+        put(ws, r, 9, dl, fmt="DD/MM/YYYY", color="D03B3B" if _v98_is_late(it, today) else None, bold=_v98_is_late(it, today))
+        put(ws, r, 10, fc, fmt="DD/MM/YYYY")
+        put(ws, r, 11, src)
+        put(ws, r, 12, desvio, fmt="0")
+        put(ws, r, 13, (now - st).days if (st and it["status"] != "ok") else None, fmt="0")
+        put(ws, r, 14, (now - since).days if (since and it["status"] in ("agu", "blq")) else None, fmt="0")
+        put(ws, r, 15, it.get("stop_reason") or "", wrap=True)
+        put(ws, r, 16, preds, wrap=True)
+        put(ws, r, 17, _V98_HM_LABEL.get(it.get("homolog"), ""))
+        put(ws, r, 18, docs, wrap=True)
+        put(ws, r, 19, it.get("obs") or "", wrap=True)
+    ws.auto_filter.ref = f"A1:{get_column_letter(19)}{max(2, len(items) + 1)}"
+
+    # resumo por área (uma atividade em várias áreas conta em cada área; a linha "Geral" conta cada atividade uma vez)
+    w2 = wb.create_sheet("Resumo por área")
+    header(w2, [("Área", 32), ("Atividades", 11), ("Concluídas", 11), ("Em andamento", 13), ("Aguardando", 12), ("Bloqueadas", 12), ("Não iniciadas", 13), ("Atrasadas", 11), ("Progresso médio", 15)])
+    r = 2
+    for f in ctx["fronts"]:
+        its = [i for i in items if f["key"] in (i.get("areas") or [i.get("front")])]
+        c = _v98_counts(its)
+        vals = [f["name"], len(its), c["ok"], c["and"], c["agu"], c["blq"], c["nao"], sum(1 for i in its if _v98_is_late(i, today))]
+        for col, v in enumerate(vals, 1):
+            put(w2, r, col, v)
+        put(w2, r, 9, _v98_avg(its) / 100 if its else None, fmt="0%")
+        r += 1
+    c = _v98_counts(items)
+    for col, v in enumerate(["Geral (sem repetir)", len(items), c["ok"], c["and"], c["agu"], c["blq"], c["nao"], sum(1 for i in items if _v98_is_late(i, today))], 1):
+        put(w2, r, col, v, bold=True)
+    put(w2, r, 9, _v98_avg(items) / 100 if items else None, fmt="0%", bold=True)
+
+    # por projeto
+    w3 = wb.create_sheet("Por projeto")
+    header(w3, [("Código", 12), ("Projeto", 36), ("Responsável pelo projeto", 26), ("Atividades", 11), ("Concluídas", 11), ("Atrasadas", 11), ("Progresso médio", 15)])
+    r = 2
+    groups = [(p, [i for i in items if i.get("project_id") == p["id"]]) for p in ctx["projects"]]
+    groups = [(p, its) for p, its in groups if its]
+    sem = [i for i in items if i.get("project_id") not in pmap]
+    if sem:
+        groups.append(({"code": "", "name": "(sem projeto)", "responsible": ""}, sem))
+    for p, its in groups:
+        for col, v in enumerate([p.get("code", ""), p["name"], p.get("responsible", ""), len(its), sum(1 for i in its if i["status"] == "ok"),
+                                 sum(1 for i in its if _v98_is_late(i, today))], 1):
+            put(w3, r, col, v)
+        put(w3, r, 7, _v98_avg(its) / 100, fmt="0%")
+        r += 1
+
+    w4 = wb.create_sheet("Informações")
+    w4.column_dimensions["A"].width = 22
+    w4.column_dimensions["B"].width = 90
+    wk = ctx["week"]
+    for r, (k, v) in enumerate([("Semana", wk.get("label", "")), ("Gerado em (Brasília)", (now - timedelta(hours=3)).strftime("%d/%m/%Y %H:%M")), ("Gerado por", ctx.get("user", "")),
+                                ("Filtros aplicados", ctx.get("filters") or "nenhum (todas as atividades da semana)"), ("Atividades exportadas", f"{len(items)} de {len(all_items)}"),
+                                ("Sistema", "Sistema de Gestão Autopass · Gestão › Planejamento semanal")], 1):
+        put(w4, r, 1, k, bold=True)
+        put(w4, r, 2, v, wrap=True)
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+# ------------------------------ PowerPoint -----------------------------------
+def v98_build_pptx(ctx):
+    from io import BytesIO
+    from pptx import Presentation
+    from pptx.util import Inches, Pt
+    from pptx.dml.color import RGBColor
+    from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
+    from pptx.enum.shapes import MSO_SHAPE
+    from pptx.chart.data import CategoryChartData
+    from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION
+
+    NAVY, BLUE, MUT, LINE, LIGHT, TXT = "16335C", "2A78D6", "6B6A66", "E4E3DF", "F0F3F8", "222222"
+    now = ctx["now"]
+    today = (now - timedelta(hours=3)).date()
+    items = ctx["items"]
+    fmap, pmap = _v98_ctx_maps(ctx)
+    wk = ctx["week"]
+    prs = Presentation()
+    prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
+    blank = prs.slide_layouts[6]
+
+    def rgb(h):
+        return RGBColor.from_string(h)
+
+    def box(sl, x, y, w, h, fill, shape=MSO_SHAPE.RECTANGLE, line=None, radius=None):
+        s = sl.shapes.add_shape(shape, Inches(x), Inches(y), Inches(w), Inches(h))
+        s.fill.solid()
+        s.fill.fore_color.rgb = rgb(fill)
+        if line:
+            s.line.color.rgb = rgb(line)
+            s.line.width = Pt(0.75)
+        else:
+            s.line.fill.background()
+        s.shadow.inherit = False
+        st = s._element.find("{http://schemas.openxmlformats.org/presentationml/2006/main}style")
+        if st is not None:  # sem o estilo do tema: sem sombra em nenhum visualizador
+            s._element.remove(st)
+        if radius is not None and shape == MSO_SHAPE.ROUNDED_RECTANGLE:
+            s.adjustments[0] = radius
+        return s
+
+    def text(sl, x, y, w, h, t, size=14, bold=False, color=TXT, align=None, anchor=None):
+        tb = sl.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h))
+        tf = tb.text_frame
+        tf.word_wrap = True
+        tf.margin_left = tf.margin_right = Inches(0.04)
+        tf.margin_top = tf.margin_bottom = Inches(0.02)
+        if anchor:
+            tf.vertical_anchor = anchor
+        lines = t if isinstance(t, list) else [t]
+        for n, ln in enumerate(lines):
+            p = tf.paragraphs[0] if n == 0 else tf.add_paragraph()
+            if align:
+                p.alignment = align
+            rr = p.add_run()
+            rr.text = str(ln)
+            rr.font.size, rr.font.bold, rr.font.name = Pt(size), bold, "Calibri"
+            rr.font.color.rgb = rgb(color)
+        return tb
+
+    def slide(title, sub=""):
+        sl = prs.slides.add_slide(blank)
+        text(sl, 0.5, 0.28, 12.3, 0.6, title, 26, True, NAVY)
+        if sub:
+            text(sl, 0.5, 0.88, 12.3, 0.35, sub, 13, False, MUT)
+        box(sl, 0.5, 1.3, 12.33, 0.03, BLUE)
+        return sl
+
+    def table(sl, x, y, w, headers, rows, widths, rh=0.42, fs=11):
+        shp = sl.shapes.add_table(len(rows) + 1, len(headers), Inches(x), Inches(y), Inches(w), Inches(rh * (len(rows) + 1)))
+        t = shp.table
+        tot = float(sum(widths))
+        for i, wd in enumerate(widths):
+            t.columns[i].width = Inches(w * wd / tot)
+        for r in range(len(rows) + 1):
+            t.rows[r].height = Inches(rh)
+        for r in range(len(rows) + 1):
+            for c in range(len(headers)):
+                cell = t.cell(r, c)
+                v = headers[c] if r == 0 else rows[r - 1][c]
+                col = None
+                if isinstance(v, tuple):
+                    v, col = v
+                cell.margin_left = cell.margin_right = Inches(0.06)
+                cell.margin_top = cell.margin_bottom = Inches(0.03)
+                cell.vertical_anchor = MSO_ANCHOR.MIDDLE
+                tf = cell.text_frame
+                tf.word_wrap = True
+                p = tf.paragraphs[0]
+                rr = p.add_run()
+                rr.text = str(v)
+                rr.font.name, rr.font.size = "Calibri", Pt(fs if r else fs)
+                rr.font.bold = (r == 0) or bool(col)
+                rr.font.color.rgb = rgb("FFFFFF" if r == 0 else (col or TXT))
+                cell.fill.solid()
+                cell.fill.fore_color.rgb = rgb(NAVY if r == 0 else ("F7F7F5" if r % 2 == 0 else "FFFFFF"))
+        return t
+
+    # ---------- capa ----------
+    c = _v98_counts(items)
+    sl = prs.slides.add_slide(blank)
+    box(sl, 0, 0, 13.333, 7.5, NAVY)
+    box(sl, 0.8, 3.55, 1.6, 0.06, "5FA0F0")
+    text(sl, 0.8, 1.9, 11.5, 1.0, "Planejamento semanal", 46, True, "FFFFFF")
+    text(sl, 0.8, 2.85, 11.5, 0.6, f"Semana de {wk.get('label', '')}", 24, False, "CFE0F7")
+    text(sl, 0.8, 3.85, 11.5, 0.5, f"{len(items)} atividades · progresso geral {_v98_avg(items)}% · {c['ok']} concluídas", 18, False, "FFFFFF")
+    if ctx.get("filters"):
+        text(sl, 0.8, 4.45, 11.5, 0.8, "Filtros aplicados: " + _v98_cut(ctx["filters"], 220), 13, False, "CFE0F7")
+    text(sl, 0.8, 6.55, 11.8, 0.4, f"Gerado em {(now - timedelta(hours=3)).strftime('%d/%m/%Y %H:%M')} (Brasília)" + (f" por {ctx['user']}" if ctx.get("user") else "") + " · Sistema de Gestão Autopass", 12, False, "9FB6D6")
+
+    # ---------- resumo ----------
+    late_n = sum(1 for i in items if _v98_is_late(i, today))
+    pend_n = sum(1 for i in items if i.get("kind") == "pend" and i["status"] != "ok")
+    stop_n = c["agu"] + c["blq"]
+    sl = slide("Resumo da semana", f"Semana de {wk.get('label', '')}")
+    cards = [("Atividades", str(len(items)), f"{c['ok']} concluídas"), ("Progresso geral", f"{_v98_avg(items)}%", "média das atividades"), ("Em andamento", str(c["and"]), f"{c['nao']} não iniciadas"),
+             ("Pendências abertas", str(pend_n), "por área"), ("Paradas", str(stop_n), "aguardando ou bloqueadas"), ("Atrasadas", str(late_n), "prazo vencido" if late_n else "nenhuma vencida")]
+    for n, (lab, val, det) in enumerate(cards):
+        cx, cy = 0.5 + (n % 3) * 2.8, 1.65 + (n // 3) * 1.75
+        box(sl, cx, cy, 2.6, 1.55, "FFFFFF", MSO_SHAPE.ROUNDED_RECTANGLE, LINE, 0.08)
+        text(sl, cx + 0.15, cy + 0.12, 2.3, 0.3, lab, 12, False, MUT)
+        text(sl, cx + 0.15, cy + 0.42, 2.3, 0.7, val, 36, True, "D03B3B" if (lab == "Atrasadas" and late_n) else NAVY)
+        text(sl, cx + 0.15, cy + 1.14, 2.3, 0.3, det, 11, False, MUT)
+    md = _v98_pd(wk.get("milestone_date"))
+    if md or wk.get("milestone_label"):
+        dd = (md - today).days if md else None
+        when = "" if dd is None else (" · hoje" if dd == 0 else (f" · em {dd} dias" if dd > 0 else " · já passou"))
+        box(sl, 0.5, 5.25, 8.2, 0.95, LIGHT, MSO_SHAPE.ROUNDED_RECTANGLE, None, 0.1)
+        text(sl, 0.7, 5.32, 7.9, 0.3, "MARCO DA SEMANA", 11, True, MUT)
+        text(sl, 0.7, 5.6, 7.9, 0.5, f"{md.strftime('%d/%m') + ' – ' if md else ''}{wk.get('milestone_label', '')}{when}", 18, True, NAVY)
+    if len(items):
+        cd = CategoryChartData()
+        keys = [k for k in _V98_ST_LABEL if c[k]]
+        cd.categories = [_V98_ST_LABEL[k] for k in keys]
+        cd.add_series("Atividades", [c[k] for k in keys])
+        gf = sl.shapes.add_chart(XL_CHART_TYPE.DOUGHNUT, Inches(9.0), Inches(1.55), Inches(3.9), Inches(4.9), cd)
+        ch = gf.chart
+        ch.has_title = False
+        ch.has_legend = True
+        ch.legend.position = XL_LEGEND_POSITION.BOTTOM
+        ch.legend.include_in_layout = False
+        ch.legend.font.size = Pt(11)
+        pl = ch.plots[0]
+        pl.has_data_labels = True
+        pl.data_labels.show_value = True
+        pl.data_labels.font.size = Pt(13)
+        pl.data_labels.font.bold = True
+        pl.data_labels.font.color.rgb = rgb("FFFFFF")
+        for n, k in enumerate(keys):
+            pt = pl.series[0].points[n]
+            pt.format.fill.solid()
+            pt.format.fill.fore_color.rgb = rgb(_V98_ST_COLOR[k])
+
+    # ---------- por área ----------
+    areas = []
+    for f in ctx["fronts"]:
+        its = [i for i in items if f["key"] in (i.get("areas") or [i.get("front")])]
+        if its:
+            areas.append((f, its))
+    if areas:
+        sl = slide("Progresso por área", "Uma atividade ligada a mais de uma área aparece em cada uma; o total geral conta cada atividade uma vez.")
+        cd = CategoryChartData()
+        cd.categories = [_v98_cut(f["name"], 28) for f, _ in areas]
+        cd.add_series("Progresso médio (%)", [_v98_avg(its) for _, its in areas])
+        gf = sl.shapes.add_chart(XL_CHART_TYPE.BAR_CLUSTERED, Inches(0.5), Inches(1.55), Inches(6.3), Inches(5.0), cd)
+        ch = gf.chart
+        ch.has_legend = False
+        ch.has_title = False
+        pl = ch.plots[0]
+        pl.gap_width = 55
+        pl.has_data_labels = True
+        pl.data_labels.number_format = '0"%"'
+        pl.data_labels.number_format_is_linked = False
+        pl.data_labels.font.size = Pt(12)
+        pl.data_labels.font.bold = True
+        ser = pl.series[0]
+        ser.format.fill.solid()
+        ser.format.fill.fore_color.rgb = rgb(BLUE)
+        ch.value_axis.maximum_scale, ch.value_axis.minimum_scale = 100, 0
+        ch.value_axis.visible = False
+        ch.value_axis.has_major_gridlines = False
+        ch.category_axis.reverse_order = True
+        ch.category_axis.tick_labels.font.size = Pt(12)
+        rows = []
+        for f, its in areas:
+            cc = _v98_counts(its)
+            lt = sum(1 for i in its if _v98_is_late(i, today))
+            rows.append([_v98_cut(f["name"], 26), str(len(its)), str(cc["ok"]), (str(cc["agu"] + cc["blq"]), "C98A00" if cc["agu"] + cc["blq"] else None), (str(lt), "D03B3B" if lt else None), f"{_v98_avg(its)}%"])
+        table(sl, 7.1, 1.65, 5.73, ["Área", "Itens", "Concl.", "Paradas", "Atras.", "Prog."], rows, [3.2, 0.9, 1.0, 1.1, 1.0, 1.0], 0.5, 12)
+
+    # ---------- por projeto ----------
+    groups = [(p, [i for i in items if i.get("project_id") == p["id"]]) for p in ctx["projects"]]
+    groups = [(p, its) for p, its in groups if its]
+    if groups:
+        sl = slide("Progresso por projeto", "Projetos do cadastro (só o administrador cadastra).")
+        cd = CategoryChartData()
+        cd.categories = [_v98_cut(p["name"], 28) for p, _ in groups]
+        cd.add_series("Progresso médio (%)", [_v98_avg(its) for _, its in groups])
+        gf = sl.shapes.add_chart(XL_CHART_TYPE.BAR_CLUSTERED, Inches(0.5), Inches(1.55), Inches(6.3), Inches(5.0), cd)
+        ch = gf.chart
+        ch.has_legend = False
+        ch.has_title = False
+        pl = ch.plots[0]
+        pl.gap_width = 55
+        pl.has_data_labels = True
+        pl.data_labels.number_format = '0"%"'
+        pl.data_labels.number_format_is_linked = False
+        pl.data_labels.font.size = Pt(12)
+        pl.data_labels.font.bold = True
+        pl.series[0].format.fill.solid()
+        pl.series[0].format.fill.fore_color.rgb = rgb(NAVY)
+        ch.value_axis.maximum_scale, ch.value_axis.minimum_scale = 100, 0
+        ch.value_axis.visible = False
+        ch.value_axis.has_major_gridlines = False
+        ch.category_axis.reverse_order = True
+        ch.category_axis.tick_labels.font.size = Pt(12)
+        rows = []
+        for p, its in groups[:10]:
+            lt = sum(1 for i in its if _v98_is_late(i, today))
+            rows.append([_v98_cut(p["name"], 24), _v98_cut(p.get("responsible") or "—", 16), str(len(its)), str(sum(1 for i in its if i["status"] == "ok")), (str(lt), "D03B3B" if lt else None), f"{_v98_avg(its)}%"])
+        table(sl, 7.1, 1.65, 5.73, ["Projeto", "Responsável", "Itens", "Concl.", "Atras.", "Prog."], rows, [2.6, 1.8, 0.8, 0.9, 0.9, 0.9], 0.5, 12)
+
+    # ---------- cronograma (Gantt) ----------
+    grows = []
+    for f, its in areas:
+        grows.append(("h", f["name"]))
+        grows.extend(("i", i) for i in its)
+    if grows:
+        dates = [today]
+        for kind, it in grows:
+            if kind == "i":
+                for d in (_v98_pd(it.get("start_date")), _v98_dt(it.get("started_at")) and (_v98_dt(it.get("started_at")) - timedelta(hours=3)).date(), _v98_pd(it.get("deadline")), _v98_forecast(it, now)[0]):
+                    if d:
+                        dates.append(d)
+        a, b = min(dates) - timedelta(days=1), max(dates) + timedelta(days=2)
+        if (b - a).days > 180:
+            a, b = max(a, today - timedelta(days=30)), min(b, today + timedelta(days=150))
+        if (b - a).days < 21:
+            b = a + timedelta(days=21)
+        ndays = (b - a).days + 1
+        GX, GW, ROWH, PER = 4.3, 8.5, 0.335, 13
+        pages, cur, used, last_h = [], [], 0, None
+        for kind, v in grows:
+            if used >= PER:
+                pages.append(cur)
+                cur, used = [], 0
+                if kind == "i" and last_h:
+                    cur.append(("h", last_h + " (cont.)"))
+                    used += 1
+            if kind == "h":
+                last_h = v
+            cur.append((kind, v))
+            used += 1
+        if cur:
+            pages.append(cur)
+
+        def gx(d):
+            return GX + max(0, min(ndays, (d - a).days)) * GW / ndays
+
+        for pn, pg in enumerate(pages, 1):
+            sl = slide("Cronograma (Gantt)" + (f" – {pn}/{len(pages)}" if len(pages) > 1 else ""), "Barra clara = período planejado · barra colorida = progresso · faixa vermelha = previsão além do prazo · linha vermelha = hoje")
+            step = max(1, -(-ndays // 14))
+            for k in range(0, ndays, step):
+                d = a + timedelta(days=k)
+                x = gx(d)
+                box(sl, x, 1.95, 0.008, ROWH * PER + 0.15, LINE)
+                text(sl, x - 0.3, 1.55, 0.7, 0.3, d.strftime("%d/%m"), 9, False, MUT, PP_ALIGN.CENTER)
+            y = 2.0
+            for kind, v in pg:
+                if kind == "h":
+                    box(sl, 0.5, y, 12.33, ROWH - 0.03, LIGHT)
+                    text(sl, 0.55, y, 3.7, ROWH - 0.03, v, 11, True, NAVY, None, MSO_ANCHOR.MIDDLE)
+                else:
+                    it = v
+                    text(sl, 0.55, y, 3.75, ROWH - 0.03, ("⚑ " if it.get("kind") == "pend" else "") + _v98_cut(it["title"], 46), 10, False, TXT, None, MSO_ANCHOR.MIDDLE)
+                    s_d = _v98_pd(it.get("start_date")) or (((_v98_dt(it.get("started_at")) - timedelta(hours=3)).date()) if _v98_dt(it.get("started_at")) else None)
+                    e_d, (fc, _src) = _v98_pd(it.get("deadline")), _v98_forecast(it, now)
+                    col = _V98_ST_COLOR.get(it["status"], MUT)
+                    by = y + 0.085
+                    if s_d and e_d and e_d >= s_d:
+                        x1, x2 = gx(s_d), gx(e_d + timedelta(days=1))
+                        box(sl, x1, by, max(0.06, x2 - x1), 0.15, "9DB8E0")
+                        pw = (x2 - x1) * int(it.get("progress") or 0) / 100
+                        if pw > 0.01:
+                            box(sl, x1, by, pw, 0.15, col)
+                    elif s_d:
+                        box(sl, gx(s_d), by, 0.16, 0.15, col)
+                    elif e_d:
+                        box(sl, gx(e_d) - 0.01, by - 0.01, 0.17, 0.17, col, MSO_SHAPE.DIAMOND)
+                    else:
+                        text(sl, GX + 0.05, y, 2.0, ROWH - 0.03, "sem datas", 9, False, MUT, None, MSO_ANCHOR.MIDDLE)
+                    if fc and e_d and it["status"] != "ok" and fc > e_d:
+                        x1 = gx(e_d + timedelta(days=1))
+                        box(sl, x1, by + 0.05, max(0.05, gx(fc + timedelta(days=1)) - x1), 0.06, "D03B3B")
+                y += ROWH
+            if a <= today <= b:
+                box(sl, gx(today) + 0.5 * GW / ndays, 1.95, 0.02, ROWH * PER + 0.15, "D03B3B")
+            lx = 0.5
+            for k in _V98_ST_LABEL:
+                box(sl, lx, 6.72, 0.14, 0.14, _V98_ST_COLOR[k])
+                text(sl, lx + 0.18, 6.66, 1.9, 0.26, _V98_ST_LABEL[k], 10, False, MUT)
+                lx += 1.85
+
+    # ---------- atenção ----------
+    att = [i for i in items if i["status"] in ("agu", "blq") or _v98_is_late(i, today) or (i.get("kind") == "pend" and i["status"] != "ok")]
+    att.sort(key=lambda i: (0 if _v98_is_late(i, today) else (1 if i["status"] in ("agu", "blq") else 2), i.get("deadline") or "9999"))
+    for pn in range(0, len(att), 9):
+        part = att[pn:pn + 9]
+        sl = slide("Atenção: paradas, atrasadas e pendências abertas" + (f" ({pn // 9 + 1}/{-(-len(att) // 9)})" if len(att) > 9 else ""), f"{len(att)} itens que pedem decisão ou ação")
+        rows = []
+        for i in part:
+            dl = _v98_pd(i.get("deadline"))
+            since = _v98_dt(i.get("status_since"))
+            if _v98_is_late(i, today):
+                sit = (f"Atrasada +{(today - dl).days} d", "D03B3B")
+            elif i["status"] in ("agu", "blq"):
+                sit = (_V98_ST_LABEL[i["status"]] + (f" · {(now - since).days} d" if since else ""), _V98_ST_COLOR[i["status"]])
+            else:
+                sit = ("Pendência aberta", "C98A00")
+            prj = pmap.get(i.get("project_id"))
+            rows.append([_v98_cut(i["title"], 60), _v98_cut(_v98_area_names(i, fmap), 34), _v98_cut(prj["name"] if prj else "—", 20), sit, _v98_cut(i.get("stop_reason") or i.get("obs") or "—", 70),
+                         _v98_cut(i.get("responsible") or "A definir", 16), dl.strftime("%d/%m") if dl else "—"])
+        table(sl, 0.5, 1.55, 12.33, ["Atividade", "Áreas", "Projeto", "Situação", "Motivo / observação", "Responsável", "Prazo"], rows, [3.4, 1.7, 1.4, 1.6, 2.9, 1.2, 0.8], 0.52, 10.5)
+
+    # ---------- uma página por área ----------
+    for f, its in areas:
+        cc = _v98_counts(its)
+        pages_n = -(-len(its) // 9)
+        for pn in range(pages_n):
+            part = its[pn * 9:(pn + 1) * 9]
+            sl = slide(f["name"] + (f" ({pn + 1}/{pages_n})" if pages_n > 1 else ""), f"{cc['ok']}/{len(its)} concluídas · progresso {_v98_avg(its)}%")
+            rows = []
+            for i in part:
+                fc, src = _v98_forecast(i, now)
+                dl = _v98_pd(i.get("deadline"))
+                prj = pmap.get(i.get("project_id"))
+                over = bool(fc and dl and i["status"] != "ok" and fc > dl)
+                rows.append([("PEND." if i.get("kind") == "pend" else "ATIV."), _v98_cut(i["title"], 62), _v98_cut(prj["name"] if prj else "—", 18),
+                             (_V98_ST_LABEL[i["status"]], _V98_ST_COLOR[i["status"]]), f"{int(i.get('progress') or 0)}%", _v98_cut(i.get("responsible") or "A definir", 16),
+                             (dl.strftime("%d/%m") if dl else "—", "D03B3B" if _v98_is_late(i, today) else None), ((fc.strftime("%d/%m") + (f" ({src})" if src else "")) if fc else "—", "D03B3B" if over else None)])
+            table(sl, 0.5, 1.55, 12.33, ["Tipo", "Atividade", "Projeto", "Status", "Prog.", "Responsável", "Prazo", "Previsão"], rows, [0.7, 4.2, 1.5, 1.7, 0.7, 1.4, 0.8, 1.5], 0.5, 10.5)
+
+    # ---------- pontos de atenção ----------
+    notes = [n for n in ctx.get("notes") or [] if str(n).strip()]
+    if notes:
+        sl = slide("Pontos de atenção e dependências", f"Semana de {wk.get('label', '')}")
+        text(sl, 0.7, 1.6, 11.9, 5.0, ["• " + _v98_cut(n, 220) for n in notes[:10]], 16, False, TXT)
+
+    total = len(prs.slides)
+    for n, sl in enumerate(prs.slides, 1):
+        if n == 1:
+            continue
+        text(sl, 0.5, 7.05, 9.5, 0.3, f"Sistema de Gestão Autopass · Planejamento semanal · {wk.get('label', '')}", 10, False, MUT)
+        text(sl, 11.3, 7.05, 1.53, 0.3, f"{n} / {total}", 10, False, MUT, PP_ALIGN.RIGHT)
+    buf = BytesIO()
+    prs.save(buf)
+    return buf.getvalue()
 
 
 @app.get("/api/diagnostico/rede/base-sem-localidade/v94")
