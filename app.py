@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV96"
+APP_RELEASE = "V87.6 REV97"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -8014,8 +8014,8 @@ def _v8522_menu_layout():
     return obj
 
 # REV5: catálogo técnico das funções efetivamente presentes na navegação.
-_V876_REV5_CATALOG = {'Dashboard': '/gerencial', 'Central de Atividades': '/atividades', 'Gestão de Tarefas': '/gestao-tarefas', 'Minhas Atividades Arrow': '/arrow?mine=1#minhas', 'Agenda Arrow': '/arrow#agenda', 'Atividades / Alocações Arrow': '/arrow#gestao', 'Inventário': '/tecnico', 'Preventiva ATM': '/preventivas', 'Atividades de Bobinas': '/field/bobinas', 'Visitas / Relatórios': '/implantacao-hardware', 'Dashboard Bobinas': '/dashboard/bobinas', 'Chamados': '/trabalho', 'Equipamentos': '/patrimonio', 'Evidências': '/evidencias-campo', 'Visão Panorâmica': '/visao-panoramica', 'Troca de Chips Recarga': '/troca-chips', 'Mapeamento ATM': '/field/mapeamento-atm', 'Bobinas': '/field/bobinas', 'Estoque Field': '/field/estoque', 'Troca de POS Metrô': '/field/troca-pos-metro', 'Atualização Firmware POS - CPTM': '/firmware-pos-cptm', 'Gerar QR Code – Trilhos': '/qr-trilhos', 'Configurações QR – Trilhos': '/gestao/configuracoes/qr-trilhos', 'Drive Técnico': '/implantacao-hardware/repositorio', 'Lista de Presença Digital': '/implantacao-hardware/lista-presenca', 'Troca de Chips EMV - Trilhos': '/troca-chips-emv', 'Troca de Chips Garagem': '/troca-chips-garagem', 'Equipes': '/equipes', 'APT': '/rh/apt', 'Usuários': '/usuarios', 'Agendamentos': '/portal-cliente', 'Recebimentos': '/portal-cliente', 'Gestão de Agendamentos': '/portal-cliente/gestao-agendamentos', 'Cadastro de Clientes': '/portal-cliente/cadastro-clientes', 'Cadastro de Itens': '/engenharia#itens', 'Estruturas BOM': '/engenharia#bom', 'Preço de Venda / Locação': '/engenharia#preco', 'Revisões': '/engenharia#revisoes', 'Codificação': '/engenharia#codificacao', 'Estoque Central': '/engenharia/estoque', 'Dossiê & Materiais': '/documentos-materiais', 'Raio-X dos Colaboradores': '/documentos-materiais/raio-x', 'Preparação de Acessos — Metrô / CPTM': '/documentos/acessos', 'Central Operacional': '/central-operacional', 'Inteligência Operacional': '/inteligencia-operacional', 'Central 360': '/gestao-360', 'Notificações 0': '/notificacoes', 'Diagnóstico': '/diagnostico', 'Configurações': '/configuracoes', 'Organização do Menu Principal': '/gestao/organizacao-menu', 'Localidades Externas': '/gestao/localidades-externas', 'Resumo dos Links': '/gestao/resumo-links', 'Rastreabilidade & Jornada': '/gestao/rastreabilidade-jornada', 'Perfis & Permissões': '/perfis', 'Configuração de Dashboards': '/gestao/configuracao-dashboards', 'Construtor de Dashboards': '/configuracoes/dashboards', 'Saúde da Plataforma': '/saude-plataforma', 'Lançamentos': '/financeiro/lancamentos', 'Coleta de Valores': '/financeiro/coleta-valores', 'Monitoramento de Coletas': '/financeiro/monitoramento-coletas', 'Apuração': '/financeiro/apuracao', 'Caixinha': '/financeiro/caixinha', 'Agenda': '/arrow#agenda', 'Minhas atividades': '/arrow?mine=1#minhas', 'Atividades / Alocações': '/arrow#gestao', 'Dashboard Arrow': '/arrow#dashboard', 'Atendimento Remoto / TeamViewer': '/arrow#remoto', 'Meu Perfil': '/meu-perfil', 'Sobre': '/sobre', 'Sair': '/logout'}
-_V876_REV5_GROUPS = {'Caixinha': 'Financeiro', 'Preparação de Acessos — Metrô / CPTM': 'Documentos & Materiais', 'Troca de POS Metrô': 'Field'}
+_V876_REV5_CATALOG = {'Dashboard': '/gerencial', 'Central de Atividades': '/atividades', 'Gestão de Tarefas': '/gestao-tarefas', 'Minhas Atividades Arrow': '/arrow?mine=1#minhas', 'Agenda Arrow': '/arrow#agenda', 'Atividades / Alocações Arrow': '/arrow#gestao', 'Inventário': '/tecnico', 'Preventiva ATM': '/preventivas', 'Atividades de Bobinas': '/field/bobinas', 'Visitas / Relatórios': '/implantacao-hardware', 'Dashboard Bobinas': '/dashboard/bobinas', 'Chamados': '/trabalho', 'Equipamentos': '/patrimonio', 'Evidências': '/evidencias-campo', 'Visão Panorâmica': '/visao-panoramica', 'Troca de Chips Recarga': '/troca-chips', 'Mapeamento ATM': '/field/mapeamento-atm', 'Bobinas': '/field/bobinas', 'Estoque Field': '/field/estoque', 'Troca de POS Metrô': '/field/troca-pos-metro', 'Atualização Firmware POS - CPTM': '/firmware-pos-cptm', 'Gerar QR Code – Trilhos': '/qr-trilhos', 'Configurações QR – Trilhos': '/gestao/configuracoes/qr-trilhos', 'Drive Técnico': '/implantacao-hardware/repositorio', 'Lista de Presença Digital': '/implantacao-hardware/lista-presenca', 'Troca de Chips EMV - Trilhos': '/troca-chips-emv', 'Troca de Chips Garagem': '/troca-chips-garagem', 'Equipes': '/equipes', 'APT': '/rh/apt', 'Usuários': '/usuarios', 'Agendamentos': '/portal-cliente', 'Recebimentos': '/portal-cliente', 'Gestão de Agendamentos': '/portal-cliente/gestao-agendamentos', 'Cadastro de Clientes': '/portal-cliente/cadastro-clientes', 'Cadastro de Itens': '/engenharia#itens', 'Estruturas BOM': '/engenharia#bom', 'Preço de Venda / Locação': '/engenharia#preco', 'Revisões': '/engenharia#revisoes', 'Codificação': '/engenharia#codificacao', 'Estoque Central': '/engenharia/estoque', 'Dossiê & Materiais': '/documentos-materiais', 'Raio-X dos Colaboradores': '/documentos-materiais/raio-x', 'Preparação de Acessos — Metrô / CPTM': '/documentos/acessos', 'Central Operacional': '/central-operacional', 'Inteligência Operacional': '/inteligencia-operacional', 'Central 360': '/gestao-360', 'Notificações 0': '/notificacoes', 'Diagnóstico': '/diagnostico', 'Configurações': '/configuracoes', 'Organização do Menu Principal': '/gestao/organizacao-menu', 'Localidades Externas': '/gestao/localidades-externas', 'Resumo dos Links': '/gestao/resumo-links', 'Rastreabilidade & Jornada': '/gestao/rastreabilidade-jornada', 'Perfis & Permissões': '/perfis', 'Configuração de Dashboards': '/gestao/configuracao-dashboards', 'Construtor de Dashboards': '/configuracoes/dashboards', 'Saúde da Plataforma': '/saude-plataforma', 'Lançamentos': '/financeiro/lancamentos', 'Coleta de Valores': '/financeiro/coleta-valores', 'Monitoramento de Coletas': '/financeiro/monitoramento-coletas', 'Apuração': '/financeiro/apuracao', 'Caixinha': '/financeiro/caixinha', 'Agenda': '/arrow#agenda', 'Minhas atividades': '/arrow?mine=1#minhas', 'Atividades / Alocações': '/arrow#gestao', 'Dashboard Arrow': '/arrow#dashboard', 'Atendimento Remoto / TeamViewer': '/arrow#remoto', 'Meu Perfil': '/meu-perfil', 'Planejamento semanal': '/gestao/planejamento-semanal', 'Sobre': '/sobre', 'Sair': '/logout'}
+_V876_REV5_GROUPS = {'Caixinha': 'Financeiro', 'Preparação de Acessos — Metrô / CPTM': 'Documentos & Materiais', 'Troca de POS Metrô': 'Field', 'Planejamento semanal': 'Gestão'}
 
 def _v876_rev5_complete(layout):
     import copy
@@ -8221,7 +8221,7 @@ _V85_FLAGS = [
     {"id": "api_cache", "label": "Equipes: resposta compartilhada por 10 s", "desc": "A tela de Equipes passa a reaproveitar por até 10 s o resultado já calculado para outro usuário, em vez de refazer ~16 consultas a cada atualização."},
     {"id": "apt_otimizado", "label": "APT: consultas em lote e arquivos sem sobra", "desc": "Verificação de APT vigente e importação em poucas consultas, contagem do painel feita no banco, PDF aberto direto do armazenamento e arquivo antigo apagado quando o PDF é trocado ou a APT é excluída."},
     {"id": "menu_terceiro_nivel", "label": "Menus com terceiro nível + índice do Diagnóstico", "desc": "Em Gestão › Diagnóstico, abre um painel ao lado com as seções da página (vai direto a cada uma) e mostra um índice fixo no topo do Diagnóstico. Mesmas permissões; desligar volta ao menu atual."},
-    {"id": "planejamento_semanal", "label": "Planejamento semanal (Gestão)", "desc": "Libera a tela Gestão › Planejamento semanal (/gestao/planejamento-semanal): frentes, atividades, status, responsável e prazo por semana, com gráficos. Só o administrador principal define quem pode ver e quem pode editar."},
+    {"id": "planejamento_semanal", "label": "Planejamento semanal (Gestão)", "desc": "Libera a tela Gestão › Planejamento semanal (/gestao/planejamento-semanal): gerenciador de projetos por área (progresso, tempo na atividade, motivo de parada, predecessoras, previsão de término, documentação, homologação e cronograma em barras), com gráficos. Só o administrador principal define quem pode ver e quem pode editar."},
 ]
 _V85_IDS = {f["id"] for f in _V85_FLAGS}
 _V85_STATE = {"ready": False}
@@ -9808,12 +9808,22 @@ def v92_manual_merge_apply():
 
 # --- histórico da padronização por lote -----------------------------------
 # ---------------------------------------------------------------------------
-# REV96 — Planejamento semanal (Gestão): acesso por usuário (ver / editar) decidido só pelo administrador principal
+# REV96/REV97 — Planejamento semanal (Gestão): gerenciador de projetos por área, com acesso por usuário (ver / editar)
+# decidido só pelo administrador principal.
 # ---------------------------------------------------------------------------
 _V96_STATUS = ("nao", "and", "agu", "blq", "ok")
+_V97_HOMOLOG = ("na", "pend", "teste", "ok", "nok")
 _V96_STATE = {"ready": False}
-_V96_FRONTS_SEED = (("hw", "Implantação de Hardware"), ("pend", "Pendências e definições"), ("at", "Assistência Técnica"),
-                    ("est", "Estoque"), ("mec", "Engenharia Mecânica"), ("ehw", "Engenharia de Hardware"))
+_V96_FRONTS_SEED = (("hw", "Implantação de Hardware"), ("at", "Assistência Técnica"), ("est", "Estoque"),
+                    ("mec", "Engenharia Mecânica"), ("ehw", "Engenharia de Hardware"))
+_V97_NEW_COLS = (
+    "kind VARCHAR(5) NOT NULL DEFAULT 'ativ'", "progress INTEGER NOT NULL DEFAULT 0", "start_date DATE", "forecast_date DATE",
+    "started_at TIMESTAMP", "status_since TIMESTAMP", "completed_at TIMESTAMP", "stop_reason VARCHAR(300) NOT NULL DEFAULT ''",
+    "predecessors VARCHAR(400) NOT NULL DEFAULT '[]'", "docs_json VARCHAR(2000) NOT NULL DEFAULT '[]'", "doc_notes VARCHAR(1000) NOT NULL DEFAULT ''",
+    "homolog VARCHAR(6) NOT NULL DEFAULT 'na'", "homolog_resp VARCHAR(120) NOT NULL DEFAULT ''", "homolog_date DATE", "homolog_obs VARCHAR(300) NOT NULL DEFAULT ''",
+)
+_V97_COLS = ("id, front, title, status, responsible, deadline, obs, position, updated_at, kind, progress, start_date, forecast_date, started_at, status_since, "
+             "completed_at, stop_reason, predecessors, docs_json, doc_notes, homolog, homolog_resp, homolog_date, homolog_obs")
 
 
 def _v96_ensure(conn):
@@ -9832,28 +9842,38 @@ def _v96_ensure(conn):
         "CREATE INDEX IF NOT EXISTS ix_v96_plan_events_week ON v96_plan_events (week_id, id)",
     ):
         conn.execute(text(ddl))
+    for col in _V97_NEW_COLS:
+        conn.execute(text("ALTER TABLE v96_plan_items ADD COLUMN IF NOT EXISTS " + col))
     if not conn.execute(text("SELECT 1 FROM v96_plan_fronts LIMIT 1")).first():
         for i, (k, n) in enumerate(_V96_FRONTS_SEED):
             conn.execute(text("INSERT INTO v96_plan_fronts (fkey,name,position) VALUES (:k,:n,:p) ON CONFLICT DO NOTHING"), {"k": k, "n": n, "p": i})
+    # REV97: "Pendências e definições" deixa de ser uma área; cada pendência passa a ser do tipo 'pend' dentro da sua área (as já cadastradas vão para Implantação de Hardware).
+    if conn.execute(text("SELECT 1 FROM v96_plan_fronts WHERE fkey='pend'")).first():
+        conn.execute(text("UPDATE v96_plan_items SET kind='pend', front='hw' WHERE front='pend'"))
+        conn.execute(text("DELETE FROM v96_plan_fronts WHERE fkey='pend'"))
+    conn.execute(text("UPDATE v96_plan_items SET progress=100 WHERE status='ok' AND progress<100"))
+    conn.execute(text("UPDATE v96_plan_items SET started_at=created_at WHERE status<>'nao' AND started_at IS NULL"))
+    conn.execute(text("UPDATE v96_plan_items SET status_since=updated_at WHERE status_since IS NULL"))
+    conn.execute(text("UPDATE v96_plan_items SET completed_at=updated_at WHERE status='ok' AND completed_at IS NULL"))
     _V96_STATE["ready"] = True
 
 
 _V96_SEED_ITEMS = (
-    ("hw", "Expansão POS nos trilhos – Metrô (finalização)", "and", "2026-11-11", "Previsão de finalizar 11/11"),
-    ("hw", "Novo cronograma POS – Linhas 01, 03, 04 e 15", "nao", None, "Linha 4 operada pela ViaQuatro – validar interlocutor"),
-    ("hw", "Expansão B80 (validador de ônibus) – SPTrans", "and", None, "Base: 10 instalados em terminais + 1 ônibus como slave"),
-    ("pend", "Chip SM 4G – continua?", "agu", None, "Decisão técnica/comercial"),
-    ("pend", "Recarga V3680 e V3695 (vermelho)", "agu", None, "Software"),
-    ("pend", "Contrato assinado", "agu", None, "Contratual"),
-    ("pend", "Versão final", "agu", None, "Software/produto"),
-    ("pend", "Definição do logo no vidro", "agu", None, "Produto/visual"),
-    ("pend", "BF80 (biometria facial)", "agu", None, "A detalhar"),
-    ("at", "Atividades rotineiras de manutenção", "and", None, ""),
-    ("at", "Preparar 4 validadores p/ SPTrans (2× V3680, 2× V3695)", "nao", None, "Depende da pendência de recarga (vermelho)?"),
-    ("at", "Giga de testes p/ validador legado – apresentação ABASP", "nao", None, "Data da apresentação a confirmar"),
-    ("est", "Atividades rotineiras de estoque", "and", None, ""),
-    ("est", "Cotação final – terminal de consulta ESP", "nao", None, ""),
-    ("est", "Cotação final – terminal de consulta p/ terminal de seccionamento", "nao", None, ""),
+    ("hw", "Expansão POS nos trilhos – Metrô (finalização)", "and", "2026-11-11", "Previsão de finalizar 11/11", "ativ"),
+    ("hw", "Novo cronograma POS – Linhas 01, 03, 04 e 15", "nao", None, "Linha 4 operada pela ViaQuatro – validar interlocutor", "ativ"),
+    ("hw", "Expansão B80 (validador de ônibus) – SPTrans", "and", None, "Base: 10 instalados em terminais + 1 ônibus como slave", "ativ"),
+    ("hw", "Chip SM 4G – continua?", "agu", None, "Decisão técnica/comercial", "pend"),
+    ("hw", "Recarga V3680 e V3695 (vermelho)", "agu", None, "Software", "pend"),
+    ("hw", "Contrato assinado", "agu", None, "Contratual", "pend"),
+    ("hw", "Versão final", "agu", None, "Software/produto", "pend"),
+    ("hw", "Definição do logo no vidro", "agu", None, "Produto/visual", "pend"),
+    ("hw", "BF80 (biometria facial)", "agu", None, "A detalhar", "pend"),
+    ("at", "Atividades rotineiras de manutenção", "and", None, "", "ativ"),
+    ("at", "Preparar 4 validadores p/ SPTrans (2× V3680, 2× V3695)", "nao", None, "Depende da pendência de recarga (vermelho)?", "ativ"),
+    ("at", "Giga de testes p/ validador legado – apresentação ABASP", "nao", None, "Data da apresentação a confirmar", "ativ"),
+    ("est", "Atividades rotineiras de estoque", "and", None, "", "ativ"),
+    ("est", "Cotação final – terminal de consulta ESP", "nao", None, "", "ativ"),
+    ("est", "Cotação final – terminal de consulta p/ terminal de seccionamento", "nao", None, "", "ativ"),
 )
 _V96_SEED_NOTES = [
     "Recarga V3680/V3695 (vermelho) × preparação dos validadores SPTrans: confirmar se a correção de software precisa estar pronta antes da entrega.",
@@ -9872,9 +9892,12 @@ def _v96_seed(conn):
                        {"n": json.dumps(_V96_SEED_NOTES, ensure_ascii=False), "u": session.get("user_id")}).scalar()
     if not wid:
         return
-    for pos, (f, t, s, d, o) in enumerate(_V96_SEED_ITEMS):
-        conn.execute(text("INSERT INTO v96_plan_items (week_id,front,title,status,deadline,obs,position,created_by) VALUES (:w,:f,:t,:s,CAST(:d AS DATE),:o,:p,:u)"),
-                     {"w": wid, "f": f, "t": t, "s": s, "d": d, "o": o, "p": pos, "u": session.get("user_id")})
+    now = datetime.utcnow()
+    for pos, (f, t, s, d, o, k) in enumerate(_V96_SEED_ITEMS):
+        conn.execute(text("INSERT INTO v96_plan_items (week_id,front,title,status,deadline,obs,position,created_by,kind,started_at,status_since,stop_reason) "
+                          "VALUES (:w,:f,:t,:s,CAST(:d AS DATE),:o,:p,:u,:k,:st,:now,:sr)"),
+                     {"w": wid, "f": f, "t": t, "s": s, "d": d, "o": o, "p": pos, "u": session.get("user_id"), "k": k,
+                      "st": None if s == "nao" else now, "now": now, "sr": o if s == "agu" else ""})
 
 
 def _v96_access(conn=None):
@@ -9898,7 +9921,7 @@ def _v96_gate(need_edit=False, need_admin=False):
     if gd:
         return gd, None
     if not _v85_flags().get("planejamento_semanal"):
-        return (jsonify({"ok": False, "error": "Ligue a chave 'Planejamento semanal' em Recursos."}), 409), None
+        return (jsonify({"ok": False, "error": "Ligue a chave 'Planejamento semanal (Gestão)' em Recursos."}), 409), None
     ver, edit, adm = _v96_access()
     if not ver or (need_edit and not edit) or (need_admin and not adm):
         return (jsonify({"ok": False, "error": "Sem permissão para esta ação."}), 403), None
@@ -9920,9 +9943,63 @@ def _v96_clean_date(v):
         raise ValueError("Data inválida (use AAAA-MM-DD).")
 
 
+def _v97_iso(v):
+    return v.isoformat() if v else None
+
+
 def _v96_item_row(r):
-    return {"id": r[0], "front": r[1], "title": r[2], "status": r[3], "responsible": r[4], "deadline": r[5].isoformat() if r[5] else "",
-            "obs": r[6], "position": r[7], "updated_at": r[8].isoformat() if r[8] else None}
+    try:
+        preds = [int(x) for x in json.loads(r[17] or "[]")]
+    except Exception:
+        preds = []
+    try:
+        docs = json.loads(r[18] or "[]")
+    except Exception:
+        docs = []
+    return {"id": r[0], "front": r[1], "title": r[2], "status": r[3], "responsible": r[4], "deadline": _v97_iso(r[5]) or "", "obs": r[6], "position": r[7],
+            "updated_at": _v97_iso(r[8]), "kind": r[9], "progress": int(r[10] or 0), "start_date": _v97_iso(r[11]) or "", "forecast_date": _v97_iso(r[12]) or "",
+            "started_at": _v97_iso(r[13]), "status_since": _v97_iso(r[14]), "completed_at": _v97_iso(r[15]), "stop_reason": r[16] or "", "predecessors": preds,
+            "docs": docs, "doc_notes": r[19] or "", "homolog": r[20] or "na", "homolog_resp": r[21] or "", "homolog_date": _v97_iso(r[22]) or "", "homolog_obs": r[23] or ""}
+
+
+_V97_GRANTS_KEY = "v97_plan_grants"
+
+
+def _v97_plan_menu_ok():
+    """Mostra o link no menu só para quem pode ver a tela (chave ligada e acesso concedido)."""
+    try:
+        uid = session.get("user_id")
+        if not uid or not _v85_flags().get("planejamento_semanal"):
+            return False
+        if _v86_is_principal():
+            return True
+        def _load():
+            with db.engine.begin() as c:
+                _v96_ensure(c)
+                return {int(r[0]) for r in c.execute(text("SELECT user_id FROM v96_plan_access")).fetchall()}
+        return int(uid) in _v73_cache_get(_V97_GRANTS_KEY, _load, ttl=60)
+    except Exception:
+        return False
+
+
+@app.after_request
+def v97_plan_menu_link(response):
+    """Mesmo padrão do link do Estoque Central: insere 'Planejamento semanal' ao lado de 'Organização do Menu Principal'."""
+    if response.status_code != 200 or response.mimetype != "text/html" or response.direct_passthrough:
+        return response
+    if request.path.startswith("/api/") or not session.get("user_id"):
+        return response
+    if not _v97_plan_menu_ok():
+        return response
+    html = response.get_data(as_text=True)
+    if "/gestao/planejamento-semanal" in html or "/gestao/organizacao-menu" not in html:
+        return response
+    m = re.search(r'(<a\b[^>]*href=["\']/gestao/organizacao-menu["\'][^>]*>.*?</a>)', html, re.I | re.S)
+    if not m:
+        return response
+    link = '<a href="/gestao/planejamento-semanal" data-v97-plan="1">Planejamento semanal</a>'
+    response.set_data(html[:m.end()] + link + html[m.end():])
+    return response
 
 
 @app.get("/gestao/planejamento-semanal")
@@ -9950,21 +10027,33 @@ def v96_plan_state():
             return jsonify({"ok": True, "weeks": [], "week": None})
         cur = next((w for w in weeks if w[0] == wk), weeks[0])
         w = conn.execute(text("SELECT id, week_start, label, milestone_date, milestone_label, notes_json, updated_at FROM v96_plan_weeks WHERE id=:i"), {"i": cur[0]}).first()
-        items = conn.execute(text("SELECT id, front, title, status, responsible, deadline, obs, position, updated_at FROM v96_plan_items WHERE week_id=:w ORDER BY position, id"), {"w": cur[0]}).fetchall()
+        items = conn.execute(text(f"SELECT {_V97_COLS} FROM v96_plan_items WHERE week_id=:w ORDER BY position, id"), {"w": cur[0]}).fetchall()
         fronts = conn.execute(text("SELECT fkey, name FROM v96_plan_fronts ORDER BY position, fkey")).fetchall()
     try:
         notes = json.loads(w[5] or "[]")
     except Exception:
         notes = []
     users = [u.name for u in User.query.filter(User.active.is_(True)).order_by(User.name).limit(400).all()] if acc[1] else []
-    return jsonify({"ok": True, "me": {"can_edit": acc[1], "is_admin": acc[2]},
+    return jsonify({"ok": True, "me": {"can_edit": acc[1], "is_admin": acc[2]}, "now": datetime.utcnow().isoformat(),
                     "weeks": [{"id": x[0], "start": x[1].isoformat(), "label": x[2]} for x in weeks],
                     "week": {"id": w[0], "start": w[1].isoformat(), "label": w[2], "milestone_date": w[3].isoformat() if w[3] else "", "milestone_label": w[4], "notes": notes,
                              "updated_at": w[6].isoformat() if w[6] else None},
                     "fronts": [{"key": f[0], "name": f[1]} for f in fronts], "items": [_v96_item_row(r) for r in items], "users": users})
 
 
-def _v96_item_fields(data, conn, partial):
+def _v97_has_cycle(preds_by_id):
+    state = {}
+    def dfs(n):
+        state[n] = 1
+        for p in preds_by_id.get(n, ()):
+            if state.get(p) == 1 or (state.get(p) is None and dfs(p)):
+                return True
+        state[n] = 2
+        return False
+    return any(state.get(n) is None and dfs(n) for n in list(preds_by_id))
+
+
+def _v96_item_fields(data, conn, partial, week_id=None, item_id=None):
     out = {}
     if "title" in data or not partial:
         t = (data.get("title") or "").strip()
@@ -9981,12 +10070,57 @@ def _v96_item_fields(data, conn, partial):
         if not conn.execute(text("SELECT 1 FROM v96_plan_fronts WHERE fkey=:k"), {"k": f}).first():
             raise ValueError("Frente inválida.")
         out["front"] = f
-    if "responsible" in data:
-        out["responsible"] = (data.get("responsible") or "").strip()[:120]
-    if "obs" in data:
-        out["obs"] = (data.get("obs") or "").strip()[:500]
-    if "deadline" in data:
-        out["deadline"] = _v96_clean_date(data.get("deadline"))
+    if "kind" in data:
+        k = (data.get("kind") or "ativ").strip()
+        if k not in ("ativ", "pend"):
+            raise ValueError("Tipo inválido.")
+        out["kind"] = k
+    if "progress" in data:
+        try:
+            p = int(data.get("progress"))
+        except (TypeError, ValueError):
+            raise ValueError("Progresso inválido (0 a 100).")
+        if p < 0 or p > 100:
+            raise ValueError("Progresso inválido (0 a 100).")
+        out["progress"] = p
+    for k, lim in (("responsible", 120), ("obs", 500), ("stop_reason", 300), ("doc_notes", 1000), ("homolog_resp", 120), ("homolog_obs", 300)):
+        if k in data:
+            out[k] = (data.get(k) or "").strip()[:lim]
+    for k in ("deadline", "start_date", "forecast_date", "homolog_date"):
+        if k in data:
+            out[k] = _v96_clean_date(data.get(k))
+    if "homolog" in data:
+        h = (data.get("homolog") or "na").strip()
+        if h not in _V97_HOMOLOG:
+            raise ValueError("Homologação inválida.")
+        out["homolog"] = h
+    if "docs" in data:
+        docs = []
+        for d in (data.get("docs") or [])[:10]:
+            u = str((d or {}).get("u") or "").strip()[:400]
+            if not u:
+                continue
+            if not re.match(r"^https?://", u, re.I):
+                raise ValueError("O link deve começar com http:// ou https://.")
+            docs.append({"t": (str((d or {}).get("t") or "").strip() or u)[:80], "u": u})
+        out["docs_json"] = json.dumps(docs, ensure_ascii=False)
+    if "predecessors" in data:
+        try:
+            ids = sorted({int(x) for x in (data.get("predecessors") or [])})[:20]
+        except (TypeError, ValueError):
+            raise ValueError("Predecessoras inválidas.")
+        if item_id and item_id in ids:
+            raise ValueError("Uma atividade não pode ser predecessora de si mesma.")
+        if ids:
+            ok = {r[0] for r in conn.execute(text("SELECT id FROM v96_plan_items WHERE week_id=:w AND id = ANY(:ids)"), {"w": week_id, "ids": ids}).fetchall()}
+            if ok != set(ids):
+                raise ValueError("Predecessora não encontrada nesta semana.")
+        if item_id:
+            graph = {r[0]: [int(x) for x in json.loads(r[1] or "[]")] for r in conn.execute(text("SELECT id, predecessors FROM v96_plan_items WHERE week_id=:w"), {"w": week_id}).fetchall()}
+            graph[item_id] = ids
+            if _v97_has_cycle(graph):
+                raise ValueError("Essas predecessoras formam um ciclo (A depende de B, que depende de A).")
+        out["predecessors"] = json.dumps(ids)
     return out
 
 
@@ -10003,15 +10137,20 @@ def v96_plan_item_create():
             wid = int(data.get("week_id") or 0)
             if not conn.execute(text("SELECT 1 FROM v96_plan_weeks WHERE id=:i"), {"i": wid}).first():
                 return jsonify({"ok": False, "error": "Semana não encontrada."}), 404
-            f = _v96_item_fields(data, conn, partial=False)
+            f = _v96_item_fields({k: v for k, v in data.items() if k not in ("predecessors", "progress")}, conn, partial=False, week_id=wid)
             pos = conn.execute(text("SELECT COALESCE(MAX(position),0)+1 FROM v96_plan_items WHERE week_id=:w"), {"w": wid}).scalar()
-            iid = conn.execute(text("INSERT INTO v96_plan_items (week_id,front,title,status,responsible,deadline,obs,position,created_by,updated_by) "
-                                    "VALUES (:w,:f,:t,:s,:r,CAST(:d AS DATE),:o,:p,:u,:u) RETURNING id"),
-                               {"w": wid, "f": f["front"], "t": f["title"], "s": f["status"], "r": f.get("responsible", ""), "d": f.get("deadline"), "o": f.get("obs", ""), "p": pos, "u": session.get("user_id")}).scalar()
+            now = datetime.utcnow()
+            iid = conn.execute(text("INSERT INTO v96_plan_items (week_id,front,title,status,responsible,deadline,obs,position,created_by,updated_by,kind,start_date,status_since) "
+                                    "VALUES (:w,:f,:t,:s,:r,CAST(:d AS DATE),:o,:p,:u,:u,:k,CAST(:sd AS DATE),:now) RETURNING id"),
+                               {"w": wid, "f": f["front"], "t": f["title"], "s": f["status"], "r": f.get("responsible", ""), "d": f.get("deadline"), "o": f.get("obs", ""),
+                                "p": pos, "u": session.get("user_id"), "k": f.get("kind", "ativ"), "sd": f.get("start_date"), "now": now}).scalar()
             _v96_event(conn, wid, iid, "CRIOU", f["title"])
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
     return jsonify({"ok": True, "id": iid})
+
+
+_V97_DATE_COLS = ("deadline", "start_date", "forecast_date", "homolog_date")
 
 
 @app.post("/api/planejamento-semanal/v96/atividade/<int:item_id>")
@@ -10024,16 +10163,45 @@ def v96_plan_item_update(item_id):
     try:
         with db.engine.begin() as conn:
             _v96_ensure(conn)
-            cur = conn.execute(text("SELECT week_id, title, status, responsible, deadline FROM v96_plan_items WHERE id=:i"), {"i": item_id}).first()
+            cur = conn.execute(text("SELECT week_id, title, status, progress, started_at FROM v96_plan_items WHERE id=:i"), {"i": item_id}).first()
             if not cur:
                 return jsonify({"ok": False, "error": "Atividade não encontrada."}), 404
-            f = _v96_item_fields(data, conn, partial=True)
+            wid, old_title, old_status, old_prog, old_started = cur
+            f = _v96_item_fields(data, conn, partial=True, week_id=wid, item_id=item_id)
             if not f:
                 return jsonify({"ok": True})
-            sets = ", ".join(f"{k}=CAST(:{k} AS DATE)" if k == "deadline" else f"{k}=:{k}" for k in f)
-            conn.execute(text(f"UPDATE v96_plan_items SET {sets}, updated_by=:u, updated_at=CURRENT_TIMESTAMP WHERE id=:i"), {**f, "u": session.get("user_id"), "i": item_id})
-            _v96_event(conn, cur[0], item_id, "EDITOU", cur[1][:80] + " → " + ", ".join(f"{k}={v}" for k, v in f.items() if k != "title")[:400])
-            conn.execute(text("UPDATE v96_plan_weeks SET updated_at=CURRENT_TIMESTAMP WHERE id=:w"), {"w": cur[0]})
+            now = datetime.utcnow()
+            new_status = f.get("status", old_status)
+            # progresso e status andam juntos
+            if "status" in f and f["status"] != old_status:
+                f["status_since"] = now
+                if f["status"] == "ok":
+                    f["progress"] = 100
+                    f["completed_at"] = now
+                else:
+                    f["completed_at"] = None
+                    if old_status == "ok" and f.get("progress", old_prog) >= 100:
+                        f["progress"] = 90
+                if f["status"] in ("agu", "blq") and not (f.get("stop_reason") or "").strip():
+                    raise ValueError("Informe o motivo da parada.")
+                if f["status"] not in ("agu", "blq") and "stop_reason" not in f:
+                    f["stop_reason"] = ""
+            elif "progress" in f:
+                p = f["progress"]
+                if p >= 100 and old_status != "ok":
+                    new_status = f["status"] = "ok"; f["status_since"] = now; f["completed_at"] = now; f["stop_reason"] = ""
+                elif p > 0 and old_status == "nao":
+                    new_status = f["status"] = "and"; f["status_since"] = now
+                elif p < 100 and old_status == "ok":
+                    new_status = f["status"] = "and"; f["status_since"] = now; f["completed_at"] = None
+            if new_status != "nao" and old_started is None:
+                f["started_at"] = now
+            sets = []
+            for k in f:
+                sets.append(f"{k}=CAST(:{k} AS DATE)" if k in _V97_DATE_COLS else f"{k}=:{k}")
+            conn.execute(text(f"UPDATE v96_plan_items SET {', '.join(sets)}, updated_by=:_u, updated_at=CURRENT_TIMESTAMP WHERE id=:_i"), {**f, "_u": session.get("user_id"), "_i": item_id})
+            _v96_event(conn, wid, item_id, "EDITOU", old_title[:80] + " → " + ", ".join(f"{k}={str(v)[:60]}" for k, v in f.items() if k not in ("title", "status_since", "started_at", "completed_at"))[:420])
+            conn.execute(text("UPDATE v96_plan_weeks SET updated_at=CURRENT_TIMESTAMP WHERE id=:w"), {"w": wid})
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
     return jsonify({"ok": True})
@@ -10051,6 +10219,12 @@ def v96_plan_item_delete(item_id):
         if not cur:
             return jsonify({"ok": False, "error": "Atividade não encontrada."}), 404
         conn.execute(text("DELETE FROM v96_plan_items WHERE id=:i"), {"i": item_id})
+        for rid, pj in conn.execute(text("SELECT id, predecessors FROM v96_plan_items WHERE week_id=:w AND predecessors LIKE '%' || :s || '%'"), {"w": cur[0], "s": str(item_id)}).fetchall():
+            try:
+                lst = [x for x in json.loads(pj or "[]") if int(x) != item_id]
+            except Exception:
+                lst = []
+            conn.execute(text("UPDATE v96_plan_items SET predecessors=:p WHERE id=:r"), {"p": json.dumps(lst), "r": rid})
         _v96_event(conn, cur[0], item_id, "EXCLUIU", cur[1])
     return jsonify({"ok": True})
 
@@ -10081,10 +10255,25 @@ def v96_plan_week_create():
                                {"s": start, "l": label, "n": notes, "u": session.get("user_id")}).scalar()
             copiadas = 0
             if src:
-                conn.execute(text("INSERT INTO v96_plan_items (week_id,front,title,status,responsible,deadline,obs,position,created_by,updated_by) "
-                                  "SELECT :w, front, title, status, responsible, NULL, obs, position, :u, :u FROM v96_plan_items WHERE week_id=:s AND status<>'ok' ORDER BY position, id"),
-                             {"w": wid, "s": src, "u": session.get("user_id")})
-                copiadas = conn.execute(text("SELECT COUNT(*) FROM v96_plan_items WHERE week_id=:w"), {"w": wid}).scalar() or 0
+                # o projeto continua: datas, progresso, início, motivo, documentos e homologação seguem; as predecessoras são remapeadas
+                rows = conn.execute(text("SELECT id, front, title, status, responsible, deadline, obs, position, kind, progress, start_date, forecast_date, started_at, status_since, "
+                                         "stop_reason, predecessors, docs_json, doc_notes, homolog, homolog_resp, homolog_date, homolog_obs FROM v96_plan_items "
+                                         "WHERE week_id=:s AND status<>'ok' ORDER BY position, id"), {"s": src}).fetchall()
+                idmap = {}
+                for r in rows:
+                    idmap[r[0]] = conn.execute(text("INSERT INTO v96_plan_items (week_id,front,title,status,responsible,deadline,obs,position,created_by,updated_by,kind,progress,start_date,forecast_date,"
+                                                    "started_at,status_since,stop_reason,docs_json,doc_notes,homolog,homolog_resp,homolog_date,homolog_obs) VALUES "
+                                                    "(:w,:f,:t,:s,:r,:d,:o,:p,:u,:u,:k,:pg,:sd,:fd,:sa,:ss,:sr,:dj,:dn,:h,:hr,:hd,:ho) RETURNING id"),
+                                               {"w": wid, "f": r[1], "t": r[2], "s": r[3], "r": r[4], "d": r[5], "o": r[6], "p": r[7], "u": session.get("user_id"), "k": r[8], "pg": r[9],
+                                                "sd": r[10], "fd": r[11], "sa": r[12], "ss": r[13], "sr": r[14], "dj": r[16], "dn": r[17], "h": r[18], "hr": r[19], "hd": r[20], "ho": r[21]}).scalar()
+                for r in rows:
+                    try:
+                        mapped = [idmap[int(x)] for x in json.loads(r[15] or "[]") if int(x) in idmap]
+                    except Exception:
+                        mapped = []
+                    if mapped:
+                        conn.execute(text("UPDATE v96_plan_items SET predecessors=:p WHERE id=:i"), {"p": json.dumps(mapped), "i": idmap[r[0]]})
+                copiadas = len(rows)
             _v96_event(conn, wid, None, "CRIOU_SEMANA", f"{label} (copiadas {copiadas} atividades abertas)")
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
@@ -10130,12 +10319,12 @@ def v96_plan_front_create():
         return gd
     name = ((request.get_json(silent=True) or {}).get("name") or "").strip()[:80]
     if not name:
-        return jsonify({"ok": False, "error": "Informe o nome da frente."}), 400
+        return jsonify({"ok": False, "error": "Informe o nome da área."}), 400
     key = "f" + re.sub(r"[^a-z0-9]", "", normalize(name).lower())[:15]
     with db.engine.begin() as conn:
         _v96_ensure(conn)
         if conn.execute(text("SELECT 1 FROM v96_plan_fronts WHERE fkey=:k OR LOWER(name)=LOWER(:n)"), {"k": key, "n": name}).first():
-            return jsonify({"ok": False, "error": "Já existe uma frente com esse nome."}), 409
+            return jsonify({"ok": False, "error": "Já existe uma área com esse nome."}), 409
         pos = conn.execute(text("SELECT COALESCE(MAX(position),0)+1 FROM v96_plan_fronts")).scalar()
         conn.execute(text("INSERT INTO v96_plan_fronts (fkey,name,position) VALUES (:k,:n,:p)"), {"k": key, "n": name, "p": pos})
         _v96_event(conn, None, None, "CRIOU_FRENTE", name)
@@ -10194,6 +10383,7 @@ def v96_plan_access_set():
         else:
             conn.execute(text("DELETE FROM v96_plan_access WHERE user_id=:u"), {"u": uid})
         _v96_event(conn, None, None, "ACESSO", f"{u.name}: ver={ver} editar={editar}")
+    _v73_cache_clear(_V97_GRANTS_KEY)
     try:
         db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="V96_PLAN_ACCESS", entity_type="users", entity_id=str(uid), detail=f"planejamento semanal: {u.name} ver={ver} editar={editar}"[:900]))
         db.session.commit()
