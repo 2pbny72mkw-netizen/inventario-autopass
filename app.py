@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV98"
+APP_RELEASE = "V87.6 REV99"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -9808,8 +9808,9 @@ def v92_manual_merge_apply():
 
 # --- histórico da padronização por lote -----------------------------------
 # ---------------------------------------------------------------------------
-# REV96/REV97/REV98 — Planejamento semanal (Gestão): gerenciador de projetos por área, com acesso por usuário (ver / editar)
+# REV96/REV97/REV98/REV99 — Planejamento semanal (Gestão): gerenciador de projetos por área, com acesso por usuário (ver / editar)
 # decidido só pelo administrador principal. REV98: cadastro de projetos, atividade em várias áreas, exportação Excel/PowerPoint, agenda de 5 semanas.
+# REV99: horas realizadas (lança, valida, trava e soma por projeto) e edição limitada a algumas áreas por usuário (decidido só pelo administrador principal).
 # ---------------------------------------------------------------------------
 _V96_STATUS = ("nao", "and", "agu", "blq", "ok")
 _V97_HOMOLOG = ("na", "pend", "teste", "ok", "nok")
@@ -9823,9 +9824,11 @@ _V97_NEW_COLS = (
     "homolog VARCHAR(6) NOT NULL DEFAULT 'na'", "homolog_resp VARCHAR(120) NOT NULL DEFAULT ''", "homolog_date DATE", "homolog_obs VARCHAR(300) NOT NULL DEFAULT ''",
     # REV98: projeto (cadastro próprio) e áreas adicionais (a área principal continua em "front")
     "project_id INTEGER", "fronts_extra VARCHAR(300) NOT NULL DEFAULT '[]'",
+    # REV99: validação da atividade (trava as horas realizadas)
+    "hours_locked BOOLEAN NOT NULL DEFAULT FALSE", "validated_at TIMESTAMP", "validated_by INTEGER",
 )
 _V97_COLS = ("id, front, title, status, responsible, deadline, obs, position, updated_at, kind, progress, start_date, forecast_date, started_at, status_since, "
-             "completed_at, stop_reason, predecessors, docs_json, doc_notes, homolog, homolog_resp, homolog_date, homolog_obs, project_id, fronts_extra")
+             "completed_at, stop_reason, predecessors, docs_json, doc_notes, homolog, homolog_resp, homolog_date, homolog_obs, project_id, fronts_extra, hours_locked, validated_at")
 
 
 def _v96_ensure(conn):
@@ -9845,6 +9848,9 @@ def _v96_ensure(conn):
         "CREATE TABLE IF NOT EXISTS v96_plan_projects (id SERIAL PRIMARY KEY, code VARCHAR(20) NOT NULL DEFAULT '', name VARCHAR(120) NOT NULL, responsible VARCHAR(120) NOT NULL DEFAULT '', "
         "active BOOLEAN NOT NULL DEFAULT TRUE, created_by INTEGER, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)",
         "CREATE UNIQUE INDEX IF NOT EXISTS ux_v96_plan_projects_name ON v96_plan_projects (LOWER(name))",
+        "CREATE TABLE IF NOT EXISTS v99_plan_hours (id SERIAL PRIMARY KEY, item_id INTEGER NOT NULL, work_date DATE NOT NULL, hours NUMERIC(5,2) NOT NULL, "
+        "note VARCHAR(300) NOT NULL DEFAULT '', user_id INTEGER, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+        "CREATE INDEX IF NOT EXISTS ix_v99_plan_hours_item ON v99_plan_hours (item_id)",
     ):
         conn.execute(text(ddl))
     for col in _V97_NEW_COLS:
@@ -9856,6 +9862,7 @@ def _v96_ensure(conn):
     if conn.execute(text("SELECT 1 FROM v96_plan_fronts WHERE fkey='pend'")).first():
         conn.execute(text("UPDATE v96_plan_items SET kind='pend', front='hw' WHERE front='pend'"))
         conn.execute(text("DELETE FROM v96_plan_fronts WHERE fkey='pend'"))
+    conn.execute(text("ALTER TABLE v96_plan_access ADD COLUMN IF NOT EXISTS edit_fronts VARCHAR(400) NOT NULL DEFAULT ''"))
     conn.execute(text("CREATE INDEX IF NOT EXISTS ix_v96_plan_items_deadline ON v96_plan_items (deadline)"))
     conn.execute(text("CREATE INDEX IF NOT EXISTS ix_v96_plan_items_project ON v96_plan_items (project_id)"))
     conn.execute(text("UPDATE v96_plan_items SET progress=100 WHERE status='ok' AND progress<100"))
@@ -9909,6 +9916,7 @@ def _v96_seed(conn):
 
 def _v96_access(conn=None):
     """(pode_ver, pode_editar, é_admin_principal). Só o administrador principal concede acesso."""
+    g._v99_scope = None  # None = edita todas as áreas
     if _v86_is_principal():
         return True, True, True
     uid = session.get("user_id")
@@ -9917,10 +9925,42 @@ def _v96_access(conn=None):
     try:
         with db.engine.begin() as c:
             _v96_ensure(c)
-            r = c.execute(text("SELECT can_edit FROM v96_plan_access WHERE user_id=:u"), {"u": uid}).first()
+            r = c.execute(text("SELECT can_edit, edit_fronts FROM v96_plan_access WHERE user_id=:u"), {"u": uid}).first()
     except Exception:
         return False, False, False
-    return (True, bool(r[0]), False) if r else (False, False, False)
+    if not r:
+        return False, False, False
+    try:
+        fr = {str(x) for x in json.loads(r[1] or "[]")}
+    except Exception:
+        fr = set()
+    g._v99_scope = fr or None
+    return True, bool(r[0]), False
+
+
+def _v99_scope():
+    """None = pode editar todas as áreas; senão, o conjunto de áreas que este usuário edita (ele continua vendo todas)."""
+    return getattr(g, "_v99_scope", None)
+
+
+def _v99_in_scope(areas):
+    sc = _v99_scope()
+    return sc is None or bool(set(areas) & sc)
+
+
+def _v99_areas_of(front, extra_json):
+    try:
+        extra = [str(x) for x in json.loads(extra_json or "[]")]
+    except Exception:
+        extra = []
+    return [front] + [x for x in extra if x != front]
+
+
+def _v99_full_gate():
+    """Nova semana, notas, marco e nova área são de quem edita todas as áreas."""
+    if _v99_scope() is not None:
+        return jsonify({"ok": False, "error": "Você edita só algumas áreas; esta ação é de quem edita todas."}), 403
+    return None
 
 
 def _v96_gate(need_edit=False, need_admin=False):
@@ -9967,7 +10007,7 @@ def _v96_item_row(r):
         extra = [str(x) for x in json.loads(r[25] or "[]")]
     except Exception:
         extra = []
-    return {"id": r[0], "front": r[1], "areas": [r[1]] + [x for x in extra if x != r[1]], "project_id": r[24], "title": r[2], "status": r[3], "responsible": r[4], "deadline": _v97_iso(r[5]) or "", "obs": r[6], "position": r[7],
+    return {"id": r[0], "front": r[1], "areas": [r[1]] + [x for x in extra if x != r[1]], "project_id": r[24], "hours_locked": bool(r[26]), "validated_at": _v97_iso(r[27]), "hours": 0.0, "can": True, "title": r[2], "status": r[3], "responsible": r[4], "deadline": _v97_iso(r[5]) or "", "obs": r[6], "position": r[7],
             "updated_at": _v97_iso(r[8]), "kind": r[9], "progress": int(r[10] or 0), "start_date": _v97_iso(r[11]) or "", "forecast_date": _v97_iso(r[12]) or "",
             "started_at": _v97_iso(r[13]), "status_since": _v97_iso(r[14]), "completed_at": _v97_iso(r[15]), "stop_reason": r[16] or "", "predecessors": preds,
             "docs": docs, "doc_notes": r[19] or "", "homolog": r[20] or "na", "homolog_resp": r[21] or "", "homolog_date": _v97_iso(r[22]) or "", "homolog_obs": r[23] or ""}
@@ -10041,8 +10081,12 @@ def v96_plan_state():
         items = conn.execute(text(f"SELECT {_V97_COLS} FROM v96_plan_items WHERE week_id=:w ORDER BY position, id"), {"w": cur[0]}).fetchall()
         fronts = conn.execute(text("SELECT fkey, name FROM v96_plan_fronts ORDER BY position, fkey")).fetchall()
         projects = conn.execute(text("SELECT id, code, name, responsible, active FROM v96_plan_projects ORDER BY LOWER(name)")).fetchall()
+        hrs = {r[0]: float(r[1] or 0) for r in conn.execute(text("SELECT h.item_id, SUM(h.hours) FROM v99_plan_hours h JOIN v96_plan_items i ON i.id=h.item_id WHERE i.week_id=:w GROUP BY h.item_id"), {"w": cur[0]}).fetchall()}
+        phr = {r[0]: (float(r[1] or 0), float(r[2] or 0)) for r in conn.execute(text(
+            "SELECT i.project_id, SUM(h.hours), SUM(CASE WHEN i.hours_locked THEN h.hours ELSE 0 END) FROM v99_plan_hours h JOIN v96_plan_items i ON i.id=h.item_id "
+            "WHERE i.project_id IS NOT NULL GROUP BY i.project_id")).fetchall()}
         # agenda de 5 semanas: 2 antes, a atual e 2 depois (atividades de todas as semanas, sem repetir as que foram copiadas de uma semana para outra)
-        ag = conn.execute(text("SELECT id, week_id, title, status, deadline, front, fronts_extra, project_id, kind FROM v96_plan_items WHERE deadline BETWEEN :a AND :b "
+        ag = conn.execute(text("SELECT id, week_id, title, status, deadline, front, fronts_extra, project_id, kind, responsible FROM v96_plan_items WHERE deadline BETWEEN :a AND :b "
                                "ORDER BY deadline, week_id DESC, position, id"), {"a": w[1] - timedelta(days=14), "b": w[1] + timedelta(days=20)}).fetchall()
     agenda = _v98_agenda(ag, cur[0])
     try:
@@ -10050,12 +10094,18 @@ def v96_plan_state():
     except Exception:
         notes = []
     users = [u.name for u in User.query.filter(User.active.is_(True)).order_by(User.name).limit(400).all()] if acc[1] else []
-    return jsonify({"ok": True, "me": {"can_edit": acc[1], "is_admin": acc[2]}, "now": datetime.utcnow().isoformat(),
+    irows = [_v96_item_row(r) for r in items]
+    for it in irows:
+        it["hours"] = hrs.get(it["id"], 0.0)
+        it["can"] = bool(acc[1] and _v99_in_scope(it["areas"]))
+    sc = _v99_scope()
+    return jsonify({"ok": True, "me": {"can_edit": acc[1], "is_admin": acc[2], "scope": sorted(sc) if sc else None}, "now": datetime.utcnow().isoformat(),
                     "weeks": [{"id": x[0], "start": x[1].isoformat(), "label": x[2], "milestone_date": x[3].isoformat() if x[3] else "", "milestone_label": x[4] or ""} for x in weeks],
                     "week": {"id": w[0], "start": w[1].isoformat(), "label": w[2], "milestone_date": w[3].isoformat() if w[3] else "", "milestone_label": w[4], "notes": notes,
                              "updated_at": w[6].isoformat() if w[6] else None},
-                    "fronts": [{"key": f[0], "name": f[1]} for f in fronts], "items": [_v96_item_row(r) for r in items], "users": users,
-                    "projects": [{"id": p[0], "code": p[1], "name": p[2], "responsible": p[3], "active": bool(p[4])} for p in projects], "agenda": agenda})
+                    "fronts": [{"key": f[0], "name": f[1]} for f in fronts], "items": irows, "users": users,
+                    "projects": [{"id": p[0], "code": p[1], "name": p[2], "responsible": p[3], "active": bool(p[4]),
+                                  "hours_total": phr.get(p[0], (0.0, 0.0))[0], "hours_valid": phr.get(p[0], (0.0, 0.0))[1]} for p in projects], "agenda": agenda})
 
 
 def _v98_agenda(rows, cur_week):
@@ -10075,7 +10125,7 @@ def _v98_agenda(rows, cur_week):
             except Exception:
                 extra = []
             out.append({"id": x[0], "week_id": x[1], "title": x[2], "status": x[3], "deadline": x[4].isoformat(), "areas": [x[5]] + [v for v in extra if v != x[5]],
-                        "project_id": x[7], "kind": x[8]})
+                        "project_id": x[7], "kind": x[8], "responsible": x[9] or ""})
     out.sort(key=lambda a: (a["deadline"], a["id"]))
     return out
 
@@ -10202,6 +10252,8 @@ def v96_plan_item_create():
             if not conn.execute(text("SELECT 1 FROM v96_plan_weeks WHERE id=:i"), {"i": wid}).first():
                 return jsonify({"ok": False, "error": "Semana não encontrada."}), 404
             f = _v96_item_fields({k: v for k, v in data.items() if k not in ("predecessors", "progress")}, conn, partial=False, week_id=wid)
+            if not _v99_in_scope([f["front"]]):
+                return jsonify({"ok": False, "error": "Você não edita esta área."}), 403
             f.setdefault("project_id", None)
             f.setdefault("fronts_extra", "[]")
             pos = conn.execute(text("SELECT COALESCE(MAX(position),0)+1 FROM v96_plan_items WHERE week_id=:w"), {"w": wid}).scalar()
@@ -10230,13 +10282,17 @@ def v96_plan_item_update(item_id):
     try:
         with db.engine.begin() as conn:
             _v96_ensure(conn)
-            cur = conn.execute(text("SELECT week_id, title, status, progress, started_at FROM v96_plan_items WHERE id=:i"), {"i": item_id}).first()
+            cur = conn.execute(text("SELECT week_id, title, status, progress, started_at, front, fronts_extra, hours_locked FROM v96_plan_items WHERE id=:i"), {"i": item_id}).first()
             if not cur:
                 return jsonify({"ok": False, "error": "Atividade não encontrada."}), 404
-            wid, old_title, old_status, old_prog, old_started = cur
+            wid, old_title, old_status, old_prog, old_started, old_front, old_extra, locked = cur
+            if not _v99_in_scope(_v99_areas_of(old_front, old_extra)):
+                return jsonify({"ok": False, "error": "Você não edita a área desta atividade."}), 403
             f = _v96_item_fields(data, conn, partial=True, week_id=wid, item_id=item_id)
             if not f:
                 return jsonify({"ok": True})
+            if "front" in f and not _v99_in_scope(_v99_areas_of(f["front"], f.get("fronts_extra", "[]"))):
+                return jsonify({"ok": False, "error": "Você não pode tirar a atividade das áreas que edita."}), 403
             now = datetime.utcnow()
             new_status = f.get("status", old_status)
             # progresso e status andam juntos
@@ -10261,6 +10317,8 @@ def v96_plan_item_update(item_id):
                     new_status = f["status"] = "and"; f["status_since"] = now
                 elif p < 100 and old_status == "ok":
                     new_status = f["status"] = "and"; f["status_since"] = now; f["completed_at"] = None
+            if locked and new_status != "ok":
+                raise ValueError("Atividade validada: peça ao administrador para reabrir a validação antes de mudar o status ou o progresso.")
             if new_status != "nao" and old_started is None:
                 f["started_at"] = now
             sets = []
@@ -10282,9 +10340,14 @@ def v96_plan_item_delete(item_id):
         return gd
     with db.engine.begin() as conn:
         _v96_ensure(conn)
-        cur = conn.execute(text("SELECT week_id, title FROM v96_plan_items WHERE id=:i"), {"i": item_id}).first()
+        cur = conn.execute(text("SELECT week_id, title, front, fronts_extra, hours_locked FROM v96_plan_items WHERE id=:i"), {"i": item_id}).first()
         if not cur:
             return jsonify({"ok": False, "error": "Atividade não encontrada."}), 404
+        if not _v99_in_scope(_v99_areas_of(cur[2], cur[3])):
+            return jsonify({"ok": False, "error": "Você não edita a área desta atividade."}), 403
+        if cur[4]:
+            return jsonify({"ok": False, "error": "Atividade validada: peça ao administrador para reabrir a validação antes de remover."}), 409
+        conn.execute(text("DELETE FROM v99_plan_hours WHERE item_id=:i"), {"i": item_id})
         conn.execute(text("DELETE FROM v96_plan_items WHERE id=:i"), {"i": item_id})
         for rid, pj in conn.execute(text("SELECT id, predecessors FROM v96_plan_items WHERE week_id=:w AND predecessors LIKE '%' || :s || '%'"), {"w": cur[0], "s": str(item_id)}).fetchall():
             try:
@@ -10302,6 +10365,9 @@ def v96_plan_week_create():
     gd, acc = _v96_gate(need_edit=True)
     if gd:
         return gd
+    fg = _v99_full_gate()
+    if fg:
+        return fg
     data = request.get_json(silent=True) or {}
     try:
         start = _v96_clean_date(data.get("start"))
@@ -10353,6 +10419,9 @@ def v96_plan_week_update(week_id):
     gd, acc = _v96_gate(need_edit=True)
     if gd:
         return gd
+    fg = _v99_full_gate()
+    if fg:
+        return fg
     data = request.get_json(silent=True) or {}
     try:
         sets, params = [], {"i": week_id}
@@ -10384,6 +10453,9 @@ def v96_plan_front_create():
     gd, acc = _v96_gate(need_edit=True)
     if gd:
         return gd
+    fg = _v99_full_gate()
+    if fg:
+        return fg
     name = ((request.get_json(silent=True) or {}).get("name") or "").strip()[:80]
     if not name:
         return jsonify({"ok": False, "error": "Informe o nome da área."}), 400
@@ -10420,9 +10492,17 @@ def v96_plan_access_list():
         return gd
     with db.engine.begin() as conn:
         _v96_ensure(conn)
-        grants = {r[0]: bool(r[1]) for r in conn.execute(text("SELECT user_id, can_edit FROM v96_plan_access")).fetchall()}
+        grants = {}
+        for r in conn.execute(text("SELECT user_id, can_edit, edit_fronts FROM v96_plan_access")).fetchall():
+            try:
+                fr = [str(x) for x in json.loads(r[2] or "[]")]
+            except Exception:
+                fr = []
+            grants[r[0]] = (bool(r[1]), fr)
+        areas = [{"key": f[0], "name": f[1]} for f in conn.execute(text("SELECT fkey, name FROM v96_plan_fronts ORDER BY position, fkey")).fetchall()]
     users = User.query.filter(User.active.is_(True)).order_by(User.name).limit(500).all()
-    return jsonify({"ok": True, "usuarios": [{"id": u.id, "nome": u.name, "usuario": u.username, "ver": u.id in grants, "editar": grants.get(u.id, False)} for u in users]})
+    return jsonify({"ok": True, "areas": areas, "usuarios": [{"id": u.id, "nome": u.name, "usuario": u.username, "ver": u.id in grants, "editar": grants.get(u.id, (False, []))[0],
+                                                              "areas": grants.get(u.id, (False, []))[1]} for u in users]})
 
 
 @app.post("/api/planejamento-semanal/v96/acessos")
@@ -10439,20 +10519,31 @@ def v96_plan_access_set():
     ver, editar = bool(data.get("ver")), bool(data.get("editar"))
     if editar:
         ver = True
+    fr = []
+    for k in (data.get("areas") or [])[:20]:
+        k = str(k).strip()
+        if k and k not in fr:
+            fr.append(k)
     u = db.session.get(User, uid)
     if not u:
         return jsonify({"ok": False, "error": "Usuário não encontrado."}), 404
     with db.engine.begin() as conn:
         _v96_ensure(conn)
+        if fr:
+            ok = {r[0] for r in conn.execute(text("SELECT fkey FROM v96_plan_fronts WHERE fkey = ANY(:k)"), {"k": fr}).fetchall()}
+            if ok != set(fr):
+                return jsonify({"ok": False, "error": "Área inválida."}), 400
+        if not editar:
+            fr = []
         if ver:
-            conn.execute(text("INSERT INTO v96_plan_access (user_id,can_edit,granted_by) VALUES (:u,:e,:g) ON CONFLICT (user_id) DO UPDATE SET can_edit=:e, granted_by=:g, updated_at=CURRENT_TIMESTAMP"),
-                         {"u": uid, "e": editar, "g": session.get("user_id")})
+            conn.execute(text("INSERT INTO v96_plan_access (user_id,can_edit,granted_by,edit_fronts) VALUES (:u,:e,:g,:f) ON CONFLICT (user_id) DO UPDATE SET can_edit=:e, granted_by=:g, edit_fronts=:f, updated_at=CURRENT_TIMESTAMP"),
+                         {"u": uid, "e": editar, "g": session.get("user_id"), "f": json.dumps(fr)})
         else:
             conn.execute(text("DELETE FROM v96_plan_access WHERE user_id=:u"), {"u": uid})
-        _v96_event(conn, None, None, "ACESSO", f"{u.name}: ver={ver} editar={editar}")
+        _v96_event(conn, None, None, "ACESSO", f"{u.name}: ver={ver} editar={editar} áreas={','.join(fr) or 'todas'}")
     _v73_cache_clear(_V97_GRANTS_KEY)
     try:
-        db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="V96_PLAN_ACCESS", entity_type="users", entity_id=str(uid), detail=f"planejamento semanal: {u.name} ver={ver} editar={editar}"[:900]))
+        db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="V96_PLAN_ACCESS", entity_type="users", entity_id=str(uid), detail=f"planejamento semanal: {u.name} ver={ver} editar={editar} áreas={','.join(fr) or 'todas'}"[:900]))
         db.session.commit()
     except Exception:
         db.session.rollback()
@@ -10519,12 +10610,18 @@ def _v98_export_ctx():
         rows = conn.execute(text(f"SELECT {_V97_COLS} FROM v96_plan_items WHERE week_id=:w ORDER BY position, id"), {"w": wid}).fetchall()
         fronts = conn.execute(text("SELECT fkey, name FROM v96_plan_fronts ORDER BY position, fkey")).fetchall()
         projects = conn.execute(text("SELECT id, code, name, responsible, active FROM v96_plan_projects ORDER BY LOWER(name)")).fetchall()
+        hrs = {r[0]: float(r[1] or 0) for r in conn.execute(text("SELECT h.item_id, SUM(h.hours) FROM v99_plan_hours h JOIN v96_plan_items i ON i.id=h.item_id WHERE i.week_id=:w GROUP BY h.item_id"), {"w": wid}).fetchall()}
+        phr = {r[0]: (float(r[1] or 0), float(r[2] or 0)) for r in conn.execute(text(
+            "SELECT i.project_id, SUM(h.hours), SUM(CASE WHEN i.hours_locked THEN h.hours ELSE 0 END) FROM v99_plan_hours h JOIN v96_plan_items i ON i.id=h.item_id "
+            "WHERE i.project_id IS NOT NULL GROUP BY i.project_id")).fetchall()}
         _v96_event(conn, wid, None, "EXPORTOU", (data.get("formato") or "")[:20] + (f" · filtros: {str(data.get('filters') or '')[:300]}" if data.get("filters") else ""))
     try:
         notes = json.loads(w[5] or "[]")
     except Exception:
         notes = []
     all_items = [_v96_item_row(r) for r in rows]
+    for it in all_items:
+        it["hours"] = hrs.get(it["id"], 0.0)
     items = [i for i in all_items if ids is None or i["id"] in ids]
     uname = ""
     try:
@@ -10533,7 +10630,8 @@ def _v98_export_ctx():
     except Exception:
         uname = ""
     return {"week": {"id": w[0], "start": w[1].isoformat(), "label": w[2], "milestone_date": w[3].isoformat() if w[3] else "", "milestone_label": w[4] or ""},
-            "fronts": [{"key": f[0], "name": f[1]} for f in fronts], "projects": [{"id": p[0], "code": p[1], "name": p[2], "responsible": p[3], "active": bool(p[4])} for p in projects],
+            "fronts": [{"key": f[0], "name": f[1]} for f in fronts], "projects": [{"id": p[0], "code": p[1], "name": p[2], "responsible": p[3], "active": bool(p[4]),
+                          "hours_total": phr.get(p[0], (0.0, 0.0))[0], "hours_valid": phr.get(p[0], (0.0, 0.0))[1]} for p in projects],
             "items": items, "all_items": all_items, "notes": notes, "filters": str(data.get("filters") or "")[:400], "user": uname, "now": datetime.utcnow()}
 
 
@@ -10575,6 +10673,128 @@ def v98_plan_export_pptx():
         return jsonify({"ok": False, "error": "Não foi possível gerar a apresentação: " + str(exc)[:160]}), 500
     return send_file(io.BytesIO(blob), as_attachment=True, download_name=f"planejamento-semanal-{ctx['week']['start']}.pptx",
                      mimetype="application/vnd.openxmlformats-officedocument.presentationml.presentation")
+
+
+# ---- REV99: horas realizadas (lança, valida, trava e soma ao projeto) ---------------------------------------------
+def _v99_item_for_hours(conn, item_id):
+    return conn.execute(text("SELECT week_id, title, status, front, fronts_extra, hours_locked, validated_at, validated_by FROM v96_plan_items WHERE id=:i"), {"i": item_id}).first()
+
+
+def _v99_hours_payload(conn, item_id, cur):
+    rows = conn.execute(text("SELECT id, work_date, hours, note, user_id FROM v99_plan_hours WHERE item_id=:i ORDER BY work_date DESC, id DESC LIMIT 300"), {"i": item_id}).fetchall()
+    ids = {r[4] for r in rows if r[4]}
+    if cur[7]:
+        ids.add(cur[7])
+    names = {u.id: u.name for u in User.query.filter(User.id.in_(ids)).all()} if ids else {}
+    me = session.get("user_id")
+    return {"ok": True, "locked": bool(cur[5]), "validated_at": _v97_iso(cur[6]), "validated_by": names.get(cur[7], "") if cur[7] else "", "status": cur[2],
+            "total": round(sum(float(r[2]) for r in rows), 2),
+            "lines": [{"id": r[0], "date": r[1].isoformat(), "hours": float(r[2]), "note": r[3], "user": names.get(r[4], "—"), "mine": r[4] == me} for r in rows]}
+
+
+@app.get("/api/planejamento-semanal/v99/atividade/<int:item_id>/horas")
+@login_required
+def v99_plan_hours_list(item_id):
+    gd, acc = _v96_gate()
+    if gd:
+        return gd
+    with db.engine.begin() as conn:
+        _v96_ensure(conn)
+        cur = _v99_item_for_hours(conn, item_id)
+        if not cur:
+            return jsonify({"ok": False, "error": "Atividade não encontrada."}), 404
+        return jsonify(_v99_hours_payload(conn, item_id, cur))
+
+
+@app.post("/api/planejamento-semanal/v99/atividade/<int:item_id>/horas")
+@login_required
+def v99_plan_hours_add(item_id):
+    gd, acc = _v96_gate(need_edit=True)
+    if gd:
+        return gd
+    data = request.get_json(silent=True) or {}
+    try:
+        h = round(float(str(data.get("hours")).replace(",", ".")), 2)
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Informe as horas (ex.: 2,5)."}), 400
+    if not (0 < h <= 24):
+        return jsonify({"ok": False, "error": "As horas de um lançamento devem ficar entre 0,01 e 24."}), 400
+    brt = (datetime.utcnow() - timedelta(hours=3)).date()
+    try:
+        d = datetime.strptime(str(data.get("date") or brt.isoformat())[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return jsonify({"ok": False, "error": "Data inválida."}), 400
+    if d < date(2020, 1, 1) or d > brt + timedelta(days=1):
+        return jsonify({"ok": False, "error": "A data do trabalho não pode ser futura."}), 400
+    note = (data.get("note") or "").strip()[:300]
+    with db.engine.begin() as conn:
+        _v96_ensure(conn)
+        cur = _v99_item_for_hours(conn, item_id)
+        if not cur:
+            return jsonify({"ok": False, "error": "Atividade não encontrada."}), 404
+        if not _v99_in_scope(_v99_areas_of(cur[3], cur[4])):
+            return jsonify({"ok": False, "error": "Você não edita a área desta atividade."}), 403
+        if cur[5]:
+            return jsonify({"ok": False, "error": "Atividade validada: as horas estão travadas."}), 409
+        conn.execute(text("INSERT INTO v99_plan_hours (item_id,work_date,hours,note,user_id) VALUES (:i,:d,:h,:n,:u)"), {"i": item_id, "d": d, "h": h, "n": note, "u": session.get("user_id")})
+        _v96_event(conn, cur[0], item_id, "HORAS", f"{cur[1][:80]}: +{h} h em {d.isoformat()}")
+        return jsonify(_v99_hours_payload(conn, item_id, cur))
+
+
+@app.post("/api/planejamento-semanal/v99/atividade/<int:item_id>/horas/<int:hid>/excluir")
+@login_required
+def v99_plan_hours_delete(item_id, hid):
+    gd, acc = _v96_gate(need_edit=True)
+    if gd:
+        return gd
+    with db.engine.begin() as conn:
+        _v96_ensure(conn)
+        cur = _v99_item_for_hours(conn, item_id)
+        if not cur:
+            return jsonify({"ok": False, "error": "Atividade não encontrada."}), 404
+        if not _v99_in_scope(_v99_areas_of(cur[3], cur[4])):
+            return jsonify({"ok": False, "error": "Você não edita a área desta atividade."}), 403
+        if cur[5]:
+            return jsonify({"ok": False, "error": "Atividade validada: as horas estão travadas."}), 409
+        ln = conn.execute(text("SELECT hours, user_id, work_date FROM v99_plan_hours WHERE id=:h AND item_id=:i"), {"h": hid, "i": item_id}).first()
+        if not ln:
+            return jsonify({"ok": False, "error": "Lançamento não encontrado."}), 404
+        if not acc[2] and ln[1] != session.get("user_id"):
+            return jsonify({"ok": False, "error": "Só quem lançou (ou o administrador) remove o lançamento."}), 403
+        conn.execute(text("DELETE FROM v99_plan_hours WHERE id=:h"), {"h": hid})
+        _v96_event(conn, cur[0], item_id, "HORAS_REMOVIDA", f"{cur[1][:80]}: -{float(ln[0])} h de {ln[2].isoformat()}")
+        return jsonify(_v99_hours_payload(conn, item_id, cur))
+
+
+@app.post("/api/planejamento-semanal/v99/atividade/<int:item_id>/validar")
+@login_required
+def v99_plan_validate(item_id):
+    gd, acc = _v96_gate(need_admin=True)
+    if gd:
+        return gd
+    validar = bool((request.get_json(silent=True) or {}).get("validar", True))
+    with db.engine.begin() as conn:
+        _v96_ensure(conn)
+        cur = _v99_item_for_hours(conn, item_id)
+        if not cur:
+            return jsonify({"ok": False, "error": "Atividade não encontrada."}), 404
+        if validar and cur[2] != "ok":
+            return jsonify({"ok": False, "error": "Só é possível validar uma atividade concluída."}), 409
+        if validar:
+            conn.execute(text("UPDATE v96_plan_items SET hours_locked=TRUE, validated_at=CURRENT_TIMESTAMP, validated_by=:u WHERE id=:i"), {"u": session.get("user_id"), "i": item_id})
+        else:
+            conn.execute(text("UPDATE v96_plan_items SET hours_locked=FALSE, validated_at=NULL, validated_by=NULL WHERE id=:i"), {"i": item_id})
+        tot = float(conn.execute(text("SELECT COALESCE(SUM(hours),0) FROM v99_plan_hours WHERE item_id=:i"), {"i": item_id}).scalar() or 0)
+        _v96_event(conn, cur[0], item_id, "VALIDOU" if validar else "REABRIU_VALIDACAO", f"{cur[1][:80]} ({tot} h)")
+        cur = _v99_item_for_hours(conn, item_id)
+        out = _v99_hours_payload(conn, item_id, cur)
+    try:
+        db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="V99_PLAN_VALIDATE", entity_type="v96_plan_items", entity_id=str(item_id),
+                                  detail=f"planejamento semanal: {'validou' if validar else 'reabriu a validação de'} atividade {item_id} ({tot} h)"[:900]))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+    return jsonify(out)
 
 
 # ---------------------------------------------------------------------------
@@ -10699,7 +10919,7 @@ def v98_build_xlsx(ctx):
     ws.title = "Atividades"
     header(ws, [("Áreas", 26), ("Projeto", 22), ("Tipo", 11), ("Atividade", 50), ("Status", 20), ("Progresso", 11), ("Responsável", 20), ("Início", 12),
                 ("Término planejado", 13), ("Previsão", 12), ("Origem da previsão", 13), ("Desvio (dias)", 11), ("Em andamento há (dias)", 13), ("Parada há (dias)", 11),
-                ("Motivo da parada", 36), ("Predecessoras", 36), ("Homologação", 16), ("Documentos", 40), ("Observação", 36)])
+                ("Motivo da parada", 36), ("Predecessoras", 36), ("Homologação", 16), ("Documentos", 40), ("Observação", 36), ("Horas realizadas", 12), ("Validada (horas travadas)", 14)])
     for r, it in enumerate(items, 2):
         fc, src = _v98_forecast(it, now)
         dl, st = _v98_pd(it.get("deadline")), _v98_dt(it.get("started_at"))
@@ -10728,7 +10948,9 @@ def v98_build_xlsx(ctx):
         put(ws, r, 17, _V98_HM_LABEL.get(it.get("homolog"), ""))
         put(ws, r, 18, docs, wrap=True)
         put(ws, r, 19, it.get("obs") or "", wrap=True)
-    ws.auto_filter.ref = f"A1:{get_column_letter(19)}{max(2, len(items) + 1)}"
+        put(ws, r, 20, float(it.get("hours") or 0), fmt="0.00")
+        put(ws, r, 21, "Sim" if it.get("hours_locked") else "")
+    ws.auto_filter.ref = f"A1:{get_column_letter(21)}{max(2, len(items) + 1)}"
 
     # resumo por área (uma atividade em várias áreas conta em cada área; a linha "Geral" conta cada atividade uma vez)
     w2 = wb.create_sheet("Resumo por área")
@@ -10749,7 +10971,8 @@ def v98_build_xlsx(ctx):
 
     # por projeto
     w3 = wb.create_sheet("Por projeto")
-    header(w3, [("Código", 12), ("Projeto", 36), ("Responsável pelo projeto", 26), ("Atividades", 11), ("Concluídas", 11), ("Atrasadas", 11), ("Progresso médio", 15)])
+    header(w3, [("Código", 12), ("Projeto", 36), ("Responsável pelo projeto", 26), ("Atividades", 11), ("Concluídas", 11), ("Atrasadas", 11), ("Progresso médio", 15),
+                ("Horas (atividades exportadas)", 16), ("Horas validadas (exportadas)", 16), ("Horas do projeto – todas as semanas", 18), ("Horas validadas do projeto – todas as semanas", 20)])
     r = 2
     groups = [(p, [i for i in items if i.get("project_id") == p["id"]]) for p in ctx["projects"]]
     groups = [(p, its) for p, its in groups if its]
@@ -10761,6 +10984,10 @@ def v98_build_xlsx(ctx):
                                  sum(1 for i in its if _v98_is_late(i, today))], 1):
             put(w3, r, col, v)
         put(w3, r, 7, _v98_avg(its) / 100, fmt="0%")
+        put(w3, r, 8, round(sum(float(i.get("hours") or 0) for i in its), 2), fmt="0.00")
+        put(w3, r, 9, round(sum(float(i.get("hours") or 0) for i in its if i.get("hours_locked")), 2), fmt="0.00")
+        put(w3, r, 10, p.get("hours_total"), fmt="0.00")
+        put(w3, r, 11, p.get("hours_valid"), fmt="0.00")
         r += 1
 
     w4 = wb.create_sheet("Informações")
@@ -10996,8 +11223,10 @@ def v98_build_pptx(ctx):
         rows = []
         for p, its in groups[:10]:
             lt = sum(1 for i in its if _v98_is_late(i, today))
-            rows.append([_v98_cut(p["name"], 24), _v98_cut(p.get("responsible") or "—", 16), str(len(its)), str(sum(1 for i in its if i["status"] == "ok")), (str(lt), "D03B3B" if lt else None), f"{_v98_avg(its)}%"])
-        table(sl, 7.1, 1.65, 5.73, ["Projeto", "Responsável", "Itens", "Concl.", "Atras.", "Prog."], rows, [2.6, 1.8, 0.8, 0.9, 0.9, 0.9], 0.5, 12)
+            hv = p.get("hours_valid")
+            rows.append([_v98_cut(p["name"], 22), _v98_cut(p.get("responsible") or "—", 14), str(len(its)), str(sum(1 for i in its if i["status"] == "ok")), (str(lt), "D03B3B" if lt else None), f"{_v98_avg(its)}%",
+                         (f"{hv:g} h" if hv else "—")])
+        table(sl, 6.9, 1.65, 5.93, ["Projeto", "Responsável", "Itens", "Concl.", "Atras.", "Prog.", "Horas valid."], rows, [2.3, 1.5, 0.7, 0.8, 0.8, 0.8, 1.1], 0.5, 11.5)
 
     # ---------- cronograma (Gantt) ----------
     grows = []
@@ -11116,8 +11345,9 @@ def v98_build_pptx(ctx):
                 over = bool(fc and dl and i["status"] != "ok" and fc > dl)
                 rows.append([("PEND." if i.get("kind") == "pend" else "ATIV."), _v98_cut(i["title"], 62), _v98_cut(prj["name"] if prj else "—", 18),
                              (_V98_ST_LABEL[i["status"]], _V98_ST_COLOR[i["status"]]), f"{int(i.get('progress') or 0)}%", _v98_cut(i.get("responsible") or "A definir", 16),
-                             (dl.strftime("%d/%m") if dl else "—", "D03B3B" if _v98_is_late(i, today) else None), ((fc.strftime("%d/%m") + (f" ({src})" if src else "")) if fc else "—", "D03B3B" if over else None)])
-            table(sl, 0.5, 1.55, 12.33, ["Tipo", "Atividade", "Projeto", "Status", "Prog.", "Responsável", "Prazo", "Previsão"], rows, [0.7, 4.2, 1.5, 1.7, 0.7, 1.4, 0.8, 1.5], 0.5, 10.5)
+                             (dl.strftime("%d/%m") if dl else "—", "D03B3B" if _v98_is_late(i, today) else None), ((fc.strftime("%d/%m") + (f" ({src})" if src else "")) if fc else "—", "D03B3B" if over else None),
+                             (f"{float(i.get('hours') or 0):g} h" + (" 🔒" if i.get("hours_locked") else "")) if i.get("hours") else "—"])
+            table(sl, 0.5, 1.55, 12.33, ["Tipo", "Atividade", "Projeto", "Status", "Prog.", "Responsável", "Prazo", "Previsão", "Horas"], rows, [0.7, 3.8, 1.4, 1.6, 0.7, 1.3, 0.8, 1.5, 0.9], 0.5, 10.5)
 
     # ---------- pontos de atenção ----------
     notes = [n for n in ctx.get("notes") or [] if str(n).strip()]
