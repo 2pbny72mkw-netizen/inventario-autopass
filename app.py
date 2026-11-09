@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV92"
+APP_RELEASE = "V87.6 REV93"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -25988,12 +25988,20 @@ with app.app_context():
         existing_alt={}
         for x in _all_locs:
             existing_alt.setdefault((normalize(x.company),normalize(x.line),_v87_norm_station(x.location)),x)
+        # REV93: a base chama a operadora de "CPTM" e o cadastro oficial de "VIA MOBILIDADE" (mesma linha/estação) — trata como a mesma operadora.
+        _v93_grp=lambda c:'CPTM_VIA' if normalize(c) in ('CPTM','VIA MOBILIDADE') else normalize(c)
+        existing_grp={}
+        for x in _all_locs:
+            existing_grp.setdefault((_v93_grp(x.company),normalize(x.line),_v87_norm_station(x.location)),[]).append(x)
         changed=False
         for (company,line,name),qty in grouped.items():
             key=(normalize(company),normalize(line),normalize(name));loc=existing.get(key)
             if not loc:
                 loc=existing_alt.get((normalize(company),normalize(line),_v87_norm_station(name)))
                 if loc:existing[key]=loc
+            if not loc:
+                _c=existing_grp.get((_v93_grp(company),normalize(line),_v87_norm_station(name))) or []
+                if len(_c)==1:loc=_c[0];existing[key]=loc
             if not loc:
                 loc=Location(company=company,line=line,location=name,expected_validator=qty,reference_source='BASE_RECARGA_V73');db.session.add(loc);existing[key]=loc;changed=True
             elif int(loc.expected_validator or 0)!=qty:
@@ -30339,7 +30347,14 @@ def _v8539r2_severity(pct):
 @login_required
 def bobinas_v8539_visao():
     try:
-        response=v77_bobbins_dashboard_api()
+        try:
+            response=v77_bobbins_dashboard_api()
+        except Exception:
+            # REV93: transação envenenada/conexão caída (falhas de ~8 ms vistas na REV90): limpa a sessão e tenta mais uma vez.
+            app.logger.exception("REV93 bobinas visao: 1a tentativa falhou")
+            try:db.session.rollback()
+            except Exception:pass
+            response=v77_bobbins_dashboard_api()
         data=response.get_json() if hasattr(response,"get_json") else response
         if not isinstance(data,dict): return response
         rows=data.get("rows") or []; operators=data.get("operators") or []; stations=data.get("stations") or []
@@ -30372,6 +30387,8 @@ def bobinas_v8539_visao():
         return jsonify(data)
     except Exception as exc:
         app.logger.exception("V85.40 REV2 bobinas visao")
+        try:db.session.rollback()
+        except Exception:pass
         return jsonify({"ok":False,"release":"V85.40 REV2","error":str(exc)}),500
 # === /V85.39 REV2 ===
 
