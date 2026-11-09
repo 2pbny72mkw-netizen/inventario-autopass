@@ -72,7 +72,10 @@ def install_pos_metro(app,db,can):
   content=db.Column(db.LargeBinary,nullable=False)
   user_id=db.Column(db.Integer,nullable=False)
   created_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow)
+ _schema_ok=[False]
  def ensure_schema():
+  # REV91: o esquema é garantido uma vez por processo (antes rodava 6 verificações de tabela e vários ALTER a cada abertura de tela).
+  if _schema_ok[0]:return
   POS.__table__.create(bind=db.engine,checkfirst=True)
   Event.__table__.create(bind=db.engine,checkfirst=True)
   Photo.__table__.create(bind=db.engine,checkfirst=True)
@@ -99,6 +102,7 @@ def install_pos_metro(app,db,can):
     conn.execute(text("UPDATE v8738_pos_metro_ap SET identifier='AP 01' WHERE identifier IS NULL OR identifier=''"))
     # SQLite requires table rebuild to drop the old station-only UNIQUE constraint.
     # Refuse multi-AP registration until migrated on PostgreSQL.
+  _schema_ok[0]=True
 
  def short_number(p):
   return p.terminal_number or (re.search(r'(\d+)$',p.terminal).group(1) if re.search(r'(\d+)$',p.terminal) else p.terminal)

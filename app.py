@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV90"
+APP_RELEASE = "V87.6 REV91"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -8207,6 +8207,7 @@ _V85_FLAGS = [
     {"id": "visual_b", "label": "Visual direção B (azul-marinho + status)", "desc": "Novo visual em todas as telas claras: cabeçalho azul-marinho com faixa verde-água, indicadores com faixa de status, tabelas e etiquetas padronizadas. Não muda dados nem permissões. Desligar volta ao visual atual na hora."},
     {"id": "central_alertas", "label": "Central de Alertas (tela /alertas)", "desc": "Mostra a tela de alertas estatísticos (coletas fora do padrão, divergências, reposição de bobinas) para o Gestor. Os alertas são calculados em modo sombra mesmo com a chave desligada e ninguém é notificado."},
     {"id": "mesclar_estacoes", "label": "Mesclar estações duplicadas", "desc": "Libera o botão 'Mesclar' no Diagnóstico (somente administrador principal, com confirmação digitada e opção de desfazer). Ligue só depois de fazer backup do banco."},
+    {"id": "padronizar_estacoes", "label": "Padronizar nomes das estações (sem sigla)", "desc": "Libera, no Diagnóstico, o botão que tira a sigla inicial dos nomes das estações (ex.: 'ABR - AGUA BRANCA' vira 'AGUA BRANCA'). Somente administrador principal, com prévia, confirmação digitada e opção de desfazer. Ligue só depois de fazer backup."},
     {"id": "graficos_paleta", "label": "Gráficos na paleta única", "desc": "Cores dos gráficos migradas para a paleta central (seguras para daltonismo)."},
     {"id": "gps_otimizado", "label": "GPS: menos contas e consultas", "desc": "Busca da estação mais próxima mais rápida (mesmo resultado), sugestão de técnico do TopDesk sem carregar todo o histórico, contagem de técnicos do dia usando índice e hora real da captura nas posições enviadas pelo navegador. Desligar volta ao método anterior."},
     {"id": "bobinas_fotos_limpeza", "label": "Fotos de Bobinas: limpeza automática em segundo plano", "desc": "Fotos de Bobinas vencidas (7 dias, conforme a configuração) são apagadas do armazenamento em lote, no máximo a cada hora e fora do registro do técnico. A foto só é marcada como apagada quando o armazenamento confirma. O registro da atividade permanece. Desligar volta ao método anterior."},
@@ -8530,6 +8531,10 @@ def _v87_rail_rows():
 # V87.6 REV87 — Qualidade da rede ferroviária (SOMENTE LEITURA): estações sem coordenada e prováveis cadastros duplicados.
 def _v87_norm_station(txt):
     import unicodedata
+    # REV91: tira a sigla inicial ("BTJ - BOTUJURU") antes de limpar a pontuação; antes só caía quando o nome tinha 2+ palavras.
+    _m = re.match(r"^\s*[A-Za-z0-9]{2,4}\s*-\s*(\S.*)$", str(txt or ""))
+    if _m and len(_m.group(1).strip()) >= 3:
+        txt = _m.group(1)
     t = unicodedata.normalize("NFD", str(txt or ""))
     t = "".join(c for c in t if unicodedata.category(c) != "Mn").upper()
     t = re.sub(r"[^A-Z0-9 ]", " ", t)
@@ -9081,7 +9086,7 @@ def _v88_money(v):
     return "R$ " + s.replace(",", "X").replace(".", ",").replace("X", ".")
 
 
-def _v88_collection_alerts(rows, baseline, z_min=3.0, div_pct=2.0, div_min=50.0):
+def _v88_collection_alerts(rows, baseline, z_min=3.0, div_pct=2.0, div_min=50.0, diff_baseline=None):
     """rows: [(id, terminal, date, collected, declared, processed)]; baseline: {terminal: (n, mean, std)}.
     Função pura (testável): devolve lista de alertas."""
     out = []
@@ -9102,6 +9107,17 @@ def _v88_collection_alerts(rows, baseline, z_min=3.0, div_pct=2.0, div_min=50.0)
                 out.append({"kind": "COLETA_DIVERGENCIA", "ref_key": f"COLETA_DIVERGENCIA:{cid}", "subject": terminal, "severity": "ALTA" if (pct >= 10 and abs(diff) >= 200) else "MEDIA", "score": round(pct, 1), "event_date": day,
                             "title": f"Divergência declarado × apurado — {terminal}",
                             "detail": f"Declarado {_v88_money(declared)}; apurado {_v88_money(processed)}; diferença {_v88_money(diff)} ({pct:.1f}%)."})
+        # V90 — regra por terminal: a diferença (apurado − declarado) é comparada com o PADRÃO DO PRÓPRIO TERMINAL; um terminal que sempre
+        # apura abaixo do declarado só alerta quando a diferença foge do que é normal para ele.
+        if diff_baseline and declared is not None and processed is not None and float(processed) > 0 and abs(float(declared)) < 1000000:
+            db_ = diff_baseline.get(terminal)
+            d_ = float(processed) - float(declared)
+            if db_ and db_[0] >= 6 and db_[2] and db_[2] >= 20.0 and abs(d_) >= div_min:
+                zd = (d_ - db_[1]) / db_[2]
+                if abs(zd) >= z_min:
+                    out.append({"kind": "COLETA_DESVIO_TERMINAL", "ref_key": f"COLETA_DESVIO_TERMINAL:{cid}", "subject": terminal, "severity": "ALTA" if abs(zd) >= z_min + 2 else "MEDIA", "score": round(zd, 2), "event_date": day,
+                                "title": f"Diferença fora do padrão do terminal — {terminal}",
+                                "detail": f"Diferença {_v88_money(d_)}; normal deste terminal {_v88_money(db_[1])} (desvio {_v88_money(db_[2])}, {db_[0]} coletas). Distância: {abs(zd):.1f} desvios."})
     return out
 
 
@@ -9153,7 +9169,16 @@ def _v88_alerts_compute(days=45):
         rows = db.session.execute(text(
             "SELECT id, terminal, collection_date, collected_amount, declared_amount, processed_amount FROM financial_cash_collections "
             "WHERE soft_deleted=FALSE AND collection_date >= :d0 ORDER BY collection_date DESC LIMIT 5000"), {"d0": d0}).fetchall()
-        _coll = _v88_collection_alerts([tuple(r) for r in rows], baseline)
+        try:
+            _dr = db.session.execute(text(
+                "SELECT terminal, COUNT(*), AVG(processed_amount - declared_amount), STDDEV_SAMP(processed_amount - declared_amount) FROM financial_cash_collections "
+                "WHERE soft_deleted=FALSE AND processed_amount > 0 AND declared_amount IS NOT NULL AND ABS(declared_amount) < 1000000 "
+                "AND collection_date < :d0 AND collection_date >= :d1 GROUP BY terminal"), {"d0": d0, "d1": d0 - timedelta(days=120)}).fetchall()
+            _diff_base = {r[0]: (int(r[1] or 0), float(r[2] or 0), float(r[3] or 0)) for r in _dr}
+        except Exception:
+            db.session.rollback()
+            _diff_base = None
+        _coll = _v88_collection_alerts([tuple(r) for r in rows], baseline, diff_baseline=_diff_base)
         found += _coll
         if rows and len(rows) < 5000:
             _div_keys = [a["ref_key"] for a in _coll if a["kind"] == "COLETA_DIVERGENCIA"]
@@ -9380,7 +9405,7 @@ def v88_merge_apply():
         db.session.commit()
     except Exception:
         db.session.rollback()
-    _v73_cache_clear()
+    _v73_cache_clear(); _v91_clear_locations_cache()
     return jsonify({"ok": True, "mesclagem": mid, "linhas_movidas": sum(len(v) for v in moved.values())})
 
 
@@ -9450,9 +9475,164 @@ def v90_merge_batch():
             feitos.append({"mesclagem": mid, "estacao": p["com_nome"], "duplicada": p["sem_id"], "linhas_movidas": n})
         except Exception as exc:
             erros.append({"estacao": p["com_nome"], "duplicada": p["sem_id"], "erro": (str(exc).strip().splitlines() or [exc.__class__.__name__])[0][:160]})
-    _v73_cache_clear()
+    _v73_cache_clear(); _v91_clear_locations_cache()
     return jsonify({"ok": True, "feitos": feitos, "erros": erros, "restantes_seguros": max(0, len(seguros) - len(feitos)),
                     "para_conferir": [{"mantida": p["com_nome"], "duplicada": p["sem_nome"], "linha": p["linha"], "dup_id": p["sem_id"], "keeper_id": p["com_id"]} for p in fora]})
+
+
+# ---------------------------------------------------------------------------
+# REV91 — cache da lista de localidades + padronização de nomes (sem sigla)
+# ---------------------------------------------------------------------------
+def _v91_clear_locations_cache():
+    """A lista /api/locations fica 30 min em memória; qualquer mudança de localidade precisa limpá-la."""
+    try:
+        for slot in list(_LOCATIONS_API_CACHE.keys()):
+            _LOCATIONS_API_CACHE[slot] = {"at": 0.0, "payload": None}
+    except Exception:
+        pass
+
+
+_V91_SIGLA_RE = re.compile(r"^\s*([A-Za-z0-9]{2,4})\s*-\s*(\S.*)$")
+
+
+def _v91_strip_sigla(name):
+    """'ABR - AGUA BRANCA' -> 'AGUA BRANCA'; 'USL - USP - LESTE' -> 'USP LESTE'; sem sigla devolve igual."""
+    m = _V91_SIGLA_RE.match(name or "")
+    if not m:
+        return (name or "").strip()
+    rest = re.sub(r"\s+", " ", m.group(2).replace(" - ", " ")).strip()
+    return rest if len(rest) >= 3 else (name or "").strip()
+
+
+def _v91_rename_plan():
+    locs = Location.query.order_by(Location.company, Location.line, Location.location).all()
+    inv = dict(db.session.query(Inventory.location_id, func.count(Inventory.id)).group_by(Inventory.location_id).all())
+    taken = {}
+    for x in locs:
+        taken.setdefault((x.company, x.line, _v90_name_norm(x.location.replace("-", " "))), []).append(x.id)
+    planned = {}
+    items = []
+    for x in locs:
+        novo = _v91_strip_sigla(x.location)
+        if novo == (x.location or "").strip():
+            continue
+        key = (x.company, x.line, _v90_name_norm(novo.replace("-", " ")))
+        outros = [i for i in taken.get(key, []) if i != x.id]
+        status = "ok"
+        motivo = ""
+        if outros:
+            status, motivo = "colisao", "já existe estação com este nome nesta operadora/linha (id " + ", ".join(str(i) for i in outros[:3]) + "): mescle antes"
+        elif key in planned:
+            status, motivo = "colisao", "outra estação seria renomeada para o mesmo nome (id " + str(planned[key]) + ")"
+        else:
+            planned[key] = x.id
+        items.append({"id": x.id, "operadora": x.company, "linha": x.line, "de": x.location, "para": novo,
+                      "inventario": int(inv.get(x.id, 0)), "status": status, "motivo": motivo})
+    return items
+
+
+def _v91_rename_ensure(conn):
+    conn.execute(text("""CREATE TABLE IF NOT EXISTS v91_location_renames (
+        id SERIAL PRIMARY KEY, lote VARCHAR(40) NOT NULL, location_id INTEGER NOT NULL, old_name VARCHAR(220) NOT NULL, new_name VARCHAR(220) NOT NULL,
+        created_by INTEGER, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, undone_at TIMESTAMP)"""))
+
+
+@app.get("/api/diagnostico/rede/padronizar/v91")
+@login_required
+def v91_rename_preview():
+    gd = _v85_guard()
+    if gd:
+        return gd
+    items = _v91_rename_plan()
+    hist = {"aplicadas": 0, "desfeitas": 0}
+    try:
+        with db.engine.begin() as conn:
+            _v91_rename_ensure(conn)
+            row = conn.execute(text("SELECT COUNT(*) FILTER (WHERE undone_at IS NULL), COUNT(*) FILTER (WHERE undone_at IS NOT NULL) FROM v91_location_renames")).first()
+            hist = {"aplicadas": int(row[0] or 0), "desfeitas": int(row[1] or 0)}
+    except Exception:
+        pass
+    return jsonify({"ok": True, "total": len(items), "prontas": sum(1 for i in items if i["status"] == "ok"),
+                    "colisoes": sum(1 for i in items if i["status"] != "ok"),
+                    "com_inventario": sum(1 for i in items if i["inventario"]), "itens": items, "historico": hist})
+
+
+@app.post("/api/diagnostico/rede/padronizar/v91")
+@login_required
+def v91_rename_apply():
+    gd = _v85_guard()
+    if gd:
+        return gd
+    if not _v86_is_principal():
+        return jsonify({"ok": False, "error": "Somente o administrador principal."}), 403
+    if not _v85_flags().get("padronizar_estacoes"):
+        return jsonify({"ok": False, "error": "Ligue a chave 'Padronizar nomes das estações (sem sigla)' em Recursos."}), 409
+    data = request.get_json(silent=True) or {}
+    if (data.get("confirmacao") or "").strip() != "PADRONIZAR":
+        return jsonify({"ok": False, "error": "Digite PADRONIZAR para confirmar."}), 400
+    lote = re.sub(r"[^0-9A-Za-z_-]", "", str(data.get("lote") or "")) or datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    lote = lote[:40]
+    prontas = [i for i in _v91_rename_plan() if i["status"] == "ok"]
+    feitas, erros = [], []
+    try:
+        with db.engine.begin() as conn:
+            _v91_rename_ensure(conn)
+            for it in prontas[:50]:
+                cur = conn.execute(text("UPDATE locations SET location=:n WHERE id=:i AND location=:o"), {"n": it["para"], "i": it["id"], "o": it["de"]})
+                if cur.rowcount != 1:
+                    erros.append({"id": it["id"], "erro": "nome mudou durante a operação"})
+                    continue
+                conn.execute(text("INSERT INTO v91_location_renames (lote, location_id, old_name, new_name, created_by) VALUES (:l,:i,:o,:n,:u)"),
+                             {"l": lote, "i": it["id"], "o": it["de"], "n": it["para"], "u": session.get("user_id")})
+                feitas.append({"id": it["id"], "de": it["de"], "para": it["para"]})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": "Nada foi alterado neste bloco. Motivo: " + (str(exc).strip().splitlines() or [exc.__class__.__name__])[0][:220]}), 500
+    try:
+        db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="V91_RENAME_LOCATIONS", entity_type="locations", entity_id=lote,
+                                  detail=f"lote {lote}: {len(feitas)} estação(ões) renomeada(s) sem sigla"[:900]))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+    _v73_cache_clear(); _v91_clear_locations_cache()
+    return jsonify({"ok": True, "lote": lote, "feitas": feitas, "erros": erros, "restantes": max(0, len(prontas) - len(feitas) - len(erros))})
+
+
+@app.post("/api/diagnostico/rede/padronizar/desfazer/v91")
+@login_required
+def v91_rename_undo():
+    gd = _v85_guard()
+    if gd:
+        return gd
+    if not _v86_is_principal():
+        return jsonify({"ok": False, "error": "Somente o administrador principal."}), 403
+    if not _v85_flags().get("padronizar_estacoes"):
+        return jsonify({"ok": False, "error": "Ligue a chave 'Padronizar nomes das estações (sem sigla)' em Recursos."}), 409
+    data = request.get_json(silent=True) or {}
+    if (data.get("confirmacao") or "").strip() != "DESFAZER":
+        return jsonify({"ok": False, "error": "Digite DESFAZER para confirmar."}), 400
+    lote = re.sub(r"[^0-9A-Za-z_-]", "", str(data.get("lote") or ""))[:40]
+    feitas, puladas = 0, []
+    try:
+        with db.engine.begin() as conn:
+            _v91_rename_ensure(conn)
+            sql = "SELECT id, location_id, old_name, new_name FROM v91_location_renames WHERE undone_at IS NULL" + (" AND lote=:l" if lote else "") + " ORDER BY id DESC LIMIT 100"
+            rows = conn.execute(text(sql), {"l": lote} if lote else {}).fetchall()
+            for rid, lid, old, new in rows:
+                cur = conn.execute(text("UPDATE locations SET location=:o WHERE id=:i AND location=:n"), {"o": old, "i": lid, "n": new})
+                if cur.rowcount != 1:
+                    puladas.append({"id": lid, "motivo": "o nome atual já não é o aplicado por esta ferramenta"})
+                    continue
+                conn.execute(text("UPDATE v91_location_renames SET undone_at=CURRENT_TIMESTAMP WHERE id=:i"), {"i": rid})
+                feitas += 1
+    except Exception as exc:
+        return jsonify({"ok": False, "error": "Nada foi alterado neste bloco. Motivo: " + (str(exc).strip().splitlines() or [exc.__class__.__name__])[0][:220]}), 500
+    try:
+        db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="V91_RENAME_UNDO", entity_type="locations", entity_id=lote or "todos", detail=f"{feitas} nome(s) restaurado(s)"))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+    _v73_cache_clear(); _v91_clear_locations_cache()
+    return jsonify({"ok": True, "desfeitas": feitas, "puladas": puladas, "restantes": max(0, len(rows) - feitas - len(puladas)) if len(rows) >= 100 else 0})
 
 
 @app.post("/api/diagnostico/rede/mesclar/desfazer/v88")
@@ -9495,7 +9675,7 @@ def v88_merge_undo():
         db.session.commit()
     except Exception:
         db.session.rollback()
-    _v73_cache_clear()
+    _v73_cache_clear(); _v91_clear_locations_cache()
     return jsonify({"ok": True})
 
 
