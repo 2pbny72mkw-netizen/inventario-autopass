@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV93"
+APP_RELEASE = "V87.6 REV94"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -9781,6 +9781,34 @@ def v92_manual_merge_apply():
 
 
 # --- histórico da padronização por lote -----------------------------------
+@app.get("/api/diagnostico/rede/base-sem-localidade/v94")
+@login_required
+def v94_base_sem_localidade():
+    gd = _v85_guard()
+    if gd:
+        return gd
+    grp = lambda c: "CPTM_VIA" if normalize(c) in ("CPTM", "VIA MOBILIDADE", "METRO") else normalize(c)
+    locs = Location.query.with_entities(Location.company, Location.line, Location.location).all()
+    ex = {(normalize(c), normalize(l), normalize(n)) for c, l, n in locs}
+    ex_alt = {(grp(c), normalize(l), _v87_norm_station(n)) for c, l, n in locs}
+    ex_line = {(normalize(l), _v87_norm_station(n)) for c, l, n in locs}
+    assets = BaseAsset.query.filter(or_(func.upper(func.coalesce(BaseAsset.equipment_type, "")).like("%VALID%"), func.upper(func.coalesce(BaseAsset.equipment_type, "")) == "TDI")).all()
+    seen, itens = set(), []
+    for a in assets:
+        if "INATIVO" in normalize(a.base_status) or "FORA DO ESCOPO" in normalize(a.base_status):
+            continue
+        name = (a.locality or a.station_code or "").strip(); line = (a.line or "EXTERNA").strip(); company = (a.company or "EXTERNA").strip()
+        if not name or (company, line, name) in seen:
+            continue
+        seen.add((company, line, name))
+        if (normalize(company), normalize(line), normalize(name)) in ex or (grp(company), normalize(line), _v87_norm_station(name)) in ex_alt:
+            continue
+        itens.append({"operadora": company, "linha": line, "estacao": name,
+                      "existe_mesma_linha_e_nome_em_outra_operadora": (normalize(line), _v87_norm_station(name)) in ex_line})
+    return jsonify({"ok": True, "total": len(itens), "itens": itens[:300],
+                    "obs": "O boot não cria mais localidades. Itens com 'existe_mesma_linha_e_nome_em_outra_operadora' = provável duplicata (não criar)."})
+
+
 @app.get("/api/diagnostico/rede/padronizar/lotes/v92")
 @login_required
 def v92_rename_batches():
@@ -25994,6 +26022,7 @@ with app.app_context():
         for x in _all_locs:
             existing_grp.setdefault((_v93_grp(x.company),normalize(x.line),_v87_norm_station(x.location)),[]).append(x)
         changed=False
+        _v94_missing=[]
         for (company,line,name),qty in grouped.items():
             key=(normalize(company),normalize(line),normalize(name));loc=existing.get(key)
             if not loc:
@@ -26003,9 +26032,17 @@ with app.app_context():
                 _c=existing_grp.get((_v93_grp(company),normalize(line),_v87_norm_station(name))) or []
                 if len(_c)==1:loc=_c[0];existing[key]=loc
             if not loc:
-                loc=Location(company=company,line=line,location=name,expected_validator=qty,reference_source='BASE_RECARGA_V73');db.session.add(loc);existing[key]=loc;changed=True
+                # REV94: o boot NÃO cria mais localidades (recriava duplicadas a cada deploy). Só registra o que falta; a lista fica em
+                # /api/diagnostico/rede/base-sem-localidade/v94 para o administrador criar/ajustar conscientemente.
+                _v94_missing.append((company,line,name,qty))
             elif int(loc.expected_validator or 0)!=qty:
                 loc.expected_validator=qty;changed=True
+        if _v94_missing:
+            app.logger.warning('REV94: %s localidade(s) da base sem cadastro (nao criadas no boot)',len(_v94_missing))
+            try:
+                db.session.add(AuditEvent(user_id=None,event_type='V94_BOOT_BASE_SEM_LOCALIDADE',entity_type='locations',entity_id=APP_RELEASE,
+                    detail=('%s sem cadastro, nao criadas: '%len(_v94_missing)+'; '.join('%s|%s|%s'%(c,l,n) for c,l,n,_q in _v94_missing[:12]))[:900]));changed=True
+            except Exception:pass
         if changed:db.session.commit();_chip_swap_payload_cache['at']=0
     except Exception:
         db.session.rollback();app.logger.exception('V73: falha ao sincronizar localidades Recarga/TDI')
