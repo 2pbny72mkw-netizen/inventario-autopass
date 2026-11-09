@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV91"
+APP_RELEASE = "V87.6 REV92"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -8208,6 +8208,8 @@ _V85_FLAGS = [
     {"id": "central_alertas", "label": "Central de Alertas (tela /alertas)", "desc": "Mostra a tela de alertas estatísticos (coletas fora do padrão, divergências, reposição de bobinas) para o Gestor. Os alertas são calculados em modo sombra mesmo com a chave desligada e ninguém é notificado."},
     {"id": "mesclar_estacoes", "label": "Mesclar estações duplicadas", "desc": "Libera o botão 'Mesclar' no Diagnóstico (somente administrador principal, com confirmação digitada e opção de desfazer). Ligue só depois de fazer backup do banco."},
     {"id": "padronizar_estacoes", "label": "Padronizar nomes das estações (sem sigla)", "desc": "Libera, no Diagnóstico, o botão que tira a sigla inicial dos nomes das estações (ex.: 'ABR - AGUA BRANCA' vira 'AGUA BRANCA'). Somente administrador principal, com prévia, confirmação digitada e opção de desfazer. Ligue só depois de fazer backup."},
+    {"id": "importar_coordenadas_osm", "label": "Importar coordenadas das estações (OpenStreetMap)", "desc": "Libera, no Diagnóstico, o botão que grava a coordenada de 59 estações sem coordenada, com origem OpenStreetMap (ODbL, © Colaboradores do OpenStreetMap). Só preenche campo vazio, só administrador principal, com confirmação digitada e opção de desfazer."},
+    {"id": "cache_dashboard", "label": "Dashboard principal com cache (30 s)", "desc": "O /api/dashboard (usado pelo painel) reutiliza o resultado por até 30 s em vez de refazer ~20 consultas a cada abertura. Desligar volta ao cálculo direto."},
     {"id": "graficos_paleta", "label": "Gráficos na paleta única", "desc": "Cores dos gráficos migradas para a paleta central (seguras para daltonismo)."},
     {"id": "gps_otimizado", "label": "GPS: menos contas e consultas", "desc": "Busca da estação mais próxima mais rápida (mesmo resultado), sugestão de técnico do TopDesk sem carregar todo o histórico, contagem de técnicos do dia usando índice e hora real da captura nas posições enviadas pelo navegador. Desligar volta ao método anterior."},
     {"id": "bobinas_fotos_limpeza", "label": "Fotos de Bobinas: limpeza automática em segundo plano", "desc": "Fotos de Bobinas vencidas (7 dias, conforme a configuração) são apagadas do armazenamento em lote, no máximo a cada hora e fora do registro do técnico. A foto só é marcada como apagada quando o armazenamento confirma. O registro da atividade permanece. Desligar volta ao método anterior."},
@@ -9513,7 +9515,7 @@ def _v91_rename_plan():
     planned = {}
     items = []
     for x in locs:
-        novo = _v91_strip_sigla(x.location)
+        novo = _v91_strip_sigla(x.location).upper()  # REV92: nomes em caixa alta (acentos mantidos)
         if novo == (x.location or "").strip():
             continue
         key = (x.company, x.line, _v90_name_norm(novo.replace("-", " ")))
@@ -9633,6 +9635,269 @@ def v91_rename_undo():
         db.session.rollback()
     _v73_cache_clear(); _v91_clear_locations_cache()
     return jsonify({"ok": True, "desfeitas": feitas, "puladas": puladas, "restantes": max(0, len(rows) - feitas - len(puladas)) if len(rows) >= 100 else 0})
+
+
+_V92_OSM_COORDS = [
+    (9, 'LUZ - LUZ', -23.536588, -46.633257, 'way/424572971', 'Luz'),
+    (30, 'SUM - SUMARE', -23.551028, -46.677587, 'node/5368635708', 'Santuário Nossa Senhora de Fátima - Sumaré'),
+    (53, 'FARIA LIMA', -23.566888, -46.69341, 'way/683908721', 'Faria Lima - PagBank'),
+    (54, 'FRADIQUE COUTINHO', -23.566389, -46.684057, 'way/312911288', 'Fradique Coutinho'),
+    (55, 'OSCAR FREIRE', -23.560891, -46.671935, 'way/651946183', 'Oscar Freire'),
+    (56, 'VILA SONIA', -23.593434, -46.734809, 'node/9346910951', 'Vila Sônia - Professora Elizabeth Tenreiro'),
+    (57, 'HIGIENOPOLIS MACKENZIE', -23.548687, -46.652342, 'way/555252628', 'Higienópolis-Mackenzie'),
+    (58, 'LUZ', -23.536177, -46.635292, 'way/665461708', 'Luz'),
+    (59, 'SAO PAULO MORUMBI', -23.586137, -46.723912, 'node/5942913082', 'São Paulo – Morumbi'),
+    (60, 'PINHEIROS', -23.567249, -46.701951, 'node/4425010407', 'Pinheiros'),
+    (61, 'PAULISTA', -23.555342, -46.662241, 'way/817292043', 'Paulista'),
+    (62, 'BUTANTÃ', -23.5719, -46.70809, 'node/5368617428', 'Butantã'),
+    (75, 'SERVIDOR', -23.597655, -46.652422, 'relation/20812081', 'Estação AACD-Servidor'),
+    (141, 'SAN - SANTO ANDRE', -23.652104, -46.52818, 'node/6671954743', 'Prefeito Celso Daniel - Santo André'),
+    (177, 'JARDIM COLONIAL', -23.599214, -46.469065, 'node/8915053909', 'Jardim Colonial'),
+    (216, 'LUZ', -23.536588, -46.633257, 'way/424572971', 'Luz'),
+    (223, 'TIETE', -23.51613, -46.625096, 'way/1233223262', 'Portuguesa - Tietê'),
+    (236, 'SUMARÉ', -23.551028, -46.677587, 'node/5368635708', 'Santuário Nossa Senhora de Fátima - Sumaré'),
+    (238, 'TRIANON', -23.563312, -46.654203, 'node/5159984781', 'Trianon-Masp'),
+    (239, 'VERGUEIRO', -23.568816, -46.639921, 'node/4897835958', 'Vergueiro - Sebrae'),
+    (242, 'ITAQUERA', -23.542299, -46.471207, 'node/5370729520', 'Corinthians-Itaquera'),
+    (248, 'BRESSER', -23.546504, -46.60693, 'node/5369262558', 'Bresser-Mooca'),
+    (255, 'PRAÇA DA SÉ', -23.550443, -46.633446, 'node/4311073828', 'Sé'),
+    (260, 'BUTANTÃ', -23.5719, -46.70809, 'node/5368617428', 'Butantã'),
+    (261, 'FARIA LIMA', -23.566888, -46.69341, 'way/683908721', 'Faria Lima - PagBank'),
+    (262, 'FRADIQUE COUTINHO', -23.566389, -46.684057, 'way/312911288', 'Fradique Coutinho'),
+    (263, 'HIGIENOPOLIS MACKENZIE', -23.548687, -46.652342, 'way/555252628', 'Higienópolis-Mackenzie'),
+    (264, 'LUZ', -23.536177, -46.635292, 'way/665461708', 'Luz'),
+    (265, 'OSCAR FREIRE', -23.560891, -46.671935, 'way/651946183', 'Oscar Freire'),
+    (266, 'PAULISTA', -23.555342, -46.662241, 'way/817292043', 'Paulista'),
+    (267, 'SP MORUMBI', -23.586137, -46.723912, 'node/5942913082', 'São Paulo – Morumbi'),
+    (268, 'VILA SONIA', -23.593434, -46.734809, 'node/9346910951', 'Vila Sônia - Professora Elizabeth Tenreiro'),
+    (269, 'LARGO TREZE OESTE', -23.654458, -46.710166, 'node/4438460892', 'Largo Treze'),
+    (271, 'AACD SERVIDOR', -23.597655, -46.652422, 'relation/20812081', 'Estação AACD-Servidor'),
+    (274, 'BOOKLIN', -23.626802, -46.688128, 'node/5109495595', 'Brooklin'),
+    (279, 'CHÁCARA KLABIN', -23.592681, -46.630681, 'node/4923069358', 'Chácara Klabin'),
+    (282, 'HOSP SÃO PAULO', -23.598509, -46.64558, 'way/494225775', 'Estação Hospital São Paulo'),
+    (283, 'LARGO TREZE LESTE', -23.654458, -46.710166, 'node/4438460892', 'Largo Treze'),
+    (297, 'LAPA', -23.517595, -46.703966, 'way/520671386', 'Lapa'),
+    (309, 'DOMINGOS DE MORAES', -23.518787, -46.721672, 'node/4593577589', 'Domingos de Moraes'),
+    (311, 'GAL. MIGUEL COSTA', -23.523457, -46.815897, 'node/4692782496', 'General Miguel Costa'),
+    (316, 'LAPA', -23.519981, -46.699179, 'node/4592396614', 'Lapa - Senac'),
+    (334, 'PRIMAVERA INTERLAGOS', -23.722867, -46.691768, 'node/4144661923', 'Primavera - Interlagos'),
+    (337, 'VILA LOBOS', -23.545987, -46.732853, 'node/4142881339', 'Villa Lobos - Jaguaré'),
+    (338, 'VILA MENDES NATAL', -23.754244, -46.70924, 'node/8997093804', 'Mendes - Vila Natal'),
+    (350, 'S. CAETANO', -23.610062, -46.570055, 'node/4580231040', 'São Caetano do Sul - Prefeito Walter Braido'),
+    (351, 'SANTO ANDRE', -23.652104, -46.52818, 'node/6671954743', 'Prefeito Celso Daniel - Santo André'),
+    (354, 'ANTONIO GIANETTI NETO', -23.554412, -46.383631, 'node/4580265049', 'Antonio Gianetti Neto'),
+    (367, 'CAMON VIANA', -23.525445, -46.332771, 'node/4581523860', 'Calmon Viana'),
+    (369, 'ENGENHEIRO GOULARD', -23.498095, -46.519895, 'node/5039552221', 'Engenheiro Goulart'),
+    (370, 'ENGENHEIRO MANOEL FEIO', -23.479227, -46.367778, 'node/4693953605', 'Engenheiro Manoel Feio'),
+    (382, 'JD PLANALTO', -23.606538, -46.507614, 'node/6764734909', 'Jardim Planalto'),
+    (390, 'Aeroporto de Congonhas', -23.627002, -46.661897, 'way/698751459', 'Aeroporto de Congonhas'),
+    (391, 'Brooklin Paulista', -23.629554, -46.673583, 'way/1494475327', 'Brooklin Paulista'),
+    (392, 'Campo Belo', -23.618685, -46.683411, 'relation/20396980', 'Campo Belo'),
+    (393, 'Chucri Zaidan', -23.613982, -46.695502, 'way/1494656556', 'Chucri Zaidan'),
+    (394, 'MORUMBI', -23.622467, -46.702716, 'relation/19064053', 'Morumbi'),
+    (395, 'Vereador José Diniz', -23.622055, -46.678879, 'way/671909899', 'Vereador José Diniz'),
+    (396, 'Vila Cordeiro', -23.615576, -46.688598, 'way/506475778', 'Vila Cordeiro'),
+]
+
+
+def _v92_flag_guard(flag_id, label):
+    gd = _v85_guard()
+    if gd:
+        return gd
+    if not _v86_is_principal():
+        return jsonify({"ok": False, "error": "Somente o administrador principal."}), 403
+    if not _v85_flags().get(flag_id):
+        return jsonify({"ok": False, "error": f"Ligue a chave '{label}' em Recursos."}), 409
+    return None
+
+
+# --- mesclagem manual por par de IDs --------------------------------------
+def _v92_loc_brief(conn, lid):
+    r = conn.execute(text("SELECT id, company, line, location, expected_atm, expected_validator, expected_pos, reference_latitude FROM locations WHERE id=:i"), {"i": lid}).first()
+    if not r:
+        return None
+    inv = conn.execute(text("SELECT COUNT(*) FROM inventory WHERE location_id=:i"), {"i": lid}).scalar() if conn.execute(text("SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='inventory'")).first() else 0
+    return {"id": r[0], "operadora": r[1], "linha": r[2], "estacao": r[3], "esperado": int((r[4] or 0) + (r[5] or 0) + (r[6] or 0)),
+            "com_coordenada": r[7] is not None, "inventario": int(inv or 0)}
+
+
+@app.get("/api/diagnostico/rede/mesclar-manual/v92")
+@login_required
+def v92_manual_merge_preview():
+    gd = _v85_guard()
+    if gd:
+        return gd
+    try:
+        dup_id, keeper_id = int(request.args.get("dup")), int(request.args.get("keeper"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Informe dup e keeper (números)."}), 400
+    if dup_id == keeper_id:
+        return jsonify({"ok": False, "error": "A duplicada e a mantida são a mesma estação."}), 400
+    with db.engine.connect() as conn:
+        d, k = _v92_loc_brief(conn, dup_id), _v92_loc_brief(conn, keeper_id)
+        if not d or not k:
+            return jsonify({"ok": False, "error": "Uma das estações não existe (já foi mesclada?)."}), 404
+        refs = _v88_location_refs(conn)
+        impact = []
+        for t, c in refs:
+            n = conn.execute(text(f'SELECT COUNT(*) FROM "{t}" WHERE "{c}"=:i'), {"i": dup_id}).scalar() or 0
+            if n:
+                impact.append({"tabela": t, "coluna": c, "linhas": int(n)})
+    avisos = []
+    if d["operadora"] != k["operadora"] or d["linha"] != k["linha"]:
+        avisos.append("Operadora ou linha diferentes: só mescle se for a mesma estação (a API pede 'forcar').")
+    if d["esperado"] > k["esperado"]:
+        avisos.append("A duplicada tem totais esperados maiores que a mantida; os totais NÃO são somados. Prefira manter a que tem os totais.")
+    return jsonify({"ok": True, "duplicada": d, "mantida": k, "referencias": impact, "total_linhas": sum(i["linhas"] for i in impact), "avisos": avisos})
+
+
+@app.post("/api/diagnostico/rede/mesclar-manual/v92")
+@login_required
+def v92_manual_merge_apply():
+    gd = _v92_flag_guard("mesclar_estacoes", "Mesclar estações duplicadas")
+    if gd:
+        return gd
+    data = request.get_json(silent=True) or {}
+    if (data.get("confirmacao") or "").strip() != "MESCLAR":
+        return jsonify({"ok": False, "error": "Digite MESCLAR para confirmar."}), 400
+    try:
+        dup_id, keeper_id = int(data.get("dup")), int(data.get("keeper"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Informe dup e keeper."}), 400
+    if dup_id == keeper_id:
+        return jsonify({"ok": False, "error": "A duplicada e a mantida são a mesma estação."}), 400
+    with db.engine.connect() as conn:
+        d, k = _v92_loc_brief(conn, dup_id), _v92_loc_brief(conn, keeper_id)
+    if not d or not k:
+        return jsonify({"ok": False, "error": "Uma das estações não existe (já foi mesclada?)."}), 404
+    if (d["operadora"] != k["operadora"] or d["linha"] != k["linha"]) and not data.get("forcar"):
+        return jsonify({"ok": False, "error": "Operadora ou linha diferentes. Se for mesmo a mesma estação, confirme com 'forcar'."}), 409
+    try:
+        mid, n = _v90_merge_one(dup_id, keeper_id)
+    except Exception as exc:
+        return jsonify({"ok": False, "error": "Nada foi alterado. Motivo: " + (str(exc).strip().splitlines() or [exc.__class__.__name__])[0][:220]}), 500
+    _v73_cache_clear(); _v91_clear_locations_cache()
+    return jsonify({"ok": True, "mesclagem": mid, "linhas_movidas": n})
+
+
+# --- histórico da padronização por lote -----------------------------------
+@app.get("/api/diagnostico/rede/padronizar/lotes/v92")
+@login_required
+def v92_rename_batches():
+    gd = _v85_guard()
+    if gd:
+        return gd
+    with db.engine.begin() as conn:
+        _v91_rename_ensure(conn)
+        rows = conn.execute(text("SELECT lote, COUNT(*), COUNT(DISTINCT location_id), COUNT(*) FILTER (WHERE undone_at IS NOT NULL), MIN(created_at), MAX(created_at) FROM v91_location_renames GROUP BY lote ORDER BY MIN(created_at)")).fetchall()
+        rep = conn.execute(text("SELECT COUNT(*) FROM (SELECT location_id FROM v91_location_renames WHERE undone_at IS NULL GROUP BY location_id HAVING COUNT(*)>1) t")).scalar()
+    return jsonify({"ok": True, "lotes": [{"lote": r[0], "linhas": int(r[1]), "estacoes_distintas": int(r[2]), "desfeitas": int(r[3]),
+                                           "inicio": r[4].isoformat() if r[4] else None, "fim": r[5].isoformat() if r[5] else None} for r in rows],
+                    "estacoes_renomeadas_mais_de_uma_vez": int(rep or 0)})
+
+
+# --- coordenadas das estações (OpenStreetMap, ODbL) -----------------------
+_V92_OSM_TAG = "OSM_ODbL_20261109"
+
+
+def _v92_osm_plan():
+    out = []
+    for lid, nome, lat, lon, osm_id, osm_nome in _V92_OSM_COORDS:
+        loc = db.session.get(Location, lid)
+        item = {"id": lid, "esperado": nome, "osm": osm_nome, "osm_id": osm_id, "lat": lat, "lon": lon, "atual": loc.location if loc else None, "status": "ok", "motivo": ""}
+        if not loc:
+            item.update(status="ignorar", motivo="a estação não existe mais (mesclada?)")
+        elif _v87_norm_station(loc.location) != _v87_norm_station(nome):
+            item.update(status="ignorar", motivo="o nome desta estação mudou; confira")
+        elif loc.reference_latitude is not None and loc.reference_longitude is not None:
+            item.update(status="ignorar", motivo="já tem coordenada (não sobrescrevo)")
+        out.append(item)
+    return out
+
+
+@app.get("/api/diagnostico/rede/coordenadas-osm/v92")
+@login_required
+def v92_osm_preview():
+    gd = _v85_guard()
+    if gd:
+        return gd
+    items = _v92_osm_plan()
+    aplicadas = Location.query.filter(Location.reference_source.like(_V92_OSM_TAG + ":%")).count()
+    return jsonify({"ok": True, "atribuicao": "© Colaboradores do OpenStreetMap (ODbL)", "total": len(items), "prontas": sum(1 for i in items if i["status"] == "ok"),
+                    "ignoradas": sum(1 for i in items if i["status"] != "ok"), "ja_importadas": aplicadas, "itens": items})
+
+
+@app.post("/api/diagnostico/rede/coordenadas-osm/v92")
+@login_required
+def v92_osm_apply():
+    gd = _v92_flag_guard("importar_coordenadas_osm", "Importar coordenadas das estações (OpenStreetMap)")
+    if gd:
+        return gd
+    data = request.get_json(silent=True) or {}
+    if (data.get("confirmacao") or "").strip() != "IMPORTAR":
+        return jsonify({"ok": False, "error": "Digite IMPORTAR para confirmar."}), 400
+    feitas = 0
+    try:
+        for it in _v92_osm_plan():
+            if it["status"] != "ok":
+                continue
+            loc = db.session.get(Location, it["id"])
+            loc.reference_latitude, loc.reference_longitude = it["lat"], it["lon"]
+            loc.reference_source = f"{_V92_OSM_TAG}:{it['osm_id']}"
+            loc.reference_updated_at = datetime.utcnow()
+            feitas += 1
+        db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="V92_OSM_COORDS", entity_type="locations", entity_id=_V92_OSM_TAG, detail=f"{feitas} coordenada(s) importada(s) do OpenStreetMap (ODbL)"))
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({"ok": False, "error": "Nada foi alterado. Motivo: " + (str(exc).strip().splitlines() or [exc.__class__.__name__])[0][:220]}), 500
+    _v73_cache_clear(); _v91_clear_locations_cache()
+    return jsonify({"ok": True, "importadas": feitas})
+
+
+@app.post("/api/diagnostico/rede/coordenadas-osm/desfazer/v92")
+@login_required
+def v92_osm_undo():
+    gd = _v92_flag_guard("importar_coordenadas_osm", "Importar coordenadas das estações (OpenStreetMap)")
+    if gd:
+        return gd
+    data = request.get_json(silent=True) or {}
+    if (data.get("confirmacao") or "").strip() != "DESFAZER":
+        return jsonify({"ok": False, "error": "Digite DESFAZER para confirmar."}), 400
+    try:
+        rows = Location.query.filter(Location.reference_source.like(_V92_OSM_TAG + ":%")).all()
+        for loc in rows:
+            loc.reference_latitude = loc.reference_longitude = loc.reference_source = loc.reference_updated_at = None
+        db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="V92_OSM_COORDS_UNDO", entity_type="locations", entity_id=_V92_OSM_TAG, detail=f"{len(rows)} coordenada(s) removida(s)"))
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({"ok": False, "error": "Nada foi alterado. Motivo: " + (str(exc).strip().splitlines() or [exc.__class__.__name__])[0][:220]}), 500
+    _v73_cache_clear(); _v91_clear_locations_cache()
+    return jsonify({"ok": True, "removidas": len(rows)})
+
+
+# --- erros 5xx recentes (telemetria) --------------------------------------
+@app.get("/api/telemetria/erros5xx/v92")
+@login_required
+def v92_errors_5xx():
+    if not _has_access("management.health"):
+        return jsonify({"ok": False, "error": "Sem permissão para Saúde da Plataforma."}), 403
+    try:
+        dias = max(1, min(int(request.args.get("dias") or 7), 30))
+    except (TypeError, ValueError):
+        dias = 7
+    since = datetime.utcnow() - timedelta(days=dias)
+    rows = (PerformanceMetric.query.filter(PerformanceMetric.status_code >= 500, PerformanceMetric.created_at >= since)
+            .order_by(PerformanceMetric.created_at.desc()).limit(200).all())
+    por_rota = {}
+    for r in rows:
+        k = f"{r.method} {r.route} {r.status_code}"
+        por_rota[k] = por_rota.get(k, 0) + 1
+    return jsonify({"ok": True, "dias": dias, "total": len(rows),
+                    "por_rota": sorted(({"rota": k, "vezes": v} for k, v in por_rota.items()), key=lambda x: -x["vezes"]),
+                    "recentes": [{"em": r.created_at.isoformat() + "Z", "metodo": r.method, "rota": r.route, "status": r.status_code, "ms": r.duration_ms,
+                                  "versao": r.release, "request_id": r.request_id} for r in rows[:30]]})
 
 
 @app.post("/api/diagnostico/rede/mesclar/desfazer/v88")
@@ -12345,6 +12610,14 @@ def api_recent_gps():
 @app.get("/api/dashboard")
 @dashboard_required
 def dashboard():
+    # REV92: com a chave 'cache_dashboard' ligada, reutiliza o resultado por até 30 s (o conteúdo não depende do usuário).
+    if not _v85_flags().get("cache_dashboard"):
+        return _v92_dashboard_build()
+    body = _v73_cache_get("v92_dashboard", lambda: _v92_dashboard_build().get_data(), ttl=30)
+    return app.response_class(body, mimetype="application/json")
+
+
+def _v92_dashboard_build():
     total = Location.query.count()
     pending = Location.query.filter_by(survey_status="PENDENTE").count()
     progress = Location.query.filter_by(survey_status="EM ANDAMENTO").count()
@@ -25709,10 +25982,18 @@ with app.app_context():
             name=(a.locality or a.station_code or '').strip();line=(a.line or 'EXTERNA').strip();company=(a.company or 'EXTERNA').strip()
             if not name:continue
             grouped.setdefault((company,line,name),0);grouped[(company,line,name)]+=1
-        existing={(normalize(x.company),normalize(x.line),normalize(x.location)):x for x in Location.query.all()}
+        _all_locs=Location.query.all()
+        existing={(normalize(x.company),normalize(x.line),normalize(x.location)):x for x in _all_locs}
+        # REV92: trava contra recriação — também reconhece a estação existente com/sem sigla ("ABR - AGUA BRANCA" x "AGUA BRANCA").
+        existing_alt={}
+        for x in _all_locs:
+            existing_alt.setdefault((normalize(x.company),normalize(x.line),_v87_norm_station(x.location)),x)
         changed=False
         for (company,line,name),qty in grouped.items():
             key=(normalize(company),normalize(line),normalize(name));loc=existing.get(key)
+            if not loc:
+                loc=existing_alt.get((normalize(company),normalize(line),_v87_norm_station(name)))
+                if loc:existing[key]=loc
             if not loc:
                 loc=Location(company=company,line=line,location=name,expected_validator=qty,reference_source='BASE_RECARGA_V73');db.session.add(loc);existing[key]=loc;changed=True
             elif int(loc.expected_validator or 0)!=qty:
