@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV94"
+APP_RELEASE = "V87.6 REV95"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -5594,9 +5594,13 @@ def _ensure_team_schedule_profiles(force=False):
                     db.session.add(row)
                     profiles.append(row); by_uid[u.id]=row; by_name[(u.name or "").strip().casefold()]=row
                 else:
-                    row.user_id=u.id; row.name=u.name; row.active=True; row.category=category; row.schedule_type=sched; row.shift=shift; row.anchor_date=anchor; row.updated_at=datetime.utcnow()
+                    # REV95: só grava quando algo mudou (antes fazia UPDATE em todos os perfis a cada sincronização, inclusive em telas de leitura).
+                    _new=(u.id,u.name,True,category,sched,shift,anchor)
+                    _old=(row.user_id,row.name,row.active,row.category,row.schedule_type,row.shift,row.anchor_date)
+                    if _old!=_new:
+                        row.user_id=u.id; row.name=u.name; row.active=True; row.category=category; row.schedule_type=sched; row.shift=shift; row.anchor_date=anchor; row.updated_at=datetime.utcnow()
             for row in profiles:
-                if row.user_id and row.user_id not in valid_ids:
+                if row.user_id and row.user_id not in valid_ids and row.active:
                     row.active=False
             db.session.commit()
             _TEAM_PROFILE_SYNC_STATE["at"]=time.time()
@@ -5805,9 +5809,10 @@ def _teams_status_compute():
         WorkAccessRequest.approved_from < end_utc,WorkAccessRequest.approved_until >= start_utc
     ).order_by(WorkAccessRequest.approved_until.desc()).all()
     profiles={p.user_id:p for p in TeamScheduleProfile.query.filter(TeamScheduleProfile.user_id.isnot(None)).all()}
+    _auth_users={u.id:u for u in User.query.filter(User.id.in_({a.user_id for a in auth_rows if a.user_id})).all()} if auth_rows else {}  # REV95: 1 consulta em vez de 1 por autorização
     for auth in auth_rows:
         if auth.user_id in scheduled_ids: continue
-        u=db.session.get(User,auth.user_id)
+        u=_auth_users.get(auth.user_id)
         if not u or not u.active or normalize(u.personnel_status or "ATIVO")!="ATIVO": continue
         p=profiles.get(u.id)
         member=_profile_to_dict(p,u) if p else {
