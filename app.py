@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV95"
+APP_RELEASE = "V87.6 REV96"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -8221,6 +8221,7 @@ _V85_FLAGS = [
     {"id": "api_cache", "label": "Equipes: resposta compartilhada por 10 s", "desc": "A tela de Equipes passa a reaproveitar por até 10 s o resultado já calculado para outro usuário, em vez de refazer ~16 consultas a cada atualização."},
     {"id": "apt_otimizado", "label": "APT: consultas em lote e arquivos sem sobra", "desc": "Verificação de APT vigente e importação em poucas consultas, contagem do painel feita no banco, PDF aberto direto do armazenamento e arquivo antigo apagado quando o PDF é trocado ou a APT é excluída."},
     {"id": "menu_terceiro_nivel", "label": "Menus com terceiro nível + índice do Diagnóstico", "desc": "Em Gestão › Diagnóstico, abre um painel ao lado com as seções da página (vai direto a cada uma) e mostra um índice fixo no topo do Diagnóstico. Mesmas permissões; desligar volta ao menu atual."},
+    {"id": "planejamento_semanal", "label": "Planejamento semanal (Gestão)", "desc": "Libera a tela Gestão › Planejamento semanal (/gestao/planejamento-semanal): frentes, atividades, status, responsável e prazo por semana, com gráficos. Só o administrador principal define quem pode ver e quem pode editar."},
 ]
 _V85_IDS = {f["id"] for f in _V85_FLAGS}
 _V85_STATE = {"ready": False}
@@ -9446,8 +9447,28 @@ def _v90_merge_one(dup_id, keeper_id):
             if n_total and not has_id:
                 raise RuntimeError(f"Tabela {t} não tem coluna id; mesclagem desfazível não é possível.")
             if ids:
-                conn.execute(text(f'UPDATE "{t}" SET "{c}"=:k WHERE "{c}"=:d'), {"k": keeper_id, "d": dup_id})
-                moved[f"{t}|{c}"] = ids
+                # REV96: troca de chip repetida (mesmo ativo nas duas estações) viola a regra de unicidade; nesse caso — só em tabelas chip_swap —
+                # o registro repetido da duplicada é guardado em v96_merge_discarded e removido; o restante é movido normalmente.
+                try:
+                    with conn.begin_nested():
+                        conn.execute(text(f'UPDATE "{t}" SET "{c}"=:k WHERE "{c}"=:d'), {"k": keeper_id, "d": dup_id})
+                    moved[f"{t}|{c}"] = ids
+                except IntegrityError:
+                    if "chip_swap" not in t:
+                        raise
+                    conn.execute(text("CREATE TABLE IF NOT EXISTS v96_merge_discarded (id SERIAL PRIMARY KEY, dup_id INTEGER NOT NULL, table_name VARCHAR(80) NOT NULL, row_json TEXT NOT NULL, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"))
+                    ok_ids = []
+                    for rid in ids:
+                        try:
+                            with conn.begin_nested():
+                                conn.execute(text(f'UPDATE "{t}" SET "{c}"=:k WHERE id=:r'), {"k": keeper_id, "r": rid})
+                            ok_ids.append(rid)
+                        except IntegrityError:
+                            rj = conn.execute(text(f'SELECT row_to_json(x)::text FROM "{t}" x WHERE id=:r'), {"r": rid}).scalar()
+                            conn.execute(text("INSERT INTO v96_merge_discarded (dup_id, table_name, row_json) VALUES (:d,:t,:j)"), {"d": dup_id, "t": t, "j": rj})
+                            conn.execute(text(f'DELETE FROM "{t}" WHERE id=:r'), {"r": rid})
+                    if ok_ids:
+                        moved[f"{t}|{c}"] = ok_ids
         conn.execute(text("DELETE FROM locations WHERE id=:i"), {"i": dup_id})
         mid = conn.execute(text("INSERT INTO v88_location_merges (keeper_id, dup_id, dup_row, moved, created_by) VALUES (:k,:d,:r,:m,:u) RETURNING id"),
                            {"k": keeper_id, "d": dup_id, "r": json.dumps(dup_row, ensure_ascii=False, default=str), "m": json.dumps(moved), "u": session.get("user_id")}).scalar()
@@ -9786,6 +9807,401 @@ def v92_manual_merge_apply():
 
 
 # --- histórico da padronização por lote -----------------------------------
+# ---------------------------------------------------------------------------
+# REV96 — Planejamento semanal (Gestão): acesso por usuário (ver / editar) decidido só pelo administrador principal
+# ---------------------------------------------------------------------------
+_V96_STATUS = ("nao", "and", "agu", "blq", "ok")
+_V96_STATE = {"ready": False}
+_V96_FRONTS_SEED = (("hw", "Implantação de Hardware"), ("pend", "Pendências e definições"), ("at", "Assistência Técnica"),
+                    ("est", "Estoque"), ("mec", "Engenharia Mecânica"), ("ehw", "Engenharia de Hardware"))
+
+
+def _v96_ensure(conn):
+    if _V96_STATE["ready"]:
+        return
+    for ddl in (
+        "CREATE TABLE IF NOT EXISTS v96_plan_fronts (fkey VARCHAR(20) PRIMARY KEY, name VARCHAR(80) NOT NULL, position INTEGER NOT NULL DEFAULT 0)",
+        "CREATE TABLE IF NOT EXISTS v96_plan_weeks (id SERIAL PRIMARY KEY, week_start DATE NOT NULL UNIQUE, label VARCHAR(80) NOT NULL DEFAULT '', milestone_date DATE, "
+        "milestone_label VARCHAR(160) NOT NULL DEFAULT '', notes_json TEXT NOT NULL DEFAULT '[]', created_by INTEGER, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+        "CREATE TABLE IF NOT EXISTS v96_plan_items (id SERIAL PRIMARY KEY, week_id INTEGER NOT NULL, front VARCHAR(20) NOT NULL, title VARCHAR(300) NOT NULL, status VARCHAR(6) NOT NULL DEFAULT 'nao', "
+        "responsible VARCHAR(120) NOT NULL DEFAULT '', deadline DATE, obs VARCHAR(500) NOT NULL DEFAULT '', position INTEGER NOT NULL DEFAULT 0, created_by INTEGER, updated_by INTEGER, "
+        "created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+        "CREATE INDEX IF NOT EXISTS ix_v96_plan_items_week ON v96_plan_items (week_id)",
+        "CREATE TABLE IF NOT EXISTS v96_plan_access (user_id INTEGER PRIMARY KEY, can_edit BOOLEAN NOT NULL DEFAULT FALSE, granted_by INTEGER, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+        "CREATE TABLE IF NOT EXISTS v96_plan_events (id SERIAL PRIMARY KEY, week_id INTEGER, item_id INTEGER, user_id INTEGER, action VARCHAR(40) NOT NULL, detail VARCHAR(600) NOT NULL DEFAULT '', created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+        "CREATE INDEX IF NOT EXISTS ix_v96_plan_events_week ON v96_plan_events (week_id, id)",
+    ):
+        conn.execute(text(ddl))
+    if not conn.execute(text("SELECT 1 FROM v96_plan_fronts LIMIT 1")).first():
+        for i, (k, n) in enumerate(_V96_FRONTS_SEED):
+            conn.execute(text("INSERT INTO v96_plan_fronts (fkey,name,position) VALUES (:k,:n,:p) ON CONFLICT DO NOTHING"), {"k": k, "n": n, "p": i})
+    _V96_STATE["ready"] = True
+
+
+_V96_SEED_ITEMS = (
+    ("hw", "Expansão POS nos trilhos – Metrô (finalização)", "and", "2026-11-11", "Previsão de finalizar 11/11"),
+    ("hw", "Novo cronograma POS – Linhas 01, 03, 04 e 15", "nao", None, "Linha 4 operada pela ViaQuatro – validar interlocutor"),
+    ("hw", "Expansão B80 (validador de ônibus) – SPTrans", "and", None, "Base: 10 instalados em terminais + 1 ônibus como slave"),
+    ("pend", "Chip SM 4G – continua?", "agu", None, "Decisão técnica/comercial"),
+    ("pend", "Recarga V3680 e V3695 (vermelho)", "agu", None, "Software"),
+    ("pend", "Contrato assinado", "agu", None, "Contratual"),
+    ("pend", "Versão final", "agu", None, "Software/produto"),
+    ("pend", "Definição do logo no vidro", "agu", None, "Produto/visual"),
+    ("pend", "BF80 (biometria facial)", "agu", None, "A detalhar"),
+    ("at", "Atividades rotineiras de manutenção", "and", None, ""),
+    ("at", "Preparar 4 validadores p/ SPTrans (2× V3680, 2× V3695)", "nao", None, "Depende da pendência de recarga (vermelho)?"),
+    ("at", "Giga de testes p/ validador legado – apresentação ABASP", "nao", None, "Data da apresentação a confirmar"),
+    ("est", "Atividades rotineiras de estoque", "and", None, ""),
+    ("est", "Cotação final – terminal de consulta ESP", "nao", None, ""),
+    ("est", "Cotação final – terminal de consulta p/ terminal de seccionamento", "nao", None, ""),
+)
+_V96_SEED_NOTES = [
+    "Recarga V3680/V3695 (vermelho) × preparação dos validadores SPTrans: confirmar se a correção de software precisa estar pronta antes da entrega.",
+    "Cronograma das Linhas 1, 3, 4 e 15 depende da conclusão POS em 11/11 – preparar em paralelo.",
+    "Contrato e versão final tendem a travar as demais definições – priorizar na reunião da semana.",
+    "Atribuir responsável e prazo a todas as pendências até o fim da semana.",
+    "Eng. Mecânica e Eng. Hardware: atividades da semana a definir.",
+]
+
+
+def _v96_seed(conn):
+    if conn.execute(text("SELECT 1 FROM v96_plan_weeks LIMIT 1")).first():
+        return
+    wid = conn.execute(text("INSERT INTO v96_plan_weeks (week_start,label,milestone_date,milestone_label,notes_json,created_by) VALUES "
+                            "('2026-11-09','09 a 13/11/2026','2026-11-11','Conclusão POS trilhos Metrô',:n,:u) ON CONFLICT (week_start) DO NOTHING RETURNING id"),
+                       {"n": json.dumps(_V96_SEED_NOTES, ensure_ascii=False), "u": session.get("user_id")}).scalar()
+    if not wid:
+        return
+    for pos, (f, t, s, d, o) in enumerate(_V96_SEED_ITEMS):
+        conn.execute(text("INSERT INTO v96_plan_items (week_id,front,title,status,deadline,obs,position,created_by) VALUES (:w,:f,:t,:s,CAST(:d AS DATE),:o,:p,:u)"),
+                     {"w": wid, "f": f, "t": t, "s": s, "d": d, "o": o, "p": pos, "u": session.get("user_id")})
+
+
+def _v96_access(conn=None):
+    """(pode_ver, pode_editar, é_admin_principal). Só o administrador principal concede acesso."""
+    if _v86_is_principal():
+        return True, True, True
+    uid = session.get("user_id")
+    if not uid:
+        return False, False, False
+    try:
+        with db.engine.begin() as c:
+            _v96_ensure(c)
+            r = c.execute(text("SELECT can_edit FROM v96_plan_access WHERE user_id=:u"), {"u": uid}).first()
+    except Exception:
+        return False, False, False
+    return (True, bool(r[0]), False) if r else (False, False, False)
+
+
+def _v96_gate(need_edit=False, need_admin=False):
+    gd = _v85_guard()
+    if gd:
+        return gd, None
+    if not _v85_flags().get("planejamento_semanal"):
+        return (jsonify({"ok": False, "error": "Ligue a chave 'Planejamento semanal' em Recursos."}), 409), None
+    ver, edit, adm = _v96_access()
+    if not ver or (need_edit and not edit) or (need_admin and not adm):
+        return (jsonify({"ok": False, "error": "Sem permissão para esta ação."}), 403), None
+    return None, (ver, edit, adm)
+
+
+def _v96_event(conn, week_id, item_id, action, detail):
+    conn.execute(text("INSERT INTO v96_plan_events (week_id,item_id,user_id,action,detail) VALUES (:w,:i,:u,:a,:d)"),
+                 {"w": week_id, "i": item_id, "u": session.get("user_id"), "a": action, "d": str(detail)[:600]})
+
+
+def _v96_clean_date(v):
+    v = (v or "").strip() if isinstance(v, str) else ""
+    if not v:
+        return None
+    try:
+        return datetime.strptime(v[:10], "%Y-%m-%d").date().isoformat()
+    except ValueError:
+        raise ValueError("Data inválida (use AAAA-MM-DD).")
+
+
+def _v96_item_row(r):
+    return {"id": r[0], "front": r[1], "title": r[2], "status": r[3], "responsible": r[4], "deadline": r[5].isoformat() if r[5] else "",
+            "obs": r[6], "position": r[7], "updated_at": r[8].isoformat() if r[8] else None}
+
+
+@app.get("/gestao/planejamento-semanal")
+@login_required
+def v96_plan_page():
+    ver, edit, adm = _v96_access()
+    ligado = bool(_v85_flags().get("planejamento_semanal"))
+    if not ver:
+        abort(403)
+    return render_template("planejamento_semanal.html", app_release=APP_RELEASE, plan_on=ligado, can_edit=edit, is_admin=adm)
+
+
+@app.get("/api/planejamento-semanal/v96")
+@login_required
+def v96_plan_state():
+    gd, acc = _v96_gate()
+    if gd:
+        return gd
+    wk = request.args.get("week", type=int)
+    with db.engine.begin() as conn:
+        _v96_ensure(conn)
+        _v96_seed(conn)
+        weeks = conn.execute(text("SELECT id, week_start, label FROM v96_plan_weeks ORDER BY week_start DESC LIMIT 60")).fetchall()
+        if not weeks:
+            return jsonify({"ok": True, "weeks": [], "week": None})
+        cur = next((w for w in weeks if w[0] == wk), weeks[0])
+        w = conn.execute(text("SELECT id, week_start, label, milestone_date, milestone_label, notes_json, updated_at FROM v96_plan_weeks WHERE id=:i"), {"i": cur[0]}).first()
+        items = conn.execute(text("SELECT id, front, title, status, responsible, deadline, obs, position, updated_at FROM v96_plan_items WHERE week_id=:w ORDER BY position, id"), {"w": cur[0]}).fetchall()
+        fronts = conn.execute(text("SELECT fkey, name FROM v96_plan_fronts ORDER BY position, fkey")).fetchall()
+    try:
+        notes = json.loads(w[5] or "[]")
+    except Exception:
+        notes = []
+    users = [u.name for u in User.query.filter(User.active.is_(True)).order_by(User.name).limit(400).all()] if acc[1] else []
+    return jsonify({"ok": True, "me": {"can_edit": acc[1], "is_admin": acc[2]},
+                    "weeks": [{"id": x[0], "start": x[1].isoformat(), "label": x[2]} for x in weeks],
+                    "week": {"id": w[0], "start": w[1].isoformat(), "label": w[2], "milestone_date": w[3].isoformat() if w[3] else "", "milestone_label": w[4], "notes": notes,
+                             "updated_at": w[6].isoformat() if w[6] else None},
+                    "fronts": [{"key": f[0], "name": f[1]} for f in fronts], "items": [_v96_item_row(r) for r in items], "users": users})
+
+
+def _v96_item_fields(data, conn, partial):
+    out = {}
+    if "title" in data or not partial:
+        t = (data.get("title") or "").strip()
+        if not t:
+            raise ValueError("Informe a atividade.")
+        out["title"] = t[:300]
+    if "status" in data or not partial:
+        s = (data.get("status") or "nao").strip()
+        if s not in _V96_STATUS:
+            raise ValueError("Status inválido.")
+        out["status"] = s
+    if "front" in data or not partial:
+        f = (data.get("front") or "").strip()
+        if not conn.execute(text("SELECT 1 FROM v96_plan_fronts WHERE fkey=:k"), {"k": f}).first():
+            raise ValueError("Frente inválida.")
+        out["front"] = f
+    if "responsible" in data:
+        out["responsible"] = (data.get("responsible") or "").strip()[:120]
+    if "obs" in data:
+        out["obs"] = (data.get("obs") or "").strip()[:500]
+    if "deadline" in data:
+        out["deadline"] = _v96_clean_date(data.get("deadline"))
+    return out
+
+
+@app.post("/api/planejamento-semanal/v96/atividade")
+@login_required
+def v96_plan_item_create():
+    gd, acc = _v96_gate(need_edit=True)
+    if gd:
+        return gd
+    data = request.get_json(silent=True) or {}
+    try:
+        with db.engine.begin() as conn:
+            _v96_ensure(conn)
+            wid = int(data.get("week_id") or 0)
+            if not conn.execute(text("SELECT 1 FROM v96_plan_weeks WHERE id=:i"), {"i": wid}).first():
+                return jsonify({"ok": False, "error": "Semana não encontrada."}), 404
+            f = _v96_item_fields(data, conn, partial=False)
+            pos = conn.execute(text("SELECT COALESCE(MAX(position),0)+1 FROM v96_plan_items WHERE week_id=:w"), {"w": wid}).scalar()
+            iid = conn.execute(text("INSERT INTO v96_plan_items (week_id,front,title,status,responsible,deadline,obs,position,created_by,updated_by) "
+                                    "VALUES (:w,:f,:t,:s,:r,CAST(:d AS DATE),:o,:p,:u,:u) RETURNING id"),
+                               {"w": wid, "f": f["front"], "t": f["title"], "s": f["status"], "r": f.get("responsible", ""), "d": f.get("deadline"), "o": f.get("obs", ""), "p": pos, "u": session.get("user_id")}).scalar()
+            _v96_event(conn, wid, iid, "CRIOU", f["title"])
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    return jsonify({"ok": True, "id": iid})
+
+
+@app.post("/api/planejamento-semanal/v96/atividade/<int:item_id>")
+@login_required
+def v96_plan_item_update(item_id):
+    gd, acc = _v96_gate(need_edit=True)
+    if gd:
+        return gd
+    data = request.get_json(silent=True) or {}
+    try:
+        with db.engine.begin() as conn:
+            _v96_ensure(conn)
+            cur = conn.execute(text("SELECT week_id, title, status, responsible, deadline FROM v96_plan_items WHERE id=:i"), {"i": item_id}).first()
+            if not cur:
+                return jsonify({"ok": False, "error": "Atividade não encontrada."}), 404
+            f = _v96_item_fields(data, conn, partial=True)
+            if not f:
+                return jsonify({"ok": True})
+            sets = ", ".join(f"{k}=CAST(:{k} AS DATE)" if k == "deadline" else f"{k}=:{k}" for k in f)
+            conn.execute(text(f"UPDATE v96_plan_items SET {sets}, updated_by=:u, updated_at=CURRENT_TIMESTAMP WHERE id=:i"), {**f, "u": session.get("user_id"), "i": item_id})
+            _v96_event(conn, cur[0], item_id, "EDITOU", cur[1][:80] + " → " + ", ".join(f"{k}={v}" for k, v in f.items() if k != "title")[:400])
+            conn.execute(text("UPDATE v96_plan_weeks SET updated_at=CURRENT_TIMESTAMP WHERE id=:w"), {"w": cur[0]})
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    return jsonify({"ok": True})
+
+
+@app.post("/api/planejamento-semanal/v96/atividade/<int:item_id>/excluir")
+@login_required
+def v96_plan_item_delete(item_id):
+    gd, acc = _v96_gate(need_edit=True)
+    if gd:
+        return gd
+    with db.engine.begin() as conn:
+        _v96_ensure(conn)
+        cur = conn.execute(text("SELECT week_id, title FROM v96_plan_items WHERE id=:i"), {"i": item_id}).first()
+        if not cur:
+            return jsonify({"ok": False, "error": "Atividade não encontrada."}), 404
+        conn.execute(text("DELETE FROM v96_plan_items WHERE id=:i"), {"i": item_id})
+        _v96_event(conn, cur[0], item_id, "EXCLUIU", cur[1])
+    return jsonify({"ok": True})
+
+
+@app.post("/api/planejamento-semanal/v96/semana")
+@login_required
+def v96_plan_week_create():
+    gd, acc = _v96_gate(need_edit=True)
+    if gd:
+        return gd
+    data = request.get_json(silent=True) or {}
+    try:
+        start = _v96_clean_date(data.get("start"))
+        if not start:
+            raise ValueError("Informe a data de início (segunda-feira).")
+        d0 = datetime.strptime(start, "%Y-%m-%d").date()
+        label = (data.get("label") or "").strip()[:80] or f"{d0.strftime('%d')} a {(d0 + timedelta(days=4)).strftime('%d/%m/%Y')}"
+        with db.engine.begin() as conn:
+            _v96_ensure(conn)
+            if conn.execute(text("SELECT 1 FROM v96_plan_weeks WHERE week_start=CAST(:s AS DATE)"), {"s": start}).first():
+                return jsonify({"ok": False, "error": "Já existe uma semana com essa data de início."}), 409
+            src = int(data.get("copy_from") or 0)
+            notes = "[]"
+            if src:
+                r = conn.execute(text("SELECT notes_json FROM v96_plan_weeks WHERE id=:i"), {"i": src}).first()
+                notes = r[0] if r else "[]"
+            wid = conn.execute(text("INSERT INTO v96_plan_weeks (week_start,label,notes_json,created_by) VALUES (CAST(:s AS DATE),:l,:n,:u) RETURNING id"),
+                               {"s": start, "l": label, "n": notes, "u": session.get("user_id")}).scalar()
+            copiadas = 0
+            if src:
+                conn.execute(text("INSERT INTO v96_plan_items (week_id,front,title,status,responsible,deadline,obs,position,created_by,updated_by) "
+                                  "SELECT :w, front, title, status, responsible, NULL, obs, position, :u, :u FROM v96_plan_items WHERE week_id=:s AND status<>'ok' ORDER BY position, id"),
+                             {"w": wid, "s": src, "u": session.get("user_id")})
+                copiadas = conn.execute(text("SELECT COUNT(*) FROM v96_plan_items WHERE week_id=:w"), {"w": wid}).scalar() or 0
+            _v96_event(conn, wid, None, "CRIOU_SEMANA", f"{label} (copiadas {copiadas} atividades abertas)")
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    return jsonify({"ok": True, "id": wid, "copiadas": copiadas})
+
+
+@app.post("/api/planejamento-semanal/v96/semana/<int:week_id>")
+@login_required
+def v96_plan_week_update(week_id):
+    gd, acc = _v96_gate(need_edit=True)
+    if gd:
+        return gd
+    data = request.get_json(silent=True) or {}
+    try:
+        sets, params = [], {"i": week_id}
+        if "label" in data:
+            sets.append("label=:label"); params["label"] = (data.get("label") or "").strip()[:80]
+        if "milestone_label" in data:
+            sets.append("milestone_label=:ml"); params["ml"] = (data.get("milestone_label") or "").strip()[:160]
+        if "milestone_date" in data:
+            sets.append("milestone_date=CAST(:md AS DATE)"); params["md"] = _v96_clean_date(data.get("milestone_date"))
+        if "notes" in data:
+            notes = [str(n).strip()[:400] for n in (data.get("notes") or []) if str(n).strip()][:30]
+            sets.append("notes_json=:notes"); params["notes"] = json.dumps(notes, ensure_ascii=False)
+        if not sets:
+            return jsonify({"ok": True})
+        with db.engine.begin() as conn:
+            _v96_ensure(conn)
+            if not conn.execute(text("SELECT 1 FROM v96_plan_weeks WHERE id=:i"), {"i": week_id}).first():
+                return jsonify({"ok": False, "error": "Semana não encontrada."}), 404
+            conn.execute(text("UPDATE v96_plan_weeks SET " + ", ".join(sets) + ", updated_at=CURRENT_TIMESTAMP WHERE id=:i"), params)
+            _v96_event(conn, week_id, None, "EDITOU_SEMANA", ", ".join(k for k in data if k in ("label", "milestone_label", "milestone_date", "notes")))
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    return jsonify({"ok": True})
+
+
+@app.post("/api/planejamento-semanal/v96/frente")
+@login_required
+def v96_plan_front_create():
+    gd, acc = _v96_gate(need_edit=True)
+    if gd:
+        return gd
+    name = ((request.get_json(silent=True) or {}).get("name") or "").strip()[:80]
+    if not name:
+        return jsonify({"ok": False, "error": "Informe o nome da frente."}), 400
+    key = "f" + re.sub(r"[^a-z0-9]", "", normalize(name).lower())[:15]
+    with db.engine.begin() as conn:
+        _v96_ensure(conn)
+        if conn.execute(text("SELECT 1 FROM v96_plan_fronts WHERE fkey=:k OR LOWER(name)=LOWER(:n)"), {"k": key, "n": name}).first():
+            return jsonify({"ok": False, "error": "Já existe uma frente com esse nome."}), 409
+        pos = conn.execute(text("SELECT COALESCE(MAX(position),0)+1 FROM v96_plan_fronts")).scalar()
+        conn.execute(text("INSERT INTO v96_plan_fronts (fkey,name,position) VALUES (:k,:n,:p)"), {"k": key, "n": name, "p": pos})
+        _v96_event(conn, None, None, "CRIOU_FRENTE", name)
+    return jsonify({"ok": True, "key": key})
+
+
+@app.get("/api/planejamento-semanal/v96/historico")
+@login_required
+def v96_plan_history():
+    gd, acc = _v96_gate(need_edit=True)
+    if gd:
+        return gd
+    wk = request.args.get("week", type=int)
+    with db.engine.begin() as conn:
+        _v96_ensure(conn)
+        rows = conn.execute(text("SELECT e.created_at, e.action, e.detail, e.user_id FROM v96_plan_events e WHERE (:w IS NULL OR e.week_id=:w OR e.week_id IS NULL) ORDER BY e.id DESC LIMIT 60"), {"w": wk}).fetchall()
+    names = {u.id: u.name for u in User.query.filter(User.id.in_({r[3] for r in rows if r[3]})).all()} if rows else {}
+    return jsonify({"ok": True, "eventos": [{"em": r[0].isoformat(), "acao": r[1], "detalhe": r[2], "quem": names.get(r[3], "—")} for r in rows]})
+
+
+@app.get("/api/planejamento-semanal/v96/acessos")
+@login_required
+def v96_plan_access_list():
+    gd, acc = _v96_gate(need_admin=True)
+    if gd:
+        return gd
+    with db.engine.begin() as conn:
+        _v96_ensure(conn)
+        grants = {r[0]: bool(r[1]) for r in conn.execute(text("SELECT user_id, can_edit FROM v96_plan_access")).fetchall()}
+    users = User.query.filter(User.active.is_(True)).order_by(User.name).limit(500).all()
+    return jsonify({"ok": True, "usuarios": [{"id": u.id, "nome": u.name, "usuario": u.username, "ver": u.id in grants, "editar": grants.get(u.id, False)} for u in users]})
+
+
+@app.post("/api/planejamento-semanal/v96/acessos")
+@login_required
+def v96_plan_access_set():
+    gd, acc = _v96_gate(need_admin=True)
+    if gd:
+        return gd
+    data = request.get_json(silent=True) or {}
+    try:
+        uid = int(data.get("user_id"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Usuário inválido."}), 400
+    ver, editar = bool(data.get("ver")), bool(data.get("editar"))
+    if editar:
+        ver = True
+    u = db.session.get(User, uid)
+    if not u:
+        return jsonify({"ok": False, "error": "Usuário não encontrado."}), 404
+    with db.engine.begin() as conn:
+        _v96_ensure(conn)
+        if ver:
+            conn.execute(text("INSERT INTO v96_plan_access (user_id,can_edit,granted_by) VALUES (:u,:e,:g) ON CONFLICT (user_id) DO UPDATE SET can_edit=:e, granted_by=:g, updated_at=CURRENT_TIMESTAMP"),
+                         {"u": uid, "e": editar, "g": session.get("user_id")})
+        else:
+            conn.execute(text("DELETE FROM v96_plan_access WHERE user_id=:u"), {"u": uid})
+        _v96_event(conn, None, None, "ACESSO", f"{u.name}: ver={ver} editar={editar}")
+    try:
+        db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="V96_PLAN_ACCESS", entity_type="users", entity_id=str(uid), detail=f"planejamento semanal: {u.name} ver={ver} editar={editar}"[:900]))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+    return jsonify({"ok": True})
+
+
 @app.get("/api/diagnostico/rede/base-sem-localidade/v94")
 @login_required
 def v94_base_sem_localidade():
