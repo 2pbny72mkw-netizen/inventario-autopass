@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV103"
+APP_RELEASE = "V87.6 REV104"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -27140,6 +27140,34 @@ def portal_appointments_create():
         db.session.add(CustomerAppointmentEquipment(appointment_id=a.id,item_no=i,serial_number=serial,equipment=(x.get('equipment') or '').strip(),version=(x.get('version') or '').strip(),eod=(x.get('eod') or '').strip(),defect=defect,notes=(x.get('notes') or '').strip()))
     db.session.commit(); return jsonify({'ok':True,'id':a.id,'code':a.code})
 
+# V87.6 REV104 — equipamentos já agendados pela empresa, para seleção rápida no novo agendamento.
+_V104_OPEN_STATUSES=('ENVIADO','NA_PROGRAMACAO','AGENDADO','RECEBIMENTO_PARCIAL','RECEBIDO')
+
+@app.get('/api/portal/known-equipments')
+@login_required
+def v104_portal_known_equipments():
+    if not _has_access('portal.appointments'): abort(403)
+    u=db.session.get(User,session['user_id']); allowed=[c.legal_name for c in _customer_companies_for_user(u)]
+    requested=(request.args.get('company') or '').strip()
+    company=requested if requested in allowed else (allowed[0] if allowed else (u.company or '').strip())
+    if not company: return jsonify({'ok':True,'company':'','rows':[]})
+    serial_key=func.upper(func.trim(CustomerAppointmentEquipment.serial_number))
+    agg=(db.session.query(func.max(CustomerAppointmentEquipment.id).label('last_id'),func.count(CustomerAppointmentEquipment.id).label('times'))
+         .join(CustomerAppointment,CustomerAppointment.id==CustomerAppointmentEquipment.appointment_id)
+         .filter(CustomerAppointment.customer_company==company,CustomerAppointment.status!='RASCUNHO')
+         .group_by(serial_key).subquery())
+    rows=(db.session.query(CustomerAppointmentEquipment,CustomerAppointment,agg.c.times)
+          .join(agg,agg.c.last_id==CustomerAppointmentEquipment.id)
+          .join(CustomerAppointment,CustomerAppointment.id==CustomerAppointmentEquipment.appointment_id)
+          .order_by(CustomerAppointmentEquipment.id.desc()).limit(500).all())
+    out=[]
+    for x,a,times in rows:
+        d=a.request_date or (a.created_at.date() if a.created_at else None)
+        out.append({'serial':(x.serial_number or '').strip(),'equipment':x.equipment or '','version':x.version or '','eod':x.eod or '',
+                    'last_defect':x.defect or '','last_code':a.code or '','last_date':d.isoformat() if d else '','times':int(times or 0),
+                    'open':a.status in _V104_OPEN_STATUSES,'status':a.status})
+    return jsonify({'ok':True,'company':company,'rows':out,'limited':len(out)>=500})
+
 @app.post('/api/portal/appointments/<int:aid>/attachments')
 @login_required
 def portal_appointment_attachments(aid):
@@ -27289,7 +27317,7 @@ def _portal_notify(a,kind,items):
         db.session.rollback(); app.logger.exception('REV101: falha ao avisar o cliente no Portal (%s)',kind); return 0
 
 class V103ReturnDate(db.Model):
-    """Data de devolução (entrega) reprogramada pela equipe; sem registro = recolha + 7 dias."""
+    """Data de devolução (entrega) reprogramada pela equipe; sem registro = retirada + 7 dias."""
     __tablename__='v103_return_dates'
     appointment_id=db.Column(db.Integer,primary_key=True)
     return_date=db.Column(db.Date,nullable=False,index=True)
@@ -27307,7 +27335,7 @@ def _v103_ensure_returns():
         app.logger.exception('REV103: não foi possível garantir a tabela de devoluções reprogramadas')
 
 def _v102_return_date(a,ov=None):
-    """Devolução prevista: data reprogramada, se houver; senão o mesmo dia da semana seguinte à recolha."""
+    """Devolução prevista: data reprogramada, se houver; senão o mesmo dia da semana seguinte à retirada."""
     try:
         if ov is None:
             _v103_ensure_returns()
@@ -27321,13 +27349,13 @@ def _v102_return_date(a,ov=None):
     return d+timedelta(days=7) if d else None
 
 def _v102_notify(a,title,verb,n=0):
-    """REV102 — avisa o cliente no Portal com a recolha e a devolução prevista (semana seguinte)."""
+    """REV102 — avisa o cliente no Portal com a retirada e a devolução prevista (semana seguinte)."""
     try:
         targets=_v100_customer_targets(a)
         if not targets: return 0
         fmt=lambda d:d.strftime('%d/%m/%Y') if d else '—'
         d=a.programmed_date or a.expected_date or a.scheduled_date
-        msg=f'{a.code}: agendamento {verb}'+(f' ({n} equipamento(s))' if n else '')+f'. Recolha em {fmt(d)}; devolução prevista em {fmt(_v102_return_date(a))} (semana seguinte).'
+        msg=f'{a.code}: agendamento {verb}'+(f' ({n} equipamento(s))' if n else '')+f'. Retirada em {fmt(d)}; devolução prevista em {fmt(_v102_return_date(a))} (semana seguinte).'
         for uid in targets:
             db.session.add(V76Notification(recipient_id=uid,severity='INFO',category='PORTAL_CLIENTE',title=title,message=msg[:1000],action_url='/portal-cliente',entity_type='customer_appointment',entity_id=str(a.id)))
         db.session.commit(); return len(targets)
@@ -27345,7 +27373,7 @@ def v102_accept_appointment(aid):
     if d and LogisticsBlockedDate.query.filter_by(blocked_date=d,active=True).first():return jsonify({'ok':False,'error':'A data prevista está bloqueada no calendário operacional. Programe outra data antes de aceitar.'}),409
     a.status='NA_PROGRAMACAO'
     if d and not a.scheduled_date:a.scheduled_date=d
-    db.session.add(AuditEvent(user_id=session['user_id'],event_type='V102_APPOINTMENT_ACCEPTED',entity_type='customer_appointment',entity_id=str(a.id),detail=f'{a.code} · recolha {d.isoformat() if d else "—"} · devolução prevista {(_v102_return_date(a).isoformat() if _v102_return_date(a) else "—")}'))
+    db.session.add(AuditEvent(user_id=session['user_id'],event_type='V102_APPOINTMENT_ACCEPTED',entity_type='customer_appointment',entity_id=str(a.id),detail=f'{a.code} · retirada {d.isoformat() if d else "—"} · devolução prevista {(_v102_return_date(a).isoformat() if _v102_return_date(a) else "—")}'))
     db.session.commit()
     n=CustomerAppointmentEquipment.query.filter_by(appointment_id=aid).count()
     rd=_v102_return_date(a)
@@ -27363,7 +27391,7 @@ def v103_set_return_date(aid):
     try:nd=date.fromisoformat(str(data.get('return_date') or '')[:10])
     except Exception:return jsonify({'ok':False,'error':'Data inválida.'}),400
     base=a.programmed_date or a.expected_date or a.scheduled_date
-    if base and nd<=base:return jsonify({'ok':False,'error':'A entrega deve ser depois da recolha ('+base.strftime('%d/%m/%Y')+').'}),409
+    if base and nd<=base:return jsonify({'ok':False,'error':'A entrega deve ser depois da retirada ('+base.strftime('%d/%m/%Y')+').'}),409
     if nd.weekday()>=5:return jsonify({'ok':False,'error':'Sábado e domingo não têm operação. Escolha um dia útil.'}),409
     if LogisticsBlockedDate.query.filter_by(blocked_date=nd,active=True).first():return jsonify({'ok':False,'error':'A data está bloqueada no calendário operacional.'}),409
     reason=(data.get('reason') or '').strip()[:300]
