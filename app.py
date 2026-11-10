@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV101"
+APP_RELEASE = "V87.6 REV102"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -27028,7 +27028,7 @@ def v71_schedule_management_api():
     rows=[];daily={}
     for a in appts:
         d=a.programmed_date or a.expected_date or a.scheduled_date
-        item={'id':a.id,'code':a.code,'company':a.customer_company,'request_date':(a.request_date or a.created_at.date()).isoformat(),'expected_date':a.expected_date.isoformat() if a.expected_date else '', 'programmed_date':a.programmed_date.isoformat() if a.programmed_date else '', 'date':d.isoformat() if d else '', 'status':a.status,'count':int(counts.get(a.id,0)),'received':int(received_counts.get(a.id,0)),'alternate':bool(a.alternate_date_requested),'alternate_reason':a.alternate_reason or '', 'cancellation_reason':a.cancellation_reason or ''}
+        item={'id':a.id,'code':a.code,'company':a.customer_company,'request_date':(a.request_date or a.created_at.date()).isoformat(),'expected_date':a.expected_date.isoformat() if a.expected_date else '', 'programmed_date':a.programmed_date.isoformat() if a.programmed_date else '', 'date':d.isoformat() if d else '', 'status':a.status,'count':int(counts.get(a.id,0)),'received':int(received_counts.get(a.id,0)),'alternate':bool(a.alternate_date_requested),'alternate_reason':a.alternate_reason or '', 'cancellation_reason':a.cancellation_reason or '', 'return_date':(_v102_return_date(a).isoformat() if _v102_return_date(a) else '')}
         rows.append(item)
         if d and start<=d<end and str(a.status or '').upper()!='CANCELADO':
             k=d.isoformat();bucket=daily.setdefault(k,{'appointments':0,'equipment':0,'garages':set()});bucket['appointments']+=1;bucket['equipment']+=item['count'];bucket['garages'].add(a.customer_company)
@@ -27040,7 +27040,7 @@ def v71_schedule_management_api():
     from sqlalchemy import exists as _sa_exists
     _ret=_sa_exists().where(PortalEquipmentEvent.equipment_id==CustomerAppointmentEquipment.id,PortalEquipmentEvent.event_type=='DEVOLVIDO')
     to_return=[{'company':c or '','count':int(n)} for c,n in db.session.query(CustomerAppointment.customer_company,func.count(CustomerAppointmentEquipment.id)).select_from(CustomerAppointmentEquipment).join(CustomerAppointment,CustomerAppointment.id==CustomerAppointmentEquipment.appointment_id).filter(CustomerAppointmentEquipment.received.is_(True),CustomerAppointment.status!='CANCELADO',~_ret).group_by(CustomerAppointment.customer_company).order_by(CustomerAppointment.customer_company).all()]
-    return jsonify({'ok':True,'today':today.isoformat(),'to_return':to_return,'rows':rows,'daily':daily,'requested_today':requested_today,'programmed_today':programmed_today,'routes':routes,'blocked':blocked,'can_manage_appointments':_has_access('portal.manage')})
+    return jsonify({'ok':True,'today':today.isoformat(),'to_return':to_return,'rows':rows,'daily':daily,'requested_today':requested_today,'programmed_today':programmed_today,'routes':routes,'blocked':blocked,'can_manage_appointments':_has_access('portal.manage'),'can_accept':True})
 
 @app.patch('/api/portal/appointments/<int:aid>/programacao')
 @login_required
@@ -27055,7 +27055,7 @@ def v71_program_appointment(aid):
     old_eff=a.programmed_date or a.expected_date or a.scheduled_date
     reason=(data.get('reason') or '').strip()[:300]
     a.programmed_date=d;a.scheduled_date=d or a.expected_date;new_eff=d or a.expected_date
-    if a.status not in ('RECEBIDO','RECEBIMENTO_PARCIAL','CONCLUIDO','DEVOLVIDO','DEVOLUCAO_PARCIAL'):a.status='NA_PROGRAMACAO'
+    if a.status not in ('ENVIADO','RECEBIDO','RECEBIMENTO_PARCIAL','CONCLUIDO','DEVOLVIDO','DEVOLUCAO_PARCIAL'):a.status='NA_PROGRAMACAO'
     db.session.add(AuditEvent(user_id=session['user_id'],event_type='V71_APPOINTMENT_PROGRAMMED',entity_type='customer_appointment',entity_id=str(a.id),detail=f'{a.code} · {d.isoformat() if d else "data padrão"}'))
     db.session.commit()
     notified=_v100_notify_date_change(a,old_eff,new_eff,reason)
@@ -27169,7 +27169,7 @@ def portal_appointments_submit(aid):
     data=request.get_json(silent=True) or {}; sig=data.get('signature_data'); name=(data.get('accepted_name') or a.responsible_name).strip()
     # V69.2.1: assinatura eletrônica permanece disponível, porém não bloqueia a finalização.
     a.signature_file=_portal_store_dataurl(sig,f'assinatura-{a.code}') if sig else None
-    a.accepted_name=name;a.accepted_at=datetime.utcnow();a.request_date=a.request_date or datetime.now(ZoneInfo('America/Sao_Paulo')).date();a.expected_date=a.expected_date or _v71_next_operational_date(a.customer_company,a.request_date)[0];a.scheduled_date=a.programmed_date or a.expected_date;a.status='NA_PROGRAMACAO'
+    a.accepted_name=name;a.accepted_at=datetime.utcnow();a.request_date=a.request_date or datetime.now(ZoneInfo('America/Sao_Paulo')).date();a.expected_date=a.expected_date or _v71_next_operational_date(a.customer_company,a.request_date)[0];a.scheduled_date=a.programmed_date or a.expected_date;a.status='ENVIADO'
     pdf=_portal_pdf(a); key=f"portal-cliente/{datetime.utcnow().strftime('%Y/%m')}/{a.code}.pdf"
     try:_r2_put_bytes(key,pdf,'application/pdf');a.pdf_file='r2__'+key
     except Exception:
@@ -27251,6 +27251,7 @@ def portal_equipment_receive(eid):
     x=db.session.get(CustomerAppointmentEquipment,eid);a=db.session.get(CustomerAppointment,x.appointment_id) if x else None
     if not a:abort(404)
     if a.status in ('CANCELADO','DEVOLVIDO'):return jsonify({'ok':False,'error':'Agendamento encerrado: não é possível receber equipamentos.'}),409
+    if a.status=='ENVIADO':return jsonify({'ok':False,'error':'Aceite o pedido antes de receber os equipamentos.'}),409
     x.received=True;x.received_at=datetime.utcnow();x.received_by=session['user_id'];db.session.flush()
     total=CustomerAppointmentEquipment.query.filter_by(appointment_id=a.id).count(); rec=CustomerAppointmentEquipment.query.filter_by(appointment_id=a.id,received=True).count()
     a.status='RECEBIDO' if rec>=total else 'RECEBIMENTO_PARCIAL';a.received_at=datetime.utcnow() if rec>=total else None;a.received_by=session['user_id'] if rec>=total else None
@@ -27273,16 +27274,53 @@ def _portal_notify(a,kind,items):
     except Exception:
         db.session.rollback(); app.logger.exception('REV101: falha ao avisar o cliente no Portal (%s)',kind); return 0
 
+def _v102_return_date(a):
+    """Devolução prevista = mesmo dia da semana seguinte à recolha."""
+    d=a.programmed_date or a.expected_date or a.scheduled_date
+    return d+timedelta(days=7) if d else None
+
+def _v102_notify(a,title,verb,n=0):
+    """REV102 — avisa o cliente no Portal com a recolha e a devolução prevista (semana seguinte)."""
+    try:
+        targets=_v100_customer_targets(a)
+        if not targets: return 0
+        fmt=lambda d:d.strftime('%d/%m/%Y') if d else '—'
+        d=a.programmed_date or a.expected_date or a.scheduled_date
+        msg=f'{a.code}: agendamento {verb}'+(f' ({n} equipamento(s))' if n else '')+f'. Recolha em {fmt(d)}; devolução prevista em {fmt(_v102_return_date(a))} (semana seguinte).'
+        for uid in targets:
+            db.session.add(V76Notification(recipient_id=uid,severity='INFO',category='PORTAL_CLIENTE',title=title,message=msg[:1000],action_url='/portal-cliente',entity_type='customer_appointment',entity_id=str(a.id)))
+        db.session.commit(); return len(targets)
+    except Exception:
+        db.session.rollback(); app.logger.exception('REV102: falha ao avisar o cliente (%s)',title); return 0
+
+@app.post('/api/portal/appointments/<int:aid>/accept')
+@login_required
+def v102_accept_appointment(aid):
+    if not _portal_staff():abort(403)
+    a=db.session.get(CustomerAppointment,aid)
+    if not a:abort(404)
+    if a.status!='ENVIADO':return jsonify({'ok':False,'error':'Só é possível aceitar um pedido na situação Solicitado (situação atual: '+str(a.status or '').replace('_',' ').title()+').'}),409
+    d=a.programmed_date or a.expected_date or a.scheduled_date
+    if d and LogisticsBlockedDate.query.filter_by(blocked_date=d,active=True).first():return jsonify({'ok':False,'error':'A data prevista está bloqueada no calendário operacional. Programe outra data antes de aceitar.'}),409
+    a.status='NA_PROGRAMACAO'
+    if d and not a.scheduled_date:a.scheduled_date=d
+    db.session.add(AuditEvent(user_id=session['user_id'],event_type='V102_APPOINTMENT_ACCEPTED',entity_type='customer_appointment',entity_id=str(a.id),detail=f'{a.code} · recolha {d.isoformat() if d else "—"} · devolução prevista {(_v102_return_date(a).isoformat() if _v102_return_date(a) else "—")}'))
+    db.session.commit()
+    n=CustomerAppointmentEquipment.query.filter_by(appointment_id=aid).count()
+    rd=_v102_return_date(a)
+    return jsonify({'ok':True,'status':a.status,'return_date':rd.isoformat() if rd else '','notified':_v102_notify(a,'Pedido aceito','aceito',n)})
+
 @app.post('/api/portal/appointments/<int:aid>/confirm-schedule')
 @login_required
 def v859_confirm_schedule(aid):
     if not _portal_staff():abort(403)
     a=db.session.get(CustomerAppointment,aid)
     if not a:abort(404)
-    if a.status not in ('ENVIADO','NA_PROGRAMACAO'):return jsonify({'error':'Só é possível confirmar o agendamento antes do recebimento (situação atual: '+str(a.status or '').replace('_',' ').title()+').'}),409
+    if a.status=='ENVIADO':return jsonify({'error':'Aceite o pedido antes de confirmar o agendamento.'}),409
+    if a.status!='NA_PROGRAMACAO':return jsonify({'error':'Só é possível confirmar o agendamento antes do recebimento (situação atual: '+str(a.status or '').replace('_',' ').title()+').'}),409
     a.status='AGENDADO';db.session.add(AuditEvent(user_id=session['user_id'],event_type='PORTAL_SCHEDULE_CONFIRMED',entity_type='customer_appointment',entity_id=str(a.id),detail=a.code))
     db.session.commit();items=CustomerAppointmentEquipment.query.filter_by(appointment_id=aid).all()
-    return jsonify({'ok':True,'notified':_portal_notify(a,'Confirmação do agendamento',items)})
+    return jsonify({'ok':True,'notified':_v102_notify(a,'Agendamento confirmado','confirmado',len(items))})
 
 @app.post('/api/portal/appointments/<int:aid>/receive-batch')
 @login_required
@@ -27291,6 +27329,7 @@ def v859_receive_batch(aid):
     a=db.session.get(CustomerAppointment,aid)
     if not a:abort(404)
     if a.status in ('CANCELADO','DEVOLVIDO'):return jsonify({'error':'Agendamento '+('cancelado' if a.status=='CANCELADO' else 'já devolvido')+': não é possível receber equipamentos.'}),409
+    if a.status=='ENVIADO':return jsonify({'error':'Aceite o pedido antes de receber os equipamentos.'}),409
     data=request.get_json(silent=True) or {};ids=data.get('equipment_ids') or []
     if not isinstance(ids,list) or not ids:return jsonify({'error':'Selecione equipamentos.'}),400
     items=CustomerAppointmentEquipment.query.filter(CustomerAppointmentEquipment.appointment_id==aid,CustomerAppointmentEquipment.id.in_(ids)).all()
