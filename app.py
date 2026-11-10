@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV104"
+APP_RELEASE = "V87.6 REV105"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -27140,6 +27140,41 @@ def portal_appointments_create():
         db.session.add(CustomerAppointmentEquipment(appointment_id=a.id,item_no=i,serial_number=serial,equipment=(x.get('equipment') or '').strip(),version=(x.get('version') or '').strip(),eod=(x.get('eod') or '').strip(),defect=defect,notes=(x.get('notes') or '').strip()))
     db.session.commit(); return jsonify({'ok':True,'id':a.id,'code':a.code})
 
+class V105Invoice(db.Model):
+    """REV105 — NF adicional (2ª em diante) do agendamento; a 1ª NF segue nas colunas invoice_* de customer_appointments."""
+    __tablename__='v105_appointment_invoices'
+    id=db.Column(db.Integer,primary_key=True)
+    appointment_id=db.Column(db.Integer,nullable=False,index=True)
+    number=db.Column(db.String(120))
+    file=db.Column(db.String(600))
+    original_name=db.Column(db.String(255))
+    created_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow)
+
+_V105_STATE={"ready":False}
+def _v105_ensure_invoices():
+    if _V105_STATE["ready"]: return
+    try:
+        db.metadata.create_all(bind=db.engine,tables=[V105Invoice.__table__],checkfirst=True)
+        _V105_STATE["ready"]=True
+    except Exception:
+        app.logger.exception('REV105: não foi possível garantir a tabela de NF adicionais')
+
+def _v105_extra_invoices(a):
+    try:
+        _v105_ensure_invoices()
+        return V105Invoice.query.filter_by(appointment_id=a.id).order_by(V105Invoice.id).all()
+    except Exception:
+        db.session.rollback(); return []
+
+def _v105_invoices(a):
+    """Lista única de NF do agendamento (1ª = colunas antigas; demais = tabela nova)."""
+    out=[]
+    if getattr(a,'invoice_number',None) or getattr(a,'invoice_file',None):
+        out.append({'n':1,'number':a.invoice_number or '','name':a.invoice_original_name or '','has_file':bool(a.invoice_file)})
+    for i,x in enumerate(_v105_extra_invoices(a),2):
+        out.append({'n':i,'number':x.number or '','name':x.original_name or '','has_file':bool(x.file)})
+    return out
+
 # V87.6 REV104 — equipamentos já agendados pela empresa, para seleção rápida no novo agendamento.
 _V104_OPEN_STATUSES=('ENVIADO','NA_PROGRAMACAO','AGENDADO','RECEBIMENTO_PARCIAL','RECEBIDO')
 
@@ -27174,10 +27209,25 @@ def portal_appointment_attachments(aid):
     a=db.session.get(CustomerAppointment,aid)
     if not a or not _portal_can_see(a) or a.created_by!=session['user_id'] or a.status!='RASCUNHO': abort(404)
     try:
-        a.invoice_number=(request.form.get('invoice_number') or '').strip() or None
-        inv=request.files.get('invoice')
-        if inv and inv.filename:
-            a.invoice_file,a.invoice_original_name=_portal_store_upload(inv,f'NF-{a.code}')
+        # REV104: várias NF (invoice_number_1/invoice_1, invoice_number_2/invoice_2…); formato antigo (invoice_number/invoice) continua aceito
+        try:ninv=max(1,min(int(request.form.get('invoice_count') or 1),10))
+        except ValueError:ninv=1
+        entries=[]
+        for i in range(1,ninv+1):
+            num=(request.form.get(f'invoice_number_{i}') or (request.form.get('invoice_number') if i==1 else '') or '').strip()[:120]
+            fl=request.files.get(f'invoice_{i}') or (request.files.get('invoice') if i==1 else None)
+            if num or (fl and fl.filename): entries.append((num,fl if (fl and fl.filename) else None))
+        _v105_ensure_invoices()
+        V105Invoice.query.filter_by(appointment_id=a.id).delete()
+        a.invoice_number=None
+        if entries:
+            num,fl=entries[0]
+            a.invoice_number=num or None
+            if fl: a.invoice_file,a.invoice_original_name=_portal_store_upload(fl,f'NF-{a.code}')
+            for k,(num,fl) in enumerate(entries[1:],2):
+                f2=n2=None
+                if fl: f2,n2=_portal_store_upload(fl,f'NF-{a.code}-{k}')
+                db.session.add(V105Invoice(appointment_id=a.id,number=num or None,file=f2,original_name=n2))
         items=CustomerAppointmentEquipment.query.filter_by(appointment_id=a.id).order_by(CustomerAppointmentEquipment.item_no).all()
         for x in items:
             f=request.files.get(f'photo_{x.item_no}')
@@ -27192,6 +27242,18 @@ def portal_equipment_photo(eid):
     x=db.session.get(CustomerAppointmentEquipment,eid); a=db.session.get(CustomerAppointment,x.appointment_id) if x else None
     if not a or not _portal_can_see(a) or not x.photo_file: abort(404)
     return Response(_portal_stored_bytes(x.photo_file),mimetype='image/jpeg')
+
+@app.get('/api/portal/appointments/<int:aid>/invoice/<int:n>')
+@login_required
+def v105_appointment_invoice_n(aid,n):
+    a=db.session.get(CustomerAppointment,aid)
+    if not a or not _portal_can_see(a): abort(404)
+    if n==1: return portal_appointment_invoice(aid)
+    ex=_v105_extra_invoices(a)
+    if n-2>=len(ex) or not ex[n-2].file: abort(404)
+    raw=_portal_stored_bytes(ex[n-2].file); name=ex[n-2].original_name or f'{a.code}-documento-{n}'
+    mime='application/pdf' if name.lower().endswith('.pdf') else ('image/png' if name.lower().endswith('.png') else 'image/jpeg')
+    return Response(raw,mimetype=mime,headers={'Content-Disposition':f'inline; filename="{secure_filename(name)}"'})
 
 @app.get('/api/portal/appointments/<int:aid>/invoice')
 @login_required
@@ -27229,7 +27291,7 @@ def portal_appointment_detail(aid):
     for ev in download_events:
         latest_download.setdefault(ev.entity_id,ev)
     portal_events=PortalEquipmentEvent.query.filter_by(appointment_id=a.id).order_by(PortalEquipmentEvent.created_at.desc()).all()
-    return jsonify({'ok':True,'events':[{'type':e.event_type,'batch':e.batch_code,'equipment_id':e.equipment_id,'at':e.created_at.isoformat(),'actor':e.actor_name or ''} for e in portal_events],'appointment':{'id':a.id,'code':a.code,'company':a.customer_company,'responsible':a.responsible_name,'date':(a.programmed_date or a.expected_date or a.scheduled_date).isoformat() if (a.programmed_date or a.expected_date or a.scheduled_date) else '', 'request_date':(a.request_date or a.created_at.date()).isoformat(),'expected_date':a.expected_date.isoformat() if a.expected_date else '', 'programmed_date':a.programmed_date.isoformat() if a.programmed_date else '', 'alternate':bool(a.alternate_date_requested),'alternate_reason':a.alternate_reason or '', 'notes':a.notes or '', 'status':a.status,'email_status':a.email_status or '', 'invoice_number':getattr(a,'invoice_number',None) or '', 'invoice_name':getattr(a,'invoice_original_name',None) or '', 'has_invoice':bool(getattr(a,'invoice_file',None))},'items':[{'id':x.id,'item_no':x.item_no,'protocol':_portal_equipment_code(a,x),'serial':x.serial_number,'equipment':x.equipment or '', 'version':x.version or '', 'eod':x.eod or '', 'defect':x.defect,'notes':x.notes or '', 'has_photo':bool(x.photo_file), 'photo_url':(f'/api/portal/equipments/{x.id}/photo' if x.photo_file else ''), 'received':x.received,'returned':bool(PortalEquipmentEvent.query.filter_by(equipment_id=x.id,event_type='DEVOLVIDO').first()),'pdf_downloaded':str(x.id) in latest_download,'pdf_downloaded_at':latest_download[str(x.id)].created_at.replace(tzinfo=ZoneInfo('UTC')).astimezone(ZoneInfo('America/Sao_Paulo')).strftime('%d/%m/%Y %H:%M') if str(x.id) in latest_download else ''} for x in items]})
+    return jsonify({'ok':True,'events':[{'type':e.event_type,'batch':e.batch_code,'equipment_id':e.equipment_id,'at':e.created_at.isoformat(),'actor':e.actor_name or ''} for e in portal_events],'appointment':{'id':a.id,'code':a.code,'company':a.customer_company,'responsible':a.responsible_name,'date':(a.programmed_date or a.expected_date or a.scheduled_date).isoformat() if (a.programmed_date or a.expected_date or a.scheduled_date) else '', 'request_date':(a.request_date or a.created_at.date()).isoformat(),'expected_date':a.expected_date.isoformat() if a.expected_date else '', 'programmed_date':a.programmed_date.isoformat() if a.programmed_date else '', 'alternate':bool(a.alternate_date_requested),'alternate_reason':a.alternate_reason or '', 'notes':a.notes or '', 'status':a.status,'email_status':a.email_status or '', 'invoice_number':getattr(a,'invoice_number',None) or '', 'invoice_name':getattr(a,'invoice_original_name',None) or '', 'has_invoice':bool(getattr(a,'invoice_file',None)),'invoices':_v105_invoices(a)},'items':[{'id':x.id,'item_no':x.item_no,'protocol':_portal_equipment_code(a,x),'serial':x.serial_number,'equipment':x.equipment or '', 'version':x.version or '', 'eod':x.eod or '', 'defect':x.defect,'notes':x.notes or '', 'has_photo':bool(x.photo_file), 'photo_url':(f'/api/portal/equipments/{x.id}/photo' if x.photo_file else ''), 'received':x.received,'returned':bool(PortalEquipmentEvent.query.filter_by(equipment_id=x.id,event_type='DEVOLVIDO').first()),'pdf_downloaded':str(x.id) in latest_download,'pdf_downloaded_at':latest_download[str(x.id)].created_at.replace(tzinfo=ZoneInfo('UTC')).astimezone(ZoneInfo('America/Sao_Paulo')).strftime('%d/%m/%Y %H:%M') if str(x.id) in latest_download else ''} for x in items]})
 
 @app.get('/api/portal/appointments/<int:aid>/pdf')
 @login_required
@@ -27280,6 +27342,10 @@ def portal_appointment_pdfs_zip(aid):
         if getattr(a,'invoice_file',None):
             try: zf.writestr('Documento_'+secure_filename(a.invoice_original_name or 'nota-fiscal'),_portal_stored_bytes(a.invoice_file))
             except Exception: app.logger.exception('Falha ao incluir documento do agendamento no ZIP %s',a.code)
+        for k,ex in enumerate(_v105_extra_invoices(a),2):
+            if ex.file:
+                try: zf.writestr(f'Documento_{k}_'+secure_filename(ex.original_name or 'nota-fiscal'),_portal_stored_bytes(ex.file))
+                except Exception: app.logger.exception('Falha ao incluir NF adicional no ZIP %s',a.code)
         for x in items:
             zf.writestr(_portal_equipment_pdf_filename(a,x),_portal_pdf(a,x))
             _portal_record_pdf_download(a,x,'PORTAL_EQUIPMENT_PDF_DOWNLOADED_ALL')
