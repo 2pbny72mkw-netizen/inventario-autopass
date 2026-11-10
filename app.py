@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV99"
+APP_RELEASE = "V87.6 REV100"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -3066,7 +3066,7 @@ ACCESS_GROUPS = {
         "engineering.items.view","engineering.items.manage","engineering.bom.view","engineering.bom.manage","engineering.bom.delete","engineering.import","engineering.pricing.view","engineering.pricing.manage","engineering.stock.view","engineering.stock.create","engineering.stock.move","engineering.stock.classify","engineering.stock.locations","engineering.stock.export",
         "engineering.tags.view","engineering.tags.import","engineering.tags.edit","engineering.tags.bulk","engineering.tags.issues","engineering.tags.export","engineering.tags.audit"
     )),
-    "portal": ("Portal do Cliente", ("portal.appointments","portal.receive","portal.manage")),
+    "portal": ("Portal do Cliente", ("portal.appointments","portal.receive","portal.manage","portal.driver")),
     "tasks": ("Gestão de Tarefas", ("tasks.view","tasks.create","tasks.edit","tasks.transfer","tasks.manage")),
     "arrow": ("Arrow", ("arrow.view","arrow.manage","arrow.edit","arrow.delete","arrow.dashboard","arrow.remote","arrow.create_field","arrow.change_status")),
     "about_versions": ("Sobre / Versões", ("about.versions",)),
@@ -3087,7 +3087,7 @@ ACCESS_LABELS = {
  "engineering.items.view":"Visualizar cadastro de itens","engineering.items.manage":"Cadastrar / editar itens","engineering.bom.view":"Visualizar estruturas BOM","engineering.bom.manage":"Criar / revisar BOM","engineering.bom.delete":"Excluir estruturas BOM","engineering.import":"Importar planilhas de Engenharia","engineering.pricing.view":"Visualizar formação de preço","engineering.pricing.manage":"Criar / editar estudos de preço",
  "engineering.stock.view":"Visualizar Estoque Central","engineering.stock.create":"Cadastrar material provisório","engineering.stock.move":"Inventariar / movimentar estoque","engineering.stock.classify":"Classificar materiais","engineering.stock.locations":"Administrar localidades de estoque","engineering.stock.export":"Exportar Estoque Central",
  "engineering.tags.view":"Visualizar Controle de TAGs e Produtos","engineering.tags.import":"Cadastrar / importar TAGs","engineering.tags.edit":"Editar TAGs","engineering.tags.bulk":"Atualizar TAGs em massa","engineering.tags.issues":"Tratar divergências de TAGs","engineering.tags.export":"Exportar TAGs","engineering.tags.audit":"Visualizar auditoria de TAGs",
- "portal.appointments":"Criar / consultar agendamentos","portal.receive":"Receber agendamentos","portal.manage":"Administrar Portal do Cliente",
+ "portal.appointments":"Criar / consultar agendamentos","portal.receive":"Receber agendamentos","portal.manage":"Administrar Portal do Cliente","portal.driver":"Motorista Leva e Traz (vê só o que está na programação ou a devolver; marque também Receber agendamentos)",
  "arrow.view":"Visualizar Arrow","arrow.manage":"Gerenciar Arrow / alocações","arrow.edit":"Editar atividade Arrow","arrow.delete":"Excluir atividade Arrow","arrow.dashboard":"Dashboard Arrow","arrow.remote":"TeamViewer / Atendimento Remoto","arrow.create_field":"Criar imprevisto Arrow em campo","arrow.change_status":"Alterar status de atividade Arrow",
  "about.versions":"Histórico / Versões",
  "tasks.view":"Visualizar tarefas","tasks.create":"Criar tarefas","tasks.edit":"Editar tarefas","tasks.transfer":"Transferir tarefas","tasks.manage":"Administrar Gestão de Tarefas",
@@ -3100,7 +3100,8 @@ def _expand_legacy_access(values):
     # Compatibilidade: uma permissão antiga de módulo significa acesso a todas as subatividades do módulo.
     for group in list(values):
         if group in ACCESS_GROUPS:
-            out.update(ACCESS_GROUPS[group][1])
+            # "portal.driver" RESTRINGE a visão; por isso nunca é herdada de uma permissão antiga de módulo.
+            out.update(x for x in ACCESS_GROUPS[group][1] if x!="portal.driver")
     return out
 
 def _default_access_for_role(role):
@@ -3608,6 +3609,7 @@ def _v789_landing_for_user(user=None):
         ("engineering.items.view", "engineering_page"),
         ("engineering.bom.view", "engineering_page"),
         ("portal.appointments", "portal_cliente_page"),
+        ("portal.receive", "portal_cliente_page"),
         ("materials.my_documents", "materials_home_page"),
         ("about.versions", "about"),
     ]
@@ -26534,8 +26536,22 @@ def _customer_companies_for_user(u):
 def _portal_internal():
     return _has_access('portal.receive') or _has_access('portal.manage')
 
+# REV100 — motorista: só enxerga o que está na programação ou a devolver.
+_V100_DRIVER_STATUSES=('NA_PROGRAMACAO','AGENDADO','ENVIADO','RECEBIMENTO_PARCIAL','RECEBIDO','DEVOLUCAO_PARCIAL')
+
+def _portal_driver_only():
+    """Marcação explícita 'portal.driver' (nunca herdada) em quem NÃO administra o Portal."""
+    if not _portal_internal() or _has_access('portal.manage'): return False
+    try: return 'portal.driver' in _user_access_set()
+    except Exception: return False
+
+def _portal_staff():
+    """Equipe do Portal (recebimento/gestão), excluindo quem só tem o papel de motorista."""
+    return _portal_internal() and not _portal_driver_only()
+
 def _portal_can_see(a):
-    if _portal_internal(): return True
+    if _portal_internal():
+        return (not _portal_driver_only()) or str(a.status or '').upper() in _V100_DRIVER_STATUSES
     u=db.session.get(User,session.get('user_id'))
     return bool(u and u.role=='customer' and (a.customer_company or '').strip().casefold() in {(c.legal_name or '').strip().casefold() for c in _customer_companies_for_user(u)})
 
@@ -26930,7 +26946,7 @@ def _v71_import_resumo(file_storage):
 @app.get('/portal-cliente/logistica/modelo.xlsx')
 @login_required
 def v71_logistics_model():
-    if not _portal_internal():abort(403)
+    if not _portal_staff():abort(403)
     path=DATA_DIR/'MODELO_LEVA_E_TRAZ_PADRAO.xlsx'
     if not path.exists():abort(404)
     return send_file(path,as_attachment=True,download_name='MODELO_LEVA_E_TRAZ_PADRAO.xlsx')
@@ -26938,7 +26954,7 @@ def v71_logistics_model():
 @app.post('/portal-cliente/logistica/importar')
 @login_required
 def v71_logistics_import():
-    if not _portal_internal():abort(403)
+    if not _portal_staff():abort(403)
     f=request.files.get('file')
     if not f or not (f.filename or '').lower().endswith('.xlsx'):
         flash('Selecione a planilha padrão .xlsx.');return redirect('/portal-cliente/gestao-agendamentos')
@@ -26964,7 +26980,7 @@ def v71_logistics_next_date():
 @app.post('/api/portal/logistics/blocked-dates')
 @login_required
 def v71_blocked_date_create():
-    if not _portal_internal():abort(403)
+    if not _portal_staff():abort(403)
     data=request.get_json(silent=True) or {}; raw=data.get('date');desc=(data.get('description') or '').strip()
     try:d=date.fromisoformat(raw)
     except Exception:return jsonify({'ok':False,'error':'Data inválida.'}),400
@@ -26974,7 +26990,7 @@ def v71_blocked_date_create():
 @app.delete('/api/portal/logistics/blocked-dates/<int:bid>')
 @login_required
 def v71_blocked_date_delete(bid):
-    if not _portal_internal():abort(403)
+    if not _portal_staff():abort(403)
     row=db.session.get(LogisticsBlockedDate,bid)
     if not row:abort(404)
     row.active=False;db.session.commit();return jsonify({'ok':True})
@@ -26982,16 +26998,19 @@ def v71_blocked_date_delete(bid):
 @app.get('/portal-cliente/gestao-agendamentos')
 @login_required
 def v71_schedule_management_page():
-    if not _portal_internal():abort(403)
+    if not _portal_staff():abort(403)
     return render_template('logistics_schedule.html',app_release=APP_RELEASE)
 
 @app.post('/api/portal/logistics/share-whatsapp')
 @login_required
 def portal_logistics_share_whatsapp():
-    if not _portal_internal(): abort(403)
-    data=request.get_json(silent=True) or {}; day=(data.get('date') or '').strip(); count=int(data.get('appointments') or 0)
+    if not _portal_staff(): abort(403)
+    data=request.get_json(silent=True) or {}; day=(data.get('date') or '').strip()[:20]
+    try: count=int(data.get('appointments') or 0)
+    except Exception: count=0
+    driver=(data.get('driver') or '').strip()[:120]
     try:
-        db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='PORTAL_LOGISTICS_WHATSAPP_SHARE',entity_type='logistics_day',entity_id=day or 'sem-data',detail=('ATIVIDADE_AGENDADA' if count else 'NOVA_ATIVIDADE')+f' | {count} agendamento(s)'))
+        db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='PORTAL_LOGISTICS_WHATSAPP_SHARE',entity_type='logistics_day',entity_id=day or 'sem-data',detail=('ATIVIDADE_AGENDADA' if count else 'NOVA_ATIVIDADE')+f' | {count} agendamento(s)'+(f' | motorista: {driver}' if driver else '')))
         db.session.commit()
     except Exception:
         db.session.rollback(); app.logger.exception('Falha ao auditar compartilhamento WhatsApp da logística')
@@ -27000,7 +27019,7 @@ def portal_logistics_share_whatsapp():
 @app.get('/api/portal/logistics/management')
 @login_required
 def v71_schedule_management_api():
-    if not _portal_internal():abort(403)
+    if not _portal_staff():abort(403)
     today=datetime.now(ZoneInfo('America/Sao_Paulo')).date();month=(request.args.get('month') or today.strftime('%Y-%m'))
     try:y,m=[int(x) for x in month.split('-',1)];start=date(y,m,1);end=(date(y+1,1,1) if m==12 else date(y,m+1,1))
     except Exception:start=date(today.year,today.month,1);end=(date(today.year+1,1,1) if today.month==12 else date(today.year,today.month+1,1))
@@ -27018,22 +27037,29 @@ def v71_schedule_management_api():
     programmed_today=[x for x in rows if x['date']==today.isoformat() and str(x.get('status') or '').upper()!='CANCELADO']
     routes=[{'id':r.id,'garage':r.garage_name,'weekday':r.weekday,'weekday_label':_V71_WEEKDAY_LABELS.get(r.weekday,''),'contact':r.contact_name or '', 'address':r.address or '', 'region':r.region or '', 'active':r.active} for r in LogisticsGarageRoute.query.order_by(LogisticsGarageRoute.weekday,LogisticsGarageRoute.garage_name).all()]
     blocked=[{'id':x.id,'date':x.blocked_date.isoformat(),'description':x.description or ''} for x in LogisticsBlockedDate.query.filter_by(active=True).order_by(LogisticsBlockedDate.blocked_date).all()]
-    return jsonify({'ok':True,'today':today.isoformat(),'rows':rows,'daily':daily,'requested_today':requested_today,'programmed_today':programmed_today,'routes':routes,'blocked':blocked,'can_manage_appointments':_has_access('portal.manage')})
+    from sqlalchemy import exists as _sa_exists
+    _ret=_sa_exists().where(PortalEquipmentEvent.equipment_id==CustomerAppointmentEquipment.id,PortalEquipmentEvent.event_type=='DEVOLVIDO')
+    to_return=[{'company':c or '','count':int(n)} for c,n in db.session.query(CustomerAppointment.customer_company,func.count(CustomerAppointmentEquipment.id)).select_from(CustomerAppointmentEquipment).join(CustomerAppointment,CustomerAppointment.id==CustomerAppointmentEquipment.appointment_id).filter(CustomerAppointmentEquipment.received.is_(True),CustomerAppointment.status!='CANCELADO',~_ret).group_by(CustomerAppointment.customer_company).order_by(CustomerAppointment.customer_company).all()]
+    return jsonify({'ok':True,'today':today.isoformat(),'to_return':to_return,'rows':rows,'daily':daily,'requested_today':requested_today,'programmed_today':programmed_today,'routes':routes,'blocked':blocked,'can_manage_appointments':_has_access('portal.manage')})
 
 @app.patch('/api/portal/appointments/<int:aid>/programacao')
 @login_required
 def v71_program_appointment(aid):
-    if not _portal_internal():abort(403)
+    if not _portal_staff():abort(403)
     a=db.session.get(CustomerAppointment,aid)
     if not a:abort(404)
     data=request.get_json(silent=True) or {};raw=data.get('programmed_date')
     try:d=date.fromisoformat(raw) if raw else None
     except Exception:return jsonify({'ok':False,'error':'Data inválida.'}),400
     if d and LogisticsBlockedDate.query.filter_by(blocked_date=d,active=True).first():return jsonify({'ok':False,'error':'A data está bloqueada no calendário operacional.'}),409
-    a.programmed_date=d;a.scheduled_date=d or a.expected_date
+    old_eff=a.programmed_date or a.expected_date or a.scheduled_date
+    reason=(data.get('reason') or '').strip()[:300]
+    a.programmed_date=d;a.scheduled_date=d or a.expected_date;new_eff=d or a.expected_date
     if a.status not in ('RECEBIDO','RECEBIMENTO_PARCIAL','CONCLUIDO','DEVOLVIDO','DEVOLUCAO_PARCIAL'):a.status='NA_PROGRAMACAO'
     db.session.add(AuditEvent(user_id=session['user_id'],event_type='V71_APPOINTMENT_PROGRAMMED',entity_type='customer_appointment',entity_id=str(a.id),detail=f'{a.code} · {d.isoformat() if d else "data padrão"}'))
-    db.session.commit();return jsonify({'ok':True,'date':(a.programmed_date or a.expected_date).isoformat() if (a.programmed_date or a.expected_date) else ''})
+    db.session.commit()
+    notified=_v100_notify_date_change(a,old_eff,new_eff,reason)
+    return jsonify({'ok':True,'notified':notified,'date':(a.programmed_date or a.expected_date).isoformat() if (a.programmed_date or a.expected_date) else ''})
 
 @app.post('/api/portal/appointments/<int:aid>/cancel')
 @login_required
@@ -27068,20 +27094,20 @@ def v712_delete_appointment(aid):
 @login_required
 def portal_cliente_page():
     if not (_has_access('portal.appointments') or _portal_internal()): abort(403)
-    u=db.session.get(User,session['user_id']); return render_template('customer_portal.html',app_release=APP_RELEASE,internal=_portal_internal(),customer_companies=_customer_companies_for_user(u) if u and u.role=='customer' else CustomerCompany.query.filter_by(active=True).order_by(CustomerCompany.legal_name).all())
+    u=db.session.get(User,session['user_id']); return render_template('customer_portal.html',app_release=APP_RELEASE,internal=_portal_internal(),driver=_portal_driver_only(),customer_companies=_customer_companies_for_user(u) if u and u.role=='customer' else CustomerCompany.query.filter_by(active=True).order_by(CustomerCompany.legal_name).all())
 
 @app.get('/api/portal/appointments')
 @login_required
 def portal_appointments_list():
     if not (_has_access('portal.appointments') or _portal_internal()): abort(403)
-    q=CustomerAppointment.query
-    if not _portal_internal():
-        u=db.session.get(User,session['user_id']); allowed=[c.legal_name for c in _customer_companies_for_user(u)]; q=q.filter(CustomerAppointment.customer_company.in_(allowed or ['__SEM_EMPRESA__']))
-    rows=q.order_by(CustomerAppointment.created_at.desc()).limit(500).all(); out=[]
+    rows=_v100_portal_rows_query().limit(500).all(); out=[]; ids=[a.id for a in rows] or [-1]
+    cnt=dict(db.session.query(CustomerAppointmentEquipment.appointment_id,func.count(CustomerAppointmentEquipment.id)).filter(CustomerAppointmentEquipment.appointment_id.in_(ids)).group_by(CustomerAppointmentEquipment.appointment_id).all())
+    rec=dict(db.session.query(CustomerAppointmentEquipment.appointment_id,func.count(CustomerAppointmentEquipment.id)).filter(CustomerAppointmentEquipment.appointment_id.in_(ids),CustomerAppointmentEquipment.received.is_(True)).group_by(CustomerAppointmentEquipment.appointment_id).all())
+    ret=dict(db.session.query(PortalEquipmentEvent.appointment_id,func.count(func.distinct(PortalEquipmentEvent.equipment_id))).filter(PortalEquipmentEvent.appointment_id.in_(ids),PortalEquipmentEvent.event_type=='DEVOLVIDO').group_by(PortalEquipmentEvent.appointment_id).all())
     for a in rows:
-        items=CustomerAppointmentEquipment.query.filter_by(appointment_id=a.id).all()
-        out.append({'id':a.id,'code':a.code,'company':a.customer_company,'responsible':a.responsible_name,'scheduled_date':(a.programmed_date or a.expected_date or a.scheduled_date).isoformat() if (a.programmed_date or a.expected_date or a.scheduled_date) else '', 'request_date':(a.request_date or a.created_at.date()).isoformat(),'expected_date':a.expected_date.isoformat() if a.expected_date else '', 'programmed_date':a.programmed_date.isoformat() if a.programmed_date else '', 'alternate':bool(a.alternate_date_requested),'alternate_reason':a.alternate_reason or '', 'status':a.status,'created_at':a.created_at.isoformat(),'count':len(items),'received':sum(1 for x in items if x.received),'returned':len({ev.equipment_id for ev in PortalEquipmentEvent.query.filter_by(appointment_id=a.id,event_type='DEVOLVIDO').all()}),'email_status':a.email_status or ''})
-    return jsonify({'ok':True,'rows':out,'internal':_portal_internal()})
+        d=a.programmed_date or a.expected_date or a.scheduled_date
+        out.append({'id':a.id,'code':a.code,'company':a.customer_company,'responsible':a.responsible_name,'scheduled_date':d.isoformat() if d else '','request_date':(a.request_date or a.created_at.date()).isoformat(),'expected_date':a.expected_date.isoformat() if a.expected_date else '','programmed_date':a.programmed_date.isoformat() if a.programmed_date else '','alternate':bool(a.alternate_date_requested),'alternate_reason':a.alternate_reason or '','status':a.status,'created_at':a.created_at.isoformat(),'count':int(cnt.get(a.id,0)),'received':int(rec.get(a.id,0)),'returned':int(ret.get(a.id,0)),'email_status':a.email_status or ''})
+    return jsonify({'ok':True,'rows':out,'internal':_portal_internal(),'driver':_portal_driver_only()})
 
 @app.post('/api/portal/appointments')
 @login_required
@@ -27253,7 +27279,7 @@ def _portal_notify(a,kind,items):
 @app.post('/api/portal/appointments/<int:aid>/confirm-schedule')
 @login_required
 def v859_confirm_schedule(aid):
-    if not _portal_internal():abort(403)
+    if not _portal_staff():abort(403)
     a=db.session.get(CustomerAppointment,aid)
     if not a:abort(404)
     if a.status in ('CANCELADO','DEVOLVIDO'):return jsonify({'error':'Agendamento encerrado.'}),409
@@ -27326,6 +27352,141 @@ def v8510_assistance_pending():
     amap={a.id:a for a in appointments}
     return jsonify({'companies':sorted({amap[x.appointment_id].customer_company for x in equipment if x.id not in returned and amap[x.appointment_id].customer_company}),
         'items':[{'id':x.id,'appointment_id':x.appointment_id,'code':amap[x.appointment_id].code,'company':amap[x.appointment_id].customer_company,'serial':x.serial_number,'equipment':x.equipment or '', 'defect':x.defect or ''} for x in equipment if x.id not in returned]})
+
+# ===================== REV100 — Portal do Cliente: motorista, aviso de data e indicadores em caixa =====================
+_V100_STATE={"drivers_ready":False}
+
+class V100PortalDriver(db.Model):
+    """Motorista avulso (sem usuário no sistema) para o envio do WhatsApp da programação."""
+    __tablename__='v100_portal_drivers'
+    id=db.Column(db.Integer,primary_key=True)
+    name=db.Column(db.String(120),nullable=False)
+    phone=db.Column(db.String(40))
+    active=db.Column(db.Boolean,nullable=False,default=True,index=True)
+    created_by=db.Column(db.Integer)
+    created_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow)
+
+def _v100_ensure_drivers():
+    if _V100_STATE["drivers_ready"]: return
+    try:
+        db.metadata.create_all(bind=db.engine,tables=[V100PortalDriver.__table__],checkfirst=True)
+        _V100_STATE["drivers_ready"]=True
+    except Exception:
+        app.logger.exception('REV100: não foi possível garantir a tabela de motoristas')
+
+def _v100_phone(raw):
+    d=re.sub(r'\D+','',str(raw or ''))
+    if d.startswith('00'): d=d[2:]
+    if len(d) in (10,11): d='55'+d
+    return d if 12<=len(d)<=15 else ''
+
+def _v100_drivers():
+    _v100_ensure_drivers()
+    out=[]
+    cand=User.query.filter(User.active.is_(True),User.archived_at.is_(None),or_(User.access_json.like('%portal.driver%'),User.system_profile_id.isnot(None))).order_by(User.name).all()
+    for u in cand:
+        if (u.role or '')=='manager': continue
+        acc=_user_access_set(u)
+        if 'portal.driver' in acc and 'portal.manage' not in acc:
+            out.append({'key':f'u{u.id}','name':u.name,'phone':_v100_phone(u.phone),'phone_raw':u.phone or '','kind':'usuario'})
+    for d in V100PortalDriver.query.filter_by(active=True).order_by(V100PortalDriver.name).all():
+        out.append({'key':f'd{d.id}','id':d.id,'name':d.name,'phone':_v100_phone(d.phone),'phone_raw':d.phone or '','kind':'avulso'})
+    return out
+
+@app.get('/api/portal/logistics/drivers')
+@login_required
+def v100_portal_drivers_list():
+    if not _portal_staff(): abort(403)
+    return jsonify({'ok':True,'drivers':_v100_drivers(),'can_manage':_has_access('portal.manage')})
+
+@app.post('/api/portal/logistics/drivers')
+@login_required
+def v100_portal_driver_create():
+    if not _has_access('portal.manage'): abort(403)
+    _v100_ensure_drivers()
+    data=request.get_json(silent=True) or {}
+    name=(data.get('name') or '').strip()[:120]; phone_raw=(data.get('phone') or '').strip()[:40]
+    if not name: return jsonify({'ok':False,'error':'Informe o nome do motorista.'}),400
+    if phone_raw and not _v100_phone(phone_raw): return jsonify({'ok':False,'error':'Celular inválido. Informe DDD + número (ex.: 11 98888-7777).'}),400
+    if V100PortalDriver.query.filter(func.lower(V100PortalDriver.name)==name.lower(),V100PortalDriver.active.is_(True)).first():
+        return jsonify({'ok':False,'error':'Já existe um motorista avulso com esse nome.'}),409
+    row=V100PortalDriver(name=name,phone=phone_raw or None,created_by=session.get('user_id'))
+    db.session.add(row); db.session.flush()
+    db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='V100_PORTAL_DRIVER_ADDED',entity_type='portal_driver',entity_id=str(row.id),detail=name))
+    db.session.commit(); return jsonify({'ok':True,'id':row.id})
+
+@app.post('/api/portal/logistics/drivers/<int:did>/excluir')
+@login_required
+def v100_portal_driver_delete(did):
+    if not _has_access('portal.manage'): abort(403)
+    _v100_ensure_drivers()
+    row=db.session.get(V100PortalDriver,did)
+    if not row: abort(404)
+    row.active=False
+    db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='V100_PORTAL_DRIVER_REMOVED',entity_type='portal_driver',entity_id=str(row.id),detail=row.name))
+    db.session.commit(); return jsonify({'ok':True})
+
+def _v100_portal_rows_query():
+    """Agendamentos visíveis ao usuário: cliente (só a empresa dele), motorista (programação ou a devolver) ou equipe."""
+    q=CustomerAppointment.query
+    if not _portal_internal():
+        u=db.session.get(User,session['user_id']); allowed=[c.legal_name for c in _customer_companies_for_user(u)]
+        q=q.filter(CustomerAppointment.customer_company.in_(allowed or ['__SEM_EMPRESA__']))
+    elif _portal_driver_only():
+        q=q.filter(CustomerAppointment.status.in_(_V100_DRIVER_STATUSES))
+    return q.order_by(CustomerAppointment.created_at.desc())
+
+@app.get('/api/portal/kpi-items')
+@login_required
+def v100_portal_kpi_items():
+    """Equipamentos por trás dos indicadores da tela (mesmos agendamentos da lista, sem consulta por linha)."""
+    if not (_has_access('portal.appointments') or _portal_internal()): abort(403)
+    appts=_v100_portal_rows_query().limit(500).all(); amap={a.id:a for a in appts}; ids=list(amap) or [-1]
+    eqs=CustomerAppointmentEquipment.query.filter(CustomerAppointmentEquipment.appointment_id.in_(ids)).order_by(CustomerAppointmentEquipment.appointment_id.desc(),CustomerAppointmentEquipment.item_no).all()
+    returned={eid for (eid,) in db.session.query(PortalEquipmentEvent.equipment_id).filter(PortalEquipmentEvent.appointment_id.in_(ids),PortalEquipmentEvent.event_type=='DEVOLVIDO').all()}
+    items=[]
+    for x in eqs:
+        a=amap.get(x.appointment_id)
+        if not a: continue
+        d=a.programmed_date or a.expected_date or a.scheduled_date
+        items.append({'id':x.id,'appointment_id':a.id,'code':a.code,'company':a.customer_company or '','serial':x.serial_number or '','equipment':x.equipment or '','defect':x.defect or '','received':bool(x.received),'returned':x.id in returned,'received_at':x.received_at.isoformat() if x.received_at else '','date':d.isoformat() if d else '','status':a.status or ''})
+    return jsonify({'ok':True,'items':items})
+
+def _v100_notify_date_change(a,old,new,reason=''):
+    """Avisa, dentro do Portal, os usuários-cliente da empresa quando a data de programação muda."""
+    if not (a and old and new and old!=new) or str(a.status or '').upper() in ('RASCUNHO','CANCELADO'): return 0
+    try:
+        legal=(a.customer_company or '').strip().lower()
+        cc=CustomerCompany.query.filter(func.lower(CustomerCompany.legal_name)==legal).first()
+        targets={}
+        for u in User.query.filter(User.role=='customer',User.active.is_(True)).all():
+            if (cc and cc.id in _customer_company_ids(u)) or (u.company or '').strip().lower()==legal: targets[u.id]=u
+        creator=db.session.get(User,a.created_by) if getattr(a,'created_by',None) else None
+        if creator and creator.role=='customer' and creator.active: targets.setdefault(creator.id,creator)
+        fmt=lambda d:d.strftime('%d/%m/%Y')
+        msg=f'{a.code}: a data de programação passou de {fmt(old)} para {fmt(new)}.'+(f' Motivo: {reason}' if reason else '')
+        for uid in targets:
+            db.session.add(V76Notification(recipient_id=uid,severity='ALERTA',category='PORTAL_CLIENTE',title='Data de programação alterada',message=msg[:1000],action_url='/portal-cliente',entity_type='customer_appointment',entity_id=str(a.id)))
+        db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='V100_PORTAL_DATE_CHANGE_NOTICE',entity_type='customer_appointment',entity_id=str(a.id),detail=f'{a.code} · {old.isoformat()} → {new.isoformat()} · {len(targets)} usuário(s) avisado(s)'))
+        db.session.commit(); return len(targets)
+    except Exception:
+        db.session.rollback(); app.logger.exception('REV100: falha ao avisar o cliente sobre a nova data'); return 0
+
+@app.get('/api/portal/notices')
+@login_required
+def v100_portal_notices():
+    uid=session.get('user_id')
+    rows=V76Notification.query.filter(V76Notification.recipient_id==uid,V76Notification.category=='PORTAL_CLIENTE',V76Notification.read_at.is_(None)).order_by(V76Notification.created_at.desc()).limit(20).all()
+    return jsonify({'ok':True,'notices':[{'id':n.id,'title':n.title,'message':n.message,'appointment_id':int(n.entity_id) if str(n.entity_id or '').isdigit() else None,'created_at':n.created_at.isoformat()} for n in rows]})
+
+@app.post('/api/portal/notices/<int:nid>/ack')
+@login_required
+def v100_portal_notice_ack(nid):
+    n=db.session.get(V76Notification,nid)
+    if not n or n.recipient_id!=session.get('user_id') or n.category!='PORTAL_CLIENTE': abort(404)
+    if not n.read_at: n.read_at=datetime.utcnow(); db.session.commit()
+    return jsonify({'ok':True})
+# =================== fim REV100 ===================
 
 # V70 — Performance & Banco: migrações versionadas, aditivas e idempotentes.
 def _apply_v70_migrations():
