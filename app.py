@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV102"
+APP_RELEASE = "V87.6 REV103"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -9965,8 +9965,19 @@ def _v99_full_gate():
     return None
 
 
+def _v103_plan_guard():
+    """REV103 — o Planejamento semanal tem a própria regra de acesso (_v96_access: administrador principal ou
+    usuário liberado em 'Quem tem acesso'). A trava do Diagnóstico (_v85_guard) exigia ser Gestor e barrava
+    quem recebeu acesso com 'Somente o Gestor.'."""
+    if not session.get("user_id"):
+        return jsonify({"ok": False, "error": "Sessão expirada. Entre novamente."}), 401
+    if not database_url.startswith("postgresql"):
+        return jsonify({"ok": False, "error": "Disponível apenas no PostgreSQL."}), 400
+    return None
+
+
 def _v96_gate(need_edit=False, need_admin=False):
-    gd = _v85_guard()
+    gd = _v103_plan_guard()
     if gd:
         return gd, None
     if not _v85_flags().get("planejamento_semanal"):
@@ -27024,11 +27035,14 @@ def v71_schedule_management_api():
     try:y,m=[int(x) for x in month.split('-',1)];start=date(y,m,1);end=(date(y+1,1,1) if m==12 else date(y,m+1,1))
     except Exception:start=date(today.year,today.month,1);end=(date(today.year+1,1,1) if today.month==12 else date(today.year,today.month+1,1))
     appts=CustomerAppointment.query.filter(CustomerAppointment.status!='RASCUNHO').order_by(CustomerAppointment.created_at.desc()).all()
-    ids=[a.id for a in appts];counts=dict(db.session.query(CustomerAppointmentEquipment.appointment_id,func.count(CustomerAppointmentEquipment.id)).filter(CustomerAppointmentEquipment.appointment_id.in_(ids or [-1])).group_by(CustomerAppointmentEquipment.appointment_id).all());received_counts=dict(db.session.query(CustomerAppointmentEquipment.appointment_id,func.count(CustomerAppointmentEquipment.id)).filter(CustomerAppointmentEquipment.appointment_id.in_(ids or [-1]),CustomerAppointmentEquipment.received.is_(True)).group_by(CustomerAppointmentEquipment.appointment_id).all())
+    ids=[a.id for a in appts];_v103_ensure_returns()
+    try:ov={r.appointment_id:r.return_date for r in V103ReturnDate.query.filter(V103ReturnDate.appointment_id.in_(ids or [-1])).all()}
+    except Exception:db.session.rollback();ov={}
+    counts=dict(db.session.query(CustomerAppointmentEquipment.appointment_id,func.count(CustomerAppointmentEquipment.id)).filter(CustomerAppointmentEquipment.appointment_id.in_(ids or [-1])).group_by(CustomerAppointmentEquipment.appointment_id).all());received_counts=dict(db.session.query(CustomerAppointmentEquipment.appointment_id,func.count(CustomerAppointmentEquipment.id)).filter(CustomerAppointmentEquipment.appointment_id.in_(ids or [-1]),CustomerAppointmentEquipment.received.is_(True)).group_by(CustomerAppointmentEquipment.appointment_id).all())
     rows=[];daily={}
     for a in appts:
         d=a.programmed_date or a.expected_date or a.scheduled_date
-        item={'id':a.id,'code':a.code,'company':a.customer_company,'request_date':(a.request_date or a.created_at.date()).isoformat(),'expected_date':a.expected_date.isoformat() if a.expected_date else '', 'programmed_date':a.programmed_date.isoformat() if a.programmed_date else '', 'date':d.isoformat() if d else '', 'status':a.status,'count':int(counts.get(a.id,0)),'received':int(received_counts.get(a.id,0)),'alternate':bool(a.alternate_date_requested),'alternate_reason':a.alternate_reason or '', 'cancellation_reason':a.cancellation_reason or '', 'return_date':(_v102_return_date(a).isoformat() if _v102_return_date(a) else '')}
+        item={'id':a.id,'code':a.code,'company':a.customer_company,'request_date':(a.request_date or a.created_at.date()).isoformat(),'expected_date':a.expected_date.isoformat() if a.expected_date else '', 'programmed_date':a.programmed_date.isoformat() if a.programmed_date else '', 'date':d.isoformat() if d else '', 'status':a.status,'count':int(counts.get(a.id,0)),'received':int(received_counts.get(a.id,0)),'alternate':bool(a.alternate_date_requested),'alternate_reason':a.alternate_reason or '', 'cancellation_reason':a.cancellation_reason or '', 'return_date':(_v102_return_date(a,ov).isoformat() if _v102_return_date(a,ov) else ''),'return_custom':a.id in ov}
         rows.append(item)
         if d and start<=d<end and str(a.status or '').upper()!='CANCELADO':
             k=d.isoformat();bucket=daily.setdefault(k,{'appointments':0,'equipment':0,'garages':set()});bucket['appointments']+=1;bucket['equipment']+=item['count'];bucket['garages'].add(a.customer_company)
@@ -27274,8 +27288,35 @@ def _portal_notify(a,kind,items):
     except Exception:
         db.session.rollback(); app.logger.exception('REV101: falha ao avisar o cliente no Portal (%s)',kind); return 0
 
-def _v102_return_date(a):
-    """Devolução prevista = mesmo dia da semana seguinte à recolha."""
+class V103ReturnDate(db.Model):
+    """Data de devolução (entrega) reprogramada pela equipe; sem registro = recolha + 7 dias."""
+    __tablename__='v103_return_dates'
+    appointment_id=db.Column(db.Integer,primary_key=True)
+    return_date=db.Column(db.Date,nullable=False,index=True)
+    reason=db.Column(db.String(300))
+    updated_by=db.Column(db.Integer)
+    updated_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow)
+
+_V103_STATE={"ready":False}
+def _v103_ensure_returns():
+    if _V103_STATE["ready"]: return
+    try:
+        db.metadata.create_all(bind=db.engine,tables=[V103ReturnDate.__table__],checkfirst=True)
+        _V103_STATE["ready"]=True
+    except Exception:
+        app.logger.exception('REV103: não foi possível garantir a tabela de devoluções reprogramadas')
+
+def _v102_return_date(a,ov=None):
+    """Devolução prevista: data reprogramada, se houver; senão o mesmo dia da semana seguinte à recolha."""
+    try:
+        if ov is None:
+            _v103_ensure_returns()
+            r=db.session.get(V103ReturnDate,a.id)
+            if r: return r.return_date
+        elif a.id in ov:
+            return ov[a.id]
+    except Exception:
+        db.session.rollback()
     d=a.programmed_date or a.expected_date or a.scheduled_date
     return d+timedelta(days=7) if d else None
 
@@ -27309,6 +27350,39 @@ def v102_accept_appointment(aid):
     n=CustomerAppointmentEquipment.query.filter_by(appointment_id=aid).count()
     rd=_v102_return_date(a)
     return jsonify({'ok':True,'status':a.status,'return_date':rd.isoformat() if rd else '','notified':_v102_notify(a,'Pedido aceito','aceito',n)})
+
+@app.post('/api/portal/appointments/<int:aid>/return-date')
+@login_required
+def v103_set_return_date(aid):
+    if not _portal_staff():abort(403)
+    a=db.session.get(CustomerAppointment,aid)
+    if not a:abort(404)
+    if a.status not in ('NA_PROGRAMACAO','AGENDADO','RECEBIMENTO_PARCIAL','RECEBIDO','DEVOLUCAO_PARCIAL'):
+        return jsonify({'ok':False,'error':'A data de entrega só pode ser reprogramada em agendamento aceito e ainda não devolvido (situação atual: '+str(a.status or '').replace('_',' ').title()+').'}),409
+    data=request.get_json(silent=True) or {}
+    try:nd=date.fromisoformat(str(data.get('return_date') or '')[:10])
+    except Exception:return jsonify({'ok':False,'error':'Data inválida.'}),400
+    base=a.programmed_date or a.expected_date or a.scheduled_date
+    if base and nd<=base:return jsonify({'ok':False,'error':'A entrega deve ser depois da recolha ('+base.strftime('%d/%m/%Y')+').'}),409
+    if nd.weekday()>=5:return jsonify({'ok':False,'error':'Sábado e domingo não têm operação. Escolha um dia útil.'}),409
+    if LogisticsBlockedDate.query.filter_by(blocked_date=nd,active=True).first():return jsonify({'ok':False,'error':'A data está bloqueada no calendário operacional.'}),409
+    reason=(data.get('reason') or '').strip()[:300]
+    old=_v102_return_date(a);_v103_ensure_returns()
+    r=db.session.get(V103ReturnDate,aid)
+    if r:r.return_date=nd;r.reason=reason;r.updated_by=session['user_id'];r.updated_at=datetime.utcnow()
+    else:db.session.add(V103ReturnDate(appointment_id=aid,return_date=nd,reason=reason,updated_by=session['user_id']))
+    db.session.add(AuditEvent(user_id=session['user_id'],event_type='V103_RETURN_DATE_CHANGED',entity_type='customer_appointment',entity_id=str(a.id),detail=f'{a.code} · entrega {old.isoformat() if old else "—"} → {nd.isoformat()}'+(f' · {reason}' if reason else '')))
+    db.session.commit()
+    notified=0
+    try:
+        targets=_v100_customer_targets(a);fmt=lambda d:d.strftime('%d/%m/%Y') if d else '—'
+        msg=f'{a.code}: a devolução prevista passou de {fmt(old)} para {fmt(nd)}.'+(f' Motivo: {reason}' if reason else '')
+        for uid in targets:
+            db.session.add(V76Notification(recipient_id=uid,severity='ALERTA',category='PORTAL_CLIENTE',title='Data de devolução alterada',message=msg[:1000],action_url='/portal-cliente',entity_type='customer_appointment',entity_id=str(a.id)))
+        db.session.commit();notified=len(targets)
+    except Exception:
+        db.session.rollback();app.logger.exception('REV103: falha ao avisar o cliente sobre a nova data de entrega')
+    return jsonify({'ok':True,'return_date':nd.isoformat(),'notified':notified})
 
 @app.post('/api/portal/appointments/<int:aid>/confirm-schedule')
 @login_required
