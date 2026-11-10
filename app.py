@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV100"
+APP_RELEASE = "V87.6 REV101"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -27250,6 +27250,7 @@ def portal_equipment_receive(eid):
     if not _portal_internal():abort(403)
     x=db.session.get(CustomerAppointmentEquipment,eid);a=db.session.get(CustomerAppointment,x.appointment_id) if x else None
     if not a:abort(404)
+    if a.status in ('CANCELADO','DEVOLVIDO'):return jsonify({'ok':False,'error':'Agendamento encerrado: não é possível receber equipamentos.'}),409
     x.received=True;x.received_at=datetime.utcnow();x.received_by=session['user_id'];db.session.flush()
     total=CustomerAppointmentEquipment.query.filter_by(appointment_id=a.id).count(); rec=CustomerAppointmentEquipment.query.filter_by(appointment_id=a.id,received=True).count()
     a.status='RECEBIDO' if rec>=total else 'RECEBIMENTO_PARCIAL';a.received_at=datetime.utcnow() if rec>=total else None;a.received_by=session['user_id'] if rec>=total else None
@@ -27258,23 +27259,19 @@ def portal_equipment_receive(eid):
 
 # V85.9 — operações da Assistência, com controle de acesso e eventos por equipamento.
 def _portal_notify(a,kind,items):
-    cc=CustomerCompany.query.filter(func.lower(CustomerCompany.legal_name)==(a.customer_company or '').lower()).first()
-    to=(a.responsible_email or (cc.email if cc else '') or '').strip()
-    host=os.environ.get('SMTP_HOST','').strip();sender=(os.environ.get('SMTP_FROM') or os.environ.get('SMTP_USER') or '').strip()
-    if not (host and sender and to):return 'NAO_CONFIGURADO'
-    msg=EmailMessage();msg['From']=sender;msg['To']=to
-    msg['Subject']=f'{a.code} — {kind} de equipamentos'
-    listing='\n'.join(f'- {_portal_equipment_code(a,x)} | Série {x.serial_number}' for x in items)
-    msg.set_content(f'Agendamento: {a.code}\nEmpresa: {a.customer_company}\nEvento: {kind}\nEquipamentos:\n{listing}\n\nAcesse o Portal do Cliente para consultar e registrar ciência.')
+    """REV101 — devolução/recebimento/confirmação avisam o cliente DENTRO do Portal (sem exigir e-mail)."""
     try:
-        with smtplib.SMTP(host,int(os.environ.get('SMTP_PORT','587')),timeout=15) as srv:
-            if os.environ.get('SMTP_TLS','1')!='0':srv.starttls()
-            if os.environ.get('SMTP_USER'):srv.login(os.environ.get('SMTP_USER'),os.environ.get('SMTP_PASSWORD',''))
-            srv.send_message(msg)
-        return 'ENVIADO'
+        targets=_v100_customer_targets(a)
+        if not targets: return 0
+        titles={'Confirmação do agendamento':'Agendamento confirmado','Recebimento':'Equipamentos recebidos','Devolução':'Equipamentos devolvidos'}
+        series=[str(getattr(x,'serial_number','') or '') for x in (items or []) if getattr(x,'serial_number','')]
+        shown=', '.join(series[:6])+(f' (+{len(series)-6})' if len(series)>6 else '')
+        msg=f'{a.code}: {kind.lower()}'+(f' de {len(items)} equipamento(s)' if items else '')+(f' — séries {shown}.' if shown else '.')
+        for uid in targets:
+            db.session.add(V76Notification(recipient_id=uid,severity='INFO',category='PORTAL_CLIENTE',title=titles.get(kind,kind),message=msg[:1000],action_url='/portal-cliente',entity_type='customer_appointment',entity_id=str(a.id)))
+        db.session.commit(); return len(targets)
     except Exception:
-        app.logger.exception('V85.9: falha ao notificar cliente %s',a.code)
-        return 'FALHA'
+        db.session.rollback(); app.logger.exception('REV101: falha ao avisar o cliente no Portal (%s)',kind); return 0
 
 @app.post('/api/portal/appointments/<int:aid>/confirm-schedule')
 @login_required
@@ -27282,10 +27279,10 @@ def v859_confirm_schedule(aid):
     if not _portal_staff():abort(403)
     a=db.session.get(CustomerAppointment,aid)
     if not a:abort(404)
-    if a.status in ('CANCELADO','DEVOLVIDO'):return jsonify({'error':'Agendamento encerrado.'}),409
+    if a.status not in ('ENVIADO','NA_PROGRAMACAO'):return jsonify({'error':'Só é possível confirmar o agendamento antes do recebimento (situação atual: '+str(a.status or '').replace('_',' ').title()+').'}),409
     a.status='AGENDADO';db.session.add(AuditEvent(user_id=session['user_id'],event_type='PORTAL_SCHEDULE_CONFIRMED',entity_type='customer_appointment',entity_id=str(a.id),detail=a.code))
     db.session.commit();items=CustomerAppointmentEquipment.query.filter_by(appointment_id=aid).all()
-    return jsonify({'ok':True,'email_status':_portal_notify(a,'Confirmação do agendamento',items)})
+    return jsonify({'ok':True,'notified':_portal_notify(a,'Confirmação do agendamento',items)})
 
 @app.post('/api/portal/appointments/<int:aid>/receive-batch')
 @login_required
@@ -27293,6 +27290,7 @@ def v859_receive_batch(aid):
     if not _portal_internal():abort(403)
     a=db.session.get(CustomerAppointment,aid)
     if not a:abort(404)
+    if a.status in ('CANCELADO','DEVOLVIDO'):return jsonify({'error':'Agendamento '+('cancelado' if a.status=='CANCELADO' else 'já devolvido')+': não é possível receber equipamentos.'}),409
     data=request.get_json(silent=True) or {};ids=data.get('equipment_ids') or []
     if not isinstance(ids,list) or not ids:return jsonify({'error':'Selecione equipamentos.'}),400
     items=CustomerAppointmentEquipment.query.filter(CustomerAppointmentEquipment.appointment_id==aid,CustomerAppointmentEquipment.id.in_(ids)).all()
@@ -27304,7 +27302,7 @@ def v859_receive_batch(aid):
             db.session.add(PortalEquipmentEvent(appointment_id=aid,equipment_id=x.id,event_type='RECEBIDO',batch_code=batch,actor_id=session['user_id']))
     if not changed:return jsonify({'error':'Equipamentos já recebidos.'}),409
     _portal_refresh_status(a);db.session.commit()
-    return jsonify({'ok':True,'status':a.status,'batch':batch,'email_status':_portal_notify(a,'Recebimento',changed)})
+    return jsonify({'ok':True,'status':a.status,'batch':batch,'notified':_portal_notify(a,'Recebimento',changed)})
 
 @app.post('/api/portal/appointments/<int:aid>/return-batch')
 @login_required
@@ -27312,6 +27310,7 @@ def v859_return_batch(aid):
     if not _portal_internal():abort(403)
     a=db.session.get(CustomerAppointment,aid)
     if not a:abort(404)
+    if a.status in ('CANCELADO','DEVOLVIDO'):return jsonify({'error':'Agendamento '+('cancelado' if a.status=='CANCELADO' else 'já devolvido')+': não há equipamentos a devolver.'}),409
     data=request.get_json(silent=True) or {};ids=data.get('equipment_ids') or []
     if not isinstance(ids,list) or not ids:return jsonify({'error':'Selecione equipamentos para devolver.'}),400
     items=CustomerAppointmentEquipment.query.filter(CustomerAppointmentEquipment.appointment_id==aid,CustomerAppointmentEquipment.id.in_(ids)).all()
@@ -27321,7 +27320,7 @@ def v859_return_batch(aid):
     batch='DEV-'+datetime.utcnow().strftime('%Y%m%d%H%M%S')+'-'+str(aid)
     for x in items:db.session.add(PortalEquipmentEvent(appointment_id=aid,equipment_id=x.id,event_type='DEVOLVIDO',batch_code=batch,actor_id=session['user_id']))
     db.session.flush();_portal_refresh_status(a);db.session.commit()
-    return jsonify({'ok':True,'status':a.status,'batch':batch,'email_status':_portal_notify(a,'Devolução',items)})
+    return jsonify({'ok':True,'status':a.status,'batch':batch,'notified':_portal_notify(a,'Devolução',items)})
 
 @app.post('/api/portal/appointments/<int:aid>/acknowledge')
 @login_required
@@ -27452,17 +27451,22 @@ def v100_portal_kpi_items():
         items.append({'id':x.id,'appointment_id':a.id,'code':a.code,'company':a.customer_company or '','serial':x.serial_number or '','equipment':x.equipment or '','defect':x.defect or '','received':bool(x.received),'returned':x.id in returned,'received_at':x.received_at.isoformat() if x.received_at else '','date':d.isoformat() if d else '','status':a.status or ''})
     return jsonify({'ok':True,'items':items})
 
+def _v100_customer_targets(a):
+    """Usuários-cliente da empresa do agendamento (e quem o criou, se for cliente): {id: User}."""
+    legal=(a.customer_company or '').strip().lower()
+    cc=CustomerCompany.query.filter(func.lower(CustomerCompany.legal_name)==legal).first()
+    targets={}
+    for u in User.query.filter(User.role=='customer',User.active.is_(True)).all():
+        if (cc and cc.id in _customer_company_ids(u)) or (u.company or '').strip().lower()==legal: targets[u.id]=u
+    creator=db.session.get(User,a.created_by) if getattr(a,'created_by',None) else None
+    if creator and creator.role=='customer' and creator.active: targets.setdefault(creator.id,creator)
+    return targets
+
 def _v100_notify_date_change(a,old,new,reason=''):
     """Avisa, dentro do Portal, os usuários-cliente da empresa quando a data de programação muda."""
     if not (a and old and new and old!=new) or str(a.status or '').upper() in ('RASCUNHO','CANCELADO'): return 0
     try:
-        legal=(a.customer_company or '').strip().lower()
-        cc=CustomerCompany.query.filter(func.lower(CustomerCompany.legal_name)==legal).first()
-        targets={}
-        for u in User.query.filter(User.role=='customer',User.active.is_(True)).all():
-            if (cc and cc.id in _customer_company_ids(u)) or (u.company or '').strip().lower()==legal: targets[u.id]=u
-        creator=db.session.get(User,a.created_by) if getattr(a,'created_by',None) else None
-        if creator and creator.role=='customer' and creator.active: targets.setdefault(creator.id,creator)
+        targets=_v100_customer_targets(a)
         fmt=lambda d:d.strftime('%d/%m/%Y')
         msg=f'{a.code}: a data de programação passou de {fmt(old)} para {fmt(new)}.'+(f' Motivo: {reason}' if reason else '')
         for uid in targets:
@@ -27477,7 +27481,7 @@ def _v100_notify_date_change(a,old,new,reason=''):
 def v100_portal_notices():
     uid=session.get('user_id')
     rows=V76Notification.query.filter(V76Notification.recipient_id==uid,V76Notification.category=='PORTAL_CLIENTE',V76Notification.read_at.is_(None)).order_by(V76Notification.created_at.desc()).limit(20).all()
-    return jsonify({'ok':True,'notices':[{'id':n.id,'title':n.title,'message':n.message,'appointment_id':int(n.entity_id) if str(n.entity_id or '').isdigit() else None,'created_at':n.created_at.isoformat()} for n in rows]})
+    return jsonify({'ok':True,'notices':[{'id':n.id,'title':n.title,'message':n.message,'severity':n.severity or 'INFO','appointment_id':int(n.entity_id) if str(n.entity_id or '').isdigit() else None,'created_at':n.created_at.isoformat()} for n in rows]})
 
 @app.post('/api/portal/notices/<int:nid>/ack')
 @login_required
