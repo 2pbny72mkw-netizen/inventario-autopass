@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV105"
+APP_RELEASE = "V87.6 REV106"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -27445,38 +27445,69 @@ def v102_accept_appointment(aid):
     rd=_v102_return_date(a)
     return jsonify({'ok':True,'status':a.status,'return_date':rd.isoformat() if rd else '','notified':_v102_notify(a,'Pedido aceito','aceito',n)})
 
+def _v106_apply_return_date(a,nd,reason,uid):
+    """Valida e grava a nova data de entrega de um agendamento. Retorna (ok, erro, avisados)."""
+    if a.status not in ('NA_PROGRAMACAO','AGENDADO','RECEBIMENTO_PARCIAL','RECEBIDO','DEVOLUCAO_PARCIAL'):
+        return False,'só é possível em agendamento aceito e ainda não devolvido (situação atual: '+str(a.status or '').replace('_',' ').title()+')',0
+    base=a.programmed_date or a.expected_date or a.scheduled_date
+    if base and nd<=base:return False,'a entrega deve ser depois da retirada ('+base.strftime('%d/%m/%Y')+')',0
+    old=_v102_return_date(a);_v103_ensure_returns()
+    r=db.session.get(V103ReturnDate,a.id)
+    if r:r.return_date=nd;r.reason=reason;r.updated_by=uid;r.updated_at=datetime.utcnow()
+    else:db.session.add(V103ReturnDate(appointment_id=a.id,return_date=nd,reason=reason,updated_by=uid))
+    db.session.add(AuditEvent(user_id=uid,event_type='V103_RETURN_DATE_CHANGED',entity_type='customer_appointment',entity_id=str(a.id),detail=f'{a.code} · entrega {old.isoformat() if old else "—"} → {nd.isoformat()}'+(f' · {reason}' if reason else '')))
+    db.session.commit()
+    notified=0
+    try:
+        targets=_v100_customer_targets(a);fmt=lambda d:d.strftime('%d/%m/%Y') if d else '—'
+        msg=f'{a.code}: a devolução prevista passou de {fmt(old)} para {fmt(nd)}.'+(f' Motivo: {reason}' if reason else '')
+        for tuid in targets:
+            db.session.add(V76Notification(recipient_id=tuid,severity='ALERTA',category='PORTAL_CLIENTE',title='Data de devolução alterada',message=msg[:1000],action_url='/portal-cliente',entity_type='customer_appointment',entity_id=str(a.id)))
+        db.session.commit();notified=len(targets)
+    except Exception:
+        db.session.rollback();app.logger.exception('REV103: falha ao avisar o cliente sobre a nova data de entrega')
+    return True,'',notified
+
+def _v106_parse_return_request():
+    data=request.get_json(silent=True) or {}
+    try:nd=date.fromisoformat(str(data.get('return_date') or '')[:10])
+    except Exception:return None,None,(jsonify({'ok':False,'error':'Data inválida.'}),400)
+    if nd.weekday()>=5:return None,None,(jsonify({'ok':False,'error':'Sábado e domingo não têm operação. Escolha um dia útil.'}),409)
+    if LogisticsBlockedDate.query.filter_by(blocked_date=nd,active=True).first():return None,None,(jsonify({'ok':False,'error':'A data está bloqueada no calendário operacional.'}),409)
+    return nd,(data.get('reason') or '').strip()[:300],None
+
 @app.post('/api/portal/appointments/<int:aid>/return-date')
 @login_required
 def v103_set_return_date(aid):
     if not _portal_staff():abort(403)
     a=db.session.get(CustomerAppointment,aid)
     if not a:abort(404)
-    if a.status not in ('NA_PROGRAMACAO','AGENDADO','RECEBIMENTO_PARCIAL','RECEBIDO','DEVOLUCAO_PARCIAL'):
-        return jsonify({'ok':False,'error':'A data de entrega só pode ser reprogramada em agendamento aceito e ainda não devolvido (situação atual: '+str(a.status or '').replace('_',' ').title()+').'}),409
-    data=request.get_json(silent=True) or {}
-    try:nd=date.fromisoformat(str(data.get('return_date') or '')[:10])
-    except Exception:return jsonify({'ok':False,'error':'Data inválida.'}),400
-    base=a.programmed_date or a.expected_date or a.scheduled_date
-    if base and nd<=base:return jsonify({'ok':False,'error':'A entrega deve ser depois da retirada ('+base.strftime('%d/%m/%Y')+').'}),409
-    if nd.weekday()>=5:return jsonify({'ok':False,'error':'Sábado e domingo não têm operação. Escolha um dia útil.'}),409
-    if LogisticsBlockedDate.query.filter_by(blocked_date=nd,active=True).first():return jsonify({'ok':False,'error':'A data está bloqueada no calendário operacional.'}),409
-    reason=(data.get('reason') or '').strip()[:300]
-    old=_v102_return_date(a);_v103_ensure_returns()
-    r=db.session.get(V103ReturnDate,aid)
-    if r:r.return_date=nd;r.reason=reason;r.updated_by=session['user_id'];r.updated_at=datetime.utcnow()
-    else:db.session.add(V103ReturnDate(appointment_id=aid,return_date=nd,reason=reason,updated_by=session['user_id']))
-    db.session.add(AuditEvent(user_id=session['user_id'],event_type='V103_RETURN_DATE_CHANGED',entity_type='customer_appointment',entity_id=str(a.id),detail=f'{a.code} · entrega {old.isoformat() if old else "—"} → {nd.isoformat()}'+(f' · {reason}' if reason else '')))
-    db.session.commit()
-    notified=0
-    try:
-        targets=_v100_customer_targets(a);fmt=lambda d:d.strftime('%d/%m/%Y') if d else '—'
-        msg=f'{a.code}: a devolução prevista passou de {fmt(old)} para {fmt(nd)}.'+(f' Motivo: {reason}' if reason else '')
-        for uid in targets:
-            db.session.add(V76Notification(recipient_id=uid,severity='ALERTA',category='PORTAL_CLIENTE',title='Data de devolução alterada',message=msg[:1000],action_url='/portal-cliente',entity_type='customer_appointment',entity_id=str(a.id)))
-        db.session.commit();notified=len(targets)
-    except Exception:
-        db.session.rollback();app.logger.exception('REV103: falha ao avisar o cliente sobre a nova data de entrega')
+    nd,reason,err=_v106_parse_return_request()
+    if err:return err
+    ok,msg,notified=_v106_apply_return_date(a,nd,reason,session['user_id'])
+    if not ok:return jsonify({'ok':False,'error':'A data de entrega '+msg+'.'}),409
     return jsonify({'ok':True,'return_date':nd.isoformat(),'notified':notified})
+
+@app.post('/api/portal/appointments/return-date-bulk')
+@login_required
+def v106_set_return_date_bulk():
+    """REV106 — mesma nova data de entrega para vários agendamentos de uma vez."""
+    if not _portal_staff():abort(403)
+    data=request.get_json(silent=True) or {}
+    try:ids=[int(x) for x in (data.get('ids') or [])][:100]
+    except (TypeError,ValueError):return jsonify({'ok':False,'error':'Lista de agendamentos inválida.'}),400
+    if not ids:return jsonify({'ok':False,'error':'Selecione ao menos uma entrega.'}),400
+    nd,reason,err=_v106_parse_return_request()
+    if err:return err
+    appts={a.id:a for a in CustomerAppointment.query.filter(CustomerAppointment.id.in_(ids)).all()}
+    done=[];failed=[];notified=0
+    for i in ids:
+        a=appts.get(i)
+        if not a:failed.append({'id':i,'code':'','error':'não encontrado'});continue
+        ok,msg,n=_v106_apply_return_date(a,nd,reason,session['user_id'])
+        if ok:done.append(i);notified+=n
+        else:failed.append({'id':i,'code':a.code,'error':msg})
+    return jsonify({'ok':True,'return_date':nd.isoformat(),'done':done,'failed':failed,'notified':notified})
 
 @app.post('/api/portal/appointments/<int:aid>/confirm-schedule')
 @login_required
