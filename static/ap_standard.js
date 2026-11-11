@@ -288,3 +288,45 @@
   var mark=function(){ [].forEach.call(document.querySelectorAll('[data-ap-window]'),function(c){ if(c.__w) return; c.__w=true; if(!/^(A|BUTTON)$/.test(c.tagName)){ c.setAttribute('role','button'); c.tabIndex=0; } c.title=c.title||'Ver os registros deste indicador'; }); };
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',mark); else mark();
 })();
+
+/* V108 — Tabelas agrupadas: repete o nome/empresa só na primeira linha de cada grupo.
+   Não remove nada do DOM (busca, ordenação e exportação continuam lendo o texto); apenas esconde o conteúdo repetido.
+   Reagrupa sozinho quando a tabela é ordenada, filtrada ou paginada ("Mostrar mais"/"Recolher"). */
+(function(){
+  var CFG=[{
+    sel:'#aptTable', cols:[0,1],
+    key:function(tr){
+      var u=tr.getAttribute('data-user');
+      if(u) return 'u:'+u;
+      var n=(tr.getAttribute('data-name')||tr.cells[0]&&tr.cells[0].textContent||'').replace(/\s+/g,' ').trim().toLowerCase();
+      var c=(tr.getAttribute('data-company')||'').replace(/\s+/g,' ').trim().toLowerCase();
+      return 'n:'+n+'|'+c;
+    }
+  }];
+  var st=document.createElement('style');
+  st.textContent='.apRepCell{color:transparent!important;border-top:none!important}.apRepCell *{visibility:hidden!important}.apRepPrev{border-bottom:none!important}';
+  document.head.appendChild(st);
+  function apply(cfg,tbody){
+    var rows=[].slice.call(tbody.rows), vis=rows.map(function(r){return r.cells.length>1&&r.offsetParent!==null;});
+    var prevKey=null, prevRow=null;
+    rows.forEach(function(r,i){
+      var rep=false, k=null;
+      cfg.cols.forEach(function(c){ var td=r.cells[c]; if(td) td.classList.remove('apRepPrev'); });
+      if(vis[i]){ k=cfg.key(r); rep=(k===prevKey); }
+      cfg.cols.forEach(function(c){ var td=r.cells[c]; if(td) td.classList.toggle('apRepCell',rep); });
+      if(rep&&prevRow) cfg.cols.forEach(function(c){ var td=prevRow.cells[c]; if(td) td.classList.add('apRepPrev'); });
+      if(vis[i]){ prevKey=k; prevRow=r; }
+    });
+  }
+  function setup(cfg){
+    var table=document.querySelector(cfg.sel); if(!table||!table.tBodies.length||table.__apRep) return;
+    table.__apRep=true; var tbody=table.tBodies[0], t=null, obs;
+    function run(){ t=null; obs.disconnect(); try{ apply(cfg,tbody); }finally{ obs.observe(tbody,{childList:true,subtree:true,attributes:true,attributeFilter:['style','hidden','class']}); } }
+    function sched(){ if(t) return; t=(window.requestAnimationFrame||setTimeout)(run); }
+    obs=new MutationObserver(function(ms){ for(var i=0;i<ms.length;i++){ var m=ms[i]; if(m.type==='childList'||(m.target&&m.target.tagName==='TR')){ sched(); return; } } });
+    run();
+  }
+  function init(){ CFG.forEach(setup); }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',init); else init();
+  window.addEventListener('load',init); setTimeout(init,300);
+})();
