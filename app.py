@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V87.6 REV106"
+APP_RELEASE = "V87.6 REV107"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -29239,45 +29239,485 @@ def engineering_bom_export_api(bid):
     bio=io.BytesIO();wb.save(bio);bio.seek(0);return send_file(bio,as_attachment=True,download_name=f"BOM_{b.product_code}_{b.revision}_MULTINIVEL.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
+# ===== V107 — Exportação Excel (Preço de Venda / Locação) com fórmulas e premissas editáveis =====
+# Trecho autônomo: recebe dicionários simples (BOM já calculada pelo sistema) e devolve um Workbook.
+# As fórmulas reproduzem exatamente saleCalc() e o bloco de locação de static/engineering_v72.js.
+def _v107_num(v, default=0.0, lo=0.0):
+    try:
+        x = float(v)
+        if x != x or x in (float("inf"), float("-inf")):
+            return default
+        return max(lo, x)
+    except Exception:
+        return default
+
+
+def _v107_params(data):
+    data = data if isinstance(data, dict) else {}
+    s = data.get("sale") if isinstance(data.get("sale"), dict) else {}
+    r = data.get("rental") if isinstance(data.get("rental"), dict) else {}
+    ipi_mode = str(s.get("ipi_mode") or "review")
+    return {
+        "assembly": _v107_num(data.get("assembly")),
+        "admin": _v107_num(data.get("admin_pct")) / 100,
+        "mode": "Margem alvo" if str(s.get("mode") or "price") == "margin" else "Preço informado",
+        "reform": "Sim" if str(s.get("tax_reform") or "no").lower() == "yes" else "Não",
+        "gross": _v107_num(s.get("gross"), 4800.0),
+        "target": _v107_num(s.get("target_margin")) / 100,
+        "ipi": _v107_num(s.get("ipi"), 6.5) / 100,
+        "icms": _v107_num(s.get("icms"), 18.0) / 100,
+        "pis": _v107_num(s.get("pis"), 0.65) / 100,
+        "cofins": _v107_num(s.get("cofins"), 3.0) / 100,
+        "cbs": _v107_num(s.get("cbs"), 9.0) / 100,
+        "ibs_uf": _v107_num(s.get("ibs_state"), 0.05) / 100,
+        "ibs_mun": _v107_num(s.get("ibs_city"), 0.05) / 100,
+        "iss": _v107_num(s.get("iss")) / 100,
+        "year": str(s.get("tax_year") or "2027") if str(s.get("tax_year") or "2027") in ("2026", "2027", "2029", "2033") else "2027",
+        "ipi_mode": {"zero": "Alíquota zero", "keep": "Manter alíquota informada"}.get(ipi_mode, "Pendente de enquadramento"),
+        "years": _v107_num(r.get("years"), 5.0),
+        "r_margin": _v107_num(r.get("margin"), 20.0) / 100,
+        "r_tax": _v107_num(r.get("tax")) / 100,
+        "r_rec": _v107_num(r.get("recurring")) / 100,
+    }
+
+
+def _v107_build_workbook(root, subs, qty, study_name, data, screen=None, exported_at=""):
+    """root/subs: saída de _eng_bom_json (subs = {bom_id: json} das subestruturas)."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side, Protection
+    from openpyxl.utils import get_column_letter
+    from openpyxl.workbook.defined_name import DefinedName
+    from openpyxl.worksheet.datavalidation import DataValidation
+    from openpyxl.workbook.properties import CalcProperties
+    from openpyxl.worksheet.properties import PageSetupProperties
+
+    P = _v107_params(data)
+    qty = max(1, int(_v107_num(qty, 1)))
+    HEAD = PatternFill("solid", fgColor="17365D")
+    SECT = PatternFill("solid", fgColor="DCE6F1")
+    EDIT = PatternFill("solid", fgColor="FFF2CC")
+    LOCK = PatternFill("solid", fgColor="EDEDED")
+    KEY = PatternFill("solid", fgColor="E2EFDA")
+    thin = Side(style="thin", color="BFBFBF")
+    BOX = Border(left=thin, right=thin, top=thin, bottom=thin)
+    MONEY = '"R$" #,##0.00'
+    PCT = '0.00%'
+    COEF = '0.000000'
+    wb = Workbook()
+    wb.calculation = CalcProperties(fullCalcOnLoad=True)
+    ws_p = wb.active
+    ws_p.title = "Premissas"
+    ws_b = wb.create_sheet("Base de cálculo")
+    ws_v = wb.create_sheet("Venda")
+    ws_l = wb.create_sheet("Locação")
+    BASE = "'Base de cálculo'!"
+
+    def name(nm, ws, ref):
+        wb.defined_names[nm] = DefinedName(nm, attr_text=f"'{ws.title}'!{ref}")
+
+    def put(ws, ref, value, fmt=None, fill=None, bold=False, color=None, wrap=False, border=True, align=None):
+        c = ws[ref]
+        c.value = value
+        if fmt: c.number_format = fmt
+        if fill: c.fill = fill
+        if bold or color: c.font = Font(bold=bold, color=color or "000000")
+        if wrap or align: c.alignment = Alignment(wrap_text=wrap, vertical="center", horizontal=align)
+        if border: c.border = BOX
+        return c
+
+    def head(ws, row, labels, widths=None):
+        for i, t in enumerate(labels, 1):
+            c = ws.cell(row=row, column=i, value=t)
+            c.font = Font(bold=True, color="FFFFFF"); c.fill = HEAD; c.border = BOX
+            c.alignment = Alignment(wrap_text=True, vertical="center", horizontal="center")
+
+    def section(ws, row, text, ncols):
+        for i in range(1, ncols + 1):
+            ws.cell(row=row, column=i).fill = SECT
+        ws.cell(row=row, column=1, value=text).font = Font(bold=True, color="17365D")
+
+    # ------------------------------------------------------------------ Base de cálculo
+    blocks = [root]
+    seen = {root["id"]}
+    i = 0
+    while i < len(blocks):
+        for it in blocks[i].get("items", []):
+            lid = it.get("linked_bom_id")
+            if it.get("derived_from_bom") and lid in subs and lid not in seen:
+                seen.add(lid); blocks.append(subs[lid])
+        i += 1
+    start = {}
+    row = 4
+    for bj in blocks:
+        start[bj["id"]] = row
+        row += 2 + max(len(bj.get("items", [])), 1) + 6 + 1
+    unit_cell = {}
+    for bj in blocks:
+        n = max(len(bj.get("items", [])), 1)
+        unit_cell[bj["id"]] = f"$L${start[bj['id']] + 2 + n + 5}"
+
+    ws_b["A1"] = "Base de cálculo — estrutura (BOM) e custo unitário"
+    ws_b["A1"].font = Font(bold=True, size=14, color="17365D")
+    ws_b["A2"] = ("Cinza = dado herdado da BOM (travado). Importados: custo FOB em US$ × cotação × fator de importação "
+                  "(definidos na aba Premissas). Subestruturas usam o custo unitário do bloco correspondente, mais abaixo.")
+    ws_b["A2"].alignment = Alignment(wrap_text=True, vertical="top")
+    ws_b.merge_cells("A2:M2"); ws_b.row_dimensions[2].height = 32
+    for bj in blocks:
+        r0 = start[bj["id"]]
+        items = bj.get("items", [])
+        is_root = bj["id"] == root["id"]
+        ws_b.cell(row=r0, column=1, value=("BOM do estudo: " if is_root else "Subestrutura: ") + f"{bj.get('product_code','')} · {bj.get('revision','')} — {bj.get('product_name','')}")
+        ws_b.cell(row=r0, column=1).font = Font(bold=True, color="17365D")
+        for c in range(1, 14): ws_b.cell(row=r0, column=c).fill = SECT
+        head(ws_b, r0 + 1, ["Código", "MPN", "Descrição", "NCM", "Origem", "Grupo de custo", "Classe", "Moeda", "Qtd.", "Custo unit. (moeda origem)", "Custo unit. nacionalizado (R$)", "Total (R$)", "Observação"])
+        a = r0 + 2
+        for k, it in enumerate(items):
+            rr = a + k
+            origin = str(it.get("origin") or "NACIONAL").upper()
+            group = str(it.get("cost_group") or "MATERIAL").upper()
+            derived = bool(it.get("derived_from_bom")) and it.get("linked_bom_id") in start
+            classe = "CONSUMO" if group == "CONSUMO" else ("IMPORTADO" if origin == "IMPORTADO" else "NACIONAL")
+            vals = [it.get("internal_part_number", ""), it.get("manufacturer_part_number", ""), it.get("description", ""), it.get("ncm", ""), origin, group, classe, it.get("currency", "BRL"), float(it.get("quantity") or 0), float(it.get("unit_cost") or 0)]
+            for c, v in enumerate(vals, 1):
+                cell = ws_b.cell(row=rr, column=c, value=v); cell.fill = LOCK; cell.border = BOX
+            ws_b.cell(row=rr, column=9).number_format = '#,##0.000'
+            ws_b.cell(row=rr, column=10).number_format = '#,##0.0000'
+            obs = ""
+            if derived:
+                ws_b.cell(row=rr, column=11, value=f"={unit_cell[it['linked_bom_id']]}")
+                obs = "Subestrutura: custo do bloco abaixo"
+            elif origin == "IMPORTADO" and not it.get("derived_from_bom"):
+                ws_b.cell(row=rr, column=11, value=f"=J{rr}*Fator_Importacao*Cotacao_USD")
+                obs = "FOB pendente (moeda não é USD): custo zerado" if it.get("fob_pending") else "US$ × cotação × fator"
+            else:
+                ws_b.cell(row=rr, column=11, value=f"=J{rr}")
+            ws_b.cell(row=rr, column=12, value=f"=I{rr}*K{rr}")
+            ws_b.cell(row=rr, column=13, value=obs).fill = LOCK
+            for c in (11, 12):
+                ws_b.cell(row=rr, column=c).number_format = MONEY; ws_b.cell(row=rr, column=c).border = BOX
+            ws_b.cell(row=rr, column=13).border = BOX
+        n = max(len(items), 1)
+        b = a + n
+        rng_g = f"$G${a}:$G${a + n - 1}"; rng_l = f"$L${a}:$L${a + n - 1}"
+        labels = [("Nacionais (R$)", f'=SUMIF({rng_g},"NACIONAL",{rng_l})' if items else "=0"),
+                  ("Importados nacionalizados (R$)", f'=SUMIF({rng_g},"IMPORTADO",{rng_l})' if items else "=0"),
+                  ("Consumo (R$)", f'=SUMIF({rng_g},"CONSUMO",{rng_l})' if items else "=0"),
+                  ("Total da BOM (R$)", f"=L{b}+L{b+1}+L{b+2}"),
+                  ("Quantidade de referência da BOM", float(bj.get("quantity_reference") or 1) or 1.0),
+                  ("Custo unitário da BOM (R$) = total ÷ qtd. referência", f"=ROUND(L{b+3}/L{b+4},2)")]
+        for k, (t, f) in enumerate(labels):
+            ws_b.cell(row=b + k, column=11, value=t).font = Font(bold=True)
+            ws_b.cell(row=b + k, column=11).alignment = Alignment(horizontal="right")
+            c = ws_b.cell(row=b + k, column=12, value=f)
+            c.number_format = '#,##0.000' if k == 4 else MONEY; c.border = BOX
+            if k == 4: c.fill = LOCK
+            if k == 5: c.fill = KEY; c.font = Font(bold=True)
+        # linha de unidade fica em K (coluna do rótulo) -> célula de referência é L
+    r_root = start[root["id"]]
+    n_root = max(len(root.get("items", [])), 1)
+    rb = r_root + 2 + n_root
+    name("Custo_BOM", ws_b, unit_cell[root["id"]])
+    name("BOM_Nacionais", ws_b, f"$L${rb}"); name("BOM_Importados", ws_b, f"$L${rb+1}"); name("BOM_Consumo", ws_b, f"$L${rb+2}"); name("BOM_QtdRef", ws_b, f"$L${rb+4}")
+    for col, w in zip("ABCDEFGHIJKLM", [16, 20, 44, 12, 12, 14, 13, 8, 9, 16, 18, 16, 36]):
+        ws_b.column_dimensions[col].width = w
+    ws_b.freeze_panes = "A4"
+
+    # ------------------------------------------------------------------ Premissas
+    ws_p["A1"] = "Preço de Venda / Locação — Simulação"
+    ws_p["A1"].font = Font(bold=True, size=15, color="17365D")
+    ws_p["A2"] = "Amarelo = campo editável para simulação · Cinza = dado herdado do sistema (travado) · Verde = resultado. Altere os campos amarelos e todas as abas recalculam."
+    ws_p["A2"].alignment = Alignment(wrap_text=True, vertical="top"); ws_p.merge_cells("A2:D2"); ws_p.row_dimensions[2].height = 32
+    info = [("Estudo", study_name or "PV-001"), ("Produto", f"{root.get('product_code','')} — {root.get('product_name','')}"),
+            ("Revisão da BOM", root.get("revision", "")), ("Exportado em (Brasília)", exported_at)]
+    for k, (t, v) in enumerate(info):
+        put(ws_p, f"A{4+k}", t, bold=True); put(ws_p, f"B{4+k}", v, fill=LOCK)
+    rows = []  # (rótulo, valor, formato, editável, nome, nota)
+    cfgrows = [
+        ("QUANTIDADE E CUSTO", None, None, None, None, None),
+        ("Quantidade do lote (un.)", qty, "0", True, "Qtd_Lote", "Número inteiro ≥ 1"),
+        ("Cotação USD/BRL", float(root.get("usd_brl") or 0), '"R$" #,##0.0000', True, "Cotacao_USD", "Configuração do sistema na data da exportação"),
+        ("Fator de importação (nacionalização)", float(root.get("import_factor") or 1.8), "0.0000", True, "Fator_Importacao", "Multiplica o FOB em US$ dos itens importados"),
+        ("Mão de obra / montagem (R$ por unidade)", P["assembly"], MONEY, True, "Mao_de_Obra", "Somada ao custo da BOM antes das despesas ADM"),
+        ("Despesas ADM (%)", P["admin"], PCT, True, "Desp_ADM", "Aplicada sobre (BOM + mão de obra)"),
+        ("PREÇO DE VENDA", None, None, None, None, None),
+        ("Modo de cálculo", P["mode"], None, True, "Modo_Venda", "Preço informado: você digita o preço · Margem alvo: o preço é calculado"),
+        ("Preço de venda c/ IPI informado (R$, unitário)", P["gross"], MONEY, True, "Preco_Informado", "Usado quando o modo é Preço informado"),
+        ("Margem alvo (% sobre a receita líquida)", P["target"], PCT, True, "Margem_Alvo", "Usada quando o modo é Margem alvo"),
+        ("Reforma tributária (CBS/IBS)", P["reform"], None, True, "Reforma", "Sim: PIS/COFINS zerados e CBS + IBS aplicados"),
+        ("Ano fiscal de referência", P["year"], None, True, "Ano_Fiscal", "Com reforma, em 2026 o IPI é mantido"),
+        ("Tratamento do IPI na reforma", P["ipi_mode"], None, True, "Modo_IPI", "Alíquota zero só vale com reforma e ano diferente de 2026"),
+        ("IPI (%)", P["ipi"], PCT, True, "Aliq_IPI", ""),
+        ("ICMS (%)", P["icms"], PCT, True, "Aliq_ICMS", ""),
+        ("PIS (%)", P["pis"], PCT, True, "Aliq_PIS", "Ignorado com reforma"),
+        ("COFINS (%)", P["cofins"], PCT, True, "Aliq_COFINS", "Ignorado com reforma"),
+        ("CBS (%)", P["cbs"], PCT, True, "Aliq_CBS", "Só com reforma"),
+        ("IBS estadual (%)", P["ibs_uf"], PCT, True, "Aliq_IBS_UF", "Só com reforma"),
+        ("IBS municipal (%)", P["ibs_mun"], PCT, True, "Aliq_IBS_MUN", "Só com reforma"),
+        ("ISS (%)", P["iss"], PCT, True, "Aliq_ISS", ""),
+        ("LOCAÇÃO", None, None, None, None, None),
+        ("Prazo do contrato (anos)", P["years"], "0.00", True, "Loc_Anos", "Mínimo considerado: 1 ano"),
+        ("Margem da locação (%)", P["r_margin"], PCT, True, "Loc_Margem", ""),
+        ("Impostos da locação (%)", P["r_tax"], PCT, True, "Loc_Impostos", ""),
+        ("Custos recorrentes (%)", P["r_rec"], PCT, True, "Loc_Recorrentes", "Manutenção, logística etc."),
+    ]
+    r = 9
+    dvs = {"Modo_Venda": '"Preço informado,Margem alvo"', "Reforma": '"Não,Sim"', "Ano_Fiscal": '"2026,2027,2029,2033"',
+           "Modo_IPI": '"Pendente de enquadramento,Alíquota zero,Manter alíquota informada"'}
+    for t, v, fmt, ed, nm, note in cfgrows:
+        if v is None:
+            section(ws_p, r, t, 4); r += 1; continue
+        put(ws_p, f"A{r}", t)
+        c = put(ws_p, f"B{r}", v, fmt=fmt, fill=EDIT, bold=True)
+        c.protection = Protection(locked=False)
+        put(ws_p, f"C{r}", note, border=False); ws_p[f"C{r}"].font = Font(italic=True, color="595959")
+        name(nm, ws_p, f"$B${r}")
+        if nm in dvs:
+            dv = DataValidation(type="list", formula1=dvs[nm], allow_blank=False); ws_p.add_data_validation(dv); dv.add(f"B{r}")
+        elif nm == "Qtd_Lote":
+            dv = DataValidation(type="whole", operator="greaterThanOrEqual", formula1="1"); ws_p.add_data_validation(dv); dv.add(f"B{r}")
+        else:
+            dv = DataValidation(type="decimal", operator="greaterThanOrEqual", formula1="0"); ws_p.add_data_validation(dv); dv.add(f"B{r}")
+        r += 1
+    r += 1
+    section(ws_p, r, "RESUMO (recalcula sozinho)", 4); r += 1
+    res = [("Custo da BOM por unidade", "=Custo_BOM", MONEY), ("Custo industrial unitário", "=Custo_Industrial", MONEY),
+           ("Preço de venda c/ IPI (unitário)", "=Preco_Venda", MONEY), ("Preço de venda do lote", "=Preco_Venda*Qtd_Lote", MONEY),
+           ("Lucro unitário", "=Lucro_Unitario", MONEY), ("Margem efetiva (% da receita líquida)", "=Margem_Efetiva", PCT),
+           ("Locação mensal unitária", "=Locacao_Mensal", MONEY), ("Locação mensal do lote", "=Locacao_Mensal*Qtd_Lote", MONEY)]
+    sum_start = r
+    for t, f, fmt in res:
+        put(ws_p, f"A{r}", t, bold=True); put(ws_p, f"B{r}", f, fmt=fmt, fill=KEY, bold=True); r += 1
+    r += 1
+    section(ws_p, r, "CONFERÊNCIA COM A TELA (valores no momento da exportação, com os mesmos dados)", 4); r += 1
+    head(ws_p, r, ["Indicador", "Tela do sistema", "Esta planilha", "Diferença"]); r += 1
+    scr = screen if isinstance(screen, dict) else {}
+    for t, key, f, fmt in [("Custo industrial unitário", "industrial", "=Custo_Industrial", MONEY), ("Preço de venda c/ IPI (unitário)", "gross", "=Preco_Venda", MONEY),
+                           ("Lucro unitário", "profit", "=Lucro_Unitario", MONEY), ("Margem efetiva", "margin", "=Margem_Efetiva", PCT),
+                           ("Locação mensal unitária", "monthly", "=Locacao_Mensal", MONEY)]:
+        put(ws_p, f"A{r}", t)
+        v = scr.get(key)
+        try:
+            v = float(v) / (100 if key == "margin" else 1)
+        except Exception:
+            v = None
+        put(ws_p, f"B{r}", v if v is not None else "—", fmt=fmt, fill=LOCK)
+        put(ws_p, f"C{r}", f, fmt=fmt)
+        put(ws_p, f"D{r}", f'=IF(ISNUMBER(B{r}),C{r}-B{r},"—")', fmt=fmt)
+        r += 1
+    put(ws_p, f"A{r}", "Diferenças de centavos podem aparecer se você alterar qualquer campo amarelo — a coluna “Tela do sistema” é fixa.", border=False)
+    ws_p[f"A{r}"].font = Font(italic=True, color="595959")
+    for col, w in zip("ABCD", [48, 34, 58, 18]): ws_p.column_dimensions[col].width = w
+
+    # ------------------------------------------------------------------ Venda
+    ws_v["A1"] = "Preço de Venda — composição e fórmulas"
+    ws_v["A1"].font = Font(bold=True, size=14, color="17365D")
+    ws_v["A2"] = "Todas as células desta aba são fórmulas. Para simular, altere os campos amarelos da aba Premissas."
+    r = 4
+    section(ws_v, r, "1. Custo industrial", 6); r += 1
+    head(ws_v, r, ["Componente", "", "", "Valor (R$)", "", "Como é calculado"]); r += 1
+    def line(ws, row, label, formula, fmt=MONEY, how="", col="D", bold=False, fill=None, nm=None):
+        put(ws, f"A{row}", label, bold=bold)
+        c = put(ws, f"{col}{row}", formula, fmt=fmt, bold=bold, fill=fill)
+        put(ws, f"F{row}", how, border=False); ws[f"F{row}"].font = Font(italic=True, color="595959")
+        if nm: name(nm, ws, f"${col}${row}")
+        return row + 1
+    r = line(ws_v, r, "Custo da BOM (unitário)", "=Custo_BOM", how="Aba Base de cálculo: total ÷ quantidade de referência")
+    r = line(ws_v, r, "(+) Mão de obra / montagem", "=Mao_de_Obra", how="Premissas")
+    rb0 = r
+    r = line(ws_v, r, "(=) Base industrial", f"=D{r-2}+D{r-1}", how="BOM + mão de obra")
+    r = line(ws_v, r, "(+) Despesas ADM", f"=D{rb0}*Desp_ADM", how="Base industrial × % ADM")
+    r = line(ws_v, r, "(=) Custo industrial unitário", f"=D{rb0}+D{r-1}", how="Base industrial × (1 + % ADM)", bold=True, fill=KEY, nm="Custo_Industrial")
+    r += 1
+    section(ws_v, r, "2. Alíquotas efetivas (conforme o regime escolhido)", 6); r += 1
+    ef = {}
+    for key, label, f, how in [
+        ("ipi", "IPI efetivo", '=IF(AND(Reforma="Sim",TEXT(Ano_Fiscal,"0")<>"2026",Modo_IPI="Alíquota zero"),0,Aliq_IPI)', "Zero só com reforma + ano ≠ 2026 + tratamento “Alíquota zero”"),
+        ("pis", "PIS efetivo", '=IF(Reforma="Sim",0,Aliq_PIS)', "Zerado com reforma"),
+        ("cof", "COFINS efetivo", '=IF(Reforma="Sim",0,Aliq_COFINS)', "Zerado com reforma"),
+        ("cbs", "CBS efetiva", '=IF(Reforma="Sim",Aliq_CBS,0)', "Só com reforma"),
+        ("ibs", "IBS efetivo (estadual + municipal)", '=IF(Reforma="Sim",Aliq_IBS_UF+Aliq_IBS_MUN,0)', "Só com reforma"),
+    ]:
+        put(ws_v, f"A{r}", label); put(ws_v, f"D{r}", f, fmt=PCT); put(ws_v, f"F{r}", how, border=False); ws_v[f"F{r}"].font = Font(italic=True, color="595959")
+        ef[key] = f"$D${r}"; r += 1
+    t_rate = f"({ef['cbs']}+{ef['ibs']})"
+    r += 1
+    section(ws_v, r, "3. Decomposição por R$ 1,00 de preço de venda (coeficientes)", 6); r += 1
+    head(ws_v, r, ["Item", "", "", "Coeficiente", "", "Como é calculado"]); r += 1
+    co = {}
+    def coef(key, label, f, how, fmt=COEF):
+        nonlocal r
+        put(ws_v, f"A{r}", label); put(ws_v, f"D{r}", f, fmt=fmt); put(ws_v, f"F{r}", how, border=False); ws_v[f"F{r}"].font = Font(italic=True, color="595959")
+        co[key] = f"$D${r}"; r += 1
+    coef("x", "Mercadoria antes do ajuste", f"=1/(1+{ef['ipi']}+{t_rate}*MAX(0,1-Aliq_ICMS-Aliq_ISS))", "Resolve o preço por dentro: preço = mercadoria + IPI + CBS + IBS")
+    coef("B", "Base de CBS/IBS", f"=MAX(0,{co['x']}*(1-Aliq_ISS-Aliq_ICMS)/(1+Aliq_ICMS*{t_rate}))", "Mercadoria − ICMS − ISS (CBS/IBS não incidem sobre ICMS)")
+    coef("cbs0", "CBS (antes da escala)", f"={co['B']}*{ef['cbs']}", "Base × alíquota CBS")
+    coef("ibs0", "IBS (antes da escala)", f"={co['B']}*{ef['ibs']}", "Base × alíquota IBS")
+    coef("s", "Fator de escala", f"=1/({co['x']}*(1+{ef['ipi']})+{co['cbs0']}+{co['ibs0']})", "Reconcilia a decomposição ao preço informado")
+    coef("noipi", "Valor sem IPI", f"={co['x']}*{co['s']}", "Mercadoria × escala")
+    coef("ipi", "IPI", f"={co['x']}*{ef['ipi']}*{co['s']}", "Mercadoria × IPI × escala")
+    coef("icmsb", "Base do ICMS", f"=({co['x']}+{co['cbs0']}+{co['ibs0']})*{co['s']}", "Com reforma, o ICMS inclui CBS e IBS")
+    coef("icms", "ICMS", f"={co['icmsb']}*Aliq_ICMS", "Base × ICMS")
+    coef("cbs", "CBS", f"={co['cbs0']}*{co['s']}", "")
+    coef("ibs", "IBS", f"={co['ibs0']}*{co['s']}", "")
+    coef("cbsb", "Base de CBS/IBS (escalada)", f"={co['B']}*{co['s']}", "")
+    coef("pcb", "Base de PIS/COFINS", f"=MAX(0,{co['noipi']}-{co['icms']})", "Valor sem IPI − ICMS")
+    coef("pis", "PIS", f"={co['pcb']}*{ef['pis']}", "")
+    coef("cof", "COFINS", f"={co['pcb']}*{ef['cof']}", "")
+    coef("iss", "ISS", f"={co['noipi']}*Aliq_ISS", "Valor sem IPI × ISS")
+    coef("k", "Receita líquida (por R$ 1,00)", f"=1-{co['ipi']}-{co['icms']}-{co['pis']}-{co['cof']}-{co['cbs']}-{co['ibs']}-{co['iss']}", "Preço − tributos destacados")
+    r += 1
+    section(ws_v, r, "4. Preço de venda adotado", 6); r += 1
+    r = line(ws_v, r, "Modo de cálculo", "=Modo_Venda", fmt=None, how="Premissas")
+    r = line(ws_v, r, "Preço informado (R$)", "=Preco_Informado", how="Premissas")
+    r = line(ws_v, r, "Preço calculado para a margem alvo (R$)", f'=IF(AND({co["k"]}>0,Margem_Alvo<1),Custo_Industrial/({co["k"]}*(1-Margem_Alvo)),0)', how="Custo industrial ÷ (receita líquida por R$1 × (1 − margem alvo))")
+    r = line(ws_v, r, "Preço de venda c/ IPI adotado (unitário)", f'=IF(Modo_Venda="Margem alvo",D{r-1},D{r-2})', how="Conforme o modo de cálculo", bold=True, fill=KEY, nm="Preco_Venda")
+    r += 1
+    section(ws_v, r, "5. Composição do preço de venda", 6); r += 1
+    head(ws_v, r, ["Componente", "Alíquota efetiva", "Base de cálculo (R$)", "Valor unitário (R$)", "Valor do lote (R$)", "Como é calculado"]); r += 1
+    G = "Preco_Venda"
+    comp = [
+        ("Preço de venda c/ IPI", None, None, f"={G}", "Preço adotado (item 4)", True, None),
+        ("(−) IPI", ef["ipi"], f"={G}", f"=-{G}*{co['ipi']}", "Preço × coeficiente de IPI", False, None),
+        ("(=) Valor sem IPI", None, None, f"={G}*{co['noipi']}", "Preço × coeficiente", False, None),
+        ("(−) ICMS", "Aliq_ICMS", f"={G}*{co['icmsb']}", f"=-{G}*{co['icms']}", "Base do ICMS × alíquota", False, None),
+        ("(−) PIS", ef["pis"], f"={G}*{co['pcb']}", f"=-{G}*{co['pis']}", "(Valor sem IPI − ICMS) × PIS", False, None),
+        ("(−) COFINS", ef["cof"], f"={G}*{co['pcb']}", f"=-{G}*{co['cof']}", "(Valor sem IPI − ICMS) × COFINS", False, None),
+        ("(−) CBS", ef["cbs"], f"={G}*{co['cbsb']}", f"=-{G}*{co['cbs']}", "Base CBS/IBS × CBS", False, None),
+        ("(−) IBS", ef["ibs"], f"={G}*{co['cbsb']}", f"=-{G}*{co['ibs']}", "Base CBS/IBS × IBS", False, None),
+        ("(−) ISS", "Aliq_ISS", f"={G}*{co['noipi']}", f"=-{G}*{co['iss']}", "Valor sem IPI × ISS", False, None),
+        ("(=) Receita líquida", None, None, f"={G}*{co['k']}", "Preço − tributos", True, "Receita_Liquida"),
+        ("(−) Custo industrial", None, None, "=-Custo_Industrial", "Item 1", False, None),
+        ("(=) Lucro unitário", None, None, "=Receita_Liquida-Custo_Industrial", "Receita líquida − custo industrial", True, "Lucro_Unitario"),
+        ("Margem efetiva (% da receita líquida)", None, None, "=IF(Receita_Liquida<>0,Lucro_Unitario/Receita_Liquida,0)", "Lucro ÷ receita líquida", True, "Margem_Efetiva"),
+    ]
+    for t, aliq, base, f, how, bold, nm in comp:
+        put(ws_v, f"A{r}", t, bold=bold)
+        put(ws_v, f"B{r}", ("=" + aliq) if aliq else None, fmt=PCT)
+        put(ws_v, f"C{r}", base, fmt=MONEY)
+        ismargin = t.startswith("Margem")
+        put(ws_v, f"D{r}", f, fmt=PCT if ismargin else MONEY, bold=bold, fill=KEY if bold else None)
+        put(ws_v, f"E{r}", None if ismargin else f"=D{r}*Qtd_Lote", fmt=MONEY)
+        put(ws_v, f"F{r}", how, border=False); ws_v[f"F{r}"].font = Font(italic=True, color="595959")
+        if nm: name(nm, ws_v, f"$D${r}")
+        r += 1
+    r += 1
+    put(ws_v, f"A{r}", "Validar alíquotas, créditos e enquadramento fiscal com o contador antes de uso comercial ou fiscal definitivo.", border=False)
+    ws_v[f"A{r}"].font = Font(italic=True, color="C00000")
+    for col, w in zip("ABCDEF", [44, 16, 22, 22, 22, 70]): ws_v.column_dimensions[col].width = w
+
+    # ------------------------------------------------------------------ Locação
+    ws_l["A1"] = "Preço de Locação — composição e fórmulas"
+    ws_l["A1"].font = Font(bold=True, size=14, color="17365D")
+    ws_l["A2"] = "Todas as células desta aba são fórmulas. Para simular, altere os campos amarelos da aba Premissas."
+    r = 4
+    head(ws_l, r, ["Componente", "", "", "Valor", "", "Como é calculado"]); r += 1
+    r = line(ws_l, r, "Custo industrial unitário (R$)", "=Custo_Industrial", how="Mesmo custo industrial da venda (aba Venda, item 1)")
+    r = line(ws_l, r, "Prazo (anos)", "=MAX(1,Loc_Anos)", fmt="0.00", how="Mínimo de 1 ano")
+    r = line(ws_l, r, "Prazo (meses)", f"=D{r-1}*12", fmt="0.##", how="Anos × 12", nm="Loc_Meses")
+    r = line(ws_l, r, "Margem da locação (%)", "=Loc_Margem", fmt=PCT, how="Premissas")
+    r = line(ws_l, r, "Impostos da locação (%)", "=Loc_Impostos", fmt=PCT, how="Premissas")
+    r = line(ws_l, r, "Custos recorrentes (%)", "=Loc_Recorrentes", fmt=PCT, how="Premissas")
+    r = line(ws_l, r, "Divisor = 1 − margem − impostos − recorrentes", f"=1-D{r-3}-D{r-2}-D{r-1}", fmt="0.0000", how="Se ≤ 0 o valor econômico fica zerado (soma dos percentuais ≥ 100%)")
+    r = line(ws_l, r, "Valor econômico unitário (R$)", f"=IF(D{r-1}>0,D5/D{r-1},0)", how="Custo industrial ÷ divisor", bold=True)
+    r = line(ws_l, r, "Locação mensal unitária (R$)", f"=D{r-1}/Loc_Meses", how="Valor econômico ÷ meses", bold=True, fill=KEY, nm="Locacao_Mensal")
+    r = line(ws_l, r, "Locação mensal do lote (R$)", f"=Locacao_Mensal*Qtd_Lote", how="Mensalidade unitária × quantidade do lote", bold=True, fill=KEY)
+    r = line(ws_l, r, "Receita total do contrato (R$)", f"=Locacao_Mensal*Qtd_Lote*Loc_Meses", how="Mensalidade do lote × meses", bold=True, fill=KEY)
+    r += 1
+    section(ws_l, r, "Composição da mensalidade unitária", 6); r += 1
+    c0 = r
+    r = line(ws_l, r, "Custo industrial diluído (R$/mês)", "=Custo_Industrial/Loc_Meses", how="Custo industrial ÷ meses")
+    r = line(ws_l, r, "Margem da locação (R$/mês)", "=Locacao_Mensal*Loc_Margem", how="Mensalidade × margem")
+    r = line(ws_l, r, "Impostos da locação (R$/mês)", "=Locacao_Mensal*Loc_Impostos", how="Mensalidade × impostos")
+    r = line(ws_l, r, "Custos recorrentes (R$/mês)", "=Locacao_Mensal*Loc_Recorrentes", how="Mensalidade × recorrentes")
+    r = line(ws_l, r, "Soma = mensalidade unitária", f"=SUM(D{c0}:D{r-1})", how="Confere com a mensalidade acima (quando o divisor é positivo)", bold=True)
+    for col, w in zip("ABCDEF", [48, 4, 4, 22, 4, 70]): ws_l.column_dimensions[col].width = w
+
+    # proteção (sem senha): somente os campos amarelos ficam editáveis
+    for ws in (ws_p, ws_b, ws_v, ws_l):
+        ws.protection.sheet = True
+        ws.protection.formatColumns = False
+        ws.protection.formatRows = False
+        ws.sheet_view.showGridLines = False
+        ws.page_setup.orientation = "landscape"
+        ws.page_setup.fitToWidth = 1
+        ws.page_setup.fitToHeight = 0
+        ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
+    ws_v.freeze_panes = "A4"
+    wb.active = 0
+    return wb
+
+
+def _v107_collect_subs(root):
+    """Subestruturas (BOMs vinculadas) usadas pela BOM do estudo, sem repetição e sem ciclo."""
+    subs = {}
+    stack = [root]
+    while stack:
+        cur = stack.pop()
+        for it in cur.get("items", []):
+            lid = it.get("linked_bom_id")
+            if it.get("derived_from_bom") and lid and lid != root["id"] and lid not in subs:
+                lb = db.session.get(EngineeringBom, lid)
+                if lb:
+                    sj = _eng_bom_json(lb)
+                    subs[lid] = sj
+                    stack.append(sj)
+    return subs
+
+
+def _v107_send_pricing(b, quantity, study_name, data, screen):
+    root = _eng_bom_json(b)
+    subs = _v107_collect_subs(root)
+    when = datetime.now(V72_TZ).strftime("%d/%m/%Y %H:%M")
+    wb = _v107_build_workbook(root, subs, quantity, (study_name or "PV-001")[:120], data, screen, when)
+    bio = io.BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    safe = re.sub(r"[^A-Za-z0-9_-]+", "_", study_name or "ESTUDO").strip("_") or "ESTUDO"
+    code = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(root.get("product_code") or "BOM"))
+    return send_file(bio, as_attachment=True,
+                     download_name=f"PrecoVenda_Locacao_{safe}_{code}_{root.get('revision','')}.xlsx",
+                     mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
 @app.get("/api/engineering/pricing/<int:sid>/export.xlsx")
 @login_required
 def engineering_pricing_export_api(sid):
-    if not (_has_access("engineering.pricing.view") or _has_access("engineering.bom.view")):abort(403)
-    st=db.session.get(EngineeringPricingStudy,sid)
-    if not st:abort(404)
-    b=db.session.get(EngineeringBom,st.bom_id)
-    if not b:abort(404)
-    d=_eng_bom_json(b)
-    try:data=json.loads(st.data_json or "{}")
-    except:data={}
-    qty=max(float(st.quantity or 1),.000001);assembly=max(float(data.get("assembly") or 0),0);admin=max(float(data.get("admin_pct") or 0),0)/100
-    industrial=(float(d.get("unit_cost") or 0)+assembly)*(1+admin)
-    sale=data.get("sale") or {};gross=max(float(sale.get("gross") or 0),0);ipi=max(float(sale.get("ipi") or 0),0)/100;icms=max(float(sale.get("icms") or 0),0)/100;reform=str(sale.get("tax_reform") or "no").lower()=="yes";pis=0 if reform else max(float(sale.get("pis") or 0),0)/100;cof=0 if reform else max(float(sale.get("cofins") or 0),0)/100;cbs=max(float(sale.get("cbs") or 0),0)/100 if reform else 0;iss=max(float(sale.get("iss") or 0),0)/100
-    no_ipi=gross/(1+ipi) if 1+ipi else gross;ipi_v=gross-no_ipi;icms_v=no_ipi*icms;pis_cof_base=max(0,no_ipi-icms_v);pis_v=pis_cof_base*pis;cof_v=pis_cof_base*cof;iss_v=no_ipi*iss;cbs_base=no_ipi if reform else 0;cbs_v=cbs_base*cbs;final_gross=gross+cbs_v if reform else gross;net=no_ipi-icms_v-pis_v-cof_v-iss_v;profit=net-industrial;margin=(profit/net*100) if net else 0
-    rent=data.get("rental") or {};years=max(float(rent.get("years") or 1),1);rm=max(float(rent.get("margin") or 0),0)/100;rt=max(float(rent.get("tax") or 0),0)/100;rr=max(float(rent.get("recurring") or 0),0)/100;den=1-rm-rt-rr;economic=industrial/den if den>0 else 0;months=years*12;monthly=economic/months if months else 0
-    wb=Workbook()
-    ws=wb.active;ws.title="Estrutura-BOM"
-    ws.append(["Produto",d["product_code"],d["product_name"],"NCM Produto",d.get("product_ncm",""),"Revisão",d["revision"],"Quantidade estudo",qty])
-    ws.append(["Nacional",d["national_cost"],"Importado nacionalizado",d["imported_cost"],"Consumo",d.get("consumption_cost",0),"Total BOM",d["total_cost"],"Custo unitário",d["unit_cost"]]);ws.append([])
-    ws.append(["Nível","Item pai","Tipo","Código","Revisão","MPN","NCM Item","Descrição / Estrutura","Qtd.","Grupo","Origem","Fabricante","PN Fabricante / MPN","Lead Time","Moeda","FOB Unit. US$","Custo Unit. R$","Total R$","Contabiliza no total"])
-    for r in _eng_bom_flat_rows(b):
-        ws.append([f"N{r['level']}",r['parent_code'],r['record_type'],r['code'],r['revision'],r['mpn'],r['ncm'],r['description'],r['quantity'],r['group'],r['origin'],r['manufacturer'],r['supplier_pn'],r['lead'],r['currency'],r['fob'],r['unit_brl'],r['total_brl'],r['counts']])
-        ws.cell(ws.max_row,8).alignment=Alignment(indent=min(int(r['level']),15),vertical="center")
-    sv=wb.create_sheet("Preço de Venda");sv.append(["Estudo",st.study_name,"Produto",d["product_code"],"Revisão",d["revision"],"Quantidade",qty]);sv.append([]);sv.append(["Índice / Componente","Parâmetro aplicado","Base de cálculo","Valor calculado"])
-    sv.append(["IPI",ipi*100,gross,ipi_v]);sv.append(["ICMS",icms*100,no_ipi,icms_v]);sv.append(["PIS",pis*100,pis_cof_base,pis_v]);sv.append(["COFINS",cof*100,pis_cof_base,cof_v]);
-    if reform:sv.append(["CBS (por fora, sem crédito)",cbs*100,cbs_base,cbs_v])
-    sv.append(["ISS",iss*100,no_ipi,iss_v]);sv.append(["Despesas ADM",admin*100,float(d.get("unit_cost") or 0)+assembly,industrial-(float(d.get("unit_cost") or 0)+assembly)]);sv.append(["Fator importação",d.get("import_factor",1.8),d.get("imported_cost",0),d.get("imported_cost",0)]);sv.append(["Cotação USD/BRL",d.get("usd_brl",0),"Referência da configuração",d.get("usd_brl",0)]);sv.append([]);sv.append(["Memória / Resultado","Valor","Quantidade", "Total lote"])
-    for row in [("Nacionais (BOM)",d["national_cost"]/(d["quantity_reference"] or 1)),("Importados nacionalizados",d["imported_cost"]/(d["quantity_reference"] or 1)),("Consumo",d.get("consumption_cost",0)/(d["quantity_reference"] or 1)),("Montagem / mão de obra",assembly),("Despesas ADM (%)",admin*100),("Fator importação",d.get("import_factor",1.8)),("USD / BRL",d.get("usd_brl",0)),("Custo industrial unitário",industrial),("Venda final c/ IPI + CBS" if reform else "Venda c/ IPI",final_gross),("IPI",ipi_v),("Valor s/ IPI",no_ipi),("ICMS",icms_v),("PIS",pis_v),("COFINS",cof_v),("CBS",cbs_v),("ISS",iss_v),("Venda líquida",net),("Lucro unitário",profit),("Margem efetiva (%)",margin),("Venda total do lote",final_gross*qty)]:sv.append([row[0],row[1],qty,row[1]*qty if isinstance(row[1],(int,float)) and row[0] not in ("Despesas ADM (%)","Fator importação","USD / BRL","Margem efetiva (%)") else ""])
-    rv=wb.create_sheet("Preço de Locação");rv.append(["Estudo",st.study_name,"Produto",d["product_code"],"Revisão",d["revision"],"Quantidade",qty]);rv.append([]);rv.append(["Componente","Valor"])
-    for row in [("Custo industrial unitário",industrial),("Prazo (anos)",years),("Prazo (meses)",months),("Margem locação (%)",rm*100),("Impostos locação (%)",rt*100),("Custos recorrentes (%)",rr*100),("Valor econômico unitário",economic),("Locação mensal unitária",monthly),("Locação mensal do lote",monthly*qty),("Receita total do contrato",monthly*qty*months)]:rv.append(row)
-    for sh in wb.worksheets:
-        for cell in sh[1]:cell.font=Font(bold=True,color="FFFFFF");cell.fill=PatternFill("solid",fgColor="17365D")
-        if sh.max_row>=3:
-            for cell in sh[3]:cell.font=Font(bold=True,color="FFFFFF");cell.fill=PatternFill("solid",fgColor="17365D")
-        for i in range(1,sh.max_column+1):sh.column_dimensions[get_column_letter(i)].width=32 if i in (1,4) else 20
-    bio=io.BytesIO();wb.save(bio);bio.seek(0)
-    safe=re.sub(r'[^A-Za-z0-9_-]+','_',st.study_name or 'ESTUDO')
-    return send_file(bio,as_attachment=True,download_name=f"Engenharia_{safe}_{d['product_code']}_{d['revision']}.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    """V107: estudo salvo -> planilha com fórmulas e premissas editáveis."""
+    if not (_has_access("engineering.pricing.view") or _has_access("engineering.bom.view")):
+        abort(403)
+    st = db.session.get(EngineeringPricingStudy, sid)
+    if not st:
+        abort(404)
+    b = db.session.get(EngineeringBom, st.bom_id)
+    if not b:
+        abort(404)
+    try:
+        data = json.loads(st.data_json or "{}")
+    except Exception:
+        data = {}
+    return _v107_send_pricing(b, st.quantity, st.study_name, data, None)
+
+
+@app.post("/api/engineering/pricing/export.xlsx")
+@login_required
+def v107_pricing_export_current():
+    """V107: exporta o estudo exatamente como está na tela (sem precisar salvar antes)."""
+    if not (_has_access("engineering.pricing.view") or _has_access("engineering.bom.view")):
+        return jsonify({"ok": False, "error": "Sem permissão."}), 403
+    p = request.get_json(silent=True) or {}
+    try:
+        bid = int(p.get("bom_id") or 0)
+    except Exception:
+        bid = 0
+    b = db.session.get(EngineeringBom, bid) if bid else None
+    if not b:
+        return jsonify({"ok": False, "error": "Selecione uma estrutura (BOM)."}), 404
+    try:
+        return _v107_send_pricing(b, p.get("quantity"), p.get("study_name"), p.get("data"), p.get("screen"))
+    except Exception:
+        app.logger.exception("V107: falha ao gerar planilha de preço")
+        db.session.rollback()
+        return jsonify({"ok": False, "error": "Não foi possível gerar a planilha."}), 500
 
 
 # -----------------------------------------------------------------------------
