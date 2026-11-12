@@ -23,3 +23,33 @@
   new MutationObserver(function(){if(dlg.open) setTimeout(sync,30); else unlock();}).observe(dlg,{attributes:true,attributeFilter:['open']});
   dlg.addEventListener('close',unlock);
 })();
+
+/* V88.0 REV9 — Colaborador: digitar ou escolher na lista de quem está marcado "Precisa de APT?" */
+(function(){
+  var sel=document.getElementById('aeUser'); if(!sel) return;
+  var people=[].slice.call(sel.options).filter(function(o){return o.value}).map(function(o){return {id:o.value,name:o.dataset.name||'',company:o.dataset.company||''}});
+  if(!people.length) return;
+  function dl(id){var d=document.createElement('datalist');d.id=id;people.forEach(function(p){var o=document.createElement('option');o.value=p.name;o.label=p.company?(p.name+' · '+p.company):p.name;d.appendChild(o)});document.body.appendChild(d);return d}
+  dl('aptPeopleDL');
+  var q=document.querySelector('#aptFilters input[name="q"]');
+  if(q){q.setAttribute('list','aptPeopleDL');q.setAttribute('autocomplete','off');q.placeholder='Colaborador (digite ou escolha), APT, empresa ou linha'}
+  var nm=document.getElementById('aeName'), dlg=document.getElementById('aptEditDialog');
+  if(!nm||!dlg) return;
+  var hint=document.createElement('div');hint.style.cssText='font-size:12px;color:#64748b;margin-top:2px;display:none';
+  hint.textContent='Digite ou escolha um colaborador marcado “Precisa de APT?” no Cadastro de Usuários.';
+  nm.parentNode.appendChild(hint);
+  function mode(){
+    var isNew=!((document.getElementById('aeId')||{}).value);
+    if(isNew){nm.readOnly=false;nm.setAttribute('list','aptPeopleDL');nm.setAttribute('autocomplete','off');nm.placeholder='Digite ou escolha o colaborador';hint.style.display='block'}
+    else{nm.readOnly=true;nm.removeAttribute('list');hint.style.display='none'}
+  }
+  function norm(v){return (v||'').toString().trim().toLowerCase()}
+  nm.addEventListener('input',function(){
+    if(nm.readOnly) return;
+    var v=norm(nm.value), hit=people.filter(function(p){return norm(p.name)===v});
+    if(hit.length===1 && sel.value!==hit[0].id){sel.value=hit[0].id;sel.dispatchEvent(new Event('change',{bubbles:true}))}
+    else if(!hit.length && sel.value){sel.value='';sel.dispatchEvent(new Event('change',{bubbles:true}));var c=document.getElementById('aeCompany');if(c) c.value=''}
+  });
+  new MutationObserver(function(){if(dlg.open) setTimeout(mode,40)}).observe(dlg,{attributes:true,attributeFilter:['open']});
+  sel.addEventListener('change',function(){setTimeout(function(){if(!nm.readOnly){var p=people.filter(function(x){return x.id===sel.value})[0];if(p) nm.value=p.name}},20)});
+})();
