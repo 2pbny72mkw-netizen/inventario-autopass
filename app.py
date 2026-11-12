@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V88.0 REV10"
+APP_RELEASE = "V88.0 REV11"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -33648,3 +33648,7 @@ install_mobile_menu_fix(app)
 install_rev5_ui(app, db, User, SystemProfile)
 from v88_apt_flag import install_apt_flag
 install_apt_flag(app, db, User)
+from v100_pm import install_pm  # V88.0 REV11 — Visão do Gerente de Projeto (Planejamento semanal)
+install_pm(app, db, text, {"gate": _v96_gate, "ensure": _v96_ensure, "event": _v96_event, "in_scope": _v99_in_scope, "areas_of": _v99_areas_of,
+                           "clean_date": _v96_clean_date, "login_required": login_required, "access": _v96_access, "release": lambda: APP_RELEASE,
+                           "scope": _v99_scope, "flags": _v85_flags, "full_gate": _v99_full_gate})
