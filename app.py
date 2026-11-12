@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V88.0 REV2"
+APP_RELEASE = "V88.0 REV3"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -26584,12 +26584,16 @@ def _portal_stored_bytes(stored):
     if stored.startswith('r2__'): return _r2_get_bytes(stored[4:])
     return (UPLOAD_DIR/stored).read_bytes()
 
-def _portal_store_upload(f,prefix,allowed_images_only=False):
+def _portal_store_upload(f,prefix,allowed_images_only=False,xml_only=False):
     if not f or not f.filename: return None,None
     mime=(f.mimetype or '').lower()
+    if xml_only:
+        if not (f.filename or '').lower().endswith('.xml'): raise ValueError('O arquivo XML deve ter a extensão .xml.')
+        mime='application/xml'
     if allowed_images_only and not mime.startswith('image/'): raise ValueError('A evidência deve ser uma imagem.')
-    if not allowed_images_only and not (mime=='application/pdf' or mime.startswith('image/')): raise ValueError('Documento deve ser PDF, JPG ou PNG.')
-    raw=f.read(); maxb=5*1024*1024 if allowed_images_only else 12*1024*1024
+    if not allowed_images_only and not xml_only and not (mime=='application/pdf' or mime.startswith('image/')): raise ValueError('Documento deve ser PDF, JPG ou PNG.')
+    raw=f.read(); maxb=5*1024*1024 if (allowed_images_only or xml_only) else 12*1024*1024
+    if xml_only and not raw.lstrip(b'\xef\xbb\xbf \t\r\n').startswith(b'<'): raise ValueError('O arquivo enviado não parece ser um XML válido.')
     if len(raw)>maxb: raise ValueError('Arquivo excede o tamanho permitido.')
     safe=secure_filename(f.filename) or ('foto.jpg' if allowed_images_only else 'documento')
     key=f"portal-cliente/{datetime.utcnow().strftime('%Y/%m')}/{prefix}-{uuid.uuid4().hex}-{safe}"
@@ -27118,9 +27122,15 @@ def portal_appointments_list():
     cnt=dict(db.session.query(CustomerAppointmentEquipment.appointment_id,func.count(CustomerAppointmentEquipment.id)).filter(CustomerAppointmentEquipment.appointment_id.in_(ids)).group_by(CustomerAppointmentEquipment.appointment_id).all())
     rec=dict(db.session.query(CustomerAppointmentEquipment.appointment_id,func.count(CustomerAppointmentEquipment.id)).filter(CustomerAppointmentEquipment.appointment_id.in_(ids),CustomerAppointmentEquipment.received.is_(True)).group_by(CustomerAppointmentEquipment.appointment_id).all())
     ret=dict(db.session.query(PortalEquipmentEvent.appointment_id,func.count(func.distinct(PortalEquipmentEvent.equipment_id))).filter(PortalEquipmentEvent.appointment_id.in_(ids),PortalEquipmentEvent.event_type=='DEVOLVIDO').group_by(PortalEquipmentEvent.appointment_id).all())
+    try:
+        _v105_ensure_invoices(); _v112_ensure()
+        nf_extra={r[0] for r in db.session.query(V105Invoice.appointment_id).filter(V105Invoice.appointment_id.in_(ids),V105Invoice.file.isnot(None)).distinct().all()}
+        xml_has={r[0] for r in db.session.query(V112Doc.appointment_id).filter(V112Doc.appointment_id.in_(ids),V112Doc.kind=='XML',V112Doc.file.isnot(None)).distinct().all()}
+    except Exception:
+        db.session.rollback(); nf_extra=set(); xml_has=set()
     for a in rows:
         d=a.programmed_date or a.expected_date or a.scheduled_date
-        out.append({'id':a.id,'code':a.code,'company':a.customer_company,'responsible':a.responsible_name,'scheduled_date':d.isoformat() if d else '','request_date':(a.request_date or a.created_at.date()).isoformat(),'expected_date':a.expected_date.isoformat() if a.expected_date else '','programmed_date':a.programmed_date.isoformat() if a.programmed_date else '','alternate':bool(a.alternate_date_requested),'alternate_reason':a.alternate_reason or '','status':a.status,'created_at':a.created_at.isoformat(),'count':int(cnt.get(a.id,0)),'received':int(rec.get(a.id,0)),'returned':int(ret.get(a.id,0)),'email_status':a.email_status or ''})
+        out.append({'nf_ok':bool(a.invoice_file) or a.id in nf_extra,'xml_ok':a.id in xml_has,'id':a.id,'code':a.code,'company':a.customer_company,'responsible':a.responsible_name,'scheduled_date':d.isoformat() if d else '','request_date':(a.request_date or a.created_at.date()).isoformat(),'expected_date':a.expected_date.isoformat() if a.expected_date else '','programmed_date':a.programmed_date.isoformat() if a.programmed_date else '','alternate':bool(a.alternate_date_requested),'alternate_reason':a.alternate_reason or '','status':a.status,'created_at':a.created_at.isoformat(),'count':int(cnt.get(a.id,0)),'received':int(rec.get(a.id,0)),'returned':int(ret.get(a.id,0)),'email_status':a.email_status or ''})
     return jsonify({'ok':True,'rows':out,'internal':_portal_internal(),'driver':_portal_driver_only()})
 
 @app.post('/api/portal/appointments')
@@ -27175,6 +27185,38 @@ def _v105_invoices(a):
         out.append({'n':i,'number':x.number or '','name':x.original_name or '','has_file':bool(x.file)})
     return out
 
+class V112Doc(db.Model):
+    """V88.0 REV3 — XML da NF do agendamento (vários por agendamento). As NF em PDF/imagem seguem em invoice_* e v105_appointment_invoices."""
+    __tablename__='v112_appointment_docs'
+    id=db.Column(db.Integer,primary_key=True)
+    appointment_id=db.Column(db.Integer,nullable=False,index=True)
+    kind=db.Column(db.String(8),nullable=False,default='XML')
+    file=db.Column(db.String(600))
+    original_name=db.Column(db.String(255))
+    created_by=db.Column(db.Integer)
+    created_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow)
+
+_V112_STATE={"ready":False}
+def _v112_ensure():
+    if _V112_STATE["ready"]: return
+    try:
+        db.metadata.create_all(bind=db.engine,tables=[V112Doc.__table__],checkfirst=True)
+        _V112_STATE["ready"]=True
+    except Exception:
+        app.logger.exception('REV3: não foi possível garantir a tabela de XML dos agendamentos')
+
+def _v112_xmls(a):
+    try:
+        _v112_ensure()
+        return V112Doc.query.filter_by(appointment_id=a.id,kind='XML').order_by(V112Doc.id).all()
+    except Exception:
+        db.session.rollback(); return []
+
+def _v112_docs_state(a):
+    """Resumo para o front: quantas NF (com arquivo) e XML o agendamento já tem."""
+    nf=len([x for x in _v105_invoices(a) if x.get('has_file')]); xml=len(_v112_xmls(a))
+    return {'nf':nf,'xml':xml,'falta_nf':nf==0,'falta_xml':xml==0}
+
 # V87.6 REV104 — equipamentos já agendados pela empresa, para seleção rápida no novo agendamento.
 _V104_OPEN_STATUSES=('ENVIADO','NA_PROGRAMACAO','AGENDADO','RECEBIMENTO_PARCIAL','RECEBIDO')
 
@@ -27228,6 +27270,16 @@ def portal_appointment_attachments(aid):
                 f2=n2=None
                 if fl: f2,n2=_portal_store_upload(fl,f'NF-{a.code}-{k}')
                 db.session.add(V105Invoice(appointment_id=a.id,number=num or None,file=f2,original_name=n2))
+        # REV3: XML da NF (xml_count / xml_1…xml_n); opcional no agendamento
+        _v112_ensure()
+        V112Doc.query.filter_by(appointment_id=a.id,kind='XML').delete()
+        try:nxml=max(0,min(int(request.form.get('xml_count') or 0),10))
+        except ValueError:nxml=0
+        for i in range(1,nxml+1):
+            fl=request.files.get(f'xml_{i}')
+            if fl and fl.filename:
+                sf,sn=_portal_store_upload(fl,f'XML-{a.code}-{i}',xml_only=True)
+                db.session.add(V112Doc(appointment_id=a.id,kind='XML',file=sf,original_name=sn,created_by=session.get('user_id')))
         items=CustomerAppointmentEquipment.query.filter_by(appointment_id=a.id).order_by(CustomerAppointmentEquipment.item_no).all()
         for x in items:
             f=request.files.get(f'photo_{x.item_no}')
@@ -27235,6 +27287,49 @@ def portal_appointment_attachments(aid):
         db.session.commit(); return jsonify({'ok':True})
     except ValueError as exc:
         db.session.rollback(); return jsonify({'ok':False,'error':str(exc)}),400
+
+@app.post('/api/portal/appointments/<int:aid>/documents')
+@login_required
+def v112_appointment_documents(aid):
+    """REV3 — envio posterior de NF (PDF/imagem) ou XML a um agendamento já feito."""
+    a=db.session.get(CustomerAppointment,aid)
+    if not a or not _portal_can_see(a): abort(404)
+    if a.status in ('RASCUNHO','CANCELADO','DEVOLVIDO','CONCLUIDO'):
+        return jsonify({'ok':False,'error':'Este agendamento não aceita novos anexos.'}),409
+    kind=(request.form.get('kind') or '').strip().upper()
+    if kind not in ('NF','XML'): return jsonify({'ok':False,'error':'Tipo de anexo inválido.'}),400
+    files=[f for f in request.files.getlist('files') if f and f.filename]
+    if not files: return jsonify({'ok':False,'error':'Selecione ao menos um arquivo.'}),400
+    try:
+        _v105_ensure_invoices(); _v112_ensure()
+        if kind=='NF':
+            cur=len(_v105_invoices(a))
+            if cur+len(files)>10: return jsonify({'ok':False,'error':'Limite de 10 notas fiscais por agendamento.'}),400
+            for k,f in enumerate(files,1):
+                sf,sn=_portal_store_upload(f,f'NF-{a.code}-{cur+k}')
+                if not a.invoice_file: a.invoice_file,a.invoice_original_name=sf,sn
+                else: db.session.add(V105Invoice(appointment_id=a.id,number=None,file=sf,original_name=sn))
+        else:
+            cur=len(_v112_xmls(a))
+            if cur+len(files)>10: return jsonify({'ok':False,'error':'Limite de 10 arquivos XML por agendamento.'}),400
+            for k,f in enumerate(files,1):
+                sf,sn=_portal_store_upload(f,f'XML-{a.code}-{cur+k}',xml_only=True)
+                db.session.add(V112Doc(appointment_id=a.id,kind='XML',file=sf,original_name=sn,created_by=session.get('user_id')))
+        db.session.commit()
+    except ValueError as exc:
+        db.session.rollback(); return jsonify({'ok':False,'error':str(exc)}),400
+    app.logger.info('REV3: %s anexo(s) %s no agendamento %s por usuário %s',len(files),kind,a.code,session.get('user_id'))
+    return jsonify({'ok':True,'docs':_v112_docs_state(a)})
+
+@app.get('/api/portal/appointments/<int:aid>/xml/<int:n>')
+@login_required
+def v112_appointment_xml(aid,n):
+    a=db.session.get(CustomerAppointment,aid)
+    if not a or not _portal_can_see(a): abort(404)
+    xs=_v112_xmls(a)
+    if n<1 or n>len(xs) or not xs[n-1].file: abort(404)
+    raw=_portal_stored_bytes(xs[n-1].file); name=xs[n-1].original_name or f'{a.code}-nf-{n}.xml'
+    return Response(raw,mimetype='application/xml',headers={'Content-Disposition':f'attachment; filename="{secure_filename(name) or "nf.xml"}"','X-Content-Type-Options':'nosniff'})
 
 @app.get('/api/portal/equipments/<int:eid>/photo')
 @login_required
@@ -27291,7 +27386,7 @@ def portal_appointment_detail(aid):
     for ev in download_events:
         latest_download.setdefault(ev.entity_id,ev)
     portal_events=PortalEquipmentEvent.query.filter_by(appointment_id=a.id).order_by(PortalEquipmentEvent.created_at.desc()).all()
-    return jsonify({'ok':True,'events':[{'type':e.event_type,'batch':e.batch_code,'equipment_id':e.equipment_id,'at':e.created_at.isoformat(),'actor':e.actor_name or ''} for e in portal_events],'appointment':{'id':a.id,'code':a.code,'company':a.customer_company,'responsible':a.responsible_name,'date':(a.programmed_date or a.expected_date or a.scheduled_date).isoformat() if (a.programmed_date or a.expected_date or a.scheduled_date) else '', 'request_date':(a.request_date or a.created_at.date()).isoformat(),'expected_date':a.expected_date.isoformat() if a.expected_date else '', 'programmed_date':a.programmed_date.isoformat() if a.programmed_date else '', 'alternate':bool(a.alternate_date_requested),'alternate_reason':a.alternate_reason or '', 'notes':a.notes or '', 'status':a.status,'email_status':a.email_status or '', 'invoice_number':getattr(a,'invoice_number',None) or '', 'invoice_name':getattr(a,'invoice_original_name',None) or '', 'has_invoice':bool(getattr(a,'invoice_file',None)),'invoices':_v105_invoices(a)},'items':[{'id':x.id,'item_no':x.item_no,'protocol':_portal_equipment_code(a,x),'serial':x.serial_number,'equipment':x.equipment or '', 'version':x.version or '', 'eod':x.eod or '', 'defect':x.defect,'notes':x.notes or '', 'has_photo':bool(x.photo_file), 'photo_url':(f'/api/portal/equipments/{x.id}/photo' if x.photo_file else ''), 'received':x.received,'returned':bool(PortalEquipmentEvent.query.filter_by(equipment_id=x.id,event_type='DEVOLVIDO').first()),'pdf_downloaded':str(x.id) in latest_download,'pdf_downloaded_at':latest_download[str(x.id)].created_at.replace(tzinfo=ZoneInfo('UTC')).astimezone(ZoneInfo('America/Sao_Paulo')).strftime('%d/%m/%Y %H:%M') if str(x.id) in latest_download else ''} for x in items]})
+    return jsonify({'ok':True,'events':[{'type':e.event_type,'batch':e.batch_code,'equipment_id':e.equipment_id,'at':e.created_at.isoformat(),'actor':e.actor_name or ''} for e in portal_events],'appointment':{'id':a.id,'code':a.code,'company':a.customer_company,'responsible':a.responsible_name,'date':(a.programmed_date or a.expected_date or a.scheduled_date).isoformat() if (a.programmed_date or a.expected_date or a.scheduled_date) else '', 'request_date':(a.request_date or a.created_at.date()).isoformat(),'expected_date':a.expected_date.isoformat() if a.expected_date else '', 'programmed_date':a.programmed_date.isoformat() if a.programmed_date else '', 'alternate':bool(a.alternate_date_requested),'alternate_reason':a.alternate_reason or '', 'notes':a.notes or '', 'status':a.status,'email_status':a.email_status or '', 'invoice_number':getattr(a,'invoice_number',None) or '', 'invoice_name':getattr(a,'invoice_original_name',None) or '', 'has_invoice':bool(getattr(a,'invoice_file',None)),'invoices':_v105_invoices(a),'xmls':[{'n':i,'name':x.original_name or f'nf-{i}.xml'} for i,x in enumerate(_v112_xmls(a),1)],'docs':_v112_docs_state(a)},'items':[{'id':x.id,'item_no':x.item_no,'protocol':_portal_equipment_code(a,x),'serial':x.serial_number,'equipment':x.equipment or '', 'version':x.version or '', 'eod':x.eod or '', 'defect':x.defect,'notes':x.notes or '', 'has_photo':bool(x.photo_file), 'photo_url':(f'/api/portal/equipments/{x.id}/photo' if x.photo_file else ''), 'received':x.received,'returned':bool(PortalEquipmentEvent.query.filter_by(equipment_id=x.id,event_type='DEVOLVIDO').first()),'pdf_downloaded':str(x.id) in latest_download,'pdf_downloaded_at':latest_download[str(x.id)].created_at.replace(tzinfo=ZoneInfo('UTC')).astimezone(ZoneInfo('America/Sao_Paulo')).strftime('%d/%m/%Y %H:%M') if str(x.id) in latest_download else ''} for x in items]})
 
 @app.get('/api/portal/appointments/<int:aid>/pdf')
 @login_required
@@ -27346,6 +27441,10 @@ def portal_appointment_pdfs_zip(aid):
             if ex.file:
                 try: zf.writestr(f'Documento_{k}_'+secure_filename(ex.original_name or 'nota-fiscal'),_portal_stored_bytes(ex.file))
                 except Exception: app.logger.exception('Falha ao incluir NF adicional no ZIP %s',a.code)
+        for k,xd in enumerate(_v112_xmls(a),1):
+            if xd.file:
+                try: zf.writestr(f'XML_{k}_'+secure_filename(xd.original_name or 'nota-fiscal.xml'),_portal_stored_bytes(xd.file))
+                except Exception: app.logger.exception('Falha ao incluir XML no ZIP %s',a.code)
         for x in items:
             zf.writestr(_portal_equipment_pdf_filename(a,x),_portal_pdf(a,x))
             _portal_record_pdf_download(a,x,'PORTAL_EQUIPMENT_PDF_DOWNLOADED_ALL')
