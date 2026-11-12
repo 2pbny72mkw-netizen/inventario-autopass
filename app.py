@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V88.0 REV4"
+APP_RELEASE = "V88.0 REV5"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -33586,6 +33586,7 @@ def v872_engineering_dropdown(response):
 # V87.4 POS Metrô — módulo incremental
 from v874_pos_metro import install_pos_metro
 install_pos_metro(app, db, _has_access)
-from v88_pos_delete import install_pos_delete, install_mobile_menu_fix
+from v88_pos_delete import install_pos_delete, install_mobile_menu_fix, install_rev5_ui
 install_pos_delete(app, db, _has_access)
 install_mobile_menu_fix(app)
+install_rev5_ui(app, db, User, SystemProfile)

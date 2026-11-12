@@ -97,3 +97,35 @@ def install_mobile_menu_fix(app):
         except Exception:
             pass
         return resp
+
+
+def install_rev5_ui(app, db, User, SystemProfile):
+    """V88.0 REV5 — injeta (1) herança de datas na APT e (2) nome do perfil em Usuários, sem alterar templates."""
+    import json as _json
+
+    @app.after_request
+    def v88_rev5_inject(resp):
+        try:
+            if request.method != 'GET' or resp.status_code != 200 or not (resp.mimetype or '').startswith('text/html') or not session.get('user_id'):
+                return resp
+            path = request.path
+            if path == '/rh/apt':
+                html = resp.get_data(as_text=True)
+                if 'apt_herdar_v88.js' in html or 'aptEditDialog' not in html or '</body>' not in html:
+                    return resp
+                resp.set_data(html.replace('</body>', '<script defer src="/static/apt_herdar_v88.js?v=88.5"></script></body>', 1))
+            elif path == '/usuarios':
+                html = resp.get_data(as_text=True)
+                if 'users_profile_v88.js' in html or 'userDataRow' not in html or '</body>' not in html:
+                    return resp
+                rows = (db.session.query(User.id, SystemProfile.id, SystemProfile.name)
+                        .join(SystemProfile, SystemProfile.id == User.system_profile_id)
+                        .filter(User.archived_at.is_(None)).all())
+                data = {str(u): {'id': pid, 'name': name or ''} for u, pid, name in rows}
+                payload = _json.dumps(data, ensure_ascii=False).replace('<', '\\u003c')
+                tag = ('<script>window.__V88_USER_PROFILES=' + payload + ';</script>'
+                       '<script defer src="/static/users_profile_v88.js?v=88.5"></script>')
+                resp.set_data(html.replace('</body>', tag + '</body>', 1))
+        except Exception:
+            pass
+        return resp
