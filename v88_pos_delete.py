@@ -113,7 +113,7 @@ def install_rev5_ui(app, db, User, SystemProfile):
                 html = resp.get_data(as_text=True)
                 if 'apt_herdar_v88.js' in html or 'aptEditDialog' not in html or '</body>' not in html:
                     return resp
-                resp.set_data(html.replace('</body>', '<script defer src="/static/apt_herdar_v88.js?v=88.5"></script></body>', 1))
+                resp.set_data(html.replace('</body>', '<script defer src="/static/apt_herdar_v88.js?v=88.9"></script></body>', 1))
             elif path == '/usuarios':
                 html = resp.get_data(as_text=True)
                 if 'users_profile_v88.js' in html or 'userDataRow' not in html or '</body>' not in html:

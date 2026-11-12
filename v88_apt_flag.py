@@ -4,13 +4,27 @@ import re
 from flask import request, session
 
 
+_CSS = ('<style>.needsAptBox{grid-column:1/-1;border:1px solid #d7e1ee;border-left:4px solid #1d4ed8;border-radius:12px;padding:12px 14px;background:#f8fbff}'
+        '.needsAptBox label.naRow{display:flex!important;flex-direction:row!important;align-items:center!important;gap:12px!important;margin:0!important;cursor:pointer;width:100%}'
+        '.needsAptBox .naSw{position:relative;flex:none;width:46px;height:26px;border-radius:999px;background:#cbd5e1;transition:background .15s}'
+        '.needsAptBox .naSw:after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .15s}'
+        '.needsAptBox input.naCk{position:absolute!important;opacity:0!important;width:1px!important;height:1px!important;margin:0!important;padding:0!important;border:0!important}'
+        '.needsAptBox input.naCk:checked+.naSw{background:#16a34a}.needsAptBox input.naCk:checked+.naSw:after{left:23px}'
+        '.needsAptBox input.naCk:focus-visible+.naSw{outline:3px solid #93c5fd;outline-offset:2px}'
+        '.needsAptBox .naTx{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}.needsAptBox .naTx b{font-size:14px;color:#0f172a}'
+        '.needsAptBox .naTx small{font-size:12px;color:#64748b;line-height:1.35}'
+        '.needsAptBox .naSt{flex:none;font-weight:800;font-size:12px;padding:4px 12px;border-radius:999px;background:#e2e8f0;color:#475569}'
+        '.needsAptBox input.naCk:checked~.naSt{background:#dcfce7;color:#166534}'
+        '.needsAptBox .naSt:before{content:"N — Não"}.needsAptBox input.naCk:checked~.naSt:before{content:"S — Sim"}</style>')
+
+
 def _box(checked):
-    return ('<div class="full needsAptBox" style="border:1px solid #d7e1ee;border-radius:10px;padding:10px 12px;background:#f8fbff">'
-            '<input type="hidden" name="needs_apt_present" value="1">'
-            '<label style="display:flex;gap:8px;align-items:center;font-weight:700;cursor:pointer">'
-            '<input type="checkbox" name="needs_apt" value="1"' + (' checked' if checked else '') + '> Precisa de APT? (S/N)</label>'
-            '<div style="font-size:12px;color:#64748b;margin-top:4px">Marcado (S): o colaborador aparece em RH › APT, nos filtros e no vínculo de APT. '
-            'Desmarcado (N): não aparece nessa tela nem recebe vínculo de APT.</div></div>')
+    return (_CSS + '<div class="full needsAptBox"><input type="hidden" name="needs_apt_present" value="1">'
+            '<label class="naRow"><input type="checkbox" class="naCk" name="needs_apt" value="1"' + (' checked' if checked else '') + '>'
+            '<span class="naSw" aria-hidden="true"></span>'
+            '<span class="naTx"><b>Precisa de APT?</b><small>Sim: aparece em RH › APT, nos filtros e no vínculo de APT. '
+            'Não: não aparece nessa tela nem recebe vínculo de APT.</small></span>'
+            '<span class="naSt"></span></label></div>')
 
 
 def install_apt_flag(app, db, User):

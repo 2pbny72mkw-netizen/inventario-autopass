@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V88.0 REV7"
+APP_RELEASE = "V88.0 REV9"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -3300,7 +3300,7 @@ def _role_assignment_allowed(role):
     explícita users.roles.manage para perfis administrativos/sensíveis.
     """
     role=(role or "").strip()
-    valid={"manager","manager_field","technician","technician_implantation","consultation","hr","dispatcher","atm_financial_admin","customer"}
+    valid={"manager","manager_field","technician","technician_implantation","consultation","hr","dispatcher","atm_financial_admin","customer","staff"}
     if role not in valid:
         return False
     if _current_user_is_superadmin() or session.get("role") == "manager":
@@ -5461,6 +5461,15 @@ def migrate_user_gps_required_column():
             db.session.commit()
     except Exception:
         db.session.rollback(); raise
+
+
+def migrate_staff_role_for_profiles_without_base():
+    """V88.0 REV8: usuários com perfil personalizado "Sem base" deixam de ser técnicos (papel neutro "staff")."""
+    try:
+        res=db.session.execute(db.text("UPDATE users SET role='staff', gps_required=FALSE, gps_history_enabled=FALSE, journey_control_enabled=FALSE WHERE role='technician' AND system_profile_id IN (SELECT id FROM system_profiles WHERE base_role IS NULL OR base_role IN ('','none'))"))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
 
 
 def migrate_user_needs_apt_column():
@@ -14801,7 +14810,7 @@ def _resolve_role_selection(raw):
         try: profile=db.session.get(SystemProfile,int(raw.split(':',1)[1]))
         except Exception: profile=None
         if not profile or not profile.active: return None,None
-        role=profile.base_role if profile.base_role and profile.base_role!='none' else 'technician'
+        role=profile.base_role if profile.base_role and profile.base_role!='none' else 'staff'  # V88.0 REV8 — perfil sem papel-base é neutro (só acessos)
         return role,profile
     return raw,None
 
@@ -15007,7 +15016,7 @@ def _v75_role_label(role):
     return {
         "manager":"Gestor", "manager_field":"Gestor Field", "technician":"Técnico Field",
         "technician_implantation":"Técnico Implantação", "consultation":"Consulta",
-        "hr":"RH", "dispatcher":"Dispatcher", "customer":"Cliente", "adm_finance":"ADM Financeiro"
+        "hr":"RH", "dispatcher":"Dispatcher", "customer":"Cliente", "adm_finance":"ADM Financeiro", "staff":"Sem papel-base"
     }.get((role or "").strip().lower(), role or "")
 
 @app.get("/usuarios/configuracoes-modelo.xlsx")
@@ -15284,7 +15293,7 @@ def create_user():
         flash("Nome, usuário e senha são obrigatórios.")
         return redirect(url_for("users_page"))
 
-    if role not in ("manager", "manager_field", "technician", "technician_implantation", "consultation", "hr", "dispatcher", "atm_financial_admin", "customer"):
+    if role not in ("manager", "manager_field", "technician", "technician_implantation", "consultation", "hr", "dispatcher", "atm_financial_admin", "customer", "staff"):
         flash("Perfil de acesso inválido.")
         return redirect(url_for("users_page"))
     if not _role_assignment_allowed(role):
@@ -15570,7 +15579,7 @@ def edit_user(user_id):
         flash("Nome e usuário são obrigatórios.")
         return redirect(url_for("users_page"))
 
-    if role not in ("manager", "manager_field", "technician", "technician_implantation", "consultation", "hr", "dispatcher", "atm_financial_admin", "customer"):
+    if role not in ("manager", "manager_field", "technician", "technician_implantation", "consultation", "hr", "dispatcher", "atm_financial_admin", "customer", "staff"):
         flash("Perfil de acesso inválido.")
         return redirect(url_for("users_page"))
     if not _role_assignment_allowed(role):
@@ -15937,7 +15946,7 @@ def export_users_excel():
         c.font = Font(bold=True, color="FFFFFF")
         c.fill = PatternFill("solid", fgColor="17345D")
         c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    role_label={"manager":"Gestor","technician":"Técnico de Campo","technician_implantation":"Técnico Implantação","manager_field":"Gestor Field","consultation":"Consulta","hr":"RH","dispatcher":"Dispatcher","atm_financial_admin":"ADM Financeiro","customer":"Cliente"}
+    role_label={"manager":"Gestor","technician":"Técnico de Campo","technician_implantation":"Técnico Implantação","manager_field":"Gestor Field","consultation":"Consulta","hr":"RH","dispatcher":"Dispatcher","atm_financial_admin":"ADM Financeiro","customer":"Cliente","staff":"Sem papel-base"}
     q=User.query
     if session.get("role") != "manager" and not _has_access("users.scope.all"):
         me=db.session.get(User,session.get("user_id"))
@@ -28572,6 +28581,7 @@ with app.app_context():
     migrate_user_v23_columns()
     migrate_user_gps_required_column()
     migrate_user_needs_apt_column()
+    migrate_staff_role_for_profiles_without_base()
     migrate_financial_v524_columns()
     # REV55: não reprocessar históricos TBForte em cada boot do Gunicorn.
     # A base operacional permanece intacta; carga inicial só mediante opt-in explícito.
