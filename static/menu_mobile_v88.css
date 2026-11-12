@@ -1,0 +1,9 @@
+/* V88.0 REV2 — menu no celular: o submenu só abre/fecha pelo toque (classe .open).
+   O :hover/:focus-within do desktop abria o submenu ao pressionar, o layout mudava e o clique se perdia. */
+@media(max-width:760px){
+  .mainNavV424 .navDrop:hover>.navDropMenu,
+  .mainNavV424 .navDrop:focus-within>.navDropMenu{display:none}
+  .mainNavV424 .navDrop.open>.navDropMenu{display:grid!important}
+  html header.topbar .wrap.nav #mainNavV424.mobileOpen{flex-wrap:nowrap!important;align-items:stretch!important}
+  .mainNavV424>a,.mainNavV424>.navDrop,.mainNavV424>.navInstall{flex:0 0 auto!important}
+}
