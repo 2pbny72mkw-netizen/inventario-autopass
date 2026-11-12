@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V88.0 REV5"
+APP_RELEASE = "V88.0 REV7"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -1071,6 +1071,7 @@ class User(db.Model):
     personnel_status_note = db.Column(db.String(240))
     access_json = db.Column(db.Text)
     gps_required = db.Column(db.Boolean, nullable=False, default=False)
+    needs_apt = db.Column(db.Boolean, nullable=False, default=False)  # V88.0 REV7 — "Precisa de APT?"
     gps_history_enabled = db.Column(db.Boolean, nullable=False, default=False)
     journey_control_enabled = db.Column(db.Boolean, nullable=False, default=False)
     customer_company_ids = db.Column(db.Text)  # JSON: empresas liberadas para perfil Cliente
@@ -3118,6 +3119,8 @@ def _default_access_for_role(role):
     }
     return defaults.get(role,set())
 
+V88_ACCESS_OVERRIDE = "__override__"
+
 def _user_access_set(user=None):
     """V78.9 — permissões efetivas sem amarração por nome de perfil.
 
@@ -3142,7 +3145,9 @@ def _user_access_set(user=None):
         if getattr(user,"system_profile_id",None) and not _v86_strict():
             prof=db.session.get(SystemProfile,user.system_profile_id)
             if prof and prof.active:
-                custom=json.loads(prof.access_json or "[]")
+                # V88.0 REV6 — ajuste individual da matriz (marcador) prevalece sobre o perfil-modelo.
+                _ov=json.loads(user.access_json or "[]")
+                custom=_ov if (isinstance(_ov,list) and V88_ACCESS_OVERRIDE in _ov) else json.loads(prof.access_json or "[]")
                 access=_expand_legacy_access({x for x in custom if x in ACCESS_ALL}) if isinstance(custom,list) else set()
                 if current_lookup and has_request_context(): g._autopass_access_set=access
                 return access
@@ -5453,6 +5458,19 @@ def migrate_user_gps_required_column():
             db.session.execute(db.text("ALTER TABLE users ADD COLUMN gps_required BOOLEAN DEFAULT FALSE NOT NULL"))
             # Preserva o comportamento da REV1 para os perfis operacionais já existentes.
             db.session.execute(db.text("UPDATE users SET gps_required=TRUE WHERE role IN ('technician','technician_implantation','manager_field','dispatcher')"))
+            db.session.commit()
+    except Exception:
+        db.session.rollback(); raise
+
+
+def migrate_user_needs_apt_column():
+    """V88.0 REV7: "Precisa de APT?" — S inicial só para quem já possui APT cadastrada."""
+    try:
+        inspector=db.inspect(db.engine)
+        existing={c["name"] for c in inspector.get_columns("users")}
+        if "needs_apt" not in existing:
+            db.session.execute(db.text("ALTER TABLE users ADD COLUMN needs_apt BOOLEAN DEFAULT FALSE NOT NULL"))
+            db.session.execute(db.text("UPDATE users SET needs_apt=TRUE WHERE id IN (SELECT DISTINCT user_id FROM apt_records WHERE user_id IS NOT NULL)"))
             db.session.commit()
     except Exception:
         db.session.rollback(); raise
@@ -8382,6 +8400,10 @@ def _v86_effective_legacy(u):
             prof = db.session.get(SystemProfile, u.system_profile_id)
             if prof and prof.active:
                 raw = json.loads(prof.access_json or "[]")
+                try:
+                    _ov = json.loads(u.access_json or "[]")
+                    if isinstance(_ov, list) and V88_ACCESS_OVERRIDE in _ov: raw = _ov
+                except Exception: pass
                 return _expand_legacy_access({x for x in raw if x in ACCESS_ALL}) if isinstance(raw, list) else set()
     except Exception:
         pass
@@ -14808,7 +14830,7 @@ def _v741_sync_access_pendings():
     _v88b_us=User.query.filter(User.archived_at.is_(None),User.active.is_(True),User.access_motiva_apt.is_(True)).all()
     _v88b_valid=_v88b_valid_apt_user_ids([u.id for u in _v88b_us]) if _v88b_on("apt_otimizado") else None
     for u in _v88b_us:
-        if not ((u.id in _v88b_valid) if _v88b_valid is not None else _v741_has_valid_apt(u.id)): _v741_queue_access_pending(u,"MOTIVA","Acesso Motiva (APT) habilitado sem APT válida/formalizada")
+        if u.needs_apt and not ((u.id in _v88b_valid) if _v88b_valid is not None else _v741_has_valid_apt(u.id)): _v741_queue_access_pending(u,"MOTIVA","Acesso Motiva (APT) habilitado sem APT válida/formalizada")
 
 def _v741_access_users(operator):
     col=User.access_metro if operator=="METRO" else User.access_cptm
@@ -15124,7 +15146,7 @@ def _v741_read_user_config(raw,apply=False):
             if apply:
                 for op,attr in (("METRO","access_metro"),("CPTM","access_cptm")):
                     if any(x[0]==("Acesso Metrô" if op=="METRO" else "Acesso CPTM") for x in local):_v741_queue_access_pending(u,op,"Configuração alterada por importação da matriz Excel")
-                if u.access_motiva_apt and not _v741_has_valid_apt(u.id):_v741_queue_access_pending(u,"MOTIVA","Acesso Motiva (APT) habilitado por importação sem APT válida")
+                if u.access_motiva_apt and u.needs_apt and not _v741_has_valid_apt(u.id):_v741_queue_access_pending(u,"MOTIVA","Acesso Motiva (APT) habilitado por importação sem APT válida")
     return {"changes":changes,"errors":errors,"touched":touched}
 
 @app.route("/usuarios/importar-configuracoes",methods=["GET","POST"])
@@ -15324,6 +15346,7 @@ def create_user():
         gps_required=(gps_required if role in ("technician","technician_implantation","manager_field","dispatcher") else False),
         gps_history_enabled=(gps_history_enabled if role in ("technician","technician_implantation","manager_field","dispatcher") else False),
         journey_control_enabled=(journey_control_enabled if role == "technician" else False),
+        needs_apt=(request.form.get("needs_apt")=="1"),
         customer_company_ids=json.dumps([int(x) for x in customer_company_ids]) if role=="customer" else None,
     )
 
@@ -15348,7 +15371,7 @@ def create_user():
         if role == "technician":
             if user.access_metro: _v741_queue_access_pending(user,"METRO","Novo Técnico Field habilitado para acesso ao Metrô")
             if user.access_cptm: _v741_queue_access_pending(user,"CPTM","Novo Técnico Field habilitado para acesso à CPTM")
-            if user.access_motiva_apt and not _v741_has_valid_apt(user.id):
+            if user.access_motiva_apt and user.needs_apt and not _v741_has_valid_apt(user.id):
                 _v741_queue_access_pending(user,"MOTIVA","Técnico Field marcado para Acesso Motiva (APT) sem APT válida/formalizada")
         db.session.commit()
     except IntegrityError:
@@ -15631,6 +15654,7 @@ def edit_user(user_id):
     remove_photo = request.form.get("remove_photo") == "1"
 
     old_role = user.role
+    user._v88_old_profile_id = user.system_profile_id
     old_access_flags={"METRO":bool(getattr(user,"access_metro",False)),"CPTM":bool(getattr(user,"access_cptm",False)),"MOTIVA":bool(getattr(user,"access_motiva_apt",False))}
     user.name = name
     user.username = username
@@ -15662,6 +15686,7 @@ def edit_user(user_id):
     user.access_metro = access_metro
     user.access_cptm = access_cptm
     user.access_motiva_apt = access_motiva_apt
+    if request.form.get("needs_apt_present") == "1": user.needs_apt = request.form.get("needs_apt") == "1"
     user.cpf = (request.form.get("cpf") or "").strip() or None
     user.rg = (request.form.get("rg") or "").strip() or None
     old_gps_required = bool(getattr(user, "gps_required", False))
@@ -15671,8 +15696,21 @@ def edit_user(user_id):
     # ser bloqueado pela escala. GPS operacional/histórico continuam disponíveis.
     user.journey_control_enabled = journey_control_enabled if role == "technician" else False
     if system_profile:
-        # Perfil configurável é a fonte de verdade enquanto estiver vinculado.
-        user.access_json = system_profile.access_json
+        # V88.0 REV6 — o perfil é o modelo inicial; ajustes individuais feitos na matriz agora ficam gravados.
+        # Mantém o perfil se o perfil foi trocado ou se a matriz enviada é igual à do perfil.
+        _same_profile = getattr(user, "_v88_old_profile_id", None) == system_profile.id
+        _can_cfg = _current_user_is_superadmin() or _has_access("users.config.manage")
+        if _same_profile and _can_cfg and request.form.get("access_config_present") == "1":
+            try: _prof_set = {x for x in json.loads(system_profile.access_json or "[]") if x in ACCESS_ALL}
+            except Exception: _prof_set = set()
+            _sent = set(_parse_access_form(role))
+            if _expand_legacy_access(_sent) != _expand_legacy_access(_prof_set):
+                user.access_json = json.dumps(sorted(_sent) + [V88_ACCESS_OVERRIDE], ensure_ascii=False)
+            else:
+                user.access_json = system_profile.access_json
+        else:
+            # Perfil configurável é a fonte de verdade enquanto estiver vinculado.
+            user.access_json = system_profile.access_json
     elif _current_user_is_superadmin() or _has_access("users.config.manage"):
         # V82.13 — não amarrar edição da matriz ao nome do perfil do operador.
         # Quem possui a permissão de gerenciar configurações pode persistir a matriz individual.
@@ -15708,7 +15746,7 @@ def edit_user(user_id):
             if old_access_flags[op] != new_access_flags[op]:
                 action="inclusão" if new_access_flags[op] else "retirada"
                 _v741_queue_access_pending(user,op,f"Alteração de acesso: {action} do colaborador na lista {op}")
-        if new_access_flags["MOTIVA"] and not _v741_has_valid_apt(user.id):
+        if new_access_flags["MOTIVA"] and user.needs_apt and not _v741_has_valid_apt(user.id):
             _v741_queue_access_pending(user,"MOTIVA","Acesso Motiva (APT) habilitado sem APT válida/formalizada")
         if old_gps_required != bool(user.gps_required):
             db.session.add(AuditEvent(user_id=session.get("user_id"),event_type="USER_GPS_REQUIREMENT_CHANGE",entity_type="user",entity_id=str(user.id),detail=f"{user.name} · GPS obrigatório: {old_gps_required} -> {bool(user.gps_required)}"))
@@ -24792,7 +24830,7 @@ def v73_apt_page():
     if not _has_access("teams.apt"):abort(403)
     q=(request.args.get("q") or "").strip();validity=(request.args.get("validity") or "").strip().upper();process=(request.args.get("process") or "").strip().upper();active=(request.args.get("active") or "active").strip().lower();company=(request.args.get("company") or "").strip();line=(request.args.get("line") or "").strip()
     nr10=(request.args.get('nr10') or '').strip().upper();nr35=(request.args.get('nr35') or '').strip().upper();aso=(request.args.get('aso') or '').strip().upper();integration=(request.args.get('integration') or '').strip().upper()
-    query=AptRecord.query
+    query=AptRecord.query.filter(or_(AptRecord.user_id.is_(None),AptRecord.user_id.in_([_r[0] for _r in db.session.query(User.id).filter(User.needs_apt.is_(True)).all()])))  # V88.0 REV7
     if active=="active":query=query.filter(AptRecord.active.is_(True))
     elif active=="inactive":query=query.filter(AptRecord.active.is_(False))
     if q:query=query.filter(or_(AptRecord.collaborator_name.ilike(f"%{q}%"),AptRecord.apt_number.ilike(f"%{q}%"),AptRecord.company.ilike(f"%{q}%"),AptRecord.line.ilike(f"%{q}%")))
@@ -24822,7 +24860,7 @@ def v73_apt_page():
         represented_user_ids={x["row"].user_id for x in data if getattr(x["row"],"user_id",None)}
         # V85.31 PERFORMANCE: uma consulta em lote substitui AptRecord.first() por usuário.
         _active_apt_user_ids={r[0] for r in db.session.query(AptRecord.user_id).filter(AptRecord.active.is_(True),AptRecord.user_id.isnot(None)).distinct().all()}
-        uq=User.query.filter(User.active.is_(True), User.role!='customer')
+        uq=User.query.filter(User.active.is_(True), User.role!='customer', User.needs_apt.is_(True))
         if company:uq=uq.filter(User.company==company)
         if q:
             uq=uq.filter(or_(User.name.ilike(f"%{q}%"),User.company.ilike(f"%{q}%"),User.username.ilike(f"%{q}%")))
@@ -24859,8 +24897,8 @@ def v73_apt_page():
 
     summary={k:sum(1 for x in data if x["validity_status"]==k) for k in ("VENCIDA","ATÉ 15 DIAS","ATÉ 30 DIAS","ATÉ 40 DIAS","REGULAR","SEM VALIDADE")}
     # V85.28 REV1 — empresa/filtro vêm exclusivamente do Cadastro de Usuários (fonte mestre).
-    companies=sorted({str(r[0]).strip() for r in db.session.query(User.company).filter(User.active.is_(True),User.company.isnot(None),User.company!='').distinct().all() if str(r[0] or '').strip()},key=lambda x:normalize(x));lines=sorted({_v8529_apt_display_line(r[0]) for r in db.session.query(AptRecord.line).filter(AptRecord.line.isnot(None),AptRecord.line!='').distinct().all() if _v8529_apt_display_line(r[0])},key=lambda v:int(re.search(r'\d+',v).group()) if re.search(r'\d+',v) else 999)
-    users=User.query.filter(User.active.is_(True)).order_by(User.name).all()
+    companies=sorted({str(r[0]).strip() for r in db.session.query(User.company).filter(User.active.is_(True),User.needs_apt.is_(True),User.company.isnot(None),User.company!='').distinct().all() if str(r[0] or '').strip()},key=lambda x:normalize(x));lines=sorted({_v8529_apt_display_line(r[0]) for r in db.session.query(AptRecord.line).filter(AptRecord.line.isnot(None),AptRecord.line!='').distinct().all() if _v8529_apt_display_line(r[0])},key=lambda v:int(re.search(r'\d+',v).group()) if re.search(r'\d+',v) else 999)
+    users=User.query.filter(User.active.is_(True),User.needs_apt.is_(True)).order_by(User.name).all()
     apt_users=[{"id":u.id,"name":u.name,"company":_v8543_canonical_company_name(u.company),"job_title":u.job_title or "","username":u.username} for u in users if u.role not in ('customer',)]
     apt_user_companies=sorted({x['company'] for x in apt_users if x['company']},key=lambda x:normalize(x))
     apt_lines=sorted({_v8529_apt_display_line(x) for x in _v7893_apt_required_lines() if _v8529_apt_display_line(x)},key=lambda v:int(re.search(r"\d+",v).group()) if re.search(r"\d+",v) else 999)
@@ -24909,6 +24947,7 @@ def v735_apt_create():
     if not _has_access('teams.apt'):abort(403)
     d=request.get_json(silent=True) or {};uid=d.get('user_id');u=db.session.get(User,int(uid)) if uid else None
     if not u:return jsonify({'ok':False,'error':'Selecione um colaborador existente no Cadastro de Usuários.'}),400
+    if not u.needs_apt:return jsonify({'ok':False,'error':'Este usuário não precisa de APT. Marque "Precisa de APT?" no Cadastro de Usuários.'}),400
     name=(u.name or '').strip();apt=(d.get('apt_number') or '').strip();line=_v8212_apt_canonical_line(d.get('line'))
     if not apt:return jsonify({'ok':False,'error':'Informe o número da PT/APT.'}),400
     if not line:return jsonify({'ok':False,'error':'Selecione uma das linhas que exigem APT: 4, 5, 8 ou 9.'}),400
@@ -24948,17 +24987,19 @@ def v73_apt_import():
                     try:return datetime.strptime(str(v).strip(),fmt).date()
                     except:pass
             return None
-        users=User.query.all();um={normalize(u.name):u for u in users};created=updated=0;_exist=({(a.collaborator_name,a.line,a.apt_number):a for a in AptRecord.query.all()} if _v88b_on("apt_otimizado") else None)
+        users=User.query.all();um={normalize(u.name):u for u in users};created=updated=skipped=0;_exist=({(a.collaborator_name,a.line,a.apt_number):a for a in AptRecord.query.all()} if _v88b_on("apt_otimizado") else None)
         for r in rows:
             name=str(pick(r,"COLABORADOR","NOME","FUNCIONARIO","FUNCIONÁRIO") or "").strip();line=str(pick(r,"LINHA","LOCAL","LOCALIDADE") or "").strip();apt=str(pick(r,"APT","APT'S","APTS","Nº APT","NUMERO APT","NÚMERO APT") or "").strip()
             if not name or not apt:continue
+            _u0=um.get(normalize(name))
+            if _u0 and not _u0.needs_apt: skipped+=1; continue
             nums=re.findall(r'APT[-–][A-Z0-9-]+(?:\s+[CS]/A)?',apt.upper()) or [apt]
             for num in nums:
                 x=(_exist.get((name,line,num.strip())) if _exist is not None else AptRecord.query.filter_by(collaborator_name=name,line=line,apt_number=num.strip()).first())
                 if not x:x=AptRecord(collaborator_name=name,line=line,apt_number=num.strip());created+=1;(_exist.__setitem__((name,line,num.strip()),x) if _exist is not None else None)
                 else:updated+=1
                 u=um.get(normalize(name));x.user_id=u.id if u else None;x.company=str(pick(r,"EMPRESA") or (u.company if u else "") or "").strip();x.valid_until=parsed(pick(r,"VALIDADE APT","VALIDADE","VENCIMENTO APT","VENCIMENTO APT'S"));x.nr10_valid_until=parsed(pick(r,'VENCIMENTO NR10','VALIDADE NR10','NR10 VENCIMENTO'));x.nr35_valid_until=parsed(pick(r,'VENCIMENTO NR35','VALIDADE NR35','NR35 VENCIMENTO'));x.aso_scheduled_at=parsed(pick(r,'AGENDAMENTO ASO','DATA AGENDAMENTO ASO'));x.aso_valid_until=parsed(pick(r,'VENCIMENTO ASO','VALIDADE ASO'));x.integration_scheduled_at=parsed(pick(r,'AGENDAMENTO INTEGRACAO','AGENDAMENTO INTEGRAÇÃO','DATA AGENDAMENTO INTEGRACAO'));x.integration_valid_until=parsed(pick(r,'VENCIMENTO INTEGRACAO','VENCIMENTO INTEGRAÇÃO','VALIDADE INTEGRACAO'));x.process_status=str(pick(r,"STATUS","ANDAMENTO") or x.process_status or "AGUARDANDO").upper();x.active=True;db.session.add(x)
-        db.session.commit();return jsonify({"ok":True,"created":created,"updated":updated})
+        db.session.commit();return jsonify({"ok":True,"created":created,"updated":updated,"skipped_no_apt":skipped})
     except Exception as e:db.session.rollback();return jsonify({"ok":False,"error":str(e)}),400
 
 @app.post("/api/rh/apt/<int:rid>/update")
@@ -25562,7 +25603,9 @@ def v50_notifications_api():
     emv_pending=EmvChipSwap.query.filter(~func.upper(func.coalesce(EmvChipSwap.status,"" )).startswith("CONCLU")).count()
     work_pending=WorkAccessRequest.query.filter_by(status="PENDENTE").count()
     schedule_pending=ScheduleChangeRequest.query.filter(ScheduleChangeRequest.manager_status=="PENDENTE").count()
-    apt_due=(AptRecord.query.filter(AptRecord.active.is_(True),AptRecord.valid_until.isnot(None),AptRecord.valid_until<=datetime.now(V72_TZ).date()+timedelta(days=40)).count() if _v88b_on("apt_otimizado") else sum(1 for x in AptRecord.query.filter(AptRecord.active.is_(True),AptRecord.valid_until.isnot(None)).all() if (x.valid_until-datetime.now(V72_TZ).date()).days<=40))
+    _v88_apt_ids=[_r[0] for _r in db.session.query(User.id).filter(User.needs_apt.is_(True)).all()]  # V88.0 REV7 — só quem precisa de APT
+    _v88_apt_scope=or_(AptRecord.user_id.is_(None),AptRecord.user_id.in_(_v88_apt_ids))
+    apt_due=(AptRecord.query.filter(_v88_apt_scope,AptRecord.active.is_(True),AptRecord.valid_until.isnot(None),AptRecord.valid_until<=datetime.now(V72_TZ).date()+timedelta(days=40)).count() if _v88b_on("apt_otimizado") else sum(1 for x in AptRecord.query.filter(_v88_apt_scope,AptRecord.active.is_(True),AptRecord.valid_until.isnot(None)).all() if (x.valid_until-datetime.now(V72_TZ).date()).days<=40))
     items=[
       {"domain":"JORNADA","severity":"ATENÇÃO","title":"Autorizações de jornada aguardando decisão","count":work_pending,"url":"/gestao/rastreabilidade-jornada"},
       {"domain":"RH","severity":"ATENÇÃO","title":"Folgas/trocas aguardando aprovação","count":schedule_pending,"url":"/gestao/rastreabilidade-jornada"},
@@ -28528,6 +28571,7 @@ with app.app_context():
     migrate_user_archive_column()
     migrate_user_v23_columns()
     migrate_user_gps_required_column()
+    migrate_user_needs_apt_column()
     migrate_financial_v524_columns()
     # REV55: não reprocessar históricos TBForte em cada boot do Gunicorn.
     # A base operacional permanece intacta; carga inicial só mediante opt-in explícito.
@@ -33590,3 +33634,5 @@ from v88_pos_delete import install_pos_delete, install_mobile_menu_fix, install_
 install_pos_delete(app, db, _has_access)
 install_mobile_menu_fix(app)
 install_rev5_ui(app, db, User, SystemProfile)
+from v88_apt_flag import install_apt_flag
+install_apt_flag(app, db, User)
