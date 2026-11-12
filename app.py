@@ -45,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V88.0 REV9"
+APP_RELEASE = "V88.0 REV10"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -136,6 +136,8 @@ if not database_url:
     database_url = f"sqlite:///{BASE_DIR / 'inventario_local.db'}"
 
 app = Flask(__name__)
+from v88_perf import install_perf  # V88.0 REV10 — registrado primeiro para rodar por último nas respostas
+install_perf(app)
 app.secret_key = os.environ.get("INVENTARIO_SECRET_KEY", "chave-local-apenas-para-desenvolvimento")
 
 # V52.8: acompanhamento de importações TopDesk em background.
@@ -27182,7 +27184,7 @@ def portal_appointments_list():
         db.session.rollback(); nf_extra=set(); xml_has=set()
     for a in rows:
         d=a.programmed_date or a.expected_date or a.scheduled_date
-        out.append({'nf_ok':bool(a.invoice_file) or a.id in nf_extra,'xml_ok':a.id in xml_has,'id':a.id,'code':a.code,'company':a.customer_company,'responsible':a.responsible_name,'scheduled_date':d.isoformat() if d else '','request_date':(a.request_date or a.created_at.date()).isoformat(),'expected_date':a.expected_date.isoformat() if a.expected_date else '','programmed_date':a.programmed_date.isoformat() if a.programmed_date else '','alternate':bool(a.alternate_date_requested),'alternate_reason':a.alternate_reason or '','status':a.status,'created_at':a.created_at.isoformat(),'count':int(cnt.get(a.id,0)),'received':int(rec.get(a.id,0)),'returned':int(ret.get(a.id,0)),'email_status':a.email_status or ''})
+        out.append({'doc_req':bool(a.created_at and a.created_at>=datetime(2026,11,12)),'nf_ok':bool(a.invoice_file) or a.id in nf_extra,'xml_ok':a.id in xml_has,'id':a.id,'code':a.code,'company':a.customer_company,'responsible':a.responsible_name,'scheduled_date':d.isoformat() if d else '','request_date':(a.request_date or a.created_at.date()).isoformat(),'expected_date':a.expected_date.isoformat() if a.expected_date else '','programmed_date':a.programmed_date.isoformat() if a.programmed_date else '','alternate':bool(a.alternate_date_requested),'alternate_reason':a.alternate_reason or '','status':a.status,'created_at':a.created_at.isoformat(),'count':int(cnt.get(a.id,0)),'received':int(rec.get(a.id,0)),'returned':int(ret.get(a.id,0)),'email_status':a.email_status or ''})
     return jsonify({'ok':True,'rows':out,'internal':_portal_internal(),'driver':_portal_driver_only()})
 
 @app.post('/api/portal/appointments')
