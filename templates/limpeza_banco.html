@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Limpeza do banco | Sistema de Gestão{% endblock %}
+{% block head %}
+<style>
+.lb{max-width:980px;margin:0 auto;padding:8px 0 50px;--ln:#e4e3df;--mut:#6b6a66;--navy:#16335c}
+.lb h1{font-size:22px;margin:0 0 4px}.lb .sub{color:var(--mut);font-size:13px}
+.lb .lbcard{background:#fff;border:1px solid var(--ln);border-radius:12px;padding:16px 18px;margin:12px 0}
+.lb .lbk{display:flex;gap:22px;flex-wrap:wrap;margin:8px 0}.lb .lbk div{font-size:12px;color:var(--mut)}.lb .lbk b{display:block;font-size:24px;color:#111;font-variant-numeric:tabular-nums}
+.lb table{width:100%;border-collapse:collapse;margin:6px 0}.lb th,.lb td{font-size:13px;text-align:left;padding:5px 6px;border-bottom:1px solid var(--ln)}.lb td.n,.lb th.n{text-align:right;font-variant-numeric:tabular-nums}
+.lb input[type=text]{border:1px solid var(--ln);border-radius:8px;padding:7px 10px;font:inherit;width:min(360px,100%);box-sizing:border-box}
+.lb button{font:inherit;border:1px solid var(--ln);background:#fff;border-radius:8px;padding:8px 14px;cursor:pointer}.lb button.d{background:#a02020;color:#fff;border-color:#a02020}.lb button[disabled]{opacity:.5;cursor:default}
+.lb .warn{border:1px solid #c98a00;background:#fff8e6;border-radius:8px;padding:9px 12px;font-size:13px;margin:8px 0}
+.lb .ok{border:1px solid #9fd3b0;background:#e8f6ed;border-radius:8px;padding:9px 12px;font-size:13px;margin:8px 0}
+.lb .err{color:#a02020;font-size:13px;min-height:18px}
+.lb label.ck{display:flex;gap:8px;align-items:center;font-size:13px;margin:8px 0}
+</style>
+{% endblock %}
+{% block content %}
+<div class="lb" id="lb">
+  <h1>Limpeza do banco</h1>
+  <div class="sub">Somente o Gestor. Cada limpeza apaga os dados por inteiro (TRUNCATE), devolve o espaço na hora e fica registrada na auditoria. Não há como desfazer sem restaurar o backup.</div>
+  <div class="lbcard"><div class="lbk"><div>Tamanho do banco agora<b id="lbDb">—</b></div></div></div>
+  <div id="lbBody"><div class="lbcard">Carregando…</div></div>
+</div>
+{% endblock %}
+{% block scripts %}
+{% raw %}
+<script>
+(function(){
+function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
+function nf(v,d){return Number(v||0).toLocaleString('pt-BR',{minimumFractionDigits:d||0,maximumFractionDigits:d||0})}
+function api(u,b){var o={credentials:'same-origin'};if(b!==undefined){o.method='POST';o.headers={'Content-Type':'application/json'};o.body=JSON.stringify(b)}
+ return fetch(u,o).then(function(r){return r.json().catch(function(){return {ok:false,error:'Resposta inválida ('+r.status+')'}})}).catch(function(){return {ok:false,error:'Sem conexão.'}})}
+function load(){api('/api/diagnostico/limpeza/v101/plano').then(function(r){
+  if(!r.ok){document.getElementById('lbBody').innerHTML='<div class="lbcard err">'+esc(r.error||'Erro')+'</div>';return}
+  document.getElementById('lbDb').textContent=nf(r.banco_mb,1)+' MB';
+  document.getElementById('lbBody').innerHTML=r.alvos.map(function(a){
+    return '<div class="lbcard" data-a="'+a.id+'"><h2 style="margin:0 0 4px;font-size:17px">'+esc(a.label)+'</h2><div class="sub">'+esc(a.note)+'</div>'+
+    '<div class="lbk"><div>Linhas<b>'+nf(a.rows)+'</b></div><div>Espaço ocupado<b>'+nf(a.mb,1)+' MB</b></div></div>'+
+    '<table><thead><tr><th>Tabela</th><th class="n">Linhas</th><th class="n">MB</th></tr></thead><tbody>'+Object.keys(a.tables).map(function(t){var x=a.tables[t];return '<tr><td>'+esc(t)+(x.exists?'':' (não existe)')+'</td><td class="n">'+nf(x.rows)+'</td><td class="n">'+nf(x.mb,1)+'</td></tr>'}).join('')+'</tbody></table>'+
+    (a.rows?'<label class="ck"><input type="checkbox" class="bk"> Confirmo que existe backup recente do banco (pg_dump).</label>'+
+    '<label style="display:block;font-size:12px;color:#6b6a66">Digite <b>'+esc(a.confirm)+'</b> para liberar<br><input type="text" class="cf" autocomplete="off"></label>'+
+    '<p><button class="d go" type="button" disabled>Apagar definitivamente</button></p><div class="err"></div><div class="res"></div>':'<div class="ok">Nada para apagar: tabelas vazias.</div>')+'</div>'}).join('');
+  document.querySelectorAll('#lbBody .lbcard[data-a]').forEach(function(c){var id=c.dataset.a,a=r.alvos.filter(function(x){return x.id===id})[0],bk=c.querySelector('.bk'),cf=c.querySelector('.cf'),go=c.querySelector('.go');if(!go)return;
+    function chk(){go.disabled=!(bk.checked&&cf.value.trim().toUpperCase()===a.confirm)}bk.onchange=chk;cf.oninput=chk;
+    go.onclick=function(){go.disabled=true;c.querySelector('.err').textContent='';api('/api/diagnostico/limpeza/v101/executar',{alvo:id,backup_ok:bk.checked,confirmation:cf.value}).then(function(x){
+      if(!x.ok){c.querySelector('.err').textContent=x.error||'Erro';go.disabled=false;return}
+      c.querySelector('.res').innerHTML='<div class="ok">Concluído: '+nf(x.linhas_apagadas)+' linhas apagadas; '+nf(x.mb_liberados,1)+' MB liberados.</div>';setTimeout(load,1500)})}})})}
+load();
+})();
+</script>
+{% endraw %}
+{% endblock %}

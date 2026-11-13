@@ -6,13 +6,13 @@ main.wrap{max-width:none!important;padding-left:14px!important;padding-right:14p
 .pm{--ln:#e4e3df;--mut:#6b6a66;--navy:#16335c;--verde:#0a8f3c;--amarelo:#c98a00;--vermelho:#d03b3b;--cinza:#8a8984;--azul:#2a78d6;padding:6px 0 60px}
 .pm h1{font-size:22px;margin:0 0 2px}.pm h2{font-size:16px;margin:0 0 10px}.pm h3{font-size:14px;margin:0 0 8px}.pm .sub{color:var(--mut);font-size:13px}
 .pm button,.pm select,.pm input,.pm textarea{font:inherit;font-size:13px}
-.pm .bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;margin:10px 0 14px}.pm .btns{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.pm .pmbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;margin:10px 0 14px}.pm .btns{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .pm .b{border:1px solid var(--ln);background:#fff;border-radius:8px;padding:7px 12px;cursor:pointer;color:#222;text-decoration:none;display:inline-block}.pm .b:hover{border-color:#8a8984}.pm .b.p{background:var(--navy);color:#fff;border-color:var(--navy)}.pm .b.d{border-color:#e3b0b0;color:#a02020}.pm .b[disabled]{opacity:.5;cursor:default}
 .pm :focus-visible{outline:2px solid var(--azul);outline-offset:2px}
-.pm .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px}
-.pm .kpi{text-align:left;background:#fff;border:1px solid var(--ln);border-radius:12px;padding:12px 14px;cursor:pointer}.pm .kpi:hover{border-color:var(--navy)}
-.pm .kpi .l{font-size:12px;color:var(--mut)}.pm .kpi .v{font-size:26px;font-weight:650;font-variant-numeric:tabular-nums}.pm .kpi .d{font-size:12px;color:var(--mut)}
-.pm .card{background:#fff;border:1px solid var(--ln);border-radius:12px;padding:14px 16px;margin-bottom:12px}
+.pm .pmkpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px}
+.pm .pmkpi{text-align:left;background:#fff;border:1px solid var(--ln);border-radius:12px;padding:12px 14px;cursor:pointer}.pm .pmkpi:hover{border-color:var(--navy)}
+.pm .pmkpi .l{font-size:12px;color:var(--mut)}.pm .pmkpi .v{font-size:26px;font-weight:650;font-variant-numeric:tabular-nums}.pm .pmkpi .d{font-size:12px;color:var(--mut)}
+.pm .pmcard{background:#fff;border:1px solid var(--ln);border-radius:12px;padding:14px 16px;margin-bottom:12px}
 .pm .tabs{display:flex;gap:6px;margin:0 0 12px;flex-wrap:wrap}.pm .tab{border:1px solid var(--ln);background:#fff;border-radius:999px;padding:6px 14px;cursor:pointer}.pm .tab.on{background:var(--navy);color:#fff;border-color:var(--navy)}
 .pm .fr{display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;margin:0 0 10px}.pm .fi{border:1px solid var(--ln);border-radius:8px;padding:6px 9px;background:#fff;box-sizing:border-box}
 .pm .fl{display:flex;flex-direction:column;gap:2px;font-size:11px;color:var(--mut)}.pm .cnt{font-size:12px;color:var(--mut);margin-left:auto}
@@ -38,12 +38,12 @@ main.wrap{max-width:none!important;padding-left:14px!important;padding-right:14p
 .pm .qb{text-align:left;background:#fff;border:1px solid var(--ln);border-radius:10px;padding:10px 12px;cursor:pointer}.pm .qb.on{border-color:var(--navy);box-shadow:inset 0 0 0 1px var(--navy)}.pm .qb b{font-size:22px;display:block}
 .pm .ban{padding:9px 12px;border-radius:8px;border:1px solid #c98a00;background:#fff8e6;margin-bottom:12px;font-size:13px}
 .pm .empty{padding:22px;text-align:center;color:var(--mut)}
-@media print{header,nav,.sidebar,.pm .btns,.pm .tabs,.pm .fr,.pm .no-print{display:none!important}.pm .card{break-inside:avoid}}
+@media print{header,nav,.sidebar,.pm .btns,.pm .tabs,.pm .fr,.pm .no-print{display:none!important}.pm .pmcard{break-inside:avoid}}
 </style>
 {% endblock %}
 {% block content %}
 <div class="pm" id="pm" data-edit="{{ 1 if can_edit else 0 }}" data-full="{{ 1 if full else 0 }}" data-admin="{{ 1 if is_admin else 0 }}">
-  <div class="bar">
+  <div class="pmbar">
     <div><h1>Visão do Gerente de Projeto</h1><div class="sub" id="pmSub">Carregando…</div></div>
     <div class="btns">
       <a class="b" href="/gestao/planejamento-semanal">← Planejamento semanal</a>
@@ -153,7 +153,7 @@ function renderHome(){
   var oa=openActs(),late=oa.filter(function(a){return a.deadline&&a.deadline<today()}),blq=oa.filter(function(a){return a.status==='blq'});
   var q={};d.quality.checks.forEach(function(c){q[c.code]=c});
   var pr=T.filter(function(p){return p.progress!=null}),avg=pr.length?pr.reduce(function(s,p){return s+p.progress},0)/pr.length:null;
-  var h='<div class="kpis">'+
+  var h='<div class="pmkpis">'+
    kp('k_all','Projetos ativos',T.length,'clique para listar')+kp('k_cr','Críticos',cr.length,'farol vermelho','vermelho')+kp('k_at','Atenção',at.length,'farol amarelo','amarelo')+
    kp('k_late','Atividades atrasadas',late.length,'prazo vencido')+kp('k_blq','Bloqueadas',blq.length,'status bloqueado')+
    kp('k_nr','Sem responsável',(q.sem_resp||{count:0}).count,'qualidade dos dados')+kp('k_np','Sem prazo',(q.sem_prazo||{count:0}).count,'qualidade dos dados')+
@@ -161,7 +161,7 @@ function renderHome(){
   h+='<div class="tabs" role="tablist">'+[['port','Portfólio'],['qual','Qualidade dos dados ('+qTotal()+')'],['dep','Dependências entre projetos']].map(function(t){return '<button class="tab '+(S.tab===t[0]?'on':'')+'" role="tab" aria-selected="'+(S.tab===t[0])+'" data-tab="'+t[0]+'" type="button">'+t[1]+'</button>'}).join('')+'</div>';
   h+='<div id="pmTab"></div>';
   $('pmBody').innerHTML=h;
-  $('pmBody').querySelectorAll('.kpi').forEach(function(b){b.onclick=function(){var k=b.dataset.k;
+  $('pmBody').querySelectorAll('.pmkpi').forEach(function(b){b.onclick=function(){var k=b.dataset.k;
     if(k==='k_all')kpiProjects('Projetos ativos',T);else if(k==='k_cr')kpiProjects('Projetos críticos',cr);else if(k==='k_at')kpiProjects('Projetos em atenção',at);
     else if(k==='k_late')kpiActs('Atividades atrasadas',late);else if(k==='k_blq')kpiActs('Atividades bloqueadas',blq);
     else if(k==='k_nr')kpiActs('Atividades sem responsável',byIds(q.sem_resp.ids));else if(k==='k_np')kpiActs('Atividades sem prazo',byIds(q.sem_prazo.ids));
@@ -169,7 +169,7 @@ function renderHome(){
   $('pmBody').querySelectorAll('[data-tab]').forEach(function(b){b.onclick=function(){S.tab=b.dataset.tab;renderHome()}});
   if(S.tab==='port')tabPort();else if(S.tab==='qual')tabQual();else tabDep();
 }
-function kp(k,l,v,dsc,f){return '<button class="kpi" type="button" data-k="'+k+'"><div class="l">'+esc(l)+'</div><div class="v"'+(f?' style="color:'+COL[f]+'"':'')+'>'+v+'</div><div class="d">'+esc(dsc)+'</div></button>'}
+function kp(k,l,v,dsc,f){return '<button class="pmkpi" type="button" data-k="'+k+'"><div class="l">'+esc(l)+'</div><div class="v"'+(f?' style="color:'+COL[f]+'"':'')+'>'+v+'</div><div class="d">'+esc(dsc)+'</div></button>'}
 function byIds(ids){var m={};S.d.activities.forEach(function(a){m[a.id]=a});return ids.map(function(i){return m[i]}).filter(Boolean)}
 function qTotal(){return S.d.quality.checks.filter(function(c){return c.code!=='vence7'&&c.code!=='atrasada'}).reduce(function(s,c){return s+c.count},0)+((S.d.quality.product_suggestions||[]).length)}
 
@@ -190,7 +190,7 @@ function portVisible(){
   return out}
 function tabPort(){
   var d=S.d,resps={};d.projects.forEach(function(p){if(p.responsible)resps[p.responsible]=1});
-  var h='<div class="card"><div class="fr"><label class="fl">Buscar<input class="fi" id="pfQ" type="search" value="'+esc(S.f.q)+'" placeholder="projeto, código, responsável…"></label>'+
+  var h='<div class="pmcard"><div class="fr"><label class="fl">Buscar<input class="fi" id="pfQ" type="search" value="'+esc(S.f.q)+'" placeholder="projeto, código, responsável…"></label>'+
    '<label class="fl">Farol<select class="fi" id="pfF"><option value="all">Todos</option>'+['vermelho','amarelo','cinza','verde','ok'].map(function(k){return '<option value="'+k+'"'+(S.f.farol===k?' selected':'')+'>'+FTX[k]+'</option>'}).join('')+'</select></label>'+
    '<label class="fl">Fase<select class="fi" id="pfP"><option value="all">Todas</option>'+Object.keys(d.phases).map(function(k){return '<option value="'+k+'"'+(S.f.phase===k?' selected':'')+'>'+d.phases[k]+'</option>'}).join('')+'</select></label>'+
    '<label class="fl">Responsável<select class="fi" id="pfR"><option value="all">Todos</option>'+Object.keys(resps).sort().map(function(k){return '<option'+(S.f.resp===k?' selected':'')+'>'+esc(k)+'</option>'}).join('')+'</select></label>'+
@@ -248,7 +248,7 @@ function bindQuick(scope){scope.querySelectorAll('[data-q]').forEach(function(el
 function tabQual(){
   var d=S.d,ck=d.quality.checks,sug=d.quality.product_suggestions||[];
   var h='<div class="qc">'+ck.map(function(c){return '<button class="qb '+(S.qsel===c.code?'on':'')+'" data-qs="'+c.code+'" type="button"><b>'+c.count+'</b>'+esc(c.label)+'</button>'}).join('')+'<button class="qb '+(S.qsel==='sug'?'on':'')+'" data-qs="sug" type="button"><b>'+sug.length+'</b>Sugestões de vínculo a produto</button></div>';
-  h+='<div class="card" id="qDet"></div>';
+  h+='<div class="pmcard" id="qDet"></div>';
   $('pmTab').innerHTML=h;
   $('pmTab').querySelectorAll('[data-qs]').forEach(function(b){b.onclick=function(){S.qsel=b.dataset.qs;tabQual()}});
   var q=$('qDet');
@@ -270,8 +270,8 @@ function tabQual(){
 function tabDep(){
   var m={};S.d.activities.forEach(function(a){m[a.id]=a});var rows=[];
   S.d.activities.forEach(function(a){(a.predecessors||[]).forEach(function(pid){var p=m[pid];if(p&&p.project_id!==a.project_id)rows.push({a:a,p:p})})});
-  if(!rows.length){$('pmTab').innerHTML='<div class="card"><h3>Dependências entre projetos</h3><div class="empty">Nenhuma atividade depende de outra de projeto diferente. As predecessoras são definidas na tela Planejamento semanal (dentro da mesma semana).</div></div>';return}
-  $('pmTab').innerHTML='<div class="card"><h3>Dependências entre projetos</h3><div class="tw"><table><thead><tr><th>Atividade</th><th>Projeto</th><th>Depende de</th><th>Projeto</th><th>Situação da predecessora</th></tr></thead><tbody>'+
+  if(!rows.length){$('pmTab').innerHTML='<div class="pmcard"><h3>Dependências entre projetos</h3><div class="empty">Nenhuma atividade depende de outra de projeto diferente. As predecessoras são definidas na tela Planejamento semanal (dentro da mesma semana).</div></div>';return}
+  $('pmTab').innerHTML='<div class="pmcard"><h3>Dependências entre projetos</h3><div class="tw"><table><thead><tr><th>Atividade</th><th>Projeto</th><th>Depende de</th><th>Projeto</th><th>Situação da predecessora</th></tr></thead><tbody>'+
    rows.map(function(r){return '<tr><td>'+esc(r.a.title)+'</td><td>'+esc(r.a.project_name||'—')+'</td><td>'+esc(r.p.title)+'</td><td>'+esc(r.p.project_name||'—')+'</td><td>'+(r.p.status==='ok'?'Concluída':'<span class="red">'+esc(STX[r.p.status])+'</span> · '+badge(r.p.farol))+'</td></tr>'}).join('')+'</tbody></table></div></div>'}
 
 /* ---------- Ficha do projeto ---------- */
@@ -282,24 +282,24 @@ function renderProject(){
   var ms=d.milestones.filter(function(m){return sub[m.project_id]}),rk=d.risks.filter(function(r){return sub[r.project_id]});
   var par=p.parent_id?P(p.parent_id):null;
   var h='<div class="fr no-print"><button class="b" id="pBack" type="button">← Portfólio</button>'+(par?'<button class="b" id="pPar" type="button">Projeto: '+esc(par.name)+'</button>':'')+(CAN&&FULL?'<button class="b" id="pEdit" type="button">Editar projeto</button>':'')+'<button class="b" id="pRep" type="button">Relatório de status</button></div>';
-  h+='<div class="card"><div style="display:flex;flex-wrap:wrap;gap:10px;justify-content:space-between;align-items:flex-start"><div><h1>'+esc(p.name)+(p.code?' <span class="mut">'+esc(p.code)+'</span>':'')+'</h1><div class="sub">'+(par?'Produto do projeto <b>'+esc(par.name)+'</b> · ':'')+'Responsável: '+esc(p.responsible||'—')+' · Fase: '+esc(d.phases[p.phase]||p.phase)+' · Planejado: '+fd(p.start_date)+' a '+fd(p.end_date)+'</div></div><div style="text-align:right">'+badge(p.farol)+'</div></div>'+
+  h+='<div class="pmcard"><div style="display:flex;flex-wrap:wrap;gap:10px;justify-content:space-between;align-items:flex-start"><div><h1>'+esc(p.name)+(p.code?' <span class="mut">'+esc(p.code)+'</span>':'')+'</h1><div class="sub">'+(par?'Produto do projeto <b>'+esc(par.name)+'</b> · ':'')+'Responsável: '+esc(p.responsible||'—')+' · Fase: '+esc(d.phases[p.phase]||p.phase)+' · Planejado: '+fd(p.start_date)+' a '+fd(p.end_date)+'</div></div><div style="text-align:right">'+badge(p.farol)+'</div></div>'+
     (p.objective?'<p style="margin:8px 0 0"><b>Objetivo:</b> '+esc(p.objective)+'</p>':'')+'<ul class="rs">'+p.reasons.map(function(r){return '<li>'+esc(r)+'</li>'}).join('')+'</ul></div>';
-  h+='<div class="kpis">'+pk('Progresso',p.progress==null?'—':num(p.progress,0)+'%',p.n_done+' de '+p.n_acts+' atividades')+pk('SPI simplificado',p.spi==null?'—':num(p.spi,2),'1,00 = no ritmo')+pk('Previsão de término',fd(p.forecast_end),p.slip_end==null?'sem fim planejado':((p.slip_end>0?'+':'')+p.slip_end+' dias vs. planejado'))+
+  h+='<div class="pmkpis">'+pk('Progresso',p.progress==null?'—':num(p.progress,0)+'%',p.n_done+' de '+p.n_acts+' atividades')+pk('SPI simplificado',p.spi==null?'—':num(p.spi,2),'1,00 = no ritmo')+pk('Previsão de término',fd(p.forecast_end),p.slip_end==null?'sem fim planejado':((p.slip_end>0?'+':'')+p.slip_end+' dias vs. planejado'))+
      pk('Atrasadas',p.n_late,p.n_blocked+' bloqueadas')+pk('Replanejamentos',p.replans,'mudanças de prazo entre semanas')+pk('Vazão (7 dias)',p.thr_now,'anteriores: '+p.thr_prev)+pk('Horas',num(p.hours,1)+' h',p.est_hours?('estimadas: '+num(p.est_hours,1)+' h'):'sem estimativa')+
      pk('Pendências abertas',p.n_pend,p.pend_age_avg==null?'—':('idade média '+num(p.pend_age_avg,0)+' d · máx. '+p.pend_age_max+' d'))+'</div>';
-  if(subs.length){h+='<div class="card"><h3>Produtos</h3><div class="tw"><table><thead><tr><th>Produto</th><th>Farol</th><th>Progresso</th><th class="n">Atividades</th><th class="n">Atrasadas</th></tr></thead><tbody>'+subs.map(function(c){return '<tr class="rw" data-sp="'+c.id+'"><td><b>'+esc(c.name)+'</b></td><td>'+badge(c.farol)+'</td><td>'+pbar(c.progress)+'</td><td class="n">'+c.n_done+'/'+c.n_acts+'</td><td class="n">'+c.n_late+'</td></tr>'}).join('')+'</tbody></table></div></div>'}
-  h+='<div class="card"><h3>Marcos</h3>'+msHtml(p,ms)+'</div>';
-  h+='<div class="card"><h3>Cronograma do projeto</h3><div class="gantt" id="pGantt"></div></div>';
-  h+='<div class="g2"><div class="card"><h3>Burndown semanal (atividades abertas)</h3><div id="pBurn"></div></div><div class="card"><h3>Carga por pessoa (abertas)</h3><div id="pLoad"></div></div></div>';
-  h+='<div class="card"><h3>Atividades <span class="mut">('+acts.length+(rout.length?' + '+rout.length+' de rotina':'')+')</span></h3>'+(acts.length||rout.length?'<div class="tw" style="max-height:520px;overflow:auto">'+actTable(acts.concat(rout),'acts',['title','status','responsible','deadline','forecast','project','routine','est','hours','slip','rp','farol'])+'</div>':'<div class="empty">Nenhuma atividade vinculada. Vincule pelo campo “Projeto” na tela Planejamento semanal ou na aba Qualidade dos dados.</div>')+'</div>';
-  h+='<div class="card"><h3>Riscos, decisões e pendências</h3>'+rkHtml(p,rk)+(pend.length?'<h3 style="margin-top:14px">Pendências do planejamento semanal</h3><div class="tw">'+actTable(pend,'acts',['title','status','responsible','deadline','farol'])+'</div>':'')+'</div>';
+  if(subs.length){h+='<div class="pmcard"><h3>Produtos</h3><div class="tw"><table><thead><tr><th>Produto</th><th>Farol</th><th>Progresso</th><th class="n">Atividades</th><th class="n">Atrasadas</th></tr></thead><tbody>'+subs.map(function(c){return '<tr class="rw" data-sp="'+c.id+'"><td><b>'+esc(c.name)+'</b></td><td>'+badge(c.farol)+'</td><td>'+pbar(c.progress)+'</td><td class="n">'+c.n_done+'/'+c.n_acts+'</td><td class="n">'+c.n_late+'</td></tr>'}).join('')+'</tbody></table></div></div>'}
+  h+='<div class="pmcard"><h3>Marcos</h3>'+msHtml(p,ms)+'</div>';
+  h+='<div class="pmcard"><h3>Cronograma do projeto</h3><div class="gantt" id="pGantt"></div></div>';
+  h+='<div class="g2"><div class="pmcard"><h3>Burndown semanal (atividades abertas)</h3><div id="pBurn"></div></div><div class="pmcard"><h3>Carga por pessoa (abertas)</h3><div id="pLoad"></div></div></div>';
+  h+='<div class="pmcard"><h3>Atividades <span class="mut">('+acts.length+(rout.length?' + '+rout.length+' de rotina':'')+')</span></h3>'+(acts.length||rout.length?'<div class="tw" style="max-height:520px;overflow:auto">'+actTable(acts.concat(rout),'acts',['title','status','responsible','deadline','forecast','project','routine','est','hours','slip','rp','farol'])+'</div>':'<div class="empty">Nenhuma atividade vinculada. Vincule pelo campo “Projeto” na tela Planejamento semanal ou na aba Qualidade dos dados.</div>')+'</div>';
+  h+='<div class="pmcard"><h3>Riscos, decisões e pendências</h3>'+rkHtml(p,rk)+(pend.length?'<h3 style="margin-top:14px">Pendências do planejamento semanal</h3><div class="tw">'+actTable(pend,'acts',['title','status','responsible','deadline','farol'])+'</div>':'')+'</div>';
   $('pmBody').innerHTML=h;
   $('pBack').onclick=function(){S.view='port';render()};if($('pPar'))$('pPar').onclick=function(){S.pid=par.id;render()};
   if($('pEdit'))$('pEdit').onclick=function(){projForm(p)};$('pRep').onclick=function(){report(p)};
   $('pmBody').querySelectorAll('[data-sp]').forEach(function(tr){tr.onclick=function(){S.pid=+tr.dataset.sp;render();window.scrollTo(0,0)}});
   bindSort($('pmBody'),'acts',renderProject);bindQuick($('pmBody'));gantt(p,acts.concat(rout),ms);burn(p);load_(p);bindMsRk(p);
 }
-function pk(l,v,d){return '<div class="kpi" style="cursor:default"><div class="l">'+esc(l)+'</div><div class="v" style="font-size:22px">'+v+'</div><div class="d">'+esc(d)+'</div></div>'}
+function pk(l,v,d){return '<div class="pmkpi" style="cursor:default"><div class="l">'+esc(l)+'</div><div class="v" style="font-size:22px">'+v+'</div><div class="d">'+esc(d)+'</div></div>'}
 function msHtml(p,ms){
   var h=(ms.length?'<div class="tw"><table><thead><tr><th>Marco</th><th>Data</th><th>Situação</th><th></th></tr></thead><tbody>'+ms.map(function(m){var lt=!m.done&&m.due&&m.due<today();
     return '<tr><td>'+esc(m.name)+'</td><td>'+fd(m.due)+'</td><td>'+(m.done?'<span class="fb"><i style="background:'+COL.verde+'"></i>Concluído</span>':(lt?'<span class="fb"><i style="background:'+COL.vermelho+'"></i>Vencido</span>':'<span class="fb"><i style="background:'+COL.cinza+'"></i>Aberto</span>'))+'</td><td>'+(CAN&&FULL?'<button class="b" data-me="'+m.id+'" type="button">Editar</button>':'')+'</td></tr>'}).join('')+'</tbody></table></div>':'<div class="empty">Nenhum marco cadastrado.</div>');
