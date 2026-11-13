@@ -365,7 +365,7 @@ def project_report(p, acts, milestones, risks, today):
     L.append("Data: %s · Responsável: %s · Fase: %s" % (today.strftime("%d/%m/%Y"), p.get("responsible") or "—", PHASES.get(p.get("phase"), p.get("phase") or "—")))
     L.append("Situação: %s — %s" % (FAROL_TXT[p["farol"]].upper(), "; ".join(p["reasons"])))
     L.append("Progresso: %s%% (%d de %d atividades concluídas)%s" % (
-        ("%g" % p["progress"]) if p["progress"] is not None else "—", p["n_done"], p["n_acts"],
+        ("%g" % p["progress"]).replace(".", ",") if p["progress"] is not None else "—", p["n_done"], p["n_acts"],
         (" · SPI " + ("%.2f" % p["spi"]).replace(".", ",")) if p.get("spi") is not None else ""))
     L.append("Período planejado: %s a %s · Previsão de término: %s%s" % (
         _br(p["start_date"]), _br(p["end_date"]), _br(p["forecast_end"]),

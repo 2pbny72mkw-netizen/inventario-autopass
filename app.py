@@ -29,6 +29,7 @@ import math
 import csv
 from functools import wraps
 
+from werkzeug.exceptions import HTTPException  # V88.0 REV13
 from flask import Flask, has_request_context, render_template, request, redirect, url_for, session, jsonify, flash, send_from_directory, Response, send_file, make_response, g, abort
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import UniqueConstraint, Index, func, case, text, and_, event, or_, inspect
@@ -45,7 +46,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V88.0 REV11"
+APP_RELEASE = "V88.0 REV13"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -159,7 +160,7 @@ PANORAMA_EXPORT_DIR = Path(tempfile.gettempdir()) / "inventario_panorama_exports
 PANORAMA_EXPORT_DIR.mkdir(parents=True, exist_ok=True)
 PANORAMA_EXPORT_MAX_AGE_SECONDS = int(os.getenv("PANORAMA_EXPORT_MAX_AGE_SECONDS", "7200"))
 _STORAGE_CACHE = {"at": 0.0, "data": None}
-_STORAGE_CACHE_TTL = int(os.getenv("STORAGE_TELEMETRY_TTL", "900"))
+_STORAGE_CACHE_TTL = int(os.getenv("STORAGE_TELEMETRY_TTL", "21600"))
 _STORAGE_CACHE_LOCK = threading.Lock()
 
 def _fin_job_update(job_id, **changes):
@@ -32969,6 +32970,8 @@ def bobinas_v8539_visao():
     try:
         try:
             response=v77_bobbins_dashboard_api()
+        except HTTPException:
+            raise
         except Exception:
             # REV93: transação envenenada/conexão caída (falhas de ~8 ms vistas na REV90): limpa a sessão e tenta mais uma vez.
             app.logger.exception("REV93 bobinas visao: 1a tentativa falhou")
@@ -33005,6 +33008,8 @@ def bobinas_v8539_visao():
           "situations":["critical","attention","normal"]}
         data["thresholds"]={"critical_max":10,"attention_max":30,"normal_min":31}
         return jsonify(data)
+    except HTTPException:
+        raise
     except Exception as exc:
         app.logger.exception("V85.40 REV2 bobinas visao")
         try:db.session.rollback()
@@ -33652,3 +33657,22 @@ from v100_pm import install_pm  # V88.0 REV11 — Visão do Gerente de Projeto (
 install_pm(app, db, text, {"gate": _v96_gate, "ensure": _v96_ensure, "event": _v96_event, "in_scope": _v99_in_scope, "areas_of": _v99_areas_of,
                            "clean_date": _v96_clean_date, "login_required": login_required, "access": _v96_access, "release": lambda: APP_RELEASE,
                            "scope": _v99_scope, "flags": _v85_flags, "full_gate": _v99_full_gate})
+from v101_cleanup import install_cleanup  # V88.0 REV13 — limpeza do banco, telas aposentadas, fim do polling TopDesk
+def _v101_guard():
+    if not _has_access("management.diagnostics") or session.get("role") != "manager":
+        return jsonify({"ok": False, "error": "Somente o Gestor."}), 403
+    return None
+def _v101_audit(alvo, rows, freed):
+    try:
+        db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="DB_CLEANUP_" + str(alvo).upper(), entity_type=str(alvo), entity_id="v101",
+                                  detail=json.dumps({"release": APP_RELEASE, "rows": rows, "mb_freed": freed}, ensure_ascii=False)))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+def _v101_after_purge():
+    try: _V8543R1_SUMMARY_READY_CACHE.update({"at": 0.0})
+    except Exception: pass
+    try: _v73_cache_clear("tx_total", "tx_archive90")
+    except Exception: pass
+install_cleanup(app, db, text, {"login_required": login_required, "guard": _v101_guard, "audit": _v101_audit, "release": lambda: APP_RELEASE,
+                                "is_pg": lambda: database_url.startswith("postgresql"), "after_purge": _v101_after_purge})
