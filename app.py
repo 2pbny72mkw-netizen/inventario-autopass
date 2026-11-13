@@ -46,7 +46,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 BASE_DATA_VERSION = "1408-5"
-APP_RELEASE = "V88.0 REV13"
+APP_RELEASE = "V88.0 REV14"
 DASHBOARD_RELEASE = APP_RELEASE
 TEAMS_RELEASE = APP_RELEASE
 FIELD_NEARBY_RADIUS_M = int(os.getenv("FIELD_NEARBY_RADIUS_M", "250"))
@@ -33676,3 +33676,12 @@ def _v101_after_purge():
     except Exception: pass
 install_cleanup(app, db, text, {"login_required": login_required, "guard": _v101_guard, "audit": _v101_audit, "release": lambda: APP_RELEASE,
                                 "is_pg": lambda: database_url.startswith("postgresql"), "after_purge": _v101_after_purge})
+from v102_logistica import install_adhoc  # V88.0 REV14 — Leva e Traz: atividade avulsa por dia, com motorista
+def _v102_audit(event, eid, detail):
+    try:
+        db.session.add(AuditEvent(user_id=session.get("user_id"), event_type=event, entity_type="logistics_adhoc", entity_id=str(eid), detail=str(detail)[:500]))
+        db.session.commit()
+    except Exception:
+        db.session.rollback(); app.logger.exception("REV14: falha ao auditar atividade avulsa")
+install_adhoc(app, db, {"login_required": login_required, "staff": _portal_staff, "drivers": _v100_drivers, "audit": _v102_audit,
+                        "is_blocked": lambda d: LogisticsBlockedDate.query.filter_by(blocked_date=d, active=True).first() is not None})
