@@ -196,3 +196,19 @@ def install_estoque_foto(app, db, text, can):
         response.set_data(html)
         return response
     return None
+
+
+def install_auto(app, db, text, release="V88.0 REV15.1"):
+    """Registro sem editar o app.py: chamado por v101_cleanup.install_cleanup. Busca _has_access e APP_RELEASE no módulo principal."""
+    import sys
+
+    def _main():
+        return sys.modules.get("app") or sys.modules.get("__main__")
+
+    def can(permission):
+        m = _main()
+        return bool(m._has_access(permission))
+    m = _main()
+    if m is not None and hasattr(m, "APP_RELEASE"):
+        m.APP_RELEASE = release
+    return install_estoque_foto(app, db, text, can)

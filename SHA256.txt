@@ -1,0 +1,4 @@
+6387446d15f3f1510054ce56afa9a5e792aa77cf7f50be87d6ade5036df3d336  ./LEIA-ME.txt
+1ec644c4ed4a2efcd7aa4e57a96fdec1755da1a5aa73a9cbd78cba91ba08512f  ./aplicar_versao.py
+f5542b74a64ead8d69a309d12edb7987e9b2dfcb726a6379cd35bd306740250d  ./v101_cleanup.py
+072c7159f2a6ed3bde28ce6bfb5791e3b0a740306607a859bf8b2d02b06283ae  ./v103_estoque_foto.py

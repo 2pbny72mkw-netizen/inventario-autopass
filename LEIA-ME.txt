@@ -1,0 +1,15 @@
+V88.0 REV15.1 — Estoque Central: foto do material (corrige o pacote REV15, que não registrava o módulo)
+Arquivos: v103_estoque_foto.py (o mesmo da REV15, com registro automático) e v101_cleanup.py (o da REV13 + 6 linhas no final que registram o módulo). Base: V88.0 REV14 (no ar). Banco: nada novo.
+POR QUE: a REV15 dependia de uma edição no app.py que o script fazia; sem ela o módulo ficou parado. Agora o processo é o de sempre: copiar os arquivos, commit, push. O app.py NÃO muda (assim nada da REV14 é desfeito). O módulo se registra sozinho ao iniciar e passa o rótulo da versão para "V88.0 REV15.1" (aparece em Sobre e na telemetria). Se o registro falhar, o sistema sobe normalmente e o erro vai para o log ("REV15 foto do estoque nao registrada").
+
+O QUE MUDA (Estoque Central)
+1) Painel do material selecionado: bloco "Foto do material" com prévia e botões "Tirar foto" e "Escolher da galeria". Com foto: "Trocar (câmera)", "Trocar (galeria)" e "Remover foto" (com confirmação). Uma foto por material; trocar substitui.
+2) Cadastro de material: a foto deixa de ser só câmera (o capture forçava isso no celular); mesmos dois botões, prévia e "Limpar foto".
+3) A foto é reduzida no navegador (máx. 1600 px, JPEG) antes do envio, para caber nos 2 MB.
+4) Troca/remoção entram no histórico do material (EDICAO) com o usuário. Permissão: a de editar/classificar material.
+Rotas novas: POST e DELETE /api/engenharia/estoque/materiais/<id>/foto.
+
+COMO APLICAR: python aplicar_versao.py V88.0_REV15_1 [PASTA_DO_REPOSITORIO]; commit e push; Ctrl+F5.
+TESTE: PostgreSQL 16 local (troca, adição, remoção, histórico, arquivo falso, >2 MB, inativo, 401, 403), registro automático via install_cleanup com módulo principal simulado (rotas criadas, permissão consultada, rótulo trocado), Chromium (foto de 25 MB reduzida para ~1 MB e enviada pela galeria; remover), e no sistema no ar (leitura) o painel e os botões de câmera/galeria.
+NÃO TESTADO: o registro com o app.py real (usei módulo simulado); câmera/galeria em celular de verdade; HEIC do iPhone; envio real de foto no sistema no ar (valido a presença em leitura; você testa uma foto real).
+REVERSÃO: reaplicar o v101_cleanup.py da REV13 e remover v103_estoque_foto.py.

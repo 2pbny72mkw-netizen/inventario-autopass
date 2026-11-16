@@ -160,4 +160,9 @@ def install_cleanup(app, db, text, H):
             response.set_data(html)
         return response
 
+    try:  # V88.0 REV15: registra o módulo da foto do estoque (sem editar o app.py)
+        from v103_estoque_foto import install_auto
+        install_auto(app, db, text)
+    except Exception:
+        app.logger.exception("REV15 foto do estoque nao registrada")
     return None
