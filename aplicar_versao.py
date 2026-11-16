@@ -33,11 +33,24 @@ def main(argv):
     for dp, _, fns in os.walk(pkg):
         for fn in fns:
             src = os.path.join(dp, fn); rel = os.path.relpath(src, pkg).replace('\\', '/')
-            if rel.upper().startswith('LEIA-ME') or rel.lower().endswith(('.sha256.txt', '.zip')): continue
+            if rel.upper().startswith('LEIA-ME') or rel.lower().endswith(('.sha256.txt', '.zip')) or os.path.basename(rel) == '_patch_app.py': continue
             dst = os.path.join(repo, rel); os.makedirs(os.path.dirname(dst), exist_ok=True)
             shutil.copy2(src, dst); copied.append(rel)
             if sha(src) != sha(dst): problems.append('copia diferente do pacote: ' + rel)
     if not copied: print('ERRO: o pacote esta vazio.'); return 2
+    pp = os.path.join(pkg, '_patch_app.py')
+    if os.path.isfile(pp):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('_patch_app', pp); mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+        ap = os.path.join(repo, 'app.py'); src = open(ap, encoding='utf-8').read()
+        try:
+            novo, notes = mod.patch(src)
+        except Exception as e:
+            print('ERRO ao ajustar o app.py:', e); return 1
+        if novo != src:
+            open(ap, 'w', encoding='utf-8').write(novo)
+        copied.append('app.py (ajustado: ' + '; '.join(notes) + ')' if notes else 'app.py (ja ajustado)')
+        print('      app.py do repositorio ajustado:', '; '.join(notes) or 'nada a fazer (ja estava ajustado)')
     print(f'[1/4] Copiados e conferidos {len(copied)} arquivos.')
     if not any(c.startswith('static/') for c in copied):
         print('      aviso: este pacote nao traz arquivos em static/ (normal em versoes so de servidor).')
@@ -76,7 +89,7 @@ def main(argv):
         try:
             ver = re.search(r'APP_RELEASE\s*=\s*"([^"]+)"', open(os.path.join(repo, 'app.py'), encoding='utf-8').read())
             msg = (ver.group(1) if ver else 'versao') + ' - aplicada com aplicar_versao.py'
-            subprocess.run(['git', '-C', repo, 'add', '--'] + copied, check=True)
+            subprocess.run(['git', '-C', repo, 'add', '--'] + [c.split(' ')[0] for c in copied], check=True)
             subprocess.run(['git', '-C', repo, 'commit', '-m', msg], check=True)
             print('Commit local feito:', msg, '\nPara publicar, faca o push manualmente (git push).')
         except Exception as e:
