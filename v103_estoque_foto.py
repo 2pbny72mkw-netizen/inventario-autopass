@@ -198,7 +198,7 @@ def install_estoque_foto(app, db, text, can):
     return None
 
 
-def install_auto(app, db, text, release="V88.0 REV15.1"):
+def install_auto(app, db, text, release="V88.0 REV15.2"):
     """Registro sem editar o app.py: chamado por v101_cleanup.install_cleanup. Busca _has_access e APP_RELEASE no módulo principal."""
     import sys
 
@@ -211,4 +211,9 @@ def install_auto(app, db, text, release="V88.0 REV15.1"):
     m = _main()
     if m is not None and hasattr(m, "APP_RELEASE"):
         m.APP_RELEASE = release
+    try:  # REV15.2: modelos extras na lista do agendamento do cliente
+        from v104_portal_modelos import install_models
+        install_models(app)
+    except Exception:
+        app.logger.exception("REV15.2 modelos do portal nao registrados")
     return install_estoque_foto(app, db, text, can)
