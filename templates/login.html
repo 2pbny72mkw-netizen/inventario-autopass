@@ -13,7 +13,6 @@
 <div class="loginbox">
   {% with msgs=get_flashed_messages() %}{% for m in msgs %}<div class="alert">{{m}}</div>{% endfor %}{% endwith %}
   <h1>Sistema de Gestão</h1>
-  <p>Metrô • CPTM • Motiva / ViaQuatro / ViaMobilidade</p>
   <form method="post" autocomplete="on">
     <label>Usuário</label><input name="username" required autocomplete="username">
     <label>Senha</label><input name="password" type="password" required autocomplete="current-password">
