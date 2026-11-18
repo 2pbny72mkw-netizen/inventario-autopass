@@ -54,7 +54,7 @@
    document.getElementById('fSi39').onchange=render;
    lines();
   }
- async function dash(){if(dashboard)return dashboard;let r=await fetch('/api/bobinas/v8539/visao');dashboard=await r.json();return dashboard;}
+ async function dash(){if(dashboard)return dashboard;let j;try{let r=await fetch('/api/bobinas/v8539/visao');j=await r.json().catch(()=>({ok:false,error:r.status===403?'Sem liberação para a Visão Geral de Bobinas.':'Falha ao carregar ('+r.status+').'}));if(!r.ok&&j.ok!==false)j={ok:false,error:'Falha ao carregar ('+r.status+').'}}catch(e){j={ok:false,error:'Sem conexão. Tente de novo.'}}if(j.ok)dashboard=j;return j;}
  document.getElementById('openStockV8544R7').onclick=()=>{window.location.href='/field/estoque#minha-carga';};
  document.getElementById('closeV8539').onclick=()=>modal.style.display='none';
  modal.onclick=e=>{if(e.target===modal)modal.style.display='none';};
@@ -70,7 +70,7 @@
    let payload={boxes:+boxR39.value||0,photos:[...pics.files].map(f=>f.name),latitude:lat,longitude:lon};let r=await fetch('/api/bobinas/v8538/entregas/'+x.id+'/receber',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});let z=await r.json();if(!z.ok){alert(z.error||'Falha no recebimento.');return;}dashboard=null;alert(`Recebimento registrado. ${z.credited_bobbins||0} bobina(s) creditada(s) em ${z.stock_location||x.localidade}. Saldo disponível: ${z.stock_after??'—'}.`);modal.style.display='none';};
  };
 
- document.getElementById('openOperatorsV8539').onclick=async()=>{open('Visão Geral');let j=await dash();if(!j.ok){body.textContent='Não foi possível carregar o dashboard.';return;}
+ document.getElementById('openOperatorsV8539').onclick=async()=>{open('Visão Geral');let j=await dash();if(!j.ok){body.textContent=j.error||'Não foi possível carregar o dashboard.';return;}
   const eq=(a,b)=>String(a||'').trim().toLocaleLowerCase('pt-BR')===String(b||'').trim().toLocaleLowerCase('pt-BR');
   let sort39={key:'name',dir:1,type:'text'};
   const textCmp=(a,b)=>String(a??'').localeCompare(String(b??''),'pt-BR',{numeric:true,sensitivity:'base'});
