@@ -167,9 +167,38 @@ def install_v86(app, db, User, can):
     def v86_warehouse_add():
         d=request.get_json(silent=True) or {}; name=str(d.get('name') or '').strip()[:120]
         if len(name)<2:return jsonify(ok=False,error='Informe o nome da localidade.'),400
-        if Warehouse.query.filter(func.lower(Warehouse.name)==name.lower()).first():return jsonify(ok=False,error='Localidade já cadastrada.'),409
-        db.session.add(Warehouse(name=name));db.session.commit()
-        return jsonify(ok=True)
+        existing=Warehouse.query.filter(func.lower(Warehouse.name)==name.lower()).first()
+        if existing and existing.active:return jsonify(ok=False,error='Localidade já cadastrada.'),409
+        if existing:
+            # REV17.1: localidade com o mesmo nome estava inativada (excluída com histórico) — reativa, com saldos e movimentações.
+            existing.active=True;existing.name=name;db.session.commit()
+            return jsonify(ok=True,reactivated=True,id=existing.id,message='Localidade "'+name+'" reativada (já existia inativada; o histórico foi mantido).')
+        w=Warehouse(name=name);db.session.add(w);db.session.commit()
+        return jsonify(ok=True,id=w.id)
+
+    @app.get('/api/engenharia/estoque/localidades/inativas')
+    @guard('engineering.stock.locations')
+    def v1771_warehouse_inactive():
+        # REV17.1: localidades excluídas com histórico (inativadas) ficavam invisíveis.
+        rows=[]
+        for w in Warehouse.query.filter_by(active=False).order_by(Warehouse.name).all():
+            units=db.session.query(func.coalesce(func.sum(Balance.quantity),0)).filter(Balance.warehouse_id==w.id).scalar() or 0
+            items=Balance.query.filter(Balance.warehouse_id==w.id,Balance.quantity>0).count()
+            last=db.session.query(func.max(Movement.created_at)).filter(Movement.warehouse_id==w.id).scalar()
+            moves=Movement.query.filter_by(warehouse_id=w.id).count()
+            rows.append({'id':w.id,'name':w.name,'units':int(units),'items':items,'movements':moves,'last_movement':last.isoformat() if last else ''})
+        return jsonify(ok=True,warehouses=rows)
+
+    @app.post('/api/engenharia/estoque/localidades/<int:wid>/reativar')
+    @guard('engineering.stock.locations')
+    def v1771_warehouse_reactivate(wid):
+        w=db.session.get(Warehouse,wid)
+        if not w:abort(404)
+        if w.active:return jsonify(ok=True,message='Localidade já estava ativa.')
+        if Warehouse.query.filter(Warehouse.id!=wid,Warehouse.active==True,func.lower(Warehouse.name)==w.name.lower()).first():
+            return jsonify(ok=False,error='Já existe uma localidade ativa com esse nome.'),409
+        w.active=True;db.session.commit()
+        return jsonify(ok=True,id=w.id,message='Localidade "'+w.name+'" reativada, com saldos e histórico.')
 
     @app.patch('/api/engenharia/estoque/localidades/<int:wid>')
     @guard('engineering.stock.locations')
@@ -180,7 +209,7 @@ def install_v86(app, db, User, can):
         name=str(d.get('name') or '').strip()[:120]
         if len(name)<2:return jsonify(ok=False,error='Informe o nome da localidade.'),400
         duplicate=Warehouse.query.filter(Warehouse.id!=wid,func.lower(Warehouse.name)==name.lower()).first()
-        if duplicate:return jsonify(ok=False,error='Localidade já cadastrada.'),409
+        if duplicate:return jsonify(ok=False,error='Localidade já cadastrada.' if duplicate.active else 'Existe uma localidade inativada com esse nome: use “Nova localidade” com esse nome para reativá-la.'),409
         w.name=name
         db.session.commit()
         return jsonify(ok=True)
