@@ -121,13 +121,14 @@ def install_trainings(app, H):
 
     def techs():
         """Técnicos ativos (Field e Implantação) + quem já tem registro, mesmo com outro perfil."""
-        rows = sql(f"""SELECT id, name, role, job_title, active, personnel_status FROM users
+        rows = sql(f"""SELECT id, name, role, job_title, company, active, personnel_status FROM users
                        WHERE (active = :a AND role IN ('{TECH_ROLES[0]}','{TECH_ROLES[1]}')
                               AND COALESCE(personnel_status,'ATIVO') NOT IN ('DESLIGADO','INATIVO'))
                           OR id IN (SELECT user_id FROM v108_training_records WHERE deleted_at IS NULL)
                        ORDER BY name""", {"a": True})
         return [{"id": r["id"], "name": r["name"], "job_title": r.get("job_title") or "",
-                 "role": r.get("role") or "", "active": bool(r.get("active"))} for r in rows]
+                 "role": r.get("role") or "", "company": " ".join(str(r.get("company") or "").split()),
+                 "active": bool(r.get("active"))} for r in rows]
 
     def records():
         rows = sql("""SELECT r.id, r.user_id, r.type_id, r.done_on, r.trainer, r.notes, r.source, r.created_at, u.name AS by_name
@@ -335,7 +336,7 @@ def install_trainings(app, H):
 
     # ---------------- exportar Excel ----------------
     def filtered(args):
-        """Mesma regra da tela: técnico (nome contém), tipo, período (de/até) e situação (feito/falta)."""
+        """Mesma regra da tela: técnico (nome contém), empresa, tipo, período (de/até) e situação (feito/falta)."""
         today = H["today"]()
         ts = [t for t in types() if t["active"]]
         tid = args.get("tipo")
@@ -346,7 +347,9 @@ def install_trainings(app, H):
         q = fold(args.get("tecnico") or "")
         sit = (args.get("situacao") or "").lower()
         recs = [r for r in records() if (not de or r["date"] >= de) and (not ate or r["date"] <= ate)]
-        tt = [t for t in techs() if not q or q in fold(t["name"])]
+        emp = fold(args.get("empresa") or "")
+        tt = [t for t in techs() if (not q or q in fold(t["name"]))
+              and (not emp or fold(t["company"] or "(sem empresa)") == emp)]
         latest = {}
         for r in recs:  # já vem do mais recente para o mais antigo
             latest.setdefault((r["user_id"], r["type_id"]), r)
@@ -391,7 +394,7 @@ def install_trainings(app, H):
         if request.args.get("formato") == "lista":
             ws = wb.active
             ws.title = "Treinamentos"
-            ws.append(["Técnico", "Cargo", "Tipo de treinamento", "Data realizada", "Aplicado por", "Observação", "Origem", "Registrado por"])
+            ws.append(["Técnico", "Empresa", "Cargo", "Tipo de treinamento", "Data realizada", "Aplicado por", "Observação", "Origem", "Registrado por"])
             tname = {t["id"]: t["name"] for t in types()}
             tech = {t["id"]: t for t in techs()}
             ids = {t["id"] for t in tt}
@@ -399,17 +402,17 @@ def install_trainings(app, H):
             for r in recs:
                 if r["user_id"] in ids and r["type_id"] in allowed:
                     u = tech.get(r["user_id"], {})
-                    ws.append([u.get("name", r["user_id"]), u.get("job_title", ""), tname.get(r["type_id"], r["type_id"]),
+                    ws.append([u.get("name", r["user_id"]), u.get("company", ""), u.get("job_title", ""), tname.get(r["type_id"], r["type_id"]),
                                date.fromisoformat(r["date"]), r["trainer"], r["notes"], r["source"], r["by"]])
-                    ws.cell(ws.max_row, 4).number_format = "DD/MM/YYYY"
-            widths = [38, 26, 20, 14, 22, 50, 10, 24]
+                    ws.cell(ws.max_row, 5).number_format = "DD/MM/YYYY"
+            widths = [38, 22, 26, 20, 14, 22, 50, 10, 24]
             fname = "treinamentos_lista.xlsx"
         else:
             ws = wb.active
             ws.title = "Matriz"
-            ws.append(["Técnico"] + [t["name"] for t in ts] + ["Total"])
+            ws.append(["Técnico", "Empresa"] + [t["name"] for t in ts] + ["Total"])
             for u in tt:
-                row = [u["name"]]
+                row = [u["name"], u["company"]]
                 fills = []
                 n = 0
                 for t in ts:
@@ -423,16 +426,16 @@ def install_trainings(app, H):
                         fills.append(None)
                 row.append(f"{n}/{len(ts)}")
                 ws.append(row)
-                for j, f in enumerate(fills, 2):
+                for j, f in enumerate(fills, 3):
                     c = ws.cell(ws.max_row, j)
                     c.number_format = "DD/MM/YYYY"
                     c.alignment = Alignment(horizontal="center")
                     if f:
                         c.fill = f
-            ws.append(["Cobertura"] + [f"{sum(1 for u in tt if (u['id'], t['id']) in latest)}/{len(tt)}" for t in ts] + [""])
+            ws.append(["Cobertura", ""] + [f"{sum(1 for u in tt if (u['id'], t['id']) in latest)}/{len(tt)}" for t in ts] + [""])
             for c in ws[ws.max_row]:
                 c.font = Font(bold=True)
-            widths = [38] + [14] * len(ts) + [8]
+            widths = [38, 22] + [14] * len(ts) + [8]
             fname = "treinamentos_matriz.xlsx"
         for c in ws[1]:
             c.font, c.fill = bold, head
@@ -442,7 +445,7 @@ def install_trainings(app, H):
         ws.freeze_panes = "B2"
         info = wb.create_sheet("Filtros")
         info.append(["Gerado em", datetime.utcnow().strftime("%d/%m/%Y %H:%M") + " UTC"])
-        for k, lbl in (("tecnico", "Técnico"), ("tipo", "Tipo"), ("situacao", "Situação"), ("de", "De"), ("ate", "Até")):
+        for k, lbl in (("tecnico", "Técnico"), ("empresa", "Empresa"), ("tipo", "Tipo"), ("situacao", "Situação"), ("de", "De"), ("ate", "Até")):
             info.append([lbl, request.args.get(k) or "todos"])
         buf = io.BytesIO()
         wb.save(buf)
