@@ -456,7 +456,10 @@ def install_pos_metro(app,db,can):
     obj.terminal_number=new_number
    event=Event(pos_id=pid,old_serial=obj.serial,old_model=obj.model,new_serial=serial or obj.serial,new_model=model or obj.model,notes=(('[REV62] ID do POS alterado: '+old_number+' -> '+new_number+'; identificação: '+new_terminal+'\n') if new_number!=old_number else '')+(request.form.get('observacoes') or '')[:2000],user_id=session['user_id'])
    db.session.add(event);db.session.flush()
-   for filename,mime,data in valid:db.session.add(Photo(event_id=event.id,filename=filename,mimetype=mime,content=data))
+   for filename,mime,data in valid:
+    p=Photo(event_id=event.id,filename=filename,mimetype=mime,content=data);db.session.add(p);db.session.flush()
+    _v107=app.extensions.get('v107')  # REV17: foto vai para o R2 (fica no banco só se o R2 falhar)
+    if _v107:_v107.store('v876_pos_metro_photos',p.id,data,mime)
    if serial:obj.serial=serial
    if model:obj.model=model
    if manufacturer:obj.manufacturer=manufacturer
@@ -550,7 +553,10 @@ def install_pos_metro(app,db,can):
   ap.status=status;ap.updated_by=session['user_id'];ap.notes=(request.form.get('observacoes') or '')[:2000]
   db.session.add(APEvent(ap_id=ap.id,status=status,notes=f'[{ap.identifier} | {ap.location}] '+ap.notes,user_id=session['user_id']))
   ap.installed_on=datetime.utcnow() if status=='Concluído' else None
-  for name,mime,data in valid:db.session.add(APPhoto(ap_id=ap.id,filename=name,mimetype=mime,content=data,user_id=session['user_id']))
+  for name,mime,data in valid:
+   p=APPhoto(ap_id=ap.id,filename=name,mimetype=mime,content=data,user_id=session['user_id']);db.session.add(p);db.session.flush()
+   _v107=app.extensions.get('v107')  # REV17: foto vai para o R2
+   if _v107:_v107.store('v8738_pos_metro_ap_photos',p.id,data,mime)
   db.session.commit()
   from urllib.parse import urlencode
   return redirect('/field/troca-pos-metro?'+urlencode({'linha':line,'estacao':station}))
@@ -567,7 +573,9 @@ def install_pos_metro(app,db,can):
  def ap_photo(photo_id):
   photo=db.session.get(APPhoto,photo_id)
   if not photo:abort(404)
-  return send_file(BytesIO(photo.content),mimetype=photo.mimetype,download_name=photo.filename)
+  _v107=app.extensions.get('v107');data=_v107.read('v8738_pos_metro_ap_photos',photo.id,photo.content) if _v107 else photo.content
+  if not data:abort(404)
+  r=send_file(BytesIO(data),mimetype=photo.mimetype,download_name=photo.filename);r.headers['Cache-Control']='private, max-age=86400';return r
  @app.get('/field/troca-pos-metro/<int:pid>/fotos')
  @guard('field.pos_metro')
  def pos_photos_list(pid):
@@ -585,7 +593,9 @@ def install_pos_metro(app,db,can):
  def pos_photo(photo_id):
   photo=db.session.get(Photo,photo_id)
   if not photo:abort(404)
-  return send_file(BytesIO(photo.content),mimetype=photo.mimetype,download_name=photo.filename)
+  _v107=app.extensions.get('v107');data=_v107.read('v876_pos_metro_photos',photo.id,photo.content) if _v107 else photo.content
+  if not data:abort(404)
+  r=send_file(BytesIO(data),mimetype=photo.mimetype,download_name=photo.filename);r.headers['Cache-Control']='private, max-age=86400';return r
  @app.get('/field/troca-pos-metro/modelo')
  @guard('field.pos_metro.export')
  def pos_model():

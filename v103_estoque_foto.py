@@ -152,11 +152,18 @@ def install_estoque_foto(app, db, text, can):
             if not _material(mid):
                 return jsonify(ok=False, error="Material não encontrado."), 404
             had = db.session.execute(text("SELECT 1 FROM v86_material_photos WHERE material_id=:m LIMIT 1"), {"m": mid}).first() is not None
+            _v107 = app.extensions.get("v107")  # REV17: foto no R2; a antiga sai do R2 depois do commit
+            old_keys = _v107.keys_where("v86_material_photos", "material_id=:m", {"m": mid}) if _v107 else []
             db.session.execute(text("DELETE FROM v86_material_photos WHERE material_id=:m"), {"m": mid})
             db.session.execute(text("INSERT INTO v86_material_photos (material_id, mime, data, created_at) VALUES (:m, :t, :d, CURRENT_TIMESTAMP)"),
                                {"m": mid, "t": mime, "d": data})
+            if _v107:
+                new_id = db.session.execute(text("SELECT MAX(id) FROM v86_material_photos WHERE material_id=:m"), {"m": mid}).scalar()
+                _v107.store("v86_material_photos", new_id, data, mime)
             _log(mid, "Foto " + ("trocada" if had else "adicionada") + " (" + str(max(1, len(data) // 1024)) + " KB)")
             db.session.commit()
+            if _v107 and old_keys:
+                _v107.delete_keys(old_keys)
             return jsonify(ok=True, substituida=had, kb=max(1, len(data) // 1024), photo_url="/api/engenharia/estoque/fotos/" + str(mid))
         except Exception:
             db.session.rollback()
@@ -171,10 +178,14 @@ def install_estoque_foto(app, db, text, can):
         try:
             if not _material(mid):
                 return jsonify(ok=False, error="Material não encontrado."), 404
+            _v107 = app.extensions.get("v107")
+            old_keys = _v107.keys_where("v86_material_photos", "material_id=:m", {"m": mid}) if _v107 else []
             n = db.session.execute(text("DELETE FROM v86_material_photos WHERE material_id=:m"), {"m": mid}).rowcount
             if n:
                 _log(mid, "Foto removida")
             db.session.commit()
+            if _v107 and old_keys:
+                _v107.delete_keys(old_keys)
             return jsonify(ok=True, removida=bool(n))
         except Exception:
             db.session.rollback()
@@ -198,7 +209,7 @@ def install_estoque_foto(app, db, text, can):
     return None
 
 
-def install_auto(app, db, text, release="V88.0 REV16.1"):  # rótulo da versão no ar
+def install_auto(app, db, text, release="V88.0 REV17"):  # rótulo da versão no ar
     """Registro sem editar o app.py: chamado por v101_cleanup.install_cleanup. Busca _has_access e APP_RELEASE no módulo principal."""
     import sys
 

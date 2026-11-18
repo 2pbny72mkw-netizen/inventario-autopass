@@ -249,7 +249,9 @@ def install_v86(app, db, User, can):
         if mime not in ('image/jpeg','image/png','image/webp'):raise ValueError('Foto deve ser JPG, PNG ou WebP.')
         data=file.read(2*1024*1024+1)
         if not data or len(data)>2*1024*1024:raise ValueError('Foto deve ter até 2 MB.')
-        db.session.add(Photo(material_id=m.id,mime=mime,data=data))
+        p=Photo(material_id=m.id,mime=mime,data=data);db.session.add(p);db.session.flush()
+        _v107=app.extensions.get('v107')  # REV17: foto vai para o R2
+        if _v107:_v107.store('v86_material_photos',p.id,data,mime)
 
     @app.post('/api/engenharia/estoque/materiais')
     @guard('engineering.stock.create')
@@ -309,7 +311,9 @@ def install_v86(app, db, User, can):
     def v86_material_photo(mid):
         photo=Photo.query.filter_by(material_id=mid).order_by(Photo.id).first()
         if not photo:abort(404)
-        response=send_file(BytesIO(photo.data),mimetype=photo.mime,download_name='material-'+str(mid)+'.jpg')
+        _v107=app.extensions.get('v107');data=_v107.read('v86_material_photos',photo.id,photo.data) if _v107 else photo.data
+        if not data:abort(404)
+        response=send_file(BytesIO(data),mimetype=photo.mime,download_name='material-'+str(mid)+'.jpg')
         response.headers['Cache-Control']='private, max-age=300'
         return response
 

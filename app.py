@@ -3938,11 +3938,14 @@ def _v76_notify_managers(title,message,severity="URGENTE",category="AUTORIZACAO"
         for row in rows: row.whatsapp_status=wa
     return rows,wa
 
+_V107_NOTIF_TICK=[0.0]
 @app.get("/api/v76/notificacoes")
 @login_required
 def v76_notifications_api():
     uid=session.get("user_id");unread=(request.args.get("unread") or "").lower() in ("1","true","sim")
-    _v78_expire_work_access_requests()
+    # REV17: a expiração (escrita) roda no máximo a cada 5 min por processo, não a cada leitura.
+    if time.time()-_V107_NOTIF_TICK[0]>300:
+        _V107_NOTIF_TICK[0]=time.time();_v78_expire_work_access_requests()
     stale=V76Notification.query.filter(V76Notification.recipient_id==uid,V76Notification.entity_type=="work_access",V76Notification.read_at.is_(None)).all()
     if stale:
         req_ids=[int(x.entity_id) for x in stale if str(x.entity_id or "").isdigit()]
@@ -12050,6 +12053,10 @@ def _v88b_reference_map():
             if isinstance(c.type, _SaString) and _V88B_REF_PAT.search(c.name) and (t.name, c.name) not in seen:
                 seen.add((t.name, c.name))
                 cols.append((t.name, c.name))
+    # REV17: fotos que saíram do banco para o R2 (coluna r2_key criada fora dos modelos) contam como referenciadas.
+    for _t in ("v876_pos_metro_photos", "v8738_pos_metro_ap_photos", "v86_material_photos"):
+        if (_t, "r2_key") not in seen:
+            seen.add((_t, "r2_key")); cols.append((_t, "r2_key"))
     refs, col_keys = {}, {}
     for tname, cname in cols:
         try:
@@ -26072,11 +26079,18 @@ def _materials_xray_rows():
             # V69.5: pendência do colaborador = próxima ação depende dele.
             # CORRECAO_SOLICITADA/RASCUNHO dependem da gestão, não do colaborador.
             if st == 'AGUARDANDO_ACEITE': x['pending']+=1
+    # REV17: pedidos e movimentos de todos de uma vez (antes: 2 consultas por colaborador, ~180 por abertura).
+    reqs_by={}; mov_by={}
+    if user_ids:
+        for r in MaterialRequest.query.filter(MaterialRequest.user_id.in_(user_ids),MaterialRequest.status.in_(['SOLICITADO','EM_ANALISE','APROVADO','EM_COMPRA','DISPONIVEL'])).all():
+            reqs_by.setdefault(r.user_id,[]).append(r)
+        for m in MaterialMovement.query.filter(MaterialMovement.user_id.in_(user_ids)).all():
+            mov_by.setdefault(m.user_id,[]).append(m)
     out=[]
     for u in users:
         ds=doc_stats.get(u.id,{'total':0,'signed':0,'pending':0})
-        reqs=MaterialRequest.query.filter_by(user_id=u.id).filter(MaterialRequest.status.in_(['SOLICITADO','EM_ANALISE','APROVADO','EM_COMPRA','DISPONIVEL'])).all()
-        mov=MaterialMovement.query.filter_by(user_id=u.id).all(); bal={}
+        reqs=reqs_by.get(u.id,[])
+        mov=mov_by.get(u.id,[]); bal={}
         for m in mov: bal[m.material_id]=bal.get(m.material_id,0)+(m.quantity if m.movement_type in ('ENTREGA','SUBSTITUICAO_ENTRADA','TRANSFERENCIA_ENTRADA') else -m.quantity)
         load=sum(1 for q in bal.values() if q>0); issues=ds['pending']; reasons=[]
         if ds['pending']: reasons.append(f"{ds['pending']} termo/documento(s) aguardando ação")
@@ -31124,7 +31138,8 @@ def _v87_bob_invalidate():
 @app.get('/api/bobinas/dashboard')
 @login_required
 def v77_bobbins_dashboard_api():
-    if not _has_access('field.bobbins_dashboard'): abort(403)
+    # REV16.2: a Visão Geral da tela de campo (/api/bobinas/v8539/visao) libera também quem tem só 'Bobinas', como o app Android já faz.
+    if not _has_access('field.bobbins_dashboard') and not getattr(g,'_v162_visao_ok',False): abort(403)
     if not _v85_flags().get('cache_bobinas'):
         return _v87_bobbins_dashboard_compute()
     key = 'v87_bobdash:' + '&'.join(f"{k}={request.args.get(k, '')}" for k in sorted(request.args)) + ':' + ('1' if _has_access('field.stock_manage') else '0')
@@ -32967,6 +32982,9 @@ def _v8539r2_severity(pct):
 @app.get("/api/bobinas/v8539/visao")
 @login_required
 def bobinas_v8539_visao():
+    if not (_has_access('field.bobbins') or _has_access('field.bobbins_dashboard')):
+        return jsonify({"ok":False,"error":"Sem liberação para a Visão Geral de Bobinas (Bobinas ou Visualizar Dashboard Bobinas)."}),403
+    g._v162_visao_ok=True
     try:
         try:
             response=v77_bobbins_dashboard_api()
@@ -33699,3 +33717,14 @@ install_models(app, {"login_required": login_required, "staff": _portal_staff, "
                      "exec": lambda q, p=None: db.session.execute(text(q), p or {}),
                      "commit": db.session.commit, "rollback": db.session.rollback,
                      "is_pg": lambda: database_url.startswith("postgresql")})
+from v107_eficiencia import install_eficiencia  # V88.0 REV17 — fotos do banco no R2, limpeza automática de GPS, compactação
+def _v107_audit(event, eid, detail):
+    try:
+        db.session.add(AuditEvent(user_id=session.get("user_id") if has_request_context() else None, event_type=event, entity_type="eficiencia", entity_id=str(eid), detail=str(detail)[:500]))
+        db.session.commit()
+    except Exception:
+        db.session.rollback(); app.logger.exception("REV17: falha ao auditar")
+install_eficiencia(app, db, {"text": text, "login_required": login_required, "guard": _v85_guard, "is_principal": _v86_is_principal,
+                             "audit": _v107_audit, "is_pg": lambda: database_url.startswith("postgresql"),
+                             "r2_ok": _r2_available, "r2_put": lambda k, d, m=None: _r2_put_bytes(k, d, m), "r2_get": _r2_get_bytes,
+                             "r2_del": lambda k: r2_client().delete_object(Bucket=os.environ["R2_BUCKET_NAME"], Key=k)})

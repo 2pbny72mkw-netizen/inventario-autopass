@@ -57,10 +57,14 @@ def install_pos_delete(app, db, can):
                 pos_id=pid, terminal=row['terminal'], linha=row['line'], estacao=row['station'], status=row['status'],
                 qtd_eventos=len(events), qtd_fotos=len(photos), excluido_por=session.get('user_id'),
                 excluido_em=datetime.utcnow(), snapshot=snap))
+            _v107 = app.extensions.get('v107')  # REV17: fotos no R2 saem junto
+            r2_keys = _v107.keys_where('v876_pos_metro_photos', 'event_id IN (SELECT id FROM v874_pos_metro_events WHERE pos_id=:i)', {'i': pid}) if _v107 else []
             db.session.execute(text('DELETE FROM v876_pos_metro_photos WHERE event_id IN (SELECT id FROM v874_pos_metro_events WHERE pos_id=:i)'), {'i': pid})
             db.session.execute(text('DELETE FROM v874_pos_metro_events WHERE pos_id=:i'), {'i': pid})
             db.session.execute(text('DELETE FROM v874_pos_metro WHERE id=:i'), {'i': pid})
             db.session.commit()
+            if _v107 and r2_keys:
+                _v107.delete_keys(r2_keys)
         except Exception:
             db.session.rollback()
             raise
