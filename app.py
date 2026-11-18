@@ -33685,3 +33685,17 @@ def _v102_audit(event, eid, detail):
         db.session.rollback(); app.logger.exception("REV14: falha ao auditar atividade avulsa")
 install_adhoc(app, db, {"login_required": login_required, "staff": _portal_staff, "drivers": _v100_drivers, "audit": _v102_audit,
                         "is_blocked": lambda d: LogisticsBlockedDate.query.filter_by(blocked_date=d, active=True).first() is not None})
+from v104_redirect import install_redirect  # V88.0 REV16 — serviço antigo redireciona as telas para o endereço novo (variável REDIRECT_TO)
+install_redirect(app)
+from v105_modelos import install_models  # V88.0 REV16 — Leva e Traz: cadastro de modelos de equipamento (Gestão de Agendamentos)
+def _v105_audit(event, eid, detail):
+    try:
+        db.session.add(AuditEvent(user_id=session.get("user_id"), event_type=event, entity_type="equipment_model", entity_id=str(eid), detail=str(detail)[:500]))
+        db.session.commit()
+    except Exception:
+        db.session.rollback(); app.logger.exception("REV16: falha ao auditar modelo de equipamento")
+install_models(app, {"login_required": login_required, "staff": _portal_staff, "audit": _v105_audit,
+                     "sql": lambda q, p=None: [dict(r._mapping) for r in db.session.execute(text(q), p or {})],
+                     "exec": lambda q, p=None: db.session.execute(text(q), p or {}),
+                     "commit": db.session.commit, "rollback": db.session.rollback,
+                     "is_pg": lambda: database_url.startswith("postgresql")})
