@@ -1,0 +1,155 @@
+{% extends 'base.html' %}
+{% block title %}Treinamentos dos técnicos · {{ app_release }}{% endblock %}
+{% block content %}
+<style>
+#tr108{max-width:1400px;margin:0 auto;color:#16283d;font-size:14px}
+#tr108 .hd{background:#0f1e3d;color:#fff;border-bottom:5px solid #2ba6a0;border-radius:14px;padding:16px 20px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+#tr108 .hd small{color:#a9c3e0;font-weight:700}#tr108 .hd h1{margin:2px 0 0;font-size:24px;color:#fff}
+#tr108 button{min-height:0;font:inherit;cursor:pointer}
+#tr108 .btnP{border:0;background:#2ba6a0;color:#fff;border-radius:10px;padding:10px 15px;font-weight:800}
+#tr108 .btnO{border:1px solid #a9c3e0;background:transparent;color:#fff;border-radius:10px;padding:10px 14px;font-weight:700}
+#tr108 .btnG{border:0;background:#0e7a5a;color:#fff;border-radius:10px;padding:10px 14px;font-weight:800}
+#tr108 .btnGo{border:1px solid #0e7a5a;background:#fff;color:#0e7a5a;border-radius:10px;padding:10px 14px;font-weight:800}
+#tr108 .btnB{border:0;background:#0b5fb3;color:#fff;border-radius:9px;padding:8px 12px;font-weight:800}
+#tr108 .btnL{border:1px solid #c8d4e0;background:#fff;color:#0f1e3d;border-radius:9px;padding:8px 12px;font-weight:700}
+#tr108 .btnD{border:1px solid #c23b2e;background:#fff;color:#a12b20;border-radius:9px;padding:8px 12px;font-weight:700}
+#tr108 .kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin:14px 0}
+#tr108 .kpis button{text-align:left;background:#fff;border:1px solid #dbe4ef;border-radius:14px;padding:13px 15px;color:#0f1e3d}
+#tr108 .kpis button:hover{background:#f6f8fb}#tr108 .kpis span{display:block;font-size:11px;font-weight:800;color:#4a5b70;text-transform:uppercase}
+#tr108 .kpis b{display:block;font-size:28px;margin:2px 0}#tr108 .kpis small{color:#5b6b7f}
+#tr108 .filters{background:#fff;border:1px solid #dbe4ef;border-radius:14px;padding:12px 14px;display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
+#tr108 label.f{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:800;color:#4a5b70}
+#tr108 input,#tr108 select,#tr108 textarea{padding:9px 10px;border:1px solid #c8d4e0;border-radius:8px;font:inherit;background:#fff;color:#16283d}
+#tr108 .legend{display:flex;gap:16px;align-items:center;flex-wrap:wrap;font-size:12px;color:#4a5b70;margin:10px 2px}
+#tr108 .wrap{background:#fff;border:1px solid #dbe4ef;border-radius:14px;overflow:auto;max-height:70vh}
+#tr108 table.mx{border-collapse:separate;border-spacing:0;width:100%;min-width:1100px}
+#tr108 .mx th{position:sticky;top:0;background:#f6f8fb;border-bottom:1px solid #dbe4ef;padding:8px 6px;font-size:11px;color:#4a5b70;text-transform:uppercase;white-space:nowrap;z-index:1}
+#tr108 .mx th button{border:0;background:transparent;color:inherit;font-weight:800;padding:0;text-transform:uppercase;font-size:11px}
+#tr108 .mx td{border-bottom:1px solid #eef2f7;padding:5px 6px;text-align:center}
+#tr108 .mx td.nm,#tr108 .mx th.nm{position:sticky;left:0;background:#fff;text-align:left;white-space:nowrap;font-weight:700;padding-left:10px;z-index:2}
+#tr108 .mx th.nm{background:#f6f8fb;z-index:3}
+#tr108 .mx tfoot td{background:#f6f8fb;font-weight:800;font-size:12px}
+#tr108 .c{border:0;border-radius:7px;padding:4px 7px;font-size:12px;font-weight:800;min-width:66px}
+#tr108 .c.ok{background:#dcfce7;color:#14532d}#tr108 .c.venc{background:#fef3c7;color:#8a5a00;border:1px solid #f2a900}
+#tr108 .c.no{background:transparent;color:#9aa7b5}#tr108 .c.no:hover{background:#eef6ff;color:#0b5fb3}
+#tr108 .modal{position:fixed;inset:0;background:#0f1e3d99;z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:4vh 14px;overflow:auto}
+#tr108 .modal[hidden]{display:none}#tr108 .box{background:#fff;border-radius:16px;width:100%;max-width:760px;overflow:hidden}
+#tr108 .box .bh{background:#0f1e3d;color:#fff;border-bottom:4px solid #2ba6a0;padding:13px 16px;display:flex;justify-content:space-between;align-items:center}
+#tr108 .box .bh b{font-size:17px}#tr108 .box .bh button{border:0;background:#24375a;color:#fff;border-radius:8px;width:36px;height:36px;font-size:18px}
+#tr108 .box .bb{padding:16px;display:flex;flex-direction:column;gap:12px}
+#tr108 .chips{display:flex;gap:6px;flex-wrap:wrap}#tr108 .chip{display:inline-flex;gap:6px;align-items:center;background:#e8eef6;color:#0f1e3d;border-radius:99px;padding:4px 10px;font-weight:700;font-size:13px}
+#tr108 .chip button{border:0;background:transparent;color:#4a5b70;font-size:15px;padding:0 2px}
+#tr108 .sug{border:1px solid #dbe4ef;border-radius:10px;max-height:180px;overflow:auto}#tr108 .sug button{display:block;width:100%;text-align:left;border:0;background:#fff;padding:8px 10px;border-bottom:1px solid #eef2f7}#tr108 .sug button:hover{background:#eef6ff}
+#tr108 .row2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+#tr108 .warn{background:#fff7e6;border:1px solid #f2d08a;border-radius:10px;padding:9px 12px;font-size:12px;color:#7a4b00}
+#tr108 .err{background:#fee2e2;border:1px solid #fca5a5;border-radius:10px;padding:9px 12px;font-size:13px;color:#991b1b}
+#tr108 table.lt{width:100%;border-collapse:collapse;font-size:13px}#tr108 .lt th{background:#f6f8fb;text-align:left;padding:7px 8px;font-size:11px;color:#4a5b70;text-transform:uppercase}#tr108 .lt td{padding:7px 8px;border-top:1px solid #eef2f7}
+#tr108 .muted{color:#5b6b7f;font-size:12px}#tr108 .acts{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+@media(max-width:900px){ #tr108 .kpis{grid-template-columns:repeat(2,minmax(0,1fr))}#tr108 .row2{grid-template-columns:1fr}}
+</style>
+<div id="tr108">
+<div class="hd"><div><small>Field</small><h1>Treinamentos dos técnicos</h1></div>
+<div style="display:flex;gap:8px;flex-wrap:wrap">{% if can_manage %}<button type="button" class="btnP" onclick="trNew()">+ Registrar treinamento</button><button type="button" class="btnO" onclick="trTypes()">Tipos de treinamento</button><button type="button" class="btnO" onclick="trImport()">Importar planilha</button>{% endif %}</div></div>
+<div class="kpis" id="trKpis"></div>
+<div class="filters">
+<label class="f" style="flex:1 1 220px">Técnico<input type="search" id="fTec" placeholder="Nome do técnico" oninput="trRender()"></label>
+<label class="f">Tipo de treinamento<select id="fTipo" onchange="trRender()"><option value="">Todos</option></select></label>
+<label class="f">Situação<select id="fSit" onchange="trRender()"><option value="">Todos</option><option value="feito">Feito</option><option value="falta">Falta</option><option value="nenhum">Sem nenhum</option><option value="vencido">Vencido</option></select></label>
+<label class="f">De<input type="date" id="fDe" onchange="trRender()"></label>
+<label class="f">Até<input type="date" id="fAte" onchange="trRender()"></label>
+<div style="display:flex;gap:8px;margin-left:auto;flex-wrap:wrap"><button type="button" class="btnL" onclick="trClear()">Limpar filtros</button><button type="button" class="btnG" onclick="trExport('matriz')">Exportar Excel (matriz)</button><button type="button" class="btnGo" onclick="trExport('lista')">Exportar lista detalhada</button></div>
+</div>
+<div class="legend"><span><span class="c ok" style="display:inline-block">dd/mm/aa</span> feito (clique: histórico{% if can_manage %}, editar, excluir{% endif %})</span><span><b style="color:#9aa7b5">—</b> falta{% if can_manage %} (clique: registrar){% endif %}</span><span><span class="c venc" style="display:inline-block">⚠ vencido</span> passou da validade do tipo</span><span id="trCount" class="muted"></span></div>
+<div class="wrap"><table class="mx"><thead id="trHead"></thead><tbody id="trBody"><tr><td colspan="13" class="muted" style="padding:20px">Carregando…</td></tr></tbody><tfoot id="trFoot"></tfoot></table></div>
+
+<div class="modal" id="trModal" hidden onclick="if(event.target===this)trClose()"><div class="box" role="dialog" aria-modal="true" aria-labelledby="trMTitle"><div class="bh"><b id="trMTitle"></b><button type="button" aria-label="Fechar" onclick="trClose()">×</button></div><div class="bb" id="trMBody"></div></div></div>
+</div>
+<script>
+(()=>{
+const $=id=>document.getElementById(id),esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fold=s=>String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
+const br=d=>d?d.slice(8,10)+'/'+d.slice(5,7)+'/'+d.slice(2,4):'';const brFull=d=>d?d.slice(8,10)+'/'+d.slice(5,7)+'/'+d.slice(0,4):'';
+let D=null,SORT={k:'name',d:1};
+async function api(u,o){const r=await fetch(u,Object.assign({cache:'no-store'},o||{}));let j;try{j=await r.json()}catch(e){j={ok:false,error:r.status===403?'Sem liberação para Treinamentos.':'Falha ao falar com o servidor ('+r.status+').'}}if(!r.ok||j.ok===false)throw new Error(j.error||('Erro '+r.status));return j}
+const post=(u,b)=>api(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});
+async function load(){try{D=await api('/api/field/treinamentos');const s=$('fTipo'),v=s.value;s.innerHTML='<option value="">Todos</option>'+activeTypes().map(t=>`<option value="${t.id}">${esc(t.name)}</option>`).join('');s.value=v;trRender()}catch(e){$('trBody').innerHTML=`<tr><td colspan="13"><div class="err">${esc(e.message)}</div></td></tr>`}}
+const activeTypes=()=>D.types.filter(t=>t.active).sort((a,b)=>a.order-b.order||a.name.localeCompare(b.name));
+function dueDate(rec,t){if(!t.validity)return null;const d=new Date(rec.date+'T12:00:00');d.setMonth(d.getMonth()+t.validity);return d.toISOString().slice(0,10)}
+const isExp=(rec,t)=>{const due=dueDate(rec,t);return !!due&&due<D.today};
+function model(){const de=$('fDe').value,ate=$('fAte').value,q=fold($('fTec').value.trim()),tid=+$('fTipo').value||0,sit=$('fSit').value;
+ const types=activeTypes().filter(t=>!tid||t.id===tid);const recs=D.records.filter(r=>(!de||r.date>=de)&&(!ate||r.date<=ate));
+ const latest=new Map();for(const r of recs){const k=r.user_id+':'+r.type_id;if(!latest.has(k))latest.set(k,r)}
+ let rows=D.techs.filter(u=>!q||fold(u.name).includes(q)).map(u=>{const cells=types.map(t=>{const r=latest.get(u.id+':'+t.id);return {t,r,exp:r?isExp(r,t):false}});return {u,cells,n:cells.filter(c=>c.r).length,exp:cells.filter(c=>c.exp).length}});
+ if(sit==='feito')rows=rows.filter(x=>x.n>0);else if(sit==='falta')rows=rows.filter(x=>x.n<types.length);else if(sit==='nenhum')rows=rows.filter(x=>x.n===0);else if(sit==='vencido')rows=rows.filter(x=>x.exp>0);
+ const {k,d}=SORT;rows.sort((a,b)=>{let x,y;if(k==='name'){return a.u.name.localeCompare(b.u.name,'pt-BR')*d}if(k==='total'){x=a.n;y=b.n}else{const ca=a.cells.find(c=>c.t.id===+k),cb=b.cells.find(c=>c.t.id===+k);x=ca&&ca.r?ca.r.date:'';y=cb&&cb.r?cb.r.date:''}return ((x>y)-(x<y))*d||a.u.name.localeCompare(b.u.name,'pt-BR')});
+ return {types,recs,rows,latest}}
+window.trRender=function(){if(!D)return;const M=model(),can=D.can_manage,all=activeTypes();
+ $('trHead').innerHTML='<tr><th class="nm"><button type="button" onclick="trSort(\'name\')">Técnico ↕</button></th>'+M.types.map(t=>`<th><button type="button" onclick="trSort('${t.id}')" title="${t.validity?'Validade: '+t.validity+' meses':''}">${esc(t.name)} ↕</button></th>`).join('')+'<th><button type="button" onclick="trSort(\'total\')">Total ↕</button></th></tr>';
+ $('trBody').innerHTML=M.rows.length?M.rows.map(x=>`<tr><td class="nm">${esc(x.u.name)}${x.u.active?'':' <span class="muted">(inativo)</span>'}</td>`+x.cells.map(c=>c.r?`<td><button type="button" class="c ${c.exp?'venc':'ok'}" onclick="trCell(${x.u.id},${c.t.id})" title="${esc(c.t.name)} · ${brFull(c.r.date)}${c.exp?' · vencido':''}">${c.exp?'⚠ ':''}${br(c.r.date)}</button></td>`:`<td>${can?`<button type="button" class="c no" onclick="trNew(${x.u.id},${c.t.id})" aria-label="Registrar ${esc(c.t.name)} para ${esc(x.u.name)}">—</button>`:'<span style="color:#9aa7b5">—</span>'}</td>`).join('')+`<td style="font-weight:800;color:${x.n?'#0f1e3d':'#9aa7b5'}">${x.n}/${M.types.length}</td></tr>`).join(''):`<tr><td colspan="${M.types.length+2}" class="muted" style="padding:18px">Nenhum técnico neste filtro.</td></tr>`;
+ $('trFoot').innerHTML=`<tr><td class="nm" style="background:#f6f8fb">Cobertura</td>`+M.types.map(t=>`<td>${M.rows.filter(x=>x.cells.find(c=>c.t.id===t.id&&c.r)).length}/${M.rows.length}</td>`).join('')+'<td></td></tr>';
+ $('trCount').textContent=`${M.rows.length} técnico(s) na tela`;
+ // KPIs (sobre todos os técnicos, respeitando o período)
+const allRows=D.techs.map(u=>({u,n:all.filter(t=>M.latest.has(u.id+':'+t.id)).length,exp:all.filter(t=>{const r=M.latest.get(u.id+':'+t.id);return r&&isExp(r,t)}).length}));
+ const none=allRows.filter(x=>x.n===0).length,cov=all.map(t=>({t,n:D.techs.filter(u=>M.latest.has(u.id+':'+t.id)).length})).sort((a,b)=>b.n-a.n),exp=allRows.reduce((s,x)=>s+x.exp,0),regs=M.recs.length;
+ const K=(l,v,s,fn,c)=>`<button type="button" onclick="${fn}"><span>${l}</span><b style="color:${c||'#0f1e3d'}">${v}</b><small>${s}</small></button>`;
+ $('trKpis').innerHTML=K('Técnicos',D.techs.length,'Técnico Field e Implantação ativos',"trSetSit('')")+K('Sem nenhum treinamento',none,D.techs.length?Math.round(none*100/D.techs.length)+'% dos técnicos':'—',"trSetSit('nenhum')",'#b45309')+K('Registros no período',regs,'clique para ver a lista','trList()')+K('Mais coberto',cov[0]?esc(cov[0].t.name):'—',cov[0]?cov[0].n+' de '+D.techs.length+' técnicos':'',cov[0]?`trSetTipo(${cov[0].t.id})`:'',"#0b5fb3")+K('Vencidos',exp,all.some(t=>t.validity)?'pela validade do tipo':'nenhum tipo com validade',"trSetSit('vencido')",exp?'#8a5a00':'#0f1e3d');
+};
+window.trSort=k=>{SORT={k,d:SORT.k===k?-SORT.d:(k==='name'?1:-1)};trRender()};
+window.trSetSit=v=>{$('fSit').value=v;trRender()};window.trSetTipo=v=>{$('fTipo').value=String(v);trRender()};
+window.trClear=()=>{['fTec','fDe','fAte'].forEach(i=>$(i).value='');$('fTipo').value='';$('fSit').value='';trRender()};
+window.trExport=f=>{const p=new URLSearchParams({formato:f,tecnico:$('fTec').value,tipo:$('fTipo').value,situacao:$('fSit').value==='nenhum'||$('fSit').value==='vencido'?'':$('fSit').value,de:$('fDe').value,ate:$('fAte').value});location.href='/api/field/treinamentos/exportar?'+p};
+function open(title,html){$('trMTitle').textContent=title;$('trMBody').innerHTML=html;$('trModal').hidden=false}
+window.trClose=()=>{$('trModal').hidden=true};document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('trModal').hidden)trClose()});
+const tname=id=>(D.types.find(t=>t.id===id)||{}).name||'?',uname=id=>(D.techs.find(u=>u.id===id)||{}).name||('#'+id);
+// ---------- registrar (um ou vários) ----------
+let PICK=[];
+window.trNew=(uid,tid)=>{if(!D.can_manage)return;PICK=uid?[uid]:[];open('Registrar treinamento',`
+<label class="f">Técnicos (um ou vários — turma)<input id="nSearch" placeholder="Digite para buscar…" autocomplete="off" oninput="trSug()"></label><div class="sug" id="nSug" hidden></div><div class="chips" id="nChips"></div>
+<div class="row2"><label class="f">Tipo de treinamento *<select id="nTipo">${activeTypes().map(t=>`<option value="${t.id}" ${t.id===tid?'selected':''}>${esc(t.name)}</option>`).join('')}</select></label><label class="f">Data realizada *<input type="date" id="nData" value="${D.today}" max="${D.today}" min="2020-01-01"></label></div>
+<label class="f">Aplicado por (opcional)<input id="nTrainer" maxlength="120"></label><label class="f">Observação (opcional)<textarea id="nNotes" rows="3" maxlength="1000"></textarea></label>
+<div id="nWarn"></div><div class="acts"><button type="button" class="btnL" onclick="trClose()">Cancelar</button><button type="button" class="btnG" id="nSave" onclick="trSave()">Registrar</button></div>
+<span class="muted">Data não pode ser futura nem antes de 2020. Tudo fica na auditoria.</span>`);$('nTipo').onchange=trWarn;$('nData').onchange=trWarn;trChips();$('nSearch').focus()};
+window.trSug=()=>{const q=fold($('nSearch').value.trim());const box=$('nSug');if(q.length<2){box.hidden=true;return}const list=D.techs.filter(u=>!PICK.includes(u.id)&&fold(u.name).includes(q)).slice(0,12);box.hidden=!list.length;box.innerHTML=list.map(u=>`<button type="button" onclick="trPick(${u.id})">${esc(u.name)} <span class="muted">${esc(u.job_title)}</span></button>`).join('')};
+window.trPick=id=>{if(!PICK.includes(id))PICK.push(id);$('nSearch').value='';$('nSug').hidden=true;trChips();$('nSearch').focus()};
+window.trUnpick=id=>{PICK=PICK.filter(x=>x!==id);trChips()};
+function trChips(){$('nChips').innerHTML=PICK.map(id=>`<span class="chip">${esc(uname(id))}<button type="button" aria-label="Tirar ${esc(uname(id))}" onclick="trUnpick(${id})">×</button></span>`).join('');$('nSave').textContent=PICK.length>1?`Registrar para ${PICK.length} técnicos`:'Registrar';trWarn()}
+function trWarn(){const tid=+$('nTipo').value;const had=PICK.map(id=>{const r=D.records.find(r=>r.user_id===id&&r.type_id===tid);return r?`${uname(id)} já tem ${tname(tid)} em ${brFull(r.date)}`:null}).filter(Boolean);$('nWarn').innerHTML=had.length?`<div class="warn">${had.map(esc).join('<br>')}. O novo registro fica no histórico e a matriz mostra a data mais recente.</div>`:''}
+window.trSave=async()=>{if(!PICK.length)return alert('Escolha ao menos um técnico.');const b=$('nSave');b.disabled=true;try{const r=await post('/api/field/treinamentos',{user_ids:PICK,type_id:+$('nTipo').value,date:$('nData').value,trainer:$('nTrainer').value,notes:$('nNotes').value});trClose();await load()}catch(e){$('nWarn').innerHTML=`<div class="err">${esc(e.message)}</div>`}finally{b.disabled=false}};
+// ---------- célula: histórico, editar, excluir ----------
+window.trCell=(uid,tid)=>{const hist=D.records.filter(r=>r.user_id===uid&&r.type_id===tid);const t=D.types.find(x=>x.id===tid);open(`${uname(uid)} · ${tname(tid)}`,`
+<table class="lt"><thead><tr><th>Data</th><th>Aplicado por</th><th>Observação</th><th>Origem</th>${D.can_manage?'<th></th>':''}</tr></thead><tbody>${hist.map(r=>`<tr><td><b>${brFull(r.date)}</b>${isExp(r,t)?' <span class="c venc" style="display:inline-block;min-width:0">vencido</span>':''}</td><td>${esc(r.trainer)||'—'}</td><td>${esc(r.notes)||'—'}</td><td class="muted">${r.source==='IMPORTACAO'?'planilha':'manual'}${r.by?' · '+esc(r.by):''}</td>${D.can_manage?`<td><div class="acts"><button type="button" class="btnL" onclick="trEdit(${r.id})">Editar</button><button type="button" class="btnD" onclick="trDel(${r.id})">Excluir</button></div></td>`:''}</tr>`).join('')}</tbody></table>
+${t&&t.validity?`<span class="muted">Validade do tipo: ${t.validity} meses · vence em ${brFull(dueDate(hist[0],t))}</span>`:''}
+${D.can_manage?`<div class="acts"><button type="button" class="btnG" onclick="trNew(${uid},${tid})">+ Registrar de novo</button></div>`:''}`)};
+window.trEdit=id=>{const r=D.records.find(x=>x.id===id);open(`Editar · ${uname(r.user_id)}`,`
+<div class="row2"><label class="f">Tipo<select id="eTipo">${activeTypes().map(t=>`<option value="${t.id}" ${t.id===r.type_id?'selected':''}>${esc(t.name)}</option>`).join('')}</select></label><label class="f">Data realizada<input type="date" id="eData" value="${r.date}" max="${D.today}" min="2020-01-01"></label></div>
+<label class="f">Aplicado por<input id="eTrainer" value="${esc(r.trainer)}" maxlength="120"></label><label class="f">Observação<textarea id="eNotes" rows="3" maxlength="1000">${esc(r.notes)}</textarea></label><div id="eErr"></div>
+<div class="acts"><button type="button" class="btnL" onclick="trCell(${r.user_id},${r.type_id})">Voltar</button><button type="button" class="btnG" onclick="trEditSave(${id})">Salvar</button></div>`)};
+window.trEditSave=async id=>{try{await post('/api/field/treinamentos/'+id,{type_id:+$('eTipo').value,date:$('eData').value,trainer:$('eTrainer').value,notes:$('eNotes').value});trClose();await load()}catch(e){$('eErr').innerHTML=`<div class="err">${esc(e.message)}</div>`}};
+window.trDel=async id=>{const r=D.records.find(x=>x.id===id);if(!confirm(`Excluir o registro de ${tname(r.type_id)} de ${uname(r.user_id)} em ${brFull(r.date)}?`))return;try{await post('/api/field/treinamentos/'+id+'/excluir');trClose();await load()}catch(e){alert(e.message)}};
+// ---------- lista detalhada ----------
+window.trList=()=>{const M=model();const ids=new Set(M.rows.map(x=>x.u.id)),tids=new Set(M.types.map(t=>t.id));const L=M.recs.filter(r=>ids.has(r.user_id)&&tids.has(r.type_id));open(`Treinamentos registrados (${L.length})`,L.length?`<div style="max-height:60vh;overflow:auto"><table class="lt"><thead><tr><th>Técnico</th><th>Treinamento</th><th>Data</th><th>Aplicado por</th><th>Origem</th></tr></thead><tbody>${L.map(r=>`<tr><td>${esc(uname(r.user_id))}</td><td>${esc(tname(r.type_id))}</td><td>${brFull(r.date)}</td><td>${esc(r.trainer)||'—'}</td><td class="muted">${r.source==='IMPORTACAO'?'planilha':'manual'}</td></tr>`).join('')}</tbody></table></div><div class="acts"><button type="button" class="btnGo" onclick="trExport('lista')">Exportar esta lista</button></div>`:'<p class="muted">Nenhum registro no filtro.</p>')};
+// ---------- tipos ----------
+window.trTypes=()=>{const n=t=>D.techs.filter(u=>D.records.some(r=>r.user_id===u.id&&r.type_id===t.id)).length;open('Tipos de treinamento',`
+<table class="lt"><thead><tr><th>Ordem</th><th>Tipo</th><th>Validade (meses)</th><th style="text-align:right">Técnicos</th><th>Situação</th><th></th></tr></thead><tbody>${[...D.types].sort((a,b)=>a.order-b.order).map(t=>`<tr><td><input type="number" id="to${t.id}" value="${t.order}" style="width:64px"></td><td><input id="tn${t.id}" value="${esc(t.name)}" maxlength="80"></td><td><input type="number" id="tv${t.id}" value="${t.validity||''}" placeholder="não vence" min="1" max="120" style="width:110px"></td><td style="text-align:right">${n(t)}</td><td>${t.active?'<b style="color:#15803d">Ativo</b>':'<span class="muted">Inativo</span>'}</td><td><div class="acts"><button type="button" class="btnB" onclick="trTypeSave(${t.id})">Salvar</button><button type="button" class="btnL" onclick="trTypeToggle(${t.id},${t.active?0:1})">${t.active?'Inativar':'Ativar'}</button></div></td></tr>`).join('')}</tbody></table>
+<div class="row2" style="align-items:end"><label class="f">Novo tipo<input id="tNew" maxlength="80" placeholder="Ex.: Fibra óptica"></label><label class="f">Validade (meses, opcional)<input type="number" id="tNewV" min="1" max="120" placeholder="não vence"></label></div><div id="tErr"></div>
+<div class="acts"><button type="button" class="btnG" onclick="trTypeAdd()">+ Adicionar tipo</button></div><span class="muted">Tipo novo entra sem gerar versão. Inativar tira a coluna da matriz; o histórico fica.</span>`)};
+const tErr=e=>{$('tErr').innerHTML=`<div class="err">${esc(e.message)}</div>`};
+window.trTypeSave=async id=>{try{await post('/api/field/treinamentos/tipos/'+id,{name:$('tn'+id).value,order:$('to'+id).value,validity:$('tv'+id).value});await load();trTypes()}catch(e){tErr(e)}};
+window.trTypeToggle=async(id,a)=>{try{await post('/api/field/treinamentos/tipos/'+id,{active:!!a});await load();trTypes()}catch(e){tErr(e)}};
+window.trTypeAdd=async()=>{try{await post('/api/field/treinamentos/tipos',{name:$('tNew').value,validity:$('tNewV').value});await load();trTypes()}catch(e){tErr(e)}};
+// ---------- importar ----------
+let IMP=null;
+window.trImport=()=>{IMP=null;open('Importar planilha atual',`<p class="muted" style="margin:0">1ª coluna: nome do técnico; demais colunas: um tipo de treinamento por coluna, com a data realizada (dd/mm/aaaa). Aceita .xlsx (1ª aba) ou texto separado por tabulação. Antes de gravar, mostra a prévia.</p>
+<input type="file" id="iFile" accept=".xlsx,.xlsm,.csv,.txt"><div id="iOut"></div><div class="acts"><button type="button" class="btnL" onclick="trClose()">Fechar</button><button type="button" class="btnB" onclick="trImpRun(false)">Ver prévia</button></div>`)};
+window.trImpRun=async ok=>{const f=$('iFile').files[0];if(!f)return alert('Escolha a planilha.');const fd=new FormData();fd.append('arquivo',f);const map={};document.querySelectorAll('[data-imp]').forEach(s=>{if(s.value)map[s.dataset.imp]=s.value});fd.append('mapa',JSON.stringify(map));if(ok)fd.append('confirmar','1');
+ try{const r=await api('/api/field/treinamentos/importar',{method:'POST',body:fd});if(ok){$('iOut').innerHTML=`<div class="warn" style="background:#ecfdf5;border-color:#a7f3d0;color:#065f46"><b>${r.importados} registro(s) importados.</b> ${r.repetidos} repetido(s) ignorados. ${r.invalidos.length} data(s) inválida(s) e ${r.sem_tecnico.length} nome(s) sem técnico ficaram de fora.</div>`;await load();return}
+  const unm=r.nomes.filter(n=>!n.user_id);const opts=[...D.techs].map(u=>`<option value="${u.id}">${esc(u.name)}</option>`).join('');
+  $('iOut').innerHTML=`<div class="kpis" style="grid-template-columns:repeat(4,minmax(0,1fr));margin:6px 0"><button type="button"><span>Registros</span><b>${r.registros}</b></button><button type="button"><span>Técnicos na planilha</span><b>${r.tecnicos}</b></button><button type="button"><span>Prontos</span><b style="color:#15803d">${r.prontos}</b></button><button type="button"><span>Datas a corrigir</span><b style="color:#8a5a00">${r.invalidos.length}</b></button></div>
+  <span class="muted">Colunas: ${r.columns.map(c=>esc(c.name)+(c.new?' <b>(tipo novo)</b>':'')).join(' · ')}</span>
+  ${r.invalidos.length?`<div class="warn"><b>Ficam de fora (corrija na planilha ou registre depois):</b><br>${r.invalidos.map(x=>`${esc(x.name)} · ${esc(x.type)} · “${esc(x.value)}” — ${esc(x.error)}`).join('<br>')}</div>`:''}
+  ${unm.length?`<div class="warn"><b>${unm.length} nome(s) não encontrados no cadastro — escolha o técnico ou deixe em branco para pular:</b>${unm.map(n=>`<div style="display:flex;gap:8px;align-items:center;margin-top:6px"><span style="flex:1">${esc(n.name)}</span><select data-imp="${esc(n.name)}"><option value="">— pular —</option>${opts}</select></div>`).join('')}</div>`:'<span class="muted">Todos os nomes foram encontrados no cadastro.</span>'}
+  <div class="acts"><button type="button" class="btnG" onclick="trImpRun(true)">Importar</button></div>`}catch(e){$('iOut').innerHTML=`<div class="err">${esc(e.message)}</div>`}};
+load();
+})();
+</script>
+{% endblock %}
