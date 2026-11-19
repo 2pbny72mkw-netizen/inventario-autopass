@@ -26790,7 +26790,15 @@ def portal_customer_companies():
         if not legal: flash('Razão social é obrigatória.'); return redirect(request.path)
         c=CustomerCompany(legal_name=legal,trade_name=(d.get('trade_name') or '').strip() or None,cnpj=(d.get('cnpj') or '').strip() or None,state_registration=(d.get('state_registration') or '').strip() or None,contact_name=(d.get('contact_name') or '').strip() or None,contact_role=(d.get('contact_role') or '').strip() or None,phone=(d.get('phone') or '').strip() or None,mobile=(d.get('mobile') or '').strip() or None,email=(d.get('email') or '').strip() or None,address=(d.get('address') or '').strip() or None,city=(d.get('city') or '').strip() or None,state=(d.get('state') or '').strip().upper() or None,zip_code=(d.get('zip_code') or '').strip() or None,notes=(d.get('notes') or '').strip() or None)
         db.session.add(c); db.session.commit(); flash('Cliente cadastrado.'); return redirect(request.path)
-    companies=CustomerCompany.query.order_by(CustomerCompany.active.desc(),CustomerCompany.legal_name).all(); customer_users=User.query.filter(User.role=='customer',User.archived_at.is_(None)).order_by(User.active.desc(),User.name).all(); pending_count=sum(1 for c in companies if (not c.contact_name) or (not c.email) or (not (c.phone or c.mobile)) or (not c.address) or (not c.city)); return render_template('customer_companies.html',companies=companies,customer_users=customer_users,pending_count=pending_count,customer_company_map={u.id:_customer_company_ids(u) for u in customer_users})
+    companies=CustomerCompany.query.order_by(CustomerCompany.active.desc(),CustomerCompany.legal_name).all(); customer_users=User.query.filter(User.role=='customer',User.archived_at.is_(None)).order_by(User.active.desc(),User.name).all(); pending_count=sum(1 for c in companies if (not c.contact_name) or (not c.email) or (not (c.phone or c.mobile)) or (not c.address) or (not c.city)); ccmap={u.id:_customer_company_ids(u) for u in customer_users}
+    # V88.0 REV18.2 — acessos por empresa para a aba "Acessos ao Portal" (sem ids gravados: casa pela razão social, como a lista geral)
+    by_legal={(c.legal_name or '').strip().lower():c.id for c in companies}
+    acc_users=[]; company_user_ids={}
+    for u in customer_users:
+        ids=ccmap.get(u.id) or ([by_legal[(u.company or '').strip().lower()]] if (u.company or '').strip().lower() in by_legal else [])
+        acc_users.append({'id':u.id,'name':u.name,'username':u.username,'email':u.email or '','phone':u.phone or '','active':bool(u.active),'code':u.user_code or '','company_ids':ids})
+        for cid in ids: company_user_ids.setdefault(cid,[]).append(u.id)
+    return render_template('customer_companies.html',companies=companies,customer_users=customer_users,pending_count=pending_count,customer_company_map=ccmap,company_user_ids=company_user_ids,acc182={'users':acc_users})
 
 @app.post('/portal-cliente/cadastro-clientes/<int:cid>/editar')
 @login_required
@@ -26820,6 +26828,18 @@ def portal_customer_company_delete(cid):
     return redirect('/portal-cliente/cadastro-clientes')
 
 
+# V88.0 REV18.2 — as rotas de acesso também respondem em JSON quando chamadas da janela "Editar cliente" (aba Acessos ao Portal).
+def _v182_ajax():
+    return request.headers.get('X-AP-Ajax')=='1'
+
+def _v182_reply(ok, msg, user=None, status=None):
+    if _v182_ajax():
+        body={'ok':ok,('message' if ok else 'error'):msg}
+        if user is not None:
+            body['user']={'id':user.id,'name':user.name,'username':user.username,'email':user.email or '','phone':user.phone or '','active':bool(user.active),'code':user.user_code or '','company_ids':_customer_company_ids(user)}
+        return jsonify(body),(status or (200 if ok else 400))
+    flash(msg); return redirect('/portal-cliente/cadastro-clientes#acessos')
+
 # V71.1 — Acessos externos do Portal ficam junto ao cadastro do cliente.
 @app.post('/portal-cliente/cadastro-clientes/acessos/novo')
 @login_required
@@ -26830,20 +26850,20 @@ def portal_customer_access_create():
     except Exception: cid=0
     company=db.session.get(CustomerCompany,cid)
     if not company or not company.active:
-        flash('Selecione uma empresa/garagem ativa.'); return redirect('/portal-cliente/cadastro-clientes#acessos')
+        return _v182_reply(False, 'Selecione uma empresa/garagem ativa.')
     name=(d.get('name') or '').strip(); username=(d.get('username') or d.get('email') or '').strip().lower(); password=d.get('password') or ''
     email=_normalize_optional_email(d.get('email')); phone=_normalize_optional_phone(d.get('phone'))
     if not name or not username or len(password)<8:
-        flash('Nome, login e senha com pelo menos 8 caracteres são obrigatórios.'); return redirect('/portal-cliente/cadastro-clientes#acessos')
+        return _v182_reply(False, 'Nome, login e senha com pelo menos 8 caracteres são obrigatórios.')
     if User.query.filter(func.lower(User.username)==username).first():
-        flash('Já existe um usuário com esse login.'); return redirect('/portal-cliente/cadastro-clientes#acessos')
+        return _v182_reply(False, 'Já existe um usuário com esse login.')
     if email and User.query.filter(func.lower(User.email)==email).first():
-        flash('Já existe um usuário com esse e-mail.'); return redirect('/portal-cliente/cadastro-clientes#acessos')
+        return _v182_reply(False, 'Já existe um usuário com esse e-mail.')
     if phone and User.query.filter(User.phone==phone).first():
-        flash('Já existe um usuário com esse celular.'); return redirect('/portal-cliente/cadastro-clientes#acessos')
+        return _v182_reply(False, 'Já existe um usuário com esse celular.')
     u=User(name=name,username=username,password_hash=generate_password_hash(password),role='customer',active=True,user_code=_next_user_code('customer'),email=email,phone=phone,company=company.legal_name,personnel_status='ATIVO',access_json=json.dumps(sorted(_default_access_for_role('customer')),ensure_ascii=False),customer_company_ids=json.dumps([company.id]))
     db.session.add(u); db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='PORTAL_CUSTOMER_ACCESS_CREATED',entity_type='user',entity_id=username,detail=f'{name} · {company.legal_name}')); db.session.commit()
-    flash('Acesso do cliente criado com sucesso.'); return redirect('/portal-cliente/cadastro-clientes#acessos')
+    return _v182_reply(True, 'Acesso do cliente criado com sucesso.', u)
 
 @app.post('/portal-cliente/cadastro-clientes/acessos/<int:uid>/editar')
 @login_required
@@ -26855,17 +26875,17 @@ def portal_customer_access_edit(uid):
     try: cid=int(d.get('company_id') or 0)
     except Exception: cid=0
     company=db.session.get(CustomerCompany,cid)
-    if not company: flash('Empresa inválida.'); return redirect('/portal-cliente/cadastro-clientes#acessos')
+    if not company: return _v182_reply(False, 'Empresa inválida.')
     name=(d.get('name') or '').strip(); username=(d.get('username') or '').strip().lower(); email=_normalize_optional_email(d.get('email')); phone=_normalize_optional_phone(d.get('phone')); password=d.get('password') or ''
-    if not name or not username: flash('Nome e login são obrigatórios.'); return redirect('/portal-cliente/cadastro-clientes#acessos')
-    if User.query.filter(User.id!=uid,func.lower(User.username)==username).first(): flash('Login já utilizado.'); return redirect('/portal-cliente/cadastro-clientes#acessos')
-    if email and User.query.filter(User.id!=uid,func.lower(User.email)==email).first(): flash('E-mail já utilizado.'); return redirect('/portal-cliente/cadastro-clientes#acessos')
-    if phone and User.query.filter(User.id!=uid,User.phone==phone).first(): flash('Celular já utilizado.'); return redirect('/portal-cliente/cadastro-clientes#acessos')
-    if password and len(password)<8: flash('A nova senha deve ter pelo menos 8 caracteres.'); return redirect('/portal-cliente/cadastro-clientes#acessos')
+    if not name or not username: return _v182_reply(False, 'Nome e login são obrigatórios.')
+    if User.query.filter(User.id!=uid,func.lower(User.username)==username).first(): return _v182_reply(False, 'Login já utilizado.')
+    if email and User.query.filter(User.id!=uid,func.lower(User.email)==email).first(): return _v182_reply(False, 'E-mail já utilizado.')
+    if phone and User.query.filter(User.id!=uid,User.phone==phone).first(): return _v182_reply(False, 'Celular já utilizado.')
+    if password and len(password)<8: return _v182_reply(False, 'A nova senha deve ter pelo menos 8 caracteres.')
     u.name=name;u.username=username;u.email=email;u.phone=phone;u.company=company.legal_name;u.customer_company_ids=json.dumps([company.id]);u.active=d.get('active')=='1';u.personnel_status='ATIVO' if u.active else 'INATIVO';u.access_json=json.dumps(sorted(_default_access_for_role('customer')),ensure_ascii=False)
     if password:u.password_hash=generate_password_hash(password)
     db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='PORTAL_CUSTOMER_ACCESS_UPDATED',entity_type='user',entity_id=str(u.id),detail=f'{u.name} · {company.legal_name} · {"ATIVO" if u.active else "INATIVO"}'));db.session.commit()
-    flash('Acesso do cliente atualizado.'); return redirect('/portal-cliente/cadastro-clientes#acessos')
+    return _v182_reply(True, 'Acesso do cliente atualizado.', u)
 
 
 # ---------------- V71 Logística / Leva e Traz ----------------
