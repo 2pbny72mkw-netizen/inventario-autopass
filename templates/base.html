@@ -15,7 +15,9 @@
 <meta name="theme-color" content="#17345d">
 {% block head %}{% endblock %}
 </head>
-<body>
+<body{% if session.get('app_mode') %} class="appModeV19"{% endif %}>
+{% if session.get('app_mode') %}<style>/* REV19 — aberto pelo app: o app tem a própria barra e menu */
+body.appModeV19 header.topbar{display:none!important}body.appModeV19{padding-top:0!important}</style>{% endif %}
 {% if session.get('user_id') %}
 <header class="topbar">
   <div class="wrap nav">
