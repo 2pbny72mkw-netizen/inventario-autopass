@@ -40,16 +40,15 @@ CATALOG = [
         ("Estoque Field", "/field/estoque", ["field.bobbins"], "estoque"),
         ("Dashboard Bobinas", "/dashboard/bobinas", ["field.bobbins_dashboard"], None),
         ("Inventário", "/tecnico", ["field.inventory"], "inventario"),
-        ("Chamados", "/trabalho", ["field.calls"], None),
         ("Preventivas", "/preventivas", ["field.preventive"], None),
         ("Equipamentos", "/patrimonio", ["field.equipment"], None),
         ("Evidências", "/evidencias-campo", ["field.evidence"], None),
         ("Visão Panorâmica", "/visao-panoramica", ["field.panorama"], "panoramica"),
-        ("Troca de Chips – Recarga", "/troca-chips", ["field.chip_recarga"], "chip"),
+        ("Troca de Chips – Recarga", "/troca-chips", ["field.chip_recarga"], None),
         ("Treinamentos", "/field/treinamentos", ["field.training", "field.training.manage"], None),
         ("Mapeamento ATM", "/field/mapeamento-atm", ["field.atm_mapping"], None),
         ("Troca POS Metrô", "/field/troca-pos-metro", ["field.pos_metro"], None),
-        ("Firmware POS – CPTM", "/firmware-pos-cptm", ["field.firmware_pos_cptm"], "firmware"),
+        ("Firmware POS – CPTM", "/firmware-pos-cptm", ["field.firmware_pos_cptm"], None),
     ]),
     ("implantacao", "Implantação", "construction", [
         ("Implantação de Hardware", "/implantacao-hardware", ["implantation.visits", "implantation.reports"], "implantacao"),
@@ -89,7 +88,6 @@ CATALOG = [
         ("Central Operacional", "/central-operacional", ["teams.today"], None),
         ("Inteligência Operacional", "/inteligencia-operacional", ["management.360"], None),
         ("Gestão 360", "/gestao-360", ["management.360"], None),
-        ("TopDesk", "/topdesk", ["management.calls"], None),
         ("Notificações", "/notificacoes", ["management.notifications"], None),
         ("Rastreabilidade de Jornada", "/gestao/rastreabilidade-jornada", ["management.gps_history", "management.work_authorizations"], None),
         ("Perfis", "/perfis", ["management.profiles"], None),
@@ -99,9 +97,6 @@ CATALOG = [
     ]),
     ("financeiro", "Financeiro", "payments", [
         ("Lançamentos", "/financeiro/lancamentos", ["finance.entries", "finance.support", "finance.suppliers"], None),
-        ("Coleta de Valores", "/financeiro/coleta-valores", ["finance.collection"], None),
-        ("Monitoramento de Coletas", "/financeiro/monitoramento-coletas", ["finance.monitoring"], None),
-        ("Apuração", "/financeiro/apuracao", ["finance.apuracao"], None),
         ("Caixinha", "/financeiro/caixinha", ["finance.petty_cash.view", "finance.petty_cash.manage"], None),
     ]),
     ("conta", "Minha conta", "person", [
@@ -120,6 +115,14 @@ def safe_next(path):
     return p[:500]
 
 
+def _telas_por_caminho():
+    try:
+        import v110_specs
+        return {t.get("web"): t for t in v110_specs.SPECS if t.get("web")}
+    except Exception:
+        return {}
+
+
 def build_menu(access, full, groups, submodules):
     def ok(perm):
         if full:
@@ -136,6 +139,10 @@ def build_menu(access, full, groups, submodules):
         for ilabel, path, perms, native in items:
             if perms and not any(ok(p) for p in perms):
                 continue
+            if native is None:  # REV20: tela montada pelo motor nativo do app (v110_specs)
+                tela = _telas_por_caminho().get(path)
+                if tela:
+                    native = tela.get("nativa") or ("tela:" + tela["key"])
             vis.append({"label": ilabel, "path": path, "native": native, "needs_internet": native is None})
         if vis:
             out.append({"key": key, "label": label, "icon": icon, "items": vis})

@@ -33780,3 +33780,7 @@ install_app_web(app, {"mobile_auth_required": mobile_auth_required, "bearer": _v
                       "groups": ACCESS_GROUPS, "submodules": ACCESS_SUBMODULES,
                       "exec": lambda q, p=None: db.session.execute(text(q), p or {}),
                       "commit": db.session.commit, "rollback": db.session.rollback})
+from v110_telas import install_telas  # V88.0 REV20 — motor de telas do app: ponte de dados e descrição das telas
+install_telas(app, {"mobile_auth_required": mobile_auth_required, "access_set": _user_access_set,
+                    "strict": _v86_strict, "is_principal_user": _v86_user_is_principal,
+                    "groups": ACCESS_GROUPS, "submodules": ACCESS_SUBMODULES})
