@@ -33762,3 +33762,21 @@ install_trainings(app, {"login_required": login_required, "has_access": _has_acc
                         "is_pg": lambda: database_url.startswith("postgresql"), "audit": _v108_audit,
                         "today": lambda: datetime.now(ZoneInfo("America/Sao_Paulo")).date(),
                         "render": lambda tpl, **ctx: render_template(tpl, app_release=APP_RELEASE, **ctx)})
+from v109_app_web import install_app_web  # V88.0 REV19 — login único app→web, menu do app pelas permissões, modo app
+def _v109_token_alive(uid, tprefix):
+    raw = _v8233_mobile_token_from_request()
+    if raw:
+        return False  # /m/entrar é aberto pelo navegador do app, nunca com Bearer
+    now = datetime.utcnow()
+    for r in MobileSessionToken.query.filter_by(user_id=uid, revoked_at=None).all():
+        if r.expires_at and r.expires_at > now and (r.token_hash or "")[:16] == tprefix:
+            return True
+    return False
+install_app_web(app, {"mobile_auth_required": mobile_auth_required, "bearer": _v8233_mobile_token_from_request,
+                      "token_alive": _v109_token_alive, "get_user": lambda uid: db.session.get(User, uid),
+                      "journey": _v72_journey_status, "start_session": _v72_start_session,
+                      "landing": _v72_redirect_for_user, "access_set": _user_access_set,
+                      "strict": _v86_strict, "is_principal_user": _v86_user_is_principal,
+                      "groups": ACCESS_GROUPS, "submodules": ACCESS_SUBMODULES,
+                      "exec": lambda q, p=None: db.session.execute(text(q), p or {}),
+                      "commit": db.session.commit, "rollback": db.session.rollback})
