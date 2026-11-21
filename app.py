@@ -12152,6 +12152,45 @@ def v88b_r2_map():
                     "aviso": "Arquivos usados por colunas que este mapa não reconhece aparecem como sem referência. Nada é apagado por esta tela; confira as pastas antes de qualquer limpeza."})
 
 
+# V88.0 REV27 — limpeza do R2 restrita: só pastas conferidas uma a uma (sem uso no código e sem referência no banco).
+# Simulação por padrão; apagar exige a frase digitada. Cada execução vai para a auditoria.
+_V110_R2_LIMPAVEL = {"whatsapp/fontes/": "APAGAR FONTES WHATSAPP"}
+
+@app.post("/api/diagnostico/armazenamento/limpar/v110")
+@login_required
+def v110_r2_cleanup():
+    g = _v85_guard()
+    if g:
+        return g
+    if not _r2_available():
+        return jsonify({"ok": False, "error": "R2 não configurado nesta instância."}), 400
+    data = request.get_json(silent=True) or {}
+    prefixo = str(data.get("prefixo") or "")
+    frase = _V110_R2_LIMPAVEL.get(prefixo)
+    if not frase:
+        return jsonify({"ok": False, "error": "Pasta não liberada para limpeza.", "liberadas": list(_V110_R2_LIMPAVEL)}), 400
+    try:
+        items, complete = _v88b_r2_listing(True)
+    except Exception as exc:
+        return jsonify({"ok": False, "error": "R2 indisponível: " + str(exc)[:160]}), 502
+    if not complete:
+        return jsonify({"ok": False, "error": "Listagem do R2 incompleta; tente de novo."}), 409
+    refs, _cols = _v88b_reference_map()
+    alvo = sorted(k for k in items if k.startswith(prefixo) and k not in refs)
+    total = sum(items[k][0] for k in alvo)
+    resumo = {"prefixo": prefixo, "arquivos": len(alvo), "bytes": total, "mb": round(total / 1048576, 1), "exemplos": alvo[:5]}
+    if str(data.get("confirmacao") or "").strip() != frase:
+        return jsonify({"ok": True, "simulacao": True, "frase": frase, **resumo})
+    feitos = _v88b_r2_delete_many(alvo)
+    try:
+        db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="R2_LIMPEZA", entity_type="r2", entity_id=prefixo,
+                                  detail=f"{len(feitos)} de {len(alvo)} arquivos apagados ({resumo['mb']} MB) em {prefixo}"))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+    return jsonify({"ok": True, "simulacao": False, "apagados": len(feitos), "falhas": len(alvo) - len(feitos), **resumo})
+
+
 @app.get("/api/rede-ferroviaria/v86")
 @login_required
 def v86_rail_network():

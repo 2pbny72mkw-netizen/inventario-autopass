@@ -169,6 +169,62 @@ def install_telas(app, H):
             r["numero"] = num
         return jsonify({"ok": True, "rows": rows})
 
+    CONFIG_ROTULOS = {
+        "alert_activity_days": ("Alertas", "Dias para alertar atividade parada"),
+        "alert_pending_days": ("Alertas", "Dias para alertar pendência"),
+        "bobbin_photo_retention_days": ("Bobinas", "Dias de guarda das fotos de bobinas"),
+        "dashboard_refresh_seconds": ("Painéis", "Atualização dos painéis (segundos)"),
+        "engineering_import_factor": ("Engenharia", "Fator de importação"),
+        "engineering_usd_brl": ("Engenharia", "Dólar (R$)"),
+        "forecast_days_emv": ("Previsões", "Dias de previsão – EMV"),
+        "forecast_days_garagem": ("Previsões", "Dias de previsão – Garagem"),
+        "forecast_days_recarga": ("Previsões", "Dias de previsão – Recarga"),
+        "gps_history_min_movement_m": ("GPS", "Movimento mínimo para gravar (m)"),
+        "gps_history_ping_seconds": ("GPS", "Intervalo do histórico (s)"),
+        "gps_history_radius_m": ("GPS", "Raio do histórico (m)"),
+        "gps_history_retention_days": ("GPS", "Dias de guarda do histórico"),
+        "gps_interval_seconds": ("GPS", "Intervalo de envio (s)"),
+        "gps_radius_m": ("GPS", "Raio da estação (m)"),
+        "journey_default_field": ("Jornada", "Controle de jornada padrão – Field (0/1)"),
+        "journey_default_implantation": ("Jornada", "Controle de jornada padrão – Implantação (0/1)"),
+        "journey_enforcement_enabled": ("Jornada", "Controle de jornada ligado (0/1)"),
+        "journey_max_extension_hours": ("Jornada", "Prorrogação máxima (horas)"),
+        "journey_warning_minutes": ("Jornada", "Aviso antes do fim (min)"),
+    }
+
+    def _internal_json(path, payload):
+        """Chama outra rota da web (mesmo usuário da sessão) com corpo JSON; devolve a resposta."""
+        from werkzeug.test import EnvironBuilder
+        who = {k: session.get(k) for k in ("user_id", "name", "role")}
+        env = EnvironBuilder(path=path, method="POST", json=payload).get_environ()
+        with app.request_context(env):
+            session.update(**who)
+            return app.full_dispatch_request()
+
+    @app.route("/api/v110/configuracoes", methods=["GET", "POST"])
+    def v110_configuracoes():
+        g = _guard("management.settings")
+        if g:
+            return g
+        if request.method == "POST":
+            d = request.get_json(silent=True) or {}
+            chave = str(d.get("chave") or "")
+            if chave not in CONFIG_ROTULOS:
+                return jsonify({"ok": False, "error": "Parâmetro não editável pelo app."}), 400
+            return _internal_json("/api/configuracoes", {chave: d.get("valor")})
+        resp = _internal_json_get("/api/configuracoes")
+        atual = (resp.get_json(silent=True) or {}).get("settings") or {}
+        rows = [{"chave": k, "grupo": g_, "rotulo": r, "valor": atual.get(k)} for k, (g_, r) in CONFIG_ROTULOS.items() if k in atual]
+        return jsonify({"ok": True, "rows": rows})
+
+    def _internal_json_get(path):
+        from werkzeug.test import EnvironBuilder
+        who = {k: session.get(k) for k in ("user_id", "name", "role")}
+        env = EnvironBuilder(path=path, method="GET").get_environ()
+        with app.request_context(env):
+            session.update(**who)
+            return app.full_dispatch_request()
+
     @app.get("/api/mobile/v1/telas")
     @H["mobile_auth_required"]
     def v110_telas():
