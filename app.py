@@ -4445,6 +4445,123 @@ def a20_bobinas_register():
     return jsonify({'ok':True,'id':row.id,'reserve_after':reserve_qty})
 
 
+# V88.0 REV33 — Quarentena de registros de Bobinas recusados pelo app.
+# O app (até o Build124) mantém um registro recusado (400/409) na fila e reenvia para sempre, a cada sincronização,
+# e a cada tentativa recarrega todo o pacote offline. Depois de 3 recusas do mesmo registro, o servidor guarda o
+# registro completo (campos + foto no R2) em quarentena para o gestor revisar e responde "ok" para o app parar de reenviar.
+_V111_Q = {"ok": False}
+
+def _v111_q_ensure():
+    if _V111_Q["ok"]:
+        return
+    pk = "SERIAL PRIMARY KEY" if db.engine.dialect.name == "postgresql" else "INTEGER PRIMARY KEY AUTOINCREMENT"
+    db.session.execute(text(f"""CREATE TABLE IF NOT EXISTS v111_bobbin_quarantine (
+        id {pk}, user_id INTEGER NOT NULL, client_event_id VARCHAR(80) NOT NULL, status_code INTEGER, error TEXT,
+        attempts INTEGER NOT NULL DEFAULT 0, fields_json TEXT, photo_key VARCHAR(400), first_at TIMESTAMP, last_at TIMESTAMP,
+        accepted_at TIMESTAMP, resolved_at TIMESTAMP, resolved_by INTEGER, resolved_note TEXT,
+        UNIQUE (user_id, client_event_id))"""))
+    db.session.commit()
+    _V111_Q["ok"] = True
+
+_V111_Q_LIMIT = 3
+_v111_bob_orig = app.view_functions["a20_bobinas_register"]
+
+def _v111_bobinas_register_q(*a, **k):
+    resp = make_response(_v111_bob_orig(*a, **k))
+    if resp.status_code not in (400, 409):
+        return resp
+    cid = (request.form.get("client_event_id") or "").strip()[:80]
+    user = getattr(request, "mobile_user", None)
+    if not cid or user is None:
+        return resp
+    try:
+        db.session.rollback()
+        _v111_q_ensure()
+        err = str((resp.get_json(silent=True) or {}).get("error") or "")[:500]
+        now = datetime.utcnow()
+        fields = {kk: request.form.get(kk) for kk in request.form.keys() if kk != "photo"}
+        row = db.session.execute(text("SELECT id, attempts, accepted_at FROM v111_bobbin_quarantine WHERE user_id=:u AND client_event_id=:c"),
+                                 {"u": user.id, "c": cid}).fetchone()
+        if row is None:
+            db.session.execute(text("""INSERT INTO v111_bobbin_quarantine (user_id, client_event_id, status_code, error, attempts, fields_json, first_at, last_at)
+                                       VALUES (:u, :c, :s, :e, 1, :f, :t, :t)"""),
+                               {"u": user.id, "c": cid, "s": resp.status_code, "e": err, "f": json.dumps(fields, ensure_ascii=False), "t": now})
+            attempts, accepted = 1, None
+        else:
+            attempts, accepted = int(row[1] or 0) + 1, row[2]
+            db.session.execute(text("UPDATE v111_bobbin_quarantine SET attempts=:n, status_code=:s, error=:e, fields_json=:f, last_at=:t WHERE id=:i"),
+                               {"n": attempts, "s": resp.status_code, "e": err, "f": json.dumps(fields, ensure_ascii=False), "t": now, "i": row[0]})
+        if attempts < _V111_Q_LIMIT and accepted is None:
+            db.session.commit()
+            return resp
+        photo_key = None
+        photo = request.files.get("photo")
+        if photo is not None and photo.filename and accepted is None:
+            data = photo.read()
+            if data:
+                photo_key = f"bobinas/quarentena/{user.id}_{secure_filename(cid) or uuid.uuid4().hex}.jpg"
+                _r2_put_bytes(photo_key, data, photo.mimetype or "image/jpeg")
+        db.session.execute(text("UPDATE v111_bobbin_quarantine SET accepted_at=COALESCE(accepted_at,:t), photo_key=COALESCE(:p, photo_key) WHERE user_id=:u AND client_event_id=:c"),
+                           {"t": now, "p": photo_key, "u": user.id, "c": cid})
+        db.session.commit()
+        return jsonify({"ok": True, "id": 0, "quarantined": True, "error": err,
+                        "message": "Registro recusado guardado para revisão do gestor (Diagnóstico › Bobinas em quarentena)."})
+    except Exception:
+        db.session.rollback()
+        app.logger.exception("REV33: quarentena de bobinas falhou; resposta original mantida")
+        return resp
+
+app.view_functions["a20_bobinas_register"] = _v111_bobinas_register_q
+
+@app.get("/api/v110/bobinas-quarentena")
+@login_required
+def v111_bobbin_quarantine_list():
+    if not (_has_access("management.diagnostics") or _has_access("field.bobbins_dashboard")):
+        return jsonify(ok=False, error="Sem permissão."), 403
+    _v111_q_ensure()
+    rs = db.session.execute(text("""SELECT q.id, q.user_id, q.client_event_id, q.status_code, q.error, q.attempts, q.fields_json, q.photo_key,
+                                    q.first_at, q.last_at, q.accepted_at, q.resolved_at, q.resolved_note
+                                    FROM v111_bobbin_quarantine q ORDER BY q.last_at DESC LIMIT 500""")).fetchall()
+    names = {u.id: u.name for u in User.query.filter(User.id.in_([r[1] for r in rs] or [-1])).all()}
+    out = []
+    for r in rs:
+        try: f = json.loads(r[6] or "{}")
+        except Exception: f = {}
+        situ = "RESOLVIDO" if r[11] else ("QUARENTENA" if r[10] else "TENTANDO")
+        out.append({"id": r[0], "tecnico": names.get(r[1], f"#{r[1]}"), "evento": r[2], "http": r[3], "motivo": r[4] or "", "tentativas": r[5],
+                    "atm": f.get("atm_id") or "", "estacao": f.get("station") or "", "linha": f.get("line") or "", "percentual": f.get("percent_available") or "",
+                    "tipo": f.get("reserve_mode") or "LEGADO", "reserva": f.get("reserve_qty") or "", "reserva_antes": f.get("reserve_before") or "",
+                    "obs": f.get("notes") or "", "foto": bool(r[7]), "primeira": r[8].isoformat() + "Z" if hasattr(r[8], "isoformat") else (r[8] or ""),
+                    "ultima": r[9].isoformat() + "Z" if hasattr(r[9], "isoformat") else (r[9] or ""), "situacao": situ, "nota": r[12] or ""})
+    return jsonify(ok=True, rows=out)
+
+@app.get("/api/v110/bobinas-quarentena/<int:qid>/foto.jpg")
+@login_required
+def v111_bobbin_quarantine_photo(qid):
+    if not (_has_access("management.diagnostics") or _has_access("field.bobbins_dashboard")):
+        abort(403)
+    _v111_q_ensure()
+    r = db.session.execute(text("SELECT photo_key FROM v111_bobbin_quarantine WHERE id=:i"), {"i": qid}).fetchone()
+    if not r or not r[0]:
+        abort(404)
+    return send_file(io.BytesIO(_r2_get_bytes(r[0])), mimetype="image/jpeg")
+
+@app.post("/api/v110/bobinas-quarentena/<int:qid>/resolver")
+@login_required
+def v111_bobbin_quarantine_resolve(qid):
+    if not _has_access("management.diagnostics"):
+        return jsonify(ok=False, error="Sem permissão."), 403
+    _v111_q_ensure()
+    note = str((request.get_json(silent=True) or {}).get("nota") or "").strip()[:500]
+    if not note:
+        return jsonify(ok=False, error="Descreva o que foi feito (ex.: lançado manualmente, descartado por duplicidade)."), 400
+    db.session.execute(text("UPDATE v111_bobbin_quarantine SET resolved_at=:t, resolved_by=:u, resolved_note=:n WHERE id=:i"),
+                       {"t": datetime.utcnow(), "u": session.get("user_id"), "n": note, "i": qid})
+    db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="BOBBIN_QUARANTINE_RESOLVED", entity_type="v111_bobbin_quarantine", entity_id=str(qid), detail=note))
+    db.session.commit()
+    return jsonify(ok=True, message="Marcado como resolvido.")
+
+
 # Android A5.5 — Bobinas, Estoque Field / Minha Carga e jornada com GPS.
 def _a55_mobile_has(user,*keys):
     access=_user_access_set(user)

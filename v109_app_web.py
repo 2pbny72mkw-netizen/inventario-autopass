@@ -103,6 +103,7 @@ CATALOG = [
         ("Perfis", "/perfis", ["management.profiles"], None),
         ("Diagnóstico", "/diagnostico", ["management.diagnostics"], None),
         ("Diagnóstico – Armazenamento", "/app/diagnostico-armazenamento", ["management.diagnostics"], "tela:diagnostico_armazenamento"),
+        ("Bobinas em quarentena", "/app/bobinas-quarentena", ["management.diagnostics", "field.bobbins_dashboard"], "tela:bobinas_quarentena"),
         ("Planejamento semanal", "/gestao/planejamento-semanal", ["management.360", "management"], None),
         ("Saúde da Plataforma", "/saude-plataforma", ["management.health"], None),
         ("Configurações", "/configuracoes", ["management.settings"], None),
