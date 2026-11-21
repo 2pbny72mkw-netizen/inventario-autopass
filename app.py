@@ -33703,6 +33703,45 @@ def implantation_repo_delete_folder(folder_id):
     ImplantationRepoFile.query.filter(ImplantationRepoFile.folder_id.in_(ids),ImplantationRepoFile.deleted_at.is_(None)).update({'deleted_at':now},synchronize_session=False)
     _repo_audit('REPO_FOLDER_DELETE','implantation_repo_folder',folder_id,f'{len(ids)} pastas');db.session.commit();return jsonify(ok=True)
 
+# V88.0 REV37 — Publicação automática do APK: o APK compilado vai no repositório em releases/ e,
+# ao subir o servidor, é copiado para o Drive Técnico › App Android (R2) se ainda não estiver lá.
+# Os celulares no Build124+ passam a oferecer a atualização sozinhos.
+def _v114_import_releases():
+    import re as _re, threading as _th, time as _tm
+    from pathlib import Path as _P
+    rel = _P(__file__).resolve().parent / "releases"
+    if not rel.is_dir():
+        return
+    def run():
+        _tm.sleep(20)
+        with app.app_context():
+            try:
+                folder = ImplantationRepoFolder.query.filter(db.func.lower(db.func.trim(ImplantationRepoFolder.name)) == "app android",
+                                                             ImplantationRepoFolder.deleted_at.is_(None)).order_by(ImplantationRepoFolder.id).first()
+                if not folder:
+                    app.logger.warning("REV37: pasta 'App Android' não encontrada no Drive Técnico")
+                    return
+                have = {f.name for f in ImplantationRepoFile.query.filter_by(folder_id=folder.id, deleted_at=None).all()}
+                for apk in sorted(rel.glob("*.apk")):
+                    if not _re.search(r"build[ _-]?\d+", apk.name, _re.I) or apk.name in have:
+                        continue
+                    data = apk.read_bytes()
+                    if not data or not _r2_available():
+                        continue
+                    key = "repo_" + _repo_uuid4().hex + "_" + apk.name
+                    _r2_put_bytes("implantacao/drive/" + key, data, "application/vnd.android.package-archive")
+                    f = ImplantationRepoFile(folder_id=folder.id, name=apk.name, version=1, storage_key="r2__implantacao/drive/" + key,
+                                             content_type="application/vnd.android.package-archive", size=len(data), created_by=None)
+                    db.session.add(f); db.session.flush()
+                    db.session.add(AuditEvent(user_id=None, event_type="REPO_FILE_UPLOAD", entity_type="implantation_repo_file",
+                                              entity_id=str(f.id), detail=apk.name + " (publicação automática do APK)"))
+                    db.session.commit()
+                    app.logger.warning("REV37: %s publicado no Drive Técnico › App Android (id %s)", apk.name, f.id)
+            except Exception:
+                db.session.rollback()
+                app.logger.exception("REV37: falha ao publicar APK no Drive Técnico")
+    _th.Thread(target=run, daemon=True, name="v114-apk-release").start()
+
 @app.post('/api/implantacao/repositorio/arquivos')
 @login_required
 def implantation_repo_upload():
@@ -34331,3 +34370,9 @@ install_telas(app, {"mobile_auth_required": mobile_auth_required, "access_set": 
                     "sql": lambda q, p=None: [dict(r._mapping) for r in db.session.execute(text(q), p or {})],
                     "repo_file": lambda fid: db.session.get(ImplantationRepoFile, fid), "repo_content": _repo_download_content,
                     "rollback": db.session.rollback})
+
+# V88.0 REV37 — publica APKs de releases/ no Drive Técnico (em segundo plano, 20 s após subir).
+try:
+    _v114_import_releases()
+except Exception:
+    app.logger.exception("REV37: não foi possível iniciar a publicação do APK")
