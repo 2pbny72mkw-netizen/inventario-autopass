@@ -18,7 +18,7 @@ Linguagem (resumo):
 ST_CONCL = {"CONCLUÍDO": "sucesso", "CONCLUIDO": "sucesso", "CONCLUÍDA": "sucesso", "CONCLUIDA": "sucesso",
             "EM ANDAMENTO": "info", "PENDENTE": "aviso", "RASCUNHO": "neutro", "CANCELADA": "neutro", "CANCELADO": "neutro"}
 
-APP_ULTIMO_BUILD = 122  # o app mostra "versão nova disponível" quando o dele for menor
+APP_ULTIMO_BUILD = 123  # o app mostra "versão nova disponível" quando o dele for menor
 
 TESTE = [["TESTADO_OK", "Testado – OK"], ["TESTADO_COM_DEFEITO", "Testado – com defeito"],
          ["NAO_FOI_POSSIVEL_TESTAR", "Não foi possível testar"], ["EQUIPAMENTO_INOPERANTE", "Equipamento inoperante"], ["OUTRO", "Outro"]]
@@ -322,7 +322,7 @@ SPECS = [
         "detalhe": {"secoes": [{"titulo": "Lista", "campos": [["Título", "{title}"], ["Data", "{activity_date|data}"], ["Início", "{start_time}"],
                                                              ["Duração", "{duration}"], ["Local", "{location}"], ["Instrutor", "{instructor}"],
                                                              ["Descrição", "{description}"], ["Observações", "{observations}"]]}],
-                    "acoes": [{"rotulo": "Editar", "form": "editar", "principal": True}]},
+                    "acoes": [{"rotulo": "Editar", "form": "editar"}, {"rotulo": "Assinar presença", "form": "assinar", "principal": True}]},
         "forms": {
             "nova": {"titulo": "Nova lista de presença", "envio": {"url": "/api/implantacao/listas-presenca", "metodo": "POST", "formato": "json"},
                      "campos": [{"nome": "title", "rotulo": "Título", "tipo": "texto", "obrigatorio": True},
@@ -330,6 +330,13 @@ SPECS = [
                                 {"nome": "duration", "rotulo": "Duração", "tipo": "texto"}, {"nome": "location", "rotulo": "Local", "tipo": "texto"},
                                 {"nome": "instructor", "rotulo": "Instrutor", "tipo": "texto"}, {"nome": "description", "rotulo": "Descrição", "tipo": "area"},
                                 {"nome": "observations", "rotulo": "Observações", "tipo": "area"}]},
+            "assinar": {"titulo": "Assinar presença", "envio": {"url": "/api/implantacao/listas-presenca/{id}/participantes", "metodo": "POST", "formato": "json"},
+                        "campos": [{"nome": "name", "rotulo": "Nome", "tipo": "texto", "obrigatorio": True},
+                                   {"nome": "company", "rotulo": "Empresa", "tipo": "texto", "obrigatorio": True},
+                                   {"nome": "document", "rotulo": "Documento (RG/CPF/matrícula)", "tipo": "texto", "obrigatorio": True},
+                                   {"nome": "role", "rotulo": "Cargo", "tipo": "texto"}, {"nome": "area", "rotulo": "Área", "tipo": "texto"},
+                                   {"nome": "signature", "rotulo": "Assinatura", "tipo": "assinatura", "obrigatorio": True},
+                                   {"nome": "consent", "tipo": "oculto", "valor": "true", "json": True}]},
             "editar": {"titulo": "Editar lista (só rascunho)", "envio": {"url": "/api/implantacao/listas-presenca/{id}", "metodo": "PATCH", "formato": "json"},
                        "campos": [{"nome": "title", "rotulo": "Título", "tipo": "texto", "obrigatorio": True, "valor": "{title}"},
                                   {"nome": "activity_date", "rotulo": "Data", "tipo": "data", "valor": "{activity_date}"},
@@ -680,7 +687,14 @@ SPECS = [
                      "opcoes": ["EM ANDAMENTO", "CONCLUÍDA", "CONCLUÍDA COM PENDÊNCIAS", "NECESSITA NOVA VISITA", "IMPEDIDA", "CANCELADA"]},
                     {"nome": "conclusion", "rotulo": "Resumo da conclusão", "tipo": "area"},
                     {"nome": "pending_items", "rotulo": "Pendências", "tipo": "area"},
-                    {"nome": "client_present", "tipo": "oculto", "valor": "0"},
+                    {"nome": "client_present", "rotulo": "Houve acompanhamento do cliente?", "tipo": "lista", "valor": "0",
+                     "opcoes": [["0", "Não — visita sem acompanhamento"], ["1", "Sim — cliente presente"]]},
+                    {"nome": "client_contact", "rotulo": "Nome de quem acompanhou", "tipo": "texto"},
+                    {"nome": "client_role", "rotulo": "Cargo / função", "tipo": "texto"},
+                    {"nome": "client_observations", "rotulo": "Observações do cliente", "tipo": "area"},
+                    {"nome": "client_accepted", "rotulo": "Cliente aceita as atividades registradas?", "tipo": "lista", "valor": "0",
+                     "opcoes": [["0", "Não"], ["1", "Sim"]]},
+                    {"nome": "signature_data", "rotulo": "Assinatura do cliente (obrigatória para Aceite)", "tipo": "assinatura"},
                     {"nome": "photos", "rotulo": "Fotos", "tipo": "fotos", "max": 10},
                     {"nome": "save_mode", "rotulo": "Salvar como", "tipo": "lista", "obrigatorio": True, "valor": "RASCUNHO",
                      "opcoes": [["RASCUNHO", "Rascunho (continuar depois na web)"], ["FINALIZADO", "Finalizado"]]},
@@ -718,6 +732,47 @@ SPECS = [
                     {"nome": "serial", "rotulo": "Série do POS novo", "tipo": "texto", "valor": "{serial}"},
                     {"nome": "fotos", "rotulo": "Fotos (até 5)", "tipo": "fotos", "max": 5},
                     {"nome": "observacoes", "rotulo": "Observação", "tipo": "area"},
+                ],
+            }
+        },
+    },
+    # ------------------------------------------------- REV26 · campo restante
+    {
+        "key": "equipamentos", "titulo": "Equipamentos", "grupo": "field", "icone": "list", "perms": ["field.equipment"], "web": "/patrimonio",
+        "modelo": "lista", "fonte": {"url": "/api/v7/localidades", "itens": "locations", "offline": True},
+        "lista": {
+            "titulo": "{location}", "subtitulo": "{company} · {line}", "meta": ["{inventoried} de {expected} inventariados", "{coverage_pct}%"],
+            "etiqueta": {"campo": "survey_status", "cores": ST_CONCL},
+            "busca": ["location", "company", "line"],
+            "filtros": [{"rotulo": "Com equipamentos", "campo": "inventoried", "maior": 0}, {"rotulo": "Com divergência", "campo": "divergences", "maior": 0},
+                        {"rotulo": "Pendentes", "campo": "survey_status", "igual": "PENDENTE"}],
+            "kpis": [{"rotulo": "LOCAIS"}, {"rotulo": "INVENTARIADOS", "soma": "inventoried", "tom": "sucesso"}, {"rotulo": "DIVERGÊNCIAS", "soma": "divergences", "tom": "perigo"}],
+            "ordem": [{"rotulo": "Local", "campo": "location"}, {"rotulo": "Cobertura", "campo": "coverage_pct", "desc": True}],
+        },
+        "detalhe": {
+            "secoes": [{"titulo": "Local", "campos": [["Empresa", "{company}"], ["Linha", "{line}"], ["Situação", "{survey_status}"], ["Esperados", "{expected}"],
+                                                       ["Inventariados", "{inventoried}"], ["Faltantes", "{missing}"], ["Fora da base", "{outside_base}"],
+                                                       ["Inoperantes", "{inoperative}"], ["Divergências", "{divergences}"]]}],
+            "sublista": {"titulo": "Equipamentos", "url": "/api/v7/localidades/{id}", "itens": "location.equipment",
+                         "titulo_item": "{type} · {identifier}", "subtitulo_item": "{model} {supplier} · série {serial} · {status}",
+                         "fotos": {"lista": "media", "url": "{url}"}, "form": "editar"},
+            "acoes": [{"rotulo": "Ver no mapa", "mapa": "{latitude},{longitude}"}],
+        },
+        "forms": {
+            "editar": {
+                "titulo": "Editar equipamento",
+                "envio": {"url": "/api/inventory/{id}", "metodo": "PATCH", "formato": "multipart"},
+                "campos": [
+                    {"nome": "equipment_type", "rotulo": "Tipo", "tipo": "texto", "obrigatorio": True, "valor": "{type}"},
+                    {"nome": "asset_identifier", "rotulo": "Identificação / patrimônio", "tipo": "texto", "obrigatorio": True, "valor": "{identifier}"},
+                    {"nome": "serial", "rotulo": "Número de série", "tipo": "texto", "valor": "{serial}"},
+                    {"nome": "supplier", "rotulo": "Fabricante / fornecedor", "tipo": "texto", "valor": "{supplier}"},
+                    {"nome": "model", "rotulo": "Modelo", "tipo": "texto", "valor": "{model}"},
+                    {"nome": "operational_status", "rotulo": "Situação", "tipo": "lista", "valor": "{status}", "opcoes": ["Operacional", "Inoperante", "Em manutenção"]},
+                    {"nome": "in_base", "rotulo": "Consta na base?", "tipo": "lista", "valor": "{in_base}", "opcoes": ["Sim", "Não"]},
+                    {"nome": "divergence", "rotulo": "Divergência", "tipo": "lista", "valor": "{divergence}", "opcoes": ["Não", "Sim"]},
+                    {"nome": "notes", "rotulo": "Observações", "tipo": "area", "valor": "{notes}"},
+                    {"nome": "attachments", "rotulo": "Novas fotos", "tipo": "fotos", "max": 5},
                 ],
             }
         },
