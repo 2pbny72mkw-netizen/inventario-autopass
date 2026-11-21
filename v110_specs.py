@@ -18,7 +18,8 @@ Linguagem (resumo):
 ST_CONCL = {"CONCLUÍDO": "sucesso", "CONCLUIDO": "sucesso", "CONCLUÍDA": "sucesso", "CONCLUIDA": "sucesso",
             "EM ANDAMENTO": "info", "PENDENTE": "aviso", "RASCUNHO": "neutro", "CANCELADA": "neutro", "CANCELADO": "neutro"}
 
-APP_ULTIMO_BUILD = 123  # o app mostra "versão nova disponível" quando o dele for menor
+APP_ULTIMO_BUILD = 124  # o app mostra "versão nova disponível" quando o dele for menor
+APP_SEM_WEB = False      # True = o app (Build124+) deixa de abrir telas da web; ligar quando todas estiverem migradas
 
 TESTE = [["TESTADO_OK", "Testado – OK"], ["TESTADO_COM_DEFEITO", "Testado – com defeito"],
          ["NAO_FOI_POSSIVEL_TESTAR", "Não foi possível testar"], ["EQUIPAMENTO_INOPERANTE", "Equipamento inoperante"], ["OUTRO", "Outro"]]

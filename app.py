@@ -33823,4 +33823,6 @@ from v110_telas import install_telas  # V88.0 REV20 — motor de telas do app: p
 install_telas(app, {"mobile_auth_required": mobile_auth_required, "access_set": _user_access_set,
                     "strict": _v86_strict, "is_principal_user": _v86_user_is_principal,
                     "groups": ACCESS_GROUPS, "submodules": ACCESS_SUBMODULES, "has_access": _has_access, "labels": ACCESS_LABELS,
-                    "sql": lambda q, p=None: [dict(r._mapping) for r in db.session.execute(text(q), p or {})]})
+                    "sql": lambda q, p=None: [dict(r._mapping) for r in db.session.execute(text(q), p or {})],
+                    "repo_file": lambda fid: db.session.get(ImplantationRepoFile, fid), "repo_content": _repo_download_content,
+                    "rollback": db.session.rollback})

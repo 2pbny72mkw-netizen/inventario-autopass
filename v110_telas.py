@@ -225,6 +225,61 @@ def install_telas(app, H):
             session.update(**who)
             return app.full_dispatch_request()
 
+    # REV28 — atualização automática do app: o administrador envia o APK para a pasta "App Android" do Drive Técnico
+    # (nome do arquivo com "Build<número>", ex.: Sistema-Gestao-Build124.apk); os celulares baixam a versão mais nova.
+    APK_PASTA = "app android"
+
+    def _ultimo_apk():
+        """Nunca derruba quem chama (a lista de telas depende disto): erro → None."""
+        try:
+            return _ultimo_apk_raw()
+        except Exception:
+            app.logger.exception("REV28: falha ao procurar o APK publicado")
+            try:
+                H["rollback"]()
+            except Exception:
+                pass
+            return None
+
+    def _ultimo_apk_raw():
+        import re as _re
+        rows = H["sql"]("""SELECT f.id, f.name, f.size, f.created_at FROM implantation_repo_files f
+                           JOIN implantation_repo_folders p ON p.id = f.folder_id
+                           WHERE f.deleted_at IS NULL AND p.deleted_at IS NULL AND LOWER(TRIM(p.name)) = :pasta""", {"pasta": APK_PASTA})
+        best = None
+        for r in rows:
+            nome = str(r.get("name") or "")
+            m = _re.search(r"build[ _-]?(\d+)", nome, _re.I)
+            if not nome.lower().endswith(".apk") or not m:
+                continue
+            b = int(m.group(1))
+            if best is None or b > best["build"] or (b == best["build"] and r["id"] > best["id"]):
+                best = {"build": b, "id": r["id"], "nome": nome, "tamanho": r.get("size") or 0}
+        return best
+
+    @app.get("/api/mobile/v1/app/ultima")
+    @H["mobile_auth_required"]
+    def v110_app_ultima():
+        a = _ultimo_apk()
+        if not a:
+            return jsonify({"ok": True, "build": 0})
+        return jsonify({"ok": True, **a, "url": "/api/mobile/v1/app/apk/%d" % a["id"]})
+
+    @app.get("/api/mobile/v1/app/apk/<int:fid>")
+    @H["mobile_auth_required"]
+    def v110_app_apk(fid):
+        a = _ultimo_apk()
+        if not a or a["id"] != fid:
+            return jsonify({"ok": False, "error": "Versão não disponível."}), 404
+        f = H["repo_file"](fid)
+        data = H["repo_content"](f) if f else None
+        if not data:
+            return jsonify({"ok": False, "error": "Arquivo indisponível no armazenamento."}), 503
+        from flask import Response
+        return Response(data, mimetype="application/vnd.android.package-archive",
+                        headers={"Content-Disposition": "attachment; filename=%s" % a["nome"].replace('"', ""),
+                                 "Content-Length": str(len(data))})
+
     @app.get("/api/mobile/v1/telas")
     @H["mobile_auth_required"]
     def v110_telas():
@@ -232,6 +287,7 @@ def install_telas(app, H):
         specs = v110_specs.SPECS
         mine = screens_for(specs, H["access_set"](user), is_full(user), H["groups"], H["submodules"])
         return jsonify({"ok": True, "versao": specs_version(specs), "telas": mine,
-                        "app": {"ultimo_build": getattr(v110_specs, "APP_ULTIMO_BUILD", 0)}})
+                        "app": {"ultimo_build": max(getattr(v110_specs, "APP_ULTIMO_BUILD", 0), (_ultimo_apk() or {}).get("build", 0)),
+                                "sem_web": bool(getattr(v110_specs, "APP_SEM_WEB", False))}})
 
     return True
