@@ -280,6 +280,44 @@ def install_telas(app, H):
                         headers={"Content-Disposition": "attachment; filename=%s" % a["nome"].replace('"', ""),
                                  "Content-Length": str(len(data))})
 
+    @app.get("/api/v110/clientes")
+    def v110_clientes():
+        g = _guard("portal.manage")
+        if g:
+            return g
+        rows = H["sql"]("""SELECT c.id, c.legal_name, c.trade_name, c.cnpj, c.state_registration, c.contact_name, c.contact_role, c.phone,
+                                  c.mobile, c.email, c.address, c.city, c.state, c.zip_code, c.notes, c.active,
+                                  (SELECT COUNT(*) FROM users u WHERE u.role = 'customer' AND u.archived_at IS NULL
+                                     AND LOWER(TRIM(COALESCE(u.company, ''))) = LOWER(TRIM(c.legal_name))) AS acessos
+                           FROM customer_companies c ORDER BY c.active DESC, c.legal_name""")
+        for r in rows:
+            r["active"] = bool(r.get("active"))
+            r["ativo_form"] = "1" if r["active"] else "0"
+        return jsonify({"ok": True, "rows": rows})
+
+    @app.get("/api/v110/localidades-externas")
+    def v110_localidades_externas():
+        g = _guard("management.external_locations")
+        if g:
+            return g
+        rows = H["sql"]("""SELECT id, name, company, category, address, latitude, longitude, radius_m, active
+                           FROM external_locations ORDER BY active DESC, company, name""")
+        for r in rows:
+            r["active"] = bool(r.get("active"))
+        return jsonify({"ok": True, "rows": rows})
+
+    @app.get("/api/v110/links")
+    def v110_links():
+        g = _guard("management.links")
+        if g:
+            return g
+        rows = H["sql"]("""SELECT id, title, category, url, notes, active, updated_at FROM management_links ORDER BY active DESC, category, title""")
+        for r in rows:
+            r["active"] = bool(r.get("active"))
+            if hasattr(r.get("updated_at"), "isoformat"):
+                r["updated_at"] = r["updated_at"].isoformat()
+        return jsonify({"ok": True, "rows": rows})
+
     @app.get("/api/mobile/v1/telas")
     @H["mobile_auth_required"]
     def v110_telas():

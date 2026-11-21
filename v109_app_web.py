@@ -103,6 +103,8 @@ CATALOG = [
         ("Planejamento semanal", "/gestao/planejamento-semanal", ["management.360", "management"], None),
         ("Saúde da Plataforma", "/saude-plataforma", ["management.health"], None),
         ("Configurações", "/configuracoes", ["management.settings"], None),
+        ("Localidades Externas", "/gestao/localidades-externas", ["management.external_locations"], None),
+        ("Resumo dos Links", "/gestao/resumo-links", ["management.links"], None),
     ]),
     ("financeiro", "Financeiro", "payments", [
         ("Lançamentos", "/financeiro/lancamentos", ["finance.entries", "finance.support", "finance.suppliers"], None),
