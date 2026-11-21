@@ -1,0 +1,41 @@
+{% extends 'base.html' %}{% block title %}Endereço de acesso{% endblock %}{% block content %}
+<section class="dashHero"><div><span class="eyebrow">GESTÃO · V88.0 REV35</span><h1>Endereço de acesso (app e web)</h1>
+<p>Por qual endereço cada usuário entra no sistema. <b>Endereço novo:</b> sistema-gestao-autopass.onrender.com · <b>Endereço antigo:</b> inventario-autopass.onrender.com (a desligar).
+Quem aparece em <b>Endereço antigo</b> pelo app precisa instalar o Build125. Registro iniciado em 21/11/2026; quem ainda não acessou desde então aparece como <b>Sem acesso registrado</b>.</p></div></section>
+<section class="kpiGrid v113Kpis" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin:12px 0">
+  <button type="button" class="kpiCard" data-f="" aria-label="Mostrar todos os usuários"><small>Usuários</small><b>{{ kp.total }}</b></button>
+  <button type="button" class="kpiCard danger" data-f="ANTIGO" aria-label="Filtrar endereço antigo"><small>Endereço antigo</small><b>{{ kp.antigo }}</b></button>
+  <button type="button" class="kpiCard success" data-f="NOVO" aria-label="Filtrar endereço novo"><small>Endereço novo</small><b>{{ kp.novo }}</b></button>
+  <button type="button" class="kpiCard" data-f="SEM DADO" aria-label="Filtrar sem acesso registrado"><small>Sem acesso registrado</small><b>{{ kp.sem }}</b></button>
+</section>
+<section class="card">
+  <div class="actions" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+    <label>Situação <select id="v113Sit"><option value="">Todas</option><option value="ANTIGO">Endereço antigo</option><option value="NOVO">Endereço novo</option><option value="SEM DADO">Sem acesso registrado</option></select></label>
+    <span id="v113Count" class="muted"></span>
+    <button type="button" class="secondary" id="v113Csv">Exportar CSV</button>
+  </div>
+  <div class="tableWrap"><table id="v113Table" data-ap-table="search" data-ap-flag="tabelas_v85">
+    <thead><tr><th>Usuário</th><th>Perfil</th><th>Situação</th><th>Aparelho (app)</th><th>App — endereço</th><th>App — último acesso</th><th>Web — endereço</th><th>Web — último acesso</th><th>Último uso do endereço antigo</th></tr></thead>
+    <tbody>{% for r in rows %}<tr data-sit="{{ r.situacao }}">
+      <td><b>{{ r.nome }}</b></td><td>{{ r.perfil }}</td>
+      <td>{% if r.situacao == 'ANTIGO' %}<span class="pill danger">Endereço antigo</span>{% elif r.situacao == 'NOVO' %}<span class="pill success">Endereço novo</span>{% else %}<span class="pill">Sem acesso registrado</span>{% endif %}</td>
+      <td>{{ r.aparelho or '—' }}</td><td>{{ r.app_endereco }}</td><td>{{ r.app_ultimo_br or '—' }}</td>
+      <td>{{ r.web_endereco }}</td><td>{{ r.web_ultimo_br or '—' }}</td>
+      <td>{{ r.antigo_app_br or r.antigo_web_br or '—' }}</td></tr>{% else %}<tr><td colspan="9">Nenhum acesso registrado ainda. Os dados aparecem conforme os usuários entram no sistema.</td></tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+<script>
+(function(){
+  var sel=document.getElementById('v113Sit'), tb=document.querySelector('#v113Table tbody'), cnt=document.getElementById('v113Count');
+  function apply(){var v=sel.value, n=0, t=0; tb.querySelectorAll('tr[data-sit]').forEach(function(tr){t++; var ok=!v||tr.dataset.sit===v; tr.style.display=ok?'':'none'; if(ok)n++;}); cnt.textContent=n+' de '+t+' usuário(s)';}
+  sel.onchange=apply;
+  document.querySelectorAll('.v113Kpis button[data-f]').forEach(function(b){b.onclick=function(){sel.value=b.dataset.f;apply();document.getElementById('v113Table').scrollIntoView({behavior:'smooth'});};});
+  document.getElementById('v113Csv').onclick=function(){
+    var rows=[].slice.call(document.querySelectorAll('#v113Table tr')).filter(function(tr){return tr.style.display!=='none';});
+    var csv=rows.map(function(tr){return [].slice.call(tr.children).map(function(c){return '"'+c.innerText.replace(/"/g,'""').trim()+'"';}).join(';');}).join('\r\n');
+    var a=document.createElement('a'); a.href=URL.createObjectURL(new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8'})); a.download='enderecos-acesso.csv'; a.click();
+  };
+  apply();
+})();
+</script>
+{% endblock %}

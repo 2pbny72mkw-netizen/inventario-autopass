@@ -4503,6 +4503,28 @@ def _v113_model(ua):
 def v113_devices():
     if not (_has_access("management.diagnostics") or _has_access("users.view")):
         return jsonify(ok=False, error="Sem permissão."), 403
+    return jsonify(ok=True, rows=_v113_rows(), desde="registro iniciado na V88.0 REV35")
+
+@app.get("/gestao/enderecos-acesso")
+@login_required
+def v113_devices_page():
+    if not (_has_access("management.diagnostics") or _has_access("users.view")):
+        abort(403)
+    rows = _v113_rows()
+    def br(v):
+        try:
+            d = datetime.fromisoformat(str(v).rstrip("Z")).replace(tzinfo=ZoneInfo("UTC")).astimezone(ZoneInfo("America/Sao_Paulo"))
+            return d.strftime("%d/%m/%Y %H:%M")
+        except Exception:
+            return ""
+    for r in rows:
+        for k in ("app_ultimo", "web_ultimo", "antigo_app", "antigo_web"):
+            r[k + "_br"] = br(r[k])
+    kp = {"total": len(rows), "antigo": sum(1 for r in rows if r["situacao"] == "ANTIGO"),
+          "novo": sum(1 for r in rows if r["situacao"] == "NOVO"), "sem": sum(1 for r in rows if r["situacao"] == "SEM DADO")}
+    return render_template("enderecos_acesso_v113.html", rows=rows, kp=kp)
+
+def _v113_rows():
     with db.engine.begin() as conn:
         _v113_ensure(conn)
         rs = conn.execute(text("SELECT user_id, host, channel, user_agent, first_at, last_at FROM v113_access_hosts ORDER BY last_at DESC")).fetchall()
@@ -4536,7 +4558,7 @@ def v113_devices():
                      "ultimo": max(o.get("app_ultimo") or "", o.get("web_ultimo") or "", o.get("app_registrado") or "")})
     rows.sort(key=lambda r: r["ultimo"], reverse=True)
     rows.sort(key=lambda r: r["situacao"] != "ANTIGO")
-    return jsonify(ok=True, rows=rows, desde="registro iniciado na V88.0 REV35")
+    return rows
 
 # V88.0 REV33 — Quarentena de registros de Bobinas recusados pelo app.
 # O app (até o Build124) mantém um registro recusado (400/409) na fila e reenvia para sempre, a cada sincronização,
@@ -8259,8 +8281,8 @@ def _v8522_menu_layout():
     return obj
 
 # REV5: catálogo técnico das funções efetivamente presentes na navegação.
-_V876_REV5_CATALOG = {'Treinamentos': '/field/treinamentos', 'Dashboard': '/gerencial', 'Central de Atividades': '/atividades', 'Gestão de Tarefas': '/gestao-tarefas', 'Minhas Atividades Arrow': '/arrow?mine=1#minhas', 'Agenda Arrow': '/arrow#agenda', 'Atividades / Alocações Arrow': '/arrow#gestao', 'Inventário': '/tecnico', 'Preventiva ATM': '/preventivas', 'Atividades de Bobinas': '/field/bobinas', 'Visitas / Relatórios': '/implantacao-hardware', 'Dashboard Bobinas': '/dashboard/bobinas', 'Chamados': '/trabalho', 'Equipamentos': '/patrimonio', 'Evidências': '/evidencias-campo', 'Visão Panorâmica': '/visao-panoramica', 'Troca de Chips Recarga': '/troca-chips', 'Mapeamento ATM': '/field/mapeamento-atm', 'Bobinas': '/field/bobinas', 'Estoque Field': '/field/estoque', 'Troca de POS Metrô': '/field/troca-pos-metro', 'Atualização Firmware POS - CPTM': '/firmware-pos-cptm', 'Gerar QR Code – Trilhos': '/qr-trilhos', 'Configurações QR – Trilhos': '/gestao/configuracoes/qr-trilhos', 'Drive Técnico': '/implantacao-hardware/repositorio', 'Lista de Presença Digital': '/implantacao-hardware/lista-presenca', 'Troca de Chips EMV - Trilhos': '/troca-chips-emv', 'Troca de Chips Garagem': '/troca-chips-garagem', 'Equipes': '/equipes', 'APT': '/rh/apt', 'Usuários': '/usuarios', 'Agendamentos': '/portal-cliente', 'Recebimentos': '/portal-cliente', 'Gestão de Agendamentos': '/portal-cliente/gestao-agendamentos', 'Cadastro de Clientes': '/portal-cliente/cadastro-clientes', 'Cadastro de Itens': '/engenharia#itens', 'Estruturas BOM': '/engenharia#bom', 'Preço de Venda / Locação': '/engenharia#preco', 'Revisões': '/engenharia#revisoes', 'Codificação': '/engenharia#codificacao', 'Estoque Central': '/engenharia/estoque', 'Dossiê & Materiais': '/documentos-materiais', 'Raio-X dos Colaboradores': '/documentos-materiais/raio-x', 'Preparação de Acessos — Metrô / CPTM': '/documentos/acessos', 'Central Operacional': '/central-operacional', 'Inteligência Operacional': '/inteligencia-operacional', 'Central 360': '/gestao-360', 'Notificações 0': '/notificacoes', 'Diagnóstico': '/diagnostico', 'Configurações': '/configuracoes', 'Organização do Menu Principal': '/gestao/organizacao-menu', 'Localidades Externas': '/gestao/localidades-externas', 'Resumo dos Links': '/gestao/resumo-links', 'Rastreabilidade & Jornada': '/gestao/rastreabilidade-jornada', 'Perfis & Permissões': '/perfis', 'Configuração de Dashboards': '/gestao/configuracao-dashboards', 'Construtor de Dashboards': '/configuracoes/dashboards', 'Saúde da Plataforma': '/saude-plataforma', 'Lançamentos': '/financeiro/lancamentos', 'Coleta de Valores': '/financeiro/coleta-valores', 'Monitoramento de Coletas': '/financeiro/monitoramento-coletas', 'Apuração': '/financeiro/apuracao', 'Caixinha': '/financeiro/caixinha', 'Agenda': '/arrow#agenda', 'Minhas atividades': '/arrow?mine=1#minhas', 'Atividades / Alocações': '/arrow#gestao', 'Dashboard Arrow': '/arrow#dashboard', 'Atendimento Remoto / TeamViewer': '/arrow#remoto', 'Meu Perfil': '/meu-perfil', 'Planejamento semanal': '/gestao/planejamento-semanal', 'Sobre': '/sobre', 'Sair': '/logout'}
-_V876_REV5_GROUPS = {'Treinamentos': 'Field', 'Caixinha': 'Financeiro', 'Preparação de Acessos — Metrô / CPTM': 'Documentos & Materiais', 'Troca de POS Metrô': 'Field', 'Planejamento semanal': 'Gestão'}
+_V876_REV5_CATALOG = {'Treinamentos': '/field/treinamentos', 'Dashboard': '/gerencial', 'Central de Atividades': '/atividades', 'Gestão de Tarefas': '/gestao-tarefas', 'Minhas Atividades Arrow': '/arrow?mine=1#minhas', 'Agenda Arrow': '/arrow#agenda', 'Atividades / Alocações Arrow': '/arrow#gestao', 'Inventário': '/tecnico', 'Preventiva ATM': '/preventivas', 'Atividades de Bobinas': '/field/bobinas', 'Visitas / Relatórios': '/implantacao-hardware', 'Dashboard Bobinas': '/dashboard/bobinas', 'Chamados': '/trabalho', 'Equipamentos': '/patrimonio', 'Evidências': '/evidencias-campo', 'Visão Panorâmica': '/visao-panoramica', 'Troca de Chips Recarga': '/troca-chips', 'Mapeamento ATM': '/field/mapeamento-atm', 'Bobinas': '/field/bobinas', 'Estoque Field': '/field/estoque', 'Troca de POS Metrô': '/field/troca-pos-metro', 'Atualização Firmware POS - CPTM': '/firmware-pos-cptm', 'Gerar QR Code – Trilhos': '/qr-trilhos', 'Configurações QR – Trilhos': '/gestao/configuracoes/qr-trilhos', 'Drive Técnico': '/implantacao-hardware/repositorio', 'Lista de Presença Digital': '/implantacao-hardware/lista-presenca', 'Troca de Chips EMV - Trilhos': '/troca-chips-emv', 'Troca de Chips Garagem': '/troca-chips-garagem', 'Equipes': '/equipes', 'APT': '/rh/apt', 'Usuários': '/usuarios', 'Agendamentos': '/portal-cliente', 'Recebimentos': '/portal-cliente', 'Gestão de Agendamentos': '/portal-cliente/gestao-agendamentos', 'Cadastro de Clientes': '/portal-cliente/cadastro-clientes', 'Cadastro de Itens': '/engenharia#itens', 'Estruturas BOM': '/engenharia#bom', 'Preço de Venda / Locação': '/engenharia#preco', 'Revisões': '/engenharia#revisoes', 'Codificação': '/engenharia#codificacao', 'Estoque Central': '/engenharia/estoque', 'Dossiê & Materiais': '/documentos-materiais', 'Raio-X dos Colaboradores': '/documentos-materiais/raio-x', 'Preparação de Acessos — Metrô / CPTM': '/documentos/acessos', 'Central Operacional': '/central-operacional', 'Inteligência Operacional': '/inteligencia-operacional', 'Central 360': '/gestao-360', 'Notificações 0': '/notificacoes', 'Diagnóstico': '/diagnostico', 'Configurações': '/configuracoes', 'Organização do Menu Principal': '/gestao/organizacao-menu', 'Localidades Externas': '/gestao/localidades-externas', 'Resumo dos Links': '/gestao/resumo-links', 'Rastreabilidade & Jornada': '/gestao/rastreabilidade-jornada', 'Perfis & Permissões': '/perfis', 'Configuração de Dashboards': '/gestao/configuracao-dashboards', 'Construtor de Dashboards': '/configuracoes/dashboards', 'Saúde da Plataforma': '/saude-plataforma', 'Endereço de acesso': '/gestao/enderecos-acesso', 'Lançamentos': '/financeiro/lancamentos', 'Coleta de Valores': '/financeiro/coleta-valores', 'Monitoramento de Coletas': '/financeiro/monitoramento-coletas', 'Apuração': '/financeiro/apuracao', 'Caixinha': '/financeiro/caixinha', 'Agenda': '/arrow#agenda', 'Minhas atividades': '/arrow?mine=1#minhas', 'Atividades / Alocações': '/arrow#gestao', 'Dashboard Arrow': '/arrow#dashboard', 'Atendimento Remoto / TeamViewer': '/arrow#remoto', 'Meu Perfil': '/meu-perfil', 'Planejamento semanal': '/gestao/planejamento-semanal', 'Sobre': '/sobre', 'Sair': '/logout'}
+_V876_REV5_GROUPS = {'Endereço de acesso': 'Gestão', 'Treinamentos': 'Field', 'Caixinha': 'Financeiro', 'Preparação de Acessos — Metrô / CPTM': 'Documentos & Materiais', 'Troca de POS Metrô': 'Field', 'Planejamento semanal': 'Gestão'}
 
 def _v876_rev5_complete(layout):
     import copy
