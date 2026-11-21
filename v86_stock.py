@@ -340,10 +340,16 @@ def install_v86(app, db, User, can):
     def v86_material_photo(mid):
         photo=Photo.query.filter_by(material_id=mid).order_by(Photo.id).first()
         if not photo:abort(404)
+        # REV34: cada troca de foto cria uma linha nova (id novo) -> o id é a versão. Se o navegador já tem
+        # esta versão, responde 304 sem buscar a foto no R2 (~0,7 s por foto no plano Free).
+        etag='mp'+str(photo.id)
+        if etag in request.if_none_match:
+            resp=app.response_class(status=304);resp.set_etag(etag);resp.headers['Cache-Control']='private, max-age=3600, must-revalidate';return resp
         _v107=app.extensions.get('v107');data=_v107.read('v86_material_photos',photo.id,photo.data) if _v107 else photo.data
         if not data:abort(404)
         response=send_file(BytesIO(data),mimetype=photo.mime,download_name='material-'+str(mid)+'.jpg')
-        response.headers['Cache-Control']='private, max-age=300'
+        response.set_etag(etag)
+        response.headers['Cache-Control']='private, max-age=3600, must-revalidate'
         return response
 
     @app.post('/api/engenharia/estoque/movimentar')

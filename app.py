@@ -15708,9 +15708,11 @@ def user_photo(user_id):
     user = db.session.get(User, user_id)
     if not user or not user.photo_url:
         return "", 404
-    if not (_has_access("users.view") or user.id == session.get("user_id")):
+    # REV34: quem vê a equipe no mapa/hoje já recebe o técnico na lista — pode ver só a foto dele (não o cadastro).
+    _team_view = _has_access("teams.map") or _has_access("teams.today")
+    if not (_has_access("users.view") or user.id == session.get("user_id") or _team_view):
         return "", 404
-    if user.id != session.get("user_id") and not _hr_target_allowed(user):
+    if user.id != session.get("user_id") and not _team_view and not _hr_target_allowed(user):
         return "", 404
 
     try:
