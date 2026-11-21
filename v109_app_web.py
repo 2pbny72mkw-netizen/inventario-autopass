@@ -28,6 +28,7 @@ FULL_ROLES = {"manager", "admin", "adm", "administrator", "administrador", "gest
 CATALOG = [
     ("dashboard", "Dashboard", "dashboard", [
         ("Dashboard Gerencial", "/gerencial", ["dashboard", "field.dashboard", "implantation.dashboard", "finance.dashboard"], None),
+        ("Contratos de ATM", "/app/contratos-atm", ["dashboard", "field.dashboard"], "tela:contratos_atm"),
     ]),
     ("atividades", "Atividades", "task_alt", [
         ("Central de Atividades", "/atividades", ["tasks.view", "arrow.view", "arrow.manage", "field.inventory", "field.preventive", "implantation.visits", "field.bobbins"], None),
@@ -62,6 +63,7 @@ CATALOG = [
         ("Gestão Arrow", "/arrow#gestao", ["arrow.manage"], None),
         ("Dashboard Arrow", "/arrow#dashboard", ["arrow.dashboard"], None),
         ("Remoto", "/arrow#remoto", ["arrow.remote"], None),
+        ("Localidades Arrow", "/app/arrow-localidades", ["arrow.view", "arrow.manage"], "tela:arrow_localidades"),
     ]),
     ("rh", "RH", "groups", [
         ("Equipes", "/equipes", ["teams"], None),
@@ -76,11 +78,15 @@ CATALOG = [
     ("engenharia", "Engenharia e Estoque", "inventory_2", [
         ("Cadastro de Itens", "/engenharia#itens", ["engineering"], None),
         ("Estruturas BOM", "/engenharia#bom", ["engineering"], None),
+        ("Preço de Venda / Locação", "/engenharia#preco", ["engineering"], None),
+        ("Codificação", "/engenharia#codificacao", ["engineering"], None),
         ("Estoque Central", "/engenharia/estoque", ["engineering.stock.view"], None),
         ("Controle de TAGs", "/engenharia/tags", ["engineering.tags.view"], None),
     ]),
     ("documentos", "Documentos & Materiais", "folder", [
         ("Dossiê & Materiais", "/documentos-materiais", ["materials"], None),
+        ("Catálogo de materiais", "/app/materiais-catalogo", ["materials"], "tela:materiais_catalogo"),
+        ("Termos de entrega", "/app/termos", ["materials"], "tela:termos"),
         ("Raio-X dos Colaboradores", "/documentos-materiais/raio-x", ["materials.dossier.view"], None),
         ("Preparação de Acessos", "/documentos/acessos", ["materials.access_lists.view"], None),
     ]),
@@ -88,10 +94,13 @@ CATALOG = [
         ("Central Operacional", "/central-operacional", ["teams.today"], None),
         ("Inteligência Operacional", "/inteligencia-operacional", ["management.360"], None),
         ("Gestão 360", "/gestao-360", ["management.360"], None),
+        ("Central de Alertas", "/app/alertas", ["management.360"], "tela:alertas360"),
+        ("Auditoria recente", "/app/auditoria", ["management.360", "management.diagnostics"], "tela:auditoria"),
         ("Notificações", "/notificacoes", ["management.notifications"], None),
         ("Rastreabilidade de Jornada", "/gestao/rastreabilidade-jornada", ["management.gps_history", "management.work_authorizations"], None),
         ("Perfis", "/perfis", ["management.profiles"], None),
         ("Diagnóstico", "/diagnostico", ["management.diagnostics"], None),
+        ("Planejamento semanal", "/gestao/planejamento-semanal", ["management.360", "management"], None),
         ("Saúde da Plataforma", "/saude-plataforma", ["management.health"], None),
         ("Configurações", "/configuracoes", ["management.settings"], None),
     ]),
