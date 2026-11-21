@@ -1262,3 +1262,43 @@ SPECS = [
                                                               ["Último uso do endereço antigo (web)", "{antigo_web|datahora}"]]}]},
     },
 ]
+
+# ---------------------------------------------------------------------------------------------
+# V88.0 REV38 / Build127 — cores e gráficos (esboço aprovado em 21/11/2026).
+# O app (Build127+) entende: lista.selo (cor da linha Metrô/CPTM), lista.progresso, painel.roscas,
+# painel.linhas, barras "cores": "linha"|"paleta", kpis "legenda"/"variacao". Builds antigos ignoram.
+def _v115_enriquecer(specs):
+    por = {s["key"]: s for s in specs}
+    def lista(k, **kw):
+        if k in por: por[k].setdefault("lista", {}).update(kw)
+    def painel(k, **kw):
+        if k in por: por[k].setdefault("painel", {}).update(kw)
+    lista("pos_metro_ap", selo={"campo": "linha"}, progresso={"feito": "aps_ok", "total": "aps_total"})
+    lista("pos_metro", selo={"campo": "line"})
+    lista("mapeamento_atm", selo={"campo": "line"})
+    lista("qr_trilhos", selo={"campo": "line"})
+    painel("dashboard_bobinas", roscas=[{"titulo": "Nível das ATMs", "centro": "ATMs", "partes": [
+        {"rotulo": "Normal", "resto": "{summary.atms}", "tom": "sucesso"},
+        {"rotulo": "Atenção", "valor": "{summary.attention}", "tom": "aviso"},
+        {"rotulo": "Crítico", "valor": "{summary.critical}", "tom": "perigo"},
+        {"rotulo": "Sem leitura", "valor": "{summary.without_reading}"}]}])
+    painel("dashboard_gerencial", roscas=[{"titulo": "Locais do inventário", "centro": "locais", "partes": [
+        {"rotulo": "Concluídos", "valor": "{totals.completed}", "tom": "sucesso"},
+        {"rotulo": "Pendentes", "valor": "{totals.pending}", "tom": "aviso"}]}],
+        linhas=[{"titulo": "Registros por dia (14 dias)", "itens": "trend_14d", "rotulo": "{date}", "valor": "{count}"}])
+    painel("arrow_dashboard", roscas=[{"titulo": "Atividades por situação", "centro": "atividades", "partes": [
+        {"rotulo": "Planejadas", "valor": "{planejadas}", "tom": "aviso"},
+        {"rotulo": "Em andamento", "valor": "{andamento}", "tom": "info"},
+        {"rotulo": "Concluídas", "valor": "{concluidas}", "tom": "sucesso"},
+        {"rotulo": "Canceladas", "valor": "{canceladas}"}]}])
+    painel("evidencias", roscas=[{"titulo": "Situação das evidências", "centro": "itens", "partes": [
+        {"rotulo": "Casados", "valor": "{matched}", "tom": "sucesso"},
+        {"rotulo": "Em revisão", "valor": "{review}", "tom": "aviso"},
+        {"rotulo": "Sem vínculo", "valor": "{unresolved_visits}", "tom": "perigo"}]}])
+    painel("saude", linhas=[{"titulo": "Requisições a cada 5 min", "itens": "timeline", "rotulo": "{time}", "valor": "{requests}"}])
+    for s in specs:
+        for b in (s.get("painel") or {}).get("barras") or []:
+            b.setdefault("cores", "linha" if "linha" in (b.get("titulo") or "").lower() else "paleta")
+    return specs
+
+SPECS = _v115_enriquecer(SPECS)
