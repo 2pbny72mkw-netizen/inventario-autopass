@@ -33783,4 +33783,5 @@ install_app_web(app, {"mobile_auth_required": mobile_auth_required, "bearer": _v
 from v110_telas import install_telas  # V88.0 REV20 — motor de telas do app: ponte de dados e descrição das telas
 install_telas(app, {"mobile_auth_required": mobile_auth_required, "access_set": _user_access_set,
                     "strict": _v86_strict, "is_principal_user": _v86_user_is_principal,
-                    "groups": ACCESS_GROUPS, "submodules": ACCESS_SUBMODULES})
+                    "groups": ACCESS_GROUPS, "submodules": ACCESS_SUBMODULES, "has_access": _has_access, "labels": ACCESS_LABELS,
+                    "sql": lambda q, p=None: [dict(r._mapping) for r in db.session.execute(text(q), p or {})]})

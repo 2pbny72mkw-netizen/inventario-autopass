@@ -105,12 +105,56 @@ def install_telas(app, H):
             return jsonify({"ok": False, "error": "HTTP %d" % resp.status_code, "mensagens": msgs}), resp.status_code
         return jsonify({"ok": False, "error": "Esta função da web ainda não tem versão em dados.", "mensagens": msgs}), 406
 
+    # REV22 — listas em dados para telas que na web só existiam como página (usadas pelo app via ponte)
+    def _guard(*perms):
+        if not session.get("user_id"):
+            return jsonify({"ok": False, "error": "Sessão necessária."}), 401
+        if not any(H["has_access"](p) for p in perms):
+            return jsonify({"ok": False, "error": "Sem permissão."}), 403
+        return None
+
+    @app.get("/api/v110/usuarios")
+    def v110_usuarios():
+        g = _guard("users.view")
+        if g:
+            return g
+        rows = H["sql"]("""SELECT u.id, u.name, u.username, u.role, u.company, u.job_title, u.email, u.phone, u.active,
+                                  u.personnel_status, u.work_schedule_type, u.work_shift, u.admission_date, p.name AS profile
+                           FROM users u LEFT JOIN system_profiles p ON p.id = u.system_profile_id
+                           WHERE u.archived_at IS NULL ORDER BY u.name""")
+        for r in rows:
+            for k, v in list(r.items()):
+                if hasattr(v, "isoformat"):
+                    r[k] = v.isoformat()
+            r["active"] = bool(r.get("active"))
+        return jsonify({"ok": True, "rows": rows})
+
+    @app.get("/api/v110/perfis")
+    def v110_perfis():
+        g = _guard("management.profiles", "users.view")
+        if g:
+            return g
+        rows = H["sql"]("""SELECT p.id, p.name, p.base_role, p.active, p.access_json,
+                                  (SELECT COUNT(*) FROM users u WHERE u.system_profile_id = p.id AND u.archived_at IS NULL) AS users
+                           FROM system_profiles p ORDER BY p.name""")
+        labels = H.get("labels") or {}
+        for r in rows:
+            try:
+                acc = json.loads(r.pop("access_json") or "[]")
+            except Exception:
+                acc = []
+            r["active"] = bool(r.get("active"))
+            r["permissoes"] = len(acc) if isinstance(acc, list) else 0
+            r["liberacoes"] = [{"chave": a, "nome": labels.get(a, a)} for a in (acc if isinstance(acc, list) else []) if isinstance(a, str)]
+        return jsonify({"ok": True, "rows": rows})
+
     @app.get("/api/mobile/v1/telas")
     @H["mobile_auth_required"]
     def v110_telas():
         user = request.mobile_user
         specs = v110_specs.SPECS
         mine = screens_for(specs, H["access_set"](user), is_full(user), H["groups"], H["submodules"])
-        return jsonify({"ok": True, "versao": specs_version(specs), "telas": mine})
+        return jsonify({"ok": True, "versao": specs_version(specs), "telas": mine,
+                        "app": {"ultimo_build": getattr(v110_specs, "APP_ULTIMO_BUILD", 0)}})
 
     return True
