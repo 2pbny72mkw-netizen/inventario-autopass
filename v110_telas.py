@@ -119,7 +119,7 @@ def install_telas(app, H):
         if g:
             return g
         rows = H["sql"]("""SELECT u.id, u.name, u.username, u.role, u.company, u.job_title, u.email, u.phone, u.active,
-                                  u.personnel_status, u.work_schedule_type, u.work_shift, u.admission_date, p.name AS profile
+                                  u.personnel_status, u.personnel_status_note, u.work_schedule_type, u.work_shift, u.admission_date, p.name AS profile
                            FROM users u LEFT JOIN system_profiles p ON p.id = u.system_profile_id
                            WHERE u.archived_at IS NULL ORDER BY u.name""")
         for r in rows:
@@ -316,6 +316,62 @@ def install_telas(app, H):
             r["active"] = bool(r.get("active"))
             if hasattr(r.get("updated_at"), "isoformat"):
                 r["updated_at"] = r["updated_at"].isoformat()
+        return jsonify({"ok": True, "rows": rows})
+
+    def _arrow_rows():
+        r = _internal_json_get("/api/arrow/activities")
+        if r.status_code != 200:
+            return None, r
+        return (r.get_json(silent=True) or {}).get("rows") or [], None
+
+    @app.get("/api/v110/arrow/remoto")
+    def v110_arrow_remoto():
+        g = _guard("arrow.remote", "arrow.manage")
+        if g:
+            return g
+        rows, err = _arrow_rows()
+        if rows is None:
+            return err
+        return jsonify({"ok": True, "rows": [x for x in rows if x.get("remote")]})
+
+    @app.get("/api/v110/arrow/resumo")
+    def v110_arrow_resumo():
+        g = _guard("arrow.dashboard", "arrow.manage")
+        if g:
+            return g
+        rows, err = _arrow_rows()
+        if rows is None:
+            return err
+        from collections import Counter
+        st = Counter((x.get("status") or "—") for x in rows)
+        tec = Counter((x.get("technician") or "Sem técnico") for x in rows if (x.get("status") or "") in ("PLANEJADA", "EM ANDAMENTO"))
+        emp = Counter((x.get("company") or "—") for x in rows)
+        return jsonify({"ok": True, "total": len(rows), "planejadas": st.get("PLANEJADA", 0), "andamento": st.get("EM ANDAMENTO", 0),
+                        "concluidas": st.get("CONCLUÍDA", 0), "canceladas": st.get("CANCELADA", 0),
+                        "remotas": sum(1 for x in rows if x.get("remote")),
+                        "por_tecnico": [{"nome": k, "qtd": v} for k, v in tec.most_common(15)],
+                        "por_empresa": [{"nome": k, "qtd": v} for k, v in emp.most_common(15)]})
+
+    @app.get("/api/v110/pos-metro-ap")
+    def v110_pos_metro_ap():
+        g = _guard("field.pos_metro")
+        if g:
+            return g
+        est = H["sql"]("""SELECT line, station, COUNT(*) AS pos, SUM(CASE WHEN status = 'Concluído' THEN 1 ELSE 0 END) AS pos_ok
+                          FROM v874_pos_metro GROUP BY line, station ORDER BY line, station""")
+        aps = H["sql"]("""SELECT a.id, a.line, a.station, a.identifier, a.location, a.status, a.notes, a.installed_on,
+                                 (SELECT COUNT(*) FROM v8738_pos_metro_ap_photos f WHERE f.ap_id = a.id) AS fotos
+                          FROM v8738_pos_metro_ap a ORDER BY a.id""")
+        by = {}
+        for a in aps:
+            if hasattr(a.get("installed_on"), "isoformat"):
+                a["installed_on"] = a["installed_on"].isoformat()
+            by.setdefault((a["line"], a["station"]), []).append(a)
+        rows = []
+        for i, e in enumerate(est):
+            lst = by.get((e["line"], e["station"]), [])
+            rows.append({"id": i + 1, "linha": e["line"], "estacao": e["station"], "pos": e["pos"], "pos_ok": e["pos_ok"] or 0,
+                         "aps": lst, "aps_total": len(lst), "aps_ok": sum(1 for a in lst if a.get("status") == "Concluído" and a.get("fotos"))})
         return jsonify({"ok": True, "rows": rows})
 
     @app.get("/api/mobile/v1/telas")

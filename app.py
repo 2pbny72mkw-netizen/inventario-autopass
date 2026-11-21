@@ -8170,6 +8170,60 @@ def _v8523_can_manage_menu():
     # REV1: usa a mesma regra central da Matriz; ADM/Gestor já são tratados por _has_access.
     return _has_access('management.settings') or _current_user_is_superadmin()
 
+# V88.0 REV31 — Organização do Menu pelo app: ver colunas e mover/renomear/reordenar um item (mesma validação da importação web).
+def _v110_menu_rows():
+    lay = _v876_rev5_complete(_v8522_menu_layout())
+    rows = []
+    for ci, col in enumerate(sorted(lay.get("columns", []), key=lambda c: c.get("order") or 0)):
+        its = sorted(col.get("items", []), key=lambda i: i.get("order") or 0)
+        rows.append({"id": ci, "name": col.get("name") or "", "order": col.get("order") or ci + 1, "total": len(its),
+                     "itens": [{"col": ci, "pos": pi, "label": it.get("label") or it.get("source") or "", "source": it.get("source") or "",
+                                "group": it.get("group") or "", "order": it.get("order") or pi + 1,
+                                "href": it.get("href") or _V876_REV5_CATALOG.get(it.get("source") or "", "")} for pi, it in enumerate(its)]})
+    return lay, rows
+
+@app.get("/api/v110/menu")
+@login_required
+def v110_menu_get():
+    if not _v8523_can_manage_menu(): return jsonify(ok=False, error="Sem permissão."), 403
+    return jsonify(ok=True, rows=_v110_menu_rows()[1])
+
+@app.post("/api/v110/menu/item")
+@login_required
+def v110_menu_item():
+    if not _v8523_can_manage_menu(): return jsonify(ok=False, error="Sem permissão."), 403
+    import copy
+    p = request.get_json(silent=True) or {}
+    current = _v8522_menu_layout()
+    lay, rows = _v110_menu_rows()
+    new = copy.deepcopy(lay)
+    cols = sorted(new.get("columns", []), key=lambda c: c.get("order") or 0)
+    try:
+        ci, pi = int(p.get("col")), int(p.get("pos"))
+        src_col = cols[ci]; its = sorted(src_col.get("items", []), key=lambda i: i.get("order") or 0); item = its[pi]
+    except Exception:
+        return jsonify(ok=False, error="Item não encontrado. Atualize a tela."), 400
+    if str(p.get("source") or "") != str(item.get("source") or ""):
+        return jsonify(ok=False, error="O menu mudou desde que a tela foi aberta. Atualize e tente de novo."), 409
+    label = str(p.get("label") or "").strip()[:120]
+    if label: item["label"] = label
+    dest_name = str(p.get("destino") or src_col.get("name") or "").strip()
+    dest = next((c for c in cols if (c.get("name") or "") == dest_name), None)
+    if dest is None: return jsonify(ok=False, error="Coluna de destino inválida."), 400
+    its.remove(item); src_col["items"] = its
+    if dest is not src_col: item["group"] = ""
+    d_its = sorted(dest.get("items", []), key=lambda i: i.get("order") or 0)
+    try: pos = max(1, min(int(p.get("ordem") or len(d_its) + 1), len(d_its) + 1))
+    except Exception: pos = len(d_its) + 1
+    d_its.insert(pos - 1, item)
+    for n, it in enumerate(d_its, 1): it["order"] = n
+    dest["items"] = d_its
+    for n, it in enumerate(src_col["items"], 1): it["order"] = n
+    try: _v876_rev5_validate(new, current)
+    except ValueError as e: return jsonify(ok=False, error=str(e)), 400
+    _v8522_menu_save(new)
+    return jsonify(ok=True, message=f"“{item.get('label')}” agora em {dest.get('name')} (posição {pos}).")
+
 @app.get('/gestao/organizacao-menu')
 @login_required
 def v8522_menu_page():
@@ -14823,6 +14877,42 @@ def system_profiles_page():
     counts=dict(db.session.query(User.system_profile_id,func.count(User.id)).filter(User.system_profile_id.isnot(None)).group_by(User.system_profile_id).all())
     return render_template('system_profiles.html',profiles=profiles,profile_counts=counts,access_groups=ACCESS_GROUPS,access_labels=ACCESS_LABELS)
 
+# V88.0 REV31 — matriz de liberações pelo app: liga/desliga UMA liberação por vez (as demais ficam como estão).
+@app.get('/api/v110/perfis/<int:pid>/matriz')
+@login_required
+def v110_profile_matrix(pid):
+    if not _has_access('management.profiles'): return jsonify(ok=False, error='Sem permissão.'), 403
+    p = db.session.get(SystemProfile, pid)
+    if not p: return jsonify(ok=False, error='Perfil não encontrado.'), 404
+    try: cur = set(json.loads(p.access_json or '[]'))
+    except Exception: cur = set()
+    rows = []
+    for g, (glabel, children) in ACCESS_GROUPS.items():
+        for k in children:
+            rows.append({'chave': k, 'nome': ACCESS_LABELS.get(k, k), 'grupo': glabel, 'ativo': k in cur, 'ativo_form': '1' if k in cur else '0'})
+    return jsonify(ok=True, perfil={'id': p.id, 'name': p.name}, rows=rows)
+
+@app.post('/api/v110/perfis/<int:pid>/liberacao')
+@login_required
+def v110_profile_toggle(pid):
+    if not _has_access('management.profiles'): return jsonify(ok=False, error='Sem permissão.'), 403
+    p = db.session.get(SystemProfile, pid)
+    if not p: return jsonify(ok=False, error='Perfil não encontrado.'), 404
+    d = request.get_json(silent=True) or {}
+    k = str(d.get('chave') or '')
+    if k not in ACCESS_SUBMODULES: return jsonify(ok=False, error='Liberação inválida.'), 400
+    ligar = str(d.get('ativo')) in ('1', 'true', 'True', 'sim')
+    try: cur = set(json.loads(p.access_json or '[]'))
+    except Exception: cur = set()
+    cur = {x for x in cur if x in ACCESS_SUBMODULES}
+    (cur.add if ligar else cur.discard)(k)
+    requested = sorted(cur)
+    p.access_json = json.dumps(requested, ensure_ascii=False)
+    db.session.add(AuditEvent(user_id=session.get('user_id'), event_type='SYSTEM_PROFILE_PERMISSIONS_CHANGE', entity_type='system_profile', entity_id=str(p.id),
+                              detail=f"{p.name} · {'liga' if ligar else 'desliga'} {k} (app) · {len(requested)} permissões"))
+    db.session.commit()
+    return jsonify(ok=True, message=f"{ACCESS_LABELS.get(k, k)}: {'liberado' if ligar else 'retirado'} do perfil {p.name}.")
+
 @app.post('/perfis/<int:pid>/salvar')
 @login_required
 def system_profile_save(pid):
@@ -15012,6 +15102,38 @@ def v75_access_list_generate_pdf(operator):
     for u in users:db.session.add(AccessListMember(revision_id=r.id,user_id=u.id,name_snapshot=u.name,user_code_snapshot=u.user_code,company_snapshot=u.company,job_title_snapshot=u.job_title,photo_key_snapshot=u.photo_url))
     db.session.commit();bio=_v75_access_pdf(operator,users,rev)
     return send_file(bio,as_attachment=True,download_name=f"ACESSO_{operator}_REV{rev:02d}.pdf",mimetype="application/pdf")
+
+# V88.0 REV31 — Preparação de Acessos pelo app: resumo por operadora e PDF oficial (mesma geração da web).
+@app.get("/api/v110/acessos")
+@login_required
+def v110_access_lists():
+    if not _has_access("materials.access_lists.view"):
+        return jsonify(ok=False, error="Sem permissão."), 403
+    rows = []
+    for op in ("METRO", "CPTM"):
+        users = _v741_access_users(op)
+        inc = []
+        for u in users:  # checagem leve (sem baixar foto do R2); o PDF faz a checagem completa
+            miss = [r for r, v in (("FORNECEDOR", u.company), ("NOME", u.name), ("CPF", u.cpf), ("RG", u.rg), ("FOTO", u.photo_url)) if not (v or "").strip()]
+            if miss: inc.append({"nome": u.name or f"#{u.id}", "faltando": ", ".join(miss)})
+        last = db.session.query(func.max(AccessListRevision.revision)).filter_by(operator=op).scalar() or 0
+        rows.append({"id": op, "operadora": "Metrô" if op == "METRO" else "CPTM", "habilitados": len(users), "incompletos": len(inc),
+                     "pendencias": inc, "ultima_revisao": last, "pode_gerar": _has_access("materials.access_lists.manage")})
+    return jsonify(ok=True, rows=rows)
+
+@app.get("/api/v110/acessos/<operator>.pdf")
+@login_required
+def v110_access_list_pdf(operator):
+    op = operator.upper()
+    if op not in ("METRO", "CPTM") or not _has_access("materials.access_lists.manage"):
+        return jsonify(ok=False, error="Sem permissão para gerar."), 403
+    users = _v741_access_users(op)
+    if not users:
+        return jsonify(ok=False, error=f"Nenhum colaborador habilitado para {op}."), 400
+    inc = [u.name or f"#{u.id}" for u in users if any(not (v or "").strip() for v in (u.company, u.name, u.cpf, u.rg, u.photo_url))]
+    if inc:
+        return jsonify(ok=False, error="Complete os campos obrigatórios de: " + ", ".join(inc[:8])), 400
+    return v75_access_list_generate_pdf(op)
 
 @app.get("/documentos/acessos")
 @login_required
@@ -15570,6 +15692,51 @@ def toggle_user(user_id):
     flash("Status do usuário atualizado.")
     return redirect(url_for("users_page"))
 
+
+# V88.0 REV31 — edição pelo app: altera SÓ os campos enviados (dados cadastrais). Liberações, perfil, locais e
+# empresas do portal nunca são tocados aqui. Mesmas checagens da web (users.edit e escopo do RH).
+_V110_USER_FIELDS = ("name", "email", "phone", "company", "job_title", "personnel_status", "personnel_status_note", "work_schedule_type")
+
+@app.post("/api/v110/usuarios/<int:user_id>")
+@login_required
+def v110_user_edit(user_id):
+    if not _has_access("users.edit"):
+        return jsonify({"ok": False, "error": "Sem permissão para editar usuários."}), 403
+    user = db.session.get(User, user_id)
+    if not user or user.archived_at is not None:
+        return jsonify({"ok": False, "error": "Usuário não encontrado."}), 404
+    if not _hr_target_allowed(user):
+        return jsonify({"ok": False, "error": "Seu perfil não possui escopo para administrar este usuário."}), 403
+    d = request.get_json(silent=True) or {}
+    changes = []
+    for k in _V110_USER_FIELDS:
+        if k not in d:
+            continue
+        v = d.get(k)
+        v = (str(v).strip() if v is not None else "")
+        if k == "name":
+            if not v:
+                return jsonify({"ok": False, "error": "Nome é obrigatório."}), 400
+        elif k == "email":
+            v = _normalize_optional_email(v)
+        elif k == "phone":
+            v = _normalize_optional_phone(v)
+        elif k == "personnel_status":
+            v = (v or "ATIVO").upper()
+            if v not in ("ATIVO", "FERIAS", "AFASTADO", "LICENCA", "FOLGA_PROGRAMADA", "OUTRO", "INATIVO"):
+                return jsonify({"ok": False, "error": "Situação inválida."}), 400
+        else:
+            v = v or None
+        old = getattr(user, k, None)
+        if (old or None) != (v or None):
+            setattr(user, k, v)
+            changes.append(k)
+    if not changes:
+        return jsonify({"ok": True, "message": "Nada a alterar."})
+    db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="USER_UPDATED_APP", entity_type="user", entity_id=str(user.id),
+                              detail="Campos: " + ", ".join(changes)))
+    db.session.commit()
+    return jsonify({"ok": True, "message": "Cadastro atualizado (" + ", ".join(changes) + ")."})
 
 @app.post("/usuarios/<int:user_id>/editar")
 @user_admin_required
@@ -24882,6 +25049,29 @@ def _v8543_canonical_company_name(value):
     }
     return aliases.get(key,raw)
 
+# V88.0 REV31 — APT em dados para o app (mesmo filtro base da tela: colaboradores que precisam de APT ou sem vínculo).
+@app.get("/api/v110/apt")
+@login_required
+def v110_apt():
+    if not _has_access("teams.apt"):
+        return jsonify({"ok": False, "error": "Sem permissão."}), 403
+    need = [r[0] for r in db.session.query(User.id).filter(User.needs_apt.is_(True)).all()]
+    raw = AptRecord.query.filter(AptRecord.active.is_(True), or_(AptRecord.user_id.is_(None), AptRecord.user_id.in_(need))) \
+        .order_by(AptRecord.valid_until, AptRecord.collaborator_name).all()
+    rows = []
+    for x in raw:
+        vs, days = _apt_status(x)
+        def d(v):
+            return v.isoformat() if v else None
+        item = {"id": x.id, "colaborador": x.collaborator_name, "empresa": x.company, "linha": x.line, "numero": x.apt_number,
+                "tipo": x.apt_kind, "validade": d(x.valid_until), "situacao": vs, "dias": days, "processo": x.process_status,
+                "aso": d(x.aso_valid_until), "integracao": d(x.integration_valid_until), "obs": x.notes, "tem_pdf": bool(x.pdf_key)}
+        for k in ("nr10_valid_until", "nr35_valid_until"):
+            if hasattr(x, k):
+                item[k.split("_")[0]] = d(getattr(x, k))
+        rows.append(item)
+    return jsonify({"ok": True, "rows": rows})
+
 @app.get("/rh/apt")
 @login_required
 def v73_apt_page():
@@ -25920,6 +26110,47 @@ def builtin_dashboard_settings_page():
         except Exception: roles=[]
         rows.append({**item,'visible':True if row is None else row.visible,'order':idx*10 if row is None else row.order_index,'allowed_roles':roles})
     return render_template('builtin_dashboard_settings.html',rows=rows,app_release=APP_RELEASE)
+
+# V88.0 REV31 — Configuração de Dashboards pelo app (uma linha por vez; mesmas regras da tela web).
+_V110_DASH_ROLES = ('manager','manager_field','technician','technician_implantation','consultation','hr','dispatcher','atm_financial_admin')
+
+@app.get("/api/v110/dashboards-config")
+@login_required
+def v110_dash_cfg_get():
+    if not _has_access('management.dashboard_config'): return jsonify(ok=False, error="Sem permissão."), 403
+    saved = {x.dashboard_key: x for x in BuiltinDashboardSetting.query.all()}; rows = []
+    for idx, item in enumerate(BUILTIN_DASHBOARD_CATALOG, 1):
+        row = saved.get(item['key'])
+        try: roles = json.loads(row.allowed_roles_json or '[]') if row else list(item.get('roles') or [])
+        except Exception: roles = []
+        vis = True if row is None else bool(row.visible)
+        rows.append({"id": item['key'], "label": item['label'], "group": item['group'], "visible": vis, "visible_form": "1" if vis else "0",
+                     "order": idx * 10 if row is None else row.order_index, "roles": ", ".join(roles), "roles_txt": ", ".join(roles) or "todos",
+                     "permission": BUILTIN_DASHBOARD_PERMISSIONS.get(item['key'], 'dashboard.general')})
+    rows.sort(key=lambda r: (r["order"], r["label"]))
+    return jsonify(ok=True, rows=rows, papeis=list(_V110_DASH_ROLES))
+
+@app.post("/api/v110/dashboards-config/<key>")
+@login_required
+def v110_dash_cfg_save(key):
+    if not _has_access('management.dashboard_config'): return jsonify(ok=False, error="Sem permissão."), 403
+    if key not in {x['key'] for x in BUILTIN_DASHBOARD_CATALOG}: return jsonify(ok=False, error="Dashboard desconhecido."), 404
+    p = request.get_json(silent=True) or {}
+    row = BuiltinDashboardSetting.query.filter_by(dashboard_key=key).first()
+    if not row:
+        idx = [x['key'] for x in BUILTIN_DASHBOARD_CATALOG].index(key) + 1
+        row = BuiltinDashboardSetting(dashboard_key=key, visible=True, order_index=idx * 10, allowed_roles_json="[]"); db.session.add(row)
+    row.visible = str(p.get("visible")) in ("1", "true", "True")
+    try: row.order_index = int(p.get("order"))
+    except Exception: pass
+    roles = [x.strip() for x in str(p.get("roles") or "").replace(";", ",").split(",") if x.strip() in _V110_DASH_ROLES]
+    row.allowed_roles_json = json.dumps(roles, ensure_ascii=False); row.updated_by = session.get('user_id')
+    db.session.commit(); _v73_cache_clear("builtin_dash_saved")
+    msg = "Configuração de dashboards atualizada."
+    if not any(x.visible for x in BuiltinDashboardSetting.query.all()):
+        first = BuiltinDashboardSetting.query.filter_by(dashboard_key='overview').first()
+        if first: first.visible = True; db.session.commit(); _v73_cache_clear("builtin_dash_saved"); msg = "Visão Geral foi mantida ativa para evitar uma Central vazia."
+    return jsonify(ok=True, message=msg)
 
 @app.get('/configuracoes/dashboards')
 @login_required
@@ -32800,6 +33031,46 @@ def implantation_qr_config():
         except Exception:
             app.logger.exception('qr_rail_generation_failed'); error='Falha ao gerar QR Code. Consulte o diagnóstico do servidor.'
     return render_template('implantation_qr_config_v8525.html',configs=configs,selected=selected,values=values,qr_png=qr_png,qr_text=qr_text,error=error,turn_models=QR_RAIL_TURN_MODELS,app_release=APP_RELEASE)
+
+# V88.0 REV31 — QR Trilhos como imagem (para o app): mesma geração da tela /qr-trilhos (AES por projeto, base Trilhos).
+def _v110_qr_png(config_id):
+    from datetime import timezone as _tz
+    import secrets as _secrets
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    from cryptography.hazmat.primitives import padding
+    import qrcode
+    selected = next((x for x in _qr_rail_effective_configs() if str(x.get('id')) == str(config_id)), None)
+    if not selected:
+        raise ValueError('Bloqueio não encontrado na base Trilhos.')
+    values = {k: selected.get(k) for k in ('TransOperId','TerminalId','TurnModel','Ip','Mask','Gateway','Dns1','Dns2','LineId','TermGrpId','LabelApnChip1','LabelApnChip2')}
+    required = ('TransOperId','TerminalId','TurnModel','Ip','Mask','Gateway','Dns1','Dns2','LineId','TermGrpId')
+    missing = [k for k in required if values.get(k) in (None, '')]
+    if missing:
+        raise ValueError('Base técnica incompleta para este bloqueio: ' + ', '.join(missing) + '.')
+    values['Date'] = str(int(datetime.now(_tz.utc).timestamp()))
+    project_name, key_hex = _qr_rail_project_key(selected.get('company'))
+    plain = _qr_config_proto(values)
+    if not plain:
+        raise ValueError('Configuração sem parâmetros para geração.')
+    iv = _secrets.token_bytes(16); padder = padding.PKCS7(128).padder(); padded = padder.update(plain) + padder.finalize()
+    enc = Cipher(algorithms.AES(bytes.fromhex(key_hex)), modes.CBC(iv)).encryptor(); encrypted = enc.update(padded) + enc.finalize()
+    qr_text = '<c:2>i:' + base64.b64encode(iv).decode('ascii') + ';p:' + base64.b64encode(encrypted).decode('ascii') + ';'
+    image = qrcode.make(qr_text, box_size=8, border=4); output = io.BytesIO(); image.save(output, format='PNG')
+    app.logger.info('qr_rail_generated_app user_id=%s config_id=%s terminal_id=%s project=%s', session.get('user_id'), selected.get('id'), selected.get('TerminalId'), project_name)
+    return output.getvalue()
+
+@app.get('/api/v110/qr-trilhos/<path:config_id>.png')
+@login_required
+def v110_qr_png(config_id):
+    if not (_has_access('implantation.qr.view') or _has_access('implantation.qr.manage') or _has_access('implantation.visits')): abort(403)
+    try:
+        png = _v110_qr_png(config_id)
+    except ValueError as exc:
+        return jsonify({'ok': False, 'error': str(exc)}), 400
+    except Exception:
+        app.logger.exception('qr_rail_generation_failed_app')
+        return jsonify({'ok': False, 'error': 'Falha ao gerar QR Code.'}), 500
+    r = Response(png, mimetype='image/png'); r.headers['Cache-Control'] = 'no-store'; return r
 
 # === V85.38 BOBINAS FIELD TRACKING ===
 def _v8538_bobbin_schema(conn):
