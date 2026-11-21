@@ -1277,11 +1277,29 @@ def _v115_enriquecer(specs):
     lista("pos_metro", selo={"campo": "line"})
     lista("mapeamento_atm", selo={"campo": "line"})
     lista("qr_trilhos", selo={"campo": "line"})
-    painel("dashboard_bobinas", roscas=[{"titulo": "Nível das ATMs", "centro": "ATMs", "partes": [
-        {"rotulo": "Normal", "resto": "{summary.atms}", "tom": "sucesso"},
-        {"rotulo": "Atenção", "valor": "{summary.attention}", "tom": "aviso"},
-        {"rotulo": "Crítico", "valor": "{summary.critical}", "tom": "perigo"},
-        {"rotulo": "Sem leitura", "valor": "{summary.without_reading}"}]}])
+    # Build128: painel interativo — filtros por empresa/linha e números que abrem a lista das ATMs
+    if "dashboard_bobinas" in por:
+        pb = por["dashboard_bobinas"]["painel"]
+        servidor = [k for k in pb.get("kpis", []) if k.get("rotulo") in ("COBERTURA", "RESERVA NAS ATMS", "BOBINAS NOS ARMÁRIOS", "EM DISTRIBUIÇÃO", "ARMÁRIOS")]
+        pb.update({
+            "base": "rows",
+            "filtros_painel": [{"rotulo": "Empresa", "campo": "company"}, {"rotulo": "Linha", "campo": "line"}],
+            "lista_base": {"titulo": "ATM {atm_id} · {percent_available}%", "subtitulo": "{company} · {line} · {station}",
+                           "meta": ["{technician} · {created_at|datahora}"], "selo": {"campo": "line"}, "busca": ["atm_id", "station", "technician", "line"],
+                           "progresso": {"valor": "{percent_available}"}},
+            "kpis": [{"rotulo": "ATMs", "contar": {}},
+                     {"rotulo": "NORMAL (>30%)", "contar": {"campo": "percent_available", "maior": 30}, "tom": "sucesso"},
+                     {"rotulo": "ATENÇÃO (11–30%)", "contar": {"campo": "percent_available", "maior": 10, "ate": 30}, "tom": "aviso"},
+                     {"rotulo": "CRÍTICO (≤10%)", "contar": {"campo": "percent_available", "ate": 10}, "tom": "perigo"},
+                     {"rotulo": "NÍVEL MÉDIO", "media": "percent_available", "sufixo": "%"},
+                     {"rotulo": "TROCAS NA ÚLTIMA LEITURA", "contar": {"campo": "bobbin_replaced", "igual": True}, "tom": "info"}] + servidor,
+            "roscas": [{"titulo": "Nível das ATMs", "centro": "ATMs", "partes": [
+                {"rotulo": "Normal", "contar": {"campo": "percent_available", "maior": 30}, "tom": "sucesso"},
+                {"rotulo": "Atenção", "contar": {"campo": "percent_available", "maior": 10, "ate": 30}, "tom": "aviso"},
+                {"rotulo": "Crítico", "contar": {"campo": "percent_available", "ate": 10}, "tom": "perigo"}]}],
+            "barras": [{"titulo": "Nível médio por empresa (%)", "agrupar": {"campo": "company", "media": "percent_available"}, "cores": "paleta"},
+                       {"titulo": "ATMs por linha", "agrupar": {"campo": "line"}, "cores": "linha"}] + [b for b in pb.get("barras", []) if "operadora" not in (b.get("titulo") or "").lower()],
+        })
     painel("dashboard_gerencial", roscas=[{"titulo": "Locais do inventário", "centro": "locais", "partes": [
         {"rotulo": "Concluídos", "valor": "{totals.completed}", "tom": "sucesso"},
         {"rotulo": "Pendentes", "valor": "{totals.pending}", "tom": "aviso"}]}],
