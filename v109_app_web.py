@@ -51,7 +51,7 @@ CATALOG = [
         ("Firmware POS – CPTM", "/firmware-pos-cptm", ["field.firmware_pos_cptm"], None),
     ]),
     ("implantacao", "Implantação", "construction", [
-        ("Implantação de Hardware", "/implantacao-hardware", ["implantation.visits", "implantation.reports"], "implantacao"),
+        ("Implantação de Hardware", "/implantacao-hardware", ["implantation.visits", "implantation.reports"], None),
         ("QR Trilhos", "/qr-trilhos", ["implantation.qr.view", "implantation.qr.manage"], None),
         ("Repositório", "/implantacao-hardware/repositorio", ["implantation.repository.view"], None),
         ("Lista de Presença", "/implantacao-hardware/lista-presenca", ["implantation.attendance.view"], None),

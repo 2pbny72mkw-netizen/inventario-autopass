@@ -148,6 +148,27 @@ def install_telas(app, H):
             r["liberacoes"] = [{"chave": a, "nome": labels.get(a, a)} for a in (acc if isinstance(acc, list) else []) if isinstance(a, str)]
         return jsonify({"ok": True, "rows": rows})
 
+    @app.get("/api/v110/pos-metro")
+    def v110_pos_metro():
+        g = _guard("field.pos_metro")
+        if g:
+            return g
+        rows = H["sql"]("""SELECT p.id, p.client, p.line, p.station, p.terminal, p.terminal_number, p.model, p.manufacturer,
+                                  p.serial, p.asset, p.status, p.installed_on,
+                                  (SELECT COUNT(*) FROM v876_pos_metro_photos f JOIN v874_pos_metro_events e ON e.id = f.event_id
+                                    WHERE e.pos_id = p.id) AS fotos
+                           FROM v874_pos_metro p ORDER BY p.line, p.station, p.terminal""")
+        for r in rows:
+            if hasattr(r.get("installed_on"), "isoformat"):
+                r["installed_on"] = r["installed_on"].isoformat()
+            num = str(r.get("terminal_number") or "").strip()
+            if not num:
+                import re as _re
+                m = _re.search(r"(\d+)$", str(r.get("terminal") or ""))
+                num = m.group(1) if m else ""
+            r["numero"] = num
+        return jsonify({"ok": True, "rows": rows})
+
     @app.get("/api/mobile/v1/telas")
     @H["mobile_auth_required"]
     def v110_telas():
