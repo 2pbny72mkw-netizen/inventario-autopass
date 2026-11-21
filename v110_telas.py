@@ -78,6 +78,11 @@ def install_telas(app, H):
         for k in ("HTTP_COOKIE", "HTTP_AUTHORIZATION"):
             env.pop(k, None)
         env["HTTP_ACCEPT"] = "application/json"
+        # Android não envia PATCH: o app manda POST + X-HTTP-Method-Override
+        ov = (request.headers.get("X-HTTP-Method-Override") or "").upper()
+        if request.method == "POST" and ov in ("PATCH", "PUT", "DELETE"):
+            env["REQUEST_METHOD"] = ov
+        env.pop("HTTP_X_HTTP_METHOD_OVERRIDE", None)
         env["HTTP_X_SISTEMA_GESTAO_APP"] = "1"
         with app.app_context():  # contexto próprio: banco, g e cache de permissões isolados
             with app.request_context(env):

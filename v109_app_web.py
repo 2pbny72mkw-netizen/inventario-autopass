@@ -100,6 +100,7 @@ CATALOG = [
         ("Caixinha", "/financeiro/caixinha", ["finance.petty_cash.view", "finance.petty_cash.manage"], None),
     ]),
     ("conta", "Minha conta", "person", [
+        ("Meus avisos", "/meus-avisos", [], "tela:avisos"),
         ("Meu Perfil", "/meu-perfil", [], "perfil"),
         ("Sobre / Versões", "/sobre", ["about.versions"], None),
     ]),
