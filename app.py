@@ -4445,6 +4445,99 @@ def a20_bobinas_register():
     return jsonify({'ok':True,'id':row.id,'reserve_after':reserve_qty})
 
 
+# V88.0 REV35 — Por qual endereço cada usuário acessa (app e web), para saber quem ainda usa o endereço antigo.
+# Grava no máximo 1 vez a cada 10 min por usuário+endereço+canal, numa conexão separada (não mexe na transação da tela).
+_V113_SEEN = {}
+_V113_OLD = "inventario-autopass.onrender.com"
+_V113_NEW = "sistema-gestao-autopass.onrender.com"
+_V113_READY = {"ok": False}
+
+def _v113_ensure(conn):
+    if _V113_READY["ok"]:
+        return
+    pk = "SERIAL PRIMARY KEY" if db.engine.dialect.name == "postgresql" else "INTEGER PRIMARY KEY AUTOINCREMENT"
+    conn.execute(text(f"""CREATE TABLE IF NOT EXISTS v113_access_hosts (
+        id {pk}, user_id INTEGER NOT NULL, host VARCHAR(120) NOT NULL, channel VARCHAR(8) NOT NULL,
+        user_agent VARCHAR(300), first_at TIMESTAMP, last_at TIMESTAMP, UNIQUE (user_id, host, channel))"""))
+    _V113_READY["ok"] = True
+
+@app.after_request
+def _v113_track_host(resp):
+    try:
+        if request.path.startswith("/static/") or request.path == "/health":
+            return resp
+        mu = getattr(request, "mobile_user", None)
+        uid, ch = (mu.id, "app") if mu is not None else (session.get("user_id"), "web")
+        if not uid:
+            return resp
+        host = (request.host or "").split(":")[0].lower()[:120]
+        key = (uid, host, ch)
+        now = time.monotonic()
+        if now - _V113_SEEN.get(key, -1e9) < 600:
+            return resp
+        _V113_SEEN[key] = now
+        ua = (request.headers.get("User-Agent") or "")[:300]
+        t = datetime.utcnow()
+        with db.engine.begin() as conn:
+            _v113_ensure(conn)
+            r = conn.execute(text("UPDATE v113_access_hosts SET last_at=:t, user_agent=:ua WHERE user_id=:u AND host=:h AND channel=:c"),
+                             {"t": t, "ua": ua, "u": uid, "h": host, "c": ch})
+            if not r.rowcount:
+                conn.execute(text("INSERT INTO v113_access_hosts (user_id, host, channel, user_agent, first_at, last_at) VALUES (:u, :h, :c, :ua, :t, :t)"),
+                             {"t": t, "ua": ua, "u": uid, "h": host, "c": ch})
+    except Exception:
+        app.logger.warning("REV35: registro de endereço falhou", exc_info=True)
+    return resp
+
+def _v113_model(ua):
+    m = re.search(r"\(Linux; (?:U; )?Android ([\d.]+); ([^;)]+?)(?: Build/[^;)]*)?\)", ua or "")
+    if m:
+        return f"{m.group(2).strip()} · Android {m.group(1)}"
+    if "Windows" in (ua or ""): return "Computador Windows"
+    if "Macintosh" in (ua or ""): return "Mac"
+    if "iPhone" in (ua or ""): return "iPhone"
+    return (ua or "")[:60]
+
+@app.get("/api/v110/celulares")
+@login_required
+def v113_devices():
+    if not (_has_access("management.diagnostics") or _has_access("users.view")):
+        return jsonify(ok=False, error="Sem permissão."), 403
+    with db.engine.begin() as conn:
+        _v113_ensure(conn)
+        rs = conn.execute(text("SELECT user_id, host, channel, user_agent, first_at, last_at FROM v113_access_hosts ORDER BY last_at DESC")).fetchall()
+    devs = MobileDevice.query.filter_by(active=True).all()
+    uids = {r[0] for r in rs} | {d.user_id for d in devs}
+    users = {u.id: u for u in User.query.filter(User.id.in_(list(uids) or [-1])).all()}
+    def iso(v): return (v.isoformat() + "Z") if hasattr(v, "isoformat") else (str(v) if v else "")
+    out = {}
+    for d in devs:
+        o = out.setdefault(d.user_id, {"app_ultimo": "", "web_ultimo": ""})
+        o["app_registrado"] = iso(d.last_seen_at)
+    for uid, host, ch, ua, f, l in rs:
+        o = out.setdefault(uid, {"app_ultimo": "", "web_ultimo": ""})
+        k = ch + "_ultimo"
+        if not o[k] or iso(l) > o[k]:
+            o[k] = iso(l); o[ch + "_endereco"] = "ANTIGO" if host == _V113_OLD else ("NOVO" if host == _V113_NEW else host)
+            if ch == "app": o["aparelho"] = _v113_model(ua)
+        if host == _V113_OLD:
+            o["antigo_" + ch] = iso(l)
+    rows = []
+    for uid, o in out.items():
+        u = users.get(uid)
+        if not u: continue
+        app_end = o.get("app_endereco") or ("SEM DADO" if o.get("app_registrado") else "")
+        web_end = o.get("web_endereco") or ""
+        situ = "ANTIGO" if "ANTIGO" in (app_end, web_end) else ("NOVO" if "NOVO" in (app_end, web_end) else "SEM DADO")
+        rows.append({"id": uid, "nome": u.name or u.username, "perfil": u.role or "", "aparelho": o.get("aparelho") or "",
+                     "app_endereco": app_end or "—", "app_ultimo": o.get("app_ultimo") or o.get("app_registrado") or "",
+                     "web_endereco": web_end or "—", "web_ultimo": o.get("web_ultimo") or "",
+                     "antigo_app": o.get("antigo_app") or "", "antigo_web": o.get("antigo_web") or "", "situacao": situ,
+                     "ultimo": max(o.get("app_ultimo") or "", o.get("web_ultimo") or "", o.get("app_registrado") or "")})
+    rows.sort(key=lambda r: r["ultimo"], reverse=True)
+    rows.sort(key=lambda r: r["situacao"] != "ANTIGO")
+    return jsonify(ok=True, rows=rows, desde="registro iniciado na V88.0 REV35")
+
 # V88.0 REV33 — Quarentena de registros de Bobinas recusados pelo app.
 # O app (até o Build124) mantém um registro recusado (400/409) na fila e reenvia para sempre, a cada sincronização,
 # e a cada tentativa recarrega todo o pacote offline. Depois de 3 recusas do mesmo registro, o servidor guarda o
