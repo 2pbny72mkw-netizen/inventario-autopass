@@ -1108,7 +1108,7 @@ SPECS = [
     },
     {
         "key": "dashboard_bobinas", "titulo": "Dashboard Bobinas", "grupo": "field", "icone": "chart", "perms": ["field.bobbins_dashboard"],
-        "web": "/dashboard/bobinas", "modelo": "painel", "fonte": {"url": "/api/bobinas/dashboard"},
+        "web": "/dashboard/bobinas", "modelo": "painel", "fonte": {"url": "/api/bobinas/dashboard?sem_historico=1"},
         "painel": {"kpis": [{"rotulo": "ATMS", "valor": "{summary.atms}"}, {"rotulo": "COBERTURA", "valor": "{summary.coverage_pct}%", "tom": "sucesso"},
                             {"rotulo": "ATENÇÃO", "valor": "{summary.attention}", "tom": "aviso"}, {"rotulo": "CRÍTICOS", "valor": "{summary.critical}", "tom": "perigo"},
                             {"rotulo": "RESERVA NAS ATMS", "valor": "{summary.atm_reserve_total}"}, {"rotulo": "BOBINAS NOS ARMÁRIOS", "valor": "{summary.cabinet_bobbins}"},

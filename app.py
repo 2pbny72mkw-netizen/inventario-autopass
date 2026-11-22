@@ -369,6 +369,10 @@ def _v73_cache_get(key, loader, ttl=None):
     with _V73_CACHE_LOCK:
         _V73_CACHE[key] = (time.time(), value)
         _V73_CACHE_STATS["miss"] += 1
+        # REV41: entradas vencidas há muito tempo não ficam ocupando memória (ex.: chave diária de equipes).
+        _old = time.time() - 900
+        for _k in [k for k, v in _V73_CACHE.items() if v[0] < _old]:
+            _V73_CACHE.pop(_k, None)
     return value
 
 
@@ -31666,25 +31670,25 @@ def v77_bobbins_dashboard_api():
     if not _has_access('field.bobbins_dashboard') and not getattr(g,'_v162_visao_ok',False): abort(403)
     if not _v85_flags().get('cache_bobinas'):
         return _v87_bobbins_dashboard_compute()
-    key = 'v87_bobdash:' + '&'.join(f"{k}={request.args.get(k, '')}" for k in sorted(request.args)) + ':' + ('1' if _has_access('field.stock_manage') else '0')
+    key = 'v87_bobdash:' + '&'.join(f"{k}={request.args.get(k, '')}" for k in sorted(request.args)) + ':' + ('1' if _has_access('field.stock_manage') else '0') + (':h0' if _v116_sem_hist() else '')
     hit = {'v': True}
 
     def _load():
         hit['v'] = False
         resp = _v87_bobbins_dashboard_compute()
-        data = resp.get_json() if hasattr(resp, 'get_json') else None
-        if not data:
+        data = resp.get_data() if hasattr(resp, 'get_data') else None
+        if not data or getattr(resp, 'status_code', 200) != 200:
             raise RuntimeError('dashboard sem corpo')
         if key not in _V87_BOB_KEYS:
             _V87_BOB_KEYS.append(key)
-            while len(_V87_BOB_KEYS) > 12:
+            while len(_V87_BOB_KEYS) > 6:  # REV41: 12 -> 6 combinações de filtro guardadas
                 _v73_cache_clear(_V87_BOB_KEYS.pop(0))
         return data
     try:
         data = _v73_cache_get(key, _load, ttl=max(_V73_CACHE_TTL, 120))
     except Exception:
         return _v87_bobbins_dashboard_compute()
-    out = jsonify(data)
+    out = Response(data, mimetype='application/json')  # REV41: JSON guardado pronto
     out.headers['X-Autopass-Cache'] = 'HIT' if hit['v'] else 'MISS'
     return out
 
@@ -31709,7 +31713,8 @@ def _v87_bobbins_dashboard_compute():
     if atm:q=q.filter(AtmBobbinReading.atm_id.ilike(f'%{atm}%'))
     if replacement=='SIM':q=q.filter(AtmBobbinReading.bobbin_replaced.is_(True))
     elif replacement=='NAO':q=q.filter(AtmBobbinReading.bobbin_replaced.is_(False),AtmBobbinReading.event_type!='IMPORTACAO')
-    allrows=q.order_by(AtmBobbinReading.created_at.desc(),AtmBobbinReading.id.desc()).all()
+    # REV41: só as colunas usadas, sem montar objeto ORM por leitura (bem mais leve no plano Free).
+    allrows=q.with_entities(*_V116_READ_COLS).order_by(AtmBobbinReading.created_at.desc(),AtmBobbinReading.id.desc()).all()
     # Base mestre soberana: leituras de ATM não oficial nunca entram nos KPIs.
     if official_ids:allrows=[x for x in allrows if _v773_norm_atm_id(x.atm_id) in official_ids]
     if filtered_ids:allrows=[x for x in allrows if _v773_norm_atm_id(x.atm_id) in filtered_ids]
@@ -31816,13 +31821,14 @@ def _v87_bobbins_dashboard_compute():
     # _v771_bobbin_json executava até 2 queries extras por leitura (N+1),
     # gerando mais de mil queries em uma única abertura do dashboard.
     stock_by_key={(str(x.company or ''),str(x.line or ''),str(x.station or ''),str(x.atm_id or '')):x for x in stockrows}
-    payload_readings=list({x.id:x for x in (latest + allrows[:500])}.values())
+    _sem_hist=_v116_sem_hist()
+    payload_readings=list({x.id:x for x in (latest + ([] if _sem_hist else allrows[:500]))}.values())
     reading_ids=[x.id for x in payload_readings]
     photo_by_reading={}
     if reading_ids:
         photo_by_reading={x.reading_id:x for x in AtmBobbinPhoto.query.filter(AtmBobbinPhoto.reading_id.in_(reading_ids)).order_by(AtmBobbinPhoto.id.desc()).all()}
     rows_json=[_v771_bobbin_json(x,names,stock_by_key,photo_by_reading,now) for x in latest]
-    history_json=[_v771_bobbin_json(x,names,stock_by_key,photo_by_reading,now) for x in allrows[:500]]
+    history_json=[] if _sem_hist else [_v771_bobbin_json(x,names,stock_by_key,photo_by_reading,now) for x in allrows[:500]]
     return jsonify({'ok':True,'release':APP_RELEASE,'source':'BASE_OFICIAL_ATM_602','can_stock_manage':_has_access('field.stock_manage'),'summary':summary,'rows':rows_json,'history':history_json,'stocks':[{'company':x.company,'line':x.line,'station':x.station,'atm_id':x.atm_id,'reserve_qty':x.reserve_qty,'updated_at':x.updated_at.isoformat()+'Z' if x.updated_at else None} for x in stockrows],'unlocated':[{'company':x.company,'line':x.line,'station':x.station,'imported_qty':x.imported_qty,'current_qty':x.current_qty,'status':x.status,'source_sheet':x.source_sheet,'last_inventory_at':x.last_inventory_at.isoformat()+'Z' if x.last_inventory_at else None} for x in unlocated],'stations':station_rows,'operators':operator_rows,'cabinets_detail':cabinet_rows,'box_size':max(1,int(app.config.get('BOBBIN_ROLLS_PER_BOX',6))),'missing_atms':missing_atms,'support_reserve_target':450,'support_reserve_unit':'BOBINAS','photo_retention_days':_v771_photo_retention_days()})
 
 # V77.1 — Estoque Field / armários e carga do técnico
@@ -33549,6 +33555,7 @@ def bobinas_v8539_visao():
     if not (_has_access('field.bobbins') or _has_access('field.bobbins_dashboard')):
         return jsonify({"ok":False,"error":"Sem liberação para a Visão Geral de Bobinas (Bobinas ou Visualizar Dashboard Bobinas)."}),403
     g._v162_visao_ok=True
+    g._v116_sem_hist=True  # REV41: a tela de campo não usa o histórico
     try:
         try:
             response=v77_bobbins_dashboard_api()
@@ -34429,3 +34436,73 @@ def _v115_clear_atm_index(resp):
 
 
 app.after_request(_v115_clear_atm_index)
+
+
+# V88.0 REV41 — Dashboard de Bobinas mais leve.
+# 1) As leituras são lidas só com as colunas usadas (sem montar um objeto do banco por leitura).
+# 2) O histórico das 500 últimas leituras (≈270 KB) só vai quando pedido; a tela da web
+#    busca o histórico da ATM clicada em /api/bobinas/historico-atm.
+_V116_READ_COLS = tuple(getattr(AtmBobbinReading, c) for c in (
+    'id', 'company', 'line', 'station', 'atm_id', 'percent_available', 'event_type', 'bobbin_replaced',
+    'replacement_origin', 'reserve_delta', 'reserve_after', 'notes', 'technician_id', 'latitude', 'longitude',
+    'gps_accuracy', 'gps_captured_at', 'gps_distance_m', 'created_at'))
+
+
+def _v116_sem_hist():
+    try:
+        return bool(getattr(g, '_v116_sem_hist', False)) or (request.args.get('sem_historico') or '') == '1'
+    except Exception:
+        return False
+
+
+@app.get('/api/bobinas/historico-atm')
+@login_required
+def v116_bobbin_atm_history():
+    if not _has_access('field.bobbins_dashboard'):
+        abort(403)
+    atm = (request.args.get('atm') or '').strip()
+    if not atm:
+        return jsonify({'ok': False, 'error': 'Informe a ATM.'}), 400
+    try:
+        limit = max(1, min(300, int(request.args.get('limit') or 200)))
+    except Exception:
+        limit = 200
+    rows = (db.session.query(*_V116_READ_COLS).filter(AtmBobbinReading.atm_id == atm)
+            .order_by(AtmBobbinReading.created_at.desc(), AtmBobbinReading.id.desc()).limit(limit).all())
+    ids = {x.technician_id for x in rows}
+    names = {u.id: u.name for u in db.session.query(User.id, User.name).filter(User.id.in_(ids)).all()} if ids else {}
+    stock_by_key = {(str(s.company or ''), str(s.line or ''), str(s.station or ''), str(s.atm_id or '')): s
+                    for s in AtmBobbinAtmStock.query.filter_by(atm_id=atm).all()}
+    rids = [x.id for x in rows]
+    photos = {}
+    if rids:
+        photos = {p.reading_id: p for p in AtmBobbinPhoto.query.filter(AtmBobbinPhoto.reading_id.in_(rids)).order_by(AtmBobbinPhoto.id.desc()).all()}
+    now = datetime.utcnow()
+    return jsonify({'ok': True, 'atm': atm, 'history': [_v771_bobbin_json(x, names, stock_by_key, photos, now) for x in rows]})
+
+
+# V88.0 REV41 — memória do servidor (plano Free: 512 MB).
+# 1) Com várias threads, o alocador do sistema cria uma "arena" de memória por thread e quase
+#    não devolve o espaço ao sistema; limitar a 2 arenas reduz bastante a memória ocupada.
+# 2) No máximo 1 vez por minuto, depois de uma resposta, devolve ao sistema a memória já liberada.
+import ctypes as _v116_ctypes
+try:
+    _V116_LIBC = _v116_ctypes.CDLL("libc.so.6")
+    _V116_LIBC.mallopt(-8, 2)  # M_ARENA_MAX = 2
+except Exception:
+    _V116_LIBC = None
+_V116_TRIM = {"at": 0.0}
+
+
+@app.teardown_request
+def _v116_trim_memory(_exc=None):
+    if _V116_LIBC is None:
+        return
+    now = time.monotonic()
+    if now - _V116_TRIM["at"] < 60:
+        return
+    _V116_TRIM["at"] = now
+    try:
+        _V116_LIBC.malloc_trim(0)
+    except Exception:
+        pass
