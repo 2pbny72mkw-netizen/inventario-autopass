@@ -34376,3 +34376,56 @@ try:
     _v114_import_releases()
 except Exception:
     app.logger.exception("REV37: não foi possível iniciar a publicação do APK")
+
+# V88.0 REV40 — registro de bobina mais leve no plano Free.
+# Antes, cada registro (web e app) carregava todas as localidades do banco (41 colunas cada)
+# e remontava o índice das 602 ATMs oficiais. Agora os dois ficam em cache por 60 s
+# (o mesmo prazo da rede ferroviária); o índice é limpo na hora quando a base mestre muda.
+from types import SimpleNamespace as _V115NS
+
+
+def _v115_loc_norm_rows():
+    def _load():
+        rows = (db.session.query(Location.id, Location.company, Location.line, Location.location,
+                                 Location.reference_latitude, Location.reference_longitude)
+                .filter(Location.location.isnot(None)).order_by(Location.id).all())
+        return [(_v771_norm(r.location), _v771_norm(r.line), _v771_norm(r.company),
+                 _V115NS(id=r.id, company=r.company, line=r.line, location=r.location,
+                         reference_latitude=r.reference_latitude, reference_longitude=r.reference_longitude))
+                for r in rows]
+    return _v73_cache_get("v115_loc_norm", _load)
+
+
+def _v772_location_match(company='', line='', station=''):
+    nc, nl, ns = _v771_norm(company), _v771_norm(line), _v771_norm(station)
+    best = None; best_score = -1
+    for xs, xl, xc, x in _v115_loc_norm_rows():
+        score = 0
+        if ns and xs == ns: score += 8
+        elif ns and (xs in ns or ns in xs): score += 5
+        if nl and xl == nl: score += 5
+        elif nl and (xl in nl or nl in xl): score += 3
+        if nc and xc == nc: score += 3
+        elif nc and (xc in nc or nc in xc): score += 1
+        if score > best_score:
+            best_score = score; best = x
+    return best if best_score >= 8 else None
+
+
+_v115_official_index_orig = _v773_official_index
+
+
+def _v773_official_index():
+    return _v73_cache_get("v115_atm_index", _v115_official_index_orig)
+
+
+def _v115_clear_atm_index(resp):
+    try:
+        if request.method != "GET" and resp.status_code < 400 and request.endpoint and "mapeamento" in str(request.path):
+            _v73_cache_clear("v115_atm_index")
+    except Exception:
+        pass
+    return resp
+
+
+app.after_request(_v115_clear_atm_index)
