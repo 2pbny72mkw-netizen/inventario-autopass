@@ -49,6 +49,8 @@
 .atWrap .atF:hover,.atWrap .atF:focus-visible{background:#f1f5fb;outline:none}.atF span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.atF u{display:block;height:14px;background:#eef2f7;border-radius:7px;text-decoration:none}.atF u i{display:block;height:100%;background:#2563eb;border-radius:7px}.atF b{text-align:right}
 .atSem svg{width:100%;height:auto;display:block}.atSem rect{cursor:pointer}.atSem rect:hover{opacity:.8}.atLeg2{display:flex;gap:16px;font-size:12px;color:#4a5b70}.atLeg2 i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px}
 .atWrap .atKpi.k5,.atWrap .atKpi.k5:hover{background:#fff;color:#16283d;outline:1px solid #dbe4ef}
+#atEt .atBox{position:relative}.etHead{display:flex;gap:8px;align-items:flex-start;position:sticky;top:-18px;background:#fff;z-index:2;padding:6px 0 10px;margin-top:-6px;border-bottom:1px solid #eef2f7}
+.etFoot{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px;position:sticky;bottom:-18px;background:#fff;padding:10px 0 4px;border-top:1px solid #eef2f7;z-index:2}
 </style>
 {% if not internal %}<aside class="pcClientSide"><div class="pcClientLogo"><img src="/static/autopass-logo.png" alt="Autopass"></div><a href="/portal-cliente">▣ Agendamentos</a><a href="/portal-cliente#new">＋ Novo Agendamento</a><a href="/portal-cliente#history">↶ Histórico</a><a class="on" href="/portal-cliente/assistencia-tecnica" aria-current="page">⚙ Assistência Técnica</a><a href="/meu-perfil">♙ Meu Perfil</a><a href="/logout">⇥ Sair</a><div class="pcClientVer">Versão {{ app_release }}</div></aside>{% endif %}
 <div class="atWrap">
@@ -100,7 +102,7 @@
 {% endif %}
 {% if internal %}
 <div class="atModal" id="atEt" hidden role="dialog" aria-modal="true" aria-labelledby="etTitle"><div class="atBox" style="width:min(1060px,calc(100vw - 24px))">
-  <div style="display:flex;gap:10px;align-items:flex-start"><div style="flex:1"><h2 id="etTitle" style="margin:0">🏷 Imprimir etiquetas</h2><p class="atMuted" style="margin:2px 0 0">Etiqueta 45 × 20 mm · Zebra ZD220 · o arquivo não fica gravado no sistema.</p></div><button type="button" class="atBtn" onclick="etClose()">Fechar</button></div>
+  <div class="etHead"><div style="flex:1"><h2 id="etTitle" style="margin:0">🏷 Imprimir etiquetas</h2><p class="atMuted" style="margin:2px 0 0">Etiqueta 45 × 20 mm · Zebra ZD220 · o arquivo não fica gravado no sistema.</p></div><button type="button" class="atBtn g" onclick="etLimpar()">✕ Limpar dados</button><button type="button" class="atBtn" onclick="etClose()">Fechar</button></div>
   <div class="etIn">
     <label class="etDrop" id="etDrop"><input type="file" id="etFile" accept=".xlsx,.csv" hidden><b>⇪ Selecione ou arraste o Excel das OS abertas</b><span class="atMuted" id="etFileName">.xlsx ou .csv</span></label>
     <div class="etPaste"><textarea id="etText" rows="3" placeholder="…ou cole aqui as linhas copiadas do Excel (com o cabeçalho)"></textarea><button type="button" class="atBtn" id="etLerTxt">Ler texto colado</button></div>
@@ -113,7 +115,7 @@
       <p class="atMuted" style="margin:8px 0 0"><label for="etCopias"><b>Etiquetas por OS:</b></label> <select id="etCopias" style="height:34px;border:1px solid #b9c7d8;border-radius:8px;font:inherit;padding:0 6px"><option>1</option><option selected>2</option><option>3</option><option>4</option><option>5</option></select></p></div>
     <div class="etCard"><b>Prévia (ampliada 1,9×)</b><div class="etPrevW"><div id="etPrev"></div></div><p class="atMuted">Nomes longos: cadastre o <b>Nome reduzido</b> em Cadastro de Clientes. 1 mm livre em cada lateral. A 5ª linha só aparece quando a série entrou nos 3 meses anteriores à data da OS (o número inclui a entrada atual). Letra fixa de 7 pt em todas as etiquetas; o que não couber é cortado com “…”.</p></div>
   </div>
-  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px"><span class="atMuted" style="flex:1">Na 1ª vez, escolha a <b>ZD220</b> na janela de impressão, com margens <b>Nenhuma</b> e papel 45 × 20 mm no driver da Zebra.</span><button type="button" class="atBtn p" id="etPrint" disabled>🖨 Imprimir</button></div>
+  <div class="etFoot"><span class="atMuted" style="flex:1">Na 1ª vez, escolha a <b>ZD220</b> na janela de impressão, com margens <b>Nenhuma</b> e papel 45 × 20 mm no driver da Zebra.</span><button type="button" class="atBtn g" onclick="etLimpar()">✕ Limpar dados</button><button type="button" class="atBtn" onclick="etClose()">Fechar</button><button type="button" class="atBtn p" id="etPrint" disabled>🖨 Imprimir</button></div>
 </div></div>
 <iframe id="etFrame" title="Impressão de etiquetas" style="position:fixed;width:0;height:0;border:0;left:-9999px"></iframe>
 {% endif %}
@@ -213,6 +215,7 @@ let ET={cols:[],linhas:[],mapa:{},itens:[],sel:new Set()};
 const etEsc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 function etOpen(){$('atEt').hidden=false}
 function etClose(){$('atEt').hidden=true}
+function etLimpar(){ET={cols:[],linhas:[],mapa:{},itens:[],sel:new Set()};$('etFile').value='';$('etText').value='';$('etFileName').textContent='.xlsx ou .csv';$('etErr').textContent='';$('etMap').hidden=true;$('etBody').hidden=true;$('etRows').innerHTML='';$('etPrev').innerHTML='';$('etBusca').value='';$('etCopias').value='2';$('etPrint').disabled=true;$('etPrint').textContent='🖨 Imprimir'}
 function etLabel(x){return `<div class="etLab"><div>Nome: ${etEsc(x.nome)}</div><div>Ordem de Serviço: ${etEsc(x.os)}</div><div>Serie: ${etEsc(x.serie)}</div><div>Data: ${etEsc(x.data)}</div>${x.vezes?`<div><b>Reincidência - ${x.vezes}x</b></div>`:''}</div>`}
 function etFit(){/* REV50: fonte fixa em 7 pt em todas as linhas e etiquetas (padrão); texto que não couber é cortado com … */}
 async function etLer(fd){$('etErr').textContent='';$('etFileName').textContent='Lendo…';
@@ -251,6 +254,6 @@ function etImprimir(){const cp=Number($('etCopias').value||1),sel=ET.itens.filte
   $('etAll').onchange=e=>{ET.sel=e.target.checked?new Set(ET.itens.map((_,i)=>i)):new Set();etDraw()};
   $('etPrint').onclick=etImprimir;document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('atEt').hidden)etClose()});
   $('atEt').addEventListener('click',e=>{if(e.target.id==='atEt')etClose()})})();
-window.etOpen=etOpen;window.etClose=etClose;})();
+window.etOpen=etOpen;window.etClose=etClose;window.etLimpar=etLimpar;})();
 </script>
 {% endblock %}
