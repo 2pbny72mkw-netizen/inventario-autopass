@@ -43,6 +43,11 @@
 .etLab{width:45mm;height:20mm;box-sizing:border-box;padding:0 1mm;display:flex;flex-direction:column;justify-content:center;font-family:Arial,Helvetica,sans-serif;font-size:7pt;line-height:1.25;color:#000;background:#fff;overflow:hidden}
 #etPrev .etLab{border:1px solid #c9d3df;border-radius:1.5mm}.etLab div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.etLab b{font-weight:700}
 .atErr{color:#b42318;font-weight:700;font-size:13px;margin-top:6px}
+/* REV50.2 — gráficos da equipe */
+.atGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:12px}
+.atWrap .atF,.atWrap .atF:hover{all:unset;box-sizing:border-box;display:grid;grid-template-columns:minmax(120px,210px) 1fr 34px;gap:10px;align-items:center;width:100%;padding:6px 8px;border-radius:10px;font-size:13px;cursor:pointer;color:#16283d}
+.atWrap .atF:hover,.atWrap .atF:focus-visible{background:#f1f5fb;outline:none}.atF span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.atF u{display:block;height:14px;background:#eef2f7;border-radius:7px;text-decoration:none}.atF u i{display:block;height:100%;background:#2563eb;border-radius:7px}.atF b{text-align:right}
+.atSem svg{width:100%;height:auto;display:block}.atSem rect{cursor:pointer}.atSem rect:hover{opacity:.8}.atLeg2{display:flex;gap:16px;font-size:12px;color:#4a5b70}.atLeg2 i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px}
 </style>
 {% if not internal %}<aside class="pcClientSide"><div class="pcClientLogo"><img src="/static/autopass-logo.png" alt="Autopass"></div><a href="/portal-cliente">▣ Agendamentos</a><a href="/portal-cliente#new">＋ Novo Agendamento</a><a href="/portal-cliente#history">↶ Histórico</a><a class="on" href="/portal-cliente/assistencia-tecnica" aria-current="page">⚙ Assistência Técnica</a><a href="/meu-perfil">♙ Meu Perfil</a><a href="/logout">⇥ Sair</a><div class="pcClientVer">Versão {{ app_release }}</div></aside>{% endif %}
 <div class="atWrap">
@@ -64,7 +69,13 @@
     <button type="button" class="atKpi k3" data-f="Aguardando aprovação"><span>AGUARDANDO APROVAÇÃO</span><b id="kApr">—</b><small>orçamentos para aprovar</small></button>
     <button type="button" class="atKpi k4" data-f="__rein"><span>REINCIDÊNCIAS &lt; 90 DIAS</span><b id="kRein">—</b><small>priorizados no atendimento</small></button>
   </section>
+{% if internal %}
+  <div class="atGrid">
   <section class="atCard" aria-label="Onde estão os equipamentos"><h2>Onde estão os equipamentos</h2><div class="atDonut"><svg id="atDonut" viewBox="0 0 200 200" role="img" aria-label="Gráfico de rosca por situação"></svg><div class="atLeg" id="atLeg"></div></div><p class="atMuted">Clique num número ou numa situação para abrir a lista dos equipamentos.</p></section>
+    <section class="atCard" aria-label="Falhas mais frequentes"><h2>Falhas mais frequentes</h2><div id="atFalhas"></div></section>
+  </div>
+  <section class="atCard atSem" aria-label="Ordens de serviço abertas por semana"><div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center"><h2 style="flex:1">Ordens de serviço abertas por semana</h2><div class="atLeg2"><span><i style="background:#1f7a5c"></i>Finalizadas</span><span><i style="background:#3b6fd8"></i>Ainda na assistência</span></div></div><div id="atSem"></div><p class="atMuted">Clique numa coluna para ver só aquela semana.</p></section>
+{% endif %}
   <section class="atCard" aria-label="Equipamentos">
     <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center"><h2 style="flex:1" id="atCount">Equipamentos</h2><button type="button" class="atBtn" onclick="atExport()">⤓ Exportar Excel</button></div>
     <div class="atScroll"><table class="atTable"><thead><tr>
@@ -120,19 +131,33 @@ async function load(){
   $('kFinP').textContent=k.equipamentos?Math.round(k.finalizados*100/k.equipamentos)+'% do período':'';$('kApr').textContent=num(k.aguardando_aprovacao);$('kRein').textContent=num(k.reincidencias);
   $('atUpd').textContent='Ordens de serviço de manutenção'+(d.periodo?` · abertas de ${fmt(d.periodo[0])} a ${fmt(d.periodo[1])}`:'')+(d.atualizado_em?` · dados do Bhom Análises atualizados em ${new Date(d.atualizado_em+'Z').toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo',dateStyle:'short',timeStyle:'short'})}`:' · ainda sem carga');
   if(d.periodo_dados){['atDe','atAte'].forEach(i=>{$(i).min=d.periodo_dados[0];$(i).max=d.periodo_dados[1]})}
-  donut(d.etapas);
+  if($('atDonut'))donut(d.etapas);
+  if($('atFalhas')){
+  const mx=Math.max(1,...d.falhas.map(f=>f.n));$('atFalhas').innerHTML=d.falhas.length?d.falhas.map(f=>`<button type="button" class="atF" data-q="${esc(f.rotulo)}" title="${esc(f.rotulo)}: ${f.n} OS"><span>${esc(f.rotulo)}</span><u><i style="width:${Math.max(3,f.n*100/mx)}%"></i></u><b>${f.n}</b></button>`).join(''):'<p class="atMuted">Sem falhas registradas no período.</p>';
+  }
+  if($('atSem'))semanas(d.semanas||[]);
   bind();render()}
 function donut(et){const tot=et.reduce((a,e)=>a+e.n,0),R=70,C=2*Math.PI*R;let off=0;
   $('atDonut').innerHTML=`<circle cx="100" cy="100" r="${R}" fill="none" stroke="#eef2f7" stroke-width="26"/>`+(tot?et.filter(e=>e.n).map(e=>{const L=e.n/tot*C,g=`<circle class="seg" data-f="${esc(e.rotulo)}" cx="100" cy="100" r="${R}" fill="none" stroke="${e.cor}" stroke-width="26" stroke-dasharray="${L} ${C-L}" stroke-dashoffset="${-off}" transform="rotate(-90 100 100)"><title>${esc(e.rotulo)}: ${e.n} (${Math.round(e.n*100/tot)}%)</title></circle>`;off+=L;return g}).join(''):'')+
    `<text x="100" y="98" text-anchor="middle" font-size="30" font-weight="800" fill="#16283d">${num(tot)}</text><text x="100" y="120" text-anchor="middle" font-size="12" fill="#4a5b70">equipamentos</text>`;
   $('atLeg').innerHTML=et.map(e=>`<button type="button" class="atRow" data-f="${esc(e.rotulo)}"><i style="background:${e.cor}"></i>${esc(e.rotulo)}<b>${num(e.n)}</b><em>${tot?Math.round(e.n*100/tot)+'%':''}</em></button>`).join('')}
+function semanas(w){if(!w.length){$('atSem').innerHTML='<p class="atMuted">Sem ordens de serviço no período.</p>';return}
+  const W=Math.max(320,$('atSem').clientWidth||900),H=230,pl=34,pb=26,pt=12,step=Math.max(1,Math.ceil(Math.max(1,...w.map(x=>x.finalizadas+x.abertas))/4)),mx=step*Math.ceil(Math.max(1,...w.map(x=>x.finalizadas+x.abertas))/step),bw=(W-pl)/w.length,y=v=>H-pb-(v/mx)*(H-pb-pt);
+  const grid=[];for(let v=0;v<=mx;v+=step)grid.push(v);
+  let g=grid.map(v=>`<line x1="${pl}" x2="${W}" y1="${y(v)}" y2="${y(v)}" stroke="#eef2f7"/><text x="${pl-6}" y="${y(v)+4}" text-anchor="end" font-size="11" fill="#4a5b70">${v}</text>`).join('');
+  const lab=Math.ceil(w.length/12);
+  g+=w.map((x,i)=>{const X=pl+i*bw+bw*.18,B=bw*.64,t=x.finalizadas+x.abertas,ini=x.inicio,fim=new Date(new Date(ini+'T12:00').getTime()+6*864e5).toISOString().slice(0,10),tt=`Semana de ${fmt(ini)}: ${t} OS (${x.finalizadas} finalizadas, ${x.abertas} na assistência)`;
+    return `<g data-de="${ini}" data-ate="${fim}"><rect x="${X}" y="${y(x.finalizadas)}" width="${B}" height="${H-pb-y(x.finalizadas)}" fill="#1f7a5c" rx="2"><title>${tt}</title></rect><rect x="${X}" y="${y(t)}" width="${B}" height="${y(x.finalizadas)-y(t)}" fill="#3b6fd8" rx="2"><title>${tt}</title></rect>${i%lab===0?`<text x="${X+B/2}" y="${H-8}" text-anchor="middle" font-size="11" fill="#4a5b70">${fmt(ini).slice(0,5)}</text>`:''}</g>`}).join('');
+  $('atSem').innerHTML=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Colunas de OS abertas por semana">${g}</svg>`;
+  $('atSem').querySelectorAll('g[data-de]').forEach(n=>n.onclick=()=>{$('atDe').value=n.dataset.de;$('atAte').value=n.dataset.ate;load()})}
 function lista(){const q=($('atBusca').value||'').toUpperCase(),f=filtro||$('atEtapa').value;
   let r=(D?.equipamentos||[]).filter(e=>(!q||`${e.serial} ${e.falha} ${e.os}`.toUpperCase().includes(q))&&(!f||(f==='__rein'?e.reincidencia_dias!=null:f==='__man'?e.etapa!=='Finalizado':e.etapa===f)));
   return r.sort((a,b)=>{const x=a[sk]??'',y=b[sk]??'';return (typeof x==='number'&&typeof y==='number'?x-y:String(x).localeCompare(String(y),'pt-BR',{numeric:true}))*dir})}
 function render(){const r=lista();$('atCount').textContent=`Equipamentos · ${num(r.length)} de ${num(D?.equipamentos.length||0)}`;
   $('atRows').innerHTML=r.length?r.map(e=>`<tr class="${e.reincidencia_dias!=null?'rein':''}" data-s="${esc(e.serial)}" tabindex="0"><td style="font-family:ui-monospace,monospace">${esc(e.serial)}</td><td>${esc(e.os)}</td><td>${esc(e.falha||'—')}</td><td><span class="pillA ${cls(e.etapa)}">${esc(e.etapa)}</span></td><td>${fmt(e.abertura)}</td><td style="text-align:right">${e.dias??'—'}</td><td>${e.reincidencia_dias!=null?`<span class="pillA eRein">Reincidente · ${e.reincidencia_dias} dias</span>`:(e.entradas>1?e.entradas+' entradas':'1ª entrada')}</td></tr>`).join(''):'<tr><td colspan="7">Nenhum equipamento para este filtro.</td></tr>';
   const af=filtro||$('atEtapa').value;document.querySelectorAll('.atKpi,.atRow').forEach(b=>b.setAttribute('aria-pressed',String(!!af&&b.dataset.f===af)))}
-function bind(){document.querySelectorAll('[data-f]').forEach(b=>b.onclick=()=>detalhe(b.dataset.f,b.dataset.t||b.querySelector('span')?.textContent||b.dataset.f))}
+function bind(){document.querySelectorAll('[data-f]').forEach(b=>b.onclick=()=>detalhe(b.dataset.f,b.dataset.t||b.querySelector('span')?.textContent||b.dataset.f));
+  document.querySelectorAll('.atF').forEach(b=>b.onclick=()=>{$('atBusca').value=b.dataset.q;render()})}
 document.querySelectorAll('.atTable th').forEach(th=>th.onclick=()=>{const s=th.dataset.s;dir=(sk===s?-dir:1);sk=s;document.querySelectorAll('.atTable th').forEach(t=>{const on=t.dataset.s===sk;t.setAttribute('aria-sort',on?(dir>0?'ascending':'descending'):'none');t.textContent=t.textContent.replace(/ [▲▼⇅]$/,'')+(on?(dir>0?' ▲':' ▼'):' ⇅')});render()});
 $('atRows').addEventListener('click',e=>{const tr=e.target.closest('tr[data-s]');if(tr)openEq(tr.dataset.s)});
 $('atRows').addEventListener('keydown',e=>{const tr=e.target.closest('tr[data-s]');if(tr&&(e.key==='Enter'||e.key===' ')){e.preventDefault();openEq(tr.dataset.s)}});
@@ -176,7 +201,7 @@ $('atForm').onsubmit=async e=>{e.preventDefault();const b=$('atSend');b.disabled
     $('atRes').innerHTML=r.ok?`<p style="color:#14532d;font-weight:700">Carga concluída: ${num(d.os)} OS (${num(d.novas)} novas, ${num(d.atualizadas)} atualizadas), ${num(d.clientes)} clientes.</p>`:`<p style="color:#991b1b;font-weight:700">${esc(d.error||'Falha na carga.')}</p>`;
     if(r.ok){e.target.reset();loadMap();load()}}finally{b.disabled=false;b.textContent='Carregar'}};
 {% endif %}
-load();
+load();let rz;window.addEventListener('resize',()=>{clearTimeout(rz);rz=setTimeout(()=>{if(D&&$('atSem'))semanas(D.semanas||[])},200)});
 })();
 
 /* REV50 — etiquetas */

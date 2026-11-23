@@ -34964,7 +34964,7 @@ def v120_dashboard():
         last = c.execute(text("SELECT created_at, filename FROM v120_at_loads ORDER BY id DESC LIMIT 1")).first()
     aberturas = [r["opened"] for r in rows if r["opened"]]
     todas_ab = [r["opened"] for r in todas if r["opened"]]
-    return jsonify({"ok": True,
+    _resp = {"ok": True,
                     "atualizado_em": last[0].isoformat() if last and hasattr(last[0], "isoformat") else (str(last[0]) if last else None),
                     "periodo": [min(aberturas).isoformat(), max(aberturas).isoformat()] if aberturas else None,
                     "periodo_dados": [min(todas_ab).isoformat(), max(todas_ab).isoformat()] if todas_ab else None,
@@ -34978,7 +34978,12 @@ def v120_dashboard():
                     "etapas": [{"rotulo": rot, "cor": cor, "n": etapas.get(rot, 0)} for rot, cor, _ in _V120_ETAPAS],
                     "falhas": [{"rotulo": k.capitalize(), "n": v} for k, v in sorted(falhas.items(), key=lambda x: -x[1])[:8]],
                     "semanas": [{"inicio": w.isoformat(), "finalizadas": v[0], "abertas": v[1]} for w, v in sorted(semanas.items())],
-                    "equipamentos": sorted(equip, key=lambda e: (e["abertura"] or ""), reverse=True)})
+                    "equipamentos": sorted(equip, key=lambda e: (e["abertura"] or ""), reverse=True)}
+    if not _portal_staff():
+        # REV50.2: o cliente vê números e lista; gráficos e a data de atualização do Bhom ficam só para a equipe.
+        for k in ("atualizado_em", "falhas", "semanas"):
+            _resp.pop(k, None)
+    return jsonify(_resp)
 
 
 @app.get("/api/assistencia/equipamento")
