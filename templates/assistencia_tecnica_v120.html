@@ -210,7 +210,7 @@ function etDraw(){const q=($('etBusca').value||'').toUpperCase();
 function etImprimir(){const cp=Number($('etCopias').value||1),sel=ET.itens.filter((_,i)=>ET.sel.has(i));if(!sel.length)return;
   const labs=sel.flatMap(x=>Array(cp).fill(x)).map(etLabel).join('');
   const css=`@page{size:45mm 20mm;margin:0}html,body{margin:0;padding:0;background:#fff}.etLab{width:45mm;height:20mm;box-sizing:border-box;padding:0 1mm;display:flex;flex-direction:column;justify-content:center;font-family:Arial,Helvetica,sans-serif;font-size:7pt;line-height:1.25;color:#000;overflow:hidden;page-break-after:always;break-after:page}.etLab:last-child{page-break-after:auto;break-after:auto}.etLab div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}`;
-  const fr=$('etFrame'),doc=fr.contentDocument;doc.open();doc.write(`<!doctype html><html><head><meta charset="utf-8"><title>Etiquetas</title><style>${css}</style></head><body>${labs}</body></html>`);doc.close();
+  const fr=$('etFrame'),doc=fr.contentDocument;doc.open();doc.write(`<!doctype html><html><head><meta charset="utf-8"><title>Etiquetas<\/title><style>${css}<\/style><\/head><body>${labs}<\/body><\/html>`);doc.close();
   setTimeout(()=>{etFit(doc.body);fr.contentWindow.focus();fr.contentWindow.print()},150)}
 (function(){if(!$('atEt'))return;
   $('etFile').onchange=e=>{const f=e.target.files[0];if(!f)return;const fd=new FormData();fd.append('arquivo',f);etLer(fd);e.target.value=''};
