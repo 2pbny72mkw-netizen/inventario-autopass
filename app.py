@@ -34989,17 +34989,10 @@ def v120_equipamento():
     if not sk:
         return jsonify({"ok": False, "error": "Informe a série."}), 400
     rows = _v120_os_rows(ids, sk)
-    nums = [r["os_number"] for r in rows]
-    itens = {}
-    if nums:
-        with db.engine.connect() as c:
-            q = text("SELECT os_number, code, description, qty FROM v120_at_items WHERE os_number IN (" + ",".join(f":n{i}" for i in range(len(nums))) + ") ORDER BY os_number, line_no")
-            for r in c.execute(q, {f"n{i}": v for i, v in enumerate(nums)}):
-                itens.setdefault(r[0], []).append({"codigo": r[1], "descricao": r[2], "qtde": r[3]})
+    # REV48: solução e peças não são exibidas no Portal.
     return jsonify({"ok": True, "serie": rows[0]["serial"] if rows else request.args.get("serie"), "historico": [{
         "os": r["os_number"], "etapa": _v120_etapa(r), "abertura": str(r["opened"] or "")[:10] or None, "encerramento": str(r["closed"] or "")[:10] or None,
-        "falha": r["fault_short"], "falha_tecnica": r["fault"], "causa": r["cause"], "solucao": r["solution"], "tecnico": r["technician"],
-        "pecas": itens.get(r["os_number"], [])} for r in rows]})
+        "falha": r["fault_short"], "falha_tecnica": r["fault"], "causa": r["cause"]} for r in rows]})
 
 
 def _v120_reincidencia(serial, company_names=None, exclude_appt=None, hoje=None):
@@ -35046,7 +35039,7 @@ def _v120_reincidencia(serial, company_names=None, exclude_appt=None, hoje=None)
     # Um agendamento do Portal que virou OS no Bhom (aberta até 30 dias depois) conta uma vez só.
     datas = list(os_datas) + [d for d in set(portal) if not any(d <= o <= d + timedelta(days=30) for o in os_datas)]
     d, ref, falha, sol = max(cand, key=lambda x: x[0])
-    return {"dias": (hoje - d).days, "data": d.isoformat(), "ref": ref, "falha": falha, "solucao": sol[:200],
+    return {"dias": (hoje - d).days, "data": d.isoformat(), "ref": ref, "falha": falha,
             "vezes": len(datas), "vezes_periodo": sum(1 for x in datas if x >= lim), "consulta": hoje.isoformat()}
 
 
