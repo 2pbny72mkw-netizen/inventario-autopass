@@ -1320,3 +1320,129 @@ def _v115_enriquecer(specs):
     return specs
 
 SPECS = _v115_enriquecer(SPECS)
+
+
+# ---------------------------------------------------------------------------
+import json
+import re
+
+# Build129 — gráficos em todas as listas (calculados no app a partir dos próprios registros).
+# Regras automáticas a partir do que cada tela já usa (etiqueta de status, selo de linha,
+# campos do subtítulo e datas); gráfico sem dado suficiente não aparece no app.
+_V116_TOM_ROT = {"sucesso": "Concluído", "info": "Em andamento", "aviso": "Pendente", "perigo": "Crítico", "neutro": "Outros"}
+_V116_AGRUPA = re.compile(r"^(line|linha|company|empresa|operadora|operator|client|cliente|client_name|department|departamento|project|projeto|"
+                          r"city|cidade|model|modelo|category|categoria|type|tipo|kind|role|perfil|job_title|cargo|priority|prioridade|team|equipe|"
+                          r"technician|tecnico|technician_name|responsible|responsavel|origin|origem|severity|nivel|level|module|modulo|channel|canal|"
+                          r"source|fonte|uf|state|region|regiao|group|grupo|unit|unidade|supplier|fornecedor)$", re.I)
+_V116_ROT = {"line": "linha", "linha": "linha", "company": "empresa", "empresa": "empresa", "operadora": "operadora", "operator": "operadora",
+             "client": "cliente", "cliente": "cliente", "client_name": "cliente", "department": "departamento", "departamento": "departamento",
+             "project": "projeto", "projeto": "projeto", "city": "cidade", "cidade": "cidade", "model": "modelo", "modelo": "modelo",
+             "category": "categoria", "categoria": "categoria", "type": "tipo", "tipo": "tipo", "kind": "tipo", "role": "perfil", "perfil": "perfil",
+             "job_title": "cargo", "cargo": "cargo", "priority": "prioridade", "prioridade": "prioridade", "team": "equipe", "equipe": "equipe",
+             "technician": "técnico", "tecnico": "técnico", "technician_name": "técnico", "responsible": "responsável", "responsavel": "responsável",
+             "origin": "origem", "origem": "origem", "severity": "gravidade", "nivel": "nível", "level": "nível", "module": "módulo", "modulo": "módulo",
+             "channel": "canal", "canal": "canal", "source": "origem", "fonte": "origem", "uf": "UF", "state": "UF", "region": "região", "regiao": "região",
+             "group": "grupo", "grupo": "grupo", "unit": "unidade", "unidade": "unidade", "supplier": "fornecedor", "fornecedor": "fornecedor"}
+
+
+def _v116_campos(tpl):
+    return re.findall(r"\{([a-zA-Z_][a-zA-Z0-9_.]*)(\|[a-z]+)?\}", tpl or "")
+
+
+def _v116_rosca_kpis(l):
+    kp = [k for k in (l.get("kpis") or []) if k.get("campo") and k.get("tom") in ("sucesso", "aviso", "info", "perigo")]
+    if len(kp) < 2:
+        return None
+    return {"tipo": "rosca", "titulo": "Situação", "partes": [
+        {"rotulo": k["rotulo"].capitalize(), "tom": k["tom"], "filtro": {x: k[x] for x in k if x in ("campo", "igual", "em", "maior", "ate", "fora", "diferente")}} for k in kp]}
+
+
+def _v116_rosca(l):
+    et = l.get("etiqueta") or {}
+    cores = et.get("cores") or {}
+    if not et.get("campo") or not cores:
+        return _v116_rosca_kpis(l)
+    por_tom = {}
+    for v, t in cores.items():
+        por_tom.setdefault(t, []).append(v)
+    rots = et.get("rotulos") or {}
+    partes = []
+    for t in ("sucesso", "info", "aviso", "perigo", "neutro"):
+        if t in por_tom:
+            v0 = por_tom[t][0]
+            rot = rots.get(v0) or (v0.capitalize() if not v0.isdigit() else _V116_TOM_ROT[t])
+            partes.append({"rotulo": rot, "tom": t, "filtro": {"campo": et["campo"], "em": por_tom[t]}})
+    padrao = et.get("padrao")
+    todos = [v for vs in por_tom.values() for v in vs]
+    if padrao:
+        partes.append({"rotulo": _V116_TOM_ROT.get(padrao, "Outros") if padrao != "neutro" else "Outros", "tom": padrao, "filtro": {"campo": et["campo"], "fora": todos}})
+    else:
+        partes.append({"rotulo": "Outros", "tom": "neutro", "filtro": {"campo": et["campo"], "fora": todos}})
+    return {"tipo": "rosca", "titulo": "Situação", "partes": partes} if len(partes) >= 2 else _v116_rosca_kpis(l)
+
+
+def _v116_graficos(specs):
+    for s in specs:
+        if s.get("modelo") != "lista":
+            continue
+        l = s.setdefault("lista", {})
+        if "graficos" in l:
+            continue
+        gs = []
+        r = _v116_rosca(l)
+        if r:
+            gs.append(r)
+        ok = None
+        if r and r.get("partes"):
+            ok = next((p["filtro"] for p in r["partes"] if p["tom"] == "sucesso"), None)
+        textos = " ".join([l.get("titulo") or "", l.get("subtitulo") or ""] + list(l.get("meta") or []))
+        campos = [c for c, _ in _v116_campos(textos)]
+        selo = (l.get("selo") or {}).get("campo")
+        grupos = []
+        if selo:
+            grupos.append(selo)
+        for c in campos:
+            if _V116_AGRUPA.match(c) and c not in grupos and c != (l.get("etiqueta") or {}).get("campo"):
+                grupos.append(c)
+        grupos.sort(key=lambda c: 0 if (c == selo or _V116_ROT.get(c) == "linha") else 1)
+        for c in grupos[:2]:
+            nome = _V116_ROT.get(c, c)
+            linha = c == selo or nome == "linha"
+            if ok and linha:
+                gs.append({"tipo": "barras", "titulo": "Concluído por %s (%%)" % nome, "agrupar": {"campo": c, "pct": ok}, "cores": "linha"})
+            else:
+                gs.append({"tipo": "barras", "titulo": "Por %s" % nome, "agrupar": {"campo": c}, "cores": "linha" if linha else "paleta"})
+        datas = [c for c, f in _v116_campos(textos) if f in ("|data", "|datahora")]
+        if datas:
+            gs.append({"tipo": "linha", "titulo": "Registros por mês", "agrupar": {"campo": datas[0], "periodo": "mes"}})
+        # número de conclusão quando há estado "concluído" e espaço nos números
+        # números novos vão em "kpis2" (só a Build129 lê; o app antigo continua com os 3 de sempre)
+        kp = list(l.get("kpis") or [])
+        n0 = len(kp)
+        if ok and len(kp) < 6 and not any(k.get("pct") for k in kp):
+            rot_ok = next((p["rotulo"] for p in r["partes"] if p["tom"] == "sucesso"), "Concluído")
+            kp.append({"rotulo": "% " + rot_ok.upper(), "pct": ok})
+        # estados da rosca que ainda não são números viram números (até 6)
+        if r:
+            def _vals(k):
+                if "igual" in k: return (k.get("campo"), (str(k["igual"]),))
+                if "em" in k: return (k.get("campo"), tuple(sorted(map(str, k["em"]))))
+                return None
+            ja = {_vals(k) for k in kp if k.get("campo")}
+            for p in r["partes"]:
+                f = p["filtro"]
+                if len(kp) >= 6 or p["tom"] == "neutro" or _vals(f) is None:
+                    continue
+                v = _vals(f)
+                # mesmo estado já é número (ex.: "igual": "CONCLUÍDO" dentro de "em": ["CONCLUÍDO","CONCLUIDO"])
+                if v in ja or any(x and x[0] == v[0] and set(x[1]) & set(v[1]) for x in ja):
+                    continue
+                kp.insert(len(kp) - (1 if kp and kp[-1].get("pct") else 0), {"rotulo": p["rotulo"].upper(), "tom": p["tom"], **f})
+        if len(kp) > n0:
+            l["kpis2"] = kp[n0:]
+        if gs:
+            l["graficos"] = gs
+    return specs
+
+
+SPECS = _v116_graficos(SPECS)
