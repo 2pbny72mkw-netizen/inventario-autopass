@@ -1,0 +1,124 @@
+{% extends 'base.html' %}{% block title %}Assistência Técnica{% endblock %}
+{% block content %}
+<style>
+.atWrap{display:flex;flex-direction:column;gap:14px;font-family:inherit;color:#16283d}
+.atHead{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end}.atHead h1{margin:0;font-size:26px}.atHead p{margin:4px 0 0;font-size:13px;color:#4a5b70}
+.atHead label{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:700;color:#4a5b70}
+.atHead select,.atHead input{height:40px;border:1px solid #8a9bb0;border-radius:10px;padding:0 10px;font-family:inherit;font-size:14px;background:#fff;color:#16283d}
+.atKpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:12px}
+.atKpi{text-align:left;border:0;border-radius:16px;padding:16px;font:inherit;display:flex;flex-direction:column;gap:4px;cursor:pointer}
+.atKpi span:first-child{font-size:12px;font-weight:800}.atKpi b{font-size:30px;font-weight:800;line-height:1.1}.atKpi small{font-size:12px}
+.atKpi[aria-pressed="true"]{outline:3px solid #0f1e3d;outline-offset:2px}
+.k0{background:#0f1e3d;color:#fff}.k0 small,.k0 span:first-child{color:#c7d6ea}.k1{background:#dbeafe;color:#1e3a8a}.k2{background:#dcfce7;color:#14532d}
+.k3{background:#fef3c7;color:#7a4a00}.k4{background:#fee2e2;color:#991b1b}.k5{background:#fff;color:#16283d;border:1px solid #dbe4ef}
+.atGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:12px}
+.atCard{background:#fff;border:1px solid #dbe4ef;border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:10px}.atCard h2{margin:0;font-size:16px}
+.atBar{display:flex;height:22px;border-radius:8px;overflow:hidden;background:#eef2f7}
+.atLeg{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:1fr 1fr;gap:6px 16px;font-size:13px}
+.atLeg button{all:unset;display:flex;gap:8px;align-items:center;cursor:pointer;width:100%}.atLeg i{width:12px;height:12px;border-radius:3px;display:inline-block}.atLeg b{margin-left:auto}
+.atF{all:unset;display:grid;grid-template-columns:minmax(120px,190px) 1fr 34px;gap:8px;align-items:center;font-size:13px;cursor:pointer}.atF i{height:14px;background:#0f1e3d;border-radius:4px;display:block}
+.atTable{width:100%;border-collapse:collapse;font-size:13px;min-width:820px}.atTable th{text-align:left;color:#4a5b70;border-bottom:2px solid #dbe4ef;padding:8px;cursor:pointer;white-space:nowrap;position:sticky;top:0;background:#fff}
+.atTable td{padding:8px;border-bottom:1px solid #eef2f7}.atTable tbody tr{cursor:pointer}.atTable tbody tr:hover{background:#f3f7fc}.atTable tr.rein{background:#fff7ed}
+.pillA{display:inline-block;font-weight:800;font-size:12px;padding:3px 9px;border-radius:999px}
+.eFinalizado{background:#dcfce7;color:#14532d}.eAguardandoaprovacao{background:#fef3c7;color:#7a4a00}.eEmexecucao{background:#dbeafe;color:#1e3a8a}.eEmbalagemNF{background:#ccfbf1;color:#115e59}.eAguardandoorcamento{background:#eef2f7;color:#334155}.eRein{background:#fee2e2;color:#991b1b}
+.atBtn{height:40px;padding:0 14px;border-radius:10px;border:1px solid #8a9bb0;background:#fff;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;color:#16283d}.atBtn.p{background:#0f5e5a;color:#fff;border:0}
+.atMuted{font-size:12px;color:#4a5b70;margin:0}.atScroll{overflow:auto;max-height:640px}
+.atModal{position:fixed;inset:0;background:rgba(7,27,51,.56);display:flex;align-items:center;justify-content:center;z-index:1000;padding:14px}.atModal[hidden]{display:none}
+.atBox{background:#fff;border-radius:18px;padding:18px 20px;width:min(820px,calc(100vw - 28px));max-height:88vh;overflow:auto;box-sizing:border-box}
+.atOs{border:1px solid #dbe4ef;border-radius:12px;padding:12px;margin:10px 0}.atOs dl{display:grid;grid-template-columns:130px 1fr;gap:4px 10px;margin:8px 0 0;font-size:13px}.atOs dt{color:#4a5b70;font-weight:700}.atOs dd{margin:0}
+{% if not internal %}.topbar{display:none!important}main.wrap{max-width:none!important;width:calc(100% - 230px)!important;margin-left:230px!important;padding:22px 26px!important;background:#f7faff;min-height:100vh;box-sizing:border-box!important}.pcClientSide{position:fixed;left:0;top:0;bottom:0;width:230px;background:#fff;border-right:1px solid #e0e7ef;padding:22px 15px;z-index:900;box-sizing:border-box}.pcClientLogo{margin:4px 10px 28px}.pcClientLogo img{display:block;width:150px}.pcClientSide a{display:block;text-decoration:none;color:#17345d;font-weight:750;padding:12px 13px;border-radius:10px;margin:5px 0}.pcClientSide a.on{background:#eaf3ff;color:#1267c4}@media(max-width:900px){main.wrap{width:100%!important;margin-left:0!important;padding:14px!important}.pcClientSide{display:none}}{% endif %}
+</style>
+{% if not internal %}<aside class="pcClientSide"><div class="pcClientLogo"><img src="/static/autopass-logo.png" alt="Autopass"></div><a href="/portal-cliente">▣ Agendamentos</a><a href="/portal-cliente#new">＋ Novo Agendamento</a><a href="/portal-cliente#history">↶ Histórico</a><a class="on" href="/portal-cliente/assistencia-tecnica" aria-current="page">⚙ Assistência Técnica</a><a href="/meu-perfil">♙ Meu Perfil</a><a href="/logout">⇥ Sair</a><div class="pcClientVer">Versão {{ app_release }}</div></aside>{% endif %}
+<div class="atWrap">
+  <div class="atHead">
+    <div style="flex:1;min-width:260px"><h1>Dashboard de equipamentos</h1><p id="atUpd">Assistência técnica · carregando…</p></div>
+    {% if internal %}<label>Cliente<select id="atCompany"><option value="">Todos os clientes</option>{% for c in companies %}<option value="{{ c.id }}">{{ c.trade_name or c.legal_name }}</option>{% endfor %}</select></label>{% endif %}
+    <label>Situação<select id="atEtapa"><option value="">Todas</option><option>Aguardando orçamento</option><option>Aguardando aprovação</option><option>Em execução</option><option>Embalagem / NF</option><option>Finalizado</option><option value="__rein">Reincidentes</option></select></label>
+    <label>Nº de série<input id="atBusca" type="search" placeholder="Buscar série ou falha"></label>
+    {% if can_load %}<button type="button" class="atBtn p" onclick="atCargaOpen()">Carga do Bhom</button>{% endif %}
+  </div>
+  <section class="atKpis" aria-label="Indicadores">
+    <button type="button" class="atKpi k0" data-f=""><span>EQUIPAMENTOS</span><b id="kEq">—</b><small id="kOs"></small></button>
+    <button type="button" class="atKpi k1" data-f="__man"><span>EM MANUTENÇÃO</span><b id="kMan">—</b><small>ainda na assistência</small></button>
+    <button type="button" class="atKpi k2" data-f="Finalizado"><span>FINALIZADOS</span><b id="kFin">—</b><small id="kFinP"></small></button>
+    <button type="button" class="atKpi k3" data-f="Aguardando aprovação"><span>AGUARDANDO APROVAÇÃO</span><b id="kApr">—</b><small>orçamentos para aprovar</small></button>
+    <button type="button" class="atKpi k4" data-f="__rein"><span>REINCIDÊNCIAS &lt; 90 DIAS</span><b id="kRein">—</b><small>priorizados no atendimento</small></button>
+    <button type="button" class="atKpi k5" data-f=""><span style="color:#4a5b70">TEMPO MÉDIO</span><b id="kTm">—</b><small style="color:#4a5b70">da abertura ao encerramento</small></button>
+  </section>
+  <div class="atGrid">
+    <section class="atCard" aria-label="Onde estão os equipamentos"><h2>Onde estão os equipamentos</h2><div class="atBar" id="atBar" aria-hidden="true"></div><ul class="atLeg" id="atLeg"></ul></section>
+    <section class="atCard" aria-label="Falhas mais frequentes"><h2>Falhas mais frequentes</h2><div id="atFalhas"></div></section>
+  </div>
+  <section class="atCard" aria-label="Equipamentos">
+    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center"><h2 style="flex:1" id="atCount">Equipamentos</h2><button type="button" class="atBtn" onclick="atExport()">Exportar Excel</button></div>
+    <div class="atScroll"><table class="atTable"><thead><tr>
+      <th data-s="serial" aria-sort="none">Nº de série ⇅</th><th data-s="os" aria-sort="none">OS ⇅</th><th data-s="falha" aria-sort="none">Falha informada ⇅</th><th data-s="etapa" aria-sort="none">Situação ⇅</th><th data-s="abertura" aria-sort="descending">Abertura ▼</th><th data-s="dias" aria-sort="none" style="text-align:right">Dias ⇅</th><th data-s="entradas" aria-sort="none">Histórico ⇅</th>
+    </tr></thead><tbody id="atRows"><tr><td colspan="7">Carregando…</td></tr></tbody></table></div>
+    <p class="atMuted">Clique numa linha para ver o histórico do equipamento: todas as OS, falha, causa, solução e peças trocadas.</p>
+  </section>
+</div>
+<div class="atModal" id="atModal" hidden role="dialog" aria-modal="true" aria-labelledby="atMTitle"><div class="atBox"><div style="display:flex;gap:10px;align-items:center"><h2 id="atMTitle" style="margin:0;flex:1">Equipamento</h2><button type="button" class="atBtn" onclick="atClose()">Fechar</button></div><div id="atMBody"></div></div></div>
+{% if can_load %}
+<div class="atModal" id="atCarga" hidden role="dialog" aria-modal="true" aria-labelledby="atCTitle"><div class="atBox">
+  <div style="display:flex;gap:10px;align-items:center"><h2 id="atCTitle" style="margin:0;flex:1">Carga do Bhom Análises</h2><button type="button" class="atBtn" onclick="atCargaClose()">Fechar</button></div>
+  <p class="atMuted">Suba o "Relatório de OS" exportado do Bhom (.xlsx ou .csv). As OS já existentes são atualizadas e o histórico se acumula. Valores (R$) não são guardados.</p>
+  <form id="atForm" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0"><label class="atMuted">Planilha <input type="file" name="arquivo" accept=".xlsx,.csv" required></label><button class="atBtn p" id="atSend" type="submit">Carregar</button></form>
+  <div id="atRes" aria-live="polite"></div>
+  <h3 style="font-size:15px;margin:16px 0 6px">Vínculo com os clientes do Portal</h3><p class="atMuted">Cada nome da planilha é ligado uma vez a um cliente do Portal; o cliente só vê os equipamentos vinculados a ele.</p>
+  <div id="atMap"></div>
+  <h3 style="font-size:15px;margin:16px 0 6px">Últimas cargas</h3><div id="atLoads" class="atMuted"></div>
+</div></div>
+{% endif %}
+<script>
+(()=>{
+const $=id=>document.getElementById(id),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt=d=>d?d.slice(0,10).split('-').reverse().join('/'):'—',num=n=>(n??0).toLocaleString('pt-BR');
+let D=null,filtro='',sk='abertura',dir=-1;
+const cls=e=>'e'+String(e||'').normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^A-Za-z]/g,'');
+async function load(){
+  const c=$('atCompany')?.value||'';$('atRows').innerHTML='<tr><td colspan="7">Carregando…</td></tr>';
+  const r=await fetch('/api/assistencia/dashboard'+(c?'?company_id='+c:''));const d=await r.json();
+  if(!r.ok||!d.ok){$('atRows').innerHTML=`<tr><td colspan="7">${esc(d.error||'Não foi possível carregar.')}</td></tr>`;return}
+  D=d;const k=d.kpis;$('kEq').textContent=num(k.equipamentos);$('kOs').textContent=num(k.os)+' ordens de serviço';$('kMan').textContent=num(k.em_manutencao);$('kFin').textContent=num(k.finalizados);
+  $('kFinP').textContent=k.equipamentos?Math.round(k.finalizados*100/k.equipamentos)+'% do período':'';$('kApr').textContent=num(k.aguardando_aprovacao);$('kRein').textContent=num(k.reincidencias);
+  $('kTm').innerHTML=k.tempo_medio!=null?String(k.tempo_medio).replace('.',',')+' <span style="font-size:16px">dias</span>':'—';
+  $('atUpd').textContent='Ordens de serviço de manutenção'+(d.periodo?` · abertas de ${fmt(d.periodo[0])} a ${fmt(d.periodo[1])}`:'')+(d.atualizado_em?` · dados do Bhom Análises atualizados em ${new Date(d.atualizado_em+'Z').toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo',dateStyle:'short',timeStyle:'short'})}`:' · ainda sem carga');
+  const tot=d.etapas.reduce((a,e)=>a+e.n,0)||1;$('atBar').innerHTML=d.etapas.map(e=>`<span style="width:${e.n*100/tot}%;background:${e.cor}"></span>`).join('');
+  $('atLeg').innerHTML=d.etapas.map(e=>`<li><button type="button" data-f="${esc(e.rotulo)}"><i style="background:${e.cor}"></i>${esc(e.rotulo)}<b>${num(e.n)}</b></button></li>`).join('');
+  const mx=Math.max(1,...d.falhas.map(f=>f.n));$('atFalhas').innerHTML=d.falhas.length?d.falhas.map(f=>`<button type="button" class="atF" data-q="${esc(f.rotulo)}"><span>${esc(f.rotulo)}</span><i style="width:${f.n*100/mx}%"></i><b>${f.n}</b></button>`).join(''):'<p class="atMuted">Sem falhas registradas.</p>';
+  bind();render()}
+function lista(){const q=($('atBusca').value||'').toUpperCase(),f=filtro||$('atEtapa').value;
+  let r=(D?.equipamentos||[]).filter(e=>(!q||`${e.serial} ${e.falha} ${e.os}`.toUpperCase().includes(q))&&(!f||(f==='__rein'?e.reincidencia_dias!=null:f==='__man'?e.etapa!=='Finalizado':e.etapa===f)));
+  return r.sort((a,b)=>{const x=a[sk]??'',y=b[sk]??'';return (typeof x==='number'&&typeof y==='number'?x-y:String(x).localeCompare(String(y),'pt-BR',{numeric:true}))*dir})}
+function render(){const r=lista();$('atCount').textContent=`Equipamentos · ${num(r.length)} de ${num(D?.equipamentos.length||0)}`;
+  $('atRows').innerHTML=r.length?r.map(e=>`<tr class="${e.reincidencia_dias!=null?'rein':''}" data-s="${esc(e.serial)}" tabindex="0"><td style="font-family:ui-monospace,monospace">${esc(e.serial)}</td><td>${esc(e.os)}</td><td>${esc(e.falha||'—')}</td><td><span class="pillA ${cls(e.etapa)}">${esc(e.etapa)}</span></td><td>${fmt(e.abertura)}</td><td style="text-align:right">${e.dias??'—'}</td><td>${e.reincidencia_dias!=null?`<span class="pillA eRein">Reincidente · ${e.reincidencia_dias} dias</span>`:(e.entradas>1?e.entradas+' entradas':'1ª entrada')}</td></tr>`).join(''):'<tr><td colspan="7">Nenhum equipamento para este filtro.</td></tr>';
+  document.querySelectorAll('.atKpi').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.f===(filtro||$('atEtapa').value)&&!!(filtro||$('atEtapa').value))))}
+function bind(){document.querySelectorAll('[data-f]').forEach(b=>b.onclick=()=>{filtro=b.dataset.f;$('atEtapa').value='';render()});
+  document.querySelectorAll('.atF').forEach(b=>b.onclick=()=>{$('atBusca').value=b.dataset.q;filtro='';render()})}
+document.querySelectorAll('.atTable th').forEach(th=>th.onclick=()=>{const s=th.dataset.s;dir=(sk===s?-dir:1);sk=s;document.querySelectorAll('.atTable th').forEach(t=>{const on=t.dataset.s===sk;t.setAttribute('aria-sort',on?(dir>0?'ascending':'descending'):'none');t.textContent=t.textContent.replace(/ [▲▼⇅]$/,'')+(on?(dir>0?' ▲':' ▼'):' ⇅')});render()});
+$('atRows').addEventListener('click',e=>{const tr=e.target.closest('tr[data-s]');if(tr)openEq(tr.dataset.s)});
+$('atRows').addEventListener('keydown',e=>{const tr=e.target.closest('tr[data-s]');if(tr&&(e.key==='Enter'||e.key===' ')){e.preventDefault();openEq(tr.dataset.s)}});
+$('atBusca').addEventListener('input',()=>{filtro='';render()});$('atEtapa').addEventListener('change',()=>{filtro='';render()});$('atCompany')?.addEventListener('change',load);
+async function openEq(s){$('atMTitle').textContent='Série '+s;$('atMBody').innerHTML='<p>Carregando…</p>';$('atModal').hidden=false;
+  const c=$('atCompany')?.value||'';const d=await fetch('/api/assistencia/equipamento?serie='+encodeURIComponent(s)+(c?'&company_id='+c:'')).then(r=>r.json());
+  $('atMBody').innerHTML=(d.historico||[]).map(o=>`<div class="atOs"><b>OS ${esc(o.os)}</b> · <span class="pillA ${cls(o.etapa)}">${esc(o.etapa)}</span><dl><dt>Abertura</dt><dd>${fmt(o.abertura)}</dd><dt>Encerramento</dt><dd>${fmt(o.encerramento)}</dd><dt>Falha informada</dt><dd>${esc(o.falha||'—')}</dd><dt>Falha constatada</dt><dd>${esc(o.falha_tecnica||'—')}</dd><dt>Causa</dt><dd>${esc(o.causa||'—')}</dd><dt>Solução</dt><dd>${esc((o.solucao||'—').replace(/\s*\|\s*/g,' · '))}</dd>${o.pecas.length?`<dt>Peças</dt><dd>${o.pecas.map(p=>esc(p.descricao+(p.qtde?' ('+p.qtde+')':''))).join('<br>')}</dd>`:''}</dl></div>`).join('')||'<p>Sem histórico.</p>'}
+window.atClose=()=>{$('atModal').hidden=true};document.addEventListener('keydown',e=>{if(e.key==='Escape'){atClose();window.atCargaClose&&atCargaClose()}});
+window.atExport=()=>{const r=lista();const h=['Nº de série','OS','Falha informada','Situação','Abertura','Dias','Entradas','Reincidência (dias)'];
+  const rows=[h,...r.map(e=>[e.serial,e.os,e.falha||'',e.etapa,fmt(e.abertura),e.dias??'',e.entradas,e.reincidencia_dias??''])];
+  const csv='﻿'+rows.map(x=>x.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(';')).join('\r\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));a.download='assistencia-tecnica-equipamentos.csv';a.click()};
+{% if can_load %}
+window.atCargaOpen=()=>{$('atCarga').hidden=false;loadMap()};window.atCargaClose=()=>{$('atCarga').hidden=true};
+async function loadMap(){const d=await fetch('/api/assistencia/clientes').then(r=>r.json());
+  const opts=id=>'<option value="">— sem vínculo (não aparece no Portal) —</option>'+d.empresas.map(e=>`<option value="${e.id}" ${e.id===id?'selected':''}>${esc(e.nome)}</option>`).join('');
+  $('atMap').innerHTML=d.clientes.length?d.clientes.map(c=>`<div style="display:grid;grid-template-columns:1fr 70px minmax(180px,1fr);gap:8px;align-items:center;font-size:13px;margin:4px 0;${c.company_id?'':'background:#fff7ed;border-radius:8px;padding:4px'}"><span>${esc(c.nome)}</span><span class="atMuted">${num(c.os)} OS</span><select data-n="${esc(c.nome)}" aria-label="Cliente do Portal para ${esc(c.nome)}" style="height:36px;border:1px solid #8a9bb0;border-radius:8px">${opts(c.company_id)}</select></div>`).join(''):'<p class="atMuted">Faça a primeira carga para listar os clientes da planilha.</p>';
+  $('atMap').querySelectorAll('select').forEach(s=>s.onchange=async()=>{s.disabled=true;await fetch('/api/assistencia/clientes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nome:s.dataset.n,company_id:s.value})});s.disabled=false;s.parentElement.style.background=s.value?'':'#fff7ed';load()});
+  $('atLoads').innerHTML=d.cargas.map(l=>`${esc(l.em.replace('T',' '))} · ${esc(l.arquivo)} · ${num(l.os)} OS (${num(l.novas)} novas, ${num(l.atualizadas)} atualizadas) · ${esc(l.por||'')}`).join('<br>')||'Nenhuma carga ainda.'}
+$('atForm').onsubmit=async e=>{e.preventDefault();const b=$('atSend');b.disabled=true;b.textContent='Carregando…';$('atRes').textContent='';
+  try{const r=await fetch('/api/assistencia/carga',{method:'POST',body:new FormData(e.target)});const d=await r.json();
+    $('atRes').innerHTML=r.ok?`<p style="color:#14532d;font-weight:700">Carga concluída: ${num(d.os)} OS (${num(d.novas)} novas, ${num(d.atualizadas)} atualizadas), ${num(d.clientes)} clientes.</p>`:`<p style="color:#991b1b;font-weight:700">${esc(d.error||'Falha na carga.')}</p>`;
+    if(r.ok){e.target.reset();loadMap();load()}}finally{b.disabled=false;b.textContent='Carregar'}};
+{% endif %}
+load();
+})();
+</script>
+{% endblock %}

@@ -34642,3 +34642,503 @@ def _v119_warmup():
 
 if os.environ.get("V119_WARMUP", "1") == "1":
     threading.Thread(target=_v119_warmup, name="v119-warmup", daemon=True).start()
+
+
+# ===========================================================================
+# V88.0 REV46 — Portal do Cliente › Assistência Técnica (Relatório de OS do Bhom Análises)
+# - Carga manual diária da planilha (tela interna); o histórico se acumula a cada carga.
+# - Cada cliente do Portal vê só os equipamentos vinculados à sua empresa. Valores (R$) nunca são guardados.
+# - Reincidência: mesma série com nova entrada em menos de 90 dias (OS do Bhom + agendamentos do Portal);
+#   o agendamento fica marcado como prioritário e sobe para o topo da fila interna.
+import zipfile as _v120_zip
+import xml.etree.ElementTree as _v120_ET
+import unicodedata as _v120_ud
+
+_V120_DIAS = 90
+_V120_READY = {"ok": False}
+_V120_COLS = {  # cabeçalho da planilha (normalizado) -> coluna
+    "NUMEROOS": "os_number", "CLIENTEDEINSTALACAO": "client_install", "CLIENTECOBRANCA": "client_bill",
+    "STATUSOS": "status_os", "STATUSDETALHADO": "status_det", "SUBSTATUS": "substatus",
+    "DATAABERTURA": "opened", "DATAENCERRAMENTO": "closed", "TIPOOS": "os_type", "NUMERODESERIE": "serial",
+    "CODIGOITEMOS": "item_code", "DESCRICAODOITEMOS": "item_desc", "QTDEITEM": "item_qty",
+    "TECNICOOS": "technician", "POSSUICONTRATO": "has_contract", "NCONTRATO": "contract_no",
+    "BREVEDESCFALHAMOTIVACAODAOS": "fault_short", "FALHAMOTIVACAODAOSABAFALHA": "fault",
+    "CAUSA": "cause", "SOLUCAO": "solution", "GARANTIAOS": "warranty",
+}
+_V120_OS_FIELDS = ("client_install", "client_bill", "status_os", "status_det", "substatus", "opened", "closed", "os_type",
+                   "serial", "serial_key", "technician", "has_contract", "contract_no", "fault_short", "fault", "cause", "solution", "warranty")
+_V120_ETAPAS = [  # (rótulo, cor, status detalhados)
+    ("Aguardando orçamento", "#8a9bb0", ("AGUARDANDO ORCAMENTO",)),
+    ("Aguardando aprovação", "#f2c14e", ("AGUARDANDO APROVACAO",)),
+    ("Em execução", "#2563eb", ("AGUARDANDO EXECUCAO",)),
+    ("Embalagem / NF", "#2ba6a0", ("AGUARDANDO EMB / EMISSAO NF", "AGUARDANDO RETIRADA INTERNA")),
+    ("Finalizado", "#0e7a5a", ("PROCESSO FINALIZADO",)),
+]
+
+
+def _v120_norm(s):
+    s = _v120_ud.normalize("NFKD", str(s or "")).encode("ascii", "ignore").decode("ascii").upper()
+    return re.sub(r"[^A-Z0-9]", "", s)
+
+
+def _v120_skey(serial):
+    return _v120_norm(serial)[:120]
+
+
+def _v120_date(v):
+    v = str(v or "").strip()
+    if not v:
+        return None
+    for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d/%m/%Y %H:%M", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(v[:len(datetime.now().strftime(fmt))], fmt).date()
+        except Exception:
+            pass
+    try:  # número de série de data do Excel
+        n = float(v)
+        if 20000 < n < 80000:
+            return (datetime(1899, 12, 30) + timedelta(days=n)).date()
+    except Exception:
+        pass
+    return None
+
+
+def _v120_ensure():
+    if _V120_READY["ok"]:
+        return
+    with db.engine.begin() as c:
+        c.execute(text("CREATE TABLE IF NOT EXISTS v120_at_os (os_number VARCHAR(40) PRIMARY KEY, client_install VARCHAR(200), client_bill VARCHAR(200),"
+                       " status_os VARCHAR(60), status_det VARCHAR(80), substatus VARCHAR(80), opened DATE, closed DATE, os_type VARCHAR(80),"
+                       " serial VARCHAR(120), serial_key VARCHAR(120), technician VARCHAR(120), has_contract VARCHAR(10), contract_no VARCHAR(40),"
+                       " fault_short TEXT, fault TEXT, cause TEXT, solution TEXT, warranty VARCHAR(10), first_load BIGINT, last_load BIGINT, updated_at TIMESTAMP)"))
+        c.execute(text("CREATE INDEX IF NOT EXISTS ix_v120_os_serial ON v120_at_os (serial_key)"))
+        c.execute(text("CREATE INDEX IF NOT EXISTS ix_v120_os_client ON v120_at_os (client_install)"))
+        c.execute(text("CREATE TABLE IF NOT EXISTS v120_at_items (os_number VARCHAR(40), line_no INTEGER, code VARCHAR(60), description VARCHAR(300), qty VARCHAR(20))"))
+        c.execute(text("CREATE INDEX IF NOT EXISTS ix_v120_items_os ON v120_at_items (os_number)"))
+        c.execute(text("CREATE TABLE IF NOT EXISTS v120_at_clients (name VARCHAR(200) PRIMARY KEY, company_id INTEGER)"))
+        c.execute(text("CREATE TABLE IF NOT EXISTS v120_at_loads (id BIGINT PRIMARY KEY, filename VARCHAR(255), created_at TIMESTAMP, user_name VARCHAR(180),"
+                       " rows_count INTEGER, os_count INTEGER, new_count INTEGER, upd_count INTEGER)"))
+        c.execute(text("CREATE TABLE IF NOT EXISTS v120_at_flags (appointment_id INTEGER, serial_key VARCHAR(120), serial VARCHAR(120), days INTEGER,"
+                       " last_date DATE, last_ref VARCHAR(200), created_at TIMESTAMP, times INTEGER, PRIMARY KEY (appointment_id, serial_key))"))
+    _V120_READY["ok"] = True
+
+
+def _v120_read_rows(raw, filename):
+    """Lê a planilha (.xlsx direto do XML — o arquivo do Bhom tem estilos que o openpyxl recusa — ou .csv)."""
+    name = (filename or "").lower()
+    if name.endswith(".csv") or raw[:2] != b"PK":
+        txt = raw.decode("utf-8-sig", errors="replace")
+        sep = ";" if txt.count(";") > txt.count(",") else ","
+        return [r for r in csv.reader(io.StringIO(txt), delimiter=sep)]
+    ns = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+    z = _v120_zip.ZipFile(io.BytesIO(raw))
+    names = z.namelist()
+    ss = []
+    if "xl/sharedStrings.xml" in names:
+        for si in _v120_ET.fromstring(z.read("xl/sharedStrings.xml")).findall(ns + "si"):
+            ss.append("".join(t.text or "" for t in si.iter(ns + "t")))
+    sheet = next((n for n in names if n.startswith("xl/worksheets/") and n.endswith(".xml")), None)
+    if not sheet:
+        raise ValueError("Planilha sem abas.")
+    out = []
+    for r in _v120_ET.fromstring(z.read(sheet)).iter(ns + "row"):
+        vals = {}
+        for cel in r.findall(ns + "c"):
+            ref = re.match(r"[A-Z]+", cel.get("r") or "A")
+            col = 0
+            for ch in ref.group():
+                col = col * 26 + ord(ch) - 64
+            t = cel.get("t"); v = cel.find(ns + "v")
+            if t == "inlineStr":
+                val = "".join(x.text or "" for x in cel.iter(ns + "t"))
+            elif v is None:
+                continue
+            elif t == "s":
+                val = ss[int(v.text)]
+            else:
+                val = v.text or ""
+            vals[col - 1] = val
+        if vals:
+            out.append([vals.get(i, "") for i in range(max(vals) + 1)])
+    return out
+
+
+def _v120_parse(rows):
+    if not rows:
+        raise ValueError("Planilha vazia.")
+    head = [_v120_norm(h) for h in rows[0]]
+    idx = {}
+    for i, h in enumerate(head):
+        if h in _V120_COLS and _V120_COLS[h] not in idx:
+            idx[_V120_COLS[h]] = i
+    falta = [k for k in ("os_number", "client_install", "serial", "opened") if k not in idx]
+    if falta:
+        raise ValueError("Esta não parece ser o Relatório de OS do Bhom (faltam as colunas: " + ", ".join(falta) + ").")
+    oss, items = {}, {}
+    for r in rows[1:]:
+        g = lambda k: (str(r[idx[k]]).strip() if k in idx and idx[k] < len(r) and r[idx[k]] is not None else "")
+        num = g("os_number")
+        if not num:
+            continue
+        if num.endswith(".0"):
+            num = num[:-2]
+        if num not in oss:
+            oss[num] = {"os_number": num, "client_install": g("client_install")[:200], "client_bill": g("client_bill")[:200],
+                        "status_os": g("status_os")[:60], "status_det": g("status_det")[:80], "substatus": g("substatus")[:80],
+                        "opened": _v120_date(g("opened")), "closed": _v120_date(g("closed")), "os_type": g("os_type")[:80],
+                        "serial": g("serial")[:120], "serial_key": _v120_skey(g("serial")), "technician": g("technician")[:120],
+                        "has_contract": g("has_contract")[:10], "contract_no": g("contract_no")[:40], "fault_short": g("fault_short"),
+                        "fault": g("fault"), "cause": g("cause"), "solution": g("solution"), "warranty": g("warranty")[:10]}
+            items[num] = []
+        if g("item_code") or g("item_desc"):
+            items[num].append({"code": g("item_code")[:60], "description": g("item_desc")[:300], "qty": g("item_qty")[:20]})
+    return oss, items
+
+
+def _v120_import(raw, filename, user_name):
+    _v120_ensure()
+    oss, items = _v120_parse(_v120_read_rows(raw, filename))
+    load_id = int(time.time() * 1000)
+    now = datetime.utcnow()
+    with db.engine.begin() as c:
+        exist = set()
+        keys = list(oss)
+        for i in range(0, len(keys), 500):
+            part = keys[i:i + 500]
+            q = text("SELECT os_number FROM v120_at_os WHERE os_number IN (" + ",".join(f":k{j}" for j in range(len(part))) + ")")
+            exist |= {r[0] for r in c.execute(q, {f"k{j}": v for j, v in enumerate(part)})}
+        cols = ",".join(_V120_OS_FIELDS)
+        sets = ",".join(f"{f}=:{f}" for f in _V120_OS_FIELDS)
+        # gravações em lote (poucas idas ao banco mesmo com milhares de linhas)
+        upd = [dict(o, last_load=load_id, updated_at=now) for n, o in oss.items() if n in exist]
+        ins = [dict(o, last_load=load_id, updated_at=now) for n, o in oss.items() if n not in exist]
+        if upd:
+            c.execute(text(f"UPDATE v120_at_os SET {sets}, last_load=:last_load, updated_at=:updated_at WHERE os_number=:os_number"), upd)
+        if ins:
+            c.execute(text(f"INSERT INTO v120_at_os (os_number,{cols},first_load,last_load,updated_at) VALUES (:os_number,"
+                           + ",".join(":" + f for f in _V120_OS_FIELDS) + ",:last_load,:last_load,:updated_at)"), ins)
+        for i in range(0, len(keys), 500):
+            part = keys[i:i + 500]
+            c.execute(text("DELETE FROM v120_at_items WHERE os_number IN (" + ",".join(f":k{j}" for j in range(len(part))) + ")"), {f"k{j}": v for j, v in enumerate(part)})
+        its = [{"n": num, "l": ln, "c": it["code"], "d": it["description"], "q": it["qty"]} for num in keys for ln, it in enumerate(items.get(num) or [], 1)]
+        if its:
+            c.execute(text("INSERT INTO v120_at_items (os_number,line_no,code,description,qty) VALUES (:n,:l,:c,:d,:q)"), its)
+        names = {o["client_install"] for o in oss.values() if o["client_install"]}
+        known = {r[0] for r in c.execute(text("SELECT name FROM v120_at_clients"))}
+        for nm in names - known:
+            c.execute(text("INSERT INTO v120_at_clients (name, company_id) VALUES (:n, :c)"), {"n": nm, "c": _v120_guess_company(nm)})
+        new = len(oss) - len(exist)
+        c.execute(text("INSERT INTO v120_at_loads (id,filename,created_at,user_name,rows_count,os_count,new_count,upd_count) VALUES (:i,:f,:t,:u,:r,:o,:n,:p)"),
+                  {"i": load_id, "f": (filename or "")[:255], "t": now, "u": (user_name or "")[:180], "r": sum(1 + max(0, len(v) - 1) for v in items.values()),
+                   "o": len(oss), "n": new, "p": len(exist)})
+    return {"ok": True, "load_id": load_id, "os": len(oss), "novas": new, "atualizadas": len(exist), "clientes": len(names)}
+
+
+def _v120_guess_company(name):
+    """Sugere o cliente do Portal pelo nome (ex.: 'AUTO VIACAO URUBUPUNGA LTDA' -> 'Urubupunga')."""
+    try:
+        n = _v120_norm(name)
+        best = None
+        for cc in CustomerCompany.query.filter(CustomerCompany.active.is_(True)).all():
+            for cand in (cc.legal_name, cc.trade_name):
+                k = _v120_norm(cand)
+                if len(k) >= 5 and (k in n or n in k):
+                    if best is None or len(k) > best[0]:
+                        best = (len(k), cc.id)
+        return best[1] if best else None
+    except Exception:
+        return None
+
+
+def _v120_user_company_ids():
+    """Empresas que o usuário pode ver: None = todas (equipe interna); lista vazia = nenhuma."""
+    if _portal_staff():
+        return None
+    u = db.session.get(User, session.get("user_id"))
+    if not u or not _has_access("portal.appointments"):
+        return []
+    return [c.id for c in _customer_companies_for_user(u)]
+
+
+def _v120_os_rows(company_ids, serial_key=None):
+    _v120_ensure()
+    sql = ("SELECT o.os_number,o.client_install,o.status_os,o.status_det,o.substatus,o.opened,o.closed,o.serial,o.serial_key,o.technician,"
+           "o.fault_short,o.fault,o.cause,o.solution,m.company_id FROM v120_at_os o LEFT JOIN v120_at_clients m ON m.name=o.client_install WHERE 1=1")
+    p = {}
+    if company_ids is not None:
+        if not company_ids:
+            return []
+        sql += " AND m.company_id IN (" + ",".join(f":c{i}" for i in range(len(company_ids))) + ")"
+        p.update({f"c{i}": v for i, v in enumerate(company_ids)})
+    if serial_key:
+        sql += " AND o.serial_key = :sk"; p["sk"] = serial_key
+    with db.engine.connect() as c:
+        return [dict(r._mapping) for r in c.execute(text(sql + " ORDER BY o.opened DESC, o.os_number DESC"), p)]
+
+
+def _v120_d(v):
+    if v is None or isinstance(v, date):
+        return v
+    try:
+        return datetime.strptime(str(v)[:10], "%Y-%m-%d").date()
+    except Exception:
+        return None
+
+
+def _v120_etapa(r):
+    if (r.get("status_os") or "").upper() == "CANCELADA":
+        return "Cancelada"
+    sd = (r.get("status_det") or "").upper()
+    for rot, _cor, sts in _V120_ETAPAS:
+        if sd in sts:
+            return rot
+    return "Finalizado" if (r.get("status_os") or "").upper() == "FATURADA" else (r.get("status_det") or "Em andamento").capitalize()
+
+
+@app.get("/portal-cliente/assistencia-tecnica")
+@login_required
+def v120_page():
+    if not (_portal_staff() or _has_access("portal.appointments")):
+        abort(403)
+    u = db.session.get(User, session["user_id"])
+    comps = CustomerCompany.query.filter(CustomerCompany.active.is_(True)).order_by(CustomerCompany.legal_name).all() if _portal_staff() else _customer_companies_for_user(u)
+    return render_template("assistencia_tecnica_v120.html", app_release=APP_RELEASE, internal=_portal_staff(),
+                           can_load=_portal_staff() and _has_access("portal.manage"), companies=comps)
+
+
+@app.get("/api/assistencia/dashboard")
+@login_required
+def v120_dashboard():
+    ids = _v120_user_company_ids()
+    if ids is None and request.args.get("company_id", "").isdigit():
+        ids = [int(request.args["company_id"])]
+    if ids is not None and not ids and not _portal_staff():
+        return jsonify({"ok": False, "error": "Seu usuário não está vinculado a uma empresa do Portal."}), 403
+    rows = [r for r in _v120_os_rows(ids) if (r.get("status_os") or "").upper() != "CANCELADA"]
+    hoje = datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+    by = {}
+    for r in rows:
+        r["opened"] = _v120_d(r["opened"]); r["closed"] = _v120_d(r["closed"])
+        by.setdefault(r["serial_key"] or r["os_number"], []).append(r)
+    equip = []
+    for sk, lst in by.items():
+        lst.sort(key=lambda x: (x["opened"] or date.min, x["os_number"]), reverse=True)
+        ult = lst[0]
+        rein = None
+        if len(lst) > 1 and ult["opened"] and lst[1]["opened"] and (ult["opened"] - lst[1]["opened"]).days < _V120_DIAS:
+            rein = (ult["opened"] - lst[1]["opened"]).days
+        fim = ult["closed"] or hoje
+        equip.append({"serial": ult["serial"], "os": ult["os_number"], "falha": ult["fault_short"] or ult["fault"], "etapa": _v120_etapa(ult),
+                      "abertura": ult["opened"].isoformat() if ult["opened"] else None, "dias": (fim - ult["opened"]).days if ult["opened"] else None,
+                      "entradas": len(lst), "reincidencia_dias": rein})
+    etapas = {}
+    for e in equip:
+        etapas[e["etapa"]] = etapas.get(e["etapa"], 0) + 1
+    fin = [r for r in rows if r["closed"] and r["opened"]]
+    falhas = {}
+    for r in rows:
+        f = (r.get("fault_short") or "").strip().upper()
+        if f:
+            falhas[f] = falhas.get(f, 0) + 1
+    with db.engine.connect() as c:
+        last = c.execute(text("SELECT created_at, filename FROM v120_at_loads ORDER BY id DESC LIMIT 1")).first()
+    aberturas = [r["opened"] for r in rows if r["opened"]]
+    return jsonify({"ok": True,
+                    "atualizado_em": last[0].isoformat() if last and hasattr(last[0], "isoformat") else (str(last[0]) if last else None),
+                    "periodo": [min(aberturas).isoformat(), max(aberturas).isoformat()] if aberturas else None,
+                    "kpis": {"equipamentos": len(equip), "os": len(rows),
+                             "em_manutencao": sum(1 for e in equip if e["etapa"] != "Finalizado"),
+                             "finalizados": sum(1 for e in equip if e["etapa"] == "Finalizado"),
+                             "aguardando_aprovacao": sum(1 for e in equip if e["etapa"] == "Aguardando aprovação"),
+                             "reincidencias": sum(1 for e in equip if e["reincidencia_dias"] is not None),
+                             "tempo_medio": round(sum((r["closed"] - r["opened"]).days for r in fin) / len(fin), 1) if fin else None},
+                    "etapas": [{"rotulo": rot, "cor": cor, "n": etapas.get(rot, 0)} for rot, cor, _ in _V120_ETAPAS],
+                    "falhas": [{"rotulo": k.capitalize(), "n": v} for k, v in sorted(falhas.items(), key=lambda x: -x[1])[:6]],
+                    "equipamentos": sorted(equip, key=lambda e: (e["abertura"] or ""), reverse=True)})
+
+
+@app.get("/api/assistencia/equipamento")
+@login_required
+def v120_equipamento():
+    ids = _v120_user_company_ids()
+    sk = _v120_skey(request.args.get("serie"))
+    if not sk:
+        return jsonify({"ok": False, "error": "Informe a série."}), 400
+    rows = _v120_os_rows(ids, sk)
+    nums = [r["os_number"] for r in rows]
+    itens = {}
+    if nums:
+        with db.engine.connect() as c:
+            q = text("SELECT os_number, code, description, qty FROM v120_at_items WHERE os_number IN (" + ",".join(f":n{i}" for i in range(len(nums))) + ") ORDER BY os_number, line_no")
+            for r in c.execute(q, {f"n{i}": v for i, v in enumerate(nums)}):
+                itens.setdefault(r[0], []).append({"codigo": r[1], "descricao": r[2], "qtde": r[3]})
+    return jsonify({"ok": True, "serie": rows[0]["serial"] if rows else request.args.get("serie"), "historico": [{
+        "os": r["os_number"], "etapa": _v120_etapa(r), "abertura": str(r["opened"] or "")[:10] or None, "encerramento": str(r["closed"] or "")[:10] or None,
+        "falha": r["fault_short"], "falha_tecnica": r["fault"], "causa": r["cause"], "solucao": r["solution"], "tecnico": r["technician"],
+        "pecas": itens.get(r["os_number"], [])} for r in rows]})
+
+
+def _v120_reincidencia(serial, company_names=None, exclude_appt=None, hoje=None):
+    """Última entrada da série em menos de 90 dias (OS do Bhom ou agendamento anterior do Portal)
+    e quantas vezes o equipamento já veio até a data da consulta."""
+    sk = _v120_skey(serial)
+    if not sk:
+        return None
+    hoje = hoje or datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+    lim = hoje - timedelta(days=_V120_DIAS)
+    cand, os_datas = [], []
+    try:
+        _v120_ensure()
+        with db.engine.connect() as c:
+            rows = c.execute(text("SELECT os_number, opened, fault_short, solution FROM v120_at_os WHERE serial_key=:k"
+                                  " AND UPPER(COALESCE(status_os,'')) <> 'CANCELADA' ORDER BY opened DESC LIMIT 200"), {"k": sk}).fetchall()
+        for r in rows:
+            d = _v120_d(r[1])
+            if not d or d > hoje:
+                continue
+            os_datas.append(d)
+            if d >= lim and not cand:
+                sol = (r[3] or "").split("| ITENS EXCLUIDOS")[0].strip(" |")
+                cand.append((d, "OS " + str(r[0]), (r[2] or "").strip(), sol))
+    except Exception:
+        db.session.rollback()
+    portal = []
+    try:
+        q = (db.session.query(CustomerAppointmentEquipment, CustomerAppointment)
+             .join(CustomerAppointment, CustomerAppointment.id == CustomerAppointmentEquipment.appointment_id)
+             .filter(CustomerAppointmentEquipment.created_at >= datetime.combine(hoje - timedelta(days=365), datetime.min.time())))
+        if exclude_appt:
+            q = q.filter(CustomerAppointmentEquipment.appointment_id != exclude_appt)
+        for eq, ap in q.all():
+            if _v120_skey(eq.serial_number) == sk and (ap.status or "").upper() not in ("RASCUNHO", "CANCELADO"):
+                d = eq.created_at.date()
+                portal.append(d)
+                if d >= lim:
+                    cand.append((d, "agendamento " + (ap.code or str(ap.id)), (eq.defect or "").strip(), ""))
+    except Exception:
+        db.session.rollback()
+    if not cand:
+        return None
+    # Um agendamento do Portal que virou OS no Bhom (aberta até 30 dias depois) conta uma vez só.
+    datas = list(os_datas) + [d for d in set(portal) if not any(d <= o <= d + timedelta(days=30) for o in os_datas)]
+    d, ref, falha, sol = max(cand, key=lambda x: x[0])
+    return {"dias": (hoje - d).days, "data": d.isoformat(), "ref": ref, "falha": falha, "solucao": sol[:200],
+            "vezes": len(datas), "vezes_periodo": sum(1 for x in datas if x >= lim), "consulta": hoje.isoformat()}
+
+
+@app.get("/api/assistencia/reincidencia")
+@login_required
+def v120_reincidencia_api():
+    if not (_portal_staff() or _has_access("portal.appointments")):
+        abort(403)
+    r = _v120_reincidencia(request.args.get("serie"), exclude_appt=request.args.get("excluir", type=int))
+    return jsonify({"ok": True, "reincidente": bool(r), "dias_limite": _V120_DIAS, **(r or {})})
+
+
+@app.post("/api/assistencia/carga")
+@login_required
+def v120_carga():
+    if not (_portal_staff() and _has_access("portal.manage")):
+        abort(403)
+    f = request.files.get("arquivo")
+    if not f or not f.filename:
+        return jsonify({"ok": False, "error": "Escolha a planilha do Bhom Análises."}), 400
+    raw = f.read()
+    if len(raw) > 30 * 1024 * 1024:
+        return jsonify({"ok": False, "error": "Arquivo acima de 30 MB."}), 400
+    try:
+        res = _v120_import(raw, f.filename, session.get("name") or "")
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    except Exception:
+        app.logger.exception("REV46: falha na carga do Bhom")
+        return jsonify({"ok": False, "error": "Não foi possível ler a planilha. Confira se é o Relatório de OS exportado do Bhom."}), 400
+    try:
+        db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="ASSISTENCIA_BHOM_CARGA", entity_type="v120_at_loads",
+                                  entity_id=str(res["load_id"]), detail=f"{f.filename}: {res['os']} OS, {res['novas']} novas"))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+    return jsonify(res)
+
+
+@app.route("/api/assistencia/clientes", methods=["GET", "POST"])
+@login_required
+def v120_clientes():
+    if not (_portal_staff() and _has_access("portal.manage")):
+        abort(403)
+    _v120_ensure()
+    if request.method == "POST":
+        d = request.get_json(silent=True) or {}
+        nome = (d.get("nome") or "").strip()
+        cid = d.get("company_id")
+        cid = int(cid) if str(cid or "").isdigit() and db.session.get(CustomerCompany, int(cid)) else None
+        with db.engine.begin() as c:
+            c.execute(text("UPDATE v120_at_clients SET company_id=:c WHERE name=:n"), {"c": cid, "n": nome})
+        return jsonify({"ok": True})
+    with db.engine.connect() as c:
+        rows = c.execute(text("SELECT m.name, m.company_id, COUNT(o.os_number) FROM v120_at_clients m LEFT JOIN v120_at_os o ON o.client_install=m.name GROUP BY m.name, m.company_id ORDER BY COUNT(o.os_number) DESC")).all()
+        loads = c.execute(text("SELECT id, filename, created_at, user_name, os_count, new_count, upd_count FROM v120_at_loads ORDER BY id DESC LIMIT 10")).all()
+    comps = CustomerCompany.query.filter(CustomerCompany.active.is_(True)).order_by(CustomerCompany.legal_name).all()
+    return jsonify({"ok": True, "clientes": [{"nome": r[0], "company_id": r[1], "os": int(r[2] or 0)} for r in rows],
+                    "empresas": [{"id": cc.id, "nome": cc.trade_name or cc.legal_name} for cc in comps],
+                    "cargas": [{"arquivo": l[1], "em": str(l[2])[:16], "por": l[3], "os": l[4], "novas": l[5], "atualizadas": l[6]} for l in loads]})
+
+
+# Agendamento: marca reincidências (prioridade) e a fila interna mostra os prioritários primeiro.
+_v120_create_orig = app.view_functions.get("portal_appointments_create")
+_v120_list_orig = app.view_functions.get("portal_appointments_list")
+
+
+def _v120_marcar(appt_id):
+    try:
+        _v120_ensure()
+        eqs = CustomerAppointmentEquipment.query.filter_by(appointment_id=appt_id).all()
+        with db.engine.begin() as c:
+            for eq in eqs:
+                r = _v120_reincidencia(eq.serial_number, exclude_appt=appt_id)
+                sk = _v120_skey(eq.serial_number)
+                c.execute(text("DELETE FROM v120_at_flags WHERE appointment_id=:a AND serial_key=:k"), {"a": appt_id, "k": sk})
+                if r:
+                    c.execute(text("INSERT INTO v120_at_flags (appointment_id,serial_key,serial,days,last_date,last_ref,created_at,times) VALUES (:a,:k,:s,:d,:l,:r,:t,:v)"),
+                              {"a": appt_id, "k": sk, "s": eq.serial_number, "d": r["dias"], "l": _v120_d(r["data"]), "r": r["ref"][:200], "t": datetime.utcnow(), "v": r.get("vezes")})
+    except Exception:
+        app.logger.exception("REV46: falha ao marcar reincidência")
+
+
+if _v120_create_orig:
+    def _v120_create(*a, **k):
+        resp = make_response(_v120_create_orig(*a, **k))
+        try:
+            if resp.status_code == 200:
+                d = resp.get_json(silent=True) or {}
+                if d.get("ok") and d.get("id"):
+                    _v120_marcar(int(d["id"]))
+        except Exception:
+            pass
+        return resp
+    app.view_functions["portal_appointments_create"] = _v120_create
+
+if _v120_list_orig:
+    def _v120_list(*a, **k):
+        resp = make_response(_v120_list_orig(*a, **k))
+        try:
+            if resp.status_code == 200:
+                d = resp.get_json(silent=True) or {}
+                rows = d.get("rows") or []
+                ids = [r.get("id") for r in rows if r.get("id")]
+                if ids:
+                    _v120_ensure()
+                    with db.engine.connect() as c:
+                        q = text("SELECT appointment_id, COUNT(*), MIN(days), MAX(times) FROM v120_at_flags WHERE appointment_id IN (" + ",".join(f":i{n}" for n in range(len(ids))) + ") GROUP BY appointment_id")
+                        fl = {r[0]: (int(r[1]), r[2], r[3]) for r in c.execute(q, {f"i{n}": v for n, v in enumerate(ids)})}
+                    for r in rows:
+                        if r.get("id") in fl:
+                            r["prioridade"] = {"equipamentos": fl[r["id"]][0], "dias": fl[r["id"]][1], "vezes": fl[r["id"]][2]}
+                    if d.get("internal"):
+                        rows.sort(key=lambda r: 0 if r.get("prioridade") and (r.get("status") or "").upper() not in ("DEVOLVIDO", "CANCELADO", "CONCLUIDO") else 1)
+                    resp = jsonify(d)
+        except Exception:
+            pass
+        return resp
+    app.view_functions["portal_appointments_list"] = _v120_list
