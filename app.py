@@ -35461,23 +35461,23 @@ def _v122_contagens(itens):
             with db.engine.connect() as c:
                 for i in range(0, len(sks), 400):
                     part = sks[i:i + 400]
-                    q = text("SELECT serial_key, os_number, opened FROM v120_at_os WHERE UPPER(COALESCE(status_os,'')) <> 'CANCELADA' AND serial_key IN ("
+                    q = text("SELECT serial_key, os_number, opened, client_install FROM v120_at_os WHERE UPPER(COALESCE(status_os,'')) <> 'CANCELADA' AND serial_key IN ("
                              + ",".join(f":k{j}" for j in range(len(part))) + ")")
-                    for sk, osn, op in c.execute(q, {f"k{j}": v for j, v in enumerate(part)}):
+                    for sk, osn, op, cli in c.execute(q, {f"k{j}": v for j, v in enumerate(part)}):
                         d = _v120_d(op)
                         if d:
-                            bhom.setdefault(sk, []).append((str(osn), d))
+                            bhom.setdefault(sk, []).append((str(osn), d, _v120_norm(cli)))
         except Exception:
             db.session.rollback()
         try:
             alvo = set(sks)
-            q = (db.session.query(CustomerAppointmentEquipment.serial_number, CustomerAppointmentEquipment.created_at, CustomerAppointment.status)
+            q = (db.session.query(CustomerAppointmentEquipment.serial_number, CustomerAppointmentEquipment.created_at, CustomerAppointment.status, CustomerAppointment.customer_company)
                  .join(CustomerAppointment, CustomerAppointment.id == CustomerAppointmentEquipment.appointment_id)
                  .filter(CustomerAppointmentEquipment.created_at >= datetime.combine(hoje - timedelta(days=400), datetime.min.time())))
-            for serial, criado, st in q.all():
+            for serial, criado, st, emp in q.all():
                 sk = _v120_skey(serial)
                 if sk in alvo and criado and str(st or "").upper() not in ("RASCUNHO", "CANCELADO"):
-                    portal.setdefault(sk, []).append(criado.date())
+                    portal.setdefault(sk, []).append((criado.date(), _v120_norm(emp)))
         except Exception:
             db.session.rollback()
     out = []
@@ -35488,10 +35488,14 @@ def _v122_contagens(itens):
         ref = _v120_date(x.get("data")) or hoje
         lim = ref - timedelta(days=_V120_DIAS)
         osn = re.sub(r"\D", "", str(x.get("os") or "")) or str(x.get("os") or "").strip()
-        ant = [d for o, d in bhom.get(sk, []) if lim <= d <= ref and re.sub(r"\D", "", o) != osn]
-        todas_os = [d for _o, d in bhom.get(sk, [])] + [ref]
+        # Série curta (menos de 8 caracteres) se repete entre clientes: só conta se o cliente também for o mesmo.
+        cli = _v120_norm(x.get("nome"))
+        mesmo = (lambda n: True) if len(sk) >= 8 else (lambda n: bool(cli and n and (cli in n or n in cli)))
+        hb = [(o, d) for o, d, n in bhom.get(sk, []) if mesmo(n)]
+        ant = [d for o, d in hb if lim <= d <= ref and re.sub(r"\D", "", o) != osn]
+        todas_os = [d for _o, d in hb] + [ref]
         # Agendamento do Portal que virou OS (até 30 dias depois) conta uma vez só.
-        por = [d for d in set(portal.get(sk, [])) if lim <= d <= ref and not any(d <= o <= d + timedelta(days=30) for o in todas_os)]
+        por = [d for d in {d for d, n in portal.get(sk, []) if mesmo(n)} if lim <= d <= ref and not any(d <= o <= d + timedelta(days=30) for o in todas_os)]
         vezes = 1 + len(ant) + len(por) if sk else 1
         out.append({"nome": str(x.get("nome") or "").strip()[:60], "os": str(x.get("os") or "").strip()[:30], "serie": str(x.get("serie") or "").strip()[:60],
                     "data": ref.strftime("%d/%m/%Y") if _v120_date(x.get("data")) else str(x.get("data") or "").strip()[:20],
