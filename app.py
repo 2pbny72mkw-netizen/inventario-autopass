@@ -34551,3 +34551,94 @@ def _v118_thumb_put(key, data):
             conn.execute(text(ins), {"k": key[:500], "d": data, "t": datetime.utcnow()})
     except Exception:
         pass
+
+
+# V88.0 REV45 — servidor mais leve para o app no plano Free (sem custo).
+# 1) Dashboards de Troca de Chips (Recarga) e de Garagem guardados por 60 s para todos
+#    (resultado não depende do usuário; Garagem continua exigindo a permissão a cada pedido).
+#    Qualquer gravação em troca de chips limpa o que estiver guardado.
+# 2) Pré-aquecimento: ~25 s depois de cada reinício (acordar do plano Free ou publicação), os
+#    dashboards pesados são calculados uma vez, para o primeiro usuário não esperar 2–4 s.
+_V119_SHARED = {}
+_V119_IGNORED = {"_", "t", "ts", "timestamp", "cache", "cacheBust", "cb"}
+_V119_CHIP_PREFIXES = ("/api/chip-swaps", "/api/garage-chip-swaps", "/troca-chips", "/api/mobile/v1/field/chip", "/api/mobile/v1/ponte/api/chip-swaps", "/api/mobile/v1/ponte/api/garage-chip-swaps")
+
+
+def _v119_key(name):
+    return name + "?" + "&".join(f"{k}={v}" for k, v in sorted(request.args.items()) if k not in _V119_IGNORED)
+
+
+def _v119_shared_cache(name, ttl=60, guard=None):
+    orig = app.view_functions.get(name)
+    if orig is None:
+        return
+
+    def wrapper(*a, **k):
+        if request.method != "GET" or not session.get("user_id") or (guard is not None and not guard()):
+            return orig(*a, **k)
+        key = _v119_key(name)
+        hit = _V119_SHARED.get(key)
+        if hit and hit[0] > time.monotonic():
+            resp = Response(hit[1], mimetype="application/json")
+            resp.headers["X-Autopass-Cache"] = "HIT"
+            return resp
+        resp = make_response(orig(*a, **k))
+        try:
+            if resp.status_code == 200 and (resp.mimetype or "") == "application/json" and not resp.direct_passthrough:
+                if len(_V119_SHARED) > 40:
+                    _V119_SHARED.clear()
+                _V119_SHARED[key] = (time.monotonic() + ttl, resp.get_data())
+        except Exception:
+            pass
+        return resp
+
+    wrapper.__name__ = getattr(orig, "__name__", name)
+    app.view_functions[name] = wrapper
+
+
+_v119_shared_cache("chip_swap_dashboard_api")
+_v119_shared_cache("garage_chip_list_api", guard=lambda: _has_access("implantation.garage"))
+
+
+@app.after_request
+def _v119_invalidate(resp):
+    try:
+        if request.method != "GET" and resp.status_code < 400 and request.path.startswith(_V119_CHIP_PREFIXES):
+            _V119_SHARED.clear()
+    except Exception:
+        pass
+    return resp
+
+
+def _v119_warmup():
+    time.sleep(25)
+    try:
+        with app.app_context():
+            for path, fn in (("/api/locations", globals().get("api_locations")),
+                             ("/api/topdesk/dashboard", globals().get("topdesk_dashboard_api"))):
+                try:
+                    raw = getattr(fn, "__wrapped__", None)
+                    if raw:
+                        with app.test_request_context(path):
+                            raw()
+                except Exception:
+                    pass
+                finally:
+                    db.session.remove()
+            try:
+                raw = getattr(globals().get("chip_swap_dashboard_api"), "__wrapped__", None)
+                if raw:
+                    with app.test_request_context("/api/chip-swaps/dashboard"):
+                        r = make_response(raw())
+                        if r.status_code == 200:
+                            _V119_SHARED[_v119_key("chip_swap_dashboard_api")] = (time.monotonic() + 60, r.get_data())
+            except Exception:
+                pass
+            finally:
+                db.session.remove()
+    except Exception:
+        pass
+
+
+if os.environ.get("V119_WARMUP", "1") == "1":
+    threading.Thread(target=_v119_warmup, name="v119-warmup", daemon=True).start()
