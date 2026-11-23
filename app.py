@@ -34914,23 +34914,33 @@ def v120_dashboard():
         ids = [int(request.args["company_id"])]
     if ids is not None and not ids and not _portal_staff():
         return jsonify({"ok": False, "error": "Seu usuário não está vinculado a uma empresa do Portal."}), 403
-    rows = [r for r in _v120_os_rows(ids) if (r.get("status_os") or "").upper() != "CANCELADA"]
+    todas = [r for r in _v120_os_rows(ids) if (r.get("status_os") or "").upper() != "CANCELADA"]
     hoje = datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+    for r in todas:
+        r["opened"] = _v120_d(r["opened"]); r["closed"] = _v120_d(r["closed"])
+    de, ate = _v120_d(request.args.get("de")), _v120_d(request.args.get("ate"))
+    # Filtro de período pela data de abertura da OS; o histórico completo continua valendo para a reincidência.
+    rows = [r for r in todas if (not de or (r["opened"] and r["opened"] >= de)) and (not ate or (r["opened"] and r["opened"] <= ate))]
+    hist = {}
+    for r in todas:
+        hist.setdefault(r["serial_key"] or r["os_number"], []).append(r)
     by = {}
     for r in rows:
-        r["opened"] = _v120_d(r["opened"]); r["closed"] = _v120_d(r["closed"])
         by.setdefault(r["serial_key"] or r["os_number"], []).append(r)
     equip = []
     for sk, lst in by.items():
         lst.sort(key=lambda x: (x["opened"] or date.min, x["os_number"]), reverse=True)
         ult = lst[0]
+        ant = [h for h in hist.get(sk, []) if h["os_number"] != ult["os_number"] and h["opened"] and ult["opened"] and h["opened"] <= ult["opened"]]
+        ant.sort(key=lambda x: x["opened"], reverse=True)
         rein = None
-        if len(lst) > 1 and ult["opened"] and lst[1]["opened"] and (ult["opened"] - lst[1]["opened"]).days < _V120_DIAS:
-            rein = (ult["opened"] - lst[1]["opened"]).days
+        if ant and (ult["opened"] - ant[0]["opened"]).days < _V120_DIAS:
+            rein = (ult["opened"] - ant[0]["opened"]).days
         fim = ult["closed"] or hoje
         equip.append({"serial": ult["serial"], "os": ult["os_number"], "falha": ult["fault_short"] or ult["fault"], "etapa": _v120_etapa(ult),
                       "abertura": ult["opened"].isoformat() if ult["opened"] else None, "dias": (fim - ult["opened"]).days if ult["opened"] else None,
-                      "entradas": len(lst), "reincidencia_dias": rein})
+                      "entradas": len([h for h in hist.get(sk, []) if h["opened"] and ult["opened"] and h["opened"] <= ult["opened"]]) or len(lst),
+                      "reincidencia_dias": rein})
     etapas = {}
     for e in equip:
         etapas[e["etapa"]] = etapas.get(e["etapa"], 0) + 1
@@ -34940,12 +34950,25 @@ def v120_dashboard():
         f = (r.get("fault_short") or "").strip().upper()
         if f:
             falhas[f] = falhas.get(f, 0) + 1
+    semanas = {}
+    for r in rows:
+        if r["opened"]:
+            w = r["opened"] - timedelta(days=r["opened"].weekday())
+            x = semanas.setdefault(w, [0, 0])
+            x[0 if _v120_etapa(r) == "Finalizado" else 1] += 1
+    if semanas:
+        w = min(semanas)
+        while w < max(semanas):
+            semanas.setdefault(w, [0, 0]); w += timedelta(days=7)
     with db.engine.connect() as c:
         last = c.execute(text("SELECT created_at, filename FROM v120_at_loads ORDER BY id DESC LIMIT 1")).first()
     aberturas = [r["opened"] for r in rows if r["opened"]]
+    todas_ab = [r["opened"] for r in todas if r["opened"]]
     return jsonify({"ok": True,
                     "atualizado_em": last[0].isoformat() if last and hasattr(last[0], "isoformat") else (str(last[0]) if last else None),
                     "periodo": [min(aberturas).isoformat(), max(aberturas).isoformat()] if aberturas else None,
+                    "periodo_dados": [min(todas_ab).isoformat(), max(todas_ab).isoformat()] if todas_ab else None,
+                    "filtro": {"de": de.isoformat() if de else None, "ate": ate.isoformat() if ate else None},
                     "kpis": {"equipamentos": len(equip), "os": len(rows),
                              "em_manutencao": sum(1 for e in equip if e["etapa"] != "Finalizado"),
                              "finalizados": sum(1 for e in equip if e["etapa"] == "Finalizado"),
@@ -34953,7 +34976,8 @@ def v120_dashboard():
                              "reincidencias": sum(1 for e in equip if e["reincidencia_dias"] is not None),
                              "tempo_medio": round(sum((r["closed"] - r["opened"]).days for r in fin) / len(fin), 1) if fin else None},
                     "etapas": [{"rotulo": rot, "cor": cor, "n": etapas.get(rot, 0)} for rot, cor, _ in _V120_ETAPAS],
-                    "falhas": [{"rotulo": k.capitalize(), "n": v} for k, v in sorted(falhas.items(), key=lambda x: -x[1])[:6]],
+                    "falhas": [{"rotulo": k.capitalize(), "n": v} for k, v in sorted(falhas.items(), key=lambda x: -x[1])[:8]],
+                    "semanas": [{"inicio": w.isoformat(), "finalizadas": v[0], "abertas": v[1]} for w, v in sorted(semanas.items())],
                     "equipamentos": sorted(equip, key=lambda e: (e["abertura"] or ""), reverse=True)})
 
 

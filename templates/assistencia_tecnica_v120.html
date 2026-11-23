@@ -6,22 +6,31 @@
 .atHead label{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:700;color:#4a5b70}
 .atHead select,.atHead input{height:40px;border:1px solid #8a9bb0;border-radius:10px;padding:0 10px;font-family:inherit;font-size:14px;background:#fff;color:#16283d}
 .atKpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:12px}
-.atKpi{text-align:left;border:0;border-radius:16px;padding:16px;font:inherit;display:flex;flex-direction:column;gap:4px;cursor:pointer}
-.atKpi span:first-child{font-size:12px;font-weight:800}.atKpi b{font-size:30px;font-weight:800;line-height:1.1}.atKpi small{font-size:12px}
-.atKpi[aria-pressed="true"]{outline:3px solid #0f1e3d;outline-offset:2px}
-.k0{background:#0f1e3d;color:#fff}.k0 small,.k0 span:first-child{color:#c7d6ea}.k1{background:#dbeafe;color:#1e3a8a}.k2{background:#dcfce7;color:#14532d}
-.k3{background:#fef3c7;color:#7a4a00}.k4{background:#fee2e2;color:#991b1b}.k5{background:#fff;color:#16283d;border:1px solid #dbe4ef}
-.atGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:12px}
-.atCard{background:#fff;border:1px solid #dbe4ef;border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:10px}.atCard h2{margin:0;font-size:16px}
-.atBar{display:flex;height:22px;border-radius:8px;overflow:hidden;background:#eef2f7}
-.atLeg{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:1fr 1fr;gap:6px 16px;font-size:13px}
-.atLeg button{all:unset;display:flex;gap:8px;align-items:center;cursor:pointer;width:100%}.atLeg i{width:12px;height:12px;border-radius:3px;display:inline-block}.atLeg b{margin-left:auto}
-.atF{all:unset;display:grid;grid-template-columns:minmax(120px,190px) 1fr 34px;gap:8px;align-items:center;font-size:13px;cursor:pointer}.atF i{height:14px;background:#0f1e3d;border-radius:4px;display:block}
+.atWrap .atKpi,.atWrap .atKpi:hover{text-align:left;border:0;border-radius:16px;padding:16px;min-height:0;font:inherit;display:flex;flex-direction:column;gap:4px;cursor:pointer;box-shadow:0 1px 2px rgba(15,30,61,.08);transition:transform .12s,box-shadow .12s}
+.atWrap .atKpi:hover{transform:translateY(-2px);box-shadow:0 6px 16px rgba(15,30,61,.14)}
+.atWrap .atKpi span:first-child{font-size:12px;font-weight:800;letter-spacing:.02em}.atWrap .atKpi b{font-size:30px;font-weight:800;line-height:1.1}.atWrap .atKpi small{font-size:12px;font-weight:600}
+.atWrap .atKpi[aria-pressed="true"]{outline:3px solid #f59e0b;outline-offset:2px}
+.atWrap .atKpi.k0,.atWrap .atKpi.k0:hover{background:#0f1e3d;color:#fff}.atWrap .atKpi.k0 small,.atWrap .atKpi.k0 span:first-child{color:#c7d6ea}
+.atWrap .atKpi.k1,.atWrap .atKpi.k1:hover{background:#dbeafe;color:#1e3a8a}.atWrap .atKpi.k2,.atWrap .atKpi.k2:hover{background:#dcfce7;color:#14532d}
+.atWrap .atKpi.k3,.atWrap .atKpi.k3:hover{background:#fef3c7;color:#7a4a00}.atWrap .atKpi.k4,.atWrap .atKpi.k4:hover{background:#fee2e2;color:#991b1b}
+.atWrap .atKpi.k5,.atWrap .atKpi.k5:hover{background:#fff;color:#16283d;outline:1px solid #dbe4ef;cursor:default}
+.atGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:12px}
+.atCard{background:#fff;border:1px solid #dbe4ef;border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:10px;min-width:0}.atCard h2{margin:0;font-size:16px}
+.atDonut{display:flex;gap:18px;align-items:center;flex-wrap:wrap}.atDonut svg{width:190px;height:190px;flex:none}.atDonut svg circle.seg{cursor:pointer;transition:stroke-width .12s}.atDonut svg circle.seg:hover{stroke-width:30}
+.atLeg{flex:1;min-width:200px;display:flex;flex-direction:column;gap:2px}
+.atWrap .atRow,.atWrap .atRow:hover{all:unset;box-sizing:border-box;display:flex;gap:10px;align-items:center;width:100%;padding:7px 10px;border-radius:10px;font-size:13px;cursor:pointer;color:#16283d}
+.atWrap .atRow:hover,.atWrap .atRow:focus-visible{background:#f1f5fb;outline:none}.atWrap .atRow[aria-pressed="true"]{background:#fff7e0}
+.atRow i{width:12px;height:12px;border-radius:4px;flex:none}.atRow b{margin-left:auto;font-variant-numeric:tabular-nums}.atRow em{font-style:normal;color:#4a5b70;width:42px;text-align:right;font-size:12px}
+.atWrap .atF,.atWrap .atF:hover{all:unset;box-sizing:border-box;display:grid;grid-template-columns:minmax(120px,210px) 1fr 34px;gap:10px;align-items:center;width:100%;padding:6px 8px;border-radius:10px;font-size:13px;cursor:pointer;color:#16283d}
+.atWrap .atF:hover,.atWrap .atF:focus-visible{background:#f1f5fb;outline:none}.atF span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.atF u{display:block;height:14px;background:#eef2f7;border-radius:7px;text-decoration:none}.atF u i{display:block;height:100%;background:#2563eb;border-radius:7px}.atF b{text-align:right}
+.atSem svg{width:100%;height:auto;display:block}.atSem rect{cursor:pointer}.atSem rect:hover{opacity:.8}.atLeg2{display:flex;gap:16px;font-size:12px;color:#4a5b70}.atLeg2 i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px}
 .atTable{width:100%;border-collapse:collapse;font-size:13px;min-width:820px}.atTable th{text-align:left;color:#4a5b70;border-bottom:2px solid #dbe4ef;padding:8px;cursor:pointer;white-space:nowrap;position:sticky;top:0;background:#fff}
 .atTable td{padding:8px;border-bottom:1px solid #eef2f7}.atTable tbody tr{cursor:pointer}.atTable tbody tr:hover{background:#f3f7fc}.atTable tr.rein{background:#fff7ed}
 .pillA{display:inline-block;font-weight:800;font-size:12px;padding:3px 9px;border-radius:999px}
 .eFinalizado{background:#dcfce7;color:#14532d}.eAguardandoaprovacao{background:#fef3c7;color:#7a4a00}.eEmexecucao{background:#dbeafe;color:#1e3a8a}.eEmbalagemNF{background:#ccfbf1;color:#115e59}.eAguardandoorcamento{background:#eef2f7;color:#334155}.eRein{background:#fee2e2;color:#991b1b}
-.atBtn{height:40px;padding:0 14px;border-radius:10px;border:1px solid #8a9bb0;background:#fff;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;color:#16283d}.atBtn.p{background:#0f5e5a;color:#fff;border:0}
+.atWrap .atBtn,.atModal .atBtn{height:40px;min-height:40px;padding:0 16px;border-radius:10px;border:1px solid #0f1e3d;background:#fff;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer;color:#0f1e3d;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.atWrap .atBtn:hover,.atModal .atBtn:hover{background:#eef3fa}.atWrap .atBtn.p,.atModal .atBtn.p{background:#0f5e5a;border-color:#0f5e5a;color:#fff}.atWrap .atBtn.p:hover,.atModal .atBtn.p:hover{background:#0b4a47}
+.atWrap .atBtn.g{border-color:transparent;color:#1e3a8a;background:transparent}.atWrap .atBtn.g:hover{background:#eef3fa}
 .atMuted{font-size:12px;color:#4a5b70;margin:0}.atScroll{overflow:auto;max-height:640px}
 .atModal{position:fixed;inset:0;background:rgba(7,27,51,.56);display:flex;align-items:center;justify-content:center;z-index:1000;padding:14px}.atModal[hidden]{display:none}
 .atBox{background:#fff;border-radius:18px;padding:18px 20px;width:min(820px,calc(100vw - 28px));max-height:88vh;overflow:auto;box-sizing:border-box}
@@ -34,8 +43,11 @@
     <div style="flex:1;min-width:260px"><h1>Dashboard de equipamentos</h1><p id="atUpd">Assistência técnica · carregando…</p></div>
     {% if internal %}<label>Cliente<select id="atCompany"><option value="">Todos os clientes</option>{% for c in companies %}<option value="{{ c.id }}">{{ c.trade_name or c.legal_name }}</option>{% endfor %}</select></label>{% endif %}
     <label>Situação<select id="atEtapa"><option value="">Todas</option><option>Aguardando orçamento</option><option>Aguardando aprovação</option><option>Em execução</option><option>Embalagem / NF</option><option>Finalizado</option><option value="__rein">Reincidentes</option></select></label>
+    <label>Data início<input id="atDe" type="date"></label>
+    <label>Data fim<input id="atAte" type="date"></label>
     <label>Nº de série<input id="atBusca" type="search" placeholder="Buscar série ou falha"></label>
-    {% if can_load %}<button type="button" class="atBtn p" onclick="atCargaOpen()">Carga do Bhom</button>{% endif %}
+    <button type="button" class="atBtn g" id="atLimpar" title="Limpar filtros">✕ Limpar</button>
+    {% if can_load %}<button type="button" class="atBtn p" onclick="atCargaOpen()">⇪ Carga do Bhom</button>{% endif %}
   </div>
   <section class="atKpis" aria-label="Indicadores">
     <button type="button" class="atKpi k0" data-f=""><span>EQUIPAMENTOS</span><b id="kEq">—</b><small id="kOs"></small></button>
@@ -46,11 +58,12 @@
     <button type="button" class="atKpi k5" data-f=""><span style="color:#4a5b70">TEMPO MÉDIO</span><b id="kTm">—</b><small style="color:#4a5b70">da abertura ao encerramento</small></button>
   </section>
   <div class="atGrid">
-    <section class="atCard" aria-label="Onde estão os equipamentos"><h2>Onde estão os equipamentos</h2><div class="atBar" id="atBar" aria-hidden="true"></div><ul class="atLeg" id="atLeg"></ul></section>
+    <section class="atCard" aria-label="Onde estão os equipamentos"><h2>Onde estão os equipamentos</h2><div class="atDonut"><svg id="atDonut" viewBox="0 0 200 200" role="img" aria-label="Gráfico de rosca por situação"></svg><div class="atLeg" id="atLeg"></div></div></section>
     <section class="atCard" aria-label="Falhas mais frequentes"><h2>Falhas mais frequentes</h2><div id="atFalhas"></div></section>
   </div>
+  <section class="atCard atSem" aria-label="Ordens de serviço abertas por semana"><div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center"><h2 style="flex:1">Ordens de serviço abertas por semana</h2><div class="atLeg2"><span><i style="background:#1f7a5c"></i>Finalizadas</span><span><i style="background:#3b6fd8"></i>Ainda na assistência</span></div></div><div id="atSem"></div><p class="atMuted">Clique numa coluna para ver só aquela semana.</p></section>
   <section class="atCard" aria-label="Equipamentos">
-    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center"><h2 style="flex:1" id="atCount">Equipamentos</h2><button type="button" class="atBtn" onclick="atExport()">Exportar Excel</button></div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center"><h2 style="flex:1" id="atCount">Equipamentos</h2><button type="button" class="atBtn" onclick="atExport()">⤓ Exportar Excel</button></div>
     <div class="atScroll"><table class="atTable"><thead><tr>
       <th data-s="serial" aria-sort="none">Nº de série ⇅</th><th data-s="os" aria-sort="none">OS ⇅</th><th data-s="falha" aria-sort="none">Falha informada ⇅</th><th data-s="etapa" aria-sort="none">Situação ⇅</th><th data-s="abertura" aria-sort="descending">Abertura ▼</th><th data-s="dias" aria-sort="none" style="text-align:right">Dias ⇅</th><th data-s="entradas" aria-sort="none">Histórico ⇅</th>
     </tr></thead><tbody id="atRows"><tr><td colspan="7">Carregando…</td></tr></tbody></table></div>
@@ -76,29 +89,46 @@ const fmt=d=>d?d.slice(0,10).split('-').reverse().join('/'):'—',num=n=>(n??0).
 let D=null,filtro='',sk='abertura',dir=-1;
 const cls=e=>'e'+String(e||'').normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^A-Za-z]/g,'');
 async function load(){
-  const c=$('atCompany')?.value||'';$('atRows').innerHTML='<tr><td colspan="7">Carregando…</td></tr>';
-  const r=await fetch('/api/assistencia/dashboard'+(c?'?company_id='+c:''));const d=await r.json();
+  const c=$('atCompany')?.value||'',de=$('atDe').value,ate=$('atAte').value;$('atRows').innerHTML='<tr><td colspan="7">Carregando…</td></tr>';
+  if(de&&ate&&de>ate){$('atRows').innerHTML='<tr><td colspan="7">A data início deve ser anterior à data fim.</td></tr>';return}
+  const qs=new URLSearchParams();if(c)qs.set('company_id',c);if(de)qs.set('de',de);if(ate)qs.set('ate',ate);
+  const r=await fetch('/api/assistencia/dashboard'+(qs.toString()?'?'+qs:''));const d=await r.json();
   if(!r.ok||!d.ok){$('atRows').innerHTML=`<tr><td colspan="7">${esc(d.error||'Não foi possível carregar.')}</td></tr>`;return}
   D=d;const k=d.kpis;$('kEq').textContent=num(k.equipamentos);$('kOs').textContent=num(k.os)+' ordens de serviço';$('kMan').textContent=num(k.em_manutencao);$('kFin').textContent=num(k.finalizados);
   $('kFinP').textContent=k.equipamentos?Math.round(k.finalizados*100/k.equipamentos)+'% do período':'';$('kApr').textContent=num(k.aguardando_aprovacao);$('kRein').textContent=num(k.reincidencias);
   $('kTm').innerHTML=k.tempo_medio!=null?String(k.tempo_medio).replace('.',',')+' <span style="font-size:16px">dias</span>':'—';
   $('atUpd').textContent='Ordens de serviço de manutenção'+(d.periodo?` · abertas de ${fmt(d.periodo[0])} a ${fmt(d.periodo[1])}`:'')+(d.atualizado_em?` · dados do Bhom Análises atualizados em ${new Date(d.atualizado_em+'Z').toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo',dateStyle:'short',timeStyle:'short'})}`:' · ainda sem carga');
-  const tot=d.etapas.reduce((a,e)=>a+e.n,0)||1;$('atBar').innerHTML=d.etapas.map(e=>`<span style="width:${e.n*100/tot}%;background:${e.cor}"></span>`).join('');
-  $('atLeg').innerHTML=d.etapas.map(e=>`<li><button type="button" data-f="${esc(e.rotulo)}"><i style="background:${e.cor}"></i>${esc(e.rotulo)}<b>${num(e.n)}</b></button></li>`).join('');
-  const mx=Math.max(1,...d.falhas.map(f=>f.n));$('atFalhas').innerHTML=d.falhas.length?d.falhas.map(f=>`<button type="button" class="atF" data-q="${esc(f.rotulo)}"><span>${esc(f.rotulo)}</span><i style="width:${f.n*100/mx}%"></i><b>${f.n}</b></button>`).join(''):'<p class="atMuted">Sem falhas registradas.</p>';
+  if(d.periodo_dados){['atDe','atAte'].forEach(i=>{$(i).min=d.periodo_dados[0];$(i).max=d.periodo_dados[1]})}
+  donut(d.etapas);
+  const mx=Math.max(1,...d.falhas.map(f=>f.n));$('atFalhas').innerHTML=d.falhas.length?d.falhas.map(f=>`<button type="button" class="atF" data-q="${esc(f.rotulo)}" title="${esc(f.rotulo)}: ${f.n} OS"><span>${esc(f.rotulo)}</span><u><i style="width:${Math.max(3,f.n*100/mx)}%"></i></u><b>${f.n}</b></button>`).join(''):'<p class="atMuted">Sem falhas registradas no período.</p>';
+  semanas(d.semanas||[]);
   bind();render()}
+function donut(et){const tot=et.reduce((a,e)=>a+e.n,0),R=70,C=2*Math.PI*R;let off=0;
+  $('atDonut').innerHTML=`<circle cx="100" cy="100" r="${R}" fill="none" stroke="#eef2f7" stroke-width="26"/>`+(tot?et.filter(e=>e.n).map(e=>{const L=e.n/tot*C,g=`<circle class="seg" data-f="${esc(e.rotulo)}" cx="100" cy="100" r="${R}" fill="none" stroke="${e.cor}" stroke-width="26" stroke-dasharray="${L} ${C-L}" stroke-dashoffset="${-off}" transform="rotate(-90 100 100)"><title>${esc(e.rotulo)}: ${e.n} (${Math.round(e.n*100/tot)}%)</title></circle>`;off+=L;return g}).join(''):'')+
+   `<text x="100" y="98" text-anchor="middle" font-size="30" font-weight="800" fill="#16283d">${num(tot)}</text><text x="100" y="120" text-anchor="middle" font-size="12" fill="#4a5b70">equipamentos</text>`;
+  $('atLeg').innerHTML=et.map(e=>`<button type="button" class="atRow" data-f="${esc(e.rotulo)}"><i style="background:${e.cor}"></i>${esc(e.rotulo)}<b>${num(e.n)}</b><em>${tot?Math.round(e.n*100/tot)+'%':''}</em></button>`).join('')}
+function semanas(w){if(!w.length){$('atSem').innerHTML='<p class="atMuted">Sem ordens de serviço no período.</p>';return}
+  const W=Math.max(320,$('atSem').clientWidth||900),H=230,pl=34,pb=26,pt=12,step=Math.max(1,Math.ceil(Math.max(1,...w.map(x=>x.finalizadas+x.abertas))/4)),mx=step*Math.ceil(Math.max(1,...w.map(x=>x.finalizadas+x.abertas))/step),bw=(W-pl)/w.length,y=v=>H-pb-(v/mx)*(H-pb-pt);
+  const grid=[];for(let v=0;v<=mx;v+=step)grid.push(v);
+  let g=grid.map(v=>`<line x1="${pl}" x2="${W}" y1="${y(v)}" y2="${y(v)}" stroke="#eef2f7"/><text x="${pl-6}" y="${y(v)+4}" text-anchor="end" font-size="11" fill="#4a5b70">${v}</text>`).join('');
+  const lab=Math.ceil(w.length/12);
+  g+=w.map((x,i)=>{const X=pl+i*bw+bw*.18,B=bw*.64,t=x.finalizadas+x.abertas,ini=x.inicio,fim=new Date(new Date(ini+'T12:00').getTime()+6*864e5).toISOString().slice(0,10),tt=`Semana de ${fmt(ini)}: ${t} OS (${x.finalizadas} finalizadas, ${x.abertas} na assistência)`;
+    return `<g data-de="${ini}" data-ate="${fim}"><rect x="${X}" y="${y(x.finalizadas)}" width="${B}" height="${H-pb-y(x.finalizadas)}" fill="#1f7a5c" rx="2"><title>${tt}</title></rect><rect x="${X}" y="${y(t)}" width="${B}" height="${y(x.finalizadas)-y(t)}" fill="#3b6fd8" rx="2"><title>${tt}</title></rect>${i%lab===0?`<text x="${X+B/2}" y="${H-8}" text-anchor="middle" font-size="11" fill="#4a5b70">${fmt(ini).slice(0,5)}</text>`:''}</g>`}).join('');
+  $('atSem').innerHTML=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Colunas de OS abertas por semana">${g}</svg>`;
+  $('atSem').querySelectorAll('g[data-de]').forEach(n=>n.onclick=()=>{$('atDe').value=n.dataset.de;$('atAte').value=n.dataset.ate;load()})}
 function lista(){const q=($('atBusca').value||'').toUpperCase(),f=filtro||$('atEtapa').value;
   let r=(D?.equipamentos||[]).filter(e=>(!q||`${e.serial} ${e.falha} ${e.os}`.toUpperCase().includes(q))&&(!f||(f==='__rein'?e.reincidencia_dias!=null:f==='__man'?e.etapa!=='Finalizado':e.etapa===f)));
   return r.sort((a,b)=>{const x=a[sk]??'',y=b[sk]??'';return (typeof x==='number'&&typeof y==='number'?x-y:String(x).localeCompare(String(y),'pt-BR',{numeric:true}))*dir})}
 function render(){const r=lista();$('atCount').textContent=`Equipamentos · ${num(r.length)} de ${num(D?.equipamentos.length||0)}`;
   $('atRows').innerHTML=r.length?r.map(e=>`<tr class="${e.reincidencia_dias!=null?'rein':''}" data-s="${esc(e.serial)}" tabindex="0"><td style="font-family:ui-monospace,monospace">${esc(e.serial)}</td><td>${esc(e.os)}</td><td>${esc(e.falha||'—')}</td><td><span class="pillA ${cls(e.etapa)}">${esc(e.etapa)}</span></td><td>${fmt(e.abertura)}</td><td style="text-align:right">${e.dias??'—'}</td><td>${e.reincidencia_dias!=null?`<span class="pillA eRein">Reincidente · ${e.reincidencia_dias} dias</span>`:(e.entradas>1?e.entradas+' entradas':'1ª entrada')}</td></tr>`).join(''):'<tr><td colspan="7">Nenhum equipamento para este filtro.</td></tr>';
-  document.querySelectorAll('.atKpi').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.f===(filtro||$('atEtapa').value)&&!!(filtro||$('atEtapa').value))))}
+  const af=filtro||$('atEtapa').value;document.querySelectorAll('.atKpi,.atRow').forEach(b=>b.setAttribute('aria-pressed',String(!!af&&b.dataset.f===af)))}
 function bind(){document.querySelectorAll('[data-f]').forEach(b=>b.onclick=()=>{filtro=b.dataset.f;$('atEtapa').value='';render()});
   document.querySelectorAll('.atF').forEach(b=>b.onclick=()=>{$('atBusca').value=b.dataset.q;filtro='';render()})}
 document.querySelectorAll('.atTable th').forEach(th=>th.onclick=()=>{const s=th.dataset.s;dir=(sk===s?-dir:1);sk=s;document.querySelectorAll('.atTable th').forEach(t=>{const on=t.dataset.s===sk;t.setAttribute('aria-sort',on?(dir>0?'ascending':'descending'):'none');t.textContent=t.textContent.replace(/ [▲▼⇅]$/,'')+(on?(dir>0?' ▲':' ▼'):' ⇅')});render()});
 $('atRows').addEventListener('click',e=>{const tr=e.target.closest('tr[data-s]');if(tr)openEq(tr.dataset.s)});
 $('atRows').addEventListener('keydown',e=>{const tr=e.target.closest('tr[data-s]');if(tr&&(e.key==='Enter'||e.key===' ')){e.preventDefault();openEq(tr.dataset.s)}});
-$('atBusca').addEventListener('input',()=>{filtro='';render()});$('atEtapa').addEventListener('change',()=>{filtro='';render()});$('atCompany')?.addEventListener('change',load);
+$('atBusca').addEventListener('input',()=>{filtro='';render()});$('atEtapa').addEventListener('change',()=>{filtro='';render()});$('atCompany')?.addEventListener('change',load);$('atDe').addEventListener('change',load);$('atAte').addEventListener('change',load);
+$('atLimpar').onclick=()=>{filtro='';$('atEtapa').value='';$('atBusca').value='';$('atDe').value='';$('atAte').value='';load()};
 async function openEq(s){$('atMTitle').textContent='Série '+s;$('atMBody').innerHTML='<p>Carregando…</p>';$('atModal').hidden=false;
   const c=$('atCompany')?.value||'';const d=await fetch('/api/assistencia/equipamento?serie='+encodeURIComponent(s)+(c?'&company_id='+c:'')).then(r=>r.json());
   $('atMBody').innerHTML=(d.historico||[]).map(o=>`<div class="atOs"><b>OS ${esc(o.os)}</b> · <span class="pillA ${cls(o.etapa)}">${esc(o.etapa)}</span><dl><dt>Abertura</dt><dd>${fmt(o.abertura)}</dd><dt>Encerramento</dt><dd>${fmt(o.encerramento)}</dd><dt>Falha informada</dt><dd>${esc(o.falha||'—')}</dd><dt>Falha constatada</dt><dd>${esc(o.falha_tecnica||'—')}</dd><dt>Causa</dt><dd>${esc(o.causa||'—')}</dd><dt>Solução</dt><dd>${esc((o.solucao||'—').replace(/\s*\|\s*/g,' · '))}</dd>${o.pecas.length?`<dt>Peças</dt><dd>${o.pecas.map(p=>esc(p.descricao+(p.qtde?' ('+p.qtde+')':''))).join('<br>')}</dd>`:''}</dl></div>`).join('')||'<p>Sem histórico.</p>'}
@@ -118,7 +148,7 @@ $('atForm').onsubmit=async e=>{e.preventDefault();const b=$('atSend');b.disabled
     $('atRes').innerHTML=r.ok?`<p style="color:#14532d;font-weight:700">Carga concluída: ${num(d.os)} OS (${num(d.novas)} novas, ${num(d.atualizadas)} atualizadas), ${num(d.clientes)} clientes.</p>`:`<p style="color:#991b1b;font-weight:700">${esc(d.error||'Falha na carga.')}</p>`;
     if(r.ok){e.target.reset();loadMap();load()}}finally{b.disabled=false;b.textContent='Carregar'}};
 {% endif %}
-load();
+load();let rz;window.addEventListener('resize',()=>{clearTimeout(rz);rz=setTimeout(()=>D&&semanas(D.semanas||[]),200)});
 })();
 </script>
 {% endblock %}
