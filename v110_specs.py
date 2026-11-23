@@ -1446,3 +1446,190 @@ def _v116_graficos(specs):
 
 
 SPECS = _v116_graficos(SPECS)
+
+
+# Ajustes por tela a partir dos dados reais (23/11): gráficos extras que fazem sentido para cada operação.
+def _R(campo, titulo, cores=None, rotulos=None, mx=6):
+    g = {"tipo": "rosca", "titulo": titulo, "agrupar": {"campo": campo}, "max": mx}
+    if cores: g["cores"] = cores
+    if rotulos: g["rotulos"] = rotulos
+    return g
+
+
+def _B(campo, titulo, cores="paleta", **ag):
+    return {"tipo": "barras", "titulo": titulo, "agrupar": {"campo": campo, **ag}, "cores": cores}
+
+
+def _L(campo, titulo="Registros por mês", periodo="mes"):
+    return {"tipo": "linha", "titulo": titulo, "agrupar": {"campo": campo, "periodo": periodo}}
+
+
+_SIMNAO = {"true": "Sim", "false": "Não"}
+_TESTE = {"TESTADO_OK": "sucesso", "TESTADO_COM_DEFEITO": "perigo", "EQUIPAMENTO_INOPERANTE": "perigo", "NAO_FOI_POSSIVEL_TESTAR": "aviso", "OUTRO": "neutro"}
+_TESTE_R = {"TESTADO_OK": "Testado OK", "TESTADO_COM_DEFEITO": "Com defeito", "EQUIPAMENTO_INOPERANTE": "Equip. inoperante", "NAO_FOI_POSSIVEL_TESTAR": "Não foi possível", "OUTRO": "Outro", "—": "Sem teste"}
+_V116_EXTRA = {
+    "chip_garagem": [_R("test_result", "Resultado do teste", _TESTE, _TESTE_R), _L("completed_at")],
+    "chip_emv": [_R("test_result", "Resultado do teste", _TESTE, _TESTE_R), _B("technician", "Por técnico"), _B("version", "Por versão")],
+    "mapeamento_atm": [_B("bill_acceptor", "Por noteiro"), _R("physical_access", "Acesso físico"), _R("has_holes", "Com furos", {"true": "aviso", "false": "sucesso"}, _SIMNAO)],
+    "panoramica": [_B("photo_count", "Fotos por local")],
+    "arrow_agenda": [_R("priority", "Prioridade", {"URGENTE": "perigo", "ALTA": "aviso", "NORMAL": "info"}), _B("operator", "Por operadora")],
+    "portal_agendamentos": [_B("status", "Por situação")],
+    "gestao_agendamentos": [_B("status", "Por situação"), _B("responsible", "Por responsável")],
+    "tarefas": [_R("priority", "Prioridade", {"ALTA": "aviso", "MEDIA": "info", "BAIXA": "neutro"}), _B("assigned_name", "Por responsável")],
+    "central_operacional": [_R("operation_status", "Situação da jornada"), _R("freshness", "Sinal do GPS", {"ATUAL": "sucesso", "ATENÇÃO": "aviso", "ATRASADO": "aviso", "SEM SINAL": "perigo"}), _B("shift", "Por turno"), _B("supervision", "Por supervisão")],
+    "usuarios": [_R("role", "Perfil"), _B("work_shift", "Por turno"), _R("work_schedule_type", "Escala")],
+    "equipes": [_R("role", "Perfil"), _B("shift", "Por turno"), _R("schedule_type", "Escala")],
+    "visitas": [_B("reason", "Por motivo"), _B("technician_name", "Por técnico"), _B("project", "Por projeto"), _L("visit_date", "Visitas por mês")],
+    "pos_metro": [_B("client", "Por cliente"), _R("manufacturer", "Fabricante")],
+    "contratos_atm": [_R("contract_status", "Vencimento do contrato", {"ATÉ 30 DIAS": "perigo", "ACIMA DE 90 DIAS": "sucesso", "SEM CONTRATO": "neutro"}), _B("company", "Por empresa")],
+    "equipamentos": [_B("company", "Por empresa")],
+    "apt": [_R("processo", "Processo", {"CONCLUÍDO": "sucesso", "APROVADO": "info", "EM ANDAMENTO": "info", "AGUARDANDO": "aviso"}),
+            _R("situacao", "Validade", {"REGULAR": "sucesso", "ATÉ 40 DIAS": "aviso", "ATÉ 30 DIAS": "perigo", "VENCIDO": "perigo", "SEM VALIDADE": "neutro"}), _B("linha", "Por linha", "linha")],
+    "diagnostico": [_R("gravidade", "Gravidade", {"ALTA": "perigo", "MEDIA": "aviso", "BAIXA": "info"}), _B("tipo", "Por tipo")],
+    "lancamentos": [_B("cost_center", "Por centro de custo"), _B("project", "Por projeto"), {"tipo": "barras", "titulo": "Lançamentos por competência", "agrupar": {"campo": "competence", "periodo": "mes"}, "cores": "paleta", "max": 12}],
+    "celulares": [_R("perfil", "Perfil"), _R("situacao", "Endereço do app")],
+    "tags": [_R("finalidade", "Finalidade"), _B("produto", "Por produto"), _B("localidade", "Por localidade"), _R("lote", "Lote")],
+    "engenharia_itens": [_R("default_origin", "Origem"), _B("unit", "Por unidade")],
+    "estoque_central": [_B("company", "Por empresa")],
+    "avisos": [_R("severity", "Gravidade", {"URGENTE": "perigo", "ALERTA": "aviso", "INFO": "info"}), _R("read", "Lidos", {"true": "sucesso", "false": "aviso"}, {"true": "Lido", "false": "Não lido"})],
+    "rastreabilidade": [_R("status", "Situação", {"APROVADA": "sucesso", "PENDENTE": "aviso", "RECUSADA": "perigo", "EXPIRADA": "neutro"})],
+    "engenharia_bom": [_R("bom_kind", "Tipo de estrutura")],
+    "alertas360": [_R("severity", "Gravidade", {"CRITICO": "perigo", "ATENCAO": "aviso", "INFO": "info"}), _B("domain", "Por área")],
+    "notificacoes_gestao": [_B("domain", "Por área")],
+    "configuracoes": [],
+    "planejamento": [_B("front", "Por frente"), _R("kind", "Tipo", rotulos={"ativ": "Atividade", "pend": "Pendência"})],
+    "links": [],
+    "treinamentos": [_R("role", "Perfil"), _R("active", "Ativos", {"true": "sucesso", "false": "neutro"}, _SIMNAO)],
+    "config_dashboards": [_R("visible", "Visível", {"true": "sucesso", "false": "neutro"}, _SIMNAO)],
+}
+for _s in SPECS:
+    _x = _V116_EXTRA.get(_s["key"])
+    if _x and _s.get("modelo") == "lista":
+        _l = _s.setdefault("lista", {})
+        _have = {(g.get("tipo"), (g.get("agrupar") or {}).get("campo")) for g in _l.get("graficos") or []}
+        _l["graficos"] = (_l.get("graficos") or []) + [g for g in _x if (g["tipo"], g["agrupar"]["campo"]) not in _have]
+
+
+
+# ---------------------------------------------------------------------------
+# Build129 / REV42 — Paridade Web × App, etapa Field: o que a web grava, o app passa a gravar.
+_MANAGE = ["field.stock_manage"]
+
+
+def _acao(spec, acao):
+    spec.setdefault("detalhe", {}).setdefault("acoes", []).append(acao)
+
+
+def _form(spec, chave, form):
+    spec.setdefault("forms", {})[chave] = form
+
+
+def _novo(spec, rotulo, chave, perms=None):
+    n = {"rotulo": rotulo, "form": chave}
+    if perms: n["perms"] = perms
+    spec.setdefault("novos", []).append(n)
+
+
+def _v117_field(specs):
+    P = {x["key"]: x for x in specs}
+    # Estoque Field — saldo por armário: retirar, movimentar, ajustar; cadastros e ocorrências
+    e = P.get("estoque_field")
+    if e:
+        _form(e, "retirar", {"titulo": "Retirar para a minha carga", "envio": {"url": "/api/field-stock/retirar", "metodo": "POST", "formato": "json"}, "campos": [
+            {"nome": "point_id", "tipo": "oculto", "valor": "{point_id}"}, {"nome": "item_id", "tipo": "oculto", "valor": "{item_id}"},
+            {"nome": "qty", "rotulo": "Quantidade a retirar", "tipo": "numero", "obrigatorio": True},
+            {"nome": "justification", "rotulo": "Justificativa", "tipo": "area", "obrigatorio": True}]})
+        _form(e, "movimentar", {"titulo": "Entrada / saída no armário", "envio": {"url": "/api/field-stock/movimentar", "metodo": "POST", "formato": "json"}, "campos": [
+            {"nome": "point_id", "tipo": "oculto", "valor": "{point_id}"}, {"nome": "item_id", "tipo": "oculto", "valor": "{item_id}"},
+            {"nome": "direction", "rotulo": "Movimento", "tipo": "lista", "obrigatorio": True, "opcoes": [["ENTRADA", "Entrada"], ["SAIDA", "Saída"]]},
+            {"nome": "qty", "rotulo": "Quantidade", "tipo": "numero", "obrigatorio": True},
+            {"nome": "reason", "rotulo": "Justificativa", "tipo": "area", "obrigatorio": True}]})
+        _form(e, "saldo", {"titulo": "Ajustar saldo", "envio": {"url": "/api/field-stock/saldo", "metodo": "POST", "formato": "json"}, "campos": [
+            {"nome": "point_id", "tipo": "oculto", "valor": "{point_id}"}, {"nome": "item_id", "tipo": "oculto", "valor": "{item_id}"},
+            {"nome": "good", "rotulo": "Quantidade boa", "tipo": "numero", "obrigatorio": True, "valor": "{good}"},
+            {"nome": "bad", "rotulo": "Quantidade ruim", "tipo": "numero", "obrigatorio": True, "valor": "{bad}"},
+            {"nome": "reason", "rotulo": "Justificativa", "tipo": "area", "obrigatorio": True}]})
+        _acao(e, {"rotulo": "Retirar", "form": "retirar", "principal": True})
+        _acao(e, {"rotulo": "Entrada / saída", "form": "movimentar", "perms": _MANAGE})
+        _acao(e, {"rotulo": "Ajustar saldo", "form": "saldo", "perms": _MANAGE})
+        _form(e, "ocorrencia", {"titulo": "Ocorrência no armário", "envio": {"url": "/api/field-stock/ocorrencia", "metodo": "POST", "formato": "multipart"}, "campos": [
+            {"nome": "point_id", "rotulo": "Armário / estoque", "tipo": "lista", "obrigatorio": True, "opcoes_fonte": {"de": "points", "valor": "{id}", "rotulo": "{name} · {station}"}},
+            {"nome": "incident_type", "rotulo": "Falha", "tipo": "lista", "obrigatorio": True, "opcoes": ["Fechadura danificada", "Porta danificada", "Sem acesso / falta de chave", "Avaria / segurança", "Outro"]},
+            {"nome": "description", "rotulo": "Descrição", "tipo": "area"},
+            {"nome": "photo", "rotulo": "Foto (obrigatória)", "tipo": "fotos", "max": 1, "obrigatorio": True}]})
+        _form(e, "regularizar", {"titulo": "Regularizar a minha carga", "envio": {"url": "/api/field-stock/regularizacao", "metodo": "POST", "formato": "json"}, "campos": [
+            {"nome": "item_id", "rotulo": "Item", "tipo": "lista", "obrigatorio": True, "opcoes_fonte": {"de": "items", "valor": "{id}", "rotulo": "{description}"}},
+            {"nome": "qty", "rotulo": "Quantidade", "tipo": "numero", "obrigatorio": True},
+            {"nome": "reason", "rotulo": "Justificativa", "tipo": "area", "obrigatorio": True}]})
+        _form(e, "novo_item", {"titulo": "Novo item de estoque", "envio": {"url": "/api/field-stock/item", "metodo": "POST", "formato": "json"}, "campos": [
+            {"nome": "description", "rotulo": "Descrição", "tipo": "texto", "obrigatorio": True},
+            {"nome": "code", "rotulo": "Código", "tipo": "qr"},
+            {"nome": "category", "rotulo": "Categoria", "tipo": "texto"},
+            {"nome": "unit", "rotulo": "Unidade", "tipo": "lista", "valor": "UN", "opcoes": ["UN", "PC", "CX", "L", "M", "KG"]},
+            {"nome": "point_id", "rotulo": "Saldo inicial em", "tipo": "lista", "opcoes_fonte": {"de": "points", "valor": "{id}", "rotulo": "{name}"}},
+            {"nome": "good", "rotulo": "Quantidade boa", "tipo": "numero", "valor": "0"},
+            {"nome": "bad", "rotulo": "Quantidade ruim", "tipo": "numero", "valor": "0"},
+            {"nome": "reason", "rotulo": "Justificativa", "tipo": "area"}]})
+        _form(e, "novo_armario", {"titulo": "Novo armário / estoque de bobinas", "envio": {"url": "/api/bobinas/estoques", "metodo": "POST", "formato": "json"}, "campos": [
+            {"nome": "name", "rotulo": "Nome (localidade / CD)", "tipo": "texto", "obrigatorio": True},
+            {"nome": "point_type", "rotulo": "Tipo", "tipo": "lista", "obrigatorio": True, "valor": "ARMARIO", "opcoes": [["ARMARIO", "Armário"], ["ESTOQUE", "Estoque"], ["CD", "Centro de distribuição"]]},
+            {"nome": "company", "rotulo": "Operadora", "tipo": "texto"}, {"nome": "line", "rotulo": "Linha", "tipo": "texto"}, {"nome": "station", "rotulo": "Estação", "tipo": "texto"},
+            {"nome": "qty", "rotulo": "Bobinas no armário", "tipo": "numero", "valor": "0"},
+            {"nome": "reason", "rotulo": "Justificativa", "tipo": "area", "obrigatorio": True}]})
+        _novo(e, "Ocorrência no armário", "ocorrencia")
+        _novo(e, "Regularizar a minha carga", "regularizar")
+        _novo(e, "Novo item de estoque", "novo_item", _MANAGE)
+        _novo(e, "Novo armário de bobinas", "novo_armario", _MANAGE)
+    # Dashboard de Bobinas — tocar numa ATM abre o detalhe com o ajuste administrativo
+    b = P.get("dashboard_bobinas")
+    if b:
+        b.setdefault("detalhe", {"secoes": [{"titulo": "ATM", "campos": [["ATM", "{atm_id}"], ["Empresa", "{company}"], ["Linha", "{line}"], ["Estação", "{station}"],
+            ["Nível", "{percent_available}%"], ["Última leitura", "{created_at|datahora}"], ["Técnico", "{technician}"], ["Reserva na ATM", "{reserve_after}"]]}]})
+        _form(b, "ajuste", {"titulo": "Ajuste administrativo da ATM", "envio": {"url": "/api/bobinas/ajuste-administrativo", "metodo": "POST", "formato": "json"}, "campos": [
+            {"nome": "kind", "tipo": "oculto", "valor": "ATM"}, {"nome": "company", "tipo": "oculto", "valor": "{company}"}, {"nome": "line", "tipo": "oculto", "valor": "{line}"},
+            {"nome": "station", "tipo": "oculto", "valor": "{station}"}, {"nome": "atm_id", "tipo": "oculto", "valor": "{atm_id}"},
+            {"nome": "percent_available", "rotulo": "Nível da bobina (%)", "tipo": "lista", "obrigatorio": True, "valor": "{percent_available}", "opcoes": [str(x) for x in range(0, 101, 10)]},
+            {"nome": "reserve_qty", "rotulo": "Bobinas de reserva na ATM", "tipo": "numero", "obrigatorio": True, "valor": "{reserve_after}"},
+            {"nome": "reason", "rotulo": "Justificativa", "tipo": "area", "obrigatorio": True}]})
+        _acao(b, {"rotulo": "Ajuste administrativo", "form": "ajuste", "principal": True, "perms": _MANAGE})
+    # Troca de POS Metrô — novo POS, desfazer registro e excluir POS
+    pm = P.get("pos_metro")
+    if pm:
+        _form(pm, "novo_pos", {"titulo": "Cadastrar POS em campo", "envio": {"url": "/field/troca-pos-metro/novo-pos", "metodo": "POST", "formato": "multipart"}, "campos": [
+            {"nome": "linha", "rotulo": "Linha", "tipo": "lista", "obrigatorio": True, "opcoes": ["01 - AZUL", "02 - VERDE", "03 - VERMELHA", "04 - AMARELA", "05 - LILÁS", "15 - PRATA"]},
+            {"nome": "estacao", "rotulo": "Estação (como na base)", "tipo": "texto", "obrigatorio": True},
+            {"nome": "terminal", "rotulo": "Identificação do POS", "tipo": "qr", "obrigatorio": True},
+            {"nome": "numero", "rotulo": "Número do terminal", "tipo": "numero"},
+            {"nome": "fabricante", "rotulo": "Fabricante", "tipo": "lista", "opcoes": ["Gertec", "Ingenico"]}]})
+        _form(pm, "desfazer", {"titulo": "Excluir o registro da troca", "envio": {"url": "/field/troca-pos-metro/{id}/excluir-registro", "metodo": "POST", "formato": "multipart"}, "campos": [
+            {"nome": "confirmar", "rotulo": "Digite EXCLUIR para confirmar (o POS volta a Pendente; fotos e histórico ficam guardados)", "tipo": "texto", "obrigatorio": True}]})
+        _form(pm, "excluir_pos", {"titulo": "Excluir este POS da base", "envio": {"url": "/field/troca-pos-metro/{id}/excluir-pos", "metodo": "POST", "formato": "multipart"}, "campos": [
+            {"nome": "confirmar", "rotulo": "Digite a identificação do POS (como aparece no título) para confirmar", "tipo": "texto", "obrigatorio": True}]})
+        _acao(pm, {"rotulo": "Excluir registro", "form": "desfazer", "perms": ["field.pos_metro.execute"]})
+        _acao(pm, {"rotulo": "Excluir POS", "form": "excluir_pos", "perms": ["field.pos_metro.import"]})
+        _novo(pm, "Cadastrar POS em campo", "novo_pos", ["field.pos_metro.execute"])
+    # Troca de Chips EMV — bloqueio manual, situação administrativa e exclusão
+    ce = P.get("chip_emv")
+    if ce:
+        _form(ce, "manual", {"titulo": "Incluir bloqueio manual", "envio": {"url": "/api/emv-chip-swaps/manual", "metodo": "POST", "formato": "json"}, "campos": [
+            {"nome": "company", "rotulo": "Operadora", "tipo": "lista", "obrigatorio": True, "opcoes": ["CPTM", "VIA MOBILIDADE", "METRO", "TIC TRENS S.A.", "VIA QUATRO", "OUTROS"]},
+            {"nome": "line", "rotulo": "Linha", "tipo": "texto", "obrigatorio": True},
+            {"nome": "station", "rotulo": "Estação / localidade", "tipo": "texto", "obrigatorio": True},
+            {"nome": "block_number", "rotulo": "Número do bloqueio", "tipo": "qr", "obrigatorio": True},
+            {"nome": "notes", "rotulo": "Observação", "tipo": "area"}]})
+        _form(ce, "situacao", {"titulo": "Alterar situação (gestão)", "envio": {"url": "/api/emv-chip-swaps/{terminal}/admin-status", "metodo": "POST", "formato": "json"}, "campos": [
+            {"nome": "status", "rotulo": "Situação", "tipo": "lista", "obrigatorio": True, "valor": "{status}", "opcoes": ["PENDENTE", "EM ANDAMENTO", "CONCLUÍDA"]},
+            {"nome": "reason", "rotulo": "Motivo", "tipo": "area"}]})
+        _acao(ce, {"rotulo": "Alterar situação", "form": "situacao"})
+        _acao(ce, {"rotulo": "Excluir", "url": "/api/emv-chip-swaps/{terminal}", "metodo": "DELETE", "confirmar": "Excluir este registro de troca de chip? Esta ação não pode ser desfeita."})
+        _novo(ce, "Incluir bloqueio manual", "manual")
+    # Troca de Chips Recarga — situação administrativa por local
+    cr = P.get("chip_recarga")
+    if cr and (cr.get("detalhe") or {}).get("sublista"):
+        _form(cr, "situacao", {"titulo": "Alterar situação (gestão)", "envio": {"url": "/api/chip-swaps/{pai.id}/{base_asset_id}/admin-status", "metodo": "POST", "formato": "json"}, "campos": [
+            {"nome": "status", "rotulo": "Situação", "tipo": "lista", "obrigatorio": True, "valor": "{status}", "opcoes": ["PENDENTE", "EM ANDAMENTO", "CONCLUÍDO"]},
+            {"nome": "reason", "rotulo": "Motivo", "tipo": "area", "obrigatorio": True}]})
+    return specs
+
+
+SPECS = _v117_field(SPECS)
