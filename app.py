@@ -35385,3 +35385,134 @@ def _v121_wrap(name):
 
 _v121_wrap("portal_appointments_list")
 _v121_wrap("v71_schedule_management_api")
+
+
+# =====================================================================
+# V88.0 REV50 — Assistência Técnica: impressão de etiquetas (Zebra ZD220, 45×20 mm).
+# A equipe sobe o Excel das OS abertas (ou cola o texto copiado do Excel) a cada impressão;
+# nada é gravado. Cada série é comparada com o histórico (Bhom + Portal) dos 3 meses anteriores
+# à data da OS para imprimir "Reincidência - Nx".
+# =====================================================================
+_V122_CAMPOS = {
+    "nome": ("CLIENTE", "NOME", "NOMECLIENTE", "RAZAOSOCIAL", "CLIENTEINSTALACAO", "CLIENTEDEINSTALACAO", "EMPRESA", "GARAGEM"),
+    "os": ("OS", "NOS", "NUMEROOS", "NUMERODAOS", "ORDEMDESERVICO", "ORDEMSERVICO", "NUMEROORDEM", "ORDEM"),
+    "serie": ("SERIE", "NSERIE", "NUMERODESERIE", "NUMEROSERIE", "SERIAL", "NUMSERIE", "NS"),
+    "data": ("DATA", "DATAABERTURA", "DATADEABERTURA", "ABERTURA", "DTABERTURA", "DATAOS", "DATADAOS", "EMISSAO"),
+}
+
+
+def _v122_mapa(head):
+    h = [_v120_norm(x) for x in head]
+    mapa = {}
+    for campo, nomes in _V122_CAMPOS.items():
+        i = next((i for i, x in enumerate(h) if x in nomes and i not in mapa.values()), None)
+        if i is None:
+            i = next((i for i, x in enumerate(h) if x and i not in mapa.values() and any(n in x for n in nomes if len(n) > 3)), None)
+        if i is not None:
+            mapa[campo] = i
+    return mapa
+
+
+@app.post("/api/assistencia/etiquetas/ler")
+@login_required
+def v122_ler():
+    if not _portal_staff():
+        abort(403)
+    f = request.files.get("arquivo")
+    try:
+        if f and f.filename:
+            raw = f.read(10 * 1024 * 1024 + 1)
+            if len(raw) > 10 * 1024 * 1024:
+                return jsonify({"ok": False, "error": "Arquivo acima de 10 MB."}), 400
+            rows = _v120_read_rows(raw, f.filename)
+        else:
+            txt = (request.form.get("texto") or "").strip()
+            if not txt:
+                return jsonify({"ok": False, "error": "Envie o Excel ou cole o texto copiado do Excel."}), 400
+            sep = "\t" if "\t" in txt else (";" if txt.count(";") >= txt.count(",") else ",")
+            rows = [r for r in csv.reader(io.StringIO(txt), delimiter=sep)]
+    except Exception:
+        return jsonify({"ok": False, "error": "Não foi possível ler o arquivo. Use .xlsx ou .csv, ou cole o texto copiado do Excel."}), 400
+    rows = [[str(c or "").strip() for c in r] for r in rows if any(str(c or "").strip() for c in r)]
+    if not rows:
+        return jsonify({"ok": False, "error": "Nenhuma linha encontrada."}), 400
+    # Cabeçalho: a primeira das 10 primeiras linhas que tenha pelo menos 2 colunas reconhecidas.
+    hi, mapa = None, {}
+    for i, r in enumerate(rows[:10]):
+        m = _v122_mapa(r)
+        if len(m) >= 2:
+            hi, mapa = i, m
+            break
+    largura = max(len(r) for r in rows)
+    head = (rows[hi] if hi is not None else [f"Coluna {i + 1}" for i in range(largura)])
+    head = head + [f"Coluna {i + 1}" for i in range(len(head), largura)]
+    corpo = rows[hi + 1:] if hi is not None else rows
+    return jsonify({"ok": True, "colunas": head, "linhas": corpo[:500], "total": len(corpo), "mapa": mapa, "cabecalho": hi is not None})
+
+
+def _v122_contagens(itens):
+    """Para cada item {serie, data, os}: nº de entradas da série nos 90 dias até a data (inclui a atual)."""
+    hoje = datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+    sks = sorted({_v120_skey(x.get("serie")) for x in itens if _v120_skey(x.get("serie"))})
+    bhom, portal = {}, {}
+    if sks:
+        try:
+            _v120_ensure()
+            with db.engine.connect() as c:
+                for i in range(0, len(sks), 400):
+                    part = sks[i:i + 400]
+                    q = text("SELECT serial_key, os_number, opened FROM v120_at_os WHERE UPPER(COALESCE(status_os,'')) <> 'CANCELADA' AND serial_key IN ("
+                             + ",".join(f":k{j}" for j in range(len(part))) + ")")
+                    for sk, osn, op in c.execute(q, {f"k{j}": v for j, v in enumerate(part)}):
+                        d = _v120_d(op)
+                        if d:
+                            bhom.setdefault(sk, []).append((str(osn), d))
+        except Exception:
+            db.session.rollback()
+        try:
+            alvo = set(sks)
+            q = (db.session.query(CustomerAppointmentEquipment.serial_number, CustomerAppointmentEquipment.created_at, CustomerAppointment.status)
+                 .join(CustomerAppointment, CustomerAppointment.id == CustomerAppointmentEquipment.appointment_id)
+                 .filter(CustomerAppointmentEquipment.created_at >= datetime.combine(hoje - timedelta(days=400), datetime.min.time())))
+            for serial, criado, st in q.all():
+                sk = _v120_skey(serial)
+                if sk in alvo and criado and str(st or "").upper() not in ("RASCUNHO", "CANCELADO"):
+                    portal.setdefault(sk, []).append(criado.date())
+        except Exception:
+            db.session.rollback()
+    out = []
+    for x in itens:
+        sk = _v120_skey(x.get("serie"))
+        if "XXX" in sk or len(sk) < 3:  # série mascarada/incompleta não identifica o equipamento
+            sk = ""
+        ref = _v120_date(x.get("data")) or hoje
+        lim = ref - timedelta(days=_V120_DIAS)
+        osn = re.sub(r"\D", "", str(x.get("os") or "")) or str(x.get("os") or "").strip()
+        ant = [d for o, d in bhom.get(sk, []) if lim <= d <= ref and re.sub(r"\D", "", o) != osn]
+        todas_os = [d for _o, d in bhom.get(sk, [])] + [ref]
+        # Agendamento do Portal que virou OS (até 30 dias depois) conta uma vez só.
+        por = [d for d in set(portal.get(sk, [])) if lim <= d <= ref and not any(d <= o <= d + timedelta(days=30) for o in todas_os)]
+        vezes = 1 + len(ant) + len(por) if sk else 1
+        out.append({"nome": str(x.get("nome") or "").strip()[:60], "os": str(x.get("os") or "").strip()[:30], "serie": str(x.get("serie") or "").strip()[:60],
+                    "data": ref.strftime("%d/%m/%Y") if _v120_date(x.get("data")) else str(x.get("data") or "").strip()[:20],
+                    "vezes": vezes if vezes > 1 else 0})
+    return out
+
+
+@app.post("/api/assistencia/etiquetas/preparar")
+@login_required
+def v122_preparar():
+    if not _portal_staff():
+        abort(403)
+    itens = (request.get_json(silent=True) or {}).get("itens") or []
+    if not isinstance(itens, list) or not itens:
+        return jsonify({"ok": False, "error": "Nenhuma OS para preparar."}), 400
+    itens = [x for x in itens[:500] if isinstance(x, dict)]
+    out = _v122_contagens(itens)
+    try:
+        db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="ASSISTENCIA_ETIQUETAS", entity_type="assistencia",
+                                  entity_id="etiquetas", detail=f"{len(out)} etiqueta(s) preparada(s) · {sum(1 for x in out if x['vezes'])} com reincidência"))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+    return jsonify({"ok": True, "itens": out})

@@ -34,6 +34,15 @@
 .atBox{background:#fff;border-radius:18px;padding:18px 20px;width:min(1040px,calc(100vw - 28px));max-height:88vh;overflow:auto;box-sizing:border-box}
 .atOs{border:1px solid #dbe4ef;border-radius:12px;padding:12px;margin:10px 0}.atOs dl{display:grid;grid-template-columns:130px 1fr;gap:4px 10px;margin:8px 0 0;font-size:13px}.atOs dt{color:#4a5b70;font-weight:700}.atOs dd{margin:0}
 {% if not internal %}.topbar{display:none!important}main.wrap{max-width:none!important;width:calc(100% - 230px)!important;margin-left:230px!important;padding:22px 26px!important;background:#f7faff;min-height:100vh;box-sizing:border-box!important}.pcClientSide{position:fixed;left:0;top:0;bottom:0;width:230px;background:#fff;border-right:1px solid #e0e7ef;padding:22px 15px;z-index:900;box-sizing:border-box}.pcClientLogo{margin:4px 10px 28px}.pcClientLogo img{display:block;width:150px}.pcClientSide a{display:block;text-decoration:none;color:#17345d;font-weight:750;padding:12px 13px;border-radius:10px;margin:5px 0}.pcClientSide a.on{background:#eaf3ff;color:#1267c4}@media(max-width:900px){main.wrap{width:100%!important;margin-left:0!important;padding:14px!important}.pcClientSide{display:none}}{% endif %}
+.etIn{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}@media(max-width:760px){.etIn,.etCols{grid-template-columns:1fr!important}}
+.etDrop{border:2px dashed #9fb3c8;border-radius:14px;padding:14px;text-align:center;display:flex;flex-direction:column;gap:4px;justify-content:center;cursor:pointer;background:#f8fafd}.etDrop.over{background:#e8f1ff;border-color:#2563eb}
+.etPaste{display:flex;flex-direction:column;gap:6px}.etPaste textarea{font:inherit;font-size:13px;border:1px solid #b9c7d8;border-radius:10px;padding:8px;min-height:0;resize:vertical}
+.etMap{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:10px}.etMap label{display:flex;flex-direction:column;font-size:12px;font-weight:700;gap:3px}.etMap select{height:36px;border:1px solid #b9c7d8;border-radius:8px;font:inherit;font-weight:400}
+.etCols{display:grid;grid-template-columns:1.6fr 1fr;gap:12px;margin-top:10px}.etCard{border:1px solid #dbe4ef;border-radius:14px;padding:12px;min-width:0}
+.etPrevW{height:calc(20mm * 1.9 + 8px);margin:10px 0}#etPrev{transform:scale(1.9);transform-origin:top left;width:45mm}
+.etLab{width:45mm;height:20mm;box-sizing:border-box;padding:0 1mm;display:flex;flex-direction:column;justify-content:center;font-family:Arial,Helvetica,sans-serif;font-size:7pt;line-height:1.25;color:#000;background:#fff;overflow:hidden}
+#etPrev .etLab{border:1px solid #c9d3df;border-radius:1.5mm}.etLab div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.etLab b{font-weight:700}
+.atErr{color:#b42318;font-weight:700;font-size:13px;margin-top:6px}
 </style>
 {% if not internal %}<aside class="pcClientSide"><div class="pcClientLogo"><img src="/static/autopass-logo.png" alt="Autopass"></div><a href="/portal-cliente">▣ Agendamentos</a><a href="/portal-cliente#new">＋ Novo Agendamento</a><a href="/portal-cliente#history">↶ Histórico</a><a class="on" href="/portal-cliente/assistencia-tecnica" aria-current="page">⚙ Assistência Técnica</a><a href="/meu-perfil">♙ Meu Perfil</a><a href="/logout">⇥ Sair</a><div class="pcClientVer">Versão {{ app_release }}</div></aside>{% endif %}
 <div class="atWrap">
@@ -45,6 +54,7 @@
     <label>Data fim<input id="atAte" type="date"></label>
     <label>Nº de série<input id="atBusca" type="search" placeholder="Buscar série ou falha"></label>
     <button type="button" class="atBtn g" id="atLimpar" title="Limpar filtros">✕ Limpar</button>
+    {% if internal %}<button type="button" class="atBtn" onclick="etOpen()">🏷 Imprimir etiqueta</button>{% endif %}
     {% if can_load %}<button type="button" class="atBtn p" onclick="atCargaOpen()">⇪ Carga do Bhom</button>{% endif %}
   </div>
   <section class="atKpis" aria-label="Indicadores">
@@ -74,6 +84,25 @@
   <div id="atMap"></div>
   <h3 style="font-size:15px;margin:16px 0 6px">Últimas cargas</h3><div id="atLoads" class="atMuted"></div>
 </div></div>
+{% endif %}
+{% if internal %}
+<div class="atModal" id="atEt" hidden role="dialog" aria-modal="true" aria-labelledby="etTitle"><div class="atBox" style="width:min(1060px,calc(100vw - 24px))">
+  <div style="display:flex;gap:10px;align-items:flex-start"><div style="flex:1"><h2 id="etTitle" style="margin:0">🏷 Imprimir etiquetas</h2><p class="atMuted" style="margin:2px 0 0">Etiqueta 45 × 20 mm · Zebra ZD220 · o arquivo não fica gravado no sistema.</p></div><button type="button" class="atBtn" onclick="etClose()">Fechar</button></div>
+  <div class="etIn">
+    <label class="etDrop" id="etDrop"><input type="file" id="etFile" accept=".xlsx,.csv" hidden><b>⇪ Selecione ou arraste o Excel das OS abertas</b><span class="atMuted" id="etFileName">.xlsx ou .csv</span></label>
+    <div class="etPaste"><textarea id="etText" rows="3" placeholder="…ou cole aqui as linhas copiadas do Excel (com o cabeçalho)"></textarea><button type="button" class="atBtn" id="etLerTxt">Ler texto colado</button></div>
+  </div>
+  <div class="atErr" id="etErr" role="alert"></div>
+  <div id="etMap" hidden><div class="etMap"><label>Nome<select data-c="nome"></select></label><label>Ordem de Serviço<select data-c="os"></select></label><label>Série<select data-c="serie"></select></label><label>Data<select data-c="data"></select></label></div><p class="atMuted" id="etMapInfo"></p></div>
+  <div class="etCols" id="etBody" hidden>
+    <div class="etCard"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px"><b id="etCount" style="flex:1"></b><input id="etBusca" type="search" placeholder="Buscar" style="height:34px;border:1px solid #b9c7d8;border-radius:8px;padding:0 8px;font:inherit"></div>
+      <div class="atScroll" style="max-height:46vh"><table class="atTable"><thead><tr><th style="width:34px"><input type="checkbox" id="etAll" checked aria-label="Selecionar todas"></th><th>Nome</th><th>OS</th><th>Série</th><th>Data</th><th>Reincid.</th></tr></thead><tbody id="etRows"></tbody></table></div>
+      <p class="atMuted" style="margin:8px 0 0">Cópias por etiqueta: <select id="etCopias"><option>1</option><option>2</option><option>3</option></select></p></div>
+    <div class="etCard"><b>Prévia (ampliada 1,9×)</b><div class="etPrevW"><div id="etPrev"></div></div><p class="atMuted">1 mm livre em cada lateral. A 5ª linha só aparece quando a série entrou nos 3 meses anteriores à data da OS (o número inclui a entrada atual). O texto encolhe sozinho se não couber.</p></div>
+  </div>
+  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px"><span class="atMuted" style="flex:1">Na 1ª vez, escolha a <b>ZD220</b> na janela de impressão, com margens <b>Nenhuma</b> e papel 45 × 20 mm no driver da Zebra.</span><button type="button" class="atBtn p" id="etPrint" disabled>🖨 Imprimir</button></div>
+</div></div>
+<iframe id="etFrame" title="Impressão de etiquetas" style="position:fixed;width:0;height:0;border:0;left:-9999px"></iframe>
 {% endif %}
 <script>
 (()=>{
@@ -149,5 +178,51 @@ $('atForm').onsubmit=async e=>{e.preventDefault();const b=$('atSend');b.disabled
 {% endif %}
 load();
 })();
+
+/* REV50 — etiquetas */
+(()=>{const $=id=>document.getElementById(id);
+let ET={cols:[],linhas:[],mapa:{},itens:[],sel:new Set()};
+const etEsc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+function etOpen(){$('atEt').hidden=false}
+function etClose(){$('atEt').hidden=true}
+function etLabel(x){return `<div class="etLab"><div>Nome: ${etEsc(x.nome)}</div><div>Ordem de Serviço: ${etEsc(x.os)}</div><div>Serie: ${etEsc(x.serie)}</div><div>Data: ${etEsc(x.data)}</div>${x.vezes?`<div><b>Reincidência - ${x.vezes}x</b></div>`:''}</div>`}
+function etFit(root){root.querySelectorAll('.etLab').forEach(l=>{[...l.children].forEach(c=>{let f=7;c.style.fontSize=f+'pt';while(c.scrollWidth>c.clientWidth+1&&f>5){f-=.25;c.style.fontSize=f+'pt'}})})}
+async function etLer(fd){$('etErr').textContent='';$('etFileName').textContent='Lendo…';
+  try{const r=await fetch('/api/assistencia/etiquetas/ler',{method:'POST',body:fd});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||'Falha ao ler.');
+   ET.cols=d.colunas;ET.linhas=d.linhas;ET.mapa=d.mapa||{};
+   $('etMap').hidden=false;$('etMap').querySelectorAll('select').forEach(s=>{s.innerHTML='<option value="">— escolha a coluna —</option>'+ET.cols.map((c,i)=>`<option value="${i}">${etEsc(c)}</option>`).join('');s.value=ET.mapa[s.dataset.c]??''});
+   $('etMapInfo').textContent=`${d.total} linha(s) lidas${d.total>500?' (até 500 por vez)':''}. ${d.cabecalho?'Colunas reconhecidas automaticamente — confira acima.':'Cabeçalho não reconhecido: escolha as colunas acima.'}`;
+   $('etFileName').textContent=fd.get('arquivo')?.name||'Texto colado';await etPreparar()}
+  catch(e){$('etErr').textContent=e.message;$('etFileName').textContent='.xlsx ou .csv'}}
+async function etPreparar(){const m={};$('etMap').querySelectorAll('select').forEach(s=>m[s.dataset.c]=s.value);
+  if(['os','serie'].some(k=>m[k]==='')){$('etBody').hidden=true;$('etPrint').disabled=true;$('etErr').textContent='Escolha pelo menos as colunas de OS e de Série.';return}
+  $('etErr').textContent='';const g=(r,k)=>m[k]===''?'':(r[Number(m[k])]??'');
+  const itens=ET.linhas.map(r=>({nome:g(r,'nome'),os:g(r,'os'),serie:g(r,'serie'),data:g(r,'data')})).filter(x=>String(x.os).trim()||String(x.serie).trim()).filter((x,i,a)=>a.findIndex(y=>String(y.os).trim()===String(x.os).trim()&&String(y.serie).trim()===String(x.serie).trim())===i);
+  if(!itens.length){$('etErr').textContent='Nenhuma OS com número ou série nas colunas escolhidas.';return}
+  const r=await fetch('/api/assistencia/etiquetas/preparar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({itens})});const d=await r.json().catch(()=>({}));
+  if(!r.ok){$('etErr').textContent=d.error||'Falha ao preparar.';return}
+  ET.itens=d.itens;ET.sel=new Set(ET.itens.map((_,i)=>i));$('etBody').hidden=false;etDraw()}
+function etDraw(){const q=($('etBusca').value||'').toUpperCase();
+  $('etRows').innerHTML=ET.itens.map((x,i)=>({x,i})).filter(({x})=>!q||`${x.nome} ${x.os} ${x.serie}`.toUpperCase().includes(q)).map(({x,i})=>`<tr data-i="${i}"><td><input type="checkbox" class="etChk" value="${i}"${ET.sel.has(i)?' checked':''} aria-label="Selecionar OS ${etEsc(x.os)}"></td><td>${etEsc(x.nome)}</td><td>${etEsc(x.os)}</td><td style="font-family:ui-monospace,monospace">${etEsc(x.serie)}</td><td>${etEsc(x.data)}</td><td>${x.vezes?`<b style="color:#991b1b">${x.vezes}x</b>`:'—'}</td></tr>`).join('');
+  const n=ET.sel.size;$('etCount').textContent=`${n} de ${ET.itens.length} selecionada(s) · ${ET.itens.filter(x=>x.vezes).length} com reincidência`;$('etAll').checked=n===ET.itens.length;
+  const cp=Number($('etCopias').value||1);$('etPrint').disabled=!n;$('etPrint').textContent=`🖨 Imprimir ${n*cp} etiqueta(s)`;
+  const prev=ET.itens.find((x,i)=>ET.sel.has(i))||ET.itens[0];$('etPrev').innerHTML=prev?etLabel(prev):'';etFit($('etPrev'))}
+function etImprimir(){const cp=Number($('etCopias').value||1),sel=ET.itens.filter((_,i)=>ET.sel.has(i));if(!sel.length)return;
+  const labs=sel.flatMap(x=>Array(cp).fill(x)).map(etLabel).join('');
+  const css=`@page{size:45mm 20mm;margin:0}html,body{margin:0;padding:0;background:#fff}.etLab{width:45mm;height:20mm;box-sizing:border-box;padding:0 1mm;display:flex;flex-direction:column;justify-content:center;font-family:Arial,Helvetica,sans-serif;font-size:7pt;line-height:1.25;color:#000;overflow:hidden;page-break-after:always;break-after:page}.etLab:last-child{page-break-after:auto;break-after:auto}.etLab div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}`;
+  const fr=$('etFrame'),doc=fr.contentDocument;doc.open();doc.write(`<!doctype html><html><head><meta charset="utf-8"><title>Etiquetas</title><style>${css}</style></head><body>${labs}</body></html>`);doc.close();
+  setTimeout(()=>{etFit(doc.body);fr.contentWindow.focus();fr.contentWindow.print()},150)}
+(function(){if(!$('atEt'))return;
+  $('etFile').onchange=e=>{const f=e.target.files[0];if(!f)return;const fd=new FormData();fd.append('arquivo',f);etLer(fd);e.target.value=''};
+  const dz=$('etDrop');['dragenter','dragover'].forEach(t=>dz.addEventListener(t,e=>{e.preventDefault();dz.classList.add('over')}));['dragleave','drop'].forEach(t=>dz.addEventListener(t,e=>{e.preventDefault();dz.classList.remove('over')}));
+  dz.addEventListener('drop',e=>{const f=e.dataTransfer.files[0];if(!f)return;const fd=new FormData();fd.append('arquivo',f);etLer(fd)});
+  $('etLerTxt').onclick=()=>{const t=$('etText').value.trim();if(!t){$('etErr').textContent='Cole as linhas copiadas do Excel.';return}const fd=new FormData();fd.append('texto',t);etLer(fd)};
+  $('etMap').addEventListener('change',etPreparar);$('etBusca').oninput=etDraw;$('etCopias').onchange=etDraw;
+  $('etRows').addEventListener('change',e=>{if(e.target.classList.contains('etChk')){const i=Number(e.target.value);e.target.checked?ET.sel.add(i):ET.sel.delete(i);etDraw()}});
+  $('etRows').addEventListener('click',e=>{const tr=e.target.closest('tr[data-i]');if(tr&&!e.target.matches('input')){const x=ET.itens[Number(tr.dataset.i)];$('etPrev').innerHTML=etLabel(x);etFit($('etPrev'))}});
+  $('etAll').onchange=e=>{ET.sel=e.target.checked?new Set(ET.itens.map((_,i)=>i)):new Set();etDraw()};
+  $('etPrint').onclick=etImprimir;document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('atEt').hidden)etClose()});
+  $('atEt').addEventListener('click',e=>{if(e.target.id==='atEt')etClose()})})();
+window.etOpen=etOpen;window.etClose=etClose;})();
 </script>
 {% endblock %}
