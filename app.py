@@ -15838,8 +15838,10 @@ def user_photo(user_id):
         # REV74 — miniatura já em memória: não busca a foto original no R2 (~1 s por foto).
         if request.args.get("thumb")=="1":
             _t=_V8548_THUMB_CACHE.get(str(user.photo_url))
-            if _t and time.monotonic()-_t[0] < 21600:
-                resp=send_file(io.BytesIO(_t[1]),mimetype='image/jpeg',download_name='usuario-thumb.jpg',max_age=604800)
+            # REV44: miniatura guardada no banco sobrevive aos reinícios do servidor (plano Free)
+            _tb=(_t[1] if (_t and time.monotonic()-_t[0] < 21600) else _v118_thumb_get(str(user.photo_url)))
+            if _tb:
+                resp=send_file(io.BytesIO(_tb),mimetype='image/jpeg',download_name='usuario-thumb.jpg',max_age=604800)
                 resp.headers['Cache-Control']='private, max-age=604800, immutable'
                 return resp
         # V85.43 REV1 — evita buscar a mesma foto no R2 a cada refresh da Central de Equipes.
@@ -15862,6 +15864,7 @@ def user_photo(user_id):
         if request.args.get("thumb")=="1":
             thumb=_v8548_cached_thumbnail(str(user.photo_url),raw) if mime.startswith('image/') else None
             if thumb:
+                _v118_thumb_put(str(user.photo_url),thumb)
                 resp=send_file(io.BytesIO(thumb),mimetype='image/jpeg',download_name='usuario-thumb.jpg',max_age=604800)
                 resp.headers['Cache-Control']='private, max-age=604800, immutable'
                 return resp
@@ -34504,5 +34507,47 @@ def _v116_trim_memory(_exc=None):
     _V116_TRIM["at"] = now
     try:
         _V116_LIBC.malloc_trim(0)
+    except Exception:
+        pass
+
+
+
+# V88.0 REV44 — miniaturas das fotos de usuários guardadas no banco.
+# A chave é o caminho da foto no armazenamento (muda quando a foto muda), então nunca fica desatualizada.
+# No plano Free o servidor reinicia ao acordar; antes, cada reinício refazia todas as miniaturas (~1–3 s cada).
+_V118_READY = {"ok": False}
+
+
+def _v118_ensure(conn):
+    if _V118_READY["ok"]:
+        return
+    blob = "BYTEA" if db.engine.dialect.name == "postgresql" else "BLOB"
+    conn.execute(text(f"CREATE TABLE IF NOT EXISTS v118_user_thumbs (photo_key VARCHAR(500) PRIMARY KEY, data {blob} NOT NULL, created_at TIMESTAMP)"))
+    _V118_READY["ok"] = True
+
+
+def _v118_thumb_get(key):
+    if not key:
+        return None
+    try:
+        with db.engine.begin() as conn:
+            _v118_ensure(conn)
+            row = conn.execute(text("SELECT data FROM v118_user_thumbs WHERE photo_key = :k"), {"k": key[:500]}).first()
+            return bytes(row[0]) if row and row[0] else None
+    except Exception:
+        return None
+
+
+def _v118_thumb_put(key, data):
+    if not key or not data or len(data) > 300 * 1024:
+        return
+    try:
+        with db.engine.begin() as conn:
+            _v118_ensure(conn)
+            ins = "INSERT INTO v118_user_thumbs (photo_key, data, created_at) VALUES (:k, :d, :t)"
+            ins += " ON CONFLICT (photo_key) DO NOTHING" if db.engine.dialect.name == "postgresql" else ""
+            if db.engine.dialect.name != "postgresql":
+                ins = ins.replace("INSERT INTO", "INSERT OR IGNORE INTO")
+            conn.execute(text(ins), {"k": key[:500], "d": data, "t": datetime.utcnow()})
     except Exception:
         pass
