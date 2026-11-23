@@ -35159,3 +35159,229 @@ if _v120_list_orig:
             pass
         return resp
     app.view_functions["portal_appointments_list"] = _v120_list
+
+
+# =====================================================================
+# V88.0 REV49 — Edição e exclusão de agendamentos do Portal.
+# Equipe com "Administrar Portal": edita e exclui em qualquer situação (testes/erros),
+#   inclusive com equipamento já recebido (pede motivo e confirmação do protocolo).
+# Cliente: edita e exclui enquanto a assistência ainda não recebeu nenhum equipamento.
+# =====================================================================
+_V121_CLIENTE_ABERTO = ("RASCUNHO", "ENVIADO", "NA_PROGRAMACAO", "AGENDADO")
+
+
+def _v121_recebidos(aid):
+    return CustomerAppointmentEquipment.query.filter_by(appointment_id=aid, received=True).count()
+
+
+def _v121_regras(a, recebidos=None):
+    """(pode_editar, pode_excluir, motivo) para o usuário atual."""
+    st = str(a.status or "").upper()
+    if _portal_staff() and _has_access("portal.manage"):
+        return True, True, ""
+    if _portal_internal():
+        return False, False, "Somente quem administra o Portal pode editar ou excluir."
+    if not _portal_can_see(a):
+        return False, False, "Agendamento de outra empresa."
+    rec = _v121_recebidos(a.id) if recebidos is None else recebidos
+    if rec or st not in _V121_CLIENTE_ABERTO:
+        return False, False, "A assistência já recebeu este agendamento. Para corrigir, fale com a assistência técnica."
+    return True, True, ""
+
+
+def _v121_apagar(a):
+    """Apaga o agendamento e tudo que depende dele (eventos, NF, XML, datas, reincidência)."""
+    aid = a.id
+    for fn in (lambda: V103ReturnDate.query.filter_by(appointment_id=aid).delete(synchronize_session=False),
+               lambda: (_v105_ensure_invoices(), V105Invoice.query.filter_by(appointment_id=aid).delete(synchronize_session=False)),
+               lambda: (_v112_ensure(), V112Doc.query.filter_by(appointment_id=aid).delete(synchronize_session=False))):
+        try:
+            with db.session.begin_nested():
+                fn()
+        except Exception:
+            pass
+    PortalEquipmentEvent.query.filter_by(appointment_id=aid).delete(synchronize_session=False)
+    CustomerAppointmentEquipment.query.filter_by(appointment_id=aid).delete(synchronize_session=False)
+    db.session.delete(a)
+    try:
+        with db.engine.begin() as c:
+            c.execute(text("DELETE FROM v120_at_flags WHERE appointment_id=:a"), {"a": aid})
+    except Exception:
+        pass
+
+
+def _v121_delete(aid):
+    a = db.session.get(CustomerAppointment, aid)
+    if not a:
+        abort(404)
+    rec = _v121_recebidos(a.id)
+    _ed, pode, motivo = _v121_regras(a, rec)
+    if not pode:
+        return jsonify({"ok": False, "error": motivo}), 403 if "outra empresa" in motivo or "Somente" in motivo else 409
+    data = request.get_json(silent=True) or {}
+    reason = (data.get("reason") or "").strip()[:300]
+    if rec and not reason:
+        return jsonify({"ok": False, "error": f"Este agendamento tem {rec} equipamento(s) recebido(s). Informe o motivo da exclusão."}), 400
+    code, company = a.code or str(a.id), a.customer_company or ""
+    _v121_apagar(a)
+    db.session.flush()
+    db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="V121_APPOINTMENT_DELETED", entity_type="customer_appointment",
+                              entity_id=str(aid), detail=f"{code} · {company} · recebidos: {rec}" + (f" · {reason}" if reason else "")))
+    db.session.commit()
+    return jsonify({"ok": True})
+
+
+app.view_functions["v712_delete_appointment"] = login_required(_v121_delete)
+
+
+@app.post("/api/portal/appointments/excluir-lote")
+@login_required
+def v121_bulk_delete():
+    if not (_portal_staff() and _has_access("portal.manage")):
+        abort(403)
+    data = request.get_json(silent=True) or {}
+    if (data.get("confirm") or "").strip().upper() != "EXCLUIR":
+        return jsonify({"ok": False, "error": "Digite EXCLUIR para confirmar."}), 400
+    reason = (data.get("reason") or "").strip()[:300]
+    if not reason:
+        return jsonify({"ok": False, "error": "Informe o motivo da exclusão."}), 400
+    ids = [int(x) for x in (data.get("ids") or []) if str(x).isdigit()][:200]
+    feitos = []
+    for aid in ids:
+        a = db.session.get(CustomerAppointment, aid)
+        if not a:
+            continue
+        rec = _v121_recebidos(a.id)
+        code, company = a.code or str(a.id), a.customer_company or ""
+        _v121_apagar(a)
+        db.session.flush()
+        db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="V121_APPOINTMENT_DELETED", entity_type="customer_appointment",
+                                  entity_id=str(aid), detail=f"{code} · {company} · recebidos: {rec} · lote · {reason}"))
+        feitos.append(code)
+    db.session.commit()
+    return jsonify({"ok": True, "excluidos": len(feitos), "codigos": feitos})
+
+
+@app.get("/api/portal/appointments/<int:aid>/editar")
+@login_required
+def v121_edit_get(aid):
+    a = db.session.get(CustomerAppointment, aid)
+    if not a or not (_portal_can_see(a) or (_portal_staff() and _has_access("portal.manage"))):
+        abort(404)
+    pode, _x, motivo = _v121_regras(a)
+    eqs = CustomerAppointmentEquipment.query.filter_by(appointment_id=a.id).order_by(CustomerAppointmentEquipment.item_no).all()
+    return jsonify({"ok": True, "pode_editar": pode, "motivo": motivo, "appointment": {
+        "id": a.id, "code": a.code, "company": a.customer_company, "status": a.status, "responsible": a.responsible_name or "",
+        "email": a.responsible_email or "", "phone": a.responsible_phone or "", "notes": a.notes or "",
+        "alternate": bool(a.alternate_date_requested), "alternate_reason": a.alternate_reason or ""},
+        "items": [{"id": e.id, "serial": e.serial_number, "equipment": e.equipment or "", "version": e.version or "", "eod": e.eod or "",
+                   "defect": e.defect or "", "notes": e.notes or "", "received": bool(e.received)} for e in eqs]})
+
+
+@app.post("/api/portal/appointments/<int:aid>/editar")
+@login_required
+def v121_edit_save(aid):
+    a = db.session.get(CustomerAppointment, aid)
+    if not a or not (_portal_can_see(a) or (_portal_staff() and _has_access("portal.manage"))):
+        abort(404)
+    pode, _x, motivo = _v121_regras(a)
+    if not pode:
+        return jsonify({"ok": False, "error": motivo}), 409
+    data = request.get_json(silent=True) or {}
+    items = data.get("items") or []
+    if not items:
+        return jsonify({"ok": False, "error": "O agendamento precisa ter pelo menos um equipamento."}), 400
+    atuais = {e.id: e for e in CustomerAppointmentEquipment.query.filter_by(appointment_id=a.id).all()}
+    manter, novos = set(), []
+    for i, x in enumerate(items, 1):
+        serial, defect = (x.get("serial") or "").strip()[:120], (x.get("defect") or "").strip()[:500]
+        if not serial or not defect:
+            return jsonify({"ok": False, "error": f"Equipamento {i}: série e defeito são obrigatórios."}), 400
+        eid = int(x["id"]) if str(x.get("id") or "").isdigit() else None
+        if eid and eid not in atuais:
+            return jsonify({"ok": False, "error": f"Equipamento {i} não pertence a este agendamento."}), 400
+        if eid:
+            manter.add(eid)
+        novos.append((eid, serial, defect, x))
+    remover = [e for k, e in atuais.items() if k not in manter]
+    if any(e.received for e in remover):
+        return jsonify({"ok": False, "error": "Equipamento já recebido não pode ser retirado do agendamento."}), 409
+    mudou = []
+    for e in remover:
+        PortalEquipmentEvent.query.filter_by(equipment_id=e.id).delete(synchronize_session=False)
+        db.session.delete(e)
+        mudou.append(f"retirado {e.serial_number}")
+    db.session.flush()
+    # Renumera os itens sem violar a chave única (appointment_id, item_no).
+    for e in atuais.values():
+        if e.id in manter:
+            e.item_no = e.item_no + 1000
+    db.session.flush()
+    for n, (eid, serial, defect, x) in enumerate(novos, 1):
+        campos = dict(serial_number=serial, defect=defect, equipment=(x.get("equipment") or "").strip()[:120],
+                      version=(x.get("version") or "").strip()[:80], eod=(x.get("eod") or "").strip()[:120], notes=(x.get("notes") or "").strip())
+        if eid:
+            e = atuais[eid]
+            if e.serial_number != serial or (e.defect or "") != defect:
+                mudou.append(f"item {n}: {e.serial_number}→{serial}" if e.serial_number != serial else f"item {n}: defeito")
+            for k, v in campos.items():
+                setattr(e, k, v)
+            e.item_no = n
+        else:
+            db.session.add(CustomerAppointmentEquipment(appointment_id=a.id, item_no=n, **campos))
+            mudou.append(f"incluído {serial}")
+    a.responsible_name = (data.get("responsible") or a.responsible_name or "").strip()[:180] or a.responsible_name
+    a.responsible_email = (data.get("email") or "").strip()[:180]
+    a.responsible_phone = (data.get("phone") or "").strip()[:40]
+    a.notes = (data.get("notes") or "").strip()
+    alt = bool(data.get("alternate"))
+    a.alternate_date_requested = alt
+    a.alternate_reason = ((data.get("alternate_reason") or "").strip()[:300] or None) if alt else None
+    db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="V121_APPOINTMENT_EDITED", entity_type="customer_appointment",
+                              entity_id=str(a.id), detail=(f"{a.code} · " + ("; ".join(mudou) or "dados gerais"))[:500]))
+    db.session.commit()
+    _v120_marcar(a.id)
+    return jsonify({"ok": True, "code": a.code})
+
+
+def _v121_flags(rows, recebidos_key="received"):
+    """Acrescenta pode_editar/pode_excluir às linhas das listas (sem consultas extras por linha)."""
+    admin = _portal_staff() and _has_access("portal.manage")
+    interno = _portal_internal()
+    for r in rows:
+        st = str(r.get("status") or "").upper()
+        if admin:
+            r["pode_editar"] = r["pode_excluir"] = True
+        elif interno:
+            r["pode_editar"] = r["pode_excluir"] = False
+        else:
+            ok = not int(r.get(recebidos_key) or 0) and st in _V121_CLIENTE_ABERTO
+            r["pode_editar"] = r["pode_excluir"] = ok
+    return rows
+
+
+def _v121_wrap(name):
+    orig = app.view_functions.get(name)
+    if not orig:
+        return
+    def wrapper(*a, **k):
+        resp = make_response(orig(*a, **k))
+        try:
+            if resp.status_code == 200 and resp.is_json:
+                d = resp.get_json(silent=True) or {}
+                if isinstance(d.get("rows"), list):
+                    _v121_flags(d["rows"])
+                    for key in ("requested_today", "programmed_today"):
+                        if isinstance(d.get(key), list):
+                            _v121_flags(d[key])
+                    d["pode_excluir_lote"] = bool(_portal_staff() and _has_access("portal.manage"))
+                    resp = jsonify(d)
+        except Exception:
+            app.logger.exception("REV49: falha ao marcar permissões de edição")
+        return resp
+    wrapper.__name__ = orig.__name__
+    app.view_functions[name] = wrapper
+
+
+_v121_wrap("portal_appointments_list")
+_v121_wrap("v71_schedule_management_api")
