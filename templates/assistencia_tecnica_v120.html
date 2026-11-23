@@ -98,7 +98,7 @@
     <div class="etCard"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px"><b id="etCount" style="flex:1"></b><input id="etBusca" type="search" placeholder="Buscar" style="height:34px;border:1px solid #b9c7d8;border-radius:8px;padding:0 8px;font:inherit"></div>
       <div class="atScroll" style="max-height:46vh"><table class="atTable"><thead><tr><th style="width:34px"><input type="checkbox" id="etAll" checked aria-label="Selecionar todas"></th><th>Nome</th><th>OS</th><th>Série</th><th>Data</th><th>Reincid.</th></tr></thead><tbody id="etRows"></tbody></table></div>
       <p class="atMuted" style="margin:8px 0 0">Cópias por etiqueta: <select id="etCopias"><option>1</option><option>2</option><option>3</option></select></p></div>
-    <div class="etCard"><b>Prévia (ampliada 1,9×)</b><div class="etPrevW"><div id="etPrev"></div></div><p class="atMuted">Nomes longos: cadastre o <b>Nome reduzido</b> em Cadastro de Clientes. 1 mm livre em cada lateral. A 5ª linha só aparece quando a série entrou nos 3 meses anteriores à data da OS (o número inclui a entrada atual). O texto encolhe sozinho se não couber.</p></div>
+    <div class="etCard"><b>Prévia (ampliada 1,9×)</b><div class="etPrevW"><div id="etPrev"></div></div><p class="atMuted">Nomes longos: cadastre o <b>Nome reduzido</b> em Cadastro de Clientes. 1 mm livre em cada lateral. A 5ª linha só aparece quando a série entrou nos 3 meses anteriores à data da OS (o número inclui a entrada atual). Letra fixa de 7 pt em todas as etiquetas; o que não couber é cortado com “…”.</p></div>
   </div>
   <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px"><span class="atMuted" style="flex:1">Na 1ª vez, escolha a <b>ZD220</b> na janela de impressão, com margens <b>Nenhuma</b> e papel 45 × 20 mm no driver da Zebra.</span><button type="button" class="atBtn p" id="etPrint" disabled>🖨 Imprimir</button></div>
 </div></div>
@@ -186,7 +186,7 @@ const etEsc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':
 function etOpen(){$('atEt').hidden=false}
 function etClose(){$('atEt').hidden=true}
 function etLabel(x){return `<div class="etLab"><div>Nome: ${etEsc(x.nome)}</div><div>Ordem de Serviço: ${etEsc(x.os)}</div><div>Serie: ${etEsc(x.serie)}</div><div>Data: ${etEsc(x.data)}</div>${x.vezes?`<div><b>Reincidência - ${x.vezes}x</b></div>`:''}</div>`}
-function etFit(root){root.querySelectorAll('.etLab').forEach(l=>{[...l.children].forEach(c=>{let f=7;c.style.fontSize=f+'pt';while(c.scrollWidth>c.clientWidth+1&&f>5){f-=.25;c.style.fontSize=f+'pt'}})})}
+function etFit(){/* REV50: fonte fixa em 7 pt em todas as linhas e etiquetas (padrão); texto que não couber é cortado com … */}
 async function etLer(fd){$('etErr').textContent='';$('etFileName').textContent='Lendo…';
   try{const r=await fetch('/api/assistencia/etiquetas/ler',{method:'POST',body:fd});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||'Falha ao ler.');
    ET.cols=d.colunas;ET.linhas=d.linhas;ET.mapa=d.mapa||{};
