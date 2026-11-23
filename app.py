@@ -35509,6 +35509,10 @@ def v122_preparar():
         return jsonify({"ok": False, "error": "Nenhuma OS para preparar."}), 400
     itens = [x for x in itens[:500] if isinstance(x, dict)]
     out = _v122_contagens(itens)
+    curtos = _v122_nomes_curto({x["nome"] for x in out if x["nome"]})
+    for x in out:
+        x["nome_original"] = x["nome"]
+        x["nome"] = curtos.get(x["nome"], x["nome"])
     try:
         db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="ASSISTENCIA_ETIQUETAS", entity_type="assistencia",
                                   entity_id="etiquetas", detail=f"{len(out)} etiqueta(s) preparada(s) · {sum(1 for x in out if x['vezes'])} com reincidência"))
@@ -35516,3 +35520,95 @@ def v122_preparar():
     except Exception:
         db.session.rollback()
     return jsonify({"ok": True, "itens": out})
+
+
+# V88.0 REV50.1 — "Nome na etiqueta" por cliente (Cadastro de Clientes), usado na impressão de etiquetas.
+_V122_LBL = {"ok": False}
+
+
+def _v122_lbl_ensure():
+    if _V122_LBL["ok"]:
+        return
+    with db.engine.begin() as c:
+        c.execute(text("CREATE TABLE IF NOT EXISTS v122_label_names (company_id INTEGER PRIMARY KEY, label VARCHAR(40) NOT NULL, updated_at TIMESTAMP)"))
+    _V122_LBL["ok"] = True
+
+
+def _v122_lbl_map():
+    try:
+        _v122_lbl_ensure()
+        with db.engine.connect() as c:
+            return {int(r[0]): r[1] for r in c.execute(text("SELECT company_id, label FROM v122_label_names"))}
+    except Exception:
+        return {}
+
+
+def _v122_lbl_save(cid, label):
+    label = re.sub(r"\s+", " ", (label or "")).strip()[:40]
+    _v122_lbl_ensure()
+    with db.engine.begin() as c:
+        c.execute(text("DELETE FROM v122_label_names WHERE company_id=:c"), {"c": cid})
+        if label:
+            c.execute(text("INSERT INTO v122_label_names (company_id, label, updated_at) VALUES (:c,:l,:t)"), {"c": cid, "l": label, "t": datetime.utcnow()})
+
+
+def _v122_nomes_curto(nomes):
+    """Nome do Excel → nome na etiqueta (via vínculo da Carga do Bhom ou razão social / nome fantasia do cadastro)."""
+    lbl = _v122_lbl_map()
+    if not lbl:
+        return {}
+    por_nome = {}
+    try:
+        for c in CustomerCompany.query.all():
+            for n in (c.legal_name, c.trade_name):
+                if n:
+                    por_nome.setdefault(_v120_norm(n), c.id)
+    except Exception:
+        db.session.rollback()
+    try:
+        _v120_ensure()
+        with db.engine.connect() as c:
+            for n, cid in c.execute(text("SELECT name, company_id FROM v120_at_clients WHERE company_id IS NOT NULL")):
+                por_nome.setdefault(_v120_norm(n), int(cid))
+    except Exception:
+        pass
+    out = {}
+    for n in nomes:
+        cid = por_nome.get(_v120_norm(n))
+        if cid in lbl:
+            out[n] = lbl[cid]
+    return out
+
+
+@app.get("/api/portal/clientes/nomes-etiqueta")
+@login_required
+def v122_lbl_list():
+    if not _has_access("portal.manage"):
+        abort(403)
+    return jsonify({"ok": True, "nomes": {str(k): v for k, v in _v122_lbl_map().items()}})
+
+
+def _v122_wrap_cadastro(name, novo=False):
+    orig = app.view_functions.get(name)
+    if not orig:
+        return
+    def wrapper(*a, **k):
+        resp = orig(*a, **k)
+        try:
+            if request.method == "POST" and _has_access("portal.manage") and "label_name" in request.form:
+                cid = k.get("cid")
+                if novo:
+                    legal = (request.form.get("legal_name") or "").strip()
+                    c = CustomerCompany.query.filter_by(legal_name=legal).order_by(CustomerCompany.id.desc()).first() if legal else None
+                    cid = c.id if c else None
+                if cid:
+                    _v122_lbl_save(int(cid), request.form.get("label_name"))
+        except Exception:
+            app.logger.exception("REV50.1: falha ao salvar nome na etiqueta")
+        return resp
+    wrapper.__name__ = orig.__name__
+    app.view_functions[name] = wrapper
+
+
+_v122_wrap_cadastro("portal_customer_company_edit")
+_v122_wrap_cadastro("portal_customer_companies", novo=True)
