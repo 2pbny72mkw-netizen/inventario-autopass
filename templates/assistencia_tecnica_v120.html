@@ -48,6 +48,7 @@
 .atWrap .atF,.atWrap .atF:hover{all:unset;box-sizing:border-box;display:grid;grid-template-columns:minmax(120px,210px) 1fr 34px;gap:10px;align-items:center;width:100%;padding:6px 8px;border-radius:10px;font-size:13px;cursor:pointer;color:#16283d}
 .atWrap .atF:hover,.atWrap .atF:focus-visible{background:#f1f5fb;outline:none}.atF span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.atF u{display:block;height:14px;background:#eef2f7;border-radius:7px;text-decoration:none}.atF u i{display:block;height:100%;background:#2563eb;border-radius:7px}.atF b{text-align:right}
 .atSem svg{width:100%;height:auto;display:block}.atSem rect{cursor:pointer}.atSem rect:hover{opacity:.8}.atLeg2{display:flex;gap:16px;font-size:12px;color:#4a5b70}.atLeg2 i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px}
+.atWrap .atKpi.k5,.atWrap .atKpi.k5:hover{background:#fff;color:#16283d;outline:1px solid #dbe4ef}
 </style>
 {% if not internal %}<aside class="pcClientSide"><div class="pcClientLogo"><img src="/static/autopass-logo.png" alt="Autopass"></div><a href="/portal-cliente">▣ Agendamentos</a><a href="/portal-cliente#new">＋ Novo Agendamento</a><a href="/portal-cliente#history">↶ Histórico</a><a class="on" href="/portal-cliente/assistencia-tecnica" aria-current="page">⚙ Assistência Técnica</a><a href="/meu-perfil">♙ Meu Perfil</a><a href="/logout">⇥ Sair</a><div class="pcClientVer">Versão {{ app_release }}</div></aside>{% endif %}
 <div class="atWrap">
@@ -68,6 +69,7 @@
     <button type="button" class="atKpi k2" data-f="Finalizado"><span>FINALIZADOS</span><b id="kFin">—</b><small id="kFinP"></small></button>
     <button type="button" class="atKpi k3" data-f="Aguardando aprovação"><span>AGUARDANDO APROVAÇÃO</span><b id="kApr">—</b><small>orçamentos para aprovar</small></button>
     <button type="button" class="atKpi k4" data-f="__rein"><span>REINCIDÊNCIAS &lt; 90 DIAS</span><b id="kRein">—</b><small>priorizados no atendimento</small></button>
+    {% if internal %}<button type="button" class="atKpi k5" data-f="__fin" data-t="Finalizados · tempo de atendimento"><span style="color:#4a5b70">TEMPO MÉDIO</span><b id="kTm">—</b><small style="color:#4a5b70">da abertura ao encerramento</small></button>{% endif %}
   </section>
 {% if internal %}
   <div class="atGrid">
@@ -131,6 +133,7 @@ async function load(){
   $('kFinP').textContent=k.equipamentos?Math.round(k.finalizados*100/k.equipamentos)+'% do período':'';$('kApr').textContent=num(k.aguardando_aprovacao);$('kRein').textContent=num(k.reincidencias);
   $('atUpd').textContent='Ordens de serviço de manutenção'+(d.periodo?` · abertas de ${fmt(d.periodo[0])} a ${fmt(d.periodo[1])}`:'')+(d.atualizado_em?` · dados do Bhom Análises atualizados em ${new Date(d.atualizado_em+'Z').toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo',dateStyle:'short',timeStyle:'short'})}`:' · ainda sem carga');
   if(d.periodo_dados){['atDe','atAte'].forEach(i=>{$(i).min=d.periodo_dados[0];$(i).max=d.periodo_dados[1]})}
+  if($('kTm'))$('kTm').innerHTML=k.tempo_medio!=null?String(k.tempo_medio).replace('.',',')+' <span style="font-size:16px">dias</span>':'—';
   if($('atDonut'))donut(d.etapas);
   if($('atFalhas')){
   const mx=Math.max(1,...d.falhas.map(f=>f.n));$('atFalhas').innerHTML=d.falhas.length?d.falhas.map(f=>`<button type="button" class="atF" data-q="${esc(f.rotulo)}" title="${esc(f.rotulo)}: ${f.n} OS"><span>${esc(f.rotulo)}</span><u><i style="width:${Math.max(3,f.n*100/mx)}%"></i></u><b>${f.n}</b></button>`).join(''):'<p class="atMuted">Sem falhas registradas no período.</p>';
@@ -165,7 +168,7 @@ $('atBusca').addEventListener('input',()=>{filtro='';render()});$('atEtapa').add
 $('atLimpar').onclick=()=>{filtro='';$('atEtapa').value='';$('atBusca').value='';$('atDe').value='';$('atAte').value='';load()};
 let DT={f:'',t:'',sk:'abertura',dir:-1};
 function dLista(){const f=DT.f,q=($('atDq')?.value||'').toUpperCase();
-  let r=(D?.equipamentos||[]).filter(e=>f==='__all'||(f==='__rein'?e.reincidencia_dias!=null:f==='__man'?e.etapa!=='Finalizado':e.etapa===f));
+  let r=(D?.equipamentos||[]).filter(e=>f==='__all'||(f==='__rein'?e.reincidencia_dias!=null:f==='__fin'?e.etapa==='Finalizado':f==='__man'?e.etapa!=='Finalizado':e.etapa===f));
   r=r.filter(e=>!q||`${e.serial} ${e.falha} ${e.os}`.toUpperCase().includes(q));
   return r.sort((a,b)=>{const x=a[DT.sk]??'',y=b[DT.sk]??'';return (typeof x==='number'&&typeof y==='number'?x-y:String(x).localeCompare(String(y),'pt-BR',{numeric:true}))*DT.dir})}
 const DCOLS=[['serial','Nº de série'],['os','OS'],['falha','Falha informada'],['etapa','Situação'],['abertura','Abertura'],['dias','Dias'],['entradas','Histórico']];
@@ -173,7 +176,7 @@ function dRender(){const r=dLista();$('atDn').textContent=`${num(r.length)} equi
   $('atDh').innerHTML=DCOLS.map(([k,l])=>`<th data-k="${k}" aria-sort="${DT.sk===k?(DT.dir>0?'ascending':'descending'):'none'}"${k==='dias'?' style="text-align:right"':''}>${l} ${DT.sk===k?(DT.dir>0?'▲':'▼'):'⇅'}</th>`).join('');
   $('atDb').innerHTML=r.length?r.map(e=>`<tr class="${e.reincidencia_dias!=null?'rein':''}" data-s="${esc(e.serial)}" tabindex="0"><td style="font-family:ui-monospace,monospace">${esc(e.serial)}</td><td>${esc(e.os)}</td><td>${esc(e.falha||'—')}</td><td><span class="pillA ${cls(e.etapa)}">${esc(e.etapa)}</span></td><td>${fmt(e.abertura)}</td><td style="text-align:right">${e.dias??'—'}</td><td>${e.reincidencia_dias!=null?`<span class="pillA eRein">Reincidente · ${e.reincidencia_dias} dias</span>`:(e.entradas>1?e.entradas+' entradas':'1ª entrada')}</td></tr>`).join(''):'<tr><td colspan="7">Nenhum equipamento.</td></tr>';
   $('atDh').querySelectorAll('th').forEach(th=>th.onclick=()=>{DT.dir=DT.sk===th.dataset.k?-DT.dir:1;DT.sk=th.dataset.k;dRender()})}
-function detalhe(f,t){DT={f,t:(t||'').trim(),sk:'abertura',dir:-1};const c=$('atCompany'),fl=[];
+function detalhe(f,t){DT={f,t:(t||'').trim(),sk:f==='__fin'?'dias':'abertura',dir:-1};const c=$('atCompany'),fl=[];
   if(c&&c.value)fl.push('Cliente: '+c.options[c.selectedIndex].text);if($('atDe').value)fl.push('De '+fmt($('atDe').value));if($('atAte').value)fl.push('até '+fmt($('atAte').value));
   $('atMTitle').textContent=DT.t.charAt(0)+DT.t.slice(1).toLowerCase();
   $('atMBody').innerHTML=`<p class="atMuted">${fl.length?'Filtros: '+esc(fl.join(' · ')):'Todo o período carregado'}${D?.periodo?` · abertas de ${fmt(D.periodo[0])} a ${fmt(D.periodo[1])}`:''}</p>
@@ -183,7 +186,7 @@ function detalhe(f,t){DT={f,t:(t||'').trim(),sk:'abertura',dir:-1};const c=$('at
   const go=e=>{const tr=e.target.closest('tr[data-s]');if(tr)openEq(tr.dataset.s,true)};$('atDb').onclick=go;$('atDb').onkeydown=e=>{if(e.key==='Enter')go(e)};dRender();$('atDq').focus()}
 async function openEq(s,voltar){const back=voltar?{...DT}:null;$('atMTitle').textContent='Série '+s;$('atMBody').innerHTML='<p>Carregando…</p>';$('atModal').hidden=false;
   const c=$('atCompany')?.value||'';const d=await fetch('/api/assistencia/equipamento?serie='+encodeURIComponent(s)+(c?'&company_id='+c:'')).then(r=>r.json());
-  $('atMBody').innerHTML=(d.historico||[]).map(o=>`<div class="atOs"><b>OS ${esc(o.os)}</b> · <span class="pillA ${cls(o.etapa)}">${esc(o.etapa)}</span><dl><dt>Abertura</dt><dd>${fmt(o.abertura)}</dd><dt>Encerramento</dt><dd>${fmt(o.encerramento)}</dd><dt>Falha informada</dt><dd>${esc(o.falha||'—')}</dd><dt>Falha constatada</dt><dd>${esc(o.falha_tecnica||'—')}</dd><dt>Causa</dt><dd>${esc(o.causa||'—')}</dd></dl></div>`).join('')||'<p>Sem histórico.</p>';
+  $('atMBody').innerHTML=(d.historico||[]).map(o=>`<div class="atOs"><b>OS ${esc(o.os)}</b> · <span class="pillA ${cls(o.etapa)}">${esc(o.etapa)}</span><dl><dt>Abertura</dt><dd>${fmt(o.abertura)}</dd><dt>Encerramento</dt><dd>${fmt(o.encerramento)}</dd><dt>Falha informada</dt><dd>${esc(o.falha||'—')}</dd><dt>Falha constatada</dt><dd>${esc(o.falha_tecnica||'—')}</dd><dt>Causa</dt><dd>${esc(o.causa||'—')}</dd>${'solucao' in o?`<dt>Solução</dt><dd>${esc((o.solucao||'—').replace(/\s*\|\s*/g,' · '))}</dd>`:''}${o.pecas&&o.pecas.length?`<dt>Peças</dt><dd>${o.pecas.map(p=>esc(p.descricao+(p.qtde?' ('+p.qtde+')':''))).join('<br>')}</dd>`:''}</dl></div>`).join('')||'<p>Sem histórico.</p>';
   if(back){$('atMBody').insertAdjacentHTML('afterbegin','<button type="button" class="atBtn g" id="atBack">‹ Voltar à lista</button>');$('atBack').onclick=()=>{detalhe(back.f,back.t);DT.sk=back.sk;DT.dir=back.dir;dRender()}}}
 window.atClose=()=>{$('atModal').hidden=true};document.addEventListener('keydown',e=>{if(e.key==='Escape'){atClose();window.atCargaClose&&atCargaClose()}});
 const exp=(r,nome)=>{const h=['Nº de série','OS','Falha informada','Situação','Abertura','Dias','Entradas','Reincidência (dias)'];

@@ -34983,6 +34983,7 @@ def v120_dashboard():
         # REV50.2: o cliente vê números e lista; gráficos e a data de atualização do Bhom ficam só para a equipe.
         for k in ("atualizado_em", "falhas", "semanas"):
             _resp.pop(k, None)
+        _resp["kpis"].pop("tempo_medio", None)
     return jsonify(_resp)
 
 
@@ -34994,10 +34995,20 @@ def v120_equipamento():
     if not sk:
         return jsonify({"ok": False, "error": "Informe a série."}), 400
     rows = _v120_os_rows(ids, sk)
-    # REV48: solução e peças não são exibidas no Portal.
-    return jsonify({"ok": True, "serie": rows[0]["serial"] if rows else request.args.get("serie"), "historico": [{
-        "os": r["os_number"], "etapa": _v120_etapa(r), "abertura": str(r["opened"] or "")[:10] or None, "encerramento": str(r["closed"] or "")[:10] or None,
-        "falha": r["fault_short"], "falha_tecnica": r["fault"], "causa": r["cause"]} for r in rows]})
+    hist = [{"os": r["os_number"], "etapa": _v120_etapa(r), "abertura": str(r["opened"] or "")[:10] or None, "encerramento": str(r["closed"] or "")[:10] or None,
+             "falha": r["fault_short"], "falha_tecnica": r["fault"], "causa": r["cause"]} for r in rows]
+    # REV50.2: solução e peças só para a equipe (o cliente não recebe esses dados).
+    if _portal_staff() and rows:
+        nums = [r["os_number"] for r in rows]
+        itens = {}
+        with db.engine.connect() as c:
+            q = text("SELECT os_number, code, description, qty FROM v120_at_items WHERE os_number IN (" + ",".join(f":n{i}" for i in range(len(nums))) + ") ORDER BY os_number, line_no")
+            for r in c.execute(q, {f"n{i}": v for i, v in enumerate(nums)}):
+                itens.setdefault(r[0], []).append({"codigo": r[1], "descricao": r[2], "qtde": r[3]})
+        for h, r in zip(hist, rows):
+            h["solucao"] = (r.get("solution") or "").split("| ITENS EXCLUIDOS")[0].strip(" |")
+            h["pecas"] = itens.get(r["os_number"], [])
+    return jsonify({"ok": True, "serie": rows[0]["serial"] if rows else request.args.get("serie"), "historico": hist})
 
 
 def _v120_reincidencia(serial, company_names=None, exclude_appt=None, hoje=None):
