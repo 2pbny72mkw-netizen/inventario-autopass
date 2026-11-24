@@ -13,7 +13,7 @@
 <button type="button" class="posmetric" data-scope="geral" data-status="Pendente" onclick="openMetric(this)">Pendentes<b>{{total-done-ongoing}}</b></button>
 <button type="button" class="posmetric" data-scope="geral" data-status="" onclick="openMetric(this)">Progresso<b>{{'%.1f'|format(done*100/total if total else 0)}}%</b></button></div>
 <div class="posprogress"><div class="posring" style="--pct:{{done*100/total if total else 0}}"><div><strong>{{'%.1f'|format(done*100/total if total else 0)}}%</strong><small>concluído</small></div></div><div class="posbars">{% for label,n,color in [('Concluídos',done,'#16864d'),('Em andamento',ongoing,'#d78b10'),('Pendentes',total-done-ongoing,'#c93d47')] %}<div class="posbarrow"><span>{{label}}</span><div class="posbartrack"><div style="width:{{n*100/total if total else 0}}%;background:{{color}}"></div></div><b>{{n}}</b></div>{% endfor %}</div></div>
-<h3>Progresso da estação {% if request.args.get('estacao') %}— {{request.args.get('estacao')}}{% else %}<small>Selecione uma estação</small>{% endif %}</h3>
+<h3>{% if request.args.get('estacao') %}Progresso da estação — {{request.args.get('estacao')}}{% elif request.args.get('linha') %}Progresso da linha — {{request.args.get('linha')}}{% elif request.args.get('cliente') %}Progresso do cliente — {{request.args.get('cliente')}}{% else %}Progresso da seleção <small>Selecione cliente, linha ou estação</small>{% endif %}</h3>
 <div class="posk" id="posstation">
 <button type="button" class="posmetric" data-scope="estacao" data-status="" onclick="openMetric(this)">Previstos<b>{{st_total}}</b></button>
 <button type="button" class="posmetric" data-scope="estacao" data-status="Concluído" onclick="openMetric(this)">Concluídos<b>{{st_done}}</b></button>
@@ -142,13 +142,14 @@ function openMetric(button){
  const scope=button.dataset.scope,status=button.dataset.status;
  const form=document.getElementById('posfilter');const params=new URLSearchParams(new FormData(form));
  if(scope==='geral'){params.delete('linha');params.delete('estacao');params.delete('q');}
- if(scope==='estacao'&&!params.get('estacao')){alert('Selecione uma estação para visualizar os indicadores da estação.');return;}
+ if(scope==='estacao'&&!params.get('estacao')&&!params.get('linha')&&!params.get('cliente')){alert('Selecione cliente, linha ou estação para ver os indicadores da seleção.');return;}
+ if(scope==='geral')params.delete('cliente');
  if(status)params.set('status',status);else params.delete('status');
  // REV15: indicator opens a detail window without changing page filters or the main table.
  document.querySelectorAll('.posmetric').forEach(x=>x.classList.remove('active'));button.classList.add('active');
  const withinPeriod=p=>{const start=params.get('data_inicio'),end=params.get('data_fim');return (!start&&!end)||(p.status==='Concluído'&&p.installed_on&&(!start||p.installed_on>=start)&&(!end||p.installed_on<=end));};
- activeMetricRows=posMetricRows.filter(p=>(!params.get('linha')||p.line===params.get('linha'))&&(!params.get('estacao')||p.station===params.get('estacao'))&&(!params.get('q')||[p.terminal,p.terminal_number,p.serial,p.asset].join(' ').toLowerCase().includes(params.get('q').toLowerCase()))&&(!status||p.status===status)&&withinPeriod(p));
- document.getElementById('posmetrictitle').textContent=(status||'Previstos')+' — POS Metrô';document.getElementById('posmetricsubtitle').textContent=scope==='geral'?'Visão geral da operação':'Estação: '+params.get('estacao');
+ activeMetricRows=posMetricRows.filter(p=>(!params.get('cliente')||p.client===params.get('cliente'))&&(!params.get('linha')||p.line===params.get('linha'))&&(!params.get('estacao')||p.station===params.get('estacao'))&&(!params.get('q')||[p.terminal,p.terminal_number,p.serial,p.asset].join(' ').toLowerCase().includes(params.get('q').toLowerCase()))&&(!status||p.status===status)&&withinPeriod(p));
+ document.getElementById('posmetrictitle').textContent=(status||'Previstos')+' — POS Metrô';document.getElementById('posmetricsubtitle').textContent=scope==='geral'?'Visão geral da operação':(params.get('estacao')?'Estação: '+params.get('estacao'):params.get('linha')?'Linha: '+params.get('linha'):'Cliente: '+params.get('cliente'));
  document.getElementById('posmetricexport').href='{{url_for("pos_export")}}?'+params.toString();
  document.getElementById('posmetricsearch').value='';renderMetricRows();document.getElementById('posmetricdialog').showModal();
 }

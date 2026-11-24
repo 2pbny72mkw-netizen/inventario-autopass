@@ -155,9 +155,13 @@ def install_pos_metro(app,db,can):
   if request.args.get('linha'):stations_q=stations_q.filter(POS.line==request.args['linha'])
   stations=[x[0] for x in stations_q.distinct().order_by(POS.station)]
   station_name=(request.args.get('estacao') or '').strip()
-  station_q=POS.query.filter(POS.station==station_name) if station_name else None
-  if station_q is not None and request.args.get('linha'):station_q=station_q.filter(POS.line==request.args['linha'])
-  if station_q is not None and request.args.get('cliente'):station_q=station_q.filter(POS.client==request.args['cliente'])
+  # REV55: a faixa de progresso acompanha o filtro (estação → linha → cliente), não só a estação.
+  station_q=None
+  if station_name or request.args.get('linha') or request.args.get('cliente'):
+   station_q=POS.query
+   if station_name:station_q=station_q.filter(POS.station==station_name)
+   if request.args.get('linha'):station_q=station_q.filter(POS.line==request.args['linha'])
+   if request.args.get('cliente'):station_q=station_q.filter(POS.client==request.args['cliente'])
   st_total=station_q.count() if station_q is not None else 0
   st_done=station_q.filter(POS.status=='Concluído').count() if station_q is not None else 0
   st_ongoing=station_q.filter(POS.status=='Em andamento').count() if station_q is not None else 0
