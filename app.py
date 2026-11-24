@@ -6186,7 +6186,7 @@ def _teams_status_compute():
             operation_status="EM OPERAÇÃO · AUTORIZAÇÃO" if extraordinary else "EM OPERAÇÃO"; summary["in_operation"]+=1
         if station and station["relation"]=="FORA DA ÁREA": summary["outside_locality"]+=1
         freshness="SEM SINAL" if minutes is None else ("ATUAL" if minutes<=5 else ("ATENÇÃO" if minutes<=stale_limit else "ATRASADO"))
-        rows.append({**member,"gps_points_today":gps_counts.get(uid,0),"session_events_today":session_counts.get(uid,0),"login_events_today":login_counts.get(uid,0),"photo_url":(f"/usuarios/{user.id}/foto" if user and user.photo_url else None),"photo_version":(str(user.photo_url) if user and user.photo_url else None),"latitude":pos.latitude if pos else shift_lat,"longitude":pos.longitude if pos else shift_lon,"accuracy":pos.accuracy if pos else shift_acc,"captured_at":(captured_ref.isoformat()+"Z") if captured_ref else None,"minutes_since":minutes,"freshness":freshness,"first_login":login_local.strftime("%H:%M") if login_local else None,"late_minutes":late_minutes,"operation_status":operation_status,"nearest_station":station,"current_location":station["name"] if station else None,"mobile_shift_id":mobile_shift.id if mobile_shift else None,"shift_started_at":mobile_shift.started_at.isoformat()+"Z" if mobile_shift else None,"shift_ended_at":mobile_shift.ended_at.isoformat()+"Z" if mobile_shift and mobile_shift.ended_at else None,"shift_source":"ANDROID" if mobile_shift else None})
+        rows.append({**member,"gps_points_today":gps_counts.get(uid,0),"session_events_today":session_counts.get(uid,0),"login_events_today":login_counts.get(uid,0),"photo_url":(f"/usuarios/{user.id}/foto?thumb=1" if user and user.photo_url else None),"photo_version":(str(user.photo_url) if user and user.photo_url else None),"latitude":pos.latitude if pos else shift_lat,"longitude":pos.longitude if pos else shift_lon,"accuracy":pos.accuracy if pos else shift_acc,"captured_at":(captured_ref.isoformat()+"Z") if captured_ref else None,"minutes_since":minutes,"freshness":freshness,"first_login":login_local.strftime("%H:%M") if login_local else None,"late_minutes":late_minutes,"operation_status":operation_status,"nearest_station":station,"current_location":station["name"] if station else None,"mobile_shift_id":mobile_shift.id if mobile_shift else None,"shift_started_at":mobile_shift.started_at.isoformat()+"Z" if mobile_shift else None,"shift_ended_at":mobile_shift.ended_at.isoformat()+"Z" if mobile_shift and mobile_shift.ended_at else None,"shift_source":"ANDROID" if mobile_shift else None})
     counts={}
     for row in rows: counts[row["category"]]=counts.get(row["category"],0)+1
     return jsonify({"ok":True,"date":target_date.isoformat(),"time":(local_now.strftime("%H:%M") if is_today else "23:59"),"is_today":is_today,"is_future":is_future,"scheduled":len(rows),"counts_by_category":counts,"summary":summary,"technicians":rows,"gps_reference_radius_m":reference_radius,"gps_stale_alert_minutes":stale_limit})
@@ -14595,7 +14595,7 @@ def api_recent_gps():
         pos=pos_map.get(u.id)
         if not pos: continue
         checkin=check_map.get(u.id); loc=loc_map.get(checkin.location_id) if checkin else None
-        items.append({"inventory_id":None,"location_id":loc.id if loc else None,"location_name":loc.location if loc else "Posição atual","company":loc.company if loc else (u.company or "Equipe de campo"),"line":loc.line if loc else "","equipment_type":"Última posição do dia","asset_identifier":"","technician":u.name,"technician_code":u.user_code or "","technician_user_id":u.id,"technician_photo_url":f"/usuarios/{u.id}/foto" if u.photo_url else None,"latitude":pos.latitude,"longitude":pos.longitude,"gps_accuracy":pos.accuracy,"gps_captured_at":pos.captured_at.isoformat(timespec="seconds")+"Z","created_at":pos.captured_at.isoformat(timespec="seconds")+"Z","_team_current":True})
+        items.append({"inventory_id":None,"location_id":loc.id if loc else None,"location_name":loc.location if loc else "Posição atual","company":loc.company if loc else (u.company or "Equipe de campo"),"line":loc.line if loc else "","equipment_type":"Última posição do dia","asset_identifier":"","technician":u.name,"technician_code":u.user_code or "","technician_user_id":u.id,"technician_photo_url":f"/usuarios/{u.id}/foto?thumb=1" if u.photo_url else None,"latitude":pos.latitude,"longitude":pos.longitude,"gps_accuracy":pos.accuracy,"gps_captured_at":pos.captured_at.isoformat(timespec="seconds")+"Z","created_at":pos.captured_at.isoformat(timespec="seconds")+"Z","_team_current":True})
     items.sort(key=lambda x:x["gps_captured_at"],reverse=True)
     total_inventory=Inventory.query.count(); gps_inventory=Inventory.query.filter(Inventory.latitude.isnot(None),Inventory.longitude.isnot(None)).count()
     resp=jsonify({"date":local_day.isoformat(),"summary":{"total_inventory":total_inventory,"with_gps":gps_inventory,"without_gps":max(0,total_inventory-gps_inventory),"coverage_pct":round((gps_inventory/total_inventory*100),1) if total_inventory else 0,"technicians_today":len(items)},"items":items})
@@ -35632,3 +35632,120 @@ def _v122_wrap_cadastro(name, novo=False):
 
 _v122_wrap_cadastro("portal_customer_company_edit")
 _v122_wrap_cadastro("portal_customer_companies", novo=True)
+
+
+# =====================================================================
+# V88.0 REV52 — Economia de banda: miniaturas das fotos do Estoque Central.
+# A lista recebia a foto original (média ~385 KB, até 1,1 MB) para exibir num quadro de 70×60 px.
+# Agora recebe uma miniatura (~15–25 KB) com endereço versionado e cache de 30 dias no navegador;
+# a miniatura fica guardada no banco (sobrevive aos reinícios do plano Free) e a original continua
+# disponível no mesmo endereço sem "t=1".
+# =====================================================================
+def _v123_stock_thumb_ids(material_ids):
+    """material_id -> id da foto exibida (a mesma regra da rota: a de menor id)."""
+    ids = [int(x) for x in material_ids if str(x).isdigit()]
+    if not ids:
+        return {}
+    out = {}
+    try:
+        with db.engine.connect() as c:
+            for i in range(0, len(ids), 500):
+                part = ids[i:i + 500]
+                q = text("SELECT material_id, MIN(id) FROM v86_material_photos WHERE material_id IN ("
+                         + ",".join(f":m{j}" for j in range(len(part))) + ") GROUP BY material_id")
+                for mid, pid in c.execute(q, {f"m{j}": v for j, v in enumerate(part)}):
+                    out[int(mid)] = int(pid)
+    except Exception:
+        pass
+    return out
+
+
+def _v123_wrap_stock_list():
+    orig = app.view_functions.get("v86_stock_list")
+    if not orig:
+        return
+    def wrapper(*a, **k):
+        resp = make_response(orig(*a, **k))
+        try:
+            if resp.status_code != 200 or not resp.is_json:
+                return resp
+            d = resp.get_json(silent=True)
+            achados = []
+            def walk(o):
+                if isinstance(o, dict):
+                    u = o.get("photo_url")
+                    if isinstance(u, str) and u.startswith("/api/engenharia/estoque/fotos/") and "?" not in u:
+                        achados.append(o)
+                    for v in o.values():
+                        walk(v)
+                elif isinstance(o, list):
+                    for v in o:
+                        walk(v)
+            walk(d)
+            if not achados:
+                return resp
+            mapa = _v123_stock_thumb_ids({o["photo_url"].rsplit("/", 1)[-1] for o in achados})
+            for o in achados:
+                mid = o["photo_url"].rsplit("/", 1)[-1]
+                pid = mapa.get(int(mid)) if mid.isdigit() else None
+                o["photo_full_url"] = o["photo_url"]
+                if pid:
+                    o["photo_url"] = f"/api/engenharia/estoque/fotos/{mid}?t=1&v={pid}"
+            novo = jsonify(d)
+            novo.status_code = resp.status_code
+            return novo
+        except Exception:
+            app.logger.exception("REV52: falha ao trocar fotos do estoque por miniaturas")
+            return resp
+    wrapper.__name__ = orig.__name__
+    app.view_functions["v86_stock_list"] = wrapper
+
+
+def _v123_wrap_stock_photo():
+    orig = app.view_functions.get("v86_material_photo")
+    if not orig:
+        return
+    def wrapper(mid, *a, **k):
+        if request.args.get("t") != "1":
+            return orig(mid, *a, **k)
+        # Mesma regra de acesso da rota original (guard 'engineering.stock.view'), antes de qualquer leitura.
+        if not session.get("user_id"):
+            return jsonify(ok=False, error="Autenticação necessária"), 401
+        if not _has_access("engineering.stock.view"):
+            abort(403)
+        pid = _v123_stock_thumb_ids([mid]).get(int(mid))
+        if not pid:
+            return orig(mid, *a, **k)  # mantém a mesma verificação/404 da rota original
+        etag = f"mpt{pid}"
+        cache = "private, max-age=2592000, immutable" if request.args.get("v") == str(pid) else "private, max-age=3600, must-revalidate"
+        if etag in request.if_none_match:
+            r = app.response_class(status=304)
+            r.set_etag(etag)
+            r.headers["Cache-Control"] = cache
+            return r
+        chave = f"estoque:{pid}"
+        thumb = _v118_thumb_get(chave)
+        if not thumb:
+            full = orig(mid, *a, **k)  # mesma permissão e mesma leitura (banco/R2) da original
+            try:
+                if getattr(full, "status_code", 200) != 200:
+                    return full
+                full.direct_passthrough = False
+                raw = full.get_data()
+                thumb = _media_thumbnail(raw, max_px=240, quality=70)
+                if not thumb or len(thumb) >= len(raw):
+                    return full
+                _v118_thumb_put(chave, thumb)
+            except Exception:
+                app.logger.exception("REV52: falha ao gerar miniatura do estoque")
+                return full
+        r = send_file(io.BytesIO(thumb), mimetype="image/jpeg", download_name=f"material-{mid}-mini.jpg")
+        r.set_etag(etag)
+        r.headers["Cache-Control"] = cache
+        return r
+    wrapper.__name__ = orig.__name__
+    app.view_functions["v86_material_photo"] = wrapper
+
+
+_v123_wrap_stock_list()
+_v123_wrap_stock_photo()
