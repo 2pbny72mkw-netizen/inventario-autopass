@@ -96,6 +96,12 @@
   <p class="atMuted">Suba o "Relatório de OS" exportado do Bhom (.xlsx ou .csv). As OS já existentes são atualizadas e o histórico se acumula. Valores (R$) não são guardados.</p>
   <form id="atForm" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0"><label class="atMuted">Planilha <input type="file" name="arquivo" accept=".xlsx,.csv" required></label><button class="atBtn p" id="atSend" type="submit">Carregar</button></form>
   <div id="atRes" aria-live="polite"></div>
+  <details id="atDrvBox" class="atDet"><summary>Carga automática pelo Google Drive <span id="atDrvSum" class="atMuted"></span></summary>
+    <p class="atMuted">O sistema busca na pasta o "RELATORIO DE OS dd.mm" mais recente e faz a carga sozinho — o mesmo que subir a planilha aqui. Ignora as versões "Analysis", "Sistema novo" e os relatórios "GC". A pasta precisa estar compartilhada para "qualquer pessoa com o link".</p>
+    <label class="atMuted" style="display:block;margin:6px 0">Link da pasta<input id="atDrvLink" style="display:block;width:100%;height:38px;border:1px solid #8a9bb0;border-radius:10px;padding:0 10px;font:inherit;margin-top:4px"></label>
+    <label style="display:flex;gap:8px;align-items:center;font-size:14px;font-weight:700;margin:8px 0"><input type="checkbox" id="atDrvOn" style="width:18px;height:18px"> Carga automática (verifica de hora em hora, das 6h às 22h)</label>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="atBtn" id="atDrvSave">Salvar</button><button type="button" class="atBtn p" id="atDrvGo">⇩ Buscar agora</button></div>
+    <div id="atDrvRes" class="atMuted" style="margin-top:8px" aria-live="polite"></div></details>
   <details id="atMapBox" class="atDet"><summary>Vínculo com os clientes do Portal <span id="atMapSum" class="atMuted"></span></summary>
     <p class="atMuted">Cada nome da planilha é ligado uma vez a um cliente do Portal; o cliente só vê os equipamentos vinculados a ele. Os sem vínculo aparecem primeiro.</p>
     <label class="atMuted" style="display:flex;gap:6px;align-items:center;margin:4px 0 8px"><input type="checkbox" id="atMapSo"> Mostrar só os sem vínculo</label>
@@ -198,7 +204,7 @@ const exp=(r,nome)=>{const h=['Nº de série','OS','Falha informada','Situação
   const rows=[h,...r.map(e=>[e.serial,e.os,e.falha||'',e.etapa,fmt(e.abertura),e.dias??'',e.entradas,e.reincidencia_dias??''])];
   const csv='﻿'+rows.map(x=>x.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(';')).join('\r\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));a.download=(nome||'assistencia-tecnica-equipamentos')+'.csv';a.click()};window.atExport=()=>exp(lista());
 {% if can_load %}
-window.atCargaOpen=()=>{$('atForm').reset();$('atRes').innerHTML='';$('atMapSo').checked=false;document.querySelectorAll('#atCarga details').forEach(x=>x.open=false);$('atCarga').hidden=false;loadMap()};window.atCargaClose=()=>{$('atCarga').hidden=true};
+window.atCargaOpen=()=>{$('atForm').reset();$('atRes').innerHTML='';$('atMapSo').checked=false;document.querySelectorAll('#atCarga details').forEach(x=>x.open=false);$('atCarga').hidden=false;loadMap();loadDrv()};window.atCargaClose=()=>{$('atCarga').hidden=true};
 async function loadMap(){const d=await fetch('/api/assistencia/clientes').then(r=>r.json());
   const opts=id=>'<option value="">— sem vínculo (não aparece no Portal) —</option>'+d.empresas.map(e=>`<option value="${e.id}" ${e.id===id?'selected':''}>${esc(e.nome)}</option>`).join('');
   const sem=d.clientes.filter(c=>!c.company_id).length;$('atMapSum').textContent=d.clientes.length?`· ${d.clientes.length} clientes, ${sem} sem vínculo`:'';
@@ -208,6 +214,15 @@ async function loadMap(){const d=await fetch('/api/assistencia/clientes').then(r
   $('atMap').querySelectorAll('select').forEach(s=>s.onchange=async()=>{s.disabled=true;await fetch('/api/assistencia/clientes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nome:s.dataset.n,company_id:s.value})});s.disabled=false;s.parentElement.style.background=s.value?'':'#fff7ed';load()});
   $('atLoads').innerHTML=d.cargas.map(l=>`${esc(l.em.replace('T',' '))} · ${esc(l.arquivo)} · ${num(l.os)} OS (${num(l.novas)} novas, ${num(l.atualizadas)} atualizadas) · ${esc(l.por||'')}`).join('<br>')||'Nenhuma carga ainda.'}
 $('atMapSo').onchange=loadMap;
+async function loadDrv(){try{const d=await fetch('/api/assistencia/drive').then(r=>r.json());$('atDrvLink').value=d.link||'';$('atDrvOn').checked=!!d.ativo;
+  $('atDrvSum').textContent=d.ativo?'· ligada':'· desligada';
+  $('atDrvRes').innerHTML=(d.ultima_verificacao?`Última verificação: ${new Date(d.ultima_verificacao).toLocaleString('pt-BR')} · `:'Ainda não verificado. ')+(d.ultimo_arquivo?`último arquivo importado: <b>${esc(d.ultimo_arquivo)}</b>`:'')+(d.resultado?`<br>${esc(d.resultado)}`:'')}catch(e){}}
+$('atDrvSave').onclick=async()=>{const b=$('atDrvSave');b.disabled=true;try{const r=await fetch('/api/assistencia/drive',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pasta:$('atDrvLink').value,ativo:$('atDrvOn').checked})});const d=await r.json();if(!r.ok)$('atDrvRes').innerHTML=`<b style="color:#991b1b">${esc(d.error||'Falha ao salvar.')}</b>`;else await loadDrv()}finally{b.disabled=false}};
+$('atDrvGo').onclick=async()=>{const b=$('atDrvGo');b.disabled=true;b.textContent='Buscando…';$('atDrvRes').textContent='Lendo a pasta do Google Drive…';
+  try{const r=await fetch('/api/assistencia/drive/buscar',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});const d=await r.json();
+    $('atDrvRes').innerHTML=r.ok?`<b style="color:#14532d">${esc(d.msg||'')}</b>`:`<b style="color:#991b1b">${esc(d.error||'Falha.')}</b>`;
+    if(r.ok&&d.importou){await loadMap();if(window.__atSem){$('atMapSo').checked=true;await loadMap();$('atMapBox').open=true}load()}
+    setTimeout(loadDrv,800)}finally{b.disabled=false;b.textContent='⇩ Buscar agora'}};
 $('atForm').onsubmit=async e=>{e.preventDefault();const b=$('atSend');b.disabled=true;b.textContent='Carregando…';$('atRes').textContent='';
   try{const r=await fetch('/api/assistencia/carga',{method:'POST',body:new FormData(e.target)});const d=await r.json();
     $('atRes').innerHTML=r.ok?`<p style="color:#14532d;font-weight:700">Carga concluída: ${num(d.os)} OS (${num(d.novas)} novas, ${num(d.atualizadas)} atualizadas), ${num(d.clientes)} clientes.</p>`:`<p style="color:#991b1b;font-weight:700">${esc(d.error||'Falha na carga.')}</p>`;

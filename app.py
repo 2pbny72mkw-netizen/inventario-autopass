@@ -36008,3 +36008,189 @@ def _v125_migrar_maiusculas():
 
 if os.environ.get("V125_MAIUSCULAS", "1") == "1":
     threading.Timer(20.0, _v125_migrar_maiusculas).start()
+
+
+# =====================================================================
+# V88.0 REV56 — Assistência Técnica: carga automática do Bhom a partir da pasta do Google Drive
+# (compartilhada por link). Lista a pasta pela visualização incorporada (sem login/API), escolhe o
+# "RELATORIO DE OS dd.mm" mais recente, baixa e importa pelo MESMO _v120_import da carga manual.
+# Liga/desliga pelo administrador; nunca reimporta o mesmo arquivo.
+# =====================================================================
+_V126_PASTA_PADRAO = "1KVYXcn5FOFiBkdQzSrKudBUgYG36EMel"
+_V126_LOCK = threading.Lock()
+_V126_NOME = re.compile(r"^RELAT[OÓ]RIO\s+DE\s+OS\s+(\d{1,2})[.\-/](\d{1,2})(?:[.\-/](\d{2,4}))?(\s+COM\s+ITENS)?\s*\.(xlsx|csv)$", re.I)
+
+
+def _v126_ensure():
+    with db.engine.begin() as c:
+        c.execute(text("CREATE TABLE IF NOT EXISTS v126_bhom_drive (id INTEGER PRIMARY KEY, folder_id VARCHAR(120), enabled BOOLEAN, "
+                       "last_check TIMESTAMP, last_file_id VARCHAR(120), last_file_name VARCHAR(255), last_result VARCHAR(500), updated_by VARCHAR(120))"))
+
+
+def _v126_cfg():
+    _v126_ensure()
+    with db.engine.connect() as c:
+        r = c.execute(text("SELECT folder_id, enabled, last_check, last_file_id, last_file_name, last_result, updated_by FROM v126_bhom_drive WHERE id=1")).first()
+    if not r:
+        return {"folder_id": _V126_PASTA_PADRAO, "enabled": False, "last_check": None, "last_file_id": None, "last_file_name": None, "last_result": None, "updated_by": None}
+    return {"folder_id": r[0] or _V126_PASTA_PADRAO, "enabled": bool(r[1]), "last_check": r[2], "last_file_id": r[3], "last_file_name": r[4], "last_result": r[5], "updated_by": r[6]}
+
+
+def _v126_save(**kw):
+    cur = _v126_cfg()
+    cur.update(kw)
+    with db.engine.begin() as c:
+        c.execute(text("DELETE FROM v126_bhom_drive WHERE id=1"))
+        c.execute(text("INSERT INTO v126_bhom_drive (id, folder_id, enabled, last_check, last_file_id, last_file_name, last_result, updated_by) "
+                       "VALUES (1,:f,:e,:lc,:lf,:ln,:lr,:ub)"),
+                  {"f": cur["folder_id"], "e": bool(cur["enabled"]), "lc": cur["last_check"], "lf": cur["last_file_id"],
+                   "ln": cur["last_file_name"], "lr": (cur["last_result"] or "")[:500], "ub": cur["updated_by"]})
+    return cur
+
+
+def _v126_folder_id(txt):
+    txt = (txt or "").strip()
+    m = re.search(r"/folders/([\w-]{10,})", txt) or re.search(r"[?&]id=([\w-]{10,})", txt) or re.fullmatch(r"([\w-]{10,})", txt)
+    return m.group(1) if m else None
+
+
+def _v126_http(url, limite=40 * 1024 * 1024):
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (SistemaGestao)"})
+    with urllib.request.urlopen(req, timeout=40) as r:
+        data = r.read(limite + 1)
+    if len(data) > limite:
+        raise ValueError("arquivo grande demais")
+    return data
+
+
+def _v126_listar(folder_id):
+    html = _v126_http(f"https://drive.google.com/embeddedfolderview?id={folder_id}", 3 * 1024 * 1024).decode("utf-8", "replace")
+    itens = []
+    for fid, nome in re.findall(r'id="entry-([\w-]+)"[\s\S]*?class="flip-entry-title">([^<]+)<', html):
+        itens.append({"id": fid, "nome": html_unescape(nome).strip()})
+    return itens
+
+
+def html_unescape(s):
+    import html as _h
+    return _h.unescape(s)
+
+
+def _v126_escolher(itens, hoje=None):
+    hoje = hoje or datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+    cand = []
+    for it in itens:
+        m = _V126_NOME.match(it["nome"])
+        if not m:
+            continue
+        d, mth, a, com_itens = int(m.group(1)), int(m.group(2)), m.group(3), bool(m.group(4))
+        ano = int(a) + (2000 if a and len(a) == 2 else 0) if a else hoje.year
+        try:
+            dt = date(ano, mth, d)
+        except ValueError:
+            continue
+        if not a and dt > hoje + timedelta(days=1):
+            dt = date(ano - 1, mth, d)
+        cand.append((dt, 0 if not com_itens else -1, it))   # mesma data: prefere o relatório sem "COM ITENS"
+    if not cand:
+        return None
+    cand.sort(key=lambda x: (x[0], x[1]))
+    dt, _x, it = cand[-1]
+    return {**it, "data": dt.isoformat()}
+
+
+def _v126_baixar(fid):
+    ultimo = None
+    for url in (f"https://drive.usercontent.google.com/download?id={fid}&export=download&confirm=t",
+                f"https://drive.google.com/uc?export=download&id={fid}&confirm=t"):
+        try:
+            raw = _v126_http(url)
+            if raw[:2] == b"PK" or raw[:200].lower().find(b"<html") < 0:
+                return raw
+            ultimo = "o Google devolveu uma página em vez do arquivo (pasta precisa estar compartilhada para 'qualquer pessoa com o link')"
+        except Exception as e:
+            ultimo = str(e)
+    raise ValueError("não foi possível baixar o arquivo: " + (ultimo or "erro desconhecido"))
+
+
+def _v126_executar(quem="automática", forcar=False):
+    """Verifica a pasta e importa o relatório novo, se houver. Retorna dict com o resultado."""
+    if not _V126_LOCK.acquire(blocking=False):
+        return {"ok": False, "error": "Já existe uma verificação em andamento."}
+    try:
+        cfg = _v126_cfg()
+        agora = datetime.utcnow()
+        try:
+            itens = _v126_listar(cfg["folder_id"])
+            esc = _v126_escolher(itens)
+            if not esc:
+                res = {"ok": True, "importou": False, "msg": f"Nenhum 'RELATORIO DE OS dd.mm' na pasta ({len(itens)} arquivo(s))."}
+            elif esc["id"] == cfg["last_file_id"] and not forcar:
+                res = {"ok": True, "importou": False, "arquivo": esc["nome"], "msg": f"Sem novidade: {esc['nome']} já foi importado."}
+            else:
+                raw = _v126_baixar(esc["id"])
+                r = _v120_import(raw, esc["nome"], f"Google Drive ({quem})")
+                db.session.add(AuditEvent(user_id=session.get("user_id") if has_request_context() else None, event_type="ASSISTENCIA_BHOM_CARGA",
+                                          entity_type="v120_at_loads", entity_id=str(r.get("load_id")),
+                                          detail=f"Google Drive ({quem}) · {esc['nome']}: {r.get('os')} OS, {r.get('novas')} novas"))
+                db.session.commit()
+                cfg["last_file_id"], cfg["last_file_name"] = esc["id"], esc["nome"]
+                res = {"ok": True, "importou": True, "arquivo": esc["nome"], **{k: r.get(k) for k in ("os", "novas", "atualizadas", "clientes")},
+                       "msg": f"Importado {esc['nome']}: {r.get('os')} OS ({r.get('novas')} novas, {r.get('atualizadas')} atualizadas)."}
+        except Exception as e:
+            db.session.rollback()
+            app.logger.warning("REV56: carga do Drive falhou: %s", e)
+            res = {"ok": False, "error": f"Falha na carga pelo Drive: {e}"}
+        _v126_save(last_check=agora, last_file_id=cfg["last_file_id"], last_file_name=cfg["last_file_name"],
+                   last_result=(res.get("msg") or res.get("error") or "")[:500])
+        return res
+    finally:
+        _V126_LOCK.release()
+
+
+def _v126_ciclo():
+    """Rodando no servidor: com a chave ligada, verifica de hora em hora entre 6h e 22h (Brasília)."""
+    while True:
+        try:
+            with app.app_context():
+                cfg = _v126_cfg()
+                h = datetime.now(ZoneInfo("America/Sao_Paulo")).hour
+                vencido = not cfg["last_check"] or (datetime.utcnow() - cfg["last_check"]).total_seconds() >= 3600
+                if cfg["enabled"] and 6 <= h < 22 and vencido:
+                    _v126_executar("automática")
+        except Exception:
+            app.logger.exception("REV56: ciclo da carga do Drive")
+        time.sleep(600)
+
+
+if os.environ.get("V126_DRIVE", "1") == "1":
+    threading.Thread(target=_v126_ciclo, name="v126-bhom-drive", daemon=True).start()
+
+
+@app.route("/api/assistencia/drive", methods=["GET", "POST"])
+@login_required
+def v126_drive_cfg():
+    if not (_portal_staff() and _has_access("portal.manage")):
+        abort(403)
+    if request.method == "POST":
+        d = request.get_json(silent=True) or {}
+        fid = _v126_folder_id(d.get("pasta")) if d.get("pasta") is not None else _v126_cfg()["folder_id"]
+        if not fid:
+            return jsonify({"ok": False, "error": "Link da pasta inválido. Cole o link de compartilhamento da pasta do Google Drive."}), 400
+        cfg = _v126_save(folder_id=fid, enabled=bool(d.get("ativo")), updated_by=session.get("name"))
+        db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="ASSISTENCIA_BHOM_DRIVE_CONFIG", entity_type="v126_bhom_drive",
+                                  entity_id="1", detail=f"pasta {fid} · automática {'ligada' if cfg['enabled'] else 'desligada'}"))
+        db.session.commit()
+    cfg = _v126_cfg()
+    return jsonify({"ok": True, "pasta": cfg["folder_id"], "link": f"https://drive.google.com/drive/folders/{cfg['folder_id']}", "ativo": cfg["enabled"],
+                    "ultima_verificacao": cfg["last_check"].isoformat() + "Z" if cfg["last_check"] else None,
+                    "ultimo_arquivo": cfg["last_file_name"], "resultado": cfg["last_result"]})
+
+
+@app.post("/api/assistencia/drive/buscar")
+@login_required
+def v126_drive_buscar():
+    if not (_portal_staff() and _has_access("portal.manage")):
+        abort(403)
+    res = _v126_executar(session.get("name") or "manual", forcar=bool((request.get_json(silent=True) or {}).get("forcar")))
+    return jsonify(res), (200 if res.get("ok") else 400)
