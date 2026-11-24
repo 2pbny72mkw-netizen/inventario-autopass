@@ -36194,3 +36194,115 @@ def v126_drive_buscar():
         abort(403)
     res = _v126_executar(session.get("name") or "manual", forcar=bool((request.get_json(silent=True) or {}).get("forcar")))
     return jsonify(res), (200 if res.get("ok") else 400)
+
+
+# =================== V88.0 REV57 — Alterar o dia do Leva e Traz de uma empresa ===================
+_V127_ABERTOS = ("ENVIADO", "NA_PROGRAMACAO", "AGENDADO")
+_V127_DIAS = {0: "SEGUNDA", 1: "TERÇA", 2: "QUARTA", 3: "QUINTA", 4: "SEXTA"}
+
+
+def _v127_empresa(r):
+    """Empresa (cadastro de clientes) ligada à garagem da matriz."""
+    if r.customer_company_id:
+        cc = db.session.get(CustomerCompany, r.customer_company_id)
+        if cc:
+            return cc
+    key = _v71_norm(r.garage_name)
+    for cc in CustomerCompany.query.filter(CustomerCompany.active.is_(True)).all():
+        if key in {_v71_norm(cc.legal_name), _v71_norm(cc.trade_name)}:
+            return cc
+    return None
+
+
+def _v127_alvos(r, cc):
+    nomes = {_v71_norm(r.garage_name)} | ({_v71_norm(cc.legal_name), _v71_norm(cc.trade_name)} if cc else set())
+    nomes.discard("")
+    out = {}
+    for u in User.query.filter(User.role == "customer", User.active.is_(True)).all():
+        if (cc and cc.id in _customer_company_ids(u)) or _v71_norm(u.company) in nomes:
+            out[u.id] = u
+    return out, nomes
+
+
+def _v127_agendamentos(r, nomes, novo):
+    """Agendamentos em aberto, a partir de hoje, marcados no dia antigo da garagem -> nova data proposta."""
+    hoje = datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+    bloq = {x.blocked_date for x in LogisticsBlockedDate.query.filter_by(active=True).all()}
+    q = CustomerAppointment.query.filter(CustomerAppointment.status.in_(_V127_ABERTOS))
+    out = []
+    for a in q.all():
+        if _v71_norm(a.customer_company) not in nomes:
+            continue
+        d = a.programmed_date or a.expected_date or a.scheduled_date
+        if not d or d < hoje or d.weekday() != r.weekday:
+            continue
+        nd = d
+        for _ in range(60):
+            nd = nd + timedelta(days=1)
+            if nd.weekday() == novo and nd not in bloq:
+                break
+        out.append((a, d, nd))
+    return out
+
+
+def _v127_texto(r, novo, motivo):
+    t = (f"A partir de agora, a coleta do Leva e Traz da {r.garage_name} passa de "
+         f"{_V127_DIAS.get(r.weekday, '?')} para {_V127_DIAS.get(novo, '?')}.")
+    return t + (f" Motivo: {motivo}." if motivo else "")
+
+
+@app.route("/api/logistica/rotas/<int:rid>/alterar-dia", methods=["GET", "POST"])
+@login_required
+def v127_alterar_dia(rid):
+    if not (_portal_staff() and _has_access("portal.manage")):
+        abort(403)
+    r = db.session.get(LogisticsGarageRoute, rid)
+    if not r or not r.active:
+        return jsonify({"ok": False, "error": "Empresa não encontrada na matriz."}), 404
+    d = (request.get_json(silent=True) or {}) if request.method == "POST" else request.args
+    try:
+        novo = int(d.get("novo"))
+    except Exception:
+        novo = -1
+    if novo not in _V127_DIAS:
+        return jsonify({"ok": False, "error": "Escolha o novo dia (segunda a sexta)."}), 400
+    motivo = str(d.get("motivo") or "").strip().rstrip(".")[:200]
+    cc = _v127_empresa(r)
+    alvos, nomes = _v127_alvos(r, cc)
+    ags = _v127_agendamentos(r, nomes, novo) if novo != r.weekday else []
+    previa = {"ok": True, "empresa": r.garage_name, "atual": r.weekday, "novo": novo, "usuarios": len(alvos),
+              "aviso": _v127_texto(r, novo, motivo),
+              "agendamentos": [{"id": a.id, "codigo": a.code, "de": de.isoformat(), "para": para.isoformat()} for a, de, para in ags]}
+    if request.method == "GET":
+        return jsonify(previa)
+    if novo == r.weekday:
+        return jsonify({"ok": False, "error": "O novo dia é igual ao atual."}), 400
+    mover = bool(d.get("mover"))
+    antigo = r.weekday
+    texto = previa["aviso"]
+    try:
+        r.weekday = novo
+        r.updated_at = datetime.utcnow()
+        for uid in alvos:
+            db.session.add(V76Notification(recipient_id=uid, severity="ALERTA", category="PORTAL_CLIENTE",
+                                           title="Dia do Leva e Traz alterado", message=texto[:1000], action_url="/portal-cliente",
+                                           entity_type="logistics_route", entity_id=f"rota-{r.id}"))
+        movidos = []
+        if mover:
+            for a, de, para in ags:
+                a.programmed_date = para
+                a.scheduled_date = para
+                movidos.append((a, de, para))
+        db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="V127_LEVA_TRAZ_DIA", entity_type="logistics_route",
+                                  entity_id=str(r.id), detail=f"{r.garage_name} · {_V127_DIAS[antigo]} → {_V127_DIAS[novo]} · "
+                                  f"{len(alvos)} usuário(s) avisado(s) · {len(movidos)} agendamento(s) movido(s)"
+                                  + (f" · Motivo: {motivo}" if motivo else "")))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        app.logger.exception("REV57: falha ao alterar o dia do Leva e Traz")
+        return jsonify({"ok": False, "error": "Não foi possível salvar. Tente de novo."}), 500
+    for a, de, para in movidos:
+        _v100_notify_date_change(a, de, para, motivo or "mudança do dia do Leva e Traz")
+    return jsonify({"ok": True, "usuarios": len(alvos), "movidos": len(movidos), "novo": novo})
+# =================== fim REV57 ===================
