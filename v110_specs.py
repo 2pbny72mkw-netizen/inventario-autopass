@@ -1633,3 +1633,114 @@ def _v117_field(specs):
 
 
 SPECS = _v117_field(SPECS)
+
+
+# V88.0 REV53 — paridade de entrada de dados: Tarefas, Arrow, Portal do Cliente, Gestão de Agendamentos, Treinamentos.
+_PRIOR_T = [["BAIXA", "Baixa"], ["MEDIA", "Média"], ["ALTA", "Alta"]]
+_STATUS_T = [["A_FAZER", "A fazer"], ["EM_ANDAMENTO", "Em andamento"], ["AGUARDANDO", "Aguardando"], ["CONCLUIDA", "Concluída"]]
+_OPS_ARROW = [["METRO", "Metrô"], ["CPTM", "CPTM"], ["MOTIVA", "Motiva / ViaMobilidade"], ["OUTROS", "Outros (localidade cadastrada)"]]
+_PRIOR_A = [["NORMAL", "Normal"], ["ALTA", "Alta"], ["URGENTE", "Urgente"]]
+
+
+def _v124_specs(specs):
+    P = {x["key"]: x for x in specs}
+    t = P.get("tarefas")
+    if t:
+        _form(t, "nova", {"titulo": "Nova tarefa", "envio": {"url": "/api/gestao-tarefas", "metodo": "POST", "formato": "json"}, "campos": [
+            {"nome": "title", "rotulo": "Título", "tipo": "texto", "obrigatorio": True},
+            {"nome": "description", "rotulo": "Descrição", "tipo": "area"},
+            {"nome": "assigned_to", "rotulo": "Responsável", "tipo": "lista", "obrigatorio": True, "opcoes_fonte": {"de": "users", "valor": "{id}", "rotulo": "{name}"}},
+            {"nome": "priority", "rotulo": "Prioridade", "tipo": "lista", "valor": "MEDIA", "opcoes": _PRIOR_T},
+            {"nome": "status", "rotulo": "Situação", "tipo": "lista", "valor": "A_FAZER", "opcoes": _STATUS_T},
+            {"nome": "due_at", "rotulo": "Prazo", "tipo": "data", "hoje": False},
+            {"nome": "project", "rotulo": "Projeto", "tipo": "texto"},
+            {"nome": "department", "rotulo": "Área / departamento", "tipo": "texto"}]})
+        _form(t, "editar", {"titulo": "Editar tarefa", "envio": {"url": "/api/gestao-tarefas/{id}", "metodo": "PATCH", "formato": "json"}, "campos": [
+            {"nome": "title", "rotulo": "Título", "tipo": "texto", "obrigatorio": True, "valor": "{title}"},
+            {"nome": "description", "rotulo": "Descrição", "tipo": "area", "valor": "{description}"},
+            {"nome": "priority", "rotulo": "Prioridade", "tipo": "lista", "valor": "{priority}", "opcoes": _PRIOR_T},
+            {"nome": "due_at", "rotulo": "Prazo", "tipo": "data", "hoje": False, "valor": "{due_at}"},
+            {"nome": "project", "rotulo": "Projeto", "tipo": "texto", "valor": "{project}"},
+            {"nome": "department", "rotulo": "Área / departamento", "tipo": "texto", "valor": "{department}"}]})
+        _form(t, "transferir", {"titulo": "Transferir tarefa", "envio": {"url": "/api/gestao-tarefas/{id}", "metodo": "PATCH", "formato": "json"}, "campos": [
+            {"nome": "assigned_to", "rotulo": "Novo responsável", "tipo": "lista", "obrigatorio": True, "valor": "{assigned_to}", "opcoes_fonte": {"de": "users", "valor": "{id}", "rotulo": "{name}"}}]})
+        _acao(t, {"rotulo": "Editar", "form": "editar", "perms": ["tasks.edit", "tasks.manage"]})
+        _acao(t, {"rotulo": "Transferir", "form": "transferir", "perms": ["tasks.transfer", "tasks.manage"]})
+        _novo(t, "Nova tarefa", "nova", ["tasks.create", "tasks.manage"])
+    a = P.get("arrow_agenda")
+    if a:
+        tec = {"url": "/api/v124/opcoes/tecnicos_arrow", "itens": "itens", "valor": "{id}", "rotulo": "{nome}"}
+        _form(a, "programar", {"titulo": "Programar atividade", "envio": {"url": "/api/v124/arrow/programar", "metodo": "POST", "formato": "json"}, "campos": [
+            {"nome": "operator", "rotulo": "Empresa", "tipo": "lista", "obrigatorio": True, "opcoes": _OPS_ARROW},
+            {"nome": "line", "rotulo": "Linha", "tipo": "lista", "obrigatorio": True, "opcoes_url": {"url": "/api/v124/opcoes/linhas_arrow?operador={operator}", "itens": "itens", "valor": "{id}", "rotulo": "{nome}", "depende": "operator"}},
+            {"nome": "local", "rotulo": "Estação / localidade", "tipo": "lista", "obrigatorio": True, "opcoes_url": {"url": "/api/v124/opcoes/locais_arrow?operador={operator}&linha={line}", "itens": "itens", "valor": "{id}", "rotulo": "{nome}", "depende": "line"}},
+            {"nome": "title", "rotulo": "Atividade", "tipo": "texto", "obrigatorio": True},
+            {"nome": "technician_ids", "rotulo": "Técnicos", "tipo": "multi", "obrigatorio": True, "opcoes_url": tec},
+            {"nome": "date_from", "rotulo": "Data inicial", "tipo": "data", "obrigatorio": True},
+            {"nome": "date_to", "rotulo": "Data final (vazio = só um dia)", "tipo": "data", "hoje": False},
+            {"nome": "start_time", "rotulo": "Início", "tipo": "hora"}, {"nome": "end_time", "rotulo": "Fim", "tipo": "hora"},
+            {"nome": "priority", "rotulo": "Prioridade", "tipo": "lista", "valor": "NORMAL", "opcoes": _PRIOR_A},
+            {"nome": "notes", "rotulo": "Observações", "tipo": "area"}]})
+        _form(a, "imprevisto", {"titulo": "Imprevisto em campo", "envio": {"url": "/api/arrow/activities/imprevisto", "metodo": "POST", "formato": "json"}, "campos": [
+            {"nome": "title", "rotulo": "Atividade", "tipo": "texto", "obrigatorio": True},
+            {"nome": "date", "rotulo": "Data", "tipo": "data", "obrigatorio": True},
+            {"nome": "start_time", "rotulo": "Início", "tipo": "hora"},
+            {"nome": "priority", "rotulo": "Prioridade", "tipo": "lista", "valor": "NORMAL", "opcoes": _PRIOR_A},
+            {"nome": "notes", "rotulo": "O que aconteceu", "tipo": "area"}]})
+        _form(a, "editar", {"titulo": "Editar atividade", "envio": {"url": "/api/arrow/activities/{id}/editar", "metodo": "POST", "formato": "json"}, "campos": [
+            {"nome": "title", "rotulo": "Atividade", "tipo": "texto", "obrigatorio": True, "valor": "{title}"},
+            {"nome": "date", "rotulo": "Data", "tipo": "data", "obrigatorio": True, "valor": "{date}"},
+            {"nome": "technician_id", "rotulo": "Técnico", "tipo": "lista", "obrigatorio": True, "valor": "{technician_id}", "opcoes_url": tec},
+            {"nome": "start_time", "rotulo": "Início", "tipo": "hora", "valor": "{start_time}"}, {"nome": "end_time", "rotulo": "Fim", "tipo": "hora", "valor": "{end_time}"},
+            {"nome": "priority", "rotulo": "Prioridade", "tipo": "lista", "valor": "{priority}", "opcoes": _PRIOR_A},
+            {"nome": "notes", "rotulo": "Observações", "tipo": "area", "valor": "{notes}"}]})
+        _acao(a, {"rotulo": "Editar", "form": "editar", "perms": ["arrow.manage", "arrow.edit"]})
+        _acao(a, {"rotulo": "Excluir", "url": "/api/arrow/activities/{id}", "metodo": "DELETE", "perms": ["arrow.manage", "arrow.delete"],
+                  "confirmar": "Excluir esta atividade da agenda? O técnico deixa de vê-la."})
+        _novo(a, "Programar atividade", "programar", ["arrow.manage"])
+        _novo(a, "Imprevisto em campo", "imprevisto", ["arrow.create_field"])
+    p = P.get("portal_agendamentos")
+    if p:
+        _form(p, "novo", {"titulo": "Novo agendamento", "envio": {"url": "/api/v124/portal/agendamento", "metodo": "POST", "formato": "multipart"}, "campos": [
+            {"nome": "responsible", "rotulo": "Responsável", "tipo": "texto", "obrigatorio": True},
+            {"nome": "phone", "rotulo": "Telefone", "tipo": "texto"}, {"nome": "email", "rotulo": "E-mail", "tipo": "texto"},
+            {"nome": "itens", "rotulo": "Equipamentos", "tipo": "itens", "obrigatorio": True, "subcampos": [
+                {"nome": "serial", "rotulo": "Nº de série *", "tipo": "texto"}, {"nome": "equipment", "rotulo": "Modelo", "tipo": "texto"},
+                {"nome": "version", "rotulo": "Versão", "tipo": "texto"}, {"nome": "eod", "rotulo": "EOD", "tipo": "texto"},
+                {"nome": "defect", "rotulo": "Defeito *", "tipo": "texto"}, {"nome": "notes", "rotulo": "Informações adicionais", "tipo": "texto"}]},
+            {"nome": "invoice_number", "rotulo": "Número da NF", "tipo": "texto"},
+            {"nome": "nf", "rotulo": "Nota fiscal (PDF ou foto)", "tipo": "arquivo", "max": 10, "tipos": ["application/pdf", "image/*"]},
+            {"nome": "xml", "rotulo": "XML da NF", "tipo": "arquivo", "max": 10, "tipos": ["text/xml", "application/xml"]},
+            {"nome": "alternate", "rotulo": "Precisa de outra data de retirada?", "tipo": "lista", "valor": "0", "opcoes": [["0", "Não"], ["1", "Sim"]]},
+            {"nome": "alternate_reason", "rotulo": "Motivo da outra data", "tipo": "texto"},
+            {"nome": "notes", "rotulo": "Observações gerais", "tipo": "area"}]})
+        _form(p, "anexos", {"titulo": "Enviar NF / XML", "envio": {"url": "/api/portal/appointments/{id}/documents", "metodo": "POST", "formato": "multipart"}, "campos": [
+            {"nome": "kind", "rotulo": "Tipo", "tipo": "lista", "obrigatorio": True, "valor": "NF", "opcoes": [["NF", "Nota fiscal (PDF ou foto)"], ["XML", "XML da NF"]]},
+            {"nome": "files", "rotulo": "Arquivos", "tipo": "arquivo", "obrigatorio": True, "max": 10}]})
+        _acao(p, {"rotulo": "Enviar NF / XML", "form": "anexos", "perms": ["portal.appointments"]})
+        _acao(p, {"rotulo": "Excluir", "url": "/api/portal/appointments/{id}", "metodo": "DELETE", "perms": ["portal.appointments"],
+                  "confirmar": "Excluir este agendamento? Só é possível enquanto a assistência ainda não recebeu nenhum equipamento."})
+        _novo(p, "Novo agendamento", "novo", ["portal.appointments"])
+    g = P.get("gestao_agendamentos")
+    if g:
+        _form(g, "acoes", {"titulo": "Ações do agendamento", "envio": {"url": "/api/v124/portal/{id}/acao", "metodo": "POST", "formato": "json"}, "campos": [
+            {"nome": "acao", "rotulo": "O que fazer", "tipo": "lista", "obrigatorio": True, "opcoes": [
+                ["programar", "Programar data de retirada"], ["confirmar", "Confirmar agendamento"], ["entrega", "Definir data de entrega (devolução)"],
+                ["cancelar", "Cancelar agendamento"], ["excluir", "Excluir agendamento (testes ou erro)"]]},
+            {"nome": "data", "rotulo": "Data (programar ou entrega)", "tipo": "data", "hoje": False},
+            {"nome": "motivo", "rotulo": "Motivo (obrigatório para cancelar ou excluir com equipamento recebido)", "tipo": "area"},
+            {"nome": "confirmar", "rotulo": "Para excluir, digite EXCLUIR", "tipo": "texto"}]})
+        _acao(g, {"rotulo": "Mais ações", "form": "acoes", "perms": ["portal.manage", "portal.receive"]})
+    tr = P.get("treinamentos")
+    if tr and (tr.get("detalhe") or {}).get("sublista"):
+        _form(tr, "editar_treino", {"titulo": "Editar ou excluir treinamento", "envio": {"url": "/api/v124/treinamentos/{id}", "metodo": "POST", "formato": "json"}, "campos": [
+            {"nome": "acao", "rotulo": "O que fazer", "tipo": "lista", "obrigatorio": True, "valor": "salvar", "opcoes": [["salvar", "Salvar alterações"], ["excluir", "Excluir este treinamento"]]},
+            {"nome": "type_id", "rotulo": "Treinamento", "tipo": "lista", "valor": "{type_id}", "opcoes_fonte": {"de": "types", "valor": "{id}", "rotulo": "{name}"}},
+            {"nome": "date", "rotulo": "Data", "tipo": "data", "valor": "{date}"},
+            {"nome": "trainer", "rotulo": "Instrutor", "tipo": "texto", "valor": "{trainer}"},
+            {"nome": "notes", "rotulo": "Observações", "tipo": "area", "valor": "{notes}"}]})
+        tr["detalhe"]["sublista"]["form"] = "editar_treino"
+    return specs
+
+
+SPECS = _v124_specs(SPECS)

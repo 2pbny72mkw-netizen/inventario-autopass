@@ -35749,3 +35749,176 @@ def _v123_wrap_stock_photo():
 
 _v123_wrap_stock_list()
 _v123_wrap_stock_photo()
+
+
+# =====================================================================
+# V88.0 REV53 — Paridade de entrada de dados no app (Atividades, Arrow, Portal, Treinamentos).
+# O app envia um formulário por vez; estas rotas recebem esse formulário e chamam as MESMAS rotas
+# da web (mesmas permissões, validações, auditoria e notificações), sem duplicar regra de negócio.
+# =====================================================================
+def _v124_call(endpoint, payload=None, **kw):
+    """Chama a rota da web `endpoint` dentro da requisição atual, com `payload` como corpo JSON."""
+    req = request._get_current_object()
+    antes = getattr(req, "_cached_json", (Ellipsis, Ellipsis))
+    req._cached_json = (payload or {}, payload or {})
+    try:
+        rv = app.view_functions[endpoint](**kw)
+    except HTTPException as e:
+        rv = (jsonify({"ok": False, "error": {403: "Sem permissão para esta ação.", 404: "Registro não encontrado."}.get(e.code, e.description or "Não permitido.")}), e.code or 400)
+    finally:
+        req._cached_json = antes
+    resp = make_response(rv)
+    data = resp.get_json(silent=True) if resp.is_json else None
+    return resp, (data or {})
+
+
+def _v124_ok(resp, data):
+    return resp.status_code < 400 and data.get("ok", True) is not False and not data.get("error")
+
+
+def _v124_op_match(company, line, op):
+    c, l = (company or "").upper(), (line or "").upper()
+    if op == "METRO":
+        return "METRO" in c or "METRÔ" in c
+    if op == "CPTM":
+        return "CPTM" in c
+    if op == "MOTIVA":
+        return "VIA" in c or "MOTIVA" in c or l.startswith(("04", "05", "08", "09"))
+    return False
+
+
+@app.get("/api/v124/opcoes/<tipo>")
+@login_required
+def v124_opcoes(tipo):
+    """Listas de escolha para os formulários do app (as mesmas que a web monta dentro da página)."""
+    if tipo in ("tecnicos_arrow", "linhas_arrow", "locais_arrow"):
+        if not _has_access("arrow.view"):
+            abort(403)
+    else:
+        abort(404)
+    if tipo == "tecnicos_arrow":
+        us = User.query.filter(User.archived_at.is_(None), User.active.is_(True), User.role.in_(["technician", "technician_implantation"])).order_by(User.name).all()
+        return jsonify({"ok": True, "itens": [{"id": u.id, "nome": u.name + (f" · {u.company}" if u.company else "")} for u in us]})
+    op = (request.args.get("operador") or "").strip().upper()
+    if tipo == "linhas_arrow":
+        if op == "OUTROS":
+            return jsonify({"ok": True, "itens": [{"id": "GARAGEM", "nome": "GARAGEM"}]})
+        linhas = sorted({(l.line or "").strip() for l in Location.query.with_entities(Location.company, Location.line).all() if _v124_op_match(l.company, l.line, op) and (l.line or "").strip()})
+        return jsonify({"ok": True, "itens": [{"id": x, "nome": x} for x in linhas]})
+    # locais_arrow: OUTROS → localidades cadastradas da Arrow; demais → estações da linha escolhida
+    if op == "OUTROS":
+        ls = ArrowLocation.query.filter_by(active=True).order_by(ArrowLocation.name).all()
+        return jsonify({"ok": True, "itens": [{"id": f"A{x.id}", "nome": x.name} for x in ls]})
+    linha = (request.args.get("linha") or "").strip()
+    ls = Location.query.filter(Location.line == linha).order_by(Location.location).all() if linha else []
+    return jsonify({"ok": True, "itens": [{"id": f"L{x.id}", "nome": x.location} for x in ls if _v124_op_match(x.company, x.line, op)]})
+
+
+@app.post("/api/v124/arrow/programar")
+@login_required
+def v124_arrow_programar():
+    d = request.get_json(silent=True) or {}
+    local = str(d.get("local") or "")
+    tecs = d.get("technician_ids") or []
+    if isinstance(tecs, str):
+        tecs = [x for x in re.split(r"[,;\s]+", tecs) if x]
+    payload = {k: d.get(k) for k in ("date_from", "date_to", "operator", "line", "title", "start_time", "end_time", "priority", "notes")}
+    payload["date_to"] = payload.get("date_to") or payload.get("date_from")
+    payload["technician_ids"] = tecs
+    if local.startswith("A") and local[1:].isdigit():
+        payload["arrow_location_id"] = local[1:]
+    elif local.startswith("L") and local[1:].isdigit():
+        payload["location_id"] = local[1:]
+    resp, data = _v124_call("v8736_arrow_programar", payload)
+    if _v124_ok(resp, data):
+        n = data.get("created_count") or 0
+        return jsonify({"ok": True, "mensagens": [f"{n} atividade(s) programada(s)."]})
+    return resp
+
+
+@app.post("/api/v124/portal/agendamento")
+@login_required
+def v124_portal_novo():
+    """Novo agendamento pelo app: cria, envia e anexa NF/XML num passo só (na web são 3 telas)."""
+    f = request.form
+    try:
+        itens = json.loads(f.get("itens") or "[]")
+    except ValueError:
+        itens = []
+    itens = [x for x in itens if isinstance(x, dict) and any(str(v).strip() for v in x.values())]
+    alt = str(f.get("alternate") or "").lower() in ("1", "true", "sim")
+    payload = {"items": itens, "responsible": f.get("responsible"), "email": f.get("email"), "phone": f.get("phone"),
+               "notes": f.get("notes"), "alternate_date_requested": alt, "alternate_reason": f.get("alternate_reason") if alt else "",
+               "company": f.get("company")}
+    resp, data = _v124_call("portal_appointments_create", payload)
+    if not _v124_ok(resp, data):
+        return resp
+    aid, code = data.get("id"), data.get("code")
+    resp, data2 = _v124_call("portal_appointments_submit", {}, aid=aid)
+    if not _v124_ok(resp, data2):
+        return jsonify({"ok": False, "error": f"O rascunho {code} foi criado, mas não foi enviado: " + str(data2.get("error") or "erro")}), 400
+    a = db.session.get(CustomerAppointment, aid)
+    avisos = []
+    try:
+        _v105_ensure_invoices(); _v112_ensure()
+        nfs = [x for x in request.files.getlist("nf") if x and x.filename][:10]
+        num = (f.get("invoice_number") or "").strip()[:120]
+        for k, fl in enumerate(nfs, 1):
+            sf, sn = _portal_store_upload(fl, f"NF-{a.code}-{k}")
+            if not a.invoice_file:
+                a.invoice_file, a.invoice_original_name, a.invoice_number = sf, sn, (num or a.invoice_number)
+            else:
+                db.session.add(V105Invoice(appointment_id=a.id, number=None, file=sf, original_name=sn))
+        if num and not nfs:
+            a.invoice_number = num
+        for k, fl in enumerate([x for x in request.files.getlist("xml") if x and x.filename][:10], 1):
+            sf, sn = _portal_store_upload(fl, f"XML-{a.code}-{k}", xml_only=True)
+            db.session.add(V112Doc(appointment_id=a.id, kind="XML", file=sf, original_name=sn, created_by=session.get("user_id")))
+        db.session.commit()
+    except ValueError as exc:
+        db.session.rollback()
+        avisos.append(f"Agendamento enviado, mas um anexo foi recusado: {exc}. Envie de novo pela ação “Enviar NF / XML”.")
+    return jsonify({"ok": True, "id": aid, "code": code, "mensagens": [f"Agendamento {code} enviado."] + avisos})
+
+
+_V124_PORTAL_ACOES = {"programar": "Programar data", "confirmar": "Confirmar agendamento", "entrega": "Data de entrega (devolução)",
+                      "cancelar": "Cancelar", "excluir": "Excluir"}
+
+
+@app.post("/api/v124/portal/<int:aid>/acao")
+@login_required
+def v124_portal_acao(aid):
+    d = request.get_json(silent=True) or {}
+    acao = str(d.get("acao") or "")
+    data_ = str(d.get("data") or "")[:10]
+    motivo = (d.get("motivo") or "").strip()
+    if acao == "programar":
+        resp, r = _v124_call("v71_program_appointment", {"programmed_date": data_ or None, "reason": motivo}, aid=aid)
+    elif acao == "confirmar":
+        resp, r = _v124_call("v859_confirm_schedule", {}, aid=aid)
+    elif acao == "entrega":
+        resp, r = _v124_call("v103_set_return_date", {"return_date": data_, "reason": motivo}, aid=aid)
+    elif acao == "cancelar":
+        resp, r = _v124_call("v712_cancel_appointment", {"reason": motivo}, aid=aid)
+    elif acao == "excluir":
+        if (d.get("confirmar") or "").strip().upper() != "EXCLUIR":
+            return jsonify({"ok": False, "error": "Para excluir, digite EXCLUIR no campo de confirmação."}), 400
+        resp, r = _v124_call("v712_delete_appointment", {"reason": motivo}, aid=aid)
+    else:
+        return jsonify({"ok": False, "error": "Escolha a ação."}), 400
+    if _v124_ok(resp, r):
+        return jsonify({"ok": True, "mensagens": [_V124_PORTAL_ACOES[acao] + ": feito."]})
+    return resp
+
+
+@app.post("/api/v124/treinamentos/<int:rid>")
+@login_required
+def v124_treinamento(rid):
+    d = request.get_json(silent=True) or {}
+    if str(d.get("acao") or "salvar") == "excluir":
+        resp, r = _v124_call("v108_training_delete", {}, rid=rid)
+        msg = "Treinamento excluído."
+    else:
+        resp, r = _v124_call("v108_training_update", {k: d.get(k) for k in ("type_id", "date", "trainer", "notes") if d.get(k) not in (None, "")}, rid=rid)
+        msg = "Treinamento atualizado."
+    return jsonify({"ok": True, "mensagens": [msg]}) if _v124_ok(resp, r) else resp
