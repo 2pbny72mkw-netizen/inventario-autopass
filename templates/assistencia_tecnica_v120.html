@@ -51,6 +51,7 @@
 .atWrap .atKpi.k5,.atWrap .atKpi.k5:hover{background:#fff;color:#16283d;outline:1px solid #dbe4ef}
 #atEt .atBox{position:relative}.etHead{display:flex;gap:8px;align-items:flex-start;position:sticky;top:-18px;background:#fff;z-index:2;padding:6px 0 10px;margin-top:-6px;border-bottom:1px solid #eef2f7}
 .etFoot{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px;position:sticky;bottom:-18px;background:#fff;padding:10px 0 4px;border-top:1px solid #eef2f7;z-index:2}
+.atDet{border:1px solid #dbe4ef;border-radius:12px;padding:10px 12px;margin-top:12px}.atDet summary{cursor:pointer;font-weight:800;font-size:15px}.atDet[open] summary{margin-bottom:6px}
 </style>
 {% if not internal %}<aside class="pcClientSide"><div class="pcClientLogo"><img src="/static/autopass-logo.png" alt="Autopass"></div><a href="/portal-cliente">▣ Agendamentos</a><a href="/portal-cliente#new">＋ Novo Agendamento</a><a href="/portal-cliente#history">↶ Histórico</a><a class="on" href="/portal-cliente/assistencia-tecnica" aria-current="page">⚙ Assistência Técnica</a><a href="/meu-perfil">♙ Meu Perfil</a><a href="/logout">⇥ Sair</a><div class="pcClientVer">Versão {{ app_release }}</div></aside>{% endif %}
 <div class="atWrap">
@@ -95,9 +96,11 @@
   <p class="atMuted">Suba o "Relatório de OS" exportado do Bhom (.xlsx ou .csv). As OS já existentes são atualizadas e o histórico se acumula. Valores (R$) não são guardados.</p>
   <form id="atForm" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0"><label class="atMuted">Planilha <input type="file" name="arquivo" accept=".xlsx,.csv" required></label><button class="atBtn p" id="atSend" type="submit">Carregar</button></form>
   <div id="atRes" aria-live="polite"></div>
-  <h3 style="font-size:15px;margin:16px 0 6px">Vínculo com os clientes do Portal</h3><p class="atMuted">Cada nome da planilha é ligado uma vez a um cliente do Portal; o cliente só vê os equipamentos vinculados a ele.</p>
-  <div id="atMap"></div>
-  <h3 style="font-size:15px;margin:16px 0 6px">Últimas cargas</h3><div id="atLoads" class="atMuted"></div>
+  <details id="atMapBox" class="atDet"><summary>Vínculo com os clientes do Portal <span id="atMapSum" class="atMuted"></span></summary>
+    <p class="atMuted">Cada nome da planilha é ligado uma vez a um cliente do Portal; o cliente só vê os equipamentos vinculados a ele. Os sem vínculo aparecem primeiro.</p>
+    <label class="atMuted" style="display:flex;gap:6px;align-items:center;margin:4px 0 8px"><input type="checkbox" id="atMapSo"> Mostrar só os sem vínculo</label>
+    <div id="atMap"></div></details>
+  <details class="atDet"><summary>Últimas cargas</summary><div id="atLoads" class="atMuted" style="margin-top:6px"></div></details>
 </div></div>
 {% endif %}
 {% if internal %}
@@ -195,16 +198,20 @@ const exp=(r,nome)=>{const h=['Nº de série','OS','Falha informada','Situação
   const rows=[h,...r.map(e=>[e.serial,e.os,e.falha||'',e.etapa,fmt(e.abertura),e.dias??'',e.entradas,e.reincidencia_dias??''])];
   const csv='﻿'+rows.map(x=>x.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(';')).join('\r\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));a.download=(nome||'assistencia-tecnica-equipamentos')+'.csv';a.click()};window.atExport=()=>exp(lista());
 {% if can_load %}
-window.atCargaOpen=()=>{$('atCarga').hidden=false;loadMap()};window.atCargaClose=()=>{$('atCarga').hidden=true};
+window.atCargaOpen=()=>{$('atForm').reset();$('atRes').innerHTML='';$('atMapSo').checked=false;document.querySelectorAll('#atCarga details').forEach(x=>x.open=false);$('atCarga').hidden=false;loadMap()};window.atCargaClose=()=>{$('atCarga').hidden=true};
 async function loadMap(){const d=await fetch('/api/assistencia/clientes').then(r=>r.json());
   const opts=id=>'<option value="">— sem vínculo (não aparece no Portal) —</option>'+d.empresas.map(e=>`<option value="${e.id}" ${e.id===id?'selected':''}>${esc(e.nome)}</option>`).join('');
-  $('atMap').innerHTML=d.clientes.length?d.clientes.map(c=>`<div style="display:grid;grid-template-columns:1fr 70px minmax(180px,1fr);gap:8px;align-items:center;font-size:13px;margin:4px 0;${c.company_id?'':'background:#fff7ed;border-radius:8px;padding:4px'}"><span>${esc(c.nome)}</span><span class="atMuted">${num(c.os)} OS</span><select data-n="${esc(c.nome)}" aria-label="Cliente do Portal para ${esc(c.nome)}" style="height:36px;border:1px solid #8a9bb0;border-radius:8px">${opts(c.company_id)}</select></div>`).join(''):'<p class="atMuted">Faça a primeira carga para listar os clientes da planilha.</p>';
+  const sem=d.clientes.filter(c=>!c.company_id).length;$('atMapSum').textContent=d.clientes.length?`· ${d.clientes.length} clientes, ${sem} sem vínculo`:'';
+  const lst=[...d.clientes].sort((a,b)=>(!!a.company_id)-(!!b.company_id)).filter(c=>!$('atMapSo').checked||!c.company_id);
+  $('atMap').innerHTML=lst.length?lst.map(c=>`<div style="display:grid;grid-template-columns:1fr 70px minmax(180px,1fr);gap:8px;align-items:center;font-size:13px;margin:4px 0;${c.company_id?'':'background:#fff7ed;border-radius:8px;padding:4px'}"><span>${esc(c.nome)}</span><span class="atMuted">${num(c.os)} OS</span><select data-n="${esc(c.nome)}" aria-label="Cliente do Portal para ${esc(c.nome)}" style="height:36px;border:1px solid #8a9bb0;border-radius:8px">${opts(c.company_id)}</select></div>`).join(''):(d.clientes.length?'<p class="atMuted">Todos os clientes já têm vínculo.</p>':'<p class="atMuted">Faça a primeira carga para listar os clientes da planilha.</p>');
+  window.__atSem=sem;
   $('atMap').querySelectorAll('select').forEach(s=>s.onchange=async()=>{s.disabled=true;await fetch('/api/assistencia/clientes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nome:s.dataset.n,company_id:s.value})});s.disabled=false;s.parentElement.style.background=s.value?'':'#fff7ed';load()});
   $('atLoads').innerHTML=d.cargas.map(l=>`${esc(l.em.replace('T',' '))} · ${esc(l.arquivo)} · ${num(l.os)} OS (${num(l.novas)} novas, ${num(l.atualizadas)} atualizadas) · ${esc(l.por||'')}`).join('<br>')||'Nenhuma carga ainda.'}
+$('atMapSo').onchange=loadMap;
 $('atForm').onsubmit=async e=>{e.preventDefault();const b=$('atSend');b.disabled=true;b.textContent='Carregando…';$('atRes').textContent='';
   try{const r=await fetch('/api/assistencia/carga',{method:'POST',body:new FormData(e.target)});const d=await r.json();
     $('atRes').innerHTML=r.ok?`<p style="color:#14532d;font-weight:700">Carga concluída: ${num(d.os)} OS (${num(d.novas)} novas, ${num(d.atualizadas)} atualizadas), ${num(d.clientes)} clientes.</p>`:`<p style="color:#991b1b;font-weight:700">${esc(d.error||'Falha na carga.')}</p>`;
-    if(r.ok){e.target.reset();loadMap();load()}}finally{b.disabled=false;b.textContent='Carregar'}};
+    if(r.ok){e.target.reset();await loadMap();if(window.__atSem){$('atMapSo').checked=true;await loadMap();$('atMapBox').open=true}load()}}finally{b.disabled=false;b.textContent='Carregar'}};
 {% endif %}
 load();let rz;window.addEventListener('resize',()=>{clearTimeout(rz);rz=setTimeout(()=>{if(D&&$('atSem'))semanas(D.semanas||[])},200)});
 })();
