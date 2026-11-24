@@ -15023,6 +15023,9 @@ def _media_thumbnail(raw, max_px=520, quality=68):
     """V52.8: miniatura leve para galerias; original continua disponível sob demanda."""
     try:
         with Image.open(io.BytesIO(raw)) as im:
+            # REV55 HF1: JPEG é decodificado já reduzido (1/2, 1/4 ou 1/8), sem carregar a foto inteira na memória.
+            try: im.draft("RGB",(max_px*2,max_px*2))
+            except Exception: pass
             im=ImageOps.exif_transpose(im)
             im.thumbnail((max_px,max_px), Image.Resampling.LANCZOS)
             if im.mode != "RGB":
@@ -35701,6 +35704,9 @@ def _v123_wrap_stock_list():
     app.view_functions["v86_stock_list"] = wrapper
 
 
+_V123_THUMB_LOCK = threading.Lock()
+
+
 def _v123_wrap_stock_photo():
     orig = app.view_functions.get("v86_material_photo")
     if not orig:
@@ -35726,6 +35732,10 @@ def _v123_wrap_stock_photo():
         chave = f"estoque:{pid}"
         thumb = _v118_thumb_get(chave)
         if not thumb:
+          # REV55 HF1: uma miniatura gerada por vez (evita estourar os 512 MB com várias fotos em paralelo).
+          with _V123_THUMB_LOCK:
+           thumb = _v118_thumb_get(chave)
+           if not thumb:
             full = orig(mid, *a, **k)  # mesma permissão e mesma leitura (banco/R2) da original
             try:
                 if getattr(full, "status_code", 200) != 200:
@@ -35733,12 +35743,13 @@ def _v123_wrap_stock_photo():
                 full.direct_passthrough = False
                 raw = full.get_data()
                 thumb = _media_thumbnail(raw, max_px=240, quality=70)
-                if not thumb or len(thumb) >= len(raw):
-                    return full
+                del raw
+                if not thumb:
+                    return orig(mid, *a, **k)
                 _v118_thumb_put(chave, thumb)
             except Exception:
                 app.logger.exception("REV52: falha ao gerar miniatura do estoque")
-                return full
+                return orig(mid, *a, **k)
         r = send_file(io.BytesIO(thumb), mimetype="image/jpeg", download_name=f"material-{mid}-mini.jpg")
         r.set_etag(etag)
         r.headers["Cache-Control"] = cache
