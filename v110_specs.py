@@ -1744,3 +1744,70 @@ def _v124_specs(specs):
 
 
 SPECS = _v124_specs(SPECS)
+
+
+# V88.0 REV53 — pendências do Field: entregas de bobinas (lista nova no padrão), conciliação e edição do mapeamento.
+_SIMNAO_MANTER = [["", "Manter como está"], ["SIM", "Sim"], ["NAO", "Não"]]
+
+
+def _v124_field(specs):
+    P = {x["key"]: x for x in specs}
+    camp_entrega = lambda pref: [
+        {"nome": "location", "rotulo": "Localidade / CD", "tipo": "texto", "obrigatorio": True, "valor": "{location}" if pref else ""},
+        {"nome": "bobbin_type", "rotulo": "Tipo de bobina", "tipo": "lista", "valor": "{bobbin_type}" if pref else "ATM", "opcoes": [["ATM", "ATM"], ["POS", "POS"]]},
+        {"nome": "delivery_date", "rotulo": "Data da entrega", "tipo": "data", "obrigatorio": True, "valor": "{delivery_date}" if pref else ""},
+        {"nome": "status", "rotulo": "Situação", "tipo": "lista", "valor": "{status}" if pref else "PROGRAMADO", "opcoes": [["PROGRAMADO", "Programado"], ["EM_ANDAMENTO", "Em andamento"], ["ENTREGUE", "Entregue"]]},
+        {"nome": "boxes_qty", "rotulo": "Caixas", "tipo": "numero", "obrigatorio": True, "valor": "{boxes_qty}" if pref else "0"},
+        {"nome": "loose_qty", "rotulo": "Bobinas avulsas", "tipo": "numero", "valor": "{loose_qty}" if pref else "0"},
+        {"nome": "unit_cost", "rotulo": "Custo por bobina (R$)", "tipo": "numero", "valor": "{unit_cost}" if pref else ""},
+        {"nome": "notes", "rotulo": "Observações", "tipo": "area", "valor": "{notes}" if pref else ""}]
+    if "entregas_bobinas" not in P and "dashboard_bobinas" in P:
+        e = {"key": "entregas_bobinas", "titulo": "Entregas de bobinas", "grupo": P["dashboard_bobinas"].get("grupo", "field"),
+             "icone": P["dashboard_bobinas"].get("icone", "inventory"), "perms": ["field.bobbins_dashboard"], "web": "/field/bobinas", "modelo": "lista",
+             "fonte": {"url": "/api/bobinas/entregas", "itens": "rows", "offline": True},
+             "lista": {"titulo": "{location} · {bobbin_type}", "subtitulo": "{total_bobbins} bobinas · {boxes_qty} cx + {loose_qty} avulsas",
+                       "meta": ["entrega {delivery_date|data}"],
+                       "etiqueta": {"campo": "status", "cores": {"PROGRAMADO": "aviso", "EM_ANDAMENTO": "info", "ENTREGUE": "sucesso"},
+                                    "rotulos": {"PROGRAMADO": "Programado", "EM_ANDAMENTO": "Em andamento", "ENTREGUE": "Entregue"}},
+                       "busca": ["location", "bobbin_type", "status", "notes"],
+                       "filtros": [{"rotulo": "Programadas", "campo": "status", "igual": "PROGRAMADO"}, {"rotulo": "Entregues", "campo": "status", "igual": "ENTREGUE"}],
+                       "kpis": [{"rotulo": "ENTREGAS"}, {"rotulo": "BOBINAS", "soma": "total_bobbins"}, {"rotulo": "PROGRAMADAS", "campo": "status", "igual": "PROGRAMADO", "tom": "aviso"}],
+                       "kpis2": [{"rotulo": "ENTREGUE", "tom": "sucesso", "campo": "status", "em": ["ENTREGUE"]}, {"rotulo": "% ENTREGUE", "pct": {"campo": "status", "em": ["ENTREGUE"]}}],
+                       "ordem": [{"rotulo": "Data da entrega", "campo": "delivery_date", "desc": True}, {"rotulo": "Localidade", "campo": "location"}],
+                       "graficos": [{"tipo": "rosca", "titulo": "Situação", "agrupar": {"campo": "status"}, "cores": {"PROGRAMADO": "aviso", "EM_ANDAMENTO": "info", "ENTREGUE": "sucesso"},
+                                     "rotulos": {"PROGRAMADO": "Programado", "EM_ANDAMENTO": "Em andamento", "ENTREGUE": "Entregue"}},
+                                    {"tipo": "barras", "titulo": "Bobinas por localidade", "agrupar": {"campo": "location", "soma": "total_bobbins"}, "cores": "paleta", "max": 8},
+                                    {"tipo": "linha", "titulo": "Entregas por mês", "agrupar": {"campo": "delivery_date", "periodo": "mes"}}]},
+             "detalhe": {"secoes": [{"titulo": "Entrega", "campos": [["Localidade / CD", "{location}"], ["Tipo", "{bobbin_type}"], ["Data", "{delivery_date|data}"],
+                                                                     ["Caixas", "{boxes_qty}"], ["Avulsas", "{loose_qty}"], ["Total de bobinas", "{total_bobbins}"], ["Situação", "{status}"]]}]}}
+        _form(e, "nova", {"titulo": "Programar entrega", "envio": {"url": "/api/bobinas/entregas", "metodo": "POST", "formato": "json"}, "campos": camp_entrega(False)})
+        _form(e, "editar", {"titulo": "Editar entrega", "envio": {"url": "/api/bobinas/entregas", "metodo": "POST", "formato": "json"},
+                            "campos": [{"nome": "id", "tipo": "oculto", "valor": "{id}"}] + camp_entrega(True)})
+        _acao(e, {"rotulo": "Editar", "form": "editar", "principal": True, "perms": ["field.stock_manage"]})
+        _acao(e, {"rotulo": "Excluir", "url": "/api/bobinas/entregas/{id}", "metodo": "DELETE", "perms": ["field.stock_manage"], "confirmar": "Excluir esta programação de entrega?"})
+        _novo(e, "Programar entrega", "nova", ["field.stock_manage"])
+        specs.insert(specs.index(P["dashboard_bobinas"]) + 1, e)
+    b = P.get("dashboard_bobinas")
+    if b:
+        _form(b, "conciliar", {"titulo": "Conciliar saldo não localizado", "envio": {"url": "/api/bobinas/conciliar", "metodo": "POST", "formato": "json"}, "campos": [
+            {"nome": "company", "tipo": "oculto", "valor": "{company}"}, {"nome": "line", "tipo": "oculto", "valor": "{line}"}, {"nome": "station", "tipo": "oculto", "valor": "{station}"},
+            {"nome": "reason", "rotulo": "Observação do inventário físico (zera o saldo não localizado desta estação)", "tipo": "area"}]})
+        _acao(b, {"rotulo": "Conciliar", "form": "conciliar", "perms": ["field.bobbins_dashboard"]})
+    mp = P.get("mapeamento_atm")
+    if mp:
+        _form(mp, "ajuste", {"titulo": "Editar mapeamento (gestão)", "envio": {"url": "/api/mapeamento-atm/{mapping_id}/status-admin", "metodo": "POST", "formato": "json"}, "campos": [
+            {"nome": "status", "rotulo": "Situação", "tipo": "lista", "obrigatorio": True, "valor": "{status}", "opcoes": [["PENDENTE", "Pendente"], ["EM_ANDAMENTO", "Em andamento"], ["CONCLUIDO", "Concluído"]]},
+            {"nome": "physical_access", "rotulo": "Acesso físico", "tipo": "lista", "valor": "", "opcoes": [["", "Manter como está"], ["INTERNO", "Interno"], ["EXTERNO", "Externo"]]},
+            {"nome": "bill_acceptor", "rotulo": "Noteiro", "tipo": "lista", "valor": "", "opcoes": [["", "Manter como está"], ["UBA-PRO", "UBA-PRO"], ["I-VIZION", "I-VIZION"], ["SPECTRAL", "SPECTRAL"]]},
+            {"nome": "has_holes", "rotulo": "Tem furos?", "tipo": "lista", "valor": "", "opcoes": _SIMNAO_MANTER},
+            {"nome": "holes_sealed", "rotulo": "Furos tampados?", "tipo": "lista", "valor": "", "opcoes": _SIMNAO_MANTER},
+            {"nome": "rear_safe_door", "rotulo": "Porta traseira do cofre?", "tipo": "lista", "valor": "", "opcoes": _SIMNAO_MANTER},
+            {"nome": "acceptor_fixed", "rotulo": "Noteiro fixado?", "tipo": "lista", "valor": "", "opcoes": _SIMNAO_MANTER},
+            {"nome": "acceptor_welded", "rotulo": "Noteiro soldado?", "tipo": "lista", "valor": "", "opcoes": _SIMNAO_MANTER},
+            {"nome": "notes", "rotulo": "Observações do mapeamento", "tipo": "area", "valor": "{notes}"},
+            {"nome": "reason", "rotulo": "Justificativa da alteração", "tipo": "area", "obrigatorio": True}]})
+        _acao(mp, {"rotulo": "Editar (gestão)", "form": "ajuste", "perms": ["field.atm_mapping_manage"]})
+    return specs
+
+
+SPECS = _v124_field(SPECS)
