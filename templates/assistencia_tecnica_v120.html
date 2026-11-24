@@ -40,7 +40,7 @@
 .etMap{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:10px}.etMap label{display:flex;flex-direction:column;font-size:12px;font-weight:700;gap:3px}.etMap select{height:36px;border:1px solid #b9c7d8;border-radius:8px;font:inherit;font-weight:400}
 .etCols{display:grid;grid-template-columns:1.6fr 1fr;gap:12px;margin-top:10px}.etCols[hidden]{display:none!important}.etCard{border:1px solid #dbe4ef;border-radius:14px;padding:12px;min-width:0}
 .etPrevW{height:calc(20mm * 1.9 + 8px);margin:10px 0}#etPrev{transform:scale(1.9);transform-origin:top left;width:45mm}
-.etLab{width:45mm;height:20mm;box-sizing:border-box;padding:0 1mm;display:flex;flex-direction:column;justify-content:center;font-family:Arial,Helvetica,sans-serif;font-size:7pt;line-height:1.25;color:#000;background:#fff;overflow:hidden}
+.etLab{width:45mm;height:20mm;box-sizing:border-box;padding:0 2mm 0 0;display:flex;flex-direction:column;justify-content:center;font-family:Arial,Helvetica,sans-serif;font-size:8pt;line-height:1.2;color:#000;-webkit-text-stroke:.25px #000;-webkit-print-color-adjust:exact;print-color-adjust:exact;background:#fff;overflow:hidden}
 #etPrev .etLab{border:1px solid #c9d3df;border-radius:1.5mm}.etLab div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.etLab b{font-weight:700}
 .atErr{color:#b42318;font-weight:700;font-size:13px;margin-top:6px}
 /* REV50.2 — gráficos da equipe */
@@ -120,9 +120,8 @@
   <div id="etMap" hidden><div class="etMap"><label>Nome<select data-c="nome"></select></label><label>Ordem de Serviço<select data-c="os"></select></label><label>Série<select data-c="serie"></select></label><label>Data<select data-c="data"></select></label></div><p class="atMuted" id="etMapInfo"></p></div>
   <div class="etCols" id="etBody" hidden>
     <div class="etCard"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px"><b id="etCount" style="flex:1"></b><button type="button" class="atBtn" onclick="etTodas(true)">☑ Marcar todas</button><button type="button" class="atBtn g" onclick="etTodas(false)">☐ Desmarcar</button><input id="etBusca" type="search" placeholder="Buscar" style="height:34px;border:1px solid #b9c7d8;border-radius:8px;padding:0 8px;font:inherit"></div>
-      <div class="atScroll" style="max-height:46vh"><table class="atTable"><thead><tr><th style="width:34px"><input type="checkbox" id="etAll" checked aria-label="Selecionar todas"></th><th>Nome</th><th>OS</th><th>Série</th><th>Data</th><th>Reincid.</th></tr></thead><tbody id="etRows"></tbody></table></div>
-      <p class="atMuted" style="margin:8px 0 0"><label for="etCopias"><b>Etiquetas por OS:</b></label> <select id="etCopias" style="height:34px;border:1px solid #b9c7d8;border-radius:8px;font:inherit;padding:0 6px"><option>1</option><option selected>2</option><option>3</option><option>4</option><option>5</option></select></p></div>
-    <div class="etCard"><b>Prévia (ampliada 1,9×)</b><div class="etPrevW"><div id="etPrev"></div></div><p class="atMuted">Nomes longos: cadastre o <b>Nome reduzido</b> em Cadastro de Clientes. 1 mm livre em cada lateral. A 5ª linha só aparece quando a série entrou nos 3 meses anteriores à data da OS (o número inclui a entrada atual). Letra fixa de 7 pt em todas as etiquetas; o que não couber é cortado com “…”.</p></div>
+      <div class="atScroll" style="max-height:46vh"><table class="atTable"><thead><tr><th style="width:34px"><input type="checkbox" id="etAll" checked aria-label="Selecionar todas"></th><th>Nome</th><th>OS</th><th>Série</th><th>Data</th><th>Reincid.</th></tr></thead><tbody id="etRows"></tbody></table></div><p class="atMuted" style="margin:8px 0 0">1 etiqueta por OS. Para mais cópias, escolha <b>Cópias</b> na janela de impressão (desmarque <b>Agrupar</b> para sair em pares).</p></div>
+    <div class="etCard"><b>Prévia (ampliada 1,9×)</b><div class="etPrevW"><div id="etPrev"></div></div><p class="atMuted">Nomes longos: cadastre o <b>Nome reduzido</b> em Cadastro de Clientes. 1 mm livre em cada lateral. A 5ª linha só aparece quando a série entrou nos 3 meses anteriores à data da OS (o número inclui a entrada atual). Letra fixa de 8 pt em todas as etiquetas; o que não couber é cortado com “…”.</p></div>
   </div>
   <div class="etFoot"><span class="atMuted" style="flex:1">Na 1ª vez, escolha a <b>ZD220</b> na janela de impressão, com margens <b>Nenhuma</b> e papel 45 × 20 mm no driver da Zebra.</span><button type="button" class="atBtn g" onclick="etLimpar()">✕ Limpar dados</button><button type="button" class="atBtn" onclick="etClose()">Fechar</button><button type="button" class="atBtn p" id="etPrint" disabled title="Carregue o Excel das OS para liberar a impressão">🖨 Carregue o Excel primeiro</button></div>
 </div></div>
@@ -237,9 +236,9 @@ let ET={cols:[],linhas:[],mapa:{},itens:[],sel:new Set()};
 const etEsc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 function etOpen(){$('atEt').hidden=false}
 function etClose(){$('atEt').hidden=true}
-function etLimpar(){ET={cols:[],linhas:[],mapa:{},itens:[],sel:new Set()};$('etFile').value='';$('etText').value='';$('etFileName').textContent='.xlsx ou .csv';$('etErr').textContent='';$('etMap').hidden=true;$('etBody').hidden=true;$('etRows').innerHTML='';$('etPrev').innerHTML='';$('etBusca').value='';$('etCopias').value='2';$('etPrint').disabled=true;$('etPrint').textContent='🖨 Carregue o Excel primeiro'}
+function etLimpar(){ET={cols:[],linhas:[],mapa:{},itens:[],sel:new Set()};$('etFile').value='';$('etText').value='';$('etFileName').textContent='.xlsx ou .csv';$('etErr').textContent='';$('etMap').hidden=true;$('etBody').hidden=true;$('etRows').innerHTML='';$('etPrev').innerHTML='';$('etBusca').value='';$('etPrint').disabled=true;$('etPrint').textContent='🖨 Carregue o Excel primeiro'}
 function etLabel(x){return `<div class="etLab"><div>Nome: ${etEsc(x.nome)}</div><div>Ordem de Serviço: ${etEsc(x.os)}</div><div>Serie: ${etEsc(x.serie)}</div><div>Data: ${etEsc(x.data)}</div>${x.vezes?`<div><b>Reincidência - ${x.vezes}x</b></div>`:''}</div>`}
-function etFit(){/* REV50: fonte fixa em 7 pt em todas as linhas e etiquetas (padrão); texto que não couber é cortado com … */}
+function etFit(){/* REV50: fonte fixa em 8 pt (REV56.2) em todas as linhas e etiquetas (padrão); texto que não couber é cortado com … */}
 async function etLer(fd){$('etErr').textContent='';$('etFileName').textContent='Lendo…';
   try{const r=await fetch('/api/assistencia/etiquetas/ler',{method:'POST',body:fd});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||'Falha ao ler.');
    ET.cols=d.colunas;ET.linhas=d.linhas;ET.mapa=d.mapa||{};
@@ -259,11 +258,11 @@ function etTodas(on){ET.sel=on?new Set(ET.itens.map((_,i)=>i)):new Set();etDraw(
 function etDraw(){const q=($('etBusca').value||'').toUpperCase();
   $('etRows').innerHTML=ET.itens.map((x,i)=>({x,i})).filter(({x})=>!q||`${x.nome} ${x.os} ${x.serie}`.toUpperCase().includes(q)).map(({x,i})=>`<tr data-i="${i}"><td><input type="checkbox" class="etChk" value="${i}"${ET.sel.has(i)?' checked':''} aria-label="Selecionar OS ${etEsc(x.os)}"></td><td title="${etEsc(x.nome_original||'')}">${etEsc(x.nome)}${x.nome_original&&x.nome!==x.nome_original?' <small class="atMuted">(cadastro)</small>':(String(x.nome).length>24?' <small style="color:#b45309" title="Cadastre o Nome reduzido em Portal do Cliente › Cadastro de Clientes">⚠ longo</small>':'')}</td><td>${etEsc(x.os)}</td><td style="font-family:ui-monospace,monospace">${etEsc(x.serie)}</td><td>${etEsc(x.data)}</td><td>${x.vezes?`<b style="color:#991b1b">${x.vezes}x</b>`:'—'}</td></tr>`).join('');
   const n=ET.sel.size;$('etCount').textContent=`${n} de ${ET.itens.length} OS selecionada(s) · ${ET.itens.filter(x=>x.vezes).length} com reincidência`;if($('etAll'))$('etAll').checked=n===ET.itens.length;
-  const cp=Number($('etCopias').value||1);$('etPrint').disabled=!n;$('etPrint').textContent=n?`🖨 Imprimir ${n*cp} etiqueta(s) (${cp} por OS)`:'🖨 Marque ao menos 1 OS';
+  $('etPrint').disabled=!n;$('etPrint').textContent=n?`🖨 Imprimir ${n} etiqueta(s)`:'🖨 Marque ao menos 1 OS';
   const prev=ET.itens.find((x,i)=>ET.sel.has(i))||ET.itens[0];$('etPrev').innerHTML=prev?etLabel(prev):'';etFit($('etPrev'))}
-function etImprimir(){const cp=Number($('etCopias').value||1),sel=ET.itens.filter((_,i)=>ET.sel.has(i));if(!sel.length)return;
-  const labs=sel.flatMap(x=>Array(cp).fill(x)).map(etLabel).join('');
-  const css=`@page{size:45mm 20mm;margin:0}html,body{margin:0;padding:0;background:#fff}.etLab{width:45mm;height:20mm;box-sizing:border-box;padding:0 1mm;display:flex;flex-direction:column;justify-content:center;font-family:Arial,Helvetica,sans-serif;font-size:7pt;line-height:1.25;color:#000;overflow:hidden;page-break-after:always;break-after:page}.etLab:last-child{page-break-after:auto;break-after:auto}.etLab div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}`;
+function etImprimir(){const sel=ET.itens.filter((_,i)=>ET.sel.has(i));if(!sel.length)return;
+  const labs=sel.map(etLabel).join('');
+  const css=`@page{size:45mm 20mm;margin:0}html,body{margin:0;padding:0;background:#fff}.etLab{width:45mm;height:20mm;box-sizing:border-box;padding:0 2mm 0 0;display:flex;flex-direction:column;justify-content:center;font-family:Arial,Helvetica,sans-serif;font-size:8pt;line-height:1.2;color:#000;-webkit-text-stroke:.25px #000;-webkit-print-color-adjust:exact;print-color-adjust:exact;overflow:hidden;page-break-after:always;break-after:page}.etLab:last-child{page-break-after:auto;break-after:auto}.etLab div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}`;
   const fr=$('etFrame'),doc=fr.contentDocument;doc.open();doc.write(`<!doctype html><html><head><meta charset="utf-8"><title>Etiquetas<\/title><style>${css}<\/style><\/head><body>${labs}<\/body><\/html>`);doc.close();
   setTimeout(()=>{etFit(doc.body);fr.contentWindow.focus();fr.contentWindow.print()},150)}
 (function(){if(!$('atEt'))return;
@@ -271,12 +270,12 @@ function etImprimir(){const cp=Number($('etCopias').value||1),sel=ET.itens.filte
   const dz=$('etDrop');['dragenter','dragover'].forEach(t=>dz.addEventListener(t,e=>{e.preventDefault();dz.classList.add('over')}));['dragleave','drop'].forEach(t=>dz.addEventListener(t,e=>{e.preventDefault();dz.classList.remove('over')}));
   dz.addEventListener('drop',e=>{const f=e.dataTransfer.files[0];if(!f)return;const fd=new FormData();fd.append('arquivo',f);etLer(fd)});
   $('etLerTxt').onclick=()=>{const t=$('etText').value.trim();if(!t){$('etErr').textContent='Cole as linhas copiadas do Excel.';return}const fd=new FormData();fd.append('texto',t);etLer(fd)};
-  $('etMap').addEventListener('change',etPreparar);$('etBusca').oninput=etDraw;$('etCopias').onchange=etDraw;
+  $('etMap').addEventListener('change',etPreparar);$('etBusca').oninput=etDraw;
   $('etRows').addEventListener('change',e=>{if(e.target.classList.contains('etChk')){const i=Number(e.target.value);e.target.checked?ET.sel.add(i):ET.sel.delete(i);etDraw()}});
   $('etRows').addEventListener('click',e=>{const tr=e.target.closest('tr[data-i]');if(tr&&!e.target.matches('input')){const x=ET.itens[Number(tr.dataset.i)];$('etPrev').innerHTML=etLabel(x);etFit($('etPrev'))}});
   $('etAll').onchange=e=>{ET.sel=e.target.checked?new Set(ET.itens.map((_,i)=>i)):new Set();etDraw()};
   $('etPrint').onclick=etImprimir;document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('atEt').hidden)etClose()});
   $('atEt').addEventListener('click',e=>{if(e.target.id==='atEt')etClose()})})();
-window.etOpen=etOpen;window.etClose=etClose;window.etLimpar=etLimpar;})();
+window.etOpen=etOpen;window.etClose=etClose;window.etLimpar=etLimpar;window.etTodas=etTodas;})();
 </script>
 {% endblock %}
