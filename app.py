@@ -35922,3 +35922,78 @@ def v124_treinamento(rid):
         resp, r = _v124_call("v108_training_update", {k: d.get(k) for k in ("type_id", "date", "trainer", "notes") if d.get(k) not in (None, "")}, rid=rid)
         msg = "Treinamento atualizado."
     return jsonify({"ok": True, "mensagens": [msg]}) if _v124_ok(resp, r) else resp
+
+
+# =====================================================================
+# V88.0 REV55 — Agendamento do cliente padronizado em MAIÚSCULAS (responsável, observações e
+# dados dos equipamentos). Vale para web, app e edição; e-mail e telefone não mudam.
+# =====================================================================
+_V125_UP_TOP = ("responsible", "notes", "alternate_reason")
+_V125_UP_ITEM = ("serial", "equipment", "version", "eod", "defect", "notes")
+
+
+def _v125_upper(d):
+    if not isinstance(d, dict):
+        return d
+    d = dict(d)
+    for k in _V125_UP_TOP:
+        if isinstance(d.get(k), str):
+            d[k] = d[k].strip().upper()
+    if isinstance(d.get("items"), list):
+        d["items"] = [{**x, **{k: x[k].strip().upper() for k in _V125_UP_ITEM if isinstance(x.get(k), str)}} if isinstance(x, dict) else x
+                      for x in d["items"]]
+    return d
+
+
+def _v125_wrap_upper(endpoint):
+    orig = app.view_functions.get(endpoint)
+    if not orig:
+        return
+    def wrapper(*a, **k):
+        req = request._get_current_object()
+        data = req.get_json(silent=True)
+        if isinstance(data, dict):
+            up = _v125_upper(data)
+            req._cached_json = (up, up)
+        return orig(*a, **k)
+    wrapper.__name__ = orig.__name__
+    app.view_functions[endpoint] = wrapper
+
+
+_v125_wrap_upper("portal_appointments_create")
+_v125_wrap_upper("v121_edit_save")
+
+
+def _v125_migrar_maiusculas():
+    """REV55 (autorizado pelo administrador em 24/11): converte uma única vez os agendamentos já gravados.
+    Feito em Python (acentos corretos, independente do locale do banco) e registrado na auditoria."""
+    with app.app_context():
+        try:
+            if AuditEvent.query.filter_by(event_type="V125_MAIUSCULAS").first():
+                return
+            na = ne = 0
+            for a in CustomerAppointment.query.all():
+                mud = False
+                for f in ("responsible_name", "notes", "alternate_reason"):
+                    v = getattr(a, f, None)
+                    if isinstance(v, str) and v != v.strip().upper():
+                        setattr(a, f, v.strip().upper()); mud = True
+                na += mud
+            for e in CustomerAppointmentEquipment.query.all():
+                mud = False
+                for f in ("serial_number", "equipment", "version", "eod", "defect", "notes"):
+                    v = getattr(e, f, None)
+                    if isinstance(v, str) and v != v.strip().upper():
+                        setattr(e, f, v.strip().upper()); mud = True
+                ne += mud
+            db.session.add(AuditEvent(user_id=None, event_type="V125_MAIUSCULAS", entity_type="customer_appointment", entity_id="*",
+                                      detail=f"Padronização em maiúsculas: {na} agendamento(s) e {ne} equipamento(s) alterados."))
+            db.session.commit()
+            app.logger.info("REV55: maiúsculas aplicadas em %s agendamentos e %s equipamentos", na, ne)
+        except Exception:
+            db.session.rollback()
+            app.logger.exception("REV55: falha na conversão para maiúsculas (nada foi gravado)")
+
+
+if os.environ.get("V125_MAIUSCULAS", "1") == "1":
+    threading.Timer(20.0, _v125_migrar_maiusculas).start()

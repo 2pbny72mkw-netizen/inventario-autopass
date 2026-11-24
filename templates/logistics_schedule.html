@@ -204,5 +204,5 @@ async function v121BulkDelete(){const rows=(DATA.rows||[]).filter(x=>V121SEL.has
  const reason=(prompt('Motivo da exclusão (ex.: agendamentos de teste):')||'').trim();if(!reason)return alert('Exclusão cancelada: informe o motivo.');
  if((prompt('Para confirmar, digite EXCLUIR:')||'').trim().toUpperCase()!=='EXCLUIR')return alert('Exclusão cancelada.');
  const r=await fetch('/api/portal/appointments/excluir-lote',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:rows.map(x=>x.id),reason,confirm:'EXCLUIR'})});const d=await r.json().catch(()=>({}));if(!r.ok)return alert(d.error||'Falha ao excluir.');V121SEL.clear();alert(d.excluidos+' agendamento(s) excluído(s).');await loadData()}
-</script><script src="/static/v121_appt_edit.js?v=49"></script>
+</script><script src="/static/v121_appt_edit.js?v=55"></script>
 <style>.v121Bulk{display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:#fdecea;border:1px solid #f5b5ae;border-radius:12px;padding:8px 12px;margin:8px 0}.v121Bulk[hidden]{display:none}.v121Chk{width:34px;text-align:center}.v121Chk input{width:18px;height:18px;cursor:pointer}</style>{% endblock %}

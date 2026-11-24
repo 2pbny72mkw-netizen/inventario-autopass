@@ -22,6 +22,7 @@ html .apx button.apxBtn.d{border-color:#b42318;color:#b42318}html .apx button.ap
 html .apx button.apxBtn[disabled]{opacity:.55;cursor:wait}
 .apx .apxTag{font-size:12px;font-weight:700;color:#1f7a5c;background:#dcfce7;border-radius:999px;padding:2px 10px}
 .apx .apxErr{color:#b42318;font-weight:700;font-size:13px;margin-top:8px}
+#apxResp,#apxObs,#apxAltR,.apx .apxEq [data-k]{text-transform:uppercase}
 .apx .apxWarn{background:#fff7e0;border:1px solid #f3d38a;border-radius:12px;padding:10px 12px;font-size:13px;margin:8px 0}
 `;
   const st = document.createElement('style'); st.textContent = css; document.head.appendChild(st);

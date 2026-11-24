@@ -273,5 +273,6 @@ if(!INTERNAL){const h=(location.hash||'').replace('#','');if(h==='new'||h==='his
  if(typeof window.fillEq==='function'){const f0=window.fillEq;window.fillEq=function(card,k,o){const r=f0.apply(this,arguments);const i=card&&card.querySelector('[data-k="serial"]');if(i)check(i);return r}}
 })();
 </script>
-<script src="/static/v121_appt_edit.js?v=49"></script>
+<style>/* REV55: agendamento em maiúsculas */#responsible,#generalNotes,#alternateReason,[data-k="serial"],[data-k="equipment"],[data-k="version"],[data-k="eod"],[data-k="defect"],[data-k="notes"]{text-transform:uppercase}#responsible::placeholder,#generalNotes::placeholder,#alternateReason::placeholder,[data-k]::placeholder{text-transform:none}</style>
+<script src="/static/v121_appt_edit.js?v=55"></script>
 {% endblock %}
