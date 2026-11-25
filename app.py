@@ -37414,3 +37414,63 @@ def _v135_normaliza_empresas():
 if os.environ.get("V128_BOOT", "1") != "0":
     threading.Timer(50.0, _v135_normaliza_empresas).start()
 # =================== fim REV62.2 ===================
+
+
+# =================== V88.0 REV62.3 — Senha inicial 12345678 com troca obrigatória no primeiro acesso ===================
+_V136_INICIAL = "12345678"
+_V136_LIVRES = {"my_profile_page", "logout", "login", "static"}
+
+
+def _v136_controle():
+    if not session.get("_trocar_senha") or not session.get("user_id"):
+        return None
+    if request.endpoint in _V136_LIVRES or request.path.startswith(("/static", "/api/")) or request.method != "GET":
+        return None
+    flash("Primeiro acesso: troque a senha inicial (12345678) por uma senha sua para continuar.", "warning")
+    return redirect(url_for("my_profile_page"))
+
+
+app.before_request_funcs.setdefault(None, []).append(_v136_controle)
+
+_v136_login_orig = app.view_functions.get("login")
+
+
+def _v136_login(*a, **k):
+    resp = _v136_login_orig(*a, **k)
+    try:
+        if request.method == "POST" and session.get("user_id"):
+            u = db.session.get(User, session["user_id"])
+            if u and u.password_hash and check_password_hash(u.password_hash, _V136_INICIAL):
+                session["_trocar_senha"] = True
+                return redirect(url_for("my_profile_page"))
+    except Exception:
+        db.session.rollback()
+    return resp
+
+
+if _v136_login_orig:
+    _v136_login.__name__ = "login"
+    app.view_functions["login"] = _v136_login
+
+_v136_perfil_orig = app.view_functions.get("my_profile_page")
+
+
+def _v136_perfil(*a, **k):
+    if request.method == "POST" and (request.form.get("action") or "") == "password" and (request.form.get("new_password") or "") == _V136_INICIAL:
+        flash("Escolha uma senha diferente da senha inicial.", "error")
+        return redirect(url_for("my_profile_page"))
+    resp = _v136_perfil_orig(*a, **k)
+    try:
+        if request.method == "POST" and session.get("_trocar_senha"):
+            u = db.session.get(User, session.get("user_id"))
+            if u and not check_password_hash(u.password_hash, _V136_INICIAL):
+                session.pop("_trocar_senha", None)
+    except Exception:
+        db.session.rollback()
+    return resp
+
+
+if _v136_perfil_orig:
+    _v136_perfil.__name__ = "my_profile_page"
+    app.view_functions["my_profile_page"] = login_required(_v136_perfil)
+# =================== fim REV62.3 ===================

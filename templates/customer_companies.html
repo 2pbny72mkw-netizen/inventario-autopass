@@ -44,7 +44,7 @@ function closeCompanyEdit(){companyEditModal.hidden=true;if(ce182.changed){locat
 function accUsers182(){return ACC182.users.filter(u=>(u.company_ids||[]).includes(ce182.id))}
 function accSuggestLogin182(email,name){let b=(email||'').split('@')[0];if(!b)b=String(name||'').trim().split(/\s+/).filter(Boolean).slice(0,2).join('_');b=fold182(b).replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'').slice(0,40)||'cliente';let x=b,i=2;const taken=new Set(ACC182.users.map(u=>u.username));while(taken.has(x))x=b+i++;return x}
 function accMobile182(){const i=ce182.info;if(i.mobile)return i.mobile;const m=String(i.phone||'').split(/[\/;,]/).map(x=>x.trim()).find(x=>{const d=x.replace(/\D/g,'');return d.length>=10&&d.slice(-9,-8)==='9'});return m||''}
-function accPass182(){const c='ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';const a=new Uint32Array(10);crypto.getRandomValues(a);return [...a].map(x=>c[x%c.length]).join('')}
+function accPass182(){return '12345678'} /* REV62.3: senha inicial padrão; o sistema exige a troca no primeiro acesso */
 function accRender182(msg){const us=accUsers182();ceAccCount.textContent=us.length;const box=ceAcessos182;
  box.innerHTML=`<p class="hint" style="margin:0 0 10px">Usuários que entram no Portal do Cliente por esta empresa. A lista geral “Acessos externos” continua no fim da página.</p>`+(msg||'')+
  `<div class="accHead"><h3>Acessos vinculados</h3>${ce182.info.active?'<button type="button" class="btn71 green" onclick="accNew182()">+ Novo acesso</button>':'<span class="hint">Empresa inativa: ative em “Dados da empresa” para criar acessos.</span>'}</div>`+
