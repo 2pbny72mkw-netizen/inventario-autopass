@@ -140,12 +140,43 @@ def install_pos_metro(app,db,can):
   search=(request.args.get('q') or '').strip()
   if search:q=q.filter(or_(POS.terminal.ilike('%'+search+'%'),POS.terminal_number.ilike('%'+search+'%'),POS.serial.ilike('%'+search+'%'),POS.asset.ilike('%'+search+'%')))
   return date_filtered(q)
+
+ # REV63 — filtro Produto (POS / AP). AP: 1 ou mais por estação; estação sem AP conta 1 pendente.
+ def ap_units(pairs):
+  pairs=set(pairs)
+  if not pairs:return []
+  keys={(l,st) for _,l,st in pairs}
+  aps=[a for a in AP.query.order_by(AP.line,AP.station,AP.identifier).all() if (a.line,a.station) in keys]
+  fotos={r[0] for r in db.session.query(APPhoto.ap_id).filter(APPhoto.ap_id.in_([a.id for a in aps] or [-1])).distinct().all()}
+  por={}
+  for a in aps:por.setdefault((a.line,a.station),[]).append(a)
+  out=[]
+  for cl,l,st in sorted(pairs):
+   lst=por.get((l,st)) or []
+   if not lst:
+    out.append({'id':'ap-'+l+'-'+st,'produto':'AP','client':cl,'line':l,'station':st,'terminal':'Sem AP registrado','terminal_number':'AP','model':'MW301R','manufacturer':'Mercusys','serial':'','asset':'','status':'Pendente','installed_on':'','notes':'','location':'','ap_id':None,'has_photo':False})
+    continue
+   for a in lst:
+    foto=a.id in fotos
+    ef='Concluído' if a.status=='Concluído' and foto else ('Em andamento' if a.status in ('Em andamento','Concluído') else 'Pendente')
+    out.append({'id':'ap'+str(a.id),'produto':'AP','client':cl,'line':l,'station':st,'terminal':a.identifier,'terminal_number':'AP','model':a.model or 'MW301R','manufacturer':a.manufacturer or 'Mercusys','serial':'','asset':'','status':ef,'installed_on':a.installed_on.strftime('%Y-%m-%d') if a.installed_on else '','notes':a.notes or '','location':a.location or '','ap_id':a.id,'has_photo':foto})
+  return out
+ def ap_pairs(q):
+  return {(c or '',l or '',st or '') for c,l,st in q.with_entities(POS.client,POS.line,POS.station).distinct().all()}
+ def ap_conta(units):
+  return len(units),sum(1 for u in units if u['status']=='Concluído'),sum(1 for u in units if u['status']=='Em andamento')
  @app.get('/field/troca-pos-metro')
  @guard('field.pos_metro')
  def pos_page():
   q=selected();items=q.order_by(POS.line,POS.station,POS.terminal).limit(500).all()
   overall=POS.query
   total=overall.count();done=overall.filter(POS.status=='Concluído').count();ongoing=overall.filter(POS.status=='Em andamento').count()
+  produto=(request.args.get('produto') or '').strip().upper()
+  if produto not in ('POS','AP'):produto=''
+  ap_all=ap_units(ap_pairs(POS.query)) if produto in ('','AP') else []
+  if produto=='AP':total=done=ongoing=0
+  if produto in ('','AP'):
+   t,d,o=ap_conta(ap_all);total+=t;done+=d;ongoing+=o
   clients=[x[0] for x in db.session.query(POS.client).distinct().order_by(POS.client)]
   lines_q=db.session.query(POS.line)
   if request.args.get('cliente'):lines_q=lines_q.filter(POS.client==request.args['cliente'])
@@ -182,14 +213,30 @@ def install_pos_metro(app,db,can):
    for ap_id,photo_id in db.session.query(APPhoto.ap_id,func.min(APPhoto.id)).filter(APPhoto.ap_id.in_([a.id for a in aps])).group_by(APPhoto.ap_id):
     first_photos[ap_id]=photo_id
   ap_records=[{'ap':a,'has_photo':a.id in photo_ids,'photo_id':first_photos.get(a.id)} for a in aps]
-  ap_total=max(1,len(aps)) if station_name and request.args.get('linha') and st_total else 0
-  if ap_total:
-   st_total+=ap_total
-   for entry in ap_records:
-    a=entry['ap']
-    if a.status=='Concluído' and entry['has_photo']:st_done+=1
-    elif a.status=='Em andamento' or (a.status=='Concluído' and not entry['has_photo']):st_ongoing+=1
-  return render_template('v874_pos_metro.html',ap_records=ap_records,ap_total=ap_total,station_complete=bool(st_total and st_done==st_total),metric_rows=metric_rows,known_models=known_models,known_manufacturers=known_manufacturers,latest_notes=latest_notes,items=items,short_number=short_number,total=total,done=done,ongoing=ongoing,lines=lines,clients=clients,stations=stations,can_pos=can,st_total=st_total,st_done=st_done,st_ongoing=st_ongoing,filtered_count=q.count())
+  ap_total=len(ap_records) if station_name and request.args.get('linha') else 0
+  ap_sel=ap_units(ap_pairs(station_q)) if station_q is not None and produto in ('','AP') else []
+  if produto=='AP':st_total=st_done=st_ongoing=0
+  if ap_sel:
+   t,d,o=ap_conta(ap_sel);st_total+=t;st_done+=d;st_ongoing+=o
+  # lista de APs da seleção (filtros de cliente/linha/estação/busca; status e período sobre o AP)
+  ap_lista=[]
+  if produto in ('','AP'):
+   bq=POS.query
+   for arg,col in [('cliente',POS.client),('linha',POS.line),('estacao',POS.station)]:
+    v=(request.args.get(arg) or '').strip()
+    if v:bq=bq.filter(col==v)
+   ap_lista=ap_units(ap_pairs(bq))
+   stf=(request.args.get('status') or '').strip();termo=(request.args.get('q') or '').strip().lower()
+   da,db_=date_range()
+   if stf:ap_lista=[u for u in ap_lista if u['status']==stf]
+   if termo:ap_lista=[u for u in ap_lista if termo in (u['terminal']+' '+u['location']).lower()]
+   if da or db_:ap_lista=[u for u in ap_lista if u['status']=='Concluído' and u['installed_on'] and (not da or u['installed_on']>=da.strftime('%Y-%m-%d')) and (not db_ or u['installed_on']<db_.strftime('%Y-%m-%d'))]
+  for r in metric_rows:r['produto']='POS'
+  if produto=='AP':metric_rows=[]
+  if produto in ('','AP'):metric_rows=metric_rows+[{k:v for k,v in u.items() if k!='has_photo'} for u in ap_all]
+  if produto=='AP':items=[]
+  filtered_n=(0 if produto=='AP' else q.count())+len(ap_lista)
+  return render_template('v874_pos_metro.html',ap_records=ap_records,ap_total=ap_total,station_complete=bool(st_total and st_done==st_total),metric_rows=metric_rows,known_models=known_models,known_manufacturers=known_manufacturers,latest_notes=latest_notes,items=items,short_number=short_number,total=total,done=done,ongoing=ongoing,lines=lines,clients=clients,stations=stations,can_pos=can,st_total=st_total,st_done=st_done,st_ongoing=st_ongoing,filtered_count=filtered_n,produto=produto,ap_lista=ap_lista[:500])
  @app.post('/field/troca-pos-metro/importar')
  @guard('field.pos_metro.import')
  def pos_import():
@@ -608,10 +655,10 @@ def install_pos_metro(app,db,can):
   wb=Workbook();ws=wb.active;ws.title='POS Metrô'
   ws.append(['Cliente','Linha','Estação','N° TERMINAL2','Terminal','Modelo','Fabricante','Nº Série','Patrimônio','Status','Técnico responsável','Data da atividade','Observações','Código da estação'])
   if not empty:
-   for x in selected().order_by(POS.line,POS.station,POS.terminal):
+   for x in ([] if (request.args.get('produto') or '').upper()=='AP' else selected().order_by(POS.line,POS.station,POS.terminal)):
     event=Event.query.filter_by(pos_id=x.id).order_by(Event.occurred_at.desc()).first()
     ws.append([x.client,x.line,x.station,short_number(x),x.terminal,x.model,x.manufacturer,x.serial,x.asset,x.status,event.user_id if event else '',event.occurred_at if event else '',event.notes if event else '', ''])
-  if not empty:
+  if not empty and (request.args.get('produto') or '').upper()!='POS':
    apws=wb.create_sheet('Access Points')
    apws.append(['Cliente','Linha','Estação','Identificação AP','Lado / acesso','Fabricante','Modelo','Status','Data da conclusão','Última observação','Fotos registradas','Referências das fotos'])
    # Exportar os APs das estações abrangidas pelos filtros, sem limite de paginação.
