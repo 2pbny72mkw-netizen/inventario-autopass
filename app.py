@@ -37333,3 +37333,39 @@ def v133_dashboard():
 if _v133_dash_orig:
     app.view_functions["v120_dashboard"] = login_required(v133_dashboard)
 # =================== fim REV61 ===================
+
+
+# =================== V88.0 REV62 — Gestão de Agendamentos: recebidos por dia (para os big numbers com período e cliente) ===================
+_v134_mgmt_orig = app.view_functions.get("v71_schedule_management_api")
+
+
+def v134_schedule_management_api():
+    resp = _v134_mgmt_orig()
+    try:
+        if not hasattr(resp, "get_json"):
+            return resp
+        d = resp.get_json(silent=True) or {}
+        if not d.get("ok"):
+            return resp
+        ids = [r["id"] for r in d.get("rows") or []]
+        por = {}
+        if ids:
+            q = (db.session.query(CustomerAppointmentEquipment.appointment_id, CustomerAppointmentEquipment.received_at)
+                 .filter(CustomerAppointmentEquipment.appointment_id.in_(ids), CustomerAppointmentEquipment.received.is_(True),
+                         CustomerAppointmentEquipment.received_at.isnot(None)))
+            for aid, ra in q.all():
+                dia = _v128_sp(ra).date().isoformat()
+                x = por.setdefault(aid, {})
+                x[dia] = x.get(dia, 0) + 1
+        for r in d.get("rows") or []:
+            r["received_days"] = por.get(r["id"], {})
+        return jsonify(d)
+    except Exception:
+        db.session.rollback()
+        app.logger.exception("REV62: falha ao montar os recebidos por dia")
+        return resp
+
+
+if _v134_mgmt_orig:
+    app.view_functions["v71_schedule_management_api"] = login_required(v134_schedule_management_api)
+# =================== fim REV62 ===================
