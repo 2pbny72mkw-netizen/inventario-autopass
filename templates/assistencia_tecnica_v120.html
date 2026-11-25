@@ -238,7 +238,7 @@ const etEsc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':
 function etOpen(){$('atEt').hidden=false}
 function etClose(){$('atEt').hidden=true}
 function etLimpar(){ET={cols:[],linhas:[],mapa:{},itens:[],sel:new Set()};$('etFile').value='';$('etText').value='';$('etFileName').textContent='.xlsx ou .csv';$('etErr').textContent='';$('etMap').hidden=true;$('etBody').hidden=true;$('etRows').innerHTML='';$('etPrev').innerHTML='';$('etBusca').value='';$('etPrint').disabled=true;$('etPrint').textContent='🖨 Carregue o Excel primeiro'}
-function etLabel(x){return `<div class="etLab"><div>Nome: ${etEsc(x.nome)}</div><div>Ordem de Serviço: ${etEsc(x.os)}</div><div>Serie: ${etEsc(x.serie)}</div><div>Data: ${etEsc(x.data)}</div>${x.vezes?`<div><b>Reincidência - ${x.vezes}x</b></div>`:''}</div>`}
+function etLabel(x){return `<div class="etLab"><div>Nome: ${etEsc(x.nome)}</div><div>Ordem de Serviço: ${etEsc(x.os)}</div><div>Serie: ${etEsc(x.serie)}</div><div>Data: ${etEsc(x.data)}</div>${x.vezes?`<div><b>Reincidência</b></div>`:''}</div>`}
 function etFit(){/* REV50: fonte fixa em 8 pt (REV56.2) em todas as linhas e etiquetas (padrão); texto que não couber é cortado com … */}
 async function etLer(fd){$('etErr').textContent='';$('etFileName').textContent='Lendo…';
   try{const r=await fetch('/api/assistencia/etiquetas/ler',{method:'POST',body:fd});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||'Falha ao ler.');
