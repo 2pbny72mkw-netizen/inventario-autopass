@@ -37248,3 +37248,88 @@ def v132_fat_dados():
                     "clientes": cl, "nfs": nfs, "itens": atual, "lista_clientes": clientes,
                     "ultima_carga": _v132_cfg("ultima_carga"), "expira_em": max(0, int(session.get("_fin_ate") or 0) - int(time.time()))})
 # =================== fim REV60 ===================
+
+
+# =================== V88.0 REV61 — Recebidos no Portal aparecem na Assistência (cliente e equipe) até a OS do Bhom chegar ===================
+_V133_ETAPA = ("Recebido · aguardando OS", "#7c3aed")
+
+
+def _v133_recebidos(ids, todas, de=None, ate=None):
+    """Equipamentos recebidos no Portal, ainda não devolvidos e sem OS no Bhom (mesma regra de série do SLA, REV59)."""
+    hoje = datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+    nome_cid = {}
+    for c in CustomerCompany.query.all():
+        for n in (c.legal_name, c.trade_name):
+            if n:
+                nome_cid[n.strip().lower()] = c.id
+    por_serie = {}
+    for o in todas:
+        if o.get("serial_key"):
+            por_serie.setdefault(o["serial_key"], []).append(o)
+    lim = datetime.utcnow() - timedelta(days=120)
+    q = (db.session.query(CustomerAppointmentEquipment, CustomerAppointment)
+         .join(CustomerAppointment, CustomerAppointment.id == CustomerAppointmentEquipment.appointment_id)
+         .filter(CustomerAppointmentEquipment.received.is_(True), CustomerAppointmentEquipment.received_at.isnot(None),
+                 CustomerAppointmentEquipment.received_at >= lim))
+    linhas = q.all()
+    if not linhas:
+        return []
+    devolvidos = {e[0] for e in db.session.query(PortalEquipmentEvent.equipment_id).filter(
+        PortalEquipmentEvent.event_type == "DEVOLVIDO", PortalEquipmentEvent.equipment_id.in_([eq.id for eq, _ in linhas])).all()}
+    out = []
+    for eq, ap in linhas:
+        if eq.id in devolvidos or (ap.status or "").upper() in ("RASCUNHO", "CANCELADO"):
+            continue
+        ecid = nome_cid.get((ap.customer_company or "").strip().lower())
+        if ids is not None and ecid not in ids:
+            continue
+        rec = _v128_sp(eq.received_at).date()
+        if (de and rec < de) or (ate and rec > ate):
+            continue
+        sk = _v120_skey(eq.serial_number)
+        ok = lambda o: _v120_d(o["opened"]) and _v120_d(o["opened"]) >= rec - timedelta(days=3)
+        tem_os = bool(sk) and any(ok(o) for o in por_serie.get(sk, []))
+        if not tem_os and sk and len(sk) >= 5:
+            tem_os = any(ok(o) and (ecid is None or o.get("company_id") in (None, ecid))
+                         for k2, lst in por_serie.items() if len(k2) > len(sk) and k2.endswith(sk) for o in lst)
+        if tem_os:
+            continue
+        out.append({"serial": (eq.serial_number or "").upper(), "os": "", "falha": (eq.defect or "").strip(), "etapa": _V133_ETAPA[0],
+                    "abertura": rec.isoformat(), "dias": (hoje - rec).days, "entradas": 1, "reincidencia_dias": None,
+                    "agendamento": ap.code or str(ap.id), "equipamento": (eq.equipment or "").upper()})
+    return out
+
+
+_v133_dash_orig = app.view_functions.get("v120_dashboard")
+
+
+def v133_dashboard():
+    resp = _v133_dash_orig()
+    try:
+        if not hasattr(resp, "get_json"):
+            return resp
+        d = resp.get_json(silent=True) or {}
+        if not d.get("ok"):
+            return resp
+        ids = _v120_user_company_ids()
+        if ids is None and request.args.get("company_id", "").isdigit():
+            ids = [int(request.args["company_id"])]
+        todas = [r for r in _v120_os_rows(ids) if (r.get("status_os") or "").upper() != "CANCELADA"]
+        novos = _v133_recebidos(ids, todas, _v120_d(request.args.get("de")), _v120_d(request.args.get("ate")))
+        d["etapas"] = [{"rotulo": _V133_ETAPA[0], "cor": _V133_ETAPA[1], "n": len(novos)}] + list(d.get("etapas") or [])
+        if novos:
+            d["equipamentos"] = sorted(novos + list(d.get("equipamentos") or []), key=lambda e: (e.get("abertura") or ""), reverse=True)
+            k = d.setdefault("kpis", {})
+            k["equipamentos"] = (k.get("equipamentos") or 0) + len(novos)
+            k["em_manutencao"] = (k.get("em_manutencao") or 0) + len(novos)
+        d["kpis"]["recebidos_sem_os"] = len(novos)
+        return jsonify(d)
+    except Exception:
+        db.session.rollback()
+        app.logger.exception("REV61: falha ao juntar os recebidos do Portal na Assistência")
+        return resp
+
+
+if _v133_dash_orig:
+    app.view_functions["v120_dashboard"] = login_required(v133_dashboard)
+# =================== fim REV61 ===================

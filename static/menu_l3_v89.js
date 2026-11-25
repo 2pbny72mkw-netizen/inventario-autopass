@@ -28,6 +28,7 @@
  };
  const MAP={'/diagnostico':SECS.map(s=>({label:s.label,href:'/diagnostico#sec-'+s.k}))};
  for(const [h,l] of Object.entries(OTHER))MAP[h]=l.map(t=>({label:t,href:h+'#ap-ir='+encodeURIComponent(t)}));
+ MAP['/portal-cliente/gestao-agendamentos'].unshift({label:'Novo agendamento / Receber equipamentos',href:'/portal-cliente'}); // REV61
  // Vai até a seção pelo título (ou abre a aba com esse nome). Tenta por até ~4 s porque várias telas montam o conteúdo depois.
  const nz=t=>(t||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/\s+/g,' ').trim();
  const goto=()=>{const m=/#ap-ir=(.+)$/.exec(location.hash);if(!m)return;let want;try{want=nz(decodeURIComponent(m[1]))}catch(e){return}
