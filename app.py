@@ -27834,7 +27834,7 @@ def v104_portal_known_equipments():
     serial_key=func.upper(func.trim(CustomerAppointmentEquipment.serial_number))
     agg=(db.session.query(func.max(CustomerAppointmentEquipment.id).label('last_id'),func.count(CustomerAppointmentEquipment.id).label('times'))
          .join(CustomerAppointment,CustomerAppointment.id==CustomerAppointmentEquipment.appointment_id)
-         .filter(CustomerAppointment.customer_company==company,CustomerAppointment.status!='RASCUNHO')
+         .filter(func.upper(func.trim(CustomerAppointment.customer_company))==company.strip().upper(),CustomerAppointment.status!='RASCUNHO')
          .group_by(serial_key).subquery())
     rows=(db.session.query(CustomerAppointmentEquipment,CustomerAppointment,agg.c.times)
           .join(agg,agg.c.last_id==CustomerAppointmentEquipment.id)
@@ -28370,7 +28370,7 @@ def _v100_portal_rows_query():
     q=CustomerAppointment.query
     if not _portal_internal():
         u=db.session.get(User,session['user_id']); allowed=[c.legal_name for c in _customer_companies_for_user(u)]
-        q=q.filter(CustomerAppointment.customer_company.in_(allowed or ['__SEM_EMPRESA__']))
+        q=q.filter(func.upper(func.trim(CustomerAppointment.customer_company)).in_([(n or '').strip().upper() for n in allowed] or ['__SEM_EMPRESA__']))  # REV62.1: sem diferenciar maiúsculas (cadastro em MAIÚSCULAS desde o REV58.1)
     elif _portal_driver_only():
         q=q.filter(CustomerAppointment.status.in_(_V100_DRIVER_STATUSES))
     return q.order_by(CustomerAppointment.created_at.desc())

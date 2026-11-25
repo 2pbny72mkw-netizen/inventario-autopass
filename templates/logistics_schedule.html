@@ -257,7 +257,7 @@ function perDatas(){const p=$('v134Per').value,h=new Date();let de=new Date(h),a
  $('v134De').value=iso(de);$('v134Ate').value=iso(ate)}
 const ativo=x=>!['CANCELADO','RASCUNHO'].includes(String(x.status||'').toUpperCase());
 function vista(raw){const c=$('v134Cli').value;if(!c)return Object.assign({},raw,{__v:true});
- const f=a=>(a||[]).filter(x=>(x.company||'')===c),rows=f(raw.rows),daily={};
+ const f=a=>(a||[]).filter(x=>(x.company||'').trim().toUpperCase()===c),rows=f(raw.rows),daily={};
  rows.forEach(a=>{const d=a.programmed_date||a.expected_date||a.date;if(!d||String(a.status||'').toUpperCase()==='CANCELADO')return;const b=daily[d]||(daily[d]={appointments:0,equipment:0,garages:1});b.appointments++;b.equipment+=a.count||0});
  return Object.assign({},raw,{__v:true,rows,requested_today:f(raw.requested_today),programmed_today:f(raw.programmed_today),daily,to_return:f(raw.to_return)})}
 function periodo(){const de=$('v134De').value,ate=$('v134Ate').value;return [de||'0000',ate||'9999']}
@@ -268,10 +268,10 @@ function conjuntos(){const [de,ate]=periodo(),rows=(DATA.rows||[]).filter(ativo)
  return {de,ate,req,rec,rows}}
 function anterior(de,ate){const a=new Date(de+'T12:00'),b=new Date(ate+'T12:00'),n=Math.round((b-a)/864e5)+1,pa=new Date(a);pa.setDate(pa.getDate()-n);const pb=new Date(a);pb.setDate(pb.getDate()-1);return [iso(pa),iso(pb)]}
 function varTxt(a,b){if(!b)return '';const v=Math.round(100*(a-b)/b);return `${v>=0?'▲':'▼'} ${Math.abs(v)}% vs período anterior`}
-function preencheClientes(){const sel=$('v134Cli'),cur=sel.value,cs=[...new Set((RAW.rows||[]).filter(ativo).map(x=>x.company).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'pt-BR'));
+function preencheClientes(){const sel=$('v134Cli'),cur=sel.value,cs=[...new Set((RAW.rows||[]).filter(ativo).map(x=>(x.company||'').trim().toUpperCase()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'pt-BR'));
  sel.innerHTML='<option value="">Todos</option>'+cs.map(c=>`<option${c===cur?' selected':''}>${esc(c)}</option>`).join('')}
 window.renderAll=function(){if(!DATA)return;if(!DATA.__v){RAW=DATA;preencheClientes()}DATA=vista(RAW);
- const S=conjuntos();kReq.textContent=S.req.length;kGar.textContent=new Set(S.req.map(x=>x.company)).size;kEq.textContent=S.req.reduce((n,x)=>n+(x.count||0),0);
+ const S=conjuntos();kReq.textContent=S.req.length;kGar.textContent=new Set(S.req.map(x=>(x.company||'').trim().toUpperCase())).size;kEq.textContent=S.req.reduce((n,x)=>n+(x.count||0),0);
  const nRec=S.rec.reduce((n,x)=>n+x._rec,0);kRec.textContent=nRec;kAlt.textContent=S.req.filter(x=>x.alternate).length;
  kAg.textContent=S.req.reduce((n,x)=>n+Math.max(0,(x.count||0)-(x.received||0)),0);
  if($('v134De').value&&$('v134Ate').value){const [pa,pb]=anterior(S.de,S.ate),rows=S.rows,pr=rows.filter(x=>x.request_date>=pa&&x.request_date<=pb).length,
@@ -280,7 +280,7 @@ window.renderAll=function(){if(!DATA)return;if(!DATA.__v){RAW=DATA;preencheClien
  $('v134Txt').textContent=`${brd(S.de)} a ${brd(S.ate)} · ${$('v134Cli').value||'todos os clientes'} · solicitações pela data da solicitação, recebidos pela data do recebimento · clique num número para ver a lista`;
  renderRoutes();renderBlocked();renderCalendar();renderRows()};
 window.openLogKpi=function(i){if(!DATA)return;const S=conjuntos();
- const data=i===0?S.req:i===1?[...new Map(S.req.map(x=>[x.company,x])).values()]:i===2?S.req:i===3?S.rec:i===4?S.req.filter(x=>x.alternate):S.req.filter(x=>(x.count||0)>(x.received||0));
+ const data=i===0?S.req:i===1?[...new Map(S.req.map(x=>[(x.company||'').trim().toUpperCase(),x])).values()]:i===2?S.req:i===3?S.rec:i===4?S.req.filter(x=>x.alternate):S.req.filter(x=>(x.count||0)>(x.received||0));
  const card=document.querySelectorAll('#logisticsKpis .k')[i];logKpiTitle.textContent=card.querySelector('span').textContent+' · '+$('kReq').closest('.vGrid').querySelectorAll('b')[i].textContent;
  LK.cols=[['code','Protocolo'],['company','Garagem / cliente'],['status','Situação'],['req','Solicitado em','d'],['count',i===3?'Recebidos no período':i===5?'Faltam receber':'Equip.','n'],['date','Data','d'],['act','Ação']];LK.i=i;
  LK.rows=data.map(x=>({id:x.id,act:'',code:x.code||'',company:x.company||'',status:x.status||'',req:x.request_date||'',count:i===3?x._rec:i===5?(x.count||0)-(x.received||0):(x.count||0),date:x.programmed_date||x.expected_date||x.date||''}));
