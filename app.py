@@ -35495,8 +35495,14 @@ def _v122_contagens(itens):
                  .filter(CustomerAppointmentEquipment.created_at >= datetime.combine(hoje - timedelta(days=400), datetime.min.time())))
             for serial, criado, st, emp in q.all():
                 sk = _v120_skey(serial)
-                if sk in alvo and criado and str(st or "").upper() not in ("RASCUNHO", "CANCELADO"):
+                if not sk or not criado or str(st or "").upper() in ("RASCUNHO", "CANCELADO"):
+                    continue
+                if sk in alvo:
                     portal.setdefault(sk, []).append((criado.date(), _v120_norm(emp)))
+                elif len(sk) >= 5:  # REV59: Portal com o final da série; conta só se o cliente for o mesmo
+                    for a in alvo:
+                        if len(a) > len(sk) and a.endswith(sk):
+                            portal.setdefault(a, []).append((criado.date(), "~" + _v120_norm(emp)))
         except Exception:
             db.session.rollback()
     out = []
@@ -35514,7 +35520,8 @@ def _v122_contagens(itens):
         ant = [d for o, d in hb if lim <= d <= ref and re.sub(r"\D", "", o) != osn]
         todas_os = [d for _o, d in hb] + [ref]
         # Agendamento do Portal que virou OS (até 30 dias depois) conta uma vez só.
-        por = [d for d in {d for d, n in portal.get(sk, []) if mesmo(n)} if lim <= d <= ref and not any(d <= o <= d + timedelta(days=30) for o in todas_os)]
+        _cmp = lambda n: (bool(cli and n[1:] and (cli in n[1:] or n[1:] in cli)) if n.startswith("~") else mesmo(n))
+        por = [d for d in {d for d, n in portal.get(sk, []) if _cmp(n)} if lim <= d <= ref and not any(d <= o <= d + timedelta(days=30) for o in todas_os)]
         vezes = 1 + len(ant) + len(por) if sk else 1
         out.append({"nome": str(x.get("nome") or "").strip()[:60], "os": str(x.get("os") or "").strip()[:30], "serie": str(x.get("serie") or "").strip()[:60],
                     "data": ref.strftime("%d/%m/%Y") if _v120_date(x.get("data")) else str(x.get("data") or "").strip()[:20],
@@ -36618,6 +36625,10 @@ def _v128_dados(args):
         fim = _v128_sp(devol.get(eq.id))
         sk = _v120_skey(eq.serial_number)
         cands = [o for o in por_serie.get(sk, []) if _v120_d(o["opened"]) and ini.date() - timedelta(days=3) <= _v120_d(o["opened"]) <= ini.date() + timedelta(days=30)] if sk else []
+        if not cands and sk and len(sk) >= 5:  # REV59: série curta no Portal = final da série do Bhom, mesmo cliente
+            cands = [o for k2, lst in por_serie.items() if len(k2) > len(sk) and k2.endswith(sk) for o in lst
+                     if (ecid is None or o["company_id"] in (None, ecid)) and _v120_d(o["opened"])
+                     and ini.date() - timedelta(days=3) <= _v120_d(o["opened"]) <= ini.date() + timedelta(days=30)]
         o = min(cands, key=lambda z: abs((_v120_d(z["opened"]) - ini.date()).days)) if cands else None
         if tec and (not o or (o["technician"] or "").strip() != tec):
             continue
@@ -36787,3 +36798,195 @@ for _n in ("portal_customer_companies", "portal_customer_company_edit"):
 if os.environ.get("V128_BOOT", "1") != "0":
     threading.Timer(30.0, _v129_boot).start()
 # =================== fim REV58.1 ===================
+
+
+# =================== V88.0 REV59 — "Manter conectado neste computador" (30 dias) ===================
+# O cookie de sessão passa a valer até 30 dias; quem NÃO marcou a opção continua saindo após 12 h sem uso
+# (controle no servidor pela última atividade). Usado na máquina remota da Bhom para a carga automática.
+_V130_IDLE = timedelta(hours=12)
+_V130_LONGA = timedelta(days=30)
+app.permanent_session_lifetime = _V130_LONGA
+
+
+def _v130_controle_sessao():
+    if not session.get("user_id"):
+        return None
+    agora = int(time.time())
+    visto = session.get("_seen")
+    if not session.get("_long") and visto and agora - int(visto) > _V130_IDLE.total_seconds():
+        uid = session.get("user_id")
+        session.clear()
+        try:
+            db.session.add(SessionEvent(user_id=uid, event_type="AUTO_LOGOUT_INATIVO"))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+        return None
+    if not visto or agora - int(visto) > 60:
+        session["_seen"] = agora
+    return None
+
+
+app.before_request_funcs.setdefault(None, []).insert(0, _v130_controle_sessao)
+
+_v130_login_orig = app.view_functions.get("login")
+
+
+def _v130_login(*a, **k):
+    resp = _v130_login_orig(*a, **k)
+    if request.method == "POST" and session.get("user_id"):
+        session["_seen"] = int(time.time())
+        if request.form.get("manter") == "1":
+            session["_long"] = True
+            try:
+                db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="LOGIN_MANTER_CONECTADO", entity_type="session",
+                                          entity_id=str(session.get("user_id")), detail=f"Manter conectado por 30 dias · IP {request.headers.get('X-Forwarded-For', request.remote_addr) or ''}"[:500]))
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+    return resp
+
+
+if _v130_login_orig:
+    _v130_login.__name__ = "login"
+    app.view_functions["login"] = _v130_login
+# =================== fim REV59 ===================
+
+
+# =================== V88.0 REV59 — Série curta do Portal casa com a série completa do Bhom ===================
+# O cliente costuma digitar só o final da série ("57834"); no Bhom ela é completa ("0010621P0030170057834").
+# Com 5+ caracteres, passa a valer o final da série — sempre exigindo o mesmo cliente quando a série é curta.
+def _v131_cids(nome):
+    n = _v71_norm(nome)
+    if not n:
+        return set()
+    out = set()
+    for c in CustomerCompany.query.all():
+        if n in {_v71_norm(c.legal_name), _v71_norm(c.trade_name)}:
+            out.add(c.id)
+    return out
+
+
+def _v120_reincidencia(serial, company_names=None, exclude_appt=None, hoje=None, empresa=None):  # noqa: F811
+    sk = _v120_skey(serial)
+    if not sk:
+        return None
+    hoje = hoje or datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+    lim = hoje - timedelta(days=_V120_DIAS)
+    cids = _v131_cids(empresa) if empresa else set()
+    curta = len(sk) < 12
+    cand, os_datas = [], []
+    try:
+        _v120_ensure()
+        with db.engine.connect() as c:
+            rows = c.execute(text(
+                "SELECT o.os_number, o.opened, o.fault_short, o.solution, o.serial_key, m.company_id FROM v120_at_os o"
+                " LEFT JOIN v120_at_clients m ON m.name=o.client_install WHERE (o.serial_key=:k OR (:n >= 5 AND o.serial_key LIKE :suf))"
+                " AND UPPER(COALESCE(o.status_os,'')) <> 'CANCELADA' ORDER BY o.opened DESC LIMIT 200"),
+                {"k": sk, "n": len(sk), "suf": "%" + sk}).fetchall()
+        for r in rows:
+            if r[4] != sk:  # casou pelo final da série: só vale com o mesmo cliente (ou série longa sem cliente informado)
+                if cids:
+                    if r[5] not in cids:
+                        continue
+                elif curta:
+                    continue
+            d = _v120_d(r[1])
+            if not d or d > hoje:
+                continue
+            os_datas.append(d)
+            if d >= lim and not cand:
+                sol = (r[3] or "").split("| ITENS EXCLUIDOS")[0].strip(" |")
+                cand.append((d, "OS " + str(r[0]), (r[2] or "").strip(), sol))
+    except Exception:
+        db.session.rollback()
+    portal = []
+    try:
+        q = (db.session.query(CustomerAppointmentEquipment, CustomerAppointment)
+             .join(CustomerAppointment, CustomerAppointment.id == CustomerAppointmentEquipment.appointment_id)
+             .filter(CustomerAppointmentEquipment.created_at >= datetime.combine(hoje - timedelta(days=365), datetime.min.time())))
+        if exclude_appt:
+            q = q.filter(CustomerAppointmentEquipment.appointment_id != exclude_appt)
+        en = _v71_norm(empresa) if empresa else ""
+        for eq, ap in q.all():
+            k2 = _v120_skey(eq.serial_number)
+            if not k2 or (ap.status or "").upper() in ("RASCUNHO", "CANCELADO"):
+                continue
+            igual = k2 == sk
+            fim = (not igual) and min(len(k2), len(sk)) >= 5 and (k2.endswith(sk) or sk.endswith(k2))
+            if fim and not (en and _v71_norm(ap.customer_company) == en):
+                fim = False
+            if igual or fim:
+                d = eq.created_at.date()
+                portal.append(d)
+                if d >= lim:
+                    cand.append((d, "agendamento " + (ap.code or str(ap.id)), (eq.defect or "").strip(), ""))
+    except Exception:
+        db.session.rollback()
+    if not cand:
+        return None
+    datas = list(os_datas) + [d for d in set(portal) if not any(d <= o <= d + timedelta(days=30) for o in os_datas)]
+    d, ref, falha, sol = max(cand, key=lambda x: x[0])
+    return {"dias": (hoje - d).days, "data": d.isoformat(), "ref": ref, "falha": falha,
+            "vezes": len(datas), "vezes_periodo": sum(1 for x in datas if x >= lim), "consulta": hoje.isoformat()}
+
+
+def _v120_marcar(appt_id):  # noqa: F811 — passa o cliente do agendamento para casar série curta
+    try:
+        _v120_ensure()
+        ap = db.session.get(CustomerAppointment, appt_id)
+        emp = ap.customer_company if ap else None
+        eqs = CustomerAppointmentEquipment.query.filter_by(appointment_id=appt_id).all()
+        with db.engine.begin() as c:
+            for eq in eqs:
+                r = _v120_reincidencia(eq.serial_number, exclude_appt=appt_id, empresa=emp)
+                sk = _v120_skey(eq.serial_number)
+                c.execute(text("DELETE FROM v120_at_flags WHERE appointment_id=:a AND serial_key=:k"), {"a": appt_id, "k": sk})
+                if r:
+                    c.execute(text("INSERT INTO v120_at_flags (appointment_id,serial_key,serial,days,last_date,last_ref,created_at,times) VALUES (:a,:k,:s,:d,:l,:r,:t,:v)"),
+                              {"a": appt_id, "k": sk, "s": eq.serial_number, "d": r["dias"], "l": _v120_d(r["data"]), "r": r["ref"][:200], "t": datetime.utcnow(), "v": r.get("vezes")})
+    except Exception:
+        app.logger.exception("REV59: falha ao marcar reincidência")
+
+
+def v131_reincidencia_api():
+    if not (_portal_staff() or _has_access("portal.appointments")):
+        abort(403)
+    emp = request.args.get("empresa") or None
+    if not emp and not _portal_staff():
+        try:
+            u = db.session.get(User, session.get("user_id"))
+            ids = _customer_company_ids(u) if u else []
+            c = db.session.get(CustomerCompany, ids[0]) if ids else None
+            emp = c.legal_name if c else (u.company if u else None)
+        except Exception:
+            db.session.rollback()
+    r = _v120_reincidencia(request.args.get("serie"), exclude_appt=request.args.get("excluir", type=int), empresa=emp)
+    return jsonify({"ok": True, "reincidente": bool(r), "dias_limite": _V120_DIAS, **(r or {})})
+
+
+if "v120_reincidencia_api" in app.view_functions:
+    app.view_functions["v120_reincidencia_api"] = login_required(v131_reincidencia_api)
+# =================== fim REV59 (série) ===================
+
+
+def _v131_boot():
+    """Uma vez: refaz os alertas de reincidência dos agendamentos dos últimos 60 dias com a nova regra da série."""
+    with app.app_context():
+        try:
+            if AuditEvent.query.filter_by(event_type="V131_REINC_SERIE").first():
+                return
+            lim = datetime.utcnow() - timedelta(days=60)
+            ids = [a.id for a in CustomerAppointment.query.filter(CustomerAppointment.created_at >= lim).all()]
+            for aid in ids:
+                _v120_marcar(aid)
+            db.session.add(AuditEvent(user_id=None, event_type="V131_REINC_SERIE", entity_type="customer_appointment", entity_id="*",
+                                      detail=f"Reincidência recalculada com série curta/final da série: {len(ids)} agendamento(s)."))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            app.logger.exception("REV59: falha ao recalcular reincidências")
+
+
+if os.environ.get("V128_BOOT", "1") != "0":
+    threading.Timer(40.0, _v131_boot).start()
