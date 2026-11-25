@@ -37369,3 +37369,48 @@ def v134_schedule_management_api():
 if _v134_mgmt_orig:
     app.view_functions["v71_schedule_management_api"] = login_required(v134_schedule_management_api)
 # =================== fim REV62 ===================
+
+
+# =================== V88.0 REV62.2 — Agendamentos antigos com o nome da empresa igual ao cadastro (autorizado pelo administrador em 25/11) ===================
+def _v135_normaliza_empresas():
+    """Uma vez: agendamentos gravados antes do cadastro em MAIÚSCULAS (REV58.1) passam a ter o nome exato do cadastro de clientes."""
+    with app.app_context():
+        try:
+            if AuditEvent.query.filter_by(event_type="V135_NOME_EMPRESA_AGEND").first():
+                return
+            cads = CustomerCompany.query.all()
+            exatos = {(c.legal_name or "").strip() for c in cads}
+            por_chave = {}
+            for c in cads:
+                for n in {c.legal_name, c.trade_name}:
+                    k = _v71_norm(n)
+                    if k:
+                        por_chave.setdefault(k, set()).add(c.legal_name)
+            mudou, pulou = {}, set()
+            for a in CustomerAppointment.query.all():
+                nome = (a.customer_company or "").strip()
+                if not nome or nome in exatos:
+                    continue
+                alvo = por_chave.get(_v71_norm(nome)) or set()
+                if len(alvo) != 1:
+                    pulou.add(nome)
+                    continue
+                novo = next(iter(alvo))
+                mudou.setdefault(f"{nome} → {novo}", []).append(a.code or str(a.id))
+                a.customer_company = novo
+            det = "; ".join(f"{k}: {', '.join(v)}" for k, v in mudou.items())
+            if pulou:
+                det += " | sem correspondência única no cadastro (não alterados): " + ", ".join(sorted(pulou))
+            n = sum(len(v) for v in mudou.values())
+            db.session.add(AuditEvent(user_id=None, event_type="V135_NOME_EMPRESA_AGEND", entity_type="customer_appointment", entity_id="*",
+                                      detail=(f"{n} agendamento(s) com o nome da empresa igualado ao cadastro. " + det)[:4000]))
+            db.session.commit()
+            app.logger.info("REV62.2: %s agendamento(s) com nome de empresa ajustado", n)
+        except Exception:
+            db.session.rollback()
+            app.logger.exception("REV62.2: falha ao igualar o nome da empresa nos agendamentos")
+
+
+if os.environ.get("V128_BOOT", "1") != "0":
+    threading.Timer(50.0, _v135_normaliza_empresas).start()
+# =================== fim REV62.2 ===================
