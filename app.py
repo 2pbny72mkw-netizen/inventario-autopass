@@ -36990,3 +36990,261 @@ def _v131_boot():
 
 if os.environ.get("V128_BOOT", "1") != "0":
     threading.Timer(40.0, _v131_boot).start()
+
+
+# =================== V88.0 REV60 — Faturamento de peças (Bhom #274) com senha própria ===================
+# Dados: consulta #274 do Bhom ("FATURAMENTO DE PECAS - SISTEMA DE GESTAO"), carregada pelo mesmo botão "Carga do Bhom" da AT.
+# Acesso: qualquer pessoa da equipe que tenha a senha da área financeira; a senha é criada/trocada só pelo administrador principal.
+_V132 = {"ok": False, "falhas": {}}
+_V132_LIBERA = 30 * 60      # 30 min liberado após a senha
+_V132_TENT, _V132_BLOQ = 3, 15 * 60
+_V132_COLS = {"NUMERONF": "nf", "DATAEMISSAO": "data", "CFOP": "cfop", "CLIENTE": "cliente", "CODIGOITEM": "codigo",
+              "DESCRICAOITEM": "descricao", "QTDE": "qtde", "PRECOUNITVENDA": "preco_unit", "VALORVENDA": "venda",
+              "CUSTOUNIT": "custo_unit", "CUSTOTOTAL": "custo", "ICMS": "icms", "PIS": "pis", "COFINS": "cofins",
+              "IPIESTCOBRADOSDOCLIENTE": "ipi_st", "VALORNANF": "valor_nf", "ORIGEMCUSTO": "origem_custo"}
+_V132_NUM = ("qtde", "preco_unit", "venda", "custo_unit", "custo", "icms", "pis", "cofins", "ipi_st", "valor_nf")
+
+
+def _v132_ensure():
+    if _V132["ok"]:
+        return
+    with db.engine.begin() as c:
+        c.execute(text("CREATE TABLE IF NOT EXISTS v132_fat_itens (nf VARCHAR(20), linha INTEGER, data DATE, cfop VARCHAR(10), cliente VARCHAR(200),"
+                       " codigo VARCHAR(60), descricao VARCHAR(300), qtde NUMERIC(16,4), preco_unit NUMERIC(16,4), venda NUMERIC(16,2),"
+                       " custo_unit NUMERIC(16,4), custo NUMERIC(16,2), icms NUMERIC(16,2), pis NUMERIC(16,2), cofins NUMERIC(16,2),"
+                       " ipi_st NUMERIC(16,2), valor_nf NUMERIC(16,2), origem_custo VARCHAR(30), load_id BIGINT, updated_at TIMESTAMP)"))
+        c.execute(text("CREATE INDEX IF NOT EXISTS ix_v132_fat_nf ON v132_fat_itens (nf)"))
+        c.execute(text("CREATE INDEX IF NOT EXISTS ix_v132_fat_data ON v132_fat_itens (data)"))
+        c.execute(text("CREATE TABLE IF NOT EXISTS v132_fat_cfg (k VARCHAR(40) PRIMARY KEY, v TEXT)"))
+    _V132["ok"] = True
+
+
+def _v132_num(v):
+    s = str(v if v is not None else "").strip().lstrip("=").strip('"').strip()
+    if not s or s.lower() == "null":
+        return 0.0
+    if "," in s:
+        s = s.replace(".", "").replace(",", ".")
+    try:
+        return float(s)
+    except ValueError:
+        return 0.0
+
+
+def _v132_eh_faturamento(rows):
+    head = {_v120_norm(str(h).lstrip("=").strip('"')) for h in (rows[0] if rows else [])}
+    return {"NUMERONF", "CUSTOUNIT", "VALORVENDA"} <= head
+
+
+def _v132_import(rows, filename, user_name):
+    _v132_ensure()
+    head = [_v120_norm(str(h).lstrip("=").strip('"')) for h in rows[0]]
+    idx = {}
+    for i, h in enumerate(head):
+        if h in _V132_COLS and _V132_COLS[h] not in idx:
+            idx[_V132_COLS[h]] = i
+    load_id = int(time.time() * 1000)
+    now = datetime.utcnow()
+    linhas, cont = [], {}
+    for r in rows[1:]:
+        g = lambda k: (str(r[idx[k]]).lstrip("=").strip('"').strip() if k in idx and idx[k] < len(r) and r[idx[k]] is not None else "")
+        nf = g("nf")
+        if nf.endswith(".0"):
+            nf = nf[:-2]
+        if not nf:
+            continue
+        cont[nf] = cont.get(nf, 0) + 1
+        d = {"nf": nf[:20], "linha": cont[nf], "data": _v120_date(g("data")), "cfop": g("cfop")[:10], "cliente": g("cliente")[:200],
+             "codigo": g("codigo")[:60], "descricao": g("descricao")[:300], "origem_custo": g("origem_custo")[:30],
+             "load_id": load_id, "updated_at": now}
+        for k in _V132_NUM:
+            d[k] = _v132_num(g(k)) if k in idx else 0.0
+        linhas.append(d)
+    if not linhas:
+        raise ValueError("A planilha de faturamento de peças está vazia.")
+    nfs = sorted(cont)
+    with db.engine.begin() as c:
+        for i in range(0, len(nfs), 500):
+            part = nfs[i:i + 500]
+            c.execute(text("DELETE FROM v132_fat_itens WHERE nf IN (" + ",".join(f":k{j}" for j in range(len(part))) + ")"), {f"k{j}": v for j, v in enumerate(part)})
+        cols = ["nf", "linha", "data", "cfop", "cliente", "codigo", "descricao", *_V132_NUM, "origem_custo", "load_id", "updated_at"]
+        c.execute(text(f"INSERT INTO v132_fat_itens ({','.join(cols)}) VALUES ({','.join(':' + x for x in cols)})"), linhas)
+        for k, v in (("ultima_carga", now.isoformat()), ("ultima_carga_arquivo", (filename or "")[:200]), ("ultima_carga_usuario", (user_name or "")[:120])):
+            c.execute(text("DELETE FROM v132_fat_cfg WHERE k=:k"), {"k": k})
+            c.execute(text("INSERT INTO v132_fat_cfg (k, v) VALUES (:k, :v)"), {"k": k, "v": v})
+    return {"ok": True, "tipo": "faturamento", "load_id": load_id, "nfs": len(nfs), "itens": len(linhas),
+            "os": 0, "novas": 0, "atualizadas": 0, "clientes": len({x["cliente"] for x in linhas})}
+
+
+_v132_import_os = _v120_import
+
+
+def _v120_import(raw, filename, user_name):  # noqa: F811 — a mesma "Carga do Bhom" aceita o relatório #274
+    try:
+        rows = _v120_read_rows(raw, filename)
+    except Exception:
+        rows = None
+    if rows and _v132_eh_faturamento(rows):
+        return _v132_import(rows, filename, user_name)
+    return _v132_import_os(raw, filename, user_name)
+
+
+def _v132_cfg(k):
+    _v132_ensure()
+    with db.engine.connect() as c:
+        return c.execute(text("SELECT v FROM v132_fat_cfg WHERE k=:k"), {"k": k}).scalar()
+
+
+def _v132_liberado():
+    return int(session.get("_fin_ate") or 0) > int(time.time())
+
+
+def _v132_audit(tipo, detalhe):
+    try:
+        db.session.add(AuditEvent(user_id=session.get("user_id"), event_type=tipo, entity_type="v132_fat", entity_id=str(session.get("user_id") or ""),
+                                  detail=(detalhe + f" · IP {request.headers.get('X-Forwarded-For', request.remote_addr) or ''}")[:500]))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+
+@app.get("/portal-cliente/assistencia-tecnica/faturamento")
+@login_required
+def v132_fat_page():
+    if not _portal_staff():
+        abort(403)
+    return render_template("assistencia_faturamento_v132.html", app_release=APP_RELEASE)
+
+
+@app.get("/api/assistencia/faturamento/status")
+@login_required
+def v132_fat_status():
+    if not _portal_staff():
+        abort(403)
+    return jsonify({"ok": True, "senha_definida": bool(_v132_cfg("senha_hash")), "liberado": _v132_liberado(),
+                    "expira_em": max(0, int(session.get("_fin_ate") or 0) - int(time.time())), "admin": _current_user_is_superadmin()})
+
+
+@app.post("/api/assistencia/faturamento/entrar")
+@login_required
+def v132_fat_entrar():
+    if not _portal_staff():
+        abort(403)
+    uid = session.get("user_id")
+    agora = time.time()
+    st = _V132["falhas"].get(uid) or {"n": 0, "ate": 0}
+    if st["ate"] > agora:
+        return jsonify({"ok": False, "error": f"Acesso bloqueado por tentativas erradas. Tente em {int((st['ate'] - agora) // 60) + 1} min."}), 429
+    h = _v132_cfg("senha_hash")
+    if not h:
+        return jsonify({"ok": False, "error": "A senha da área financeira ainda não foi criada pelo administrador."}), 400
+    senha = str((request.get_json(silent=True) or {}).get("senha") or "")
+    if not senha or not check_password_hash(h, senha):
+        st["n"] += 1
+        if st["n"] >= _V132_TENT:
+            st = {"n": 0, "ate": agora + _V132_BLOQ}
+            _v132_audit("FATURAMENTO_PECAS_BLOQUEIO", f"{_V132_TENT} tentativas erradas; bloqueado por 15 min")
+        _V132["falhas"][uid] = st
+        return jsonify({"ok": False, "error": "Senha incorreta." if st["ate"] <= agora else "Senha incorreta. Acesso bloqueado por 15 min."}), 403
+    _V132["falhas"].pop(uid, None)
+    session["_fin_ate"] = int(agora) + _V132_LIBERA
+    _v132_audit("FATURAMENTO_PECAS_ACESSO", "Área financeira liberada por 30 min")
+    return jsonify({"ok": True, "expira_em": _V132_LIBERA})
+
+
+@app.post("/api/assistencia/faturamento/sair")
+@login_required
+def v132_fat_sair():
+    session.pop("_fin_ate", None)
+    return jsonify({"ok": True})
+
+
+@app.post("/api/assistencia/faturamento/senha")
+@login_required
+def v132_fat_senha():
+    if not _current_user_is_superadmin():
+        abort(403)
+    d = request.get_json(silent=True) or {}
+    nova = str(d.get("nova") or "")
+    if len(nova) < 6:
+        return jsonify({"ok": False, "error": "A senha precisa ter pelo menos 6 caracteres."}), 400
+    atual = _v132_cfg("senha_hash")
+    if atual and not check_password_hash(atual, str(d.get("atual") or "")):
+        return jsonify({"ok": False, "error": "A senha atual não confere."}), 403
+    with db.engine.begin() as c:
+        c.execute(text("DELETE FROM v132_fat_cfg WHERE k='senha_hash'"))
+        c.execute(text("INSERT INTO v132_fat_cfg (k, v) VALUES ('senha_hash', :v)"), {"v": generate_password_hash(nova)})
+    _V132["falhas"].clear()
+    session.pop("_fin_ate", None)
+    _v132_audit("FATURAMENTO_PECAS_SENHA", "Senha da área financeira " + ("alterada" if atual else "criada"))
+    return jsonify({"ok": True})
+
+
+def _v132_agrega(itens):
+    t = {"venda": 0.0, "icms": 0.0, "pis": 0.0, "cofins": 0.0, "custo": 0.0, "ipi_st": 0.0, "valor_nf": 0.0}
+    for i in itens:
+        for k in t:
+            t[k] += i[k]
+    t["impostos"] = t["icms"] + t["pis"] + t["cofins"]
+    t["liquido"] = t["venda"] - t["impostos"]
+    t["lucro"] = t["liquido"] - t["custo"]
+    t["margem"] = round(100 * t["lucro"] / t["venda"], 2) if t["venda"] else None
+    return {k: (round(v, 2) if isinstance(v, float) else v) for k, v in t.items()}
+
+
+@app.get("/api/assistencia/faturamento/dados")
+@login_required
+def v132_fat_dados():
+    if not _portal_staff():
+        abort(403)
+    if not _v132_liberado():
+        return jsonify({"ok": False, "bloqueado": True, "error": "Digite a senha da área financeira."}), 401
+    _v132_ensure()
+    hoje = datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+    de, ate = _v120_d(request.args.get("de")) or hoje.replace(month=1, day=1), _v120_d(request.args.get("ate")) or hoje
+    if ate < de:
+        de, ate = ate, de
+    cli = (request.args.get("cliente") or "").strip()
+    span = (ate - de).days + 1
+    pde, pate = de - timedelta(days=span), de - timedelta(days=1)
+    with db.engine.connect() as c:
+        rows = c.execute(text("SELECT nf, linha, data, cfop, cliente, codigo, descricao, qtde, preco_unit, venda, custo_unit, custo, icms, pis, cofins,"
+                              " ipi_st, valor_nf, origem_custo FROM v132_fat_itens WHERE data BETWEEN :a AND :b ORDER BY data DESC, nf DESC, linha"),
+                         {"a": pde, "b": ate}).fetchall()
+        clientes = [r[0] for r in c.execute(text("SELECT DISTINCT cliente FROM v132_fat_itens ORDER BY cliente")).fetchall() if r[0]]
+    cols = ["nf", "linha", "data", "cfop", "cliente", "codigo", "descricao", "qtde", "preco_unit", "venda", "custo_unit", "custo", "icms", "pis",
+            "cofins", "ipi_st", "valor_nf", "origem_custo"]
+    atual, ant = [], []
+    for r in rows:
+        i = dict(zip(cols, r))
+        i["data"] = _v120_d(i["data"])
+        for k in _V132_NUM:
+            i[k] = float(i[k] or 0)
+        if cli and i["cliente"] != cli:
+            continue
+        i["impostos"] = round(i["icms"] + i["pis"] + i["cofins"], 2)
+        i["lucro"] = round(i["venda"] - i["impostos"] - i["custo"], 2)
+        i["margem"] = round(100 * i["lucro"] / i["venda"], 2) if i["venda"] else None
+        (atual if i["data"] and i["data"] >= de else ant).append(i)
+    por_nf, por_cli = {}, {}
+    for i in atual:
+        por_nf.setdefault(i["nf"], []).append(i)
+        por_cli.setdefault(i["cliente"] or "—", []).append(i)
+    nfs = []
+    for nf, its in por_nf.items():
+        a = _v132_agrega(its)
+        nfs.append({"nf": nf, "data": its[0]["data"].isoformat() if its[0]["data"] else "", "cliente": its[0]["cliente"], "cfop": its[0]["cfop"],
+                    "itens": len(its), **a})
+    nfs.sort(key=lambda x: (x["data"], x["nf"]), reverse=True)
+    cl = [{"cliente": k, "nfs": len({i["nf"] for i in v}), **_v132_agrega(v)} for k, v in por_cli.items()]
+    cl.sort(key=lambda x: -x["venda"])
+    tot = _v132_agrega(atual)
+    tot.update({"nfs": len(por_nf), "itens": len(atual), "negativas": sum(1 for n in nfs if (n["margem"] or 0) < 0)})
+    ta = _v132_agrega(ant)
+    for i in atual:
+        i["data"] = i["data"].isoformat() if i["data"] else ""
+    return jsonify({"ok": True, "de": de.isoformat(), "ate": ate.isoformat(), "total": tot,
+                    "anterior": {"venda": ta["venda"], "margem": ta["margem"], "de": pde.isoformat(), "ate": pate.isoformat()},
+                    "clientes": cl, "nfs": nfs, "itens": atual, "lista_clientes": clientes,
+                    "ultima_carga": _v132_cfg("ultima_carga"), "expira_em": max(0, int(session.get("_fin_ate") or 0) - int(time.time()))})
+# =================== fim REV60 ===================

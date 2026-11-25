@@ -1,0 +1,222 @@
+{% extends 'base.html' %}{% block title %}Assistência Técnica · Faturamento de peças{% endblock %}
+{% block content %}
+<style>
+.fpW{display:flex;flex-direction:column;gap:14px;color:#16283d;font-family:inherit}
+.fpHead{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end}.fpHead h1{margin:0;font-size:26px}.fpHead p{margin:4px 0 0;font-size:13px;color:#4a5b70}
+.fpHead label{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:700;color:#4a5b70}
+.fpHead select,.fpHead input,.fpLock input{height:40px;border:1px solid #8a9bb0;border-radius:10px;padding:0 10px;font:inherit;font-size:14px;background:#fff;color:#16283d}
+html .fpW .fpBtn,html .fpM .fpBtn{height:40px;min-height:40px;padding:0 14px;border-radius:10px;border:1px solid #0f1e3d;background:#fff;color:#0f1e3d;font:inherit;font-weight:700;font-size:13px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;white-space:nowrap;text-decoration:none}
+html .fpW .fpBtn:hover,html .fpM .fpBtn:hover{background:#eef3fa}html .fpW .fpBtn.p{background:#0f1e3d;color:#fff}html .fpW .fpBtn.g{border-color:transparent;color:#1e3a8a}
+html .fpW .fpBtn[disabled]{opacity:.6;cursor:wait}
+.fpK{display:grid;grid-template-columns:repeat(auto-fit,minmax(178px,1fr));gap:10px}
+html .fpW .fpKpi{all:unset;box-sizing:border-box;cursor:pointer;border-radius:14px;padding:12px 14px;background:#fff;border:1px solid #dbe4ef;border-top:4px solid #8a9bb0;display:flex;flex-direction:column;gap:2px;transition:transform .12s,box-shadow .12s}
+html .fpW .fpKpi:hover,html .fpW .fpKpi:focus-visible{transform:translateY(-2px);box-shadow:0 6px 16px rgba(15,30,61,.14);outline:none}
+.fpKpi span{font-size:11px;font-weight:800;letter-spacing:.03em;color:#4a5b70;text-transform:uppercase}.fpKpi b{font-size:26px;font-weight:800;line-height:1.15;font-variant-numeric:tabular-nums}.fpKpi small{font-size:12px;color:#4a5b70;font-weight:600}
+.fpKpi.ok{border-top-color:#0e7a5a}.fpKpi.ok b{color:#0e7a5a}.fpKpi.al{border-top-color:#d97706}.fpKpi.al b{color:#b45309}.fpKpi.cr{border-top-color:#dc2626;background:#fff5f5}.fpKpi.cr b{color:#b91c1c}.fpKpi.nv{border-top-color:#0f1e3d}.fpKpi.in{border-top-color:#2563eb}
+.up{color:#0e7a5a}.dn{color:#b91c1c}
+.fpG{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:12px}
+.fpC{background:#fff;border:1px solid #dbe4ef;border-radius:16px;padding:14px 16px;min-width:0;display:flex;flex-direction:column;gap:8px}.fpC h2{margin:0;font-size:15px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}.fpC h2 small{margin-left:auto;font-size:12px;color:#4a5b70;font-weight:600}
+.fpC.full{grid-column:1/-1}
+.fpStack{display:flex;height:34px;border-radius:10px;overflow:hidden;font-size:12px;font-weight:800}.fpStack button{all:unset;box-sizing:border-box;display:flex;align-items:center;padding:0 8px;white-space:nowrap;overflow:hidden;cursor:pointer;min-width:0}
+.fpStack button:hover,.fpStack button:focus-visible{filter:brightness(.93);outline:none}
+html .fpW .fpBar{all:unset;box-sizing:border-box;display:grid;grid-template-columns:minmax(110px,220px) 1fr 150px;gap:8px;align-items:center;width:100%;padding:4px 6px;border-radius:8px;font-size:13px;cursor:pointer}
+html .fpW .fpBar:hover,html .fpW .fpBar:focus-visible{background:#f1f5fb;outline:none}.fpBar span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-transform:uppercase}.fpBar u{display:block;height:14px;background:#eef2f7;border-radius:7px;text-decoration:none;overflow:hidden}.fpBar u i{display:block;height:100%;border-radius:7px}.fpBar b{text-align:right;font-variant-numeric:tabular-nums}
+.fpT{width:100%;border-collapse:collapse;font-size:13px}.fpT th{text-align:left;color:#4a5b70;border-bottom:2px solid #dbe4ef;padding:6px 8px;white-space:nowrap;position:sticky;top:0;background:#fff;cursor:pointer;user-select:none}.fpT td{padding:6px 8px;border-bottom:1px solid #eef2f7;vertical-align:middle}
+.fpT td.n,.fpT th.n{text-align:right;font-variant-numeric:tabular-nums}.fpT tbody tr.ck{cursor:pointer}.fpT tbody tr.ck:hover{background:#f3f7fc}.fpT tr.neg td{color:#b91c1c}
+.fpT tfoot td{font-weight:800;border-top:2px solid #dbe4ef}
+.pl{display:inline-block;white-space:nowrap;font-weight:800;font-size:12px;padding:2px 8px;border-radius:999px}.pOk{background:#dcfce7;color:#14532d}.pAl{background:#fef3c7;color:#7a4a00}.pCr{background:#fee2e2;color:#991b1b}
+.fpSc{overflow:auto;max-height:460px}
+.fpMut{font-size:12px;color:#4a5b70;margin:0}.fpEmpty{color:#4a5b70;font-size:13px;padding:12px;text-align:center}
+.fpM{position:fixed;inset:0;background:rgba(7,27,51,.56);display:flex;align-items:center;justify-content:center;z-index:1000;padding:14px}.fpM[hidden]{display:none}
+.fpBox{background:#fff;border-radius:18px;padding:16px 18px;width:min(1240px,calc(100vw - 28px));max-height:88vh;display:flex;flex-direction:column;gap:10px;box-sizing:border-box}
+.fpBox .fpSc{max-height:none;flex:1}
+.fpLock{max-width:420px;margin:30px auto;background:#fff;border:1px solid #dbe4ef;border-radius:18px;padding:22px 24px;display:flex;flex-direction:column;gap:10px}
+.fpLock h2{margin:0;font-size:19px}.fpErr{color:#b91c1c;font-weight:700;font-size:13px;min-height:18px;margin:0}.fpOkMsg{color:#14532d;font-weight:700;font-size:13px;margin:0}
+.fpLoad{opacity:.55;pointer-events:none}
+@media(max-width:700px){.fpG{grid-template-columns:1fr}.fpBar{grid-template-columns:100px 1fr 110px}}
+</style>
+<div class="fpW" id="fpW">
+  <div class="fpHead">
+    <div style="flex:1;min-width:260px"><h1>🔒 Faturamento de peças</h1><p id="fpSub">Assistência técnica · área financeira</p></div>
+    <span id="fpFiltros" style="display:none">
+      <label>Período<select id="fpPer"><option value="ano">Ano atual</option><option value="mes">Mês atual</option><option value="mesant">Mês anterior</option><option value="90">Últimos 90 dias</option><option value="custom">Personalizado</option></select></label>
+      <label>Data início<input type="date" id="fpDe"></label>
+      <label>Data fim<input type="date" id="fpAte"></label>
+      <label>Cliente<select id="fpCli"><option value="">Todos</option></select></label>
+      <button type="button" class="fpBtn g" id="fpLimpar">✕ Limpar</button>
+      <button type="button" class="fpBtn" id="fpXls">⇩ Excel (CSV)</button>
+      <button type="button" class="fpBtn" id="fpSair" title="Bloquear agora">🔒 Bloquear</button>
+    </span>
+    <a class="fpBtn" href="/portal-cliente/assistencia-tecnica/dashboard">← Dashboard da AT</a>
+  </div>
+
+  <div class="fpLock" id="fpLock" hidden>
+    <h2>🔒 Área financeira</h2>
+    <p class="fpMut" id="fpLockTxt">Valores, custos e margens do faturamento de peças. Digite a senha de acesso.</p>
+    <form id="fpEntrar" style="display:flex;flex-direction:column;gap:10px">
+      <input type="password" id="fpSenha" autocomplete="current-password" placeholder="Senha da área financeira" aria-label="Senha da área financeira">
+      <p class="fpErr" id="fpErr" role="alert"></p>
+      <button class="fpBtn p" id="fpEntrarB" type="submit" style="justify-content:center">Entrar</button>
+    </form>
+    <p class="fpMut">Libera por 30 minutos. 3 tentativas erradas bloqueiam por 15 minutos. Cada acesso fica registrado na auditoria.</p>
+  </div>
+
+  <div class="fpLock" id="fpAdm" hidden>
+    <h2 id="fpAdmT">Senha da área financeira</h2>
+    <p class="fpMut">Só o administrador principal cria ou troca a senha. Ela fica guardada criptografada; ninguém consegue ler.</p>
+    <form id="fpSenhaF" style="display:flex;flex-direction:column;gap:8px">
+      <input type="password" id="fpAtual" autocomplete="current-password" placeholder="Senha atual" aria-label="Senha atual">
+      <input type="password" id="fpNova" autocomplete="new-password" placeholder="Nova senha (mínimo 6 caracteres)" aria-label="Nova senha">
+      <input type="password" id="fpNova2" autocomplete="new-password" placeholder="Repita a nova senha" aria-label="Repita a nova senha">
+      <p class="fpErr" id="fpAdmErr" role="alert"></p>
+      <button class="fpBtn p" id="fpSenhaB" type="submit" style="justify-content:center">Salvar senha</button>
+    </form>
+  </div>
+
+  <div id="fpBody" style="display:none">
+    <section class="fpK" id="fpK" aria-label="Indicadores"></section>
+    <div class="fpG">
+      <section class="fpC"><h2>De onde vai cada R$ 100 vendidos <small>clique para ver os itens</small></h2><div id="fpComp"></div><p class="fpMut">IPI e ICMS-ST são cobrados do cliente por fora e repassados ao governo: não entram no cálculo. Comissão e frete também ficam fora.</p></section>
+      <section class="fpC"><h2>Margem líquida por cliente <small>venda no período</small></h2><div id="fpCliB"></div></section>
+      <section class="fpC full"><h2>Notas fiscais <small id="fpNfLeg"></small></h2>
+        <input id="fpQ" type="search" placeholder="Buscar NF, cliente ou item" style="height:38px;border:1px solid #b9c7d8;border-radius:8px;padding:0 10px;font:inherit;max-width:360px">
+        <div class="fpSc"><table class="fpT" id="fpNfs"><thead></thead><tbody></tbody><tfoot></tfoot></table></div>
+        <p class="fpMut">Clique na nota para ver os itens. Custo = custo médio do estoque na data da venda (ou custo industrial quando o médio está zerado).</p>
+      </section>
+    </div>
+    <p class="fpMut" id="fpFonte"></p>
+  </div>
+</div>
+<div class="fpM" id="fpM" hidden role="dialog" aria-modal="true" aria-labelledby="fpMT"><div class="fpBox">
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><div style="flex:1;min-width:220px"><h2 id="fpMT" style="margin:0">Itens</h2><p class="fpMut" id="fpMF"></p></div>
+  <input id="fpMQ" type="search" placeholder="Buscar" style="height:38px;border:1px solid #b9c7d8;border-radius:8px;padding:0 10px;font:inherit">
+  <button type="button" class="fpBtn" id="fpMX">⇩ Excel (CSV)</button><button type="button" class="fpBtn" id="fpMC">Fechar</button></div>
+  <b id="fpMN" style="font-size:13px"></b>
+  <div class="fpSc"><table class="fpT" id="fpMTab"><thead></thead><tbody></tbody><tfoot></tfoot></table></div>
+</div></div>
+<script>
+(function(){
+const $=id=>document.getElementById(id);
+const esc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+const rs=n=>n==null?'—':Number(n).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+const rk=n=>n==null?'—':(Math.abs(n)>=1000?'R$ '+(n/1000).toLocaleString('pt-BR',{minimumFractionDigits:1,maximumFractionDigits:1})+' mil':rs(n));
+const pc=n=>n==null?'—':Number(n).toLocaleString('pt-BR',{minimumFractionDigits:1,maximumFractionDigits:1})+'%';
+const qn=n=>Number(n||0).toLocaleString('pt-BR',{maximumFractionDigits:2});
+const br=s=>s?String(s).slice(0,10).split('-').reverse().join('/'):'';
+const iso=d=>d.toISOString().slice(0,10);
+const norm=s=>String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
+let D=null, timer=null, sortNf={k:'data',d:-1};
+function mcls(m){return m==null?'':m<0?'pCr':m<15?'pAl':'pOk'}
+function perDatas(){const p=$('fpPer').value,h=new Date();let de,ate=new Date(h);
+  if(p==='ano')de=new Date(h.getFullYear(),0,1);else if(p==='mes')de=new Date(h.getFullYear(),h.getMonth(),1);
+  else if(p==='mesant'){de=new Date(h.getFullYear(),h.getMonth()-1,1);ate=new Date(h.getFullYear(),h.getMonth(),0)}
+  else if(p==='90'){de=new Date(h);de.setDate(de.getDate()-89)}else return;
+  $('fpDe').value=iso(new Date(de.getTime()-de.getTimezoneOffset()*6e4));$('fpAte').value=iso(new Date(ate.getTime()-ate.getTimezoneOffset()*6e4))}
+function mostra(v){$('fpLock').hidden=v!=='lock';$('fpAdm').hidden=v!=='adm'&&v!=='admlock';if(v==='admlock')$('fpLock').hidden=false;
+  const on=v==='dados';$('fpBody').hidden=!on;$('fpBody').style.display=on?'contents':'none';$('fpFiltros').hidden=!on;$('fpFiltros').style.display=on?'contents':'none'}
+async function status(){const r=await fetch('/api/assistencia/faturamento/status');const s=await r.json();
+  if(s.liberado){mostra('dados');load();return}
+  if(!s.senha_definida){
+    if(s.admin){$('fpAdmT').textContent='Crie a senha da área financeira';$('fpAtual').hidden=true;mostra('adm')}
+    else{$('fpLockTxt').textContent='A senha da área financeira ainda não foi criada. Peça ao administrador.';$('fpEntrar').hidden=true;mostra('lock')}
+    return}
+  if(s.admin){$('fpAdmT').textContent='Trocar a senha da área financeira';$('fpAtual').hidden=false;mostra('admlock')}else mostra('lock');
+  setTimeout(()=>$('fpSenha').focus(),50)}
+$('fpEntrar').onsubmit=async e=>{e.preventDefault();const b=$('fpEntrarB');$('fpErr').textContent='';
+  if(!$('fpSenha').value){$('fpErr').textContent='Digite a senha.';return}
+  b.disabled=true;b.textContent='Conferindo…';
+  try{const r=await fetch('/api/assistencia/faturamento/entrar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({senha:$('fpSenha').value})});const d=await r.json();
+    $('fpSenha').value='';if(r.ok){mostra('dados');load()}else $('fpErr').textContent=d.error||'Não foi possível entrar.'}
+  finally{b.disabled=false;b.textContent='Entrar'}};
+$('fpSenha').oninput=()=>{$('fpErr').textContent=''};
+$('fpSenhaF').onsubmit=async e=>{e.preventDefault();const er=$('fpAdmErr');er.className='fpErr';er.textContent='';
+  const n=$('fpNova').value,n2=$('fpNova2').value;
+  if(n.length<6){er.textContent='A senha precisa ter pelo menos 6 caracteres.';return}
+  if(n!==n2){er.textContent='As duas senhas não conferem.';return}
+  const b=$('fpSenhaB');b.disabled=true;
+  try{const r=await fetch('/api/assistencia/faturamento/senha',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({atual:$('fpAtual').value,nova:n})});const d=await r.json();
+    if(r.ok){e.target.reset();er.className='fpOkMsg';er.textContent='Senha salva. Use-a para entrar.';$('fpAdmT').textContent='Trocar a senha da área financeira';$('fpAtual').hidden=false;$('fpEntrar').hidden=false;mostra('admlock')}
+    else er.textContent=d.error||'Não foi possível salvar.'}
+  finally{b.disabled=false}};
+$('fpSair').onclick=async()=>{await fetch('/api/assistencia/faturamento/sair',{method:'POST'});clearInterval(timer);D=null;status()};
+function relogio(seg){clearInterval(timer);let t=seg;const f=()=>{if(t<=0){clearInterval(timer);D=null;status();return}
+  $('fpSub').textContent=`${br(D.de)} a ${br(D.ate)} · ${D.total.nfs} nota(s) · bloqueia em ${Math.ceil(t/60)} min`;t-=15};f();timer=setInterval(f,15000)}
+async function load(){const w=$('fpW');w.classList.add('fpLoad');
+  try{const q=new URLSearchParams({de:$('fpDe').value,ate:$('fpAte').value,cliente:$('fpCli').value});
+    const r=await fetch('/api/assistencia/faturamento/dados?'+q);const d=await r.json();
+    if(r.status===401){D=null;status();return}
+    if(!r.ok){$('fpSub').textContent=d.error||'Falha ao carregar.';return}
+    D=d;render();relogio(d.expira_em)}
+  catch(e){$('fpSub').textContent='Falha ao carregar. Tente de novo.'}finally{w.classList.remove('fpLoad')}}
+function var_(a,b){if(a==null||!b)return'';const v=100*(a-b)/Math.abs(b);return `<span class="${v>=0?'up':'dn'}">${v>=0?'▲':'▼'} ${pc(Math.abs(v))}</span> vs período anterior`}
+function render(){const t=D.total,a=D.anterior;
+  const sel=$('fpCli'),cur=sel.value;sel.innerHTML='<option value="">Todos</option>'+D.lista_clientes.map(c=>`<option ${c===cur?'selected':''}>${esc(c)}</option>`).join('');
+  const K=[
+   ['nv','Venda de peças',rk(t.venda),`${t.nfs} nota(s) · ${t.itens} itens · ${var_(t.venda,a.venda)}`,'todos'],
+   ['al','Impostos',rk(t.impostos),`ICMS ${rk(t.icms)} · PIS ${rk(t.pis)} · COFINS ${rk(t.cofins)}`,'imp'],
+   ['in','Recebido líquido',rk(t.liquido),'venda − ICMS, PIS e COFINS','todos'],
+   ['nv','Custo das peças',rk(t.custo),'custo médio do estoque','custo'],
+   [t.lucro<0?'cr':'ok','Lucro líquido',rk(t.lucro),'recebido líquido − custo','todos'],
+   [t.margem==null?'nv':t.margem<0?'cr':t.margem<15?'al':'ok','Margem líquida',pc(t.margem),a.margem!=null?`período anterior ${pc(a.margem)}`:'lucro ÷ venda','margem'],
+   [t.negativas?'cr':'ok','Notas com prejuízo',String(t.negativas),'margem líquida negativa','neg'],
+   ['nv','Valor nas notas',rk(t.valor_nf),`inclui IPI e ST ${rk(t.ipi_st)}`,'todos']];
+  $('fpK').innerHTML=K.map((k,i)=>`<button type="button" class="fpKpi ${k[0]}" data-i="${i}" aria-label="${esc(k[1])}: ${esc(k[2])}. Ver detalhe"><span>${k[1]}</span><b>${k[2]}</b><small>${k[3]}</small></button>`).join('');
+  $('fpK').querySelectorAll('.fpKpi').forEach(b=>b.onclick=()=>{const k=K[+b.dataset.i];
+    if(k[4]==='neg')abreItens(D.itens.filter(i=>D.nfs.some(n=>n.nf===i.nf&&n.margem<0)),'Notas com margem negativa');
+    else if(k[4]==='imp')abreItens(D.itens.filter(i=>i.impostos>0),'Itens com impostos');
+    else if(k[4]==='margem')abreItens([...D.itens].sort((x,y)=>(x.margem??0)-(y.margem??0)),'Itens pela margem (menor primeiro)');
+    else abreItens(D.itens,k[1])});
+  const tv=t.venda||1,seg=[['Custo',t.custo,'#b4b2a9','#2c2c2a','custo'],['Impostos',t.impostos,'#f0997b','#4a1b0c','imp'],['Lucro',Math.max(t.lucro,0),'#5dcaa5','#04342c','lucro']];
+  $('fpComp').innerHTML=t.venda?`<div class="fpStack">${seg.map(s=>`<button type="button" data-k="${s[4]}" style="width:${Math.max(0,100*s[1]/tv)}%;background:${s[2]};color:${s[3]}" title="${s[0]} ${rs(s[1])}">${s[0]} ${Math.round(100*s[1]/tv)}</button>`).join('')}</div>`
+    +(t.lucro<0?`<p class="fpErr">Prejuízo no período: ${rs(t.lucro)}</p>`:''):'<p class="fpEmpty">Sem vendas de peças no período.</p>';
+  $('fpComp').querySelectorAll('button').forEach(b=>b.onclick=()=>{const k=b.dataset.k;abreItens(k==='imp'?D.itens.filter(i=>i.impostos>0):k==='lucro'?D.itens.filter(i=>i.lucro>0):D.itens,'Itens · '+b.textContent.replace(/\d+$/,'').trim())});
+  const mx=Math.max(1,...D.clientes.map(c=>Math.abs(c.margem||0)));
+  $('fpCliB').innerHTML=D.clientes.length?D.clientes.map((c,i)=>`<button type="button" class="fpBar" data-i="${i}" title="${esc(c.cliente)}"><span>${esc(c.cliente)}</span><u><i style="width:${Math.min(100,100*Math.abs(c.margem||0)/mx)}%;background:${(c.margem||0)<0?'#dc2626':(c.margem||0)<15?'#d97706':'#0e7a5a'}"></i></u><b>${pc(c.margem)} · ${rk(c.venda)}</b></button>`).join(''):'<p class="fpEmpty">Sem clientes no período.</p>';
+  $('fpCliB').querySelectorAll('.fpBar').forEach(b=>b.onclick=()=>{const c=D.clientes[+b.dataset.i];abreItens(D.itens.filter(i=>(i.cliente||'—')===c.cliente),c.cliente)});
+  $('fpNfLeg').textContent=`${D.nfs.length} nota(s) · clique no título da coluna para ordenar`;
+  nfTab();
+  $('fpFonte').textContent=`Fonte: Bhom, consulta #274 · última carga ${D.ultima_carga?new Date(D.ultima_carga+'Z').toLocaleString('pt-BR'):'—'} · período anterior ${br(a.de)} a ${br(a.ate)}`}
+const NFC=[['nf','NF',0],['data','Data',0],['cliente','Cliente',0],['cfop','CFOP',0],['itens','Itens',1],['venda','Venda',1],['impostos','Impostos',1],['liquido','Recebido líq.',1],['custo','Custo',1],['lucro','Lucro',1],['margem','Margem',1],['valor_nf','Valor na NF',1]];
+function ordena(arr,s){const num=['itens','venda','impostos','liquido','custo','lucro','margem','valor_nf','nf','qtde','preco_unit','custo_unit','icms','pis','cofins'].includes(s.k);
+  return [...arr].sort((a,b)=>{let x=a[s.k],y=b[s.k];if(num){x=Number(x??-1e15);y=Number(y??-1e15)}else{x=norm(x);y=norm(y)}return (x<y?-1:x>y?1:0)*s.d})}
+function nfTab(){const q=norm($('fpQ').value);
+  let rows=D.nfs.filter(n=>!q||norm(n.nf+' '+n.cliente+' '+n.cfop).includes(q)||D.itens.some(i=>i.nf===n.nf&&norm(i.codigo+' '+i.descricao).includes(q)));
+  rows=ordena(rows,sortNf);
+  $('fpNfs').tHead.innerHTML='<tr>'+NFC.map(c=>`<th class="${c[2]?'n':''}" data-k="${c[0]}" aria-sort="${sortNf.k===c[0]?(sortNf.d>0?'ascending':'descending'):'none'}">${c[1]}${sortNf.k===c[0]?(sortNf.d>0?' ▲':' ▼'):''}</th>`).join('')+'</tr>';
+  $('fpNfs').tHead.querySelectorAll('th').forEach(th=>th.onclick=()=>{const k=th.dataset.k;sortNf={k,d:sortNf.k===k?-sortNf.d:(k==='cliente'?1:-1)};nfTab()});
+  $('fpNfs').tBodies[0].innerHTML=rows.length?rows.map(n=>`<tr class="ck ${(n.margem??0)<0?'neg':''}" data-nf="${esc(n.nf)}"><td>${esc(n.nf)}</td><td>${br(n.data)}</td><td>${esc(n.cliente)}</td><td>${esc(n.cfop)}</td><td class="n">${n.itens}</td><td class="n">${rs(n.venda)}</td><td class="n">${rs(n.impostos)}</td><td class="n">${rs(n.liquido)}</td><td class="n">${rs(n.custo)}</td><td class="n">${rs(n.lucro)}</td><td class="n"><span class="pl ${mcls(n.margem)}">${pc(n.margem)}</span></td><td class="n">${rs(n.valor_nf)}</td></tr>`).join('')
+    :`<tr><td colspan="${NFC.length}" class="fpEmpty">Nenhuma nota no período${q?' para essa busca':''}.</td></tr>`;
+  const s=k=>rows.reduce((a,n)=>a+(n[k]||0),0),v=s('venda');
+  $('fpNfs').tFoot.innerHTML=rows.length?`<tr><td colspan="4">Total · ${rows.length} nota(s)</td><td class="n">${s('itens')}</td><td class="n">${rs(v)}</td><td class="n">${rs(s('impostos'))}</td><td class="n">${rs(s('liquido'))}</td><td class="n">${rs(s('custo'))}</td><td class="n">${rs(s('lucro'))}</td><td class="n">${pc(v?100*s('lucro')/v:null)}</td><td class="n">${rs(s('valor_nf'))}</td></tr>`:'';
+  $('fpNfs').tBodies[0].querySelectorAll('tr.ck').forEach(tr=>tr.onclick=()=>{const n=D.nfs.find(x=>x.nf===tr.dataset.nf);abreItens(D.itens.filter(i=>i.nf===n.nf),`NF ${n.nf} · ${n.cliente}`)})}
+$('fpQ').oninput=()=>D&&nfTab();
+const ITC=[['nf','NF',0],['data','Data',0],['cliente','Cliente',0],['codigo','Código',0],['descricao','Item',0],['qtde','Qtde',1],['preco_unit','Preço unit.',1],['venda','Venda',1],['custo_unit','Custo unit.',1],['custo','Custo',1],['icms','ICMS',1],['pis','PIS',1],['cofins','COFINS',1],['lucro','Lucro',1],['margem','Margem',1],['origem_custo','Origem do custo',0]];
+let M={rows:[],s:{k:'',d:1},t:''};
+function fmtI(c,i){const v=i[c[0]];if(c[0]==='data')return br(v);if(c[0]==='margem')return `<span class="pl ${mcls(v)}">${pc(v)}</span>`;if(c[0]==='qtde')return qn(v);if(c[2])return rs(v);return esc(v)}
+function abreItens(rows,titulo){M={rows,s:{k:'',d:1},t:titulo};$('fpMT').textContent=titulo;$('fpMQ').value='';
+  $('fpMF').textContent=`Filtros: ${br(D.de)} a ${br(D.ate)}${$('fpCli').value?' · '+$('fpCli').value:''}`;$('fpM').hidden=false;mTab();$('fpMQ').focus()}
+function mRows(){const q=norm($('fpMQ').value);let r=M.rows.filter(i=>!q||norm(ITC.map(c=>i[c[0]]).join(' ')).includes(q));return M.s.k?ordena(r,M.s):r}
+function mTab(){const r=mRows(),T=$('fpMTab');
+  T.tHead.innerHTML='<tr>'+ITC.map(c=>`<th class="${c[2]?'n':''}" data-k="${c[0]}" aria-sort="${M.s.k===c[0]?(M.s.d>0?'ascending':'descending'):'none'}">${c[1]}${M.s.k===c[0]?(M.s.d>0?' ▲':' ▼'):''}</th>`).join('')+'</tr>';
+  T.tHead.querySelectorAll('th').forEach(th=>th.onclick=()=>{const k=th.dataset.k;M.s={k,d:M.s.k===k?-M.s.d:1};mTab()});
+  T.tBodies[0].innerHTML=r.length?r.map(i=>`<tr class="${(i.margem??0)<0?'neg':''}">${ITC.map(c=>`<td class="${c[2]?'n':''}">${fmtI(c,i)}</td>`).join('')}</tr>`).join(''):`<tr><td colspan="${ITC.length}" class="fpEmpty">Nenhum item.</td></tr>`;
+  const s=k=>r.reduce((a,i)=>a+(i[k]||0),0),v=s('venda');
+  T.tFoot.innerHTML=r.length?`<tr><td colspan="7">Total</td><td class="n">${rs(v)}</td><td></td><td class="n">${rs(s('custo'))}</td><td class="n">${rs(s('icms'))}</td><td class="n">${rs(s('pis'))}</td><td class="n">${rs(s('cofins'))}</td><td class="n">${rs(s('lucro'))}</td><td class="n">${pc(v?100*s('lucro')/v:null)}</td><td></td></tr>`:'';
+  $('fpMN').textContent=`${r.length} de ${M.rows.length} item(ns)`}
+$('fpMQ').oninput=mTab;
+function fecha(){$('fpM').hidden=true}
+$('fpMC').onclick=fecha;$('fpM').onclick=e=>{if(e.target===$('fpM'))fecha()};document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('fpM').hidden)fecha()});
+function csv(nome,cols,rows){const c=v=>{v=String(v??'');return /[;"\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v};
+  const num=v=>v==null?'':String(Math.round(v*100)/100).replace('.',',');
+  const out=[cols.map(x=>x[1]).join(';')].concat(rows.map(i=>cols.map(x=>x[2]?num(i[x[0]]):x[0]==='data'?br(i.data):c(i[x[0]])).join(';')));
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['﻿'+out.join('\r\n')],{type:'text/csv;charset=utf-8'}));a.download=nome;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),2000)}
+$('fpMX').onclick=()=>csv('faturamento_pecas_itens.csv',ITC,mRows());
+$('fpXls').onclick=()=>D&&csv(`faturamento_pecas_${D.de}_${D.ate}.csv`,ITC,D.itens);
+$('fpPer').onchange=()=>{if($('fpPer').value!=='custom'){perDatas();load()}};
+['fpDe','fpAte'].forEach(id=>$(id).onchange=()=>{$('fpPer').value='custom';load()});
+$('fpCli').onchange=load;
+$('fpLimpar').onclick=()=>{$('fpPer').value='ano';$('fpCli').value='';$('fpQ').value='';perDatas();load()};
+perDatas();status();
+})();
+</script>
+{% endblock %}

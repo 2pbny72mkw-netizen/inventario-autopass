@@ -94,7 +94,7 @@
 {% if can_load %}
 <div class="atModal" id="atCarga" hidden role="dialog" aria-modal="true" aria-labelledby="atCTitle"><div class="atBox">
   <div style="display:flex;gap:10px;align-items:center"><h2 id="atCTitle" style="margin:0;flex:1">Carga do Bhom Análises</h2><button type="button" class="atBtn" onclick="atCargaClose()">Fechar</button></div>
-  <p class="atMuted">Suba o "Relatório de OS" exportado do Bhom (.xlsx ou .csv). As OS já existentes são atualizadas e o histórico se acumula. Valores (R$) não são guardados.</p>
+  <p class="atMuted">Suba o "Relatório de OS" exportado do Bhom (.xlsx ou .csv). As OS já existentes são atualizadas e o histórico se acumula. Também aceita o "Faturamento de peças" (consulta #274), que só aparece na área financeira protegida por senha.</p>
   <form id="atForm" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0"><label class="atMuted">Planilha <input type="file" name="arquivo" accept=".xlsx,.csv" required></label><button class="atBtn p" id="atSend" type="submit">Carregar</button></form>
   <div id="atRes" aria-live="polite"></div>
   <details id="atDrvBox" class="atDet"><summary>Carga automática pelo Google Drive <span id="atDrvSum" class="atMuted"></span></summary>
@@ -225,7 +225,7 @@ $('atDrvGo').onclick=async()=>{const b=$('atDrvGo');b.disabled=true;b.textConten
     setTimeout(loadDrv,800)}finally{b.disabled=false;b.textContent='⇩ Buscar agora'}};
 $('atForm').onsubmit=async e=>{e.preventDefault();const b=$('atSend');b.disabled=true;b.textContent='Carregando…';$('atRes').textContent='';
   try{const r=await fetch('/api/assistencia/carga',{method:'POST',body:new FormData(e.target)});const d=await r.json();
-    $('atRes').innerHTML=r.ok?`<p style="color:#14532d;font-weight:700">Carga concluída: ${num(d.os)} OS (${num(d.novas)} novas, ${num(d.atualizadas)} atualizadas), ${num(d.clientes)} clientes.</p>`:`<p style="color:#991b1b;font-weight:700">${esc(d.error||'Falha na carga.')}</p>`;
+    $('atRes').innerHTML=r.ok&&d.tipo==='faturamento'?`<p style="color:#14532d;font-weight:700">Carga de faturamento de peças concluída: ${num(d.nfs)} notas, ${num(d.itens)} itens, ${num(d.clientes)} clientes.</p>`:r.ok?`<p style="color:#14532d;font-weight:700">Carga concluída: ${num(d.os)} OS (${num(d.novas)} novas, ${num(d.atualizadas)} atualizadas), ${num(d.clientes)} clientes.</p>`:`<p style="color:#991b1b;font-weight:700">${esc(d.error||'Falha na carga.')}</p>`;
     if(r.ok){e.target.reset();await loadMap();if(window.__atSem){$('atMapSo').checked=true;await loadMap();$('atMapBox').open=true}load()}}finally{b.disabled=false;b.textContent='Carregar'}};
 {% endif %}
 load();let rz;window.addEventListener('resize',()=>{clearTimeout(rz);rz=setTimeout(()=>{if(D&&$('atSem'))semanas(D.semanas||[])},200)});
