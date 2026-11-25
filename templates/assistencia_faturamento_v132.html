@@ -31,6 +31,7 @@ html .fpW .fpBar:hover,html .fpW .fpBar:focus-visible{background:#f1f5fb;outline
 .fpBox{background:#fff;border-radius:18px;padding:16px 18px;width:min(1240px,calc(100vw - 28px));max-height:88vh;display:flex;flex-direction:column;gap:10px;box-sizing:border-box}
 .fpBox .fpSc{max-height:none;flex:1}
 .fpLock{max-width:420px;margin:30px auto;background:#fff;border:1px solid #dbe4ef;border-radius:18px;padding:22px 24px;display:flex;flex-direction:column;gap:10px}
+.fpLock[hidden],.fpM[hidden]{display:none!important}
 .fpLock h2{margin:0;font-size:19px}.fpErr{color:#b91c1c;font-weight:700;font-size:13px;min-height:18px;margin:0}.fpOkMsg{color:#14532d;font-weight:700;font-size:13px;margin:0}
 .fpLoad{opacity:.55;pointer-events:none}
 @media(max-width:700px){.fpG{grid-template-columns:1fr}.fpBar{grid-template-columns:100px 1fr 110px}}
@@ -59,6 +60,7 @@ html .fpW .fpBar:hover,html .fpW .fpBar:focus-visible{background:#f1f5fb;outline
       <button class="fpBtn p" id="fpEntrarB" type="submit" style="justify-content:center">Entrar</button>
     </form>
     <p class="fpMut">Libera por 30 minutos. 3 tentativas erradas bloqueiam por 15 minutos. Cada acesso fica registrado na auditoria.</p>
+    <button type="button" class="fpBtn g" id="fpTroca" hidden style="align-self:flex-start;padding:0">🔑 Trocar a senha</button>
   </div>
 
   <div class="fpLock" id="fpAdm" hidden>
@@ -112,7 +114,7 @@ function perDatas(){const p=$('fpPer').value,h=new Date();let de,ate=new Date(h)
   else if(p==='mesant'){de=new Date(h.getFullYear(),h.getMonth()-1,1);ate=new Date(h.getFullYear(),h.getMonth(),0)}
   else if(p==='90'){de=new Date(h);de.setDate(de.getDate()-89)}else return;
   $('fpDe').value=iso(new Date(de.getTime()-de.getTimezoneOffset()*6e4));$('fpAte').value=iso(new Date(ate.getTime()-ate.getTimezoneOffset()*6e4))}
-function mostra(v){$('fpLock').hidden=v!=='lock';$('fpAdm').hidden=v!=='adm'&&v!=='admlock';if(v==='admlock')$('fpLock').hidden=false;
+function mostra(v){$('fpLock').hidden=!(v==='lock'||v==='admlock');$('fpAdm').hidden=v!=='adm';$('fpTroca').hidden=v!=='admlock';
   const on=v==='dados';$('fpBody').hidden=!on;$('fpBody').style.display=on?'contents':'none';$('fpFiltros').hidden=!on;$('fpFiltros').style.display=on?'contents':'none'}
 async function status(){const r=await fetch('/api/assistencia/faturamento/status');const s=await r.json();
   if(s.liberado){mostra('dados');load();return}
@@ -129,13 +131,14 @@ $('fpEntrar').onsubmit=async e=>{e.preventDefault();const b=$('fpEntrarB');$('fp
     $('fpSenha').value='';if(r.ok){mostra('dados');load()}else $('fpErr').textContent=d.error||'Não foi possível entrar.'}
   finally{b.disabled=false;b.textContent='Entrar'}};
 $('fpSenha').oninput=()=>{$('fpErr').textContent=''};
+$('fpTroca').onclick=()=>{$('fpAdm').hidden=!$('fpAdm').hidden;if(!$('fpAdm').hidden)$('fpAtual').focus()};
 $('fpSenhaF').onsubmit=async e=>{e.preventDefault();const er=$('fpAdmErr');er.className='fpErr';er.textContent='';
   const n=$('fpNova').value,n2=$('fpNova2').value;
   if(n.length<6){er.textContent='A senha precisa ter pelo menos 6 caracteres.';return}
   if(n!==n2){er.textContent='As duas senhas não conferem.';return}
   const b=$('fpSenhaB');b.disabled=true;
   try{const r=await fetch('/api/assistencia/faturamento/senha',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({atual:$('fpAtual').value,nova:n})});const d=await r.json();
-    if(r.ok){e.target.reset();er.className='fpOkMsg';er.textContent='Senha salva. Use-a para entrar.';$('fpAdmT').textContent='Trocar a senha da área financeira';$('fpAtual').hidden=false;$('fpEntrar').hidden=false;mostra('admlock')}
+    if(r.ok){e.target.reset();$('fpLockTxt').textContent='Senha salva. Digite a nova senha para entrar.';$('fpAdmT').textContent='Trocar a senha da área financeira';$('fpAtual').hidden=false;$('fpEntrar').hidden=false;mostra('admlock')}
     else er.textContent=d.error||'Não foi possível salvar.'}
   finally{b.disabled=false}};
 $('fpSair').onclick=async()=>{await fetch('/api/assistencia/faturamento/sair',{method:'POST'});clearInterval(timer);D=null;status()};
