@@ -36479,7 +36479,7 @@ def _v128_dados(args):
         w += timedelta(days=7)
     aging_lim = [(0, 3, "0–3 (no prazo)"), (4, 7, "4–7"), (8, 15, "8–15"), (16, 30, "16–30"), (31, 10 ** 6, "> 30")]
     aging = [0] * len(aging_lim)
-    cli_cnt, fal_cnt, etp_cnt = {}, {}, {}
+    cli_cnt, fal_cnt, etp_cnt, bkl_cli = {}, {}, {}, {}
     n_per, n_fin, soma_rep, n_rep, n_rein = 0, 0, 0, 0, 0
     for r in rows:
         ab, en = _v120_d(r["opened"]), _v120_d(r["closed"])
@@ -36516,6 +36516,8 @@ def _v128_dados(args):
                 sem[wk]["saidas"] += 1
         if aberta:
             etp_cnt[et] = etp_cnt.get(et, 0) + 1
+            nb = clientes.get(r["company_id"]) or (r["client_install"] or "SEM CLIENTE").strip().upper()
+            bkl_cli[nb] = bkl_cli.get(nb, 0) + 1
             if faixa is not None:
                 aging[faixa] += 1
         aa_desde = None
@@ -36671,6 +36673,7 @@ def _v128_dados(args):
         "semanas": list(sem.values()), "aging": [{"faixa": l, "qtd": aging[i]} for i, (_a, _b, l) in enumerate(aging_lim)],
         "etapas": [{"nome": n, "qtd": etp_cnt.get(n, 0)} for n, _c, _s in _V120_ETAPAS if n != "Finalizado"],
         "clientes": [{"nome": n, "qtd": q} for n, q in sorted(cli_cnt.items(), key=lambda z: -z[1])[:10]],
+        "backlog_clientes": [{"nome": n, "qtd": q} for n, q in sorted(bkl_cli.items(), key=lambda z: -z[1])[:10]],
         "falhas": top_f, "reincidencias": rein_top[:10], "tecnicos": tecs, "mapa_dias": [d.isoformat() for d in ult10],
         "producao": prod_lista, "os": lista, "sla": sla, "aguard_devolucao": aguard_dev, "sem_os": sem_os,
     }

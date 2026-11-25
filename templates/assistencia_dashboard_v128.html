@@ -17,7 +17,7 @@ html .exW .exKpi:hover,html .exW .exKpi:focus-visible{transform:translateY(-2px)
 .exC{background:#fff;border:1px solid #dbe4ef;border-radius:16px;padding:14px 16px;min-width:0;display:flex;flex-direction:column;gap:8px}.exC h2{margin:0;font-size:15px;display:flex;align-items:center;gap:8px}.exC h2 small{margin-left:auto;font-size:12px;color:#4a5b70;font-weight:600}
 .exC.full{grid-column:1/-1}
 .exW .exBar span,.exT td,.exHead select,.hm span,#exMTab td{text-transform:uppercase}
-html .exW .exBar{all:unset;box-sizing:border-box;display:grid;grid-template-columns:minmax(110px,190px) 1fr 52px;gap:8px;align-items:center;width:100%;padding:4px 6px;border-radius:8px;font-size:13px;cursor:pointer}
+html .exW .exBar{all:unset;box-sizing:border-box;display:grid;grid-template-columns:minmax(110px,190px) 1fr 78px;gap:8px;align-items:center;width:100%;padding:4px 6px;border-radius:8px;font-size:13px;cursor:pointer}
 html .exW .exBar:hover,html .exW .exBar:focus-visible{background:#f1f5fb;outline:none}.exBar span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.exBar u{display:block;height:14px;background:#eef2f7;border-radius:7px;text-decoration:none;overflow:hidden}.exBar u i{display:block;height:100%;border-radius:7px}.exBar b{text-align:right;font-variant-numeric:tabular-nums}
 .exT{width:100%;border-collapse:collapse;font-size:13px}.exT th{text-align:left;color:#4a5b70;border-bottom:2px solid #dbe4ef;padding:6px 8px;white-space:nowrap;position:sticky;top:0;background:#fff;cursor:pointer;user-select:none}.exT td{padding:6px 8px;border-bottom:1px solid #eef2f7;vertical-align:middle}
 .exT td.n,.exT th.n{text-align:right;font-variant-numeric:tabular-nums}.exT tbody tr{cursor:pointer}.exT tbody tr:hover{background:#f3f7fc}
@@ -46,8 +46,9 @@ html .exW .exBar:hover,html .exW .exBar:focus-visible{background:#f1f5fb;outline
   <section class="exK" id="exK" aria-label="Indicadores"></section>
   <div class="exG">
     <section class="exC"><h2>Entradas × saídas por semana<small id="exSemLeg"></small></h2><div id="exSem"></div></section>
-    <section class="exC"><h2>Backlog por idade <small>dias úteis desde a abertura</small></h2><div id="exAging"></div><h2 style="margin-top:6px">Backlog por etapa</h2><div id="exEtapas"></div></section>
-    <section class="exC"><h2>Clientes que mais trouxeram <small>OS abertas no período</small></h2><div id="exCliB"></div></section>
+    <section class="exC"><h2>Backlog por prazo <small>dias úteis desde a abertura · % do backlog</small></h2><div id="exAging"></div><h2 style="margin-top:6px">Backlog por etapa <small>% do backlog</small></h2><div id="exEtapas"></div></section>
+    <section class="exC"><h2>Clientes que mais trouxeram <small>% das OS do período</small></h2><div id="exCliB"></div></section>
+    <section class="exC"><h2>Backlog por empresa <small>OS em aberto · % do backlog</small></h2><div id="exBklCli"></div></section>
     <section class="exC"><h2>Falhas mais frequentes <small>Pareto do período</small></h2><div id="exFal"></div></section>
     <section class="exC full"><h2>Eficiência dos técnicos <small id="exTecLeg"></small></h2><div class="exSc" id="exTecT"></div><p class="exMut">Produção = OS finalizadas + orçamentos gerados (entrada em Aguardando aprovação). Dias trabalhados = dias com produção. Cores pela meta: verde ≥ 7, âmbar 5 a 6,9, vermelho &lt; 5. Clique na linha para ver as OS.</p></section>
     <section class="exC"><h2>OS por dia — últimos 10 dias úteis</h2><div id="exHm"></div><p class="exMut">Cinza = sem produção. Clique no dia para ver as OS.</p></section>
@@ -106,12 +107,14 @@ function render(){const k=D.kpis,P=D.periodo;
    kpi(k.reinc_pct>5?'cr':k.reinc_pct>3?'al':'ok','Reincidência (90 dias)',nf(k.reinc_pct)+'%',`${nf(k.reinc)} OS com entrada anterior em 90 dias`,'rein'),
    kpi(odc,'OS por técnico/dia',nf(od),`meta ${D.meta_os_dia} · média da equipe`,'prod','Produção dos técnicos no período')
   ].join('');
-  semanas();bars('exAging',D.aging.map((x,i)=>({n:x.faixa,q:x.qtd,k:'faixa:'+i,c:['#0e7a5a','#d97706','#ea580c','#dc2626','#991b1b'][i]})));
-  bars('exEtapas',D.etapas.map(x=>({n:x.nome,q:x.qtd,k:'etapa:'+x.nome,c:ETC[x.nome]})));
-  bars('exCliB',D.clientes.map((x,i)=>({n:x.nome,q:x.qtd,k:'cli:'+x.nome,c:i<3?'#7c3aed':'#a78bfa'})));
+  const pc=(q,t)=>t?Math.round(100*q/t)+'%':'';const bt=k.backlog;
+  semanas();bars('exAging',D.aging.map((x,i)=>({n:x.faixa,q:x.qtd,k:'faixa:'+i,c:['#0e7a5a','#d97706','#ea580c','#dc2626','#991b1b'][i],p:pc(x.qtd,bt)})));
+  bars('exEtapas',D.etapas.map(x=>({n:x.nome,q:x.qtd,k:'etapa:'+x.nome,c:ETC[x.nome],p:pc(x.qtd,bt)})));
+  bars('exCliB',D.clientes.map((x,i)=>({n:x.nome,q:x.qtd,k:'cli:'+x.nome,c:i<3?'#7c3aed':'#a78bfa',p:pc(x.qtd,k.os_periodo)})));
+  bars('exBklCli',(D.backlog_clientes||[]).map((x,i)=>({n:x.nome,q:x.qtd,k:'bcli:'+x.nome,c:i<3?'#2563eb':'#93c5fd',p:pc(x.qtd,bt)})));
   const ft=D.falhas.reduce((s,x)=>s+x.qtd,0);bars('exFal',D.falhas.map((x,i)=>({n:x.nome,q:x.qtd,k:'falha:'+x.nome,c:x.nome==='OUTRAS'?'#94a3b8':i<2?'#ea580c':'#fb923c',p:ft?Math.round(100*x.qtd/ft)+'%':''})));
   tecnicos();mapa();rein();sla();peca();dev();semos()}
-function bars(id,arr){const mx=Math.max(1,...arr.map(x=>x.q));$(id).innerHTML=arr.length&&arr.some(x=>x.q)?arr.map(x=>`<button type="button" class="exBar" data-d="${esc(x.k)}" data-t="${esc(x.n)}" title="${esc(x.n)}: ${x.q}"><span>${esc(x.n)}</span><u><i style="width:${Math.max(2,100*x.q/mx)}%;background:${x.c||PAL[0]}"></i></u><b>${nf(x.q)}${x.p?` <small style="color:#4a5b70;font-weight:600">${x.p}</small>`:''}</b></button>`).join(''):'<div class="exEmpty">Sem dados no recorte.</div>'}
+function bars(id,arr){const mx=Math.max(1,...arr.map(x=>x.q));$(id).innerHTML=arr.length&&arr.some(x=>x.q)?arr.map(x=>`<button type="button" class="exBar" data-d="${esc(x.k)}" data-t="${esc(x.n)}" title="${esc(x.n)}: ${x.q}"><span>${esc(x.n)}</span><u><i style="width:${Math.max(2,100*x.q/mx)}%;background:${x.c||PAL[0]}"></i></u><b>${nf(x.q)}${x.p?` <small style="color:#4a5b70;font-weight:600;font-size:11px">${x.p}</small>`:''}</b></button>`).join(''):'<div class="exEmpty">Sem dados no recorte.</div>'}
 function semanas(){const s=D.semanas;if(!s.length){$('exSem').innerHTML='<div class="exEmpty">Sem semanas no período.</div>';return}
   const W=560,H=200,L=34,B=26,mx=Math.max(1,...s.map(x=>Math.max(x.entradas,x.saidas))),st=(W-L-10)/Math.max(1,s.length-1),y=v=>H-B-(H-B-12)*v/mx,x=i=>L+(s.length>1?st*i:(W-L)/2);
   const ln=(k,c)=>`<polyline fill="none" stroke="${c}" stroke-width="2.5" points="${s.map((v,i)=>x(i)+','+y(v[k])).join(' ')}"/>`+s.map((v,i)=>`<circle cx="${x(i)}" cy="${y(v[k])}" r="5" fill="${c}" style="cursor:pointer" data-d="sem:${v.semana}:${k}" data-t="Semana de ${br(v.semana)} · ${k}"><title>${br(v.semana)}: ${v[k]} ${k}</title></circle>`).join('');
@@ -143,7 +146,7 @@ function drill(key){const os=D.os;const [t,...r]=key.split(':');const v=r.join('
    case 'periodo':return [os.filter(x=>x.periodo),C_OS];case 'aberto':return [os.filter(x=>x.aberta),C_OS];case 'pend':return [os.filter(x=>x.pend_peca),C_OS.concat([['Peça','peca']])];
    case 'aa':return [os.filter(x=>x.aberta&&x.etapa==='Aguardando aprovação'),C_OS.concat([['Parada (d)','parada','n']])];case 'fin':return [os.filter(x=>x.finalizada),C_OS];case 'rein':return [os.filter(x=>x.reinc),C_OS];
    case 'faixa':return [os.filter(x=>x.aberta&&String(x.faixa)===v),C_OS];case 'etapa':return [os.filter(x=>x.aberta&&x.etapa===v),C_OS];
-   case 'cli':return [os.filter(x=>x.periodo&&x.cliente===v),C_OS];
+   case 'cli':return [os.filter(x=>x.periodo&&x.cliente===v),C_OS];case 'bcli':return [os.filter(x=>x.aberta&&x.cliente===v),C_OS];
    case 'falha':{const top=new Set(D.falhas.map(f=>f.nome));return [os.filter(x=>x.periodo&&(v==='OUTRAS'?!top.has((x.falha||'NÃO INFORMADA').toUpperCase().slice(0,60)):(x.falha||'NÃO INFORMADA').toUpperCase().slice(0,60)===v)),C_OS]}
    case 'sem':{const [w,k]=v.split(':');const fim=new Date(w+'T12:00:00');fim.setDate(fim.getDate()+6);const f=iso(fim);return [os.filter(x=>k==='entradas'?(x.periodo&&x.abertura>=w&&x.abertura<=f):(x.finalizada&&x.encerramento>=w&&x.encerramento<=f)),C_OS]}
    case 'serie':return [os.filter(x=>x.serie===v),C_OS];case 'reinTop':return [D.reincidencias,[['Série','serie'],['Cliente','cliente'],['Vezes','vezes','n'],['Última entrada','ultima','d'],['Última falha','falha']]];
