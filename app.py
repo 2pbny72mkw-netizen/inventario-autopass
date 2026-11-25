@@ -35622,7 +35622,7 @@ def _v122_wrap_cadastro(name, novo=False):
                 cid = k.get("cid")
                 if novo:
                     legal = (request.form.get("legal_name") or "").strip()
-                    c = CustomerCompany.query.filter_by(legal_name=legal).order_by(CustomerCompany.id.desc()).first() if legal else None
+                    c = CustomerCompany.query.filter(func.upper(CustomerCompany.legal_name) == legal.upper()).order_by(CustomerCompany.id.desc()).first() if legal else None
                     cid = c.id if c else None
                 if cid:
                     _v122_lbl_save(int(cid), request.form.get("label_name"))
@@ -36433,8 +36433,9 @@ def _v128_dados(args):
     todas = [r for r in _v120_os_rows(None) if (r.get("status_os") or "").upper() != "CANCELADA"]
     tecnicos = sorted({(r["technician"] or "").strip() for r in todas if (r["technician"] or "").strip()})
     clientes = {}
+    curtos = _v122_lbl_map()  # REV58.1: nome reduzido do cadastro quando houver; tudo em MAIÚSCULAS
     for c in CustomerCompany.query.filter(CustomerCompany.active.is_(True)).all():
-        clientes[c.id] = c.trade_name or c.legal_name
+        clientes[c.id] = (curtos.get(c.id) or c.trade_name or c.legal_name or "").strip().upper()
     # série -> todas as OS (para reincidência, independe do filtro)
     por_serie = {}
     for r in todas:
@@ -36498,7 +36499,7 @@ def _v128_dados(args):
         if no_per:
             n_per += 1
             n_rein += rein
-            nome = clientes.get(r["company_id"]) or (r["client_install"] or "Sem cliente")
+            nome = clientes.get(r["company_id"]) or (r["client_install"] or "SEM CLIENTE").strip().upper()
             cli_cnt[nome] = cli_cnt.get(nome, 0) + 1
             f = (r["fault_short"] or "Não informada").strip().upper()[:60]
             fal_cnt[f] = fal_cnt.get(f, 0) + 1
@@ -36521,8 +36522,8 @@ def _v128_dados(args):
         if et == "Aguardando aprovação":
             hs = [h for h in hist_os.get(r["os_number"], []) if h["etapa"] == "Aguardando aprovação"]
             aa_desde = hs[-1]["seen_on"] if hs else None
-        lista.append({"os": r["os_number"], "cliente": clientes.get(r["company_id"]) or (r["client_install"] or ""), "serie": r["serial"] or "",
-                      "tecnico": (r["technician"] or "").strip(), "etapa": et, "substatus": sub, "abertura": ab.isoformat() if ab else "",
+        lista.append({"os": r["os_number"], "cliente": clientes.get(r["company_id"]) or (r["client_install"] or "").strip().upper(), "serie": r["serial"] or "",
+                      "tecnico": (r["technician"] or "").strip().upper(), "etapa": et, "substatus": sub, "abertura": ab.isoformat() if ab else "",
                       "encerramento": en.isoformat() if en else "", "falha": (r["fault_short"] or "").strip(), "idade": idade, "faixa": faixa,
                       "aberta": aberta, "periodo": no_per, "finalizada": fin_per, "pend_peca": pend, "reinc": rein,
                       "peca": " · ".join((pecas.get(r["os_number"]) or [])[:3]) if pend else "",
@@ -36625,8 +36626,8 @@ def _v128_dados(args):
         dentro = (de <= ini.date() <= ate) or (fim and de <= fim.date() <= ate) or (not fim and ini.date() <= ate)
         if not dentro:
             continue
-        base = {"codigo": ap.code or str(ap.id), "cliente": clientes.get(ecid) or ap.customer_company or "", "serie": eq.serial_number or "",
-                "equipamento": eq.equipment or "", "recebido": ini.strftime("%Y-%m-%d %H:%M"), "devolvido": fim.strftime("%Y-%m-%d %H:%M") if fim else "",
+        base = {"codigo": ap.code or str(ap.id), "cliente": clientes.get(ecid) or (ap.customer_company or "").strip().upper(), "serie": (eq.serial_number or "").upper(),
+                "equipamento": (eq.equipment or "").upper(), "recebido": ini.strftime("%Y-%m-%d %H:%M"), "devolvido": fim.strftime("%Y-%m-%d %H:%M") if fim else "",
                 "os": o["os_number"] if o else "", "etapa": _v120_etapa(o) if o else "Sem OS no Bhom", "tecnico": (o["technician"] or "").strip() if o else "",
                 "horas_uteis": round(horas, 1), "pausa_dias": len(pausa)}
         base["situacao"] = ("Devolvido no prazo" if horas <= _V128_SLA_H else "Devolvido fora do prazo") if fim else ("No prazo" if horas <= _V128_SLA_H else "Estourado")
@@ -36645,7 +36646,7 @@ def _v128_dados(args):
         alvo = [o for o in oss if (cid is None or o["company_id"] == cid)]
         if len(alvo) >= 2 and any(_v120_d(o["opened"]) and de <= _v120_d(o["opened"]) <= ate for o in alvo):
             u = max(alvo, key=lambda o: _v120_d(o["opened"]) or date.min)
-            rein_top.append({"serie": u["serial"] or sk, "cliente": clientes.get(u["company_id"]) or (u["client_install"] or ""), "vezes": len(alvo),
+            rein_top.append({"serie": u["serial"] or sk, "cliente": clientes.get(u["company_id"]) or (u["client_install"] or "").strip().upper(), "vezes": len(alvo),
                              "ultima": str(u["opened"] or "")[:10], "falha": (u["fault_short"] or "").strip()})
     rein_top.sort(key=lambda z: z["ultima"], reverse=True)
     rein_top.sort(key=lambda z: -z["vezes"])
@@ -36718,3 +36719,68 @@ def _v128_boot():
 if os.environ.get("V128_BOOT", "1") != "0":
     threading.Timer(25, _v128_boot).start()
 # =================== fim REV58 ===================
+
+
+# =================== V88.0 REV58.1 — Cadastro de Clientes em MAIÚSCULAS (autorizado pelo administrador em 24/11) ===================
+def _v129_maiusculas_clientes():
+    """Razão social, nome fantasia e nome reduzido em maiúsculas. Idempotente: só toca o que ainda não está."""
+    n = 0
+    for c in CustomerCompany.query.all():
+        mud = False
+        for f in ("legal_name", "trade_name"):
+            v = getattr(c, f, None)
+            if isinstance(v, str) and v != v.strip().upper():
+                setattr(c, f, v.strip().upper()); mud = True
+        n += mud
+    db.session.commit()
+    nl = 0
+    try:
+        _v122_lbl_ensure()
+        with db.engine.begin() as cx:
+            for cid, lab in cx.execute(text("SELECT company_id, label FROM v122_label_names")).fetchall():
+                if isinstance(lab, str) and lab != lab.strip().upper():
+                    cx.execute(text("UPDATE v122_label_names SET label=:l WHERE company_id=:c"), {"l": lab.strip().upper(), "c": cid}); nl += 1
+    except Exception:
+        app.logger.exception("REV58.1: falha ao padronizar nomes reduzidos")
+    return n, nl
+
+
+def _v129_boot():
+    with app.app_context():
+        try:
+            if AuditEvent.query.filter_by(event_type="V129_CLIENTES_MAIUSCULAS").first():
+                return
+            n, nl = _v129_maiusculas_clientes()
+            db.session.add(AuditEvent(user_id=None, event_type="V129_CLIENTES_MAIUSCULAS", entity_type="customer_company", entity_id="*",
+                                      detail=f"Cadastro de Clientes em maiúsculas: {n} cliente(s) e {nl} nome(s) reduzido(s) alterados."))
+            db.session.commit()
+            app.logger.info("REV58.1: %s clientes e %s nomes reduzidos em maiúsculas", n, nl)
+        except Exception:
+            db.session.rollback()
+            app.logger.exception("REV58.1: falha na conversão do cadastro para maiúsculas")
+
+
+def _v129_wrap(name):
+    """Cadastros novos ou editados continuam em maiúsculas."""
+    orig = app.view_functions.get(name)
+    if not orig:
+        return
+    def wrapper(*a, **k):
+        resp = orig(*a, **k)
+        if request.method == "POST":
+            try:
+                _v129_maiusculas_clientes()
+            except Exception:
+                db.session.rollback()
+                app.logger.exception("REV58.1: falha ao padronizar o cliente salvo")
+        return resp
+    wrapper.__name__ = getattr(orig, "__name__", name)
+    app.view_functions[name] = wrapper
+
+
+for _n in ("portal_customer_companies", "portal_customer_company_edit"):
+    _v129_wrap(_n)
+
+if os.environ.get("V128_BOOT", "1") != "0":
+    threading.Timer(30.0, _v129_boot).start()
+# =================== fim REV58.1 ===================
