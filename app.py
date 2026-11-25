@@ -36306,3 +36306,415 @@ def v127_alterar_dia(rid):
         _v100_notify_date_change(a, de, para, motivo or "mudança do dia do Leva e Traz")
     return jsonify({"ok": True, "usuarios": len(alvos), "movidos": len(movidos), "novo": novo})
 # =================== fim REV57 ===================
+
+
+# =================== V88.0 REV58 — Assistência Técnica · Painel executivo ===================
+# Histórico de etapas por carga (para saber quando a OS virou "Aguardando aprovação"), SLA de 72 h úteis
+# do recebimento no Portal até a devolução (pausando em Aguardando aprovação), eficiência por técnico
+# (meta 7 OS/dia) e visões de backlog, clientes, falhas, reincidência, peça e devolução.
+_V128 = {"ok": False, "cache": {}}
+_V128_META_DIA = 7
+_V128_SLA_H = 72
+
+
+def _v128_ensure():
+    if _V128["ok"]:
+        return
+    _v120_ensure()
+    with db.engine.begin() as c:
+        c.execute(text("CREATE TABLE IF NOT EXISTS v128_at_hist (id SERIAL PRIMARY KEY, os_number VARCHAR(40) NOT NULL, etapa VARCHAR(60),"
+                       " substatus VARCHAR(80), technician VARCHAR(120), seen_on DATE NOT NULL, seed BOOLEAN NOT NULL DEFAULT FALSE)"))
+        c.execute(text("CREATE INDEX IF NOT EXISTS ix_v128_hist_os ON v128_at_hist (os_number, id)"))
+        c.execute(text("CREATE INDEX IF NOT EXISTS ix_v128_hist_seen ON v128_at_hist (seen_on)"))
+    _V128["ok"] = True
+
+
+def _v128_hoje():
+    return datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+
+
+def _v128_snapshot():
+    """Grava a etapa atual de cada OS quando ela muda (uma linha por mudança, com o dia da carga)."""
+    _v128_ensure()
+    hoje = _v128_hoje()
+    with db.engine.begin() as c:
+        vazio = c.execute(text("SELECT COUNT(*) FROM v128_at_hist")).scalar() == 0
+        ult = {r[0]: (r[1], r[2]) for r in c.execute(text(
+            "SELECT h.os_number, h.etapa, h.substatus FROM v128_at_hist h JOIN (SELECT os_number, MAX(id) mid FROM v128_at_hist GROUP BY os_number) u"
+            " ON u.mid = h.id"))}
+        novos = []
+        for r in c.execute(text("SELECT os_number, status_os, status_det, substatus, technician FROM v120_at_os")):
+            d = dict(r._mapping)
+            et = _v120_etapa(d)[:60]
+            sub = (d["substatus"] or "")[:80]
+            if ult.get(d["os_number"]) != (et, sub):
+                novos.append({"o": d["os_number"], "e": et, "s": sub, "t": (d["technician"] or "")[:120], "d": hoje, "x": vazio})
+        if novos:
+            c.execute(text("INSERT INTO v128_at_hist (os_number, etapa, substatus, technician, seen_on, seed) VALUES (:o,:e,:s,:t,:d,:x)"), novos)
+    _V128["cache"].clear()
+    return len(novos)
+
+
+_v128_import_orig = _v120_import
+
+
+def _v120_import(raw, filename, user_name):  # noqa: F811 — envolve a carga para gravar o histórico
+    res = _v128_import_orig(raw, filename, user_name)
+    try:
+        res["mudancas_etapa"] = _v128_snapshot()
+    except Exception:
+        db.session.rollback()
+        app.logger.exception("REV58: falha ao gravar o histórico de etapas")
+    return res
+
+
+def _v128_feriados():
+    try:
+        return {x.blocked_date for x in LogisticsBlockedDate.query.filter_by(active=True).all()}
+    except Exception:
+        db.session.rollback()
+        return set()
+
+
+def _v128_util(d, fer):
+    return d.weekday() < 5 and d not in fer
+
+
+def _v128_horas_uteis(ini, fim, fer, pausas=()):
+    """Horas úteis entre dois instantes (dias úteis contam 24 h), descontando os dias de pausa."""
+    if not ini or not fim or fim <= ini:
+        return 0.0
+    tot, d = 0.0, ini.date()
+    while d <= fim.date():
+        if _v128_util(d, fer) and d not in pausas:
+            a = max(ini, datetime.combine(d, datetime.min.time()))
+            b = min(fim, datetime.combine(d + timedelta(days=1), datetime.min.time()))
+            if b > a:
+                tot += (b - a).total_seconds() / 3600
+        d += timedelta(days=1)
+    return tot
+
+
+def _v128_dias_uteis(a, b, fer):
+    if not a or not b or b <= a:
+        return 0
+    n, d = 0, a + timedelta(days=1)
+    while d <= b:
+        n += _v128_util(d, fer)
+        d += timedelta(days=1)
+    return n
+
+
+def _v128_sp(dt):
+    """datetime gravado em UTC (naive) -> horário de Brasília (naive)."""
+    if not dt:
+        return None
+    return dt.replace(tzinfo=ZoneInfo("UTC")).astimezone(ZoneInfo("America/Sao_Paulo")).replace(tzinfo=None)
+
+
+def _v128_periodo(args, hoje):
+    de, ate = _v120_d(args.get("de")), _v120_d(args.get("ate"))
+    if not de:
+        de = hoje.replace(day=1)
+    if not ate:
+        ate = hoje
+    if ate < de:
+        de, ate = ate, de
+    return de, ate
+
+
+def _v128_dados(args):
+    _v128_ensure()
+    hoje = _v128_hoje()
+    de, ate = _v128_periodo(args, hoje)
+    cid = int(args.get("cliente")) if str(args.get("cliente") or "").isdigit() else None
+    tec = (args.get("tecnico") or "").strip()
+    fer = _v128_feriados()
+    todas = [r for r in _v120_os_rows(None) if (r.get("status_os") or "").upper() != "CANCELADA"]
+    tecnicos = sorted({(r["technician"] or "").strip() for r in todas if (r["technician"] or "").strip()})
+    clientes = {}
+    for c in CustomerCompany.query.filter(CustomerCompany.active.is_(True)).all():
+        clientes[c.id] = c.trade_name or c.legal_name
+    # série -> todas as OS (para reincidência, independe do filtro)
+    por_serie = {}
+    for r in todas:
+        if r["serial_key"]:
+            por_serie.setdefault(r["serial_key"], []).append(r)
+    rows = [r for r in todas if (cid is None or r["company_id"] == cid) and (not tec or (r["technician"] or "").strip() == tec)]
+    with db.engine.connect() as c:
+        hist = [dict(x._mapping) for x in c.execute(text("SELECT os_number, etapa, substatus, technician, seen_on, seed FROM v128_at_hist ORDER BY id"))]
+        abertas_nums = [r["os_number"] for r in rows if _v120_etapa(r) != "Finalizado"]
+        pecas = {}
+        for i in range(0, len(abertas_nums), 500):
+            part = abertas_nums[i:i + 500]
+            q = text("SELECT os_number, description FROM v120_at_items WHERE os_number IN (" + ",".join(f":k{j}" for j in range(len(part))) + ") ORDER BY os_number, line_no")
+            for x in c.execute(q, {f"k{j}": v for j, v in enumerate(part)}):
+                if x[1]:
+                    pecas.setdefault(x[0], []).append(x[1])
+    hist_os = {}
+    for h in hist:
+        h["seen_on"] = _v120_d(h["seen_on"])
+        hist_os.setdefault(h["os_number"], []).append(h)
+
+    def pausas_aa(num, ini_d, fim_d):
+        """Dias em que a OS esteve em Aguardando aprovação (pelo histórico)."""
+        out, hs = set(), hist_os.get(num) or []
+        for i, h in enumerate(hs):
+            if h["etapa"] == "Aguardando aprovação":
+                a = h["seen_on"]
+                b = hs[i + 1]["seen_on"] if i + 1 < len(hs) else hoje + timedelta(days=1)
+                d = max(a, ini_d)
+                while d < min(b, fim_d + timedelta(days=1)):
+                    out.add(d)
+                    d += timedelta(days=1)
+        return out
+
+    lista, k = [], {}
+    sem = {}
+    w0 = de - timedelta(days=de.weekday())
+    w = w0
+    while w <= ate:
+        sem[w] = {"semana": w.isoformat(), "entradas": 0, "saidas": 0}
+        w += timedelta(days=7)
+    aging_lim = [(0, 3, "0–3 (no prazo)"), (4, 7, "4–7"), (8, 15, "8–15"), (16, 30, "16–30"), (31, 10 ** 6, "> 30")]
+    aging = [0] * len(aging_lim)
+    cli_cnt, fal_cnt, etp_cnt = {}, {}, {}
+    n_per, n_fin, soma_rep, n_rep, n_rein = 0, 0, 0, 0, 0
+    for r in rows:
+        ab, en = _v120_d(r["opened"]), _v120_d(r["closed"])
+        et = _v120_etapa(r)
+        aberta = et != "Finalizado"
+        no_per = bool(ab and de <= ab <= ate)
+        fin_per = bool(et == "Finalizado" and en and de <= en <= ate)
+        sub = (r["substatus"] or "").strip()
+        pend = aberta and "AGUARDANDOPECA" in _v120_norm(sub)
+        idade = _v128_dias_uteis(ab, hoje, fer) if aberta and ab else None
+        faixa = next((i for i, (a, b, _l) in enumerate(aging_lim) if idade is not None and a <= idade <= b), None)
+        rein = False
+        if no_per and r["serial_key"]:
+            rein = any(o is not r and _v120_d(o["opened"]) and ab - timedelta(days=_V120_DIAS) <= _v120_d(o["opened"]) < ab for o in por_serie.get(r["serial_key"], []))
+        if not (no_per or fin_per or aberta):
+            continue
+        if no_per:
+            n_per += 1
+            n_rein += rein
+            nome = clientes.get(r["company_id"]) or (r["client_install"] or "Sem cliente")
+            cli_cnt[nome] = cli_cnt.get(nome, 0) + 1
+            f = (r["fault_short"] or "Não informada").strip().upper()[:60]
+            fal_cnt[f] = fal_cnt.get(f, 0) + 1
+            wk = ab - timedelta(days=ab.weekday())
+            if wk in sem:
+                sem[wk]["entradas"] += 1
+        if fin_per:
+            n_fin += 1
+            if ab:
+                soma_rep += (en - ab).days
+                n_rep += 1
+            wk = en - timedelta(days=en.weekday())
+            if wk in sem:
+                sem[wk]["saidas"] += 1
+        if aberta:
+            etp_cnt[et] = etp_cnt.get(et, 0) + 1
+            if faixa is not None:
+                aging[faixa] += 1
+        aa_desde = None
+        if et == "Aguardando aprovação":
+            hs = [h for h in hist_os.get(r["os_number"], []) if h["etapa"] == "Aguardando aprovação"]
+            aa_desde = hs[-1]["seen_on"] if hs else None
+        lista.append({"os": r["os_number"], "cliente": clientes.get(r["company_id"]) or (r["client_install"] or ""), "serie": r["serial"] or "",
+                      "tecnico": (r["technician"] or "").strip(), "etapa": et, "substatus": sub, "abertura": ab.isoformat() if ab else "",
+                      "encerramento": en.isoformat() if en else "", "falha": (r["fault_short"] or "").strip(), "idade": idade, "faixa": faixa,
+                      "aberta": aberta, "periodo": no_per, "finalizada": fin_per, "pend_peca": pend, "reinc": rein,
+                      "peca": " · ".join((pecas.get(r["os_number"]) or [])[:3]) if pend else "",
+                      "parada": (hoje - aa_desde).days if aa_desde else None})
+    # dias de aprovação parados (média) e pendentes de peça
+    aa = [x for x in lista if x["etapa"] == "Aguardando aprovação"]
+    pp = [x for x in lista if x["pend_peca"]]
+    # período anterior de mesmo tamanho
+    dur = (ate - de).days + 1
+    pde, pate = de - timedelta(days=dur), de - timedelta(days=1)
+    n_ant = sum(1 for r in rows if _v120_d(r["opened"]) and pde <= _v120_d(r["opened"]) <= pate)
+
+    # ---- produção por técnico: finalizações (Bhom) + orçamentos gerados (histórico: entrou em Aguardando aprovação)
+    prod = {}
+    tec_ok = lambda t: t and (not tec or t == tec)
+    for r in rows:
+        t = (r["technician"] or "").strip()
+        en = _v120_d(r["closed"])
+        if tec_ok(t) and _v120_etapa(r) == "Finalizado" and en and de <= en <= ate:
+            prod.setdefault((t, en, r["os_number"]), "finalizou")
+    nums_ok = {r["os_number"] for r in rows}
+    for num, hs in hist_os.items():
+        if num not in nums_ok:
+            continue
+        for i, h in enumerate(hs):
+            if h["etapa"] == "Aguardando aprovação" and not h["seed"] and (i == 0 or hs[i - 1]["etapa"] != "Aguardando aprovação"):
+                t = (h["technician"] or "").strip()
+                if tec_ok(t) and de <= h["seen_on"] <= ate:
+                    prod.setdefault((t, h["seen_on"], num), "orçamento")
+    du_periodo = sum(1 for i in range(dur) if _v128_util(de + timedelta(days=i), fer))
+    por_tec = {}
+    for (t, d, num), tipo in prod.items():
+        x = por_tec.setdefault(t, {"tecnico": t, "producao": 0, "finalizadas": 0, "orcamentos": 0, "dias": set(), "por_dia": {}})
+        x["producao"] += 1
+        x["finalizadas" if tipo == "finalizou" else "orcamentos"] += 1
+        x["dias"].add(d)
+        x["por_dia"][d] = x["por_dia"].get(d, 0) + 1
+    # retorno em 90 dias e tempo médio por técnico (OS finalizadas no período)
+    for r in rows:
+        t = (r["technician"] or "").strip()
+        en, ab = _v120_d(r["closed"]), _v120_d(r["opened"])
+        if t not in por_tec or _v120_etapa(r) != "Finalizado" or not en or not (de <= en <= ate):
+            continue
+        x = por_tec[t]
+        if ab:
+            x["_rep"] = x.get("_rep", 0) + (en - ab).days
+            x["_nrep"] = x.get("_nrep", 0) + 1
+        x["_nfin"] = x.get("_nfin", 0) + 1
+        if r["serial_key"] and any(_v120_d(o["opened"]) and en < _v120_d(o["opened"]) <= en + timedelta(days=90) for o in por_serie.get(r["serial_key"], [])):
+            x["_ret"] = x.get("_ret", 0) + 1
+    ult10, d = [], ate
+    while len(ult10) < 10 and d >= ate - timedelta(days=40):
+        if _v128_util(d, fer):
+            ult10.append(d)
+        d -= timedelta(days=1)
+    ult10.reverse()
+    tecs = []
+    for t, x in por_tec.items():
+        dias = len(x["dias"])
+        tecs.append({"tecnico": t, "producao": x["producao"], "finalizadas": x["finalizadas"], "orcamentos": x["orcamentos"],
+                     "dias_trabalhados": dias, "dias_uteis": du_periodo, "os_dia": round(x["producao"] / dias, 1) if dias else 0,
+                     "tempo_medio": round(x["_rep"] / x["_nrep"], 1) if x.get("_nrep") else None,
+                     "retorno_90d": round(100 * x.get("_ret", 0) / x["_nfin"], 1) if x.get("_nfin") else None,
+                     "mapa": [x["por_dia"].get(dd, 0) for dd in ult10]})
+    tecs.sort(key=lambda z: (-z["os_dia"], -z["producao"]))
+    prod_lista = [{"tecnico": t, "dia": d.isoformat(), "os": num, "tipo": tipo} for (t, d, num), tipo in sorted(prod.items(), key=lambda z: (z[0][1], z[0][0]))]
+
+    # ---- SLA 72 h úteis: recebimento no Portal -> devolução, pausando em Aguardando aprovação
+    agora = _v128_sp(datetime.utcnow())
+    nome_cid = {}
+    for c in CustomerCompany.query.all():
+        for n in (c.legal_name, c.trade_name):
+            if n:
+                nome_cid[n.strip().lower()] = c.id
+    devol = {}
+    for e in PortalEquipmentEvent.query.filter(PortalEquipmentEvent.event_type == "DEVOLVIDO").all():
+        if e.equipment_id and (e.equipment_id not in devol or e.created_at < devol[e.equipment_id]):
+            devol[e.equipment_id] = e.created_at
+    sla, aguard_dev, sem_os = [], [], []
+    lim_ini = datetime.combine(de - timedelta(days=120), datetime.min.time())
+    q = (db.session.query(CustomerAppointmentEquipment, CustomerAppointment)
+         .join(CustomerAppointment, CustomerAppointment.id == CustomerAppointmentEquipment.appointment_id)
+         .filter(CustomerAppointmentEquipment.received.is_(True), CustomerAppointmentEquipment.received_at.isnot(None),
+                 CustomerAppointmentEquipment.received_at >= lim_ini))
+    for eq, ap in q.all():
+        ecid = nome_cid.get((ap.customer_company or "").strip().lower())
+        if cid is not None and ecid != cid:
+            continue
+        ini = _v128_sp(eq.received_at)
+        fim = _v128_sp(devol.get(eq.id))
+        sk = _v120_skey(eq.serial_number)
+        cands = [o for o in por_serie.get(sk, []) if _v120_d(o["opened"]) and ini.date() - timedelta(days=3) <= _v120_d(o["opened"]) <= ini.date() + timedelta(days=30)] if sk else []
+        o = min(cands, key=lambda z: abs((_v120_d(z["opened"]) - ini.date()).days)) if cands else None
+        if tec and (not o or (o["technician"] or "").strip() != tec):
+            continue
+        ref = fim or agora
+        pausa = pausas_aa(o["os_number"], ini.date(), ref.date()) if o else set()
+        horas = _v128_horas_uteis(ini, ref, fer, pausa)
+        # considera só o que entrou, saiu ou ainda está aberto dentro do período
+        dentro = (de <= ini.date() <= ate) or (fim and de <= fim.date() <= ate) or (not fim and ini.date() <= ate)
+        if not dentro:
+            continue
+        base = {"codigo": ap.code or str(ap.id), "cliente": clientes.get(ecid) or ap.customer_company or "", "serie": eq.serial_number or "",
+                "equipamento": eq.equipment or "", "recebido": ini.strftime("%Y-%m-%d %H:%M"), "devolvido": fim.strftime("%Y-%m-%d %H:%M") if fim else "",
+                "os": o["os_number"] if o else "", "etapa": _v120_etapa(o) if o else "Sem OS no Bhom", "tecnico": (o["technician"] or "").strip() if o else "",
+                "horas_uteis": round(horas, 1), "pausa_dias": len(pausa)}
+        base["situacao"] = ("Devolvido no prazo" if horas <= _V128_SLA_H else "Devolvido fora do prazo") if fim else ("No prazo" if horas <= _V128_SLA_H else "Estourado")
+        sla.append(base)
+        if not fim:
+            if o and _v120_etapa(o) == "Finalizado":
+                en = _v120_d(o["closed"])
+                aguard_dev.append(dict(base, finalizado=en.isoformat() if en else "", parado=(hoje - en).days if en else None))
+            elif not o and (agora - ini).days >= 1:
+                sem_os.append(dict(base, parado=(agora - ini).days))
+    dev_per = [x for x in sla if x["devolvido"] and de.isoformat() <= x["devolvido"][:10] <= ate.isoformat()]
+    no_prazo = sum(1 for x in dev_per if x["situacao"] == "Devolvido no prazo")
+
+    rein_top = []
+    for sk, oss in por_serie.items():
+        alvo = [o for o in oss if (cid is None or o["company_id"] == cid)]
+        if len(alvo) >= 2 and any(_v120_d(o["opened"]) and de <= _v120_d(o["opened"]) <= ate for o in alvo):
+            u = max(alvo, key=lambda o: _v120_d(o["opened"]) or date.min)
+            rein_top.append({"serie": u["serial"] or sk, "cliente": clientes.get(u["company_id"]) or (u["client_install"] or ""), "vezes": len(alvo),
+                             "ultima": str(u["opened"] or "")[:10], "falha": (u["fault_short"] or "").strip()})
+    rein_top.sort(key=lambda z: z["ultima"], reverse=True)
+    rein_top.sort(key=lambda z: -z["vezes"])
+    falhas = sorted(fal_cnt.items(), key=lambda z: -z[1])
+    top_f = [{"nome": n, "qtd": q} for n, q in falhas[:7]]
+    if len(falhas) > 7:
+        top_f.append({"nome": "OUTRAS", "qtd": sum(q for _n, q in falhas[7:])})
+    abertas = [x for x in lista if x["aberta"]]
+    return {
+        "ok": True, "periodo": {"de": de.isoformat(), "ate": ate.isoformat(), "dias_uteis": du_periodo}, "hoje": hoje.isoformat(),
+        "meta_os_dia": _V128_META_DIA, "sla_horas": _V128_SLA_H, "tecnicos_lista": tecnicos,
+        "clientes_lista": [{"id": i, "nome": n} for i, n in sorted(clientes.items(), key=lambda z: (z[1] or "").lower())],
+        "historico_desde": min((h["seen_on"] for h in hist), default=None) and min(h["seen_on"] for h in hist).isoformat(),
+        "kpis": {"os_periodo": n_per, "os_anterior": n_ant, "backlog": len(abertas), "pend_peca": len(pp),
+                 "aguard_aprov": len(aa), "aguard_aprov_dias": round(sum(x["parada"] for x in aa if x["parada"] is not None) / max(1, sum(1 for x in aa if x["parada"] is not None)), 1) if any(x["parada"] is not None for x in aa) else None,
+                 "tempo_medio": round(soma_rep / n_rep, 1) if n_rep else None, "finalizadas": n_fin,
+                 "reinc_pct": round(100 * n_rein / n_per, 1) if n_per else 0, "reinc": n_rein,
+                 "sla_estourado": sum(1 for x in sla if x["situacao"] == "Estourado"),
+                 "sla_no_prazo_pct": round(100 * no_prazo / len(dev_per), 1) if dev_per else None, "sla_devolvidos": len(dev_per),
+                 "aguard_devolucao": len(aguard_dev), "sem_os": len(sem_os),
+                 "os_dia_equipe": round(sum(t["producao"] for t in tecs) / max(1, sum(t["dias_trabalhados"] for t in tecs)), 1) if tecs else 0},
+        "semanas": list(sem.values()), "aging": [{"faixa": l, "qtd": aging[i]} for i, (_a, _b, l) in enumerate(aging_lim)],
+        "etapas": [{"nome": n, "qtd": etp_cnt.get(n, 0)} for n, _c, _s in _V120_ETAPAS if n != "Finalizado"],
+        "clientes": [{"nome": n, "qtd": q} for n, q in sorted(cli_cnt.items(), key=lambda z: -z[1])[:10]],
+        "falhas": top_f, "reincidencias": rein_top[:10], "tecnicos": tecs, "mapa_dias": [d.isoformat() for d in ult10],
+        "producao": prod_lista, "os": lista, "sla": sla, "aguard_devolucao": aguard_dev, "sem_os": sem_os,
+    }
+
+
+@app.get("/api/assistencia/executivo")
+@login_required
+def v128_executivo_api():
+    if not _portal_staff():
+        abort(403)
+    try:
+        chave = (tuple(sorted(request.args.items())), int(time.time() // 120))
+        cache = _V128["cache"]
+        if chave not in cache:
+            if len(cache) > 30:
+                cache.clear()
+            cache[chave] = _v128_dados(request.args)
+        return jsonify(cache[chave])
+    except Exception:
+        db.session.rollback()
+        app.logger.exception("REV58: falha no painel executivo")
+        return jsonify({"ok": False, "error": "Não foi possível montar o painel agora. Tente de novo."}), 500
+
+
+@app.get("/portal-cliente/assistencia-tecnica/dashboard")
+@login_required
+def v128_executivo_page():
+    if not _portal_staff():
+        abort(403)
+    return render_template("assistencia_dashboard_v128.html", app_release=APP_RELEASE)
+
+
+def _v128_boot():
+    try:
+        with app.app_context():
+            _v128_ensure()
+            with db.engine.connect() as c:
+                tem = c.execute(text("SELECT COUNT(*) FROM v128_at_hist")).scalar()
+            if not tem:
+                n = _v128_snapshot()
+                app.logger.info("REV58: histórico de etapas iniciado com %s OS", n)
+    except Exception:
+        app.logger.exception("REV58: falha ao iniciar o histórico de etapas")
+
+
+if os.environ.get("V128_BOOT", "1") != "0":
+    threading.Timer(25, _v128_boot).start()
+# =================== fim REV58 ===================

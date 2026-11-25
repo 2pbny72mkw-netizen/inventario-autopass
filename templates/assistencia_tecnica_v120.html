@@ -63,6 +63,7 @@
     <label>Data fim<input id="atAte" type="date"></label>
     <label>Nº de série<input id="atBusca" type="search" placeholder="Buscar série ou falha"></label>
     <button type="button" class="atBtn g" id="atLimpar" title="Limpar filtros">✕ Limpar</button>
+    {% if internal %}<a class="atBtn" href="/portal-cliente/assistencia-tecnica/dashboard" style="text-decoration:none">📊 Dashboard</a>{% endif %}
     {% if internal %}<button type="button" class="atBtn" onclick="etOpen()">🏷 Imprimir etiqueta</button>{% endif %}
     {% if can_load %}<button type="button" class="atBtn p" onclick="atCargaOpen()">⇪ Carga do Bhom</button>{% endif %}
   </div>

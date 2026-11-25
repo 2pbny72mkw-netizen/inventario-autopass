@@ -1,0 +1,176 @@
+{% extends 'base.html' %}{% block title %}Assistência Técnica · Dashboard{% endblock %}
+{% block content %}
+<style>
+.exW{display:flex;flex-direction:column;gap:14px;color:#16283d;font-family:inherit}
+.exHead{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end}.exHead h1{margin:0;font-size:26px}.exHead p{margin:4px 0 0;font-size:13px;color:#4a5b70}
+.exHead label{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:700;color:#4a5b70}
+.exHead select,.exHead input{height:40px;border:1px solid #8a9bb0;border-radius:10px;padding:0 10px;font:inherit;font-size:14px;background:#fff;color:#16283d}
+html .exW .exBtn,html .exM .exBtn{height:40px;min-height:40px;padding:0 14px;border-radius:10px;border:1px solid #0f1e3d;background:#fff;color:#0f1e3d;font:inherit;font-weight:700;font-size:13px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;white-space:nowrap;text-decoration:none}
+html .exW .exBtn:hover,html .exM .exBtn:hover{background:#eef3fa}html .exW .exBtn.g{border-color:transparent;color:#1e3a8a}
+.exK{display:grid;grid-template-columns:repeat(auto-fit,minmax(178px,1fr));gap:10px}
+html .exW .exKpi{all:unset;box-sizing:border-box;cursor:pointer;border-radius:14px;padding:12px 14px;background:#fff;border:1px solid #dbe4ef;border-top:4px solid #8a9bb0;display:flex;flex-direction:column;gap:2px;transition:transform .12s,box-shadow .12s}
+html .exW .exKpi:hover,html .exW .exKpi:focus-visible{transform:translateY(-2px);box-shadow:0 6px 16px rgba(15,30,61,.14);outline:none}
+.exKpi span{font-size:11px;font-weight:800;letter-spacing:.03em;color:#4a5b70;text-transform:uppercase}.exKpi b{font-size:28px;font-weight:800;line-height:1.15;font-variant-numeric:tabular-nums}.exKpi small{font-size:12px;color:#4a5b70;font-weight:600}
+.exKpi.ok{border-top-color:#0e7a5a}.exKpi.ok b{color:#0e7a5a}.exKpi.al{border-top-color:#d97706}.exKpi.al b{color:#b45309}.exKpi.cr{border-top-color:#dc2626;background:#fff5f5}.exKpi.cr b{color:#b91c1c}.exKpi.nv{border-top-color:#0f1e3d}.exKpi.in{border-top-color:#2563eb}
+.up{color:#0e7a5a}.dn{color:#b91c1c}
+.exG{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:12px}
+.exC{background:#fff;border:1px solid #dbe4ef;border-radius:16px;padding:14px 16px;min-width:0;display:flex;flex-direction:column;gap:8px}.exC h2{margin:0;font-size:15px;display:flex;align-items:center;gap:8px}.exC h2 small{margin-left:auto;font-size:12px;color:#4a5b70;font-weight:600}
+.exC.full{grid-column:1/-1}
+html .exW .exBar{all:unset;box-sizing:border-box;display:grid;grid-template-columns:minmax(110px,190px) 1fr 52px;gap:8px;align-items:center;width:100%;padding:4px 6px;border-radius:8px;font-size:13px;cursor:pointer}
+html .exW .exBar:hover,html .exW .exBar:focus-visible{background:#f1f5fb;outline:none}.exBar span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.exBar u{display:block;height:14px;background:#eef2f7;border-radius:7px;text-decoration:none;overflow:hidden}.exBar u i{display:block;height:100%;border-radius:7px}.exBar b{text-align:right;font-variant-numeric:tabular-nums}
+.exT{width:100%;border-collapse:collapse;font-size:13px}.exT th{text-align:left;color:#4a5b70;border-bottom:2px solid #dbe4ef;padding:6px 8px;white-space:nowrap;position:sticky;top:0;background:#fff;cursor:pointer;user-select:none}.exT td{padding:6px 8px;border-bottom:1px solid #eef2f7;vertical-align:middle}
+.exT td.n,.exT th.n{text-align:right;font-variant-numeric:tabular-nums}.exT tbody tr{cursor:pointer}.exT tbody tr:hover{background:#f3f7fc}
+.pl{display:inline-block;white-space:nowrap;font-weight:800;font-size:12px;padding:2px 8px;border-radius:999px}.pOk{background:#dcfce7;color:#14532d}.pAl{background:#fef3c7;color:#7a4a00}.pCr{background:#fee2e2;color:#991b1b}.pNe{background:#eef2f7;color:#334155}
+.exSc{overflow:auto;max-height:420px}
+.hm{display:grid;gap:3px;font-size:11px;align-items:center}.hm span{color:#4a5b70;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.hm button{all:unset;box-sizing:border-box;height:22px;border-radius:4px;cursor:pointer;text-align:center;font-weight:700;font-size:11px;line-height:22px}
+.hm button:hover,.hm button:focus-visible{outline:2px solid #0f1e3d}
+.exMut{font-size:12px;color:#4a5b70;margin:0}.exEmpty{color:#4a5b70;font-size:13px;padding:12px;text-align:center}
+.exM{position:fixed;inset:0;background:rgba(7,27,51,.56);display:flex;align-items:center;justify-content:center;z-index:1000;padding:14px}.exM[hidden]{display:none}
+.exBox{background:#fff;border-radius:18px;padding:16px 18px;width:min(1180px,calc(100vw - 28px));max-height:88vh;display:flex;flex-direction:column;gap:10px;box-sizing:border-box}
+.exBox .exSc{max-height:none;flex:1}
+.exLoad{opacity:.55;pointer-events:none}
+@media(max-width:700px){.exG{grid-template-columns:1fr}.exBar{grid-template-columns:110px 1fr 44px}}
+</style>
+<div class="exW" id="exW">
+  <div class="exHead">
+    <div style="flex:1;min-width:260px"><h1>📊 Assistência Técnica · Dashboard</h1><p id="exSub">Carregando…</p></div>
+    <label>Período<select id="exPer"><option value="mes">Mês atual</option><option value="30">Últimos 30 dias</option><option value="90">Últimos 90 dias</option><option value="ano">Ano atual</option><option value="custom">Personalizado</option></select></label>
+    <label>Data início<input type="date" id="exDe"></label>
+    <label>Data fim<input type="date" id="exAte"></label>
+    <label>Cliente<select id="exCli"><option value="">Todos</option></select></label>
+    <label>Técnico<select id="exTec"><option value="">Todos</option></select></label>
+    <button type="button" class="exBtn g" id="exLimpar">✕ Limpar</button>
+    <a class="exBtn" href="/portal-cliente/assistencia-tecnica">← Lista de equipamentos</a>
+  </div>
+  <section class="exK" id="exK" aria-label="Indicadores"></section>
+  <div class="exG">
+    <section class="exC"><h2>Entradas × saídas por semana<small id="exSemLeg"></small></h2><div id="exSem"></div></section>
+    <section class="exC"><h2>Backlog por idade <small>dias úteis desde a abertura</small></h2><div id="exAging"></div><h2 style="margin-top:6px">Backlog por etapa</h2><div id="exEtapas"></div></section>
+    <section class="exC"><h2>Clientes que mais trouxeram <small>OS abertas no período</small></h2><div id="exCliB"></div></section>
+    <section class="exC"><h2>Falhas mais frequentes <small>Pareto do período</small></h2><div id="exFal"></div></section>
+    <section class="exC full"><h2>Eficiência dos técnicos <small id="exTecLeg"></small></h2><div class="exSc" id="exTecT"></div><p class="exMut">Produção = OS finalizadas + orçamentos gerados (entrada em Aguardando aprovação). Dias trabalhados = dias com produção. Cores pela meta: verde ≥ 7, âmbar 5 a 6,9, vermelho &lt; 5. Clique na linha para ver as OS.</p></section>
+    <section class="exC"><h2>OS por dia — últimos 10 dias úteis</h2><div id="exHm"></div><p class="exMut">Cinza = sem produção. Clique no dia para ver as OS.</p></section>
+    <section class="exC"><h2>Maiores reincidências <small>séries com 2+ OS</small></h2><div class="exSc" id="exRein"></div></section>
+    <section class="exC full"><h2>SLA 72 h úteis — recebimento no Portal até a devolução <small id="exSlaLeg"></small></h2><div class="exSc" id="exSla"></div><p class="exMut">Conta só dias úteis (sem fins de semana e datas bloqueadas do calendário) e pausa nos dias em Aguardando aprovação. Ligação com a OS pela série.</p></section>
+    <section class="exC"><h2>Pendentes de peça <small>substatus Aguardando peça</small></h2><div class="exSc" id="exPeca"></div></section>
+    <section class="exC"><h2>Finalizados aguardando devolução</h2><div class="exSc" id="exDev"></div></section>
+    <section class="exC full"><h2>Recebidos no Portal sem OS no Bhom</h2><div class="exSc" id="exSemOs"></div></section>
+  </div>
+</div>
+<div class="exM" id="exM" hidden role="dialog" aria-modal="true" aria-labelledby="exMT"><div class="exBox">
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><div style="flex:1;min-width:220px"><h2 id="exMT" style="margin:0">Detalhe</h2><p class="exMut" id="exMF"></p></div>
+  <input id="exMQ" type="search" placeholder="Buscar" style="height:38px;border:1px solid #b9c7d8;border-radius:8px;padding:0 10px;font:inherit">
+  <button type="button" class="exBtn" id="exMX">⇩ Exportar Excel (CSV)</button><button type="button" class="exBtn" onclick="exClose()">Fechar</button></div>
+  <b id="exMC" style="font-size:13px"></b>
+  <div class="exSc"><table class="exT" id="exMTab"><thead></thead><tbody></tbody></table></div>
+</div></div>
+<script>
+(function(){
+const $=id=>document.getElementById(id);
+const esc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+const nf=n=>n==null?'—':Number(n).toLocaleString('pt-BR');
+const br=s=>s?String(s).slice(0,10).split('-').reverse().join('/')+(String(s).length>10?' '+String(s).slice(11,16):''):'';
+const PAL=['#0f5e5a','#2563eb','#7c3aed','#0e7a5a','#d97706','#db2777','#0891b2','#64748b'];
+const ETC={'Aguardando orçamento':'#8a9bb0','Aguardando aprovação':'#f2c14e','Em execução':'#2563eb','Embalagem / NF':'#2ba6a0','Finalizado':'#0e7a5a'};
+let D=null,M={rows:[],cols:[],sk:null,dir:1,nome:''};
+function iso(d){return d.toISOString().slice(0,10)}
+function hoje(){const d=new Date();d.setMinutes(d.getMinutes()-d.getTimezoneOffset());return d}
+function perDatas(){const p=$('exPer').value,h=hoje();let de=new Date(h);
+  if(p==='mes')de=new Date(h.getFullYear(),h.getMonth(),1,12);else if(p==='30')de.setDate(de.getDate()-29);else if(p==='90')de.setDate(de.getDate()-89);else if(p==='ano')de=new Date(h.getFullYear(),0,1,12);else return;
+  $('exDe').value=iso(de);$('exAte').value=iso(h)}
+function filtrosTxt(){const c=$('exCli'),t=$('exTec');return `Período ${br($('exDe').value)} a ${br($('exAte').value)} · Cliente: ${c.value?c.options[c.selectedIndex].text:'todos'} · Técnico: ${t.value||'todos'}`}
+async function load(){const w=$('exW');w.classList.add('exLoad');
+  try{const q=new URLSearchParams({de:$('exDe').value,ate:$('exAte').value,cliente:$('exCli').value,tecnico:$('exTec').value});
+   const r=await fetch('/api/assistencia/executivo?'+q,{cache:'no-store'});const d=await r.json().catch(()=>({}));if(!r.ok||!d.ok)throw new Error(d.error||'Falha ao carregar.');
+   D=d;fillSel();render()}
+  catch(e){$('exSub').textContent=e.message}finally{w.classList.remove('exLoad')}}
+function fillSel(){const c=$('exCli'),t=$('exTec');if(c.options.length<2){c.innerHTML='<option value="">Todos</option>'+D.clientes_lista.map(x=>`<option value="${x.id}">${esc(x.nome)}</option>`).join('')}
+  if(t.options.length<2){t.innerHTML='<option value="">Todos</option>'+D.tecnicos_lista.map(x=>`<option>${esc(x)}</option>`).join('')}}
+function kpi(cls,lab,val,sub,key,tit){return `<button type="button" class="exKpi ${cls}" data-d="${key}" data-t="${esc(tit||lab)}"><span>${lab}</span><b>${val}</b><small>${sub||''}</small></button>`}
+function render(){const k=D.kpis,P=D.periodo;
+  $('exSub').textContent=`Período ${br(P.de)} a ${br(P.ate)} · ${P.dias_uteis} dias úteis · meta ${D.meta_os_dia} OS/técnico/dia`+(D.historico_desde?` · histórico de etapas desde ${br(D.historico_desde)}`:'');
+  const var_=k.os_anterior?Math.round(100*(k.os_periodo-k.os_anterior)/k.os_anterior):null;
+  const od=k.os_dia_equipe,odc=od>=D.meta_os_dia?'ok':od>=5?'al':'cr';
+  $('exK').innerHTML=[
+   kpi('nv','OS no período',nf(k.os_periodo),var_==null?'sem base anterior':`<span class="${var_>=0?'up':'dn'}">${var_>=0?'▲':'▼'} ${Math.abs(var_)}%</span> vs período anterior (${nf(k.os_anterior)})`,'periodo'),
+   kpi('in','Em aberto (backlog)',nf(k.backlog),'todas as etapas antes de Finalizado','aberto'),
+   kpi(k.sla_estourado?'cr':'ok','SLA 72 h estourado',nf(k.sla_estourado),'recebidos no Portal, ainda não devolvidos','sla:Estourado'),
+   kpi(k.sla_no_prazo_pct==null?'':k.sla_no_prazo_pct>=90?'ok':k.sla_no_prazo_pct>=70?'al':'cr','Devolvidos no prazo',k.sla_no_prazo_pct==null?'—':k.sla_no_prazo_pct+'%',`${nf(k.sla_devolvidos)} devolvido(s) no período`,'sla:dev'),
+   kpi(k.pend_peca?'al':'ok','Pendente de peça',nf(k.pend_peca),'substatus Aguardando peça','pend'),
+   kpi(k.aguard_aprov?'al':'ok','Aguardando aprovação',nf(k.aguard_aprov),k.aguard_aprov_dias!=null?`parado há ${nf(k.aguard_aprov_dias)} dia(s) em média`:'depende do cliente','aa'),
+   kpi(k.aguard_devolucao?'al':'ok','Aguardando devolução',nf(k.aguard_devolucao),'finalizados e não devolvidos','adev'),
+   kpi(k.sem_os?'al':'ok','Recebidos sem OS',nf(k.sem_os),'no Portal, sem OS no Bhom','semos'),
+   kpi('nv','Finalizadas no período',nf(k.finalizadas),'encerradas pelo técnico','fin'),
+   kpi('in','Tempo médio de reparo',k.tempo_medio==null?'—':nf(k.tempo_medio)+' d','abertura → encerramento','fin','Finalizadas no período · tempo de reparo'),
+   kpi(k.reinc_pct>5?'cr':k.reinc_pct>3?'al':'ok','Reincidência (90 dias)',nf(k.reinc_pct)+'%',`${nf(k.reinc)} OS com entrada anterior em 90 dias`,'rein'),
+   kpi(odc,'OS por técnico/dia',nf(od),`meta ${D.meta_os_dia} · média da equipe`,'prod','Produção dos técnicos no período')
+  ].join('');
+  semanas();bars('exAging',D.aging.map((x,i)=>({n:x.faixa,q:x.qtd,k:'faixa:'+i,c:['#0e7a5a','#d97706','#ea580c','#dc2626','#991b1b'][i]})));
+  bars('exEtapas',D.etapas.map(x=>({n:x.nome,q:x.qtd,k:'etapa:'+x.nome,c:ETC[x.nome]})));
+  bars('exCliB',D.clientes.map((x,i)=>({n:x.nome,q:x.qtd,k:'cli:'+x.nome,c:i<3?'#7c3aed':'#a78bfa'})));
+  const ft=D.falhas.reduce((s,x)=>s+x.qtd,0);bars('exFal',D.falhas.map((x,i)=>({n:x.nome,q:x.qtd,k:'falha:'+x.nome,c:x.nome==='OUTRAS'?'#94a3b8':i<2?'#ea580c':'#fb923c',p:ft?Math.round(100*x.qtd/ft)+'%':''})));
+  tecnicos();mapa();rein();sla();peca();dev();semos()}
+function bars(id,arr){const mx=Math.max(1,...arr.map(x=>x.q));$(id).innerHTML=arr.length&&arr.some(x=>x.q)?arr.map(x=>`<button type="button" class="exBar" data-d="${esc(x.k)}" data-t="${esc(x.n)}" title="${esc(x.n)}: ${x.q}"><span>${esc(x.n)}</span><u><i style="width:${Math.max(2,100*x.q/mx)}%;background:${x.c||PAL[0]}"></i></u><b>${nf(x.q)}${x.p?` <small style="color:#4a5b70;font-weight:600">${x.p}</small>`:''}</b></button>`).join(''):'<div class="exEmpty">Sem dados no recorte.</div>'}
+function semanas(){const s=D.semanas;if(!s.length){$('exSem').innerHTML='<div class="exEmpty">Sem semanas no período.</div>';return}
+  const W=560,H=200,L=34,B=26,mx=Math.max(1,...s.map(x=>Math.max(x.entradas,x.saidas))),st=(W-L-10)/Math.max(1,s.length-1),y=v=>H-B-(H-B-12)*v/mx,x=i=>L+(s.length>1?st*i:(W-L)/2);
+  const ln=(k,c)=>`<polyline fill="none" stroke="${c}" stroke-width="2.5" points="${s.map((v,i)=>x(i)+','+y(v[k])).join(' ')}"/>`+s.map((v,i)=>`<circle cx="${x(i)}" cy="${y(v[k])}" r="5" fill="${c}" style="cursor:pointer" data-d="sem:${v.semana}:${k}" data-t="Semana de ${br(v.semana)} · ${k}"><title>${br(v.semana)}: ${v[k]} ${k}</title></circle>`).join('');
+  const gr=[0,.5,1].map(f=>`<line x1="${L}" x2="${W-6}" y1="${y(mx*f)}" y2="${y(mx*f)}" stroke="#eef2f7"/><text x="${L-6}" y="${y(mx*f)+4}" text-anchor="end" font-size="11" fill="#4a5b70">${Math.round(mx*f)}</text>`).join('');
+  const lb=s.map((v,i)=>(s.length<=10||i%Math.ceil(s.length/10)===0)?`<text x="${x(i)}" y="${H-8}" text-anchor="middle" font-size="11" fill="#4a5b70">${br(v.semana).slice(0,5)}</text>`:'').join('');
+  $('exSem').innerHTML=`<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Entradas e saídas por semana">${gr}${lb}${ln('entradas','#7c3aed')}${ln('saidas','#0e7a5a')}</svg>`;
+  $('exSemLeg').innerHTML='<span style="color:#7c3aed">● entradas</span> &nbsp; <span style="color:#0e7a5a">● saídas</span>'}
+function corMeta(v){return v>=D.meta_os_dia?'pOk':v>=5?'pAl':'pCr'}
+function tecnicos(){const t=D.tecnicos;$('exTecLeg').textContent=`${D.periodo.dias_uteis} dias úteis no período · meta ${D.meta_os_dia} OS/dia`;
+  if(!t.length){$('exTecT').innerHTML='<div class="exEmpty">Sem produção no período.</div>';return}const mx=Math.max(D.meta_os_dia*1.3,...t.map(x=>x.os_dia));
+  $('exTecT').innerHTML=`<table class="exT"><thead><tr><th>Técnico</th><th class="n">Dias trab.</th><th class="n">Finalizadas</th><th class="n">Orçamentos</th><th class="n">Produção</th><th class="n">OS / dia</th><th style="min-width:150px">vs meta ${D.meta_os_dia}</th><th class="n">Tempo méd.</th><th class="n">Retorno 90d</th></tr></thead><tbody>${t.map(x=>`<tr data-d="tec:${esc(x.tecnico)}" data-t="Produção de ${esc(x.tecnico)}" tabindex="0"><td><b>${esc(x.tecnico)}</b></td><td class="n">${x.dias_trabalhados} / ${x.dias_uteis}</td><td class="n">${nf(x.finalizadas)}</td><td class="n">${nf(x.orcamentos)}</td><td class="n">${nf(x.producao)}</td><td class="n"><span class="pl ${corMeta(x.os_dia)}">${nf(x.os_dia)}</span></td><td><div style="position:relative;height:12px;background:#eef2f7;border-radius:6px"><i style="position:absolute;left:0;top:0;bottom:0;width:${Math.min(100,100*x.os_dia/mx)}%;border-radius:6px;background:${x.os_dia>=D.meta_os_dia?'#0e7a5a':x.os_dia>=5?'#d97706':'#dc2626'}"></i><i style="position:absolute;top:-3px;bottom:-3px;left:${100*D.meta_os_dia/mx}%;border-left:2px dashed #0f1e3d" title="meta"></i></div></td><td class="n">${x.tempo_medio==null?'—':nf(x.tempo_medio)+' d'}</td><td class="n">${x.retorno_90d==null?'—':`<span class="pl ${x.retorno_90d>5?'pCr':x.retorno_90d>3?'pAl':'pOk'}">${nf(x.retorno_90d)}%</span>`}</td></tr>`).join('')}</tbody></table>`}
+function mapa(){const t=D.tecnicos,ds=D.mapa_dias;if(!t.length){$('exHm').innerHTML='<div class="exEmpty">Sem produção no período.</div>';return}
+  const cor=v=>!v?'#eef2f7':v>=D.meta_os_dia?'#0f5e5a':v>=5?'#2ba6a0':v>=3?'#7dd3c0':'#c8efe5',txt=v=>v>=5?'#fff':'#0f1e3d';
+  $('exHm').innerHTML=`<div class="hm" style="grid-template-columns:120px repeat(${ds.length},1fr)"><span></span>${ds.map(d=>`<span style="text-align:center">${br(d).slice(0,5)}</span>`).join('')}${t.map(x=>`<span title="${esc(x.tecnico)}">${esc(x.tecnico)}</span>${x.mapa.map((v,i)=>`<button type="button" style="background:${cor(v)};color:${txt(v)}" data-d="tecdia:${esc(x.tecnico)}|${ds[i]}" data-t="${esc(x.tecnico)} · ${br(ds[i])}" title="${esc(x.tecnico)} · ${br(ds[i])}: ${v} OS">${v||''}</button>`).join('')}`).join('')}</div>`}
+function mini(id,rows,cols,vazio){$(id).innerHTML=rows.length?`<table class="exT"><thead><tr>${cols.map(c=>`<th class="${c[2]||''}">${c[0]}</th>`).join('')}</tr></thead><tbody>${rows.slice(0,8).map(r=>`<tr data-d="${esc(r.__k)}" data-t="${esc(r.__t)}" tabindex="0">${cols.map(c=>`<td class="${c[2]||''}">${c[1](r)}</td>`).join('')}</tr>`).join('')}</tbody></table>${rows.length>8?`<button type="button" class="exBtn g" data-d="${esc(rows[0].__all)}" data-t="${esc(rows[0].__allt)}">Ver todos (${rows.length})</button>`:''}`:`<div class="exEmpty">${vazio}</div>`}
+function rein(){mini('exRein',D.reincidencias.map(x=>Object.assign({__k:'serie:'+x.serie,__t:'Série '+x.serie,__all:'reinTop',__allt:'Maiores reincidências'},x)),[['Série',x=>`<b>${esc(x.serie)}</b>`],['Cliente',x=>esc(x.cliente)],['Última',x=>br(x.ultima)],['Vezes',x=>`<span class="pl ${x.vezes>=4?'pCr':'pAl'}">${x.vezes}×</span>`,'n']],'Nenhuma série repetida no período.')}
+function slaPill(s){return `<span class="pl ${/Estourado|fora/.test(s)?'pCr':/devolvido no/i.test(s)?'pOk':'pNe'}">${esc(s)}</span>`}
+function sla(){const a=D.sla.filter(x=>!x.devolvido).sort((p,q)=>q.horas_uteis-p.horas_uteis);$('exSlaLeg').textContent=`${a.length} em andamento · ${D.kpis.sla_estourado} estourado(s)`;
+  mini('exSla',a.map(x=>Object.assign({__k:'sla:open',__t:'SLA em andamento',__all:'sla:open',__allt:'SLA em andamento'},x)),[['Agendamento',x=>esc(x.codigo)],['Cliente',x=>esc(x.cliente)],['Série',x=>esc(x.serie)],['OS',x=>esc(x.os||'—')],['Etapa',x=>esc(x.etapa)],['Recebido',x=>br(x.recebido)],['Horas úteis',x=>`<b>${nf(x.horas_uteis)}</b> / ${D.sla_horas}`,'n'],['Pausa',x=>x.pausa_dias?x.pausa_dias+' d':'—','n'],['Situação',x=>slaPill(x.situacao)]],'Nenhum equipamento recebido em andamento.')}
+function peca(){mini('exPeca',D.os.filter(x=>x.pend_peca).sort((p,q)=>(q.idade||0)-(p.idade||0)).map(x=>Object.assign({__k:'pend',__t:'Pendentes de peça',__all:'pend',__allt:'Pendentes de peça'},x)),[['OS',x=>`<b>${esc(x.os)}</b>`],['Cliente',x=>esc(x.cliente)],['Peça',x=>esc(x.peca||'—')],['Idade',x=>x.idade==null?'—':x.idade+' d.ú.','n']],'Nenhuma OS aguardando peça.')}
+function dev(){mini('exDev',D.aguard_devolucao.slice().sort((p,q)=>(q.parado||0)-(p.parado||0)).map(x=>Object.assign({__k:'adev',__t:'Aguardando devolução',__all:'adev',__allt:'Aguardando devolução'},x)),[['OS',x=>`<b>${esc(x.os)}</b>`],['Cliente',x=>esc(x.cliente)],['Série',x=>esc(x.serie)],['Finalizado',x=>br(x.finalizado)],['Parado',x=>x.parado==null?'—':x.parado+' d','n'],['SLA',x=>slaPill(x.situacao)]],'Nenhum equipamento finalizado aguardando devolução.')}
+function semos(){mini('exSemOs',D.sem_os.slice().sort((p,q)=>q.parado-p.parado).map(x=>Object.assign({__k:'semos',__t:'Recebidos sem OS',__all:'semos',__allt:'Recebidos sem OS'},x)),[['Agendamento',x=>esc(x.codigo)],['Cliente',x=>esc(x.cliente)],['Série',x=>esc(x.serie)],['Equipamento',x=>esc(x.equipamento)],['Recebido',x=>br(x.recebido)],['Há',x=>x.parado+' d','n'],['SLA',x=>slaPill(x.situacao)]],'Todos os recebidos já têm OS no Bhom.')}
+const C_OS=[['OS','os'],['Cliente','cliente'],['Série','serie'],['Técnico','tecnico'],['Etapa','etapa'],['Substatus','substatus'],['Abertura','abertura','d'],['Encerramento','encerramento','d'],['Idade (d.ú.)','idade','n'],['Falha','falha']];
+const C_SLA=[['Agendamento','codigo'],['Cliente','cliente'],['Série','serie'],['Equipamento','equipamento'],['OS','os'],['Etapa','etapa'],['Técnico','tecnico'],['Recebido','recebido','d'],['Devolvido','devolvido','d'],['Horas úteis','horas_uteis','n'],['Pausa (d)','pausa_dias','n'],['Situação','situacao']];
+const C_PROD=[['Dia','dia','d'],['Técnico','tecnico'],['OS','os'],['Produção','tipo'],['Cliente','cliente'],['Série','serie'],['Etapa','etapa'],['Falha','falha']];
+function prodRows(f){const m=Object.fromEntries(D.os.map(o=>[o.os,o]));return D.producao.filter(f).map(p=>Object.assign({},m[p.os]||{},p))}
+function drill(key){const os=D.os;const [t,...r]=key.split(':');const v=r.join(':');
+  switch(t){
+   case 'periodo':return [os.filter(x=>x.periodo),C_OS];case 'aberto':return [os.filter(x=>x.aberta),C_OS];case 'pend':return [os.filter(x=>x.pend_peca),C_OS.concat([['Peça','peca']])];
+   case 'aa':return [os.filter(x=>x.aberta&&x.etapa==='Aguardando aprovação'),C_OS.concat([['Parada (d)','parada','n']])];case 'fin':return [os.filter(x=>x.finalizada),C_OS];case 'rein':return [os.filter(x=>x.reinc),C_OS];
+   case 'faixa':return [os.filter(x=>x.aberta&&String(x.faixa)===v),C_OS];case 'etapa':return [os.filter(x=>x.aberta&&x.etapa===v),C_OS];
+   case 'cli':return [os.filter(x=>x.periodo&&x.cliente===v),C_OS];
+   case 'falha':{const top=new Set(D.falhas.map(f=>f.nome));return [os.filter(x=>x.periodo&&(v==='OUTRAS'?!top.has((x.falha||'NÃO INFORMADA').toUpperCase().slice(0,60)):(x.falha||'NÃO INFORMADA').toUpperCase().slice(0,60)===v)),C_OS]}
+   case 'sem':{const [w,k]=v.split(':');const fim=new Date(w+'T12:00:00');fim.setDate(fim.getDate()+6);const f=iso(fim);return [os.filter(x=>k==='entradas'?(x.periodo&&x.abertura>=w&&x.abertura<=f):(x.finalizada&&x.encerramento>=w&&x.encerramento<=f)),C_OS]}
+   case 'serie':return [os.filter(x=>x.serie===v),C_OS];case 'reinTop':return [D.reincidencias,[['Série','serie'],['Cliente','cliente'],['Vezes','vezes','n'],['Última entrada','ultima','d'],['Última falha','falha']]];
+   case 'tec':return [prodRows(p=>p.tecnico===v),C_PROD];case 'prod':return [prodRows(()=>true),C_PROD];
+   case 'tecdia':{const [n,d]=v.split('|');return [prodRows(p=>p.tecnico===n&&p.dia===d),C_PROD]}
+   case 'sla':return [v==='Estourado'?D.sla.filter(x=>x.situacao==='Estourado'):v==='dev'?D.sla.filter(x=>x.devolvido&&x.devolvido.slice(0,10)>=D.periodo.de&&x.devolvido.slice(0,10)<=D.periodo.ate):v==='open'?D.sla.filter(x=>!x.devolvido):D.sla,C_SLA];
+   case 'adev':return [D.aguard_devolucao,C_SLA.concat([['Finalizado','finalizado','d'],['Parado (d)','parado','n']])];case 'semos':return [D.sem_os,C_SLA.concat([['Há (d)','parado','n']])];
+  }return [[],C_OS]}
+function open(key,tit){const [rows,cols]=drill(key);M={rows,cols,sk:null,dir:1,nome:tit||'Detalhe'};$('exMT').textContent=M.nome;$('exMF').textContent=filtrosTxt();$('exMQ').value='';draw();$('exM').hidden=false;$('exMQ').focus()}
+window.exClose=()=>{$('exM').hidden=true};
+function vis(){const q=$('exMQ').value.trim().toUpperCase();let a=M.rows.filter(r=>!q||M.cols.some(c=>String(r[c[1]]??'').toUpperCase().includes(q)));
+  if(M.sk){const c=M.cols.find(c=>c[1]===M.sk),n=c&&c[2]==='n';a=a.slice().sort((x,y)=>{const p=x[M.sk],s=y[M.sk];if(n)return ((p??-1e9)-(s??-1e9))*M.dir;return String(p??'').localeCompare(String(s??''),'pt-BR',{sensitivity:'base'})*M.dir})}return a}
+function cel(c,v){if(c[2]==='d')return br(v);if(c[1]==='situacao')return slaPill(v);if(c[1]==='etapa'&&v)return `<span class="pl" style="background:${ETC[v]||'#eef2f7'}22;color:#16283d;border:1px solid ${ETC[v]||'#cbd5e1'}">${esc(v)}</span>`;return esc(v==null?'—':(c[2]==='n'?nf(v):v))}
+function draw(){const a=vis(),t=$('exMTab');t.tHead.innerHTML='<tr>'+M.cols.map(c=>`<th class="${c[2]==='n'?'n':''}" data-k="${c[1]}" aria-sort="${M.sk===c[1]?(M.dir>0?'ascending':'descending'):'none'}">${c[0]} ${M.sk===c[1]?(M.dir>0?'▲':'▼'):'⇅'}</th>`).join('')+'</tr>';
+  t.tBodies[0].innerHTML=a.length?a.map(r=>'<tr>'+M.cols.map(c=>`<td class="${c[2]==='n'?'n':''}">${cel(c,r[c[1]])}</td>`).join('')+'</tr>').join(''):`<tr><td colspan="${M.cols.length}" class="exEmpty">Nenhum registro.</td></tr>`;
+  $('exMC').textContent=`${a.length} de ${M.rows.length} registro(s)`}
+$('exMTab').tHead.addEventListener('click',e=>{const th=e.target.closest('th');if(!th)return;const k=th.dataset.k;M.dir=M.sk===k?-M.dir:1;M.sk=k;draw()});
+$('exMQ').addEventListener('input',draw);
+$('exMX').onclick=()=>{const a=vis(),L=[M.cols.map(c=>c[0])].concat(a.map(r=>M.cols.map(c=>c[2]==='d'?br(r[c[1]]):(r[c[1]]??''))));
+  const csv='﻿'+L.map(x=>x.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(';')).join('\r\n');const el=document.createElement('a');el.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));el.download='assistencia-'+M.nome.toLowerCase().replace(/[^a-z0-9]+/gi,'-').slice(0,50)+'.csv';el.click()};
+document.addEventListener('click',e=>{const el=e.target.closest('[data-d]');if(!el||!D||!$('exW').contains(el))return;open(el.dataset.d,el.dataset.t)});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('exM').hidden)exClose();const el=e.target.closest&&e.target.closest('tr[data-d]');if(el&&(e.key==='Enter'||e.key===' ')){e.preventDefault();open(el.dataset.d,el.dataset.t)}});
+$('exM').addEventListener('click',e=>{if(e.target.id==='exM')exClose()});
+$('exPer').onchange=()=>{if($('exPer').value!=='custom'){perDatas();load()}};
+['exDe','exAte'].forEach(id=>$(id).addEventListener('change',()=>{$('exPer').value='custom';load()}));
+['exCli','exTec'].forEach(id=>$(id).addEventListener('change',load));
+$('exLimpar').onclick=()=>{$('exPer').value='mes';$('exCli').value='';$('exTec').value='';perDatas();load()};
+perDatas();load();
+})();
+</script>
+{% endblock %}
