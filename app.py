@@ -33741,7 +33741,7 @@ def _v114_import_releases():
                     data = apk.read_bytes()
                     if not data or not _r2_available():
                         continue
-                    key = "repo_" + _repo_uuid4().hex + "_" + apk.name
+                    key = "repo_" + _repo_uuid4().hex + ".apk"
                     _r2_put_bytes("implantacao/drive/" + key, data, "application/vnd.android.package-archive")
                     f = ImplantationRepoFile(folder_id=folder.id, name=apk.name, version=1, storage_key="r2__implantacao/drive/" + key,
                                              content_type="application/vnd.android.package-archive", size=len(data), created_by=None)
@@ -33772,7 +33772,10 @@ def implantation_repo_upload():
     if size>max_mb*1024*1024:return jsonify(ok=False,error=f'Arquivo excede o limite configurado de {max_mb} MB'),413
     last=ImplantationRepoFile.query.filter_by(folder_id=folder_id,name=name,deleted_at=None).order_by(ImplantationRepoFile.version.desc()).first()
     version=(last.version+1) if last else 1
-    key='repo_'+_repo_uuid4().hex+'_'+name
+    # REV63.8: a chave não leva mais o nome do arquivo — storage_key tem 100 caracteres e nomes longos
+    # (ex.: "ESQUEMA_ELETRICO_B80_COM_DATAPROM_-_ARARAS.pdf") estouravam a coluna e davam erro 500.
+    ext=(name.rsplit('.',1)[-1][:10].lower() if '.' in name else '')
+    key='repo_'+_repo_uuid4().hex+('.'+ext if ext else '')
     if _r2_available():
         try:
             _r2_put_bytes('implantacao/drive/'+key,upload.read(),upload.mimetype or 'application/octet-stream')
@@ -33785,8 +33788,13 @@ def implantation_repo_upload():
         except Exception:
             app.logger.exception('Falha ao gravar arquivo local do Drive Técnico')
             return jsonify(ok=False,error='Falha de armazenamento do Drive Técnico.'),503
-    f=ImplantationRepoFile(folder_id=folder_id,name=name,version=version,storage_key=key,content_type=upload.mimetype,size=size,created_by=session.get('user_id'))
-    db.session.add(f);db.session.flush();_repo_audit('REPO_FILE_UPLOAD','implantation_repo_file',f.id,f'{name} v{version}');db.session.commit()
+    try:
+        f=ImplantationRepoFile(folder_id=folder_id,name=name,version=version,storage_key=key,content_type=(upload.mimetype or '')[:120] or None,size=size,created_by=session.get('user_id'))
+        db.session.add(f);db.session.flush();_repo_audit('REPO_FILE_UPLOAD','implantation_repo_file',f.id,f'{name} v{version}');db.session.commit()
+    except Exception:
+        db.session.rollback()
+        app.logger.exception('REV63.8: falha ao registrar arquivo do Drive Técnico (%s)',name)
+        return jsonify(ok=False,error='Não foi possível registrar o arquivo no Drive Técnico; tente novamente.'),500
     return jsonify(ok=True,file=_repo_json_file(f))
 
 def _repo_download_content(f):
