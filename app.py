@@ -21095,7 +21095,7 @@ def petty_cash_pdf(cid):
     if not (_has_access('finance.petty_cash.view') or _has_access('finance.petty_cash.manage')):abort(403)
     c=db.session.get(PettyCash,cid) or abort(404);es=PettyCashEntry.query.filter_by(petty_cash_id=cid).order_by(PettyCashEntry.entry_date,PettyCashEntry.id).all();u=db.session.get(User,c.responsible_id);sm=_petty_cash_summary(c)
     from reportlab.lib.pagesizes import A4; from reportlab.platypus import SimpleDocTemplate,Paragraph,Spacer,Table,TableStyle; from reportlab.lib.styles import getSampleStyleSheet; from reportlab.lib import colors
-    # REV64.2: PDF só com Fornecedor, Categoria, Descrição, Centro de custo/Projeto, Valor e Observação; status FECHADO.
+    # REV64.2/65: PDF só com Data, Fornecedor, Categoria, Descrição, Centro de custo/Projeto, Valor e Observação; status FECHADO.
     from reportlab.lib.pagesizes import landscape
     from reportlab.lib.styles import ParagraphStyle
     brl=lambda v:'R$ '+f'{float(v or 0):,.2f}'.replace(',','X').replace('.',',').replace('X','.')
@@ -21105,10 +21105,10 @@ def petty_cash_pdf(cid):
     story=[Paragraph(f"PRESTAÇÃO DE CONTAS – {sm['control_number']}",st['Title']),Spacer(1,6),
            Paragraph(f'Responsável: {(u.name if u else c.responsible_id)} | Departamento: {c.department or "-"} | Recebimento: {c.received_date.strftime("%d/%m/%Y")} | Status: {sm["status"]}',st['Normal']),Spacer(1,10)]
     P=lambda v:Paragraph(str(v or '').replace('&','&amp;').replace('<','&lt;'),cell)
-    data=[['Fornecedor','Categoria','Descrição','Centro de custo / Projeto','Valor','Observação']]+[[P(x.supplier),P(x.category),P(x.description),P(x.cost_center),brl(x.amount),P(x.notes)] for x in es]
+    data=[['Data','Fornecedor','Categoria','Descrição','Centro de custo / Projeto','Valor','Observação']]+[[x.entry_date.strftime('%d/%m/%Y'),P(x.supplier),P(x.category),P(x.description),P(x.cost_center),brl(x.amount),P(x.notes)] for x in es]
     total=sum(float(x.amount or 0) for x in es if x.entry_type=='DESPESA')
-    data.append(['','','','TOTAL DESPESAS',brl(total),''])
-    t=Table(data,repeatRows=1,colWidths=[120,95,200,120,70,190]);t.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#1F4E78')),('TEXTCOLOR',(0,0),(-1,0),colors.white),('FONTSIZE',(0,0),(-1,-1),7.5),('GRID',(0,0),(-1,-1),.25,colors.grey),('VALIGN',(0,0),(-1,-1),'TOP'),('ALIGN',(4,0),(4,-1),'RIGHT'),('FONTNAME',(3,-1),(4,-1),'Helvetica-Bold')]));story.append(t);doc.build(story);bio.seek(0)
+    data.append(['','','','','TOTAL DESPESAS',brl(total),''])
+    t=Table(data,repeatRows=1,colWidths=[55,115,90,190,115,68,160]);t.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#1F4E78')),('TEXTCOLOR',(0,0),(-1,0),colors.white),('FONTSIZE',(0,0),(-1,-1),7.5),('GRID',(0,0),(-1,-1),.25,colors.grey),('VALIGN',(0,0),(-1,-1),'TOP'),('ALIGN',(5,0),(5,-1),'RIGHT'),('FONTNAME',(4,-1),(5,-1),'Helvetica-Bold')]));story.append(t);doc.build(story);bio.seek(0)
     return send_file(bio,as_attachment=True,download_name=f"prestacao_{sm['control_number']}.pdf",mimetype='application/pdf')
 
 @app.get("/api/v56a/performance")
