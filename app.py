@@ -20986,7 +20986,7 @@ def _petty_cash_summary(c):
     spent=sum(float(x.amount or 0) for x in es if x.entry_type=='DESPESA')
     missing=sum(1 for x in es if x.entry_type=='DESPESA' and not x.receipt_key)
     u=db.session.get(User,c.responsible_id)
-    return {'id':c.id,'control_number':f'CX-{c.received_date.year}-{c.id:04d}','responsible_id':c.responsible_id,'responsible':u.name if u else f'#{c.responsible_id}','department':c.department or '','purpose':c.purpose or '','received_date':c.received_date.isoformat(),'opening_amount':float(c.opening_amount or 0),'payment_method':c.payment_method or '','status':('FECHADO' if c.status=='APROVADO' else c.status),'incoming':incoming,'spent':spent,'balance':float(c.opening_amount or 0)+incoming-spent,'missing_receipts':missing,'can_admin':_petty_cash_is_adm()}
+    return {'id':c.id,'control_number':f'CX-{c.received_date.year}-{c.id:04d}','responsible_id':c.responsible_id,'responsible':u.name if u else f'#{c.responsible_id}','department':c.department or '','purpose':c.purpose or '','received_date':c.received_date.isoformat(),'opening_amount':float(c.opening_amount or 0),'payment_method':c.payment_method or '','status':('FECHADO' if c.status=='APROVADO' else c.status),'incoming':incoming,'spent':spent,'balance':float(c.opening_amount or 0)+incoming-spent,'missing_receipts':missing,'entries_count':len(es),'can_admin':_petty_cash_is_adm()}
 
 @app.route("/api/financeiro/caixinha",methods=["GET","POST"])
 @login_required
@@ -20994,7 +20994,7 @@ def petty_cash_api():
     if request.method=="GET":
         if not (_has_access("finance.petty_cash.view") or _has_access("finance.petty_cash.manage")): abort(403)
         rows=PettyCash.query.order_by(PettyCash.received_date.desc(),PettyCash.id.desc()).all()
-        return jsonify({'ok':True,'rows':[_petty_cash_summary(c) for c in rows],'release':APP_RELEASE,'can_admin':_petty_cash_is_adm()})
+        return jsonify({'ok':True,'rows':[_petty_cash_summary(c) for c in rows],'release':APP_RELEASE,'can_admin':_petty_cash_is_adm(),'can_manage':_has_access('finance.petty_cash.manage')})
     if not _has_access("finance.petty_cash.manage"): abort(403)
     d=request.get_json(silent=True) or {}
     try: rd=date.fromisoformat(d.get('received_date')); amount=float(d.get('opening_amount') or 0)
@@ -37560,3 +37560,41 @@ with app.app_context():
 install_gestaoclick_import(app, {"login_required": login_required, "guard": _v140_guard, "audit": _v140_audit, "engine": _v140_engine,
                                  "user_name": lambda: str(session.get("name") or session.get("user_id") or "")[:180]})
 # =================== fim REV64 ===================
+
+
+# =================== V88.0 REV64.2 — Caixinha: análise (gráficos/filtros) e exclusão de caixinha sem movimento ===================
+@app.get('/api/financeiro/caixinha/analise')
+@login_required
+def petty_cash_analysis_v1642():
+    if not (_has_access('finance.petty_cash.view') or _has_access('finance.petty_cash.manage')):abort(403)
+    cashes={c.id:c for c in PettyCash.query.order_by(PettyCash.received_date.desc()).limit(500).all()}
+    if not cashes:return jsonify({'ok':True,'rows':[]})
+    es=(PettyCashEntry.query.filter(PettyCashEntry.petty_cash_id.in_(list(cashes))).order_by(PettyCashEntry.entry_date.desc(),PettyCashEntry.id.desc()).limit(10000).all())
+    rows=[]
+    for x in es:
+        c=cashes.get(x.petty_cash_id)
+        rows.append({'id':x.id,'cash_id':x.petty_cash_id,'control_number':f'CX-{c.received_date.year}-{c.id:04d}' if c else '',
+                     'date':x.entry_date.isoformat(),'type':x.entry_type,'supplier':x.supplier or '','category':x.category or '',
+                     'description':x.description or '','cost_center':x.cost_center or '','amount':float(x.amount or 0),
+                     'has_receipt':bool(x.receipt_key),'notes':x.notes or ''})
+    return jsonify({'ok':True,'rows':rows})
+
+
+@app.delete('/api/financeiro/caixinha/<int:cid>')
+@login_required
+def petty_cash_delete_v1642(cid):
+    if not _has_access('finance.petty_cash.manage'):return jsonify({'ok':False,'error':'Sem permissão para excluir caixinha.'}),403
+    c=db.session.get(PettyCash,cid)
+    if not c:return jsonify({'ok':False,'error':'Caixinha não encontrada.'}),404
+    n=PettyCashEntry.query.filter_by(petty_cash_id=cid).count()
+    if n:return jsonify({'ok':False,'error':f'Esta caixinha tem {n} lançamento(s); só é possível excluir caixinha sem movimentação.'}),409
+    label=f'CX-{c.received_date.year}-{c.id:04d}'
+    try:
+        db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='PETTY_CASH_DELETED',entity_type='petty_cash',entity_id=str(cid),
+                                  detail=json.dumps({'control_number':label,'opening_amount':float(c.opening_amount or 0),'received_date':c.received_date.isoformat()},ensure_ascii=False)))
+        db.session.delete(c);db.session.commit()
+    except Exception:
+        db.session.rollback();app.logger.exception('REV64.2: falha ao excluir caixinha %s',cid)
+        return jsonify({'ok':False,'error':'Não foi possível excluir a caixinha.'}),500
+    return jsonify({'ok':True,'deleted':label})
+# =================== fim REV64.2 ===================
