@@ -202,9 +202,9 @@ for(const a of direct){
 for(const x of special)frag.appendChild(x);
 // Consolidar qualquer menu Engenharia remanescente em Engenharia e Estoque.
  const eng=makeDrop('Engenharia e Estoque');
- for(const d of [...frag.querySelectorAll(':scope > .navDrop')]){if(d===eng)continue;if(engineeringAliases.has(norm(d.querySelector(':scope > .navDropBtn')?.textContent))){for(const a of [...d.querySelectorAll('a')])eng.querySelector('.navDropMenu').appendChild(a);d.remove()}}
+ for(const d of [...frag.children].filter(x=>x.classList&&x.classList.contains('navDrop'))){if(d===eng)continue;if(engineeringAliases.has(norm(d.querySelector(':scope > .navDropBtn')?.textContent))){for(const a of [...d.querySelectorAll('a')])eng.querySelector('.navDropMenu').appendChild(a);d.remove()}}
  // REV64.1: não mostrar menu vazio (ex.: "Engenharia e Estoque" para usuário Cliente sem essas liberações).
- for(const d of [...frag.querySelectorAll(':scope > .navDrop')])if(!d.querySelector('a'))d.remove();
+ for(const d of [...frag.children].filter(x=>x.classList&&x.classList.contains('navDrop')))if(!d.querySelector('a'))d.remove();
  oldDrops.forEach(x=>x.remove());root.prepend(frag)}catch(e){console.error('MENU_V8522',e)}})();</script>
 <script src="/static/arrow_evidence_v8523.js?v=85.23.0"></script>
 <script src="{{ url_for('static', filename='ap_standard.js') }}?v=85b" defer></script>

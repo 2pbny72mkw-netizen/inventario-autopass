@@ -20986,7 +20986,7 @@ def _petty_cash_summary(c):
     spent=sum(float(x.amount or 0) for x in es if x.entry_type=='DESPESA')
     missing=sum(1 for x in es if x.entry_type=='DESPESA' and not x.receipt_key)
     u=db.session.get(User,c.responsible_id)
-    return {'id':c.id,'control_number':f'CX-{c.received_date.year}-{c.id:04d}','responsible_id':c.responsible_id,'responsible':u.name if u else f'#{c.responsible_id}','department':c.department or '','purpose':c.purpose or '','received_date':c.received_date.isoformat(),'opening_amount':float(c.opening_amount or 0),'payment_method':c.payment_method or '','status':c.status,'incoming':incoming,'spent':spent,'balance':float(c.opening_amount or 0)+incoming-spent,'missing_receipts':missing,'can_admin':_petty_cash_is_adm()}
+    return {'id':c.id,'control_number':f'CX-{c.received_date.year}-{c.id:04d}','responsible_id':c.responsible_id,'responsible':u.name if u else f'#{c.responsible_id}','department':c.department or '','purpose':c.purpose or '','received_date':c.received_date.isoformat(),'opening_amount':float(c.opening_amount or 0),'payment_method':c.payment_method or '','status':('FECHADO' if c.status=='APROVADO' else c.status),'incoming':incoming,'spent':spent,'balance':float(c.opening_amount or 0)+incoming-spent,'missing_receipts':missing,'can_admin':_petty_cash_is_adm()}
 
 @app.route("/api/financeiro/caixinha",methods=["GET","POST"])
 @login_required
@@ -21012,9 +21012,9 @@ def petty_cash_entries_api(cid):
         if not (_has_access("finance.petty_cash.view") or _has_access("finance.petty_cash.manage")): abort(403)
         es=PettyCashEntry.query.filter_by(petty_cash_id=cid).order_by(PettyCashEntry.entry_date,PettyCashEntry.id).all()
         rows=[{'id':x.id,'date':x.entry_date.isoformat(),'type':x.entry_type,'supplier':x.supplier or '','category':x.category or '','description':x.description or '','cost_center':x.cost_center or '','amount':float(x.amount or 0),'payment_method':x.payment_method or '','notes':x.notes or '','has_receipt':bool(x.receipt_key),'receipt_name':x.receipt_name or '','receipt_url':f'/api/financeiro/caixinha/movimentos/{x.id}/comprovante' if x.receipt_key else ''} for x in es]
-        return jsonify({'ok':True,'cash':_petty_cash_summary(c),'rows':rows,'locked':c.status=='APROVADO','can_edit':c.status!='APROVADO' or _petty_cash_is_adm(),'can_admin':_petty_cash_is_adm()})
+        return jsonify({'ok':True,'cash':_petty_cash_summary(c),'rows':rows,'locked':c.status in ('APROVADO','FECHADO'),'can_edit':c.status not in ('APROVADO','FECHADO') or _petty_cash_is_adm(),'can_admin':_petty_cash_is_adm()})
     if not _has_access("finance.petty_cash.manage"):abort(403)
-    if c.status=='APROVADO' and not _petty_cash_is_adm():return jsonify({'ok':False,'error':'Caixinha aprovado: somente ADM pode alterar.'}),403
+    if c.status in ('APROVADO','FECHADO') and not _petty_cash_is_adm():return jsonify({'ok':False,'error':'Caixinha fechado: somente ADM pode alterar.'}),403
     d=request.form; typ=(d.get('entry_type') or 'DESPESA').upper()
     try: amount=float(d.get('amount') or 0); entry_date=date.fromisoformat(d.get('entry_date'))
     except Exception:return jsonify({'ok':False,'error':'Data/valor inválido.'}),400
@@ -21030,7 +21030,7 @@ def petty_cash_entries_api(cid):
 def petty_cash_entry_change(eid):
     x=db.session.get(PettyCashEntry,eid) or abort(404);c=db.session.get(PettyCash,x.petty_cash_id) or abort(404)
     if not _has_access('finance.petty_cash.manage'):abort(403)
-    if c.status=='APROVADO' and not _petty_cash_is_adm():return jsonify({'ok':False,'error':'Caixinha aprovado: somente ADM pode alterar.'}),403
+    if c.status in ('APROVADO','FECHADO') and not _petty_cash_is_adm():return jsonify({'ok':False,'error':'Caixinha fechado: somente ADM pode alterar.'}),403
     if request.method=='DELETE':
         before={'id':x.id,'type':x.entry_type,'amount':x.amount,'description':x.description or ''};key=x.receipt_key
         if key:
@@ -21051,7 +21051,7 @@ def petty_cash_entry_change(eid):
     if f and f.filename:
         safe=secure_filename(f.filename);x.receipt_key=_store_uploaded_file(f,'petty_cash',f'{uuid.uuid4().hex}_{safe}',f.mimetype);x.receipt_name=safe;x.receipt_type=f.mimetype
     reason=(d.get('reason') or '').strip()
-    if c.status=='APROVADO' and not reason:return jsonify({'ok':False,'error':'Após aprovação, ADM deve informar justificativa da alteração.'}),400
+    if c.status in ('APROVADO','FECHADO') and not reason:return jsonify({'ok':False,'error':'Após aprovação, ADM deve informar justificativa da alteração.'}),400
     c.updated_at=datetime.utcnow();db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='PETTY_CASH_ENTRY_EDITED',entity_type='petty_cash',entity_id=str(c.id),detail=json.dumps({'entry_id':x.id,'before':before,'reason':reason},ensure_ascii=False)));db.session.commit();return jsonify({'ok':True})
 
 @app.get('/api/financeiro/caixinha/movimentos/<int:eid>/comprovante')
@@ -21068,7 +21068,7 @@ def petty_cash_receipt(eid):
 def petty_cash_submit(cid):
     c=db.session.get(PettyCash,cid) or abort(404)
     if not _has_access('finance.petty_cash.manage'):abort(403)
-    if c.status=='APROVADO':return jsonify({'ok':False,'error':'Caixinha já aprovado.'}),409
+    if c.status in ('APROVADO','FECHADO'):return jsonify({'ok':False,'error':'Caixinha já fechado.'}),409
     c.status='AGUARDANDO_ADM';c.updated_at=datetime.utcnow();db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='PETTY_CASH_SUBMITTED',entity_type='petty_cash',entity_id=str(c.id),detail='{}'));db.session.commit();return jsonify({'ok':True,'status':c.status})
 
 @app.post('/api/financeiro/caixinha/<int:cid>/aprovar')
@@ -21076,7 +21076,7 @@ def petty_cash_submit(cid):
 def petty_cash_approve(cid):
     c=db.session.get(PettyCash,cid) or abort(404)
     if not _petty_cash_is_adm():return jsonify({'ok':False,'error':'Aprovação final restrita ao ADM.'}),403
-    c.status='APROVADO';c.updated_at=datetime.utcnow();db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='PETTY_CASH_APPROVED',entity_type='petty_cash',entity_id=str(c.id),detail='{}'));db.session.commit();return jsonify({'ok':True,'status':c.status})
+    c.status='FECHADO';c.updated_at=datetime.utcnow();db.session.add(AuditEvent(user_id=session.get('user_id'),event_type='PETTY_CASH_APPROVED',entity_type='petty_cash',entity_id=str(c.id),detail='{}'));db.session.commit();return jsonify({'ok':True,'status':c.status})
 
 @app.get('/api/financeiro/caixinha/<int:cid>/export.xlsx')
 @login_required
@@ -21095,9 +21095,20 @@ def petty_cash_pdf(cid):
     if not (_has_access('finance.petty_cash.view') or _has_access('finance.petty_cash.manage')):abort(403)
     c=db.session.get(PettyCash,cid) or abort(404);es=PettyCashEntry.query.filter_by(petty_cash_id=cid).order_by(PettyCashEntry.entry_date,PettyCashEntry.id).all();u=db.session.get(User,c.responsible_id);sm=_petty_cash_summary(c)
     from reportlab.lib.pagesizes import A4; from reportlab.platypus import SimpleDocTemplate,Paragraph,Spacer,Table,TableStyle; from reportlab.lib.styles import getSampleStyleSheet; from reportlab.lib import colors
-    bio=io.BytesIO();doc=SimpleDocTemplate(bio,pagesize=A4);st=getSampleStyleSheet();story=[Paragraph(f"PRESTAÇÃO DE CONTAS – {sm['control_number']}",st['Title']),Spacer(1,10),Paragraph(f'Responsável: {(u.name if u else c.responsible_id)} | Departamento: {c.department or "-"} | Status: {c.status}',st['Normal']),Paragraph(f'Recebimento: {c.received_date.strftime("%d/%m/%Y")} | Valor inicial: R$ {c.opening_amount:,.2f} | Entradas: R$ {sm["incoming"]:,.2f} | Gastos: R$ {sm["spent"]:,.2f} | Saldo: R$ {sm["balance"]:,.2f}',st['Normal']),Spacer(1,10)]
-    data=[['Data','Tipo','Fornecedor','Categoria','Descrição','Valor','Comprov.']]+[[x.entry_date.strftime('%d/%m/%Y'),x.entry_type,x.supplier or '',x.category or '',x.description or '',f'R$ {x.amount:,.2f}','Sim' if x.receipt_key else 'Não'] for x in es]
-    t=Table(data,repeatRows=1,colWidths=[55,55,75,65,150,65,50]);t.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#1F4E78')),('TEXTCOLOR',(0,0),(-1,0),colors.white),('FONTSIZE',(0,0),(-1,-1),7),('GRID',(0,0),(-1,-1),.25,colors.grey),('VALIGN',(0,0),(-1,-1),'TOP')]));story.append(t);doc.build(story);bio.seek(0)
+    # REV64.2: PDF só com Fornecedor, Categoria, Descrição, Centro de custo/Projeto, Valor e Observação; status FECHADO.
+    from reportlab.lib.pagesizes import landscape
+    from reportlab.lib.styles import ParagraphStyle
+    brl=lambda v:'R$ '+f'{float(v or 0):,.2f}'.replace(',','X').replace('.',',').replace('X','.')
+    st=getSampleStyleSheet()
+    cell=ParagraphStyle('pcCell',parent=st['Normal'],fontSize=7.5,leading=9)
+    bio=io.BytesIO();doc=SimpleDocTemplate(bio,pagesize=landscape(A4),leftMargin=24,rightMargin=24,topMargin=24,bottomMargin=24)
+    story=[Paragraph(f"PRESTAÇÃO DE CONTAS – {sm['control_number']}",st['Title']),Spacer(1,6),
+           Paragraph(f'Responsável: {(u.name if u else c.responsible_id)} | Departamento: {c.department or "-"} | Recebimento: {c.received_date.strftime("%d/%m/%Y")} | Status: {sm["status"]}',st['Normal']),Spacer(1,10)]
+    P=lambda v:Paragraph(str(v or '').replace('&','&amp;').replace('<','&lt;'),cell)
+    data=[['Fornecedor','Categoria','Descrição','Centro de custo / Projeto','Valor','Observação']]+[[P(x.supplier),P(x.category),P(x.description),P(x.cost_center),brl(x.amount),P(x.notes)] for x in es]
+    total=sum(float(x.amount or 0) for x in es if x.entry_type=='DESPESA')
+    data.append(['','','','TOTAL DESPESAS',brl(total),''])
+    t=Table(data,repeatRows=1,colWidths=[120,95,200,120,70,190]);t.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#1F4E78')),('TEXTCOLOR',(0,0),(-1,0),colors.white),('FONTSIZE',(0,0),(-1,-1),7.5),('GRID',(0,0),(-1,-1),.25,colors.grey),('VALIGN',(0,0),(-1,-1),'TOP'),('ALIGN',(4,0),(4,-1),'RIGHT'),('FONTNAME',(3,-1),(4,-1),'Helvetica-Bold')]));story.append(t);doc.build(story);bio.seek(0)
     return send_file(bio,as_attachment=True,download_name=f"prestacao_{sm['control_number']}.pdf",mimetype='application/pdf')
 
 @app.get("/api/v56a/performance")
