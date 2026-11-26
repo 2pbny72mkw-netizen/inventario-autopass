@@ -19,8 +19,15 @@ html .gcW .gcChip{border:1px solid #c9d8f3;background:#f4f8ff;color:#1e3a8a;bord
 .gcFields{font-size:12px;color:#4a5b70;margin:8px 0;word-break:break-word}
 </style>
 <main class="gcW">
-  <div><h1>GestãoClick</h1><p class="sub">Sistema anterior da Assistência. Conexão somente leitura pela API — nada é alterado no GestãoClick. Etapa 1: conhecer os dados antes da importação.</p></div>
-  <section class="gcCard"><h2>Conexão e resumo</h2>
+  <div><h1>GestãoClick</h1><p class="sub">Sistema anterior da Assistência: carga dos relatórios exportados e, opcionalmente, conexão somente leitura pela API. Nada é alterado no GestãoClick.</p></div>
+  <section class="gcCard"><h2>Carga das planilhas do GestãoClick</h2>
+    <p class="gcMsg" style="margin:0 0 10px">Envie os relatórios exportados em Excel (pode escolher vários de uma vez): Ordens de serviços, NF-e, Estoque de produtos, Produtos, Produtos comprados e Fornecedores. O tipo é reconhecido pelo título da planilha; carregar de novo atualiza sem duplicar.</p>
+    <div class="gcRow"><input type="file" id="gcFiles" multiple accept=".xlsx"><button class="gcBtn p" id="gcUp" type="button">Carregar</button><span id="gcUpMsg" class="gcMsg"></span></div>
+    <div id="gcUpRes" style="margin-top:10px"></div>
+    <div class="gcMsg" style="margin-top:10px">Telas: <a href="/portal-cliente/assistencia-tecnica/gestaoclick">Histórico de OS</a> · <a href="/portal-cliente/assistencia-tecnica/gestaoclick-nfe">NF-e (área financeira)</a> · <a href="/engenharia/estoque/apoio-compras">Apoio a compras</a></div>
+    <div id="gcHist" style="margin-top:10px"></div>
+  </section>
+  <section class="gcCard"><h2>Conexão pela API (opcional)</h2>
     <div class="gcRow"><button class="gcBtn p" id="gcStatusBtn" type="button">Testar conexão</button><span id="gcStatusMsg" class="gcMsg"></span></div>
     <div id="gcSummary"></div>
   </section>
@@ -80,7 +87,16 @@ async function impStart(rec){const d=await postJSON('/api/gestaoclick/importar',
 $('gcImpAll').onclick=()=>{if(confirm('Iniciar a carga única de tudo do GestãoClick? Roda no servidor e pode levar algum tempo.'))impStart()};
 $('gcImpOne').onclick=()=>{const p=$('gcPath').value.trim();if(!p){$('gcQueryMsg').textContent='Informe o recurso.';return}impStart([p])};
 $('gcImpStop').onclick=async()=>{await postJSON('/api/gestaoclick/importar/parar');impStatus()};
-impStatus();$('gcPath').addEventListener('keydown',e=>{if(e.key==='Enter')query()});
+impStatus();
+async function cargas(){const d=await getJSON('/api/gestaoclick/cargas');if(!d.ok)return;const t=d.totais||{},box=$('gcHist');box.replaceChildren();
+ box.append(el('div',`Guardado: ${Number(t.v150_gc_os||0).toLocaleString('pt-BR')} OS · ${Number(t.v150_gc_nfe||0).toLocaleString('pt-BR')} NF-e · ${Number(t.v150_gc_produtos||0).toLocaleString('pt-BR')} produtos · ${Number(t.v150_gc_compras||0).toLocaleString('pt-BR')} linhas de compras · ${Number(t.v150_gc_fornecedores||0).toLocaleString('pt-BR')} fornecedores`,'gcMsg'));
+ if((d.cargas||[]).length){const tb=el('table',undefined,'gcTbl'),h=el('tr');for(const l of ['Quando','Planilha','Tipo','Período','Linhas','Por'])h.append(el('th',l));tb.append(h);
+ for(const c of d.cargas){const tr=el('tr');tr.append(el('td',new Date(c.criado_em).toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo'})),el('td',c.arquivo),el('td',c.rotulo),el('td',c.periodo||'—'),el('td',Number(c.linhas||0).toLocaleString('pt-BR'),'n'),el('td',c.usuario||''));tb.append(tr)}box.append(tb)}}
+$('gcUp').onclick=async()=>{const fs=$('gcFiles').files;if(!fs.length){$('gcUpMsg').textContent='Escolha as planilhas.';return}const fd=new FormData();for(const f of fs)fd.append('arquivos',f);
+ $('gcUp').disabled=true;$('gcUpMsg').textContent='Carregando…';try{const r=await fetch('/api/gestaoclick/carga',{method:'POST',body:fd,credentials:'same-origin'});const d=await r.json().catch(()=>({ok:false,error:'Erro de comunicação (HTTP '+r.status+')'}));
+ const box=$('gcUpRes');box.replaceChildren();for(const x of (d.resultados||[])){box.append(el('div',x.ok?`✔ ${x.arquivo}: ${x.rotulo} — ${Number(x.linhas).toLocaleString('pt-BR')} linhas${x.periodo?' ('+x.periodo+')':''}`:`✖ ${x.arquivo}: ${x.error}`,x.ok?'gcOk':'gcErr'))}
+ $('gcUpMsg').textContent=d.resultados?'Concluído.':(d.error||'Falha');$('gcFiles').value='';cargas()}finally{$('gcUp').disabled=false}};
+cargas();$('gcPath').addEventListener('keydown',e=>{if(e.key==='Enter')query()});
 })();
 </script>
 {% endblock %}

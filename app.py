@@ -36982,6 +36982,18 @@ def _v120_reincidencia(serial, company_names=None, exclude_appt=None, hoje=None,
                     cand.append((d, "agendamento " + (ap.code or str(ap.id)), (eq.defect or "").strip(), ""))
     except Exception:
         db.session.rollback()
+    # REV65: OS do GestãoClick (sistema anterior, em paralelo ao Bhom) também contam, pela série exata.
+    try:
+        from v150_gestaoclick_dados import gc_reincidencia as _v150_gc_rein
+        for cod, dgc, sit, eqp in _v150_gc_rein(db.engine, sk, hoje - timedelta(days=365)):
+            dgc = _v120_d(dgc)
+            if not dgc or dgc > hoje:
+                continue
+            os_datas.append(dgc)
+            if dgc >= lim:
+                cand.append((dgc, "OS GestãoClick " + str(cod), "", ""))
+    except Exception:
+        app.logger.exception("REV65: falha ao consultar reincidência no GestãoClick")
     if not cand:
         return None
     datas = list(os_datas) + [d for d in set(portal) if not any(d <= o <= d + timedelta(days=30) for o in os_datas)]
@@ -37598,3 +37610,12 @@ def petty_cash_delete_v1642(cid):
         return jsonify({'ok':False,'error':'Não foi possível excluir a caixinha.'}),500
     return jsonify({'ok':True,'deleted':label})
 # =================== fim REV64.2 ===================
+
+
+# =================== V88.0 REV65 — GestãoClick: carga das planilhas, histórico de OS, NF-e e apoio a compras ===================
+from v150_gestaoclick_dados import install_gestaoclick_dados
+install_gestaoclick_dados(app, {"login_required": login_required, "gestor": _v140_guard, "portal_staff": _portal_staff,
+                                "fin_liberado": _v132_liberado, "can": _has_access, "engine": _v140_engine, "audit": _v140_audit,
+                                "user_name": lambda: str(session.get("name") or session.get("user_id") or "")[:180],
+                                "render": lambda tpl, **ctx: render_template(tpl, app_release=APP_RELEASE, **ctx)})
+# =================== fim REV65 ===================

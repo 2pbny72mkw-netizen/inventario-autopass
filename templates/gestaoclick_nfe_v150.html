@@ -1,0 +1,83 @@
+{% extends "base.html" %}{% block title %}NF-e GestãoClick | Sistema de Gestão{% endblock %}
+{% block content %}
+<style>
+.nW{max-width:1500px;margin:0 auto;padding:18px;color:#16283d}.nW h2{margin:0}.sub{color:#64748b;font-size:13px}
+.nF{display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;margin-top:12px;background:#fff;border:1px solid #dbe4ef;border-radius:12px;padding:10px 12px}
+.nF label{display:flex;flex-direction:column;gap:3px;font-size:11px;font-weight:800;color:#475569}.nF input,.nF select{padding:7px 8px;border:1px solid #cbd5e1;border-radius:7px;min-width:130px;font:inherit;font-size:13px}
+.nK{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:10px;margin:12px 0}
+html .nW button.nKpi{all:unset;box-sizing:border-box;cursor:pointer;background:#fff!important;border:1px solid #dbe4ef!important;border-top:4px solid var(--kc,#7F8A99)!important;border-radius:12px!important;padding:12px 14px!important;min-height:72px!important;display:block!important;color:inherit!important;font-weight:400!important}
+.nKpi small{color:#64748b;display:block}.nKpi b{display:block;font-size:20px;margin-top:6px}.nKpi em{display:block;font-style:normal;font-size:11px;color:#64748b}
+.nC{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.nCh{background:#fff;border:1px solid #dbe4ef;border-radius:12px;padding:12px 14px;min-height:180px}.nCh h4{margin:0 0 10px;font-size:14px}
+html .nW button.hb{all:unset;box-sizing:border-box;display:grid;grid-template-columns:minmax(90px,42%) 1fr auto;gap:8px;align-items:center;width:100%;cursor:pointer;padding:3px 2px!important;border:0!important;background:transparent!important;min-height:0!important;font-size:12px;color:inherit!important;font-weight:400!important}
+html .nW button.hb:hover{background:#f1f5fb!important}.hb span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.hb i{display:block;height:14px;border-radius:4px;min-width:2px}
+.vb{display:flex;align-items:flex-end;gap:4px;height:150px}html .nW button.v{all:unset;box-sizing:border-box;flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;cursor:pointer;border:0!important;background:transparent!important;padding:0!important;min-height:0!important}
+.v i{display:block;width:70%;max-width:36px;border-radius:5px 5px 0 0;background:var(--ap-c1,#0072B2);min-height:2px}.v small{font-size:10px;color:#64748b;margin-top:3px}.v em{font-style:normal;font-size:9px;margin-bottom:2px;white-space:nowrap}
+.nT{background:#fff;border:1px solid #dbe4ef;border-radius:12px;padding:12px;margin-top:12px}.nT table{width:100%;border-collapse:collapse;font-size:12px}.nT th,.nT td{padding:7px 6px;border-bottom:1px solid #e5e7eb;text-align:left}
+.nT thead th{background:#eef4fa;cursor:pointer;user-select:none;white-space:nowrap}.n{text-align:right!important;font-variant-numeric:tabular-nums;white-space:nowrap}
+.nBtn{border:0;border-radius:8px;padding:8px 12px;font-weight:800;cursor:pointer;background:#eef3f8;color:#173b6d;text-decoration:none;font-size:12px}.lock{background:#fff7e6;border:1px solid #f2c14e;border-radius:12px;padding:16px;margin-top:14px}
+.empty{color:#64748b;font-size:12px;padding:24px 0;text-align:center}
+@media(max-width:900px){.nK{grid-template-columns:repeat(2,1fr)}.nC{grid-template-columns:1fr}}
+</style>
+<div class="nW">
+ <h2>NF-e GestãoClick</h2>
+ <div class="sub">Notas fiscais emitidas pelo sistema anterior (carregadas da planilha do GestãoClick). Área financeira: não aparece para o cliente.</div>
+ <div id="lock" class="lock" hidden>Esta área usa a mesma senha do Faturamento de peças. <a class="nBtn" href="/portal-cliente/assistencia-tecnica/faturamento">Abrir Faturamento de peças e digitar a senha</a> — depois volte aqui.</div>
+ <div id="area" hidden>
+ <div class="nF">
+  <label>Emissão de<input type="date" id="fDe"></label><label>até<input type="date" id="fAte"></label>
+  <label>Cliente<select id="fCli"><option value="">Todos</option></select></label>
+  <label>Operação<select id="fOp"><option value="">Todas</option><option value="venda">Só vendas (CFOP 51xx/61xx)</option><option value="outras">Remessas, retornos e outras</option></select></label>
+  <label>Natureza<select id="fNat"><option value="">Todas</option></select></label>
+  <label>Situação<select id="fSit"><option value="">Todas</option></select></label>
+  <label>Tipo<select id="fTipo"><option value="">Todos</option></select></label>
+  <button class="nBtn" type="button" id="fLimpar">Limpar filtros</button>
+ </div>
+ <div class="nK">
+  <button class="nKpi" type="button" data-k="todas" style="--kc:var(--ap-c1,#0072B2)"><small>Notas</small><b id="vN">—</b><em id="vNs"></em></button>
+  <button class="nKpi" type="button" data-k="todas" style="--kc:var(--ap-c3,#009E73)"><small>Valor total das notas</small><b id="vT">—</b><em>soma das notas filtradas</em></button>
+  <button class="nKpi" type="button" data-k="impostos" style="--kc:var(--ap-c6,#D55E00)"><small>Impostos destacados</small><b id="vI">—</b><em>ICMS + IPI + PIS + COFINS</em></button>
+  <button class="nKpi" type="button" data-k="clientes" style="--kc:var(--ap-c2,#E69F00)"><small>Clientes</small><b id="vC">—</b><em>destinatários distintos</em></button>
+ </div>
+ <div class="nC">
+  <div class="nCh"><h4>Valor por mês</h4><div id="cMes"></div></div>
+  <div class="nCh"><h4>Maiores clientes (valor)</h4><div id="cCli"></div></div>
+  <div class="nCh"><h4>Por natureza da operação (valor)</h4><div id="cNat"></div></div>
+  <div class="nCh"><h4>Por situação (notas)</h4><div id="cSit"></div></div>
+ </div>
+ <div class="nT" id="tabela">
+  <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:8px;font-size:12px;color:#475569"><span id="tInfo"></span><span><input id="tQ" placeholder="Buscar nº, cliente, CNPJ" style="padding:6px 8px;border:1px solid #cbd5e1;border-radius:7px"> <button class="nBtn" type="button" id="tCsv">Exportar CSV</button></span></div>
+  <div style="overflow:auto;max-height:70vh"><table><thead><tr><th data-k="numero">Nº</th><th data-k="tipo">Tipo</th><th data-k="data">Data</th><th data-k="cliente">Cliente</th><th data-k="documento">CNPJ/CPF</th><th data-k="natureza">Natureza</th><th data-k="total" class="n">Total</th><th data-k="icms" class="n">ICMS</th><th data-k="ipi" class="n">IPI</th><th data-k="pis" class="n">PIS</th><th data-k="cofins" class="n">COFINS</th><th data-k="situacao">Situação</th></tr></thead><tbody id="tBody"></tbody></table></div>
+ </div>
+ </div>
+</div>
+<script>
+(()=>{'use strict';
+const $=id=>document.getElementById(id),esc=v=>String(v??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])),br=d=>d?d.split('-').reverse().join('/'):'—';
+const brl=v=>Number(v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}),n=v=>Number(v||0).toLocaleString('pt-BR');
+const PAL=['var(--ap-c1,#0072B2)','var(--ap-c2,#E69F00)','var(--ap-c3,#009E73)','var(--ap-c4,#CC79A7)','var(--ap-c5,#56B4E9)','var(--ap-c6,#D55E00)','var(--ap-c8,#7F8A99)','var(--ap-seq4,#2F6DB5)'];
+let all=[],sort={k:'data',d:-1},mes='',shown=[];
+const imp=r=>(r.icms||0)+(r.ipi||0)+(r.pis||0)+(r.cofins||0);
+function fill(id,k,first){const vals=[...new Set(all.map(r=>r[k]).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'pt-BR'));$(id).innerHTML=`<option value="">${first}</option>`+vals.map(v=>`<option>${esc(v)}</option>`).join('')}
+function filtered(){const f={de:$('fDe').value,ate:$('fAte').value,cli:$('fCli').value,nat:$('fNat').value,sit:$('fSit').value,tipo:$('fTipo').value},q=$('tQ').value.trim().toUpperCase();
+ const op=$('fOp').value,isV=r=>/^[56]1\d\d/.test(r.natureza||'');return all.filter(r=>(!op||(op==='venda'?isV(r):!isV(r)))&&(!f.de||r.data>=f.de)&&(!f.ate||r.data<=f.ate)&&(!f.cli||r.cliente===f.cli)&&(!f.nat||r.natureza===f.nat)&&(!f.sit||r.situacao===f.sit)&&(!f.tipo||r.tipo===f.tipo)&&(!mes||(r.data||'').startsWith(mes))&&(!q||[r.numero,r.cliente,r.documento].some(x=>String(x||'').toUpperCase().includes(q))))}
+function group(rows,k,val){const m=new Map();for(const r of rows){const key=r[k]||'(vazio)';m.set(key,(m.get(key)||0)+val(r))}return [...m].sort((a,b)=>b[1]-a[1])}
+function hb(box,data,fmt,pick){if(!data.length){box.innerHTML='<div class="empty">Sem notas com esses filtros.</div>';return}const top=data.slice(0,8),mx=Math.max(...top.map(d=>Math.abs(d[1])))||1;box.innerHTML=top.map(([k,v],i)=>`<button type="button" class="hb" data-i="${i}" title="${esc(k)}: ${fmt(v)}"><span>${esc(k)}</span><span><i style="width:${Math.max(1,Math.abs(v)/mx*100)}%;background:${PAL[i%PAL.length]}"></i></span><b>${fmt(v)}</b></button>`).join('');box.querySelectorAll('.hb').forEach(b=>b.onclick=()=>pick(top[+b.dataset.i][0]))}
+function render(){const rows=filtered();shown=rows;
+ $('vN').textContent=n(rows.length);$('vNs').textContent=rows.filter(r=>(r.situacao||'').toUpperCase().startsWith('APROV')).length+' aprovadas';$('vT').textContent=brl(rows.reduce((a,r)=>a+(r.total||0),0));$('vI').textContent=brl(rows.reduce((a,r)=>a+imp(r),0));$('vC').textContent=n(new Set(rows.map(r=>r.cliente)).size);
+ const ms=group(rows.filter(r=>r.data).map(r=>({...r,m:r.data.slice(0,7)})),'m',r=>r.total||0).sort((a,b)=>a[0]<b[0]?-1:1).slice(-18),bx=$('cMes');
+ if(!ms.length)bx.innerHTML='<div class="empty">Sem notas com esses filtros.</div>';else{const mx=Math.max(...ms.map(m=>m[1]))||1;bx.innerHTML='<div class="vb">'+ms.map(([k,v])=>`<button type="button" class="v" data-m="${k}" title="${k.slice(5)}/${k.slice(0,4)}: ${brl(v)}"><em>${(v/1000).toLocaleString('pt-BR',{maximumFractionDigits:0})} mil</em><i style="height:${Math.max(2,v/mx*110)}px;${mes===k?'background:var(--ap-c6,#D55E00)':''}"></i><small>${k.slice(5)}/${k.slice(2,4)}</small></button>`).join('')+'</div>';bx.querySelectorAll('.v').forEach(b=>b.onclick=()=>{mes=mes===b.dataset.m?'':b.dataset.m;render()})}
+ hb($('cCli'),group(rows,'cliente',r=>r.total||0),brl,v=>{$('fCli').value=v;render()});hb($('cNat'),group(rows,'natureza',r=>r.total||0),brl,v=>{$('fNat').value=v;render()});hb($('cSit'),group(rows,'situacao',()=>1),n,v=>{$('fSit').value=v;render()});
+ const s=[...rows].sort((a,b)=>{const x=a[sort.k],y=b[sort.k];if(typeof x==='number'||typeof y==='number')return ((x||0)-(y||0))*sort.d;if(sort.k==='numero')return (Number(x)-Number(y))*sort.d;return String(x||'').localeCompare(String(y||''),'pt-BR',{sensitivity:'base'})*sort.d});
+ const lim=s.slice(0,500);$('tInfo').textContent=`${n(rows.length)} nota(s)`+(rows.length>500?' · mostrando as 500 primeiras (use os filtros ou exporte)':'')+(mes?` · mês ${mes.slice(5)}/${mes.slice(0,4)}`:'');
+ $('tBody').innerHTML=lim.length?lim.map(r=>`<tr><td><b>${esc(r.numero)}</b></td><td>${esc(r.tipo)}</td><td>${br(r.data)}</td><td>${esc(r.cliente)}</td><td>${esc(r.documento)}</td><td>${esc(r.natureza)}</td><td class="n">${brl(r.total)}</td><td class="n">${brl(r.icms)}</td><td class="n">${brl(r.ipi)}</td><td class="n">${brl(r.pis)}</td><td class="n">${brl(r.cofins)}</td><td>${esc(r.situacao)}</td></tr>`).join(''):'<tr><td colspan="12" class="empty">Nenhuma nota com esses filtros.</td></tr>';
+ document.querySelectorAll('.nT thead th').forEach(th=>{const k=th.dataset.k;th.setAttribute('aria-sort',sort.k===k?(sort.d>0?'ascending':'descending'):'none');th.textContent=th.textContent.replace(/ [▲▼]$/,'')+(sort.k===k?(sort.d>0?' ▲':' ▼'):'')})}
+document.querySelectorAll('.nT thead th').forEach(th=>th.onclick=()=>{const k=th.dataset.k;sort={k,d:sort.k===k?-sort.d:(['total','icms','ipi','pis','cofins','data','numero'].includes(k)?-1:1)};render()});
+['fDe','fAte','fOp','fCli','fNat','fSit','fTipo'].forEach(id=>$(id).addEventListener('change',render));$('tQ').addEventListener('input',render);
+$('fLimpar').onclick=()=>{['fDe','fAte','fOp','fCli','fNat','fSit','fTipo','tQ'].forEach(id=>$(id).value='');mes='';render()};
+document.querySelectorAll('.nKpi').forEach(b=>b.onclick=()=>$('tabela').scrollIntoView({behavior:'smooth'}));
+$('tCsv').onclick=()=>{const q=v=>'"'+String(v??'').replace(/"/g,'""')+'"',f=v=>String(Number(v||0).toFixed(2)).replace('.',',');const L=[['Nº','Tipo','Data','Cliente','CNPJ/CPF','Natureza','Total','ICMS','IPI','PIS','COFINS','Situação'].map(q).join(';')].concat(shown.map(r=>[r.numero,r.tipo,br(r.data),r.cliente,r.documento,r.natureza,f(r.total),f(r.icms),f(r.ipi),f(r.pis),f(r.cofins),r.situacao].map(q).join(';')));const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['﻿'+L.join('\r\n')],{type:'text/csv'}));a.download='nfe_gestaoclick.csv';a.click()};
+(async()=>{const r=await fetch('/api/gestaoclick/nfe',{credentials:'same-origin'});const d=await r.json().catch(()=>({ok:false}));if(d.bloqueado){$('lock').hidden=false;return}if(!d.ok){$('lock').hidden=false;$('lock').textContent=d.error||'Falha ao carregar.';return}
+ all=d.rows||[];$('area').hidden=false;fill('fCli','cliente','Todos');fill('fNat','natureza','Todas');fill('fSit','situacao','Todas');fill('fTipo','tipo','Todos');render()})();
+})();
+</script>
+{% endblock %}
