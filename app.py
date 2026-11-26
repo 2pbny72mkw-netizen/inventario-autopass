@@ -37522,3 +37522,30 @@ if _v136_perfil_orig:
     _v136_perfil.__name__ = "my_profile_page"
     app.view_functions["my_profile_page"] = login_required(_v136_perfil)
 # =================== fim REV62.3 ===================
+
+
+# =================== V88.0 REV64 — GestãoClick (sistema anterior da Assistência): conexão e consulta, só leitura ===================
+from v140_gestaoclick import install_gestaoclick, install_gestaoclick_import
+
+
+def _v140_audit(event, detail):
+    try:
+        db.session.add(AuditEvent(user_id=session.get("user_id"), event_type=event, entity_type="gestaoclick", entity_id="api", detail=str(detail)[:500]))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+
+def _v140_guard():
+    if not session.get("user_id") or not _v86_role_ok() or not _has_access("management.diagnostics"):
+        return jsonify({"ok": False, "error": "Somente o Gestor."}), 403
+    return None
+
+
+install_gestaoclick(app, {"login_required": login_required, "guard": _v140_guard, "audit": _v140_audit,
+                          "render": lambda tpl, **ctx: render_template(tpl, app_release=APP_RELEASE, **ctx)})
+with app.app_context():
+    _v140_engine = db.engine
+install_gestaoclick_import(app, {"login_required": login_required, "guard": _v140_guard, "audit": _v140_audit, "engine": _v140_engine,
+                                 "user_name": lambda: str(session.get("name") or session.get("user_id") or "")[:180]})
+# =================== fim REV64 ===================
