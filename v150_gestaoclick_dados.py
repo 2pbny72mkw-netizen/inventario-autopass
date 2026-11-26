@@ -29,7 +29,7 @@ KINDS = [  # (prefixo do título normalizado, tipo)
     ("RELATORIO DE PRODUTOS", "produtos"),
     ("RELATORIO DE FORNECEDORES", "fornecedores"),
 ]
-KIND_LABEL = {"os": "Ordens de serviço", "nfe": "NF-e", "compras": "Produtos comprados", "estoque": "Estoque de produtos",
+KIND_LABEL = {"xml": "XMLs de NF-e (faturamento por item)", "os": "Ordens de serviço", "nfe": "NF-e", "compras": "Produtos comprados", "estoque": "Estoque de produtos",
               "produtos": "Produtos", "fornecedores": "Fornecedores"}
 
 
@@ -271,6 +271,7 @@ def import_file(engine, raw, filename, user_name):
                 merged.append(m)
             out = merged
         _upsert(c, table, keys, out)
+        _CACHE.update(at=0.0, rows=None)
         c.execute(text("INSERT INTO v150_gc_cargas (id, arquivo, tipo, periodo, linhas, criado_em, usuario) VALUES (:i,:a,:t,:p,:l,:c,:u)"),
                   {"i": int(now.timestamp() * 1000000), "a": (filename or "")[:255], "t": kind,
                    "p": ("%s a %s" % (p_ini.strftime("%d/%m/%Y"), p_fim.strftime("%d/%m/%Y"))) if p_ini and p_fim else None,
@@ -316,7 +317,12 @@ def install_gestaoclick_dados(app, H):
         for f in files[:12]:
             raw = f.read()
             try:
-                r = import_file(engine, raw, f.filename, H["user_name"]())
+                nome = (f.filename or "").lower()
+                if nome.endswith(".zip") or nome.endswith(".xml"):
+                    H["fat_ensure"]()
+                    r = import_nfe_xmls(engine, raw, f.filename, H["user_name"]())
+                else:
+                    r = import_file(engine, raw, f.filename, H["user_name"]())
                 res.append({"ok": True, **r})
             except ValueError as exc:
                 res.append({"ok": False, "arquivo": f.filename, "error": str(exc)})
@@ -528,3 +534,170 @@ def _linha(cod, nome, p, cp, meses):
             "comprado": qtd, "media_mes": round(media, 2), "cobertura_meses": round(cob, 1) if cob is not None else None,
             "custo_unit": custo, "valor_estoque": p.get("custo_total"), "sugestao": round(sug, 2) if sug else 0, "motivo": motivo,
             "valor_sugestao": round(sug * custo, 2) if sug and custo else 0}
+
+
+# ---------------- REV66: tela única (GestãoClick até o corte + Bhom depois) ----------------
+GC_CORTE = date(2026, 10, 1)   # OS do GestãoClick com entrada ANTES desta data; a partir dela vale o Bhom
+_FIM = {"LIBERADO", "FINALIZADO", "ENTREGUE", "CONCLUIDO"}
+_CACHE = {"at": 0.0, "rows": None}
+
+
+def _status(sit):
+    s = fold(sit)
+    if s in _FIM:
+        return "FATURADA", "PROCESSO FINALIZADO"
+    if s.startswith("CANCEL"):
+        return "CANCELADA", "CANCELADA"
+    if s in ("ORCAMENTO", "EM ABERTO"):
+        return "ABERTA", "AGUARDANDO ORCAMENTO"
+    if "APROVACAO" in s or s == "AGUARDANDO APROVACAO":
+        return "ABERTA", "AGUARDANDO APROVACAO"
+    return "ABERTA", "AGUARDANDO EXECUCAO"
+
+
+def gc_rows_v120(engine, ttl=120):
+    """OS do GestãoClick no formato das linhas da Assistência (v120), só as anteriores ao corte. Cache curto."""
+    import time as _t
+    from sqlalchemy import text
+    if _CACHE["rows"] is not None and _t.time() - _CACHE["at"] < ttl:
+        return _CACHE["rows"]
+    out = []
+    try:
+        with engine.connect() as c:
+            for r in c.execute(text("SELECT o.codigo, o.cliente, o.data, o.previsao, o.dt_atendimento, o.equipamento, o.serial, o.serial_key, o.situacao,"
+                                    " o.garagem, o.os_retorno, m.company_id FROM v150_gc_os o LEFT JOIN v120_at_clients m ON m.name=o.cliente"
+                                    " WHERE o.data < :c"), {"c": GC_CORTE}):
+                d = dict(r._mapping)
+                st, det = _status(d["situacao"])
+                ab = d["data"] if isinstance(d["data"], date) else (date.fromisoformat(str(d["data"])[:10]) if d["data"] else None)
+                fe = d["dt_atendimento"] or d["previsao"]
+                fe = fe if isinstance(fe, date) or fe is None else date.fromisoformat(str(fe)[:10])
+                out.append({"os_number": "GC-" + str(d["codigo"]), "client_install": d["cliente"], "status_os": st, "status_det": det,
+                            "substatus": "FINALIZADO" if st == "FATURADA" else (d["situacao"] or "").upper(), "opened": ab,
+                            "closed": fe if st == "FATURADA" else None, "serial": d["serial"], "serial_key": d["serial_key"], "technician": None,
+                            "fault_short": None, "fault": None, "cause": None, "solution": None, "company_id": d["company_id"],
+                            "origem": "GestãoClick", "equipamento": d["equipamento"]})
+    except Exception:
+        out = []
+    _CACHE.update(at=_t.time(), rows=out)
+    return out
+
+
+def gc_cache_clear():
+    _CACHE.update(at=0.0, rows=None)
+
+
+# ---------------- REV66: faturamento por item a partir dos XMLs das NF-e do GestãoClick ----------------
+_CFOP_VENDA = re.compile(r"^[56][14]\d\d$")
+
+
+def _x(el, path, ns):
+    if el is None:
+        return None
+    f = el.find(path, ns)
+    return f.text if f is not None else None
+
+
+def _xf(el, path, ns):
+    try:
+        return float(_x(el, path, ns) or 0)
+    except ValueError:
+        return 0.0
+
+
+def parse_nfe_xml(raw):
+    """Devolve (cabecalho, itens) de um XML de NF-e (nfeProc ou NFe). Itens só com CFOP de venda."""
+    import xml.etree.ElementTree as ET
+    root = ET.fromstring(raw)
+    ns = {"n": "http://www.portalfiscal.inf.br/nfe"}
+    inf = root.find(".//n:infNFe", ns)
+    if inf is None:
+        return None, []
+    prot = root.find(".//n:protNFe/n:infProt/n:cStat", ns)
+    if prot is not None and prot.text not in ("100", "150"):
+        return None, []
+    ide = inf.find("n:ide", ns)
+    if _x(ide, "n:tpNF", ns) == "0":  # entrada
+        return None, []
+    nnf = _x(ide, "n:nNF", ns)
+    dh = (_x(ide, "n:dhEmi", ns) or _x(ide, "n:dEmi", ns) or "")[:10]
+    try:
+        d = date.fromisoformat(dh)
+    except ValueError:
+        d = None
+    cli = _x(inf, "n:dest/n:xNome", ns)
+    itens = []
+    for det in inf.findall("n:det", ns):
+        prod = det.find("n:prod", ns)
+        cfop = _x(prod, "n:CFOP", ns) or ""
+        if not _CFOP_VENDA.match(cfop):
+            continue
+        imp = det.find("n:imposto", ns)
+        icms = sum(float(e.text or 0) for e in imp.iter("{http://www.portalfiscal.inf.br/nfe}vICMS")) if imp is not None else 0.0
+        st = sum(float(e.text or 0) for e in imp.iter("{http://www.portalfiscal.inf.br/nfe}vICMSST")) if imp is not None else 0.0
+        ipi = _xf(imp, "n:IPI/n:IPITrib/n:vIPI", ns)
+        pis = sum(float(e.text or 0) for e in imp.find("n:PIS", ns).iter("{http://www.portalfiscal.inf.br/nfe}vPIS")) if imp is not None and imp.find("n:PIS", ns) is not None else 0.0
+        cof = sum(float(e.text or 0) for e in imp.find("n:COFINS", ns).iter("{http://www.portalfiscal.inf.br/nfe}vCOFINS")) if imp is not None and imp.find("n:COFINS", ns) is not None else 0.0
+        venda = _xf(prod, "n:vProd", ns) - _xf(prod, "n:vDesc", ns)
+        itens.append({"codigo": (_x(prod, "n:cProd", ns) or "")[:60], "descricao": (_x(prod, "n:xProd", ns) or "")[:300], "cfop": cfop,
+                      "qtde": _xf(prod, "n:qCom", ns), "preco_unit": _xf(prod, "n:vUnCom", ns), "venda": round(venda, 2),
+                      "icms": round(icms, 2), "pis": round(pis, 2), "cofins": round(cof, 2), "ipi_st": round(ipi + st, 2),
+                      "valor_nf": round(venda + ipi + st, 2)})
+    return {"nf": nnf, "data": d, "cliente": cli}, itens
+
+
+def import_nfe_xmls(engine, raw, filename, user_name):
+    """Aceita um .zip com XMLs (ou um .xml). Grava no faturamento de peças (v132_fat_itens) só notas ANTES do corte (o Bhom cobre depois)."""
+    import zipfile
+    from sqlalchemy import text
+    blobs = []
+    if raw[:2] == b"PK":
+        with zipfile.ZipFile(io.BytesIO(raw)) as z:
+            for n in z.namelist():
+                if n.lower().endswith(".xml"):
+                    blobs.append(z.read(n))
+                elif n.lower().endswith(".zip"):
+                    with zipfile.ZipFile(io.BytesIO(z.read(n))) as z2:
+                        blobs += [z2.read(m) for m in z2.namelist() if m.lower().endswith(".xml")]
+    else:
+        blobs.append(raw)
+    with engine.connect() as c:
+        custos = {r[0]: (r[1] or r[2]) for r in c.execute(text("SELECT codigo, custo_unit, custo_cadastro FROM v150_gc_produtos"))}
+    now = datetime.utcnow()
+    load_id = int(now.timestamp() * 1000)
+    linhas, nfs, ignoradas, depois = [], set(), 0, 0
+    for b in blobs:
+        try:
+            cab, itens = parse_nfe_xml(b)
+        except Exception:
+            ignoradas += 1
+            continue
+        if not cab or not itens or not cab["nf"]:
+            ignoradas += 1
+            continue
+        if cab["data"] and cab["data"] >= GC_CORTE:
+            depois += 1
+            continue
+        nfs.add(cab["nf"])
+        for i, it in enumerate(itens, 1):
+            cu = custos.get(it["codigo"])
+            linhas.append({"nf": str(cab["nf"])[:20], "linha": i, "data": cab["data"], "cliente": (cab["cliente"] or "")[:200],
+                           "custo_unit": cu or 0.0, "custo": round((cu or 0.0) * it["qtde"], 2),
+                           "origem_custo": ("GESTAOCLICK CADASTRO" if cu else "SEM CUSTO")[:30], "load_id": load_id, "updated_at": now, **it})
+    if not linhas:
+        raise ValueError("Nenhuma nota de venda (CFOP 51xx/54xx/61xx/64xx) anterior a %s encontrada nos XMLs." % GC_CORTE.strftime("%d/%m/%Y"))
+    cols = ["nf", "linha", "data", "cfop", "cliente", "codigo", "descricao", "qtde", "preco_unit", "venda", "custo_unit", "custo", "icms", "pis",
+            "cofins", "ipi_st", "valor_nf", "origem_custo", "load_id", "updated_at"]
+    nl = sorted(nfs)
+    with engine.begin() as c:
+        for i in range(0, len(nl), 400):
+            part = nl[i:i + 400]
+            c.execute(text("DELETE FROM v132_fat_itens WHERE nf IN (%s)" % ",".join(":k%d" % j for j in range(len(part)))), {"k%d" % j: v for j, v in enumerate(part)})
+        c.execute(text("INSERT INTO v132_fat_itens (%s) VALUES (%s)" % (",".join(cols), ",".join(":" + k for k in cols))), [{k: l[k] for k in cols} for l in linhas])
+        c.execute(text("INSERT INTO v150_gc_cargas (id, arquivo, tipo, periodo, linhas, criado_em, usuario) VALUES (:i,:a,'xml',NULL,:l,:c,:u)"),
+                  {"i": int(now.timestamp() * 1000000), "a": (filename or "")[:255], "l": len(linhas), "c": now, "u": (user_name or "")[:180]})
+    sem = sum(1 for l in linhas if not l["custo_unit"])
+    return {"arquivo": filename, "tipo": "xml", "rotulo": "XMLs de NF-e (faturamento por item)", "linhas": len(linhas),
+            "periodo": None, "detalhe": "%d notas de venda, %d itens%s%s%s" % (len(nfs), len(linhas), (", %d itens sem custo no cadastro" % sem) if sem else "",
+                                                                                 (", %d notas a partir de %s ignoradas (Bhom)" % (depois, GC_CORTE.strftime("%d/%m"))) if depois else "",
+                                                                                 (", %d XMLs que não são venda/autorizada" % ignoradas) if ignoradas else "")}
