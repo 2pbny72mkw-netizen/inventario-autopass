@@ -22,7 +22,7 @@ html .fpW .fpKpi:hover,html .fpW .fpKpi:focus-visible{transform:translateY(-2px)
 html .fpW .fpBar{all:unset;box-sizing:border-box;display:grid;grid-template-columns:minmax(110px,220px) 1fr 150px;gap:8px;align-items:center;width:100%;padding:4px 6px;border-radius:8px;font-size:13px;cursor:pointer}
 html .fpW .fpBar:hover,html .fpW .fpBar:focus-visible{background:#f1f5fb;outline:none}.fpBar span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-transform:uppercase}.fpBar u{display:block;height:14px;background:#eef2f7;border-radius:7px;text-decoration:none;overflow:hidden}.fpBar u i{display:block;height:100%;border-radius:7px}.fpBar b{text-align:right;font-variant-numeric:tabular-nums}
 .fpT{width:100%;border-collapse:collapse;font-size:13px}.fpT th{text-align:left;color:#4a5b70;border-bottom:2px solid #dbe4ef;padding:6px 8px;white-space:nowrap;position:sticky;top:0;background:#fff;cursor:pointer;user-select:none}.fpT td{padding:6px 8px;border-bottom:1px solid #eef2f7;vertical-align:middle}
-.fpT td.n,.fpT th.n{text-align:right;font-variant-numeric:tabular-nums}.fpT tbody tr.ck{cursor:pointer}.fpT tbody tr.ck:hover{background:#f3f7fc}.fpT tr.neg td{color:#b91c1c}
+.fpT td.n,.fpT th.n{text-align:right;font-variant-numeric:tabular-nums}.fpT tbody tr.ck{cursor:pointer}.fpT tbody tr.ck:hover{background:#f3f7fc}.fpT tr.neg td{color:#b91c1c}.fpT .fpCk{width:34px;text-align:center;cursor:default}.fpT .fpCk input{width:17px;height:17px;cursor:pointer;margin:0;min-height:0}.fpT tr.off td:not(.fpCk){color:#94a3b8}
 .fpT tfoot td{font-weight:800;border-top:2px solid #dbe4ef}
 .pl{display:inline-block;white-space:nowrap;font-weight:800;font-size:12px;padding:2px 8px;border-radius:999px}.pOk{background:#dcfce7;color:#14532d}.pAl{background:#fef3c7;color:#7a4a00}.pCr{background:#fee2e2;color:#991b1b}
 .fpSc{overflow:auto;max-height:460px}
@@ -107,7 +107,15 @@ const qn=n=>Number(n||0).toLocaleString('pt-BR',{maximumFractionDigits:2});
 const br=s=>s?String(s).slice(0,10).split('-').reverse().join('/'):'';
 const iso=d=>d.toISOString().slice(0,10);
 const norm=s=>String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
-let D=null, timer=null, sortNf={k:'data',d:-1};
+let D=null, DF=null, SEL=null, timer=null, sortNf={k:'data',d:-1};
+/* REV63.6 — seleção de notas: SEL=null → todas; senão Set com as NFs que entram nos big numbers */
+const r2=v=>Math.round(v*100)/100;
+function agrega(its){const t={venda:0,icms:0,pis:0,cofins:0,custo:0,ipi_st:0,valor_nf:0};its.forEach(i=>{for(const k in t)t[k]+=Number(i[k]||0)});t.impostos=t.icms+t.pis+t.cofins;t.liquido=t.venda-t.impostos;t.lucro=t.liquido-t.custo;t.margem=t.venda?r2(100*t.lucro/t.venda):null;for(const k in t)if(k!=='margem')t[k]=r2(t[k]);return t}
+function vista(){if(!SEL)return DF;const nfs=DF.nfs.filter(n=>SEL.has(n.nf)),itens=DF.itens.filter(i=>SEL.has(i.nf)),pc={};
+  itens.forEach(i=>(pc[i.cliente||'—']=pc[i.cliente||'—']||[]).push(i));
+  const clientes=Object.entries(pc).map(([c,v])=>({cliente:c,nfs:new Set(v.map(i=>i.nf)).size,...agrega(v)})).sort((a,b)=>b.venda-a.venda);
+  return {...DF,nfs,itens,clientes,total:{...agrega(itens),nfs:nfs.length,itens:itens.length,negativas:nfs.filter(n=>(n.margem??0)<0).length},selecao:true}}
+function aplicaSel(){D=vista();render()}
 function mcls(m){return m==null?'':m<0?'pCr':m<15?'pAl':'pOk'}
 function perDatas(){const p=$('fpPer').value,h=new Date();let de,ate=new Date(h);
   if(p==='ano')de=new Date(h.getFullYear(),0,1);else if(p==='mes')de=new Date(h.getFullYear(),h.getMonth(),1);
@@ -149,18 +157,18 @@ async function load(){const w=$('fpW');w.classList.add('fpLoad');
     const r=await fetch('/api/assistencia/faturamento/dados?'+q);const d=await r.json();
     if(r.status===401){D=null;status();return}
     if(!r.ok){$('fpSub').textContent=d.error||'Falha ao carregar.';return}
-    D=d;render();relogio(d.expira_em)}
+    DF=d;SEL=null;D=vista();render();relogio(d.expira_em)}
   catch(e){$('fpSub').textContent='Falha ao carregar. Tente de novo.'}finally{w.classList.remove('fpLoad')}}
 function var_(a,b){if(a==null||!b)return'';const v=100*(a-b)/Math.abs(b);return `<span class="${v>=0?'up':'dn'}">${v>=0?'▲':'▼'} ${pc(Math.abs(v))}</span> vs período anterior`}
 function render(){const t=D.total,a=D.anterior;
   const sel=$('fpCli'),cur=sel.value;sel.innerHTML='<option value="">Todos</option>'+D.lista_clientes.map(c=>`<option ${c===cur?'selected':''}>${esc(c)}</option>`).join('');
   const K=[
-   ['nv','Venda de peças',rk(t.venda),`${t.nfs} nota(s) · ${t.itens} itens · ${var_(t.venda,a.venda)}`,'todos'],
+   ['nv','Venda de peças',rk(t.venda),`${t.nfs} nota(s) · ${t.itens} itens${D.selecao?' · seleção':' · '+var_(t.venda,a.venda)}`,'todos'],
    ['al','Impostos',rk(t.impostos),`ICMS ${rk(t.icms)} · PIS ${rk(t.pis)} · COFINS ${rk(t.cofins)}`,'imp'],
    ['in','Recebido líquido',rk(t.liquido),'venda − ICMS, PIS e COFINS','todos'],
    ['nv','Custo das peças',rk(t.custo),'custo médio do estoque','custo'],
    [t.lucro<0?'cr':'ok','Lucro líquido',rk(t.lucro),'recebido líquido − custo','todos'],
-   [t.margem==null?'nv':t.margem<0?'cr':t.margem<15?'al':'ok','Margem líquida',pc(t.margem),a.margem!=null?`período anterior ${pc(a.margem)}`:'lucro ÷ venda','margem'],
+   [t.margem==null?'nv':t.margem<0?'cr':t.margem<15?'al':'ok','Margem líquida',pc(t.margem),!D.selecao&&a.margem!=null?`período anterior ${pc(a.margem)}`:'lucro ÷ venda','margem'],
    [t.negativas?'cr':'ok','Notas com prejuízo',String(t.negativas),'margem líquida negativa','neg'],
    ['nv','Valor nas notas',rk(t.valor_nf),`inclui IPI e ST ${rk(t.ipi_st)}`,'todos']];
   $('fpK').innerHTML=K.map((k,i)=>`<button type="button" class="fpKpi ${k[0]}" data-i="${i}" aria-label="${esc(k[1])}: ${esc(k[2])}. Ver detalhe"><span>${k[1]}</span><b>${k[2]}</b><small>${k[3]}</small></button>`).join('');
@@ -176,23 +184,26 @@ function render(){const t=D.total,a=D.anterior;
   const mx=Math.max(1,...D.clientes.map(c=>Math.abs(c.margem||0)));
   $('fpCliB').innerHTML=D.clientes.length?D.clientes.map((c,i)=>`<button type="button" class="fpBar" data-i="${i}" title="${esc(c.cliente)}"><span>${esc(c.cliente)}</span><u><i style="width:${Math.min(100,100*Math.abs(c.margem||0)/mx)}%;background:${(c.margem||0)<0?'#dc2626':(c.margem||0)<15?'#d97706':'#0e7a5a'}"></i></u><b>${pc(c.margem)} · ${rk(c.venda)}</b></button>`).join(''):'<p class="fpEmpty">Sem clientes no período.</p>';
   $('fpCliB').querySelectorAll('.fpBar').forEach(b=>b.onclick=()=>{const c=D.clientes[+b.dataset.i];abreItens(D.itens.filter(i=>(i.cliente||'—')===c.cliente),c.cliente)});
-  $('fpNfLeg').textContent=`${D.nfs.length} nota(s) · clique no título da coluna para ordenar`;
+  $('fpNfLeg').textContent=SEL?`${SEL.size} de ${DF.nfs.length} nota(s) selecionada(s) nos big numbers · clique no título da coluna para ordenar`:`${DF.nfs.length} nota(s) · todas nos big numbers · marque as caixas para escolher`;
   nfTab();
   $('fpFonte').textContent=`Fonte: Bhom, consulta #274 · última carga ${D.ultima_carga?new Date(D.ultima_carga+'Z').toLocaleString('pt-BR'):'—'} · período anterior ${br(a.de)} a ${br(a.ate)}`}
 const NFC=[['nf','NF',0],['data','Data',0],['cliente','Cliente',0],['cfop','CFOP',0],['itens','Itens',1],['venda','Venda',1],['impostos','Impostos',1],['liquido','Recebido líq.',1],['custo','Custo',1],['lucro','Lucro',1],['margem','Margem',1],['valor_nf','Valor na NF',1]];
 function ordena(arr,s){const num=['itens','venda','impostos','liquido','custo','lucro','margem','valor_nf','nf','qtde','preco_unit','custo_unit','icms','pis','cofins'].includes(s.k);
   return [...arr].sort((a,b)=>{let x=a[s.k],y=b[s.k];if(num){x=Number(x??-1e15);y=Number(y??-1e15)}else{x=norm(x);y=norm(y)}return (x<y?-1:x>y?1:0)*s.d})}
 function nfTab(){const q=norm($('fpQ').value);
-  let rows=D.nfs.filter(n=>!q||norm(n.nf+' '+n.cliente+' '+n.cfop).includes(q)||D.itens.some(i=>i.nf===n.nf&&norm(i.codigo+' '+i.descricao).includes(q)));
+  let rows=DF.nfs.filter(n=>!q||norm(n.nf+' '+n.cliente+' '+n.cfop).includes(q)||DF.itens.some(i=>i.nf===n.nf&&norm(i.codigo+' '+i.descricao).includes(q)));
+  const on=n=>!SEL||SEL.has(n.nf),todos=rows.length&&rows.every(on),algum=rows.some(on);
   rows=ordena(rows,sortNf);
-  $('fpNfs').tHead.innerHTML='<tr>'+NFC.map(c=>`<th class="${c[2]?'n':''}" data-k="${c[0]}" aria-sort="${sortNf.k===c[0]?(sortNf.d>0?'ascending':'descending'):'none'}">${c[1]}${sortNf.k===c[0]?(sortNf.d>0?' ▲':' ▼'):''}</th>`).join('')+'</tr>';
-  $('fpNfs').tHead.querySelectorAll('th').forEach(th=>th.onclick=()=>{const k=th.dataset.k;sortNf={k,d:sortNf.k===k?-sortNf.d:(k==='cliente'?1:-1)};nfTab()});
-  $('fpNfs').tBodies[0].innerHTML=rows.length?rows.map(n=>`<tr class="ck ${(n.margem??0)<0?'neg':''}" data-nf="${esc(n.nf)}"><td>${esc(n.nf)}</td><td>${br(n.data)}</td><td>${esc(n.cliente)}</td><td>${esc(n.cfop)}</td><td class="n">${n.itens}</td><td class="n">${rs(n.venda)}</td><td class="n">${rs(n.impostos)}</td><td class="n">${rs(n.liquido)}</td><td class="n">${rs(n.custo)}</td><td class="n">${rs(n.lucro)}</td><td class="n"><span class="pl ${mcls(n.margem)}">${pc(n.margem)}</span></td><td class="n">${rs(n.valor_nf)}</td></tr>`).join('')
-    :`<tr><td colspan="${NFC.length}" class="fpEmpty">Nenhuma nota no período${q?' para essa busca':''}.</td></tr>`;
-  const s=k=>rows.reduce((a,n)=>a+(n[k]||0),0),v=s('venda');
-  $('fpNfs').tFoot.innerHTML=rows.length?`<tr><td colspan="4">Total · ${rows.length} nota(s)</td><td class="n">${s('itens')}</td><td class="n">${rs(v)}</td><td class="n">${rs(s('impostos'))}</td><td class="n">${rs(s('liquido'))}</td><td class="n">${rs(s('custo'))}</td><td class="n">${rs(s('lucro'))}</td><td class="n">${pc(v?100*s('lucro')/v:null)}</td><td class="n">${rs(s('valor_nf'))}</td></tr>`:'';
-  $('fpNfs').tBodies[0].querySelectorAll('tr.ck').forEach(tr=>tr.onclick=()=>{const n=D.nfs.find(x=>x.nf===tr.dataset.nf);abreItens(D.itens.filter(i=>i.nf===n.nf),`NF ${n.nf} · ${n.cliente}`)})}
-$('fpQ').oninput=()=>D&&nfTab();
+  $('fpNfs').tHead.innerHTML='<tr><th class="fpCk"><input type="checkbox" id="fpAll" aria-label="Selecionar todas as notas exibidas" '+(todos?'checked':'')+'></th>'+NFC.map(c=>`<th class="${c[2]?'n':''}" data-k="${c[0]}" aria-sort="${sortNf.k===c[0]?(sortNf.d>0?'ascending':'descending'):'none'}">${c[1]}${sortNf.k===c[0]?(sortNf.d>0?' ▲':' ▼'):''}</th>`).join('')+'</tr>';
+  const all=$('fpAll');all.indeterminate=!todos&&algum;all.onclick=e=>e.stopPropagation();all.onchange=()=>{const vis=rows.map(n=>n.nf);if(!SEL)SEL=new Set(DF.nfs.map(n=>n.nf));vis.forEach(nf=>all.checked?SEL.add(nf):SEL.delete(nf));if(SEL.size===DF.nfs.length)SEL=null;aplicaSel()};
+  $('fpNfs').tHead.querySelectorAll('th[data-k]').forEach(th=>th.onclick=()=>{const k=th.dataset.k;sortNf={k,d:sortNf.k===k?-sortNf.d:(k==='cliente'?1:-1)};nfTab()});
+  $('fpNfs').tBodies[0].innerHTML=rows.length?rows.map(n=>`<tr class="ck ${(n.margem??0)<0?'neg':''}${on(n)?'':' off'}" data-nf="${esc(n.nf)}"><td class="fpCk"><input type="checkbox" class="fpSel" value="${esc(n.nf)}" ${on(n)?'checked':''} aria-label="Incluir NF ${esc(n.nf)} nos big numbers"></td><td>${esc(n.nf)}</td><td>${br(n.data)}</td><td>${esc(n.cliente)}</td><td>${esc(n.cfop)}</td><td class="n">${n.itens}</td><td class="n">${rs(n.venda)}</td><td class="n">${rs(n.impostos)}</td><td class="n">${rs(n.liquido)}</td><td class="n">${rs(n.custo)}</td><td class="n">${rs(n.lucro)}</td><td class="n"><span class="pl ${mcls(n.margem)}">${pc(n.margem)}</span></td><td class="n">${rs(n.valor_nf)}</td></tr>`).join('')
+    :`<tr><td colspan="${NFC.length+1}" class="fpEmpty">Nenhuma nota no período${q?' para essa busca':''}.</td></tr>`;
+  const sr=rows.filter(on),s=k=>sr.reduce((a,n)=>a+(n[k]||0),0),v=s('venda');
+  $('fpNfs').tFoot.innerHTML=rows.length?`<tr><td colspan="5">Total${SEL?' selecionado':''} · ${sr.length} nota(s)</td><td class="n">${s('itens')}</td><td class="n">${rs(v)}</td><td class="n">${rs(s('impostos'))}</td><td class="n">${rs(s('liquido'))}</td><td class="n">${rs(s('custo'))}</td><td class="n">${rs(s('lucro'))}</td><td class="n">${pc(v?100*s('lucro')/v:null)}</td><td class="n">${rs(s('valor_nf'))}</td></tr>`:'';
+  $('fpNfs').tBodies[0].querySelectorAll('tr.ck').forEach(tr=>tr.onclick=e=>{if(e.target.closest('.fpCk'))return;const n=DF.nfs.find(x=>x.nf===tr.dataset.nf);abreItens(DF.itens.filter(i=>i.nf===n.nf),`NF ${n.nf} · ${n.cliente}`)});
+  $('fpNfs').tBodies[0].querySelectorAll('.fpSel').forEach(cb=>cb.onchange=()=>{if(!SEL)SEL=new Set(DF.nfs.map(n=>n.nf));cb.checked?SEL.add(cb.value):SEL.delete(cb.value);if(SEL.size===DF.nfs.length)SEL=null;aplicaSel()})}
+$('fpQ').oninput=()=>DF&&nfTab();
 const ITC=[['nf','NF',0],['data','Data',0],['cliente','Cliente',0],['codigo','Código',0],['descricao','Item',0],['qtde','Qtde',1],['preco_unit','Preço unit.',1],['venda','Venda',1],['custo_unit','Custo unit.',1],['custo','Custo',1],['icms','ICMS',1],['pis','PIS',1],['cofins','COFINS',1],['lucro','Lucro',1],['margem','Margem',1],['origem_custo','Origem do custo',0]];
 let M={rows:[],s:{k:'',d:1},t:''};
 function fmtI(c,i){const v=i[c[0]];if(c[0]==='data')return br(v);if(c[0]==='margem')return `<span class="pl ${mcls(v)}">${pc(v)}</span>`;if(c[0]==='qtde')return qn(v);if(c[2])return rs(v);return esc(v)}
