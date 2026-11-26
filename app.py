@@ -21095,7 +21095,7 @@ def petty_cash_pdf(cid):
     if not (_has_access('finance.petty_cash.view') or _has_access('finance.petty_cash.manage')):abort(403)
     c=db.session.get(PettyCash,cid) or abort(404);es=PettyCashEntry.query.filter_by(petty_cash_id=cid).order_by(PettyCashEntry.entry_date,PettyCashEntry.id).all();u=db.session.get(User,c.responsible_id);sm=_petty_cash_summary(c)
     from reportlab.lib.pagesizes import A4; from reportlab.platypus import SimpleDocTemplate,Paragraph,Spacer,Table,TableStyle; from reportlab.lib.styles import getSampleStyleSheet; from reportlab.lib import colors
-    # REV64.2: PDF só com Fornecedor, Categoria, Descrição, Centro de custo/Projeto, Valor e Observação; status FECHADO.
+    # REV64.2/65: PDF só com Data, Fornecedor, Categoria, Descrição, Centro de custo/Projeto, Valor e Observação; status FECHADO.
     from reportlab.lib.pagesizes import landscape
     from reportlab.lib.styles import ParagraphStyle
     brl=lambda v:'R$ '+f'{float(v or 0):,.2f}'.replace(',','X').replace('.',',').replace('X','.')
@@ -21105,10 +21105,10 @@ def petty_cash_pdf(cid):
     story=[Paragraph(f"PRESTAÇÃO DE CONTAS – {sm['control_number']}",st['Title']),Spacer(1,6),
            Paragraph(f'Responsável: {(u.name if u else c.responsible_id)} | Departamento: {c.department or "-"} | Recebimento: {c.received_date.strftime("%d/%m/%Y")} | Status: {sm["status"]}',st['Normal']),Spacer(1,10)]
     P=lambda v:Paragraph(str(v or '').replace('&','&amp;').replace('<','&lt;'),cell)
-    data=[['Fornecedor','Categoria','Descrição','Centro de custo / Projeto','Valor','Observação']]+[[P(x.supplier),P(x.category),P(x.description),P(x.cost_center),brl(x.amount),P(x.notes)] for x in es]
+    data=[['Data','Fornecedor','Categoria','Descrição','Centro de custo / Projeto','Valor','Observação']]+[[x.entry_date.strftime('%d/%m/%Y'),P(x.supplier),P(x.category),P(x.description),P(x.cost_center),brl(x.amount),P(x.notes)] for x in es]
     total=sum(float(x.amount or 0) for x in es if x.entry_type=='DESPESA')
-    data.append(['','','','TOTAL DESPESAS',brl(total),''])
-    t=Table(data,repeatRows=1,colWidths=[120,95,200,120,70,190]);t.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#1F4E78')),('TEXTCOLOR',(0,0),(-1,0),colors.white),('FONTSIZE',(0,0),(-1,-1),7.5),('GRID',(0,0),(-1,-1),.25,colors.grey),('VALIGN',(0,0),(-1,-1),'TOP'),('ALIGN',(4,0),(4,-1),'RIGHT'),('FONTNAME',(3,-1),(4,-1),'Helvetica-Bold')]));story.append(t);doc.build(story);bio.seek(0)
+    data.append(['','','','','TOTAL DESPESAS',brl(total),''])
+    t=Table(data,repeatRows=1,colWidths=[55,115,90,190,115,68,160]);t.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#1F4E78')),('TEXTCOLOR',(0,0),(-1,0),colors.white),('FONTSIZE',(0,0),(-1,-1),7.5),('GRID',(0,0),(-1,-1),.25,colors.grey),('VALIGN',(0,0),(-1,-1),'TOP'),('ALIGN',(5,0),(5,-1),'RIGHT'),('FONTNAME',(4,-1),(5,-1),'Helvetica-Bold')]));story.append(t);doc.build(story);bio.seek(0)
     return send_file(bio,as_attachment=True,download_name=f"prestacao_{sm['control_number']}.pdf",mimetype='application/pdf')
 
 @app.get("/api/v56a/performance")
@@ -36982,6 +36982,18 @@ def _v120_reincidencia(serial, company_names=None, exclude_appt=None, hoje=None,
                     cand.append((d, "agendamento " + (ap.code or str(ap.id)), (eq.defect or "").strip(), ""))
     except Exception:
         db.session.rollback()
+    # REV65: OS do GestãoClick (sistema anterior, em paralelo ao Bhom) também contam, pela série exata.
+    try:
+        from v150_gestaoclick_dados import gc_reincidencia as _v150_gc_rein
+        for cod, dgc, sit, eqp in _v150_gc_rein(db.engine, sk, hoje - timedelta(days=365)):
+            dgc = _v120_d(dgc)
+            if not dgc or dgc > hoje:
+                continue
+            os_datas.append(dgc)
+            if dgc >= lim:
+                cand.append((dgc, "OS GestãoClick " + str(cod), "", ""))
+    except Exception:
+        app.logger.exception("REV65: falha ao consultar reincidência no GestãoClick")
     if not cand:
         return None
     datas = list(os_datas) + [d for d in set(portal) if not any(d <= o <= d + timedelta(days=30) for o in os_datas)]
@@ -37598,3 +37610,12 @@ def petty_cash_delete_v1642(cid):
         return jsonify({'ok':False,'error':'Não foi possível excluir a caixinha.'}),500
     return jsonify({'ok':True,'deleted':label})
 # =================== fim REV64.2 ===================
+
+
+# =================== V88.0 REV65 — GestãoClick: carga das planilhas, histórico de OS, NF-e e apoio a compras ===================
+from v150_gestaoclick_dados import install_gestaoclick_dados
+install_gestaoclick_dados(app, {"login_required": login_required, "gestor": _v140_guard, "portal_staff": _portal_staff,
+                                "fin_liberado": _v132_liberado, "can": _has_access, "engine": _v140_engine, "audit": _v140_audit,
+                                "user_name": lambda: str(session.get("name") or session.get("user_id") or "")[:180],
+                                "render": lambda tpl, **ctx: render_template(tpl, app_release=APP_RELEASE, **ctx)})
+# =================== fim REV65 ===================

@@ -1,0 +1,64 @@
+{% extends "base.html" %}{% block title %}Apoio a compras | Sistema de Gestão{% endblock %}
+{% block content %}
+<style>
+.aW{max-width:1500px;margin:0 auto;padding:18px;color:#16283d}.aW h2{margin:0}.sub{color:#64748b;font-size:13px}
+.aF{display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;margin-top:12px;background:#fff;border:1px solid #dbe4ef;border-radius:12px;padding:10px 12px}
+.aF label{display:flex;flex-direction:column;gap:3px;font-size:11px;font-weight:800;color:#475569}.aF input,.aF select{padding:7px 8px;border:1px solid #cbd5e1;border-radius:7px;min-width:150px;font:inherit;font-size:13px}
+.aK{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:10px;margin:12px 0}
+html .aW button.aKpi{all:unset;box-sizing:border-box;cursor:pointer;background:#fff!important;border:1px solid #dbe4ef!important;border-top:4px solid var(--kc,#7F8A99)!important;border-radius:12px!important;padding:12px 14px!important;min-height:72px!important;display:block!important;color:inherit!important;font-weight:400!important}
+html .aW button.aKpi.on{box-shadow:0 0 0 2px var(--kc) inset!important}.aKpi small{color:#64748b;display:block}.aKpi b{display:block;font-size:20px;margin-top:6px}.aKpi em{display:block;font-style:normal;font-size:11px;color:#64748b}
+.aT{background:#fff;border:1px solid #dbe4ef;border-radius:12px;padding:12px}.aT table{width:100%;border-collapse:collapse;font-size:12px}.aT th,.aT td{padding:7px 6px;border-bottom:1px solid #e5e7eb;text-align:left;vertical-align:top}
+.aT thead th{background:#eef4fa;cursor:pointer;user-select:none;white-space:nowrap;position:sticky;top:0}.n{text-align:right!important;font-variant-numeric:tabular-nums;white-space:nowrap}
+.tag{display:inline-block;border-radius:6px;padding:2px 6px;font-size:11px;font-weight:700}.tag.crit{background:var(--ap-crit-bg,#FDE4E2);color:var(--ap-crit,#A12622)}.tag.warn{background:var(--ap-warn-bg,#FFF1CC);color:var(--ap-warn,#7A5200)}.tag.ok{background:var(--ap-ok-bg,#E3F4EA);color:var(--ap-ok,#166B44)}
+.aBtn{border:0;border-radius:8px;padding:8px 12px;font-weight:800;cursor:pointer;background:#eef3f8;color:#173b6d;font-size:12px}.note{font-size:12px;color:#64748b;margin:8px 0 0}
+.empty{color:#64748b;font-size:12px;padding:24px 0;text-align:center}
+@media(max-width:900px){.aK{grid-template-columns:repeat(2,1fr)}}
+</style>
+<div class="aW">
+ <h2>Apoio a compras</h2>
+ <div class="sub" id="sub">Estoque atual x compras do período (dados do GestãoClick).</div>
+ <div class="aF">
+  <label>Buscar item<input id="fQ" placeholder="código ou nome"></label>
+  <label>Mostrar<select id="fShow"><option value="sug">Só com sugestão de compra</option><option value="comp">Só itens comprados no período</option><option value="est">Só itens com estoque</option><option value="">Todos</option></select></label>
+  <button class="aBtn" type="button" id="fLimpar">Limpar filtros</button>
+ </div>
+ <div class="aK">
+  <button class="aKpi" type="button" data-f="sug" style="--kc:var(--ap-c6,#D55E00)"><small>Itens com sugestão de compra</small><b id="vSug">—</b><em id="vSugV"></em></button>
+  <button class="aKpi" type="button" data-f="min" style="--kc:var(--ap-crit,#A12622)"><small>Abaixo do estoque mínimo</small><b id="vMin">—</b><em>saldo menor que o mínimo cadastrado</em></button>
+  <button class="aKpi" type="button" data-f="comp" style="--kc:var(--ap-c1,#0072B2)"><small>Itens comprados no período</small><b id="vComp">—</b><em id="vCompV"></em></button>
+  <button class="aKpi" type="button" data-f="est" style="--kc:var(--ap-c3,#009E73)"><small>Itens com estoque</small><b id="vEst">—</b><em id="vEstV"></em></button>
+ </div>
+ <div class="aT">
+  <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:8px;font-size:12px;color:#475569"><span id="tInfo">Carregando…</span><button class="aBtn" type="button" id="tCsv">Exportar CSV</button></div>
+  <div style="overflow:auto;max-height:72vh"><table><thead><tr>
+   <th data-k="codigo">Código</th><th data-k="nome">Item</th><th data-k="unidade">Un.</th><th data-k="estoque" class="n">Estoque</th><th data-k="minimo" class="n">Mínimo</th><th data-k="comprado" class="n">Comprado no período</th><th data-k="media_mes" class="n">Média/mês</th><th data-k="cobertura_meses" class="n">Cobertura (meses)</th><th data-k="custo_unit" class="n">Custo unit.</th><th data-k="sugestao" class="n">Sugestão</th><th data-k="valor_sugestao" class="n">Valor sugerido</th><th data-k="motivo">Motivo</th>
+  </tr></thead><tbody id="tBody"></tbody></table></div>
+  <p class="note">Como é calculado: média/mês = quantidade comprada no período ÷ meses do período (até a data da carga). Sugestão = o que falta para o estoque mínimo ou para cobrir 2 meses de média, o que for maior. O GestãoClick não informa o consumo das OS nem o fornecedor por item; por isso a média usa as compras como referência.</p>
+ </div>
+</div>
+<script>
+(()=>{'use strict';
+const $=id=>document.getElementById(id),esc=v=>String(v??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const brl=v=>v==null?'—':Number(v).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}),q=(v,d=2)=>v==null?'—':Number(v).toLocaleString('pt-BR',{maximumFractionDigits:d});
+let all=[],sort={k:'valor_sugestao',d:-1},extra='',shown=[];
+function rows(){const t=$('fQ').value.trim().toUpperCase(),sh=$('fShow').value;return all.filter(r=>(!t||String(r.codigo).toUpperCase().includes(t)||String(r.nome||'').toUpperCase().includes(t))&&(!sh||(sh==='sug'?r.sugestao>0:sh==='comp'?r.comprado>0:r.estoque>0))&&(!extra||(extra==='min'?(r.minimo>0&&r.estoque!=null&&r.estoque<r.minimo):true)))}
+function render(){const rs=rows();shown=rs;
+ const sug=all.filter(r=>r.sugestao>0),comp=all.filter(r=>r.comprado>0),est=all.filter(r=>r.estoque>0);
+ $('vSug').textContent=sug.length;$('vSugV').textContent=brl(sug.reduce((a,r)=>a+(r.valor_sugestao||0),0))+' estimado';$('vMin').textContent=all.filter(r=>r.minimo>0&&r.estoque!=null&&r.estoque<r.minimo).length;
+ $('vComp').textContent=comp.length;$('vCompV').textContent=brl(comp.reduce((a,r)=>a+(r.comprado*(r.custo_unit||0)),0))+' aprox.';$('vEst').textContent=est.length;$('vEstV').textContent=brl(est.reduce((a,r)=>a+(r.valor_estoque||0),0))+' em estoque';
+ document.querySelectorAll('.aKpi').forEach(b=>b.classList.toggle('on',b.dataset.f===extra||($('fShow').value===b.dataset.f&&!extra)));
+ const s=[...rs].sort((a,b)=>{const x=a[sort.k],y=b[sort.k];if(typeof x==='number'||typeof y==='number'||x==null||y==null){return ((x??-1e18)-(y??-1e18))*sort.d}return String(x).localeCompare(String(y),'pt-BR',{sensitivity:'base'})*sort.d});
+ $('tInfo').textContent=`${s.length} de ${all.length} itens`;
+ $('tBody').innerHTML=s.length?s.map(r=>`<tr><td>${esc(r.codigo)}</td><td>${esc(r.nome)}</td><td>${esc(r.unidade||'')}</td><td class="n">${q(r.estoque)}</td><td class="n">${q(r.minimo)}</td><td class="n">${q(r.comprado)}</td><td class="n">${q(r.media_mes)}</td><td class="n">${r.cobertura_meses==null?'—':`<span class="tag ${r.cobertura_meses<1?'crit':r.cobertura_meses<2?'warn':'ok'}">${q(r.cobertura_meses,1)}</span>`}</td><td class="n">${brl(r.custo_unit)}</td><td class="n"><b>${r.sugestao?q(r.sugestao,0):'—'}</b></td><td class="n">${r.valor_sugestao?brl(r.valor_sugestao):'—'}</td><td>${esc(r.motivo||'')}</td></tr>`).join(''):'<tr><td colspan="12" class="empty">Nenhum item com esses filtros.</td></tr>';
+ document.querySelectorAll('.aT thead th').forEach(th=>{const k=th.dataset.k;th.setAttribute('aria-sort',sort.k===k?(sort.d>0?'ascending':'descending'):'none');th.textContent=th.textContent.replace(/ [▲▼]$/,'')+(sort.k===k?(sort.d>0?' ▲':' ▼'):'')})}
+document.querySelectorAll('.aT thead th').forEach(th=>th.onclick=()=>{const k=th.dataset.k;sort={k,d:sort.k===k?-sort.d:(['codigo','nome','unidade','motivo'].includes(k)?1:-1)};render()});
+$('fQ').addEventListener('input',render);$('fShow').addEventListener('change',()=>{extra='';render()});$('fLimpar').onclick=()=>{$('fQ').value='';$('fShow').value='';extra='';render()};
+document.querySelectorAll('.aKpi').forEach(b=>b.onclick=()=>{const f=b.dataset.f;if(f==='min'){extra=extra==='min'?'':'min';$('fShow').value=''}else{extra='';$('fShow').value=f}render()});
+$('tCsv').onclick=()=>{const Q=v=>'"'+String(v??'').replace(/"/g,'""')+'"',N=v=>v==null?'':String(v).replace('.',',');const L=[['Código','Item','Un.','Estoque','Mínimo','Comprado no período','Média/mês','Cobertura (meses)','Custo unit.','Sugestão','Valor sugerido','Motivo'].map(Q).join(';')].concat(shown.map(r=>[r.codigo,r.nome,r.unidade,N(r.estoque),N(r.minimo),N(r.comprado),N(r.media_mes),N(r.cobertura_meses),N(r.custo_unit),N(r.sugestao),N(r.valor_sugestao),r.motivo].map(Q).join(';')));const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['﻿'+L.join('\r\n')],{type:'text/csv'}));a.download='apoio_compras.csv';a.click()};
+(async()=>{const r=await fetch('/api/gestaoclick/apoio-compras',{credentials:'same-origin'});const d=await r.json().catch(()=>({ok:false,error:'Erro de comunicação (HTTP '+r.status+')'}));if(!d.ok){$('tInfo').textContent=d.error||'Falha';return}
+ all=d.rows||[];const p=d.periodo||{};$('sub').textContent='Estoque atual x compras do período (GestãoClick)'+(p.ini?` · compras de ${p.ini.split('-').reverse().join('/')} a ${p.fim.split('-').reverse().join('/')} (${String(p.meses).replace('.',',')} meses)`:' · ainda sem planilha de produtos comprados')+(d.carga?` · última carga ${new Date(d.carga).toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo'})}`:'');
+ if(!all.length){$('tInfo').textContent='Nenhum dado ainda: carregue as planilhas de estoque e de produtos comprados em Gestão › GestãoClick.';}
+ $('fShow').value=all.some(r=>r.sugestao>0)?'sug':'';render()})();
+})();
+</script>
+{% endblock %}

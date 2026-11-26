@@ -1,0 +1,81 @@
+{% extends "base.html" %}{% block title %}Histórico GestãoClick | Sistema de Gestão{% endblock %}
+{% block content %}
+<style>
+.gW{max-width:1500px;margin:0 auto;padding:18px;color:#16283d}.gW h2{margin:0}.gW small.sub{color:#64748b}
+.gF{display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;margin-top:12px;background:#fff;border:1px solid #dbe4ef;border-radius:12px;padding:10px 12px}
+.gF label{display:flex;flex-direction:column;gap:3px;font-size:11px;font-weight:800;color:#475569}.gF input,.gF select{padding:7px 8px;border:1px solid #cbd5e1;border-radius:7px;min-width:130px;font:inherit;font-size:13px}
+.gK{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:10px;margin:12px 0}
+html .gW button.gKpi{all:unset;box-sizing:border-box;cursor:pointer;background:#fff!important;border:1px solid #dbe4ef!important;border-top:4px solid var(--kc,#7F8A99)!important;border-radius:12px!important;padding:12px 14px!important;min-height:72px!important;display:block!important;color:inherit!important;font-weight:400!important}
+html .gW button.gKpi:focus-visible{outline:3px solid var(--ap-focus,#56B4E9)}.gKpi small{color:#64748b;display:block}.gKpi b{display:block;font-size:22px;margin-top:6px}.gKpi em{display:block;font-style:normal;font-size:11px;color:#64748b}
+.gC{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.gCh{background:#fff;border:1px solid #dbe4ef;border-radius:12px;padding:12px 14px;min-height:190px}.gCh h4{margin:0 0 10px;font-size:14px}
+html .gW button.hb{all:unset;box-sizing:border-box;display:grid;grid-template-columns:minmax(90px,40%) 1fr auto;gap:8px;align-items:center;width:100%;cursor:pointer;padding:3px 2px!important;border:0!important;background:transparent!important;min-height:0!important;font-size:12px;border-radius:6px;color:inherit!important;font-weight:400!important}
+html .gW button.hb:hover{background:#f1f5fb!important}.hb span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.hb i{display:block;height:14px;border-radius:4px;min-width:2px}.hb b{font-variant-numeric:tabular-nums}
+.vb{display:flex;align-items:flex-end;gap:4px;height:160px}html .gW button.v{all:unset;box-sizing:border-box;flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;cursor:pointer;min-width:0;border:0!important;background:transparent!important;padding:0!important;min-height:0!important}
+.v i{display:block;width:70%;max-width:36px;border-radius:5px 5px 0 0;background:var(--ap-c1,#0072B2);min-height:2px}.v small{font-size:10px;color:#64748b;margin-top:3px}.v em{font-style:normal;font-size:10px;margin-bottom:2px}
+.gT{background:#fff;border:1px solid #dbe4ef;border-radius:12px;padding:12px;margin-top:12px}.gT table{width:100%;border-collapse:collapse;font-size:12px}.gT th,.gT td{padding:7px 6px;border-bottom:1px solid #e5e7eb;text-align:left;vertical-align:top}
+.gT thead th{background:#eef4fa;cursor:pointer;user-select:none;position:sticky;top:0;white-space:nowrap}.gT .bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;margin-bottom:8px;font-size:12px;color:#475569}
+.gBtn{border:0;border-radius:8px;padding:8px 12px;font-weight:800;cursor:pointer;background:#eef3f8;color:#173b6d;text-decoration:none;font-size:12px}.gBtn[disabled]{opacity:.5;cursor:default}
+.empty{color:#64748b;font-size:12px;padding:24px 0;text-align:center}.sit{font-weight:700}
+@media(max-width:900px){.gK{grid-template-columns:repeat(2,1fr)}.gC{grid-template-columns:1fr}}
+</style>
+<div class="gW">
+ <h2>Histórico GestãoClick — Ordens de serviço</h2>
+ <small class="sub">OS do sistema anterior (carregadas das planilhas do GestãoClick). Uso interno: não aparece para o cliente. <span id="carga"></span></small>
+ <div class="gF">
+  <label>Entrada de<input type="date" id="fDe"></label><label>até<input type="date" id="fAte"></label>
+  <label>Cliente<select id="fCli"><option value="">Todos</option></select></label>
+  <label>Situação<select id="fSit"><option value="">Todas</option></select></label>
+  <label>Garagem<select id="fGar"><option value="">Todas</option></select></label>
+  <label>OS, série ou equipamento<input id="fQ" placeholder="ex.: 1221 ou 25563"></label>
+  <button class="gBtn" type="button" id="fLimpar">Limpar filtros</button>
+ </div>
+ <div class="gK">
+  <button class="gKpi" type="button" id="kTot" style="--kc:var(--ap-c1,#0072B2)"><small>Ordens de serviço</small><b id="vTot">—</b><em>com os filtros</em></button>
+  <button class="gKpi" type="button" id="kAb" style="--kc:var(--ap-c2,#E69F00)"><small>Em andamento</small><b id="vAb">—</b><em>não finalizadas/liberadas</em></button>
+  <button class="gKpi" type="button" id="kRet" style="--kc:var(--ap-c6,#D55E00)"><small>Com OS de retorno</small><b id="vRet">—</b><em>reincidência marcada no GestãoClick</em></button>
+  <button class="gKpi" type="button" id="kSer" style="--kc:var(--ap-c3,#009E73)"><small>Equipamentos</small><b id="vSer">—</b><em>números de série distintos</em></button>
+ </div>
+ <div class="gC">
+  <div class="gCh"><h4>OS por mês</h4><div id="cMes"></div></div>
+  <div class="gCh"><h4>Por situação</h4><div id="cSit"></div></div>
+  <div class="gCh"><h4>Maiores clientes</h4><div id="cCli"></div></div>
+  <div class="gCh"><h4>Por garagem</h4><div id="cGar"></div></div>
+ </div>
+ <div class="gT" id="tabela">
+  <div class="bar"><span id="tInfo">Carregando…</span><span><a class="gBtn" id="tXls" href="#">Exportar Excel</a> <button class="gBtn" id="tPrev" type="button">‹ Anterior</button> <span id="tPag"></span> <button class="gBtn" id="tNext" type="button">Próxima ›</button></span></div>
+  <div style="overflow:auto"><table><thead><tr>
+   <th data-k="codigo">OS</th><th data-k="data">Entrada</th><th data-k="cliente">Cliente</th><th data-k="equipamento">Equipamento</th><th data-k="situacao">Situação</th><th data-k="garagem">Garagem</th><th data-k="previsao">Previsão</th><th data-k="dt_atendimento">Atendimento</th><th>OS de retorno</th>
+  </tr></thead><tbody id="tBody"></tbody></table></div>
+ </div>
+</div>
+<script>
+(()=>{'use strict';
+const $=id=>document.getElementById(id),esc=v=>String(v??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])),br=d=>d?d.slice(0,10).split('-').reverse().join('/'):'—',n=v=>Number(v||0).toLocaleString('pt-BR');
+const PAL=['var(--ap-c1,#0072B2)','var(--ap-c2,#E69F00)','var(--ap-c3,#009E73)','var(--ap-c4,#CC79A7)','var(--ap-c5,#56B4E9)','var(--ap-c6,#D55E00)','var(--ap-c8,#7F8A99)','var(--ap-seq4,#2F6DB5)'];
+let st={pagina:1,ordem:'data',dir:'desc',mes:'',flag:''},filtrosCarregados=false,timer=null;
+function qs(extra){const p=new URLSearchParams();const m={de:'fDe',ate:'fAte',cliente:'fCli',situacao:'fSit',garagem:'fGar',q:'fQ'};for(const [k,id] of Object.entries(m)){const v=$(id).value.trim();if(v)p.set(k,v)}if(st.mes)p.set('mes',st.mes);if(st.flag)p.set(st.flag,'1');for(const [k,v] of Object.entries(extra||{}))p.set(k,v);return p}
+function fill(id,vals,first){const el=$(id),cur=el.value;el.innerHTML=`<option value="">${first}</option>`+vals.map(v=>`<option>${esc(v)}</option>`).join('');if(vals.includes(cur))el.value=cur}
+function hb(box,data,onPick){if(!data.length){box.innerHTML='<div class="empty">Sem OS com esses filtros.</div>';return}const mx=Math.max(...data.map(d=>d[1]));box.innerHTML=data.map(([k,v],i)=>`<button type="button" class="hb" data-i="${i}" title="${esc(k)}: ${n(v)} OS"><span>${esc(k)}</span><span><i style="width:${Math.max(1,v/mx*100)}%;background:${PAL[i%PAL.length]}"></i></span><b>${n(v)}</b></button>`).join('');box.querySelectorAll('.hb').forEach(b=>b.onclick=()=>onPick(data[+b.dataset.i][0]))}
+async function load(resumo){
+ $('tInfo').textContent='Carregando…';
+ const r=await fetch('/api/gestaoclick/os?'+qs({pagina:st.pagina,ordem:st.ordem,dir:st.dir,resumo:resumo?1:0,por:50}),{credentials:'same-origin'});const d=await r.json().catch(()=>({ok:false,error:'Erro de comunicação (HTTP '+r.status+')'}));
+ if(!d.ok){$('tInfo').textContent=d.error||'Falha';$('tBody').innerHTML='';return}
+ if(d.resumo){const s=d.resumo;$('vTot').textContent=n(s.total);$('vAb').textContent=n(s.abertas);$('vRet').textContent=n(s.retorno);$('vSer').textContent=n(s.series);
+  if(!filtrosCarregados){fill('fCli',s.filtros.clientes,'Todos');fill('fSit',s.filtros.situacoes,'Todas');fill('fGar',s.filtros.garagens,'Todas');filtrosCarregados=true}
+  const ms=s.por_mes.slice(-18),bx=$('cMes');if(!ms.length)bx.innerHTML='<div class="empty">Sem OS com esses filtros.</div>';else{const mx=Math.max(...ms.map(m=>m[1]));bx.innerHTML='<div class="vb">'+ms.map(([k,v])=>`<button type="button" class="v" data-m="${k}" title="${k.slice(5)}/${k.slice(0,4)}: ${n(v)} OS"><em>${n(v)}</em><i style="height:${Math.max(2,v/mx*120)}px;${st.mes===k?'background:var(--ap-c6,#D55E00)':''}"></i><small>${k.slice(5)}/${k.slice(2,4)}</small></button>`).join('')+'</div>';bx.querySelectorAll('.v').forEach(b=>b.onclick=()=>{st.mes=st.mes===b.dataset.m?'':b.dataset.m;go()})}
+  hb($('cSit'),s.por_situacao,v=>{$('fSit').value=v==='(vazio)'?'':v;go()});hb($('cCli'),s.por_cliente,v=>{$('fCli').value=v==='(vazio)'?'':v;go()});hb($('cGar'),s.por_garagem,v=>{$('fGar').value=v==='(vazio)'?'':v;go()})}
+ const pages=Math.max(1,Math.ceil(d.total/d.por));$('tInfo').textContent=`Mostrando ${d.rows.length?((d.pagina-1)*d.por+1):0}–${(d.pagina-1)*d.por+d.rows.length} de ${n(d.total)} OS`+(st.mes?` · mês ${st.mes.slice(5)}/${st.mes.slice(0,4)}`:'')+(st.flag==='abertas'?' · só em andamento':st.flag==='retorno'?' · só com OS de retorno':'');$('tPag').textContent=`${d.pagina} / ${pages}`;$('tPrev').disabled=d.pagina<=1;$('tNext').disabled=d.pagina>=pages;
+ $('tBody').innerHTML=d.rows.length?d.rows.map(r=>`<tr><td><b>${esc(r.codigo)}</b></td><td>${br(r.data)}</td><td>${esc(r.cliente)}</td><td>${esc(r.equipamento)}</td><td class="sit">${esc(r.situacao)}</td><td>${esc(r.garagem||'—')}</td><td>${br(r.previsao)}</td><td>${br(r.dt_atendimento)}</td><td>${esc(r.os_retorno||'—')}</td></tr>`).join(''):'<tr><td colspan="9" class="empty">Nenhuma OS com esses filtros. Ajuste o período ou limpe os filtros.</td></tr>';
+ document.querySelectorAll('.gT thead th[data-k]').forEach(th=>{const k=th.dataset.k;th.setAttribute('aria-sort',st.ordem===k?(st.dir==='asc'?'ascending':'descending'):'none');th.textContent=th.textContent.replace(/ [▲▼]$/,'')+(st.ordem===k?(st.dir==='asc'?' ▲':' ▼'):'')});
+ $('tXls').href='/api/gestaoclick/os/exportar?'+qs().toString()}
+function go(){st.pagina=1;load(true)}
+['fDe','fAte','fCli','fSit','fGar'].forEach(id=>$(id).addEventListener('change',go));$('fQ').addEventListener('input',()=>{clearTimeout(timer);timer=setTimeout(go,400)});
+$('fLimpar').onclick=()=>{['fDe','fAte','fCli','fSit','fGar','fQ'].forEach(id=>$(id).value='');st.mes='';st.flag='';go()};
+$('tPrev').onclick=()=>{st.pagina--;load(false)};$('tNext').onclick=()=>{st.pagina++;load(false)};
+document.querySelectorAll('.gT thead th[data-k]').forEach(th=>th.onclick=()=>{const k=th.dataset.k;st.dir=st.ordem===k&&st.dir==='desc'?'asc':'desc';st.ordem=k;st.pagina=1;load(false)});
+const toTable=()=>$('tabela').scrollIntoView({behavior:'smooth',block:'start'});
+const flag=f=>{st.flag=st.flag===f?'':f;st.pagina=1;load(true).then(toTable)};$('kTot').onclick=()=>{st.flag='';st.pagina=1;load(true).then(toTable)};$('kAb').onclick=()=>flag('abertas');$('kRet').onclick=()=>flag('retorno');$('kSer').onclick=toTable;
+load(true);
+})();
+</script>
+{% endblock %}
