@@ -37525,7 +37525,7 @@ if _v136_perfil_orig:
 
 
 # =================== V88.0 REV64 — GestãoClick (sistema anterior da Assistência): conexão e consulta, só leitura ===================
-from v140_gestaoclick import install_gestaoclick
+from v140_gestaoclick import install_gestaoclick, install_gestaoclick_import
 
 
 def _v140_audit(event, detail):
@@ -37544,4 +37544,8 @@ def _v140_guard():
 
 install_gestaoclick(app, {"login_required": login_required, "guard": _v140_guard, "audit": _v140_audit,
                           "render": lambda tpl, **ctx: render_template(tpl, app_release=APP_RELEASE, **ctx)})
+with app.app_context():
+    _v140_engine = db.engine
+install_gestaoclick_import(app, {"login_required": login_required, "guard": _v140_guard, "audit": _v140_audit, "engine": _v140_engine,
+                                 "user_name": lambda: str(session.get("name") or session.get("user_id") or "")[:180]})
 # =================== fim REV64 ===================
