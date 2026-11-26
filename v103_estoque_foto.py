@@ -209,7 +209,7 @@ def install_estoque_foto(app, db, text, can):
     return None
 
 
-def install_auto(app, db, text, release="V88.0 REV63.6"):  # rótulo da versão no ar
+def install_auto(app, db, text, release="V88.0 REV63.7"):  # rótulo da versão no ar
     """Registro sem editar o app.py: chamado por v101_cleanup.install_cleanup. Busca _has_access e APP_RELEASE no módulo principal."""
     import sys
 
