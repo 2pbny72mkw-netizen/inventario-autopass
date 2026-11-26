@@ -35155,6 +35155,37 @@ if _v120_create_orig:
         return resp
     app.view_functions["portal_appointments_create"] = _v120_create
 
+def _v126_reinc_detalhe(appt_ids):
+    """REV63.3 — visão equipe: por agendamento, quais séries são reincidência e a última OS do Bhom
+    (aberta antes do agendamento) com o técnico que fez a manutenção."""
+    out = {}
+    if not appt_ids:
+        return out
+    criado = {a.id: (a.created_at.date() if a.created_at else None)
+              for a in CustomerAppointment.query.filter(CustomerAppointment.id.in_(appt_ids)).all()}
+    with db.engine.connect() as c:
+        ph = ",".join(f":i{n}" for n in range(len(appt_ids)))
+        flags = c.execute(text("SELECT appointment_id, serial_key, serial, last_ref, last_date, times FROM v120_at_flags"
+                               " WHERE appointment_id IN (" + ph + ") ORDER BY appointment_id, serial"),
+                          {f"i{n}": v for n, v in enumerate(appt_ids)}).fetchall()
+        for f in flags:
+            aid, sk, serie, ref, ld, vezes = f
+            antes = criado.get(aid) or datetime.utcnow().date()
+            os_row = c.execute(text("SELECT os_number, opened, technician FROM v120_at_os WHERE serial_key=:k AND opened < :d"
+                                    " AND UPPER(COALESCE(status_os,'')) <> 'CANCELADA' ORDER BY opened DESC LIMIT 1"),
+                               {"k": sk, "d": antes}).fetchone()
+            if not os_row and str(ref or "").startswith("OS "):  # casou pelo final da série: usa a OS da marcação
+                os_row = c.execute(text("SELECT os_number, opened, technician FROM v120_at_os WHERE os_number=:n"),
+                                   {"n": str(ref)[3:].strip()}).fetchone()
+            item = {"serie": serie or sk, "vezes": vezes, "ultima_entrada": str(ld or "")[:10] or None,
+                    "ultima_ref": ref or None, "os": None, "os_data": None, "tecnico": None}
+            if os_row:
+                item.update({"os": str(os_row[0]), "os_data": str(os_row[1] or "")[:10] or None,
+                             "tecnico": (os_row[2] or "").strip() or None})
+            out.setdefault(aid, []).append(item)
+    return out
+
+
 if _v120_list_orig:
     def _v120_list(*a, **k):
         resp = make_response(_v120_list_orig(*a, **k))
@@ -35171,6 +35202,15 @@ if _v120_list_orig:
                     for r in rows:
                         if r.get("id") in fl:
                             r["prioridade"] = {"equipamentos": fl[r["id"]][0], "dias": fl[r["id"]][1], "vezes": fl[r["id"]][2]}
+                    if d.get("internal") and fl:
+                        try:
+                            det = _v126_reinc_detalhe(list(fl.keys()))
+                            for r in rows:
+                                if r.get("id") in det:
+                                    r["prioridade"]["itens"] = det[r["id"]]
+                        except Exception:
+                            db.session.rollback()
+                            app.logger.exception("REV63.3: falha ao detalhar reincidências")
                     if d.get("internal"):
                         rows.sort(key=lambda r: 0 if r.get("prioridade") and (r.get("status") or "").upper() not in ("DEVOLVIDO", "CANCELADO", "CONCLUIDO") else 1)
                     resp = jsonify(d)
