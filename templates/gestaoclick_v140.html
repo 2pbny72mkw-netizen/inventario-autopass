@@ -1,0 +1,67 @@
+{% extends 'base.html' %}{% block title %}GestãoClick · Conexão e consulta{% endblock %}
+{% block content %}
+<style>
+.gcW{display:flex;flex-direction:column;gap:14px;color:#16283d;font-family:inherit}
+.gcW h1{margin:0;font-size:26px}.gcW p.sub{margin:4px 0 0;font-size:13px;color:#4a5b70}
+.gcCard{background:#fff;border:1px solid #dbe4ef;border-radius:14px;padding:14px 16px}
+.gcCard h2{margin:0 0 10px;font-size:16px}
+html .gcW .gcBtn{height:38px;padding:0 14px;border-radius:10px;border:1px solid #0f1e3d;background:#fff;color:#0f1e3d;font:inherit;font-weight:700;font-size:13px;cursor:pointer}
+html .gcW .gcBtn.p{background:#0f1e3d;color:#fff}html .gcW .gcBtn[disabled]{opacity:.6;cursor:wait}
+.gcRow{display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end}
+.gcRow label{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:700;color:#4a5b70}
+.gcRow input{height:38px;border:1px solid #8a9bb0;border-radius:10px;padding:0 10px;font:inherit;font-size:14px;min-width:150px}
+.gcChips{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
+html .gcW .gcChip{border:1px solid #c9d8f3;background:#f4f8ff;color:#1e3a8a;border-radius:999px;padding:5px 10px;font-size:12px;cursor:pointer}
+.gcTbl{width:100%;border-collapse:collapse;font-size:13px}.gcTbl th,.gcTbl td{text-align:left;padding:7px 8px;border-bottom:1px solid #edf1f6}
+.gcTbl th{cursor:pointer;color:#4a5b70;font-size:12px;user-select:none}.gcTbl td.n{text-align:right;font-variant-numeric:tabular-nums}
+.gcOk{color:#15803d;font-weight:700}.gcErr{color:#b42318;font-weight:700}.gcMsg{font-size:13px;color:#4a5b70}
+.gcPre{background:#0f1e3d;color:#dbe7ff;border-radius:10px;padding:12px;font-size:12px;max-height:560px;overflow:auto;white-space:pre-wrap;word-break:break-word}
+.gcFields{font-size:12px;color:#4a5b70;margin:8px 0;word-break:break-word}
+</style>
+<main class="gcW">
+  <div><h1>GestãoClick</h1><p class="sub">Sistema anterior da Assistência. Conexão somente leitura pela API — nada é alterado no GestãoClick. Etapa 1: conhecer os dados antes da importação.</p></div>
+  <section class="gcCard"><h2>Conexão e resumo</h2>
+    <div class="gcRow"><button class="gcBtn p" id="gcStatusBtn" type="button">Testar conexão</button><span id="gcStatusMsg" class="gcMsg"></span></div>
+    <div id="gcSummary"></div>
+  </section>
+  <section class="gcCard"><h2>Consulta</h2>
+    <div class="gcChips" id="gcChips"></div>
+    <div class="gcRow">
+      <label>Recurso<input id="gcPath" placeholder="ex.: ordens_servicos ou produtos/123"></label>
+      <label>Página<input id="gcPage" type="number" min="1" value="1" style="min-width:80px;width:80px"></label>
+      <label>Outros filtros (a=b&amp;c=d)<input id="gcExtra" placeholder="ex.: data_inicio=2026-01-01&amp;data_fim=2026-01-31"></label>
+      <button class="gcBtn p" id="gcQueryBtn" type="button">Consultar</button>
+    </div>
+    <div id="gcQueryMsg" class="gcMsg" style="margin-top:8px"></div>
+    <div id="gcFields" class="gcFields"></div>
+    <pre id="gcOut" class="gcPre" hidden></pre>
+  </section>
+</main>
+<script>
+(()=>{'use strict';
+const $=id=>document.getElementById(id);
+const PATHS=['ordens_servicos','situacoes_ordens_servicos','produtos','fornecedores','clientes','servicos','vendas','compras','notas_fiscais_produtos','notas_fiscais_servicos','lojas'];
+async function getJSON(url){const r=await fetch(url,{credentials:'same-origin',cache:'no-store'});const d=await r.json().catch(()=>({ok:false,error:'Erro de comunicação (HTTP '+r.status+')'}));return d}
+function el(t,txt,cls){const e=document.createElement(t);if(txt!==undefined)e.textContent=txt;if(cls)e.className=cls;return e}
+let sortKey='label',sortDir=1,rows=[];
+function renderSummary(){const box=$('gcSummary');box.replaceChildren();if(!rows.length)return;const t=el('table',undefined,'gcTbl'),h=el('tr');
+for(const [k,l] of [['label','Recurso'],['total','Registros'],['pages','Páginas'],['http','Situação']]){const th=el('th',l+(sortKey===k?(sortDir>0?' ▲':' ▼'):''));th.onclick=()=>{sortDir=sortKey===k?-sortDir:1;sortKey=k;renderSummary()};h.append(th)}
+t.append(h);const s=[...rows].sort((a,b)=>{const x=a[sortKey],y=b[sortKey];return (x>y?1:x<y?-1:0)*sortDir});
+for(const r of s){const tr=el('tr');const a=el('td');const link=el('a',r.label);link.href='#';link.onclick=e=>{e.preventDefault();$('gcPath').value=r.path;$('gcPage').value=1;query()};a.append(link);
+tr.append(a,el('td',r.total==null?'—':Number(r.total).toLocaleString('pt-BR'),'n'),el('td',r.pages==null?'—':String(r.pages),'n'),el('td',r.http===200?'OK':(r.error||('HTTP '+r.http)),r.http===200?'gcOk':'gcErr'));t.append(tr)}box.append(t)}
+$('gcStatusBtn').onclick=async()=>{const b=$('gcStatusBtn');b.disabled=true;$('gcStatusMsg').textContent='Consultando o GestãoClick...';
+try{const d=await getJSON('/api/gestaoclick/status');if(!d.ok){$('gcStatusMsg').textContent=d.error||'Falha';return}
+if(!d.configured){$('gcStatusMsg').textContent=d.message;rows=[];renderSummary();return}
+$('gcStatusMsg').textContent=d.connected?'Conectado.':'Sem resposta válida — confira os tokens no Render.';rows=d.rows||[];renderSummary()}finally{b.disabled=false}};
+for(const p of PATHS){const c=el('button',p,'gcChip');c.type='button';c.onclick=()=>{$('gcPath').value=p;$('gcPage').value=1;query()};$('gcChips').append(c)}
+async function query(){const p=$('gcPath').value.trim();if(!p){$('gcQueryMsg').textContent='Informe o recurso.';return}
+const qs=new URLSearchParams($('gcExtra').value.trim());qs.set('caminho',p);if(!/\/\d+$/.test(p))qs.set('pagina',$('gcPage').value||1);
+$('gcQueryBtn').disabled=true;$('gcQueryMsg').textContent='Consultando...';$('gcFields').textContent='';
+try{const d=await getJSON('/api/gestaoclick/consulta?'+qs.toString());const m=d.meta||{};
+$('gcQueryMsg').textContent=d.ok?('OK'+(m.total_registros!=null?' · '+Number(m.total_registros).toLocaleString('pt-BR')+' registros · página '+(m.pagina_atual||$('gcPage').value)+' de '+(m.total_paginas||'?'):'')):(d.error||'Falha');
+const data=d.body&&d.body.data;const first=Array.isArray(data)?data[0]:data;if(first&&typeof first==='object')$('gcFields').textContent='Campos: '+Object.keys(first).join(', ');
+$('gcOut').hidden=false;$('gcOut').textContent=JSON.stringify(d.body,null,2)}finally{$('gcQueryBtn').disabled=false}}
+$('gcQueryBtn').onclick=query;$('gcPath').addEventListener('keydown',e=>{if(e.key==='Enter')query()});
+})();
+</script>
+{% endblock %}
