@@ -37617,5 +37617,33 @@ from v150_gestaoclick_dados import install_gestaoclick_dados
 install_gestaoclick_dados(app, {"login_required": login_required, "gestor": _v140_guard, "portal_staff": _portal_staff,
                                 "fin_liberado": _v132_liberado, "can": _has_access, "engine": _v140_engine, "audit": _v140_audit,
                                 "user_name": lambda: str(session.get("name") or session.get("user_id") or "")[:180],
+                                "fat_ensure": _v132_ensure,
                                 "render": lambda tpl, **ctx: render_template(tpl, app_release=APP_RELEASE, **ctx)})
 # =================== fim REV65 ===================
+
+
+# =================== V88.0 REV66 — tela única da Assistência: GestãoClick (até 30/09/2026) + Bhom (a partir de 01/10/2026) ===================
+# Só a equipe interna vê as OS do GestãoClick (prefixo "GC-"); o cliente no Portal continua vendo apenas o Bhom.
+_v166_os_rows_orig = _v120_os_rows
+
+
+def _v120_os_rows(company_ids, serial_key=None):  # noqa: F811
+    rows = _v166_os_rows_orig(company_ids, serial_key)
+    try:
+        if not _portal_staff():
+            return rows
+        from v150_gestaoclick_dados import gc_rows_v120
+        gc = gc_rows_v120(db.engine)
+        if not gc:
+            return rows
+        if company_ids is not None:
+            ids = set(company_ids)
+            gc = [r for r in gc if r["company_id"] in ids]
+        if serial_key:
+            gc = [r for r in gc if r["serial_key"] == serial_key]
+        rows = rows + [dict(r) for r in gc]
+        rows.sort(key=lambda r: (_v120_d(r.get("opened")) or date.min, str(r.get("os_number") or "")), reverse=True)
+    except Exception:
+        app.logger.exception("REV66: falha ao juntar OS do GestãoClick")
+    return rows
+# =================== fim REV66 ===================

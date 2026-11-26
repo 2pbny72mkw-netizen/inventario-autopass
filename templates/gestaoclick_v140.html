@@ -21,8 +21,8 @@ html .gcW .gcChip{border:1px solid #c9d8f3;background:#f4f8ff;color:#1e3a8a;bord
 <main class="gcW">
   <div><h1>GestãoClick</h1><p class="sub">Sistema anterior da Assistência: carga dos relatórios exportados e, opcionalmente, conexão somente leitura pela API. Nada é alterado no GestãoClick.</p></div>
   <section class="gcCard"><h2>Carga das planilhas do GestãoClick</h2>
-    <p class="gcMsg" style="margin:0 0 10px">Envie os relatórios exportados em Excel (pode escolher vários de uma vez): Ordens de serviços, NF-e, Estoque de produtos, Produtos, Produtos comprados e Fornecedores. O tipo é reconhecido pelo título da planilha; carregar de novo atualiza sem duplicar.</p>
-    <div class="gcRow"><input type="file" id="gcFiles" multiple accept=".xlsx"><button class="gcBtn p" id="gcUp" type="button">Carregar</button><span id="gcUpMsg" class="gcMsg"></span></div>
+    <p class="gcMsg" style="margin:0 0 10px">Envie os relatórios exportados em Excel (pode escolher vários de uma vez): Ordens de serviços, NF-e, Estoque de produtos, Produtos, Produtos comprados e Fornecedores — e também o .zip de XMLs das NF-e (faturamento por item, notas até 30/09/2026). O tipo é reconhecido automaticamente; carregar de novo atualiza sem duplicar.</p>
+    <div class="gcRow"><input type="file" id="gcFiles" multiple accept=".xlsx,.zip,.xml"><button class="gcBtn p" id="gcUp" type="button">Carregar</button><span id="gcUpMsg" class="gcMsg"></span></div>
     <div id="gcUpRes" style="margin-top:10px"></div>
     <div class="gcMsg" style="margin-top:10px">Telas: <a href="/portal-cliente/assistencia-tecnica/gestaoclick">Histórico de OS</a> · <a href="/portal-cliente/assistencia-tecnica/gestaoclick-nfe">NF-e (área financeira)</a> · <a href="/engenharia/estoque/apoio-compras">Apoio a compras</a></div>
     <div id="gcHist" style="margin-top:10px"></div>
@@ -94,7 +94,7 @@ async function cargas(){const d=await getJSON('/api/gestaoclick/cargas');if(!d.o
  for(const c of d.cargas){const tr=el('tr');tr.append(el('td',new Date(c.criado_em).toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo'})),el('td',c.arquivo),el('td',c.rotulo),el('td',c.periodo||'—'),el('td',Number(c.linhas||0).toLocaleString('pt-BR'),'n'),el('td',c.usuario||''));tb.append(tr)}box.append(tb)}}
 $('gcUp').onclick=async()=>{const fs=$('gcFiles').files;if(!fs.length){$('gcUpMsg').textContent='Escolha as planilhas.';return}const fd=new FormData();for(const f of fs)fd.append('arquivos',f);
  $('gcUp').disabled=true;$('gcUpMsg').textContent='Carregando…';try{const r=await fetch('/api/gestaoclick/carga',{method:'POST',body:fd,credentials:'same-origin'});const d=await r.json().catch(()=>({ok:false,error:'Erro de comunicação (HTTP '+r.status+')'}));
- const box=$('gcUpRes');box.replaceChildren();for(const x of (d.resultados||[])){box.append(el('div',x.ok?`✔ ${x.arquivo}: ${x.rotulo} — ${Number(x.linhas).toLocaleString('pt-BR')} linhas${x.periodo?' ('+x.periodo+')':''}`:`✖ ${x.arquivo}: ${x.error}`,x.ok?'gcOk':'gcErr'))}
+ const box=$('gcUpRes');box.replaceChildren();for(const x of (d.resultados||[])){box.append(el('div',x.ok?`✔ ${x.arquivo}: ${x.rotulo} — ${x.detalhe||Number(x.linhas).toLocaleString('pt-BR')+' linhas'}${x.periodo?' ('+x.periodo+')':''}`:`✖ ${x.arquivo}: ${x.error}`,x.ok?'gcOk':'gcErr'))}
  $('gcUpMsg').textContent=d.resultados?'Concluído.':(d.error||'Falha');$('gcFiles').value='';cargas()}finally{$('gcUp').disabled=false}};
 cargas();$('gcPath').addEventListener('keydown',e=>{if(e.key==='Enter')query()});
 })();
