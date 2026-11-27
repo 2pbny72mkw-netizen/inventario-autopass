@@ -37677,3 +37677,81 @@ install_bom_revisao(app, {"login_required": login_required, "can": _has_access, 
                           "bom_get": lambda bid: db.session.get(EngineeringBom, bid), "bom_json": _eng_bom_json,
                           "user_id": lambda: session.get("user_id"), "user_name": _v160_user_name, "audit": _v160_audit})
 # =================== fim REV67 ===================
+
+
+# =================== V88.0 REV67.1 — Subestrutura sem Phantom Item ===================
+# Subestruturas criadas por "Clonar"/nova revisão (ou pelo cadastro de BOM com tipo SUBESTRUTURA) nasciam sem o
+# Phantom Item que a liga à BOM superior; a inclusão dava "Phantom Item da subestrutura não localizado".
+# Agora o Phantom é garantido na criação/clonagem e sob demanda, no momento da inclusão.
+import functools
+
+
+def _v167_ensure_phantom(b):
+    """Devolve o item que representa a subestrutura (cria o Phantom se não existir). Commit fica com quem chama."""
+    ex = (EngineeringItem.query.filter(EngineeringItem.linked_bom_id == b.id, func.upper(EngineeringItem.item_type).in_(("PHANTOM", "SUBESTRUTURA")))
+          .order_by(EngineeringItem.id).first())
+    if ex:
+        return ex, False
+    base = _eng_norm(b.product_code).upper()
+    cands = [base, f"{base}-{_eng_norm(b.revision).upper()}"] + [f"{base}-{_eng_norm(b.revision).upper()}-{i}" for i in range(2, 20)]
+    code = next((c for c in cands if c and not EngineeringItem.query.filter(func.lower(EngineeringItem.internal_part_number) == c.lower()).first()), None)
+    if not code:
+        raise ValueError("Não foi possível gerar um código livre para o Phantom Item.")
+    ph = EngineeringItem(internal_part_number=code, description_pt=b.product_name, unit="UN", default_origin="NACIONAL", default_currency="BRL",
+                         reference_unit_cost=0, item_type="PHANTOM", lifecycle_status="ATIVO", linked_bom_id=b.id, source_sheet="PHANTOM_SUBESTRUTURA",
+                         author="ENGENHARIA", active=True, created_by=session.get("user_id"))
+    db.session.add(ph)
+    db.session.flush()
+    db.session.add(AuditEvent(user_id=session.get("user_id"), event_type="ENGINEERING_PHANTOM_CREATED", entity_type="engineering_bom",
+                              entity_id=str(b.id), detail=f"Phantom {code} criado para {b.product_code} {b.revision}"))
+    return ph, True
+
+
+@app.post("/api/engineering/boms/<int:bid>/phantom")
+@login_required
+def v167_bom_phantom(bid):
+    if not _has_access("engineering.bom.manage"):
+        return jsonify({"ok": False, "error": "Sem permissão."}), 403
+    b = db.session.get(EngineeringBom, bid)
+    if not b:
+        return jsonify({"ok": False, "error": "Subestrutura não encontrada."}), 404
+    if (getattr(b, "bom_kind", None) or "").upper() != "SUBESTRUTURA":
+        return jsonify({"ok": False, "error": "Esta estrutura não é uma subestrutura."}), 400
+    try:
+        ph, novo = _v167_ensure_phantom(b)
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        app.logger.exception("REV67.1: falha ao garantir Phantom da BOM %s", bid)
+        return jsonify({"ok": False, "error": str(e) if isinstance(e, ValueError) else "Não foi possível criar o Phantom Item."}), 500
+    return jsonify({"ok": True, "item_id": ph.id, "linked_bom_id": b.id, "created": novo, "code": ph.internal_part_number})
+
+
+def _v167_wrap_new_bom(endpoint):
+    orig = app.view_functions.get(endpoint)
+    if not orig:
+        return
+
+    @functools.wraps(orig)
+    def wrapped(*a, **kw):
+        resp = orig(*a, **kw)
+        try:
+            r = resp[0] if isinstance(resp, tuple) else resp
+            d = r.get_json(silent=True) if hasattr(r, "get_json") else None
+            bom = (d or {}).get("bom") if isinstance(d, dict) and d.get("ok") else None
+            if bom and (bom.get("bom_kind") or "").upper() == "SUBESTRUTURA" and not bom.get("phantom_item_id"):
+                b = db.session.get(EngineeringBom, bom["id"])
+                if b:
+                    _v167_ensure_phantom(b)
+                    db.session.commit()
+                    return jsonify({"ok": True, "bom": _eng_bom_json(b)})
+        except Exception:
+            db.session.rollback()
+            app.logger.exception("REV67.1: falha ao criar Phantom da nova subestrutura")
+        return resp
+    app.view_functions[endpoint] = wrapped
+
+
+for _ep in ("engineering_bom_clone_api", "engineering_bom_save_api"):
+    _v167_wrap_new_bom(_ep)
+# =================== fim REV67.1 ===================
