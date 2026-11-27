@@ -59,31 +59,31 @@ function renderBom(){
     const toggle=hasChildren?`<button type="button" class="engTreeToggle" data-tree-toggle="${esc(key)}" title="${collapsed?'Expandir':'Recolher'}">${collapsed?'▸':'▾'}</button>`:'<span style="display:inline-block;width:20px"></span>';
     const tag=lb?`<span class="engSubstructureTag">${esc(lb.product_code)} · ${esc(lb.revision)}</span>`:'';
     const action=editable?`<button data-row-edit="${x.id}">Editar</button> <button data-del="${x.id}">Excluir</button>${lb?` <button data-open-sub="${lb.id}">Abrir BOM</button>`:''}`:(lb?`<button data-open-sub="${lb.id}">Abrir BOM</button>`:'<span class="engReadOnlyAction">herdado</span>');
-    let h=`<tr class="engTreeRow level-${level} ${rowPalette(x)} ${level>1?'engNestedRow engPhantomChild':''} ${lb?'engPhantomRow':''}"><td><span class="engLevelBadge">N${level}</span></td><td class="engTreeCode"><b>${esc(x.internal_part_number)}</b></td><td>${esc(x.manufacturer_part_number)}</td><td>${esc(x.ncm)}</td><td><div class="engTreeDesc" data-level="${level}"><span class="engTreeIndent" style="width:${indent}px"></span><span class="engTreeBranch">${level>1?'└─':''}</span>${toggle}<span>${esc(x.description)} ${tag}</span></div></td><td>${x.quantity}</td><td>${esc(x.cost_group)}</td><td>${esc(x.origin)}</td><td>${esc(x.manufacturer||'')}</td><td>${x.lead_time_days??''}</td><td>${esc(x.currency)}</td><td>${fob}</td><td>${money(x.nationalized_unit_cost)}</td><td><b>${money(x.total_cost)}</b></td><td>${action}</td></tr>`;
+    let h=`<tr class="engTreeRow level-${level} ${rowPalette(x)} ${level>1?'engNestedRow engPhantomChild':''} ${lb?'engPhantomRow':''}"><td><span class="engLevelBadge">N${level}</span></td><td class="engTreeCode"><b>${esc(x.internal_part_number)}</b></td><td>${esc(x.manufacturer_part_number)}</td><td>${esc(x.ncm)}</td><td><div class="engTreeDesc" data-level="${level}"><span class="engTreeIndent" style="width:${indent}px"></span><span class="engTreeBranch">${level>1?'└─':''}</span>${toggle}<span>${esc(x.description)} ${tag}</span></div></td><td>${x.quantity}</td><td>${esc(x.cost_group)}</td><td>${esc(x.origin)}</td><td>${esc(x.manufacturer||'')}</td><td>${x.lead_time_days??''}</td><td>${esc(x.currency)}</td><td>${fob}</td><td>${money(x.nationalized_unit_cost)}</td><td><b>${money(x.total_cost)}</b></td><td class="engQuoteCell" data-bi="${x.id}" data-sb="${sourceBom.id}" data-ed="${editable?1:0}"></td><td>${action}</td></tr>`;
     if(hasChildren&&!collapsed&&!seen.has(lb.id)){
       const next=new Set(seen);next.add(lb.id);
       for(const child of lb.items)h+=rowHtml(child,level+1,false,lb,next);
     }else if(hasChildren&&!collapsed&&seen.has(lb.id)){
-      h+=`<tr class="engNestedRow"><td></td><td colspan="14"><span class="engReadOnlyAction">Ciclo de subestrutura detectado; expansão interrompida.</span></td></tr>`;
+      h+=`<tr class="engNestedRow"><td></td><td colspan="15"><span class="engReadOnlyAction">Ciclo de subestrutura detectado; expansão interrompida.</span></td></tr>`;
     }
     return h;
   }
 
-  let html=`<tr class="engBomRoot"><td><span class="engLevelBadge">N0</span></td><td colspan="3"><b>${esc(bom.product_code)}</b></td><td colspan="7">${esc(bom.product_name)} <small>· ${esc(bom.revision)}</small></td><td></td><td>${money(bom.unit_cost)}</td><td><b>${money(bom.total_cost)}</b></td><td>${bom.bom_kind==='SUBESTRUTURA'?`<span class="engSubstructureTag">${esc(bom.product_code)} · ${esc(bom.revision)}</span>`:'<span class="engSubstructureTag">PRODUTO FINAL</span>'}</td></tr>`;
+  let html=`<tr class="engBomRoot"><td><span class="engLevelBadge">N0</span></td><td colspan="3"><b>${esc(bom.product_code)}</b></td><td colspan="7">${esc(bom.product_name)} <small>· ${esc(bom.revision)}</small></td><td></td><td>${money(bom.unit_cost)}</td><td><b>${money(bom.total_cost)}</b></td><td></td><td>${bom.bom_kind==='SUBESTRUTURA'?`<span class="engSubstructureTag">${esc(bom.product_code)} · ${esc(bom.revision)}</span>`:'<span class="engSubstructureTag">PRODUTO FINAL</span>'}</td></tr>`;
   for(const org of ['NACIONAL','IMPORTADO']){
     const originItems=bom.items.filter(x=>x.origin===org);
     if(!originItems.length)continue;
     const originSubtotal=originItems.reduce((sum,x)=>sum+Number(x.total_cost||0),0);
-    html+=`<tr class="engBomOriginHead ${originClass[org]}"><td colspan="15">${originTitle[org]} · ${originItems.length} item(ns) · ${money(originSubtotal)}</td></tr>`;
+    html+=`<tr class="engBomOriginHead ${originClass[org]}"><td colspan="16">${originTitle[org]} · ${originItems.length} item(ns) · ${money(originSubtotal)}</td></tr>`;
     for(const [kind,kindTitle] of kinds){
       const a=originItems.filter(x=>x.cost_group===kind);
       if(!a.length)continue;
       const subtotal=a.reduce((sum,x)=>sum+Number(x.total_cost||0),0);
-      html+=`<tr class="engGroup engBomSubgroup ${rowPalette(a[0])}"><td colspan="15"><b>${kindTitle.toUpperCase()}</b> · ${a.length} item(ns) · ${money(subtotal)}</td></tr>`;
+      html+=`<tr class="engGroup engBomSubgroup ${rowPalette(a[0])}"><td colspan="16"><b>${kindTitle.toUpperCase()}</b> · ${a.length} item(ns) · ${money(subtotal)}</td></tr>`;
       for(const x of a)html+=rowHtml(x,1,true,bom,new Set([bom.id]));
     }
   }
-  $('engBomRows').innerHTML=html||'<tr><td colspan="15">BOM sem componentes.</td></tr>';let target=$('engInsertTarget');if(target){let opts=[`<option value="${bom.id}">N0 · ${esc(bom.product_code)} — inserir no N1</option>`];function walkTargets(bb,level,seen=new Set()){if(seen.has(bb.id))return;seen.add(bb.id);for(const x of bb.items||[]){let lb=linkedBom(x);if(lb){opts.push(`<option value="${lb.id}">${'— '.repeat(level)}N${level} · ${esc(lb.product_code)} — inserir no N${level+1}</option>`);walkTargets(lb,level+1,new Set(seen))}}}walkTargets(bom,1);let cur=target.value;target.innerHTML=opts.join('');if(cur&&[...target.options].some(o=>o.value===cur))target.value=cur;}
+  $('engBomRows').innerHTML=html||'<tr><td colspan="16">BOM sem componentes.</td></tr>';let target=$('engInsertTarget');if(target){let opts=[`<option value="${bom.id}">N0 · ${esc(bom.product_code)} — inserir no N1</option>`];function walkTargets(bb,level,seen=new Set()){if(seen.has(bb.id))return;seen.add(bb.id);for(const x of bb.items||[]){let lb=linkedBom(x);if(lb){opts.push(`<option value="${lb.id}">${'— '.repeat(level)}N${level} · ${esc(lb.product_code)} — inserir no N${level+1}</option>`);walkTargets(lb,level+1,new Set(seen))}}}walkTargets(bom,1);let cur=target.value;target.innerHTML=opts.join('');if(cur&&[...target.options].some(o=>o.value===cur))target.value=cur;}
   document.querySelectorAll('[data-del]').forEach(b=>b.onclick=async()=>{if(confirm('Excluir componente?')){await api(`/api/engineering/boms/${bom.id}/items/${b.dataset.del}`,{method:'DELETE'});await loadBoms()}});
   document.querySelectorAll('[data-row-edit]').forEach(b=>b.onclick=()=>bomItemForm(bom.items.find(x=>x.id==b.dataset.rowEdit)));
   document.querySelectorAll('[data-tree-toggle]').forEach(b=>b.onclick=()=>{let k=b.dataset.treeToggle;if(collapsedSubstructures.has(k))collapsedSubstructures.delete(k);else collapsedSubstructures.add(k);renderBom()});
