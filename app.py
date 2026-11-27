@@ -29912,7 +29912,7 @@ def _eng_bom_flat_rows(b, level=0, parent_code="", seen=None, inherited=False):
     for x in d.get("items") or []:
         linked_id=x.get("linked_bom_id")
         is_phantom=bool(linked_id)
-        out.append({"level":level+1,"parent_code":d.get("product_code","") or "","record_type":"PHANTOM" if is_phantom else "ITEM","code":x.get("internal_part_number","") or "","revision":"","mpn":x.get("manufacturer_part_number","") or "","ncm":x.get("ncm","") or "","description":x.get("description","") or "","quantity":x.get("quantity",0),"group":x.get("cost_group","MATERIAL") or "MATERIAL","origin":x.get("origin","") or "","manufacturer":x.get("manufacturer","") or "","supplier_pn":x.get("supplier_part_number","") or "","lead":x.get("lead_time_days","") if x.get("lead_time_days") is not None else "","currency":x.get("currency","") or "","fob":x.get("unit_cost",0) if x.get("origin")=="IMPORTADO" and not x.get("derived_from_bom") else "","unit_brl":x.get("nationalized_unit_cost",x.get("unit_cost",0)),"total_brl":x.get("total_cost",0),"counts":"NÃO — DETALHE" if inherited else "SIM"})
+        out.append({"bom_item_id":x.get("id"),"level":level+1,"parent_code":d.get("product_code","") or "","record_type":"PHANTOM" if is_phantom else "ITEM","code":x.get("internal_part_number","") or "","revision":"","mpn":x.get("manufacturer_part_number","") or "","ncm":x.get("ncm","") or "","description":x.get("description","") or "","quantity":x.get("quantity",0),"group":x.get("cost_group","MATERIAL") or "MATERIAL","origin":x.get("origin","") or "","manufacturer":x.get("manufacturer","") or "","supplier_pn":x.get("supplier_part_number","") or "","lead":x.get("lead_time_days","") if x.get("lead_time_days") is not None else "","currency":x.get("currency","") or "","fob":x.get("unit_cost",0) if x.get("origin")=="IMPORTADO" and not x.get("derived_from_bom") else "","unit_brl":x.get("nationalized_unit_cost",x.get("unit_cost",0)),"total_brl":x.get("total_cost",0),"counts":"NÃO — DETALHE" if inherited else "SIM"})
         if linked_id:
             lb=db.session.get(EngineeringBom,int(linked_id))
             if lb and lb.id not in seen:
@@ -29931,10 +29931,12 @@ def engineering_bom_export_api(bid):
     wb=Workbook();ws=wb.active;ws.title="BOM Multinível"
     ws.append(["Produto",d["product_code"],d["product_name"],"NCM Produto",d.get("product_ncm",""),"Revisão",d["revision"],"Status",d["status"]])
     ws.append(["Qtd. referência",d["quantity_reference"],"Nacional",d["national_cost"],"Importado nacionalizado",d["imported_cost"],"Consumo",d.get("consumption_cost",0),"Total",d["total_cost"],"Unitário",d["unit_cost"]]);ws.append([])
-    headers=["Nível","Item pai","Tipo de registro","Código","Revisão","MPN","NCM Item","Descrição / Estrutura","Qtd.","Grupo","Origem","Fabricante","PN Fabricante / MPN","Lead Time","Moeda","FOB Unit. US$","Custo Unit. R$","Total R$","Contabiliza no total"]
+    headers=["Nível","Item pai","Tipo de registro","Código","Revisão","MPN","NCM Item","Descrição / Estrutura","Qtd.","Grupo","Origem","Fabricante","PN Fabricante / MPN","Lead Time","Moeda","FOB Unit. US$","Custo Unit. R$","Total R$","Contabiliza no total","Cotação"]
     ws.append(headers)
+    try:qmap=_v168_status_map([r.get("bom_item_id") for r in rows])
+    except Exception:qmap={}
     for r in rows:
-        ws.append([f"N{r['level']}",r['parent_code'],r['record_type'],r['code'],r['revision'],r['mpn'],r['ncm'],r['description'],r['quantity'],r['group'],r['origin'],r['manufacturer'],r['supplier_pn'],r['lead'],r['currency'],r['fob'],r['unit_brl'],r['total_brl'],r['counts']])
+        ws.append([f"N{r['level']}",r['parent_code'],r['record_type'],r['code'],r['revision'],r['mpn'],r['ncm'],r['description'],r['quantity'],r['group'],r['origin'],r['manufacturer'],r['supplier_pn'],r['lead'],r['currency'],r['fob'],r['unit_brl'],r['total_brl'],r['counts'],(_V168_LABEL.get(qmap.get(r.get('bom_item_id')) or 'NAO_COTADO','') if r.get('bom_item_id') else '')])
         rr=ws.max_row
         ws.cell(rr,8).alignment=Alignment(indent=min(int(r['level']),15),vertical="center")
         if r['record_type']=="PHANTOM":
@@ -29950,8 +29952,8 @@ def engineering_bom_export_api(bid):
             fill=PatternFill("solid",fgColor="ECFDF5")
             for c in ws[rr]:c.fill=fill
     for c in ws[4]:c.font=Font(bold=True,color="FFFFFF");c.fill=PatternFill("solid",fgColor="0B2D45")
-    ws.freeze_panes="A5";ws.auto_filter.ref=f"A4:S{ws.max_row}"
-    widths=[10,18,18,20,14,18,16,48,12,16,14,24,24,12,12,18,18,18,22]
+    ws.freeze_panes="A5";ws.auto_filter.ref=f"A4:T{ws.max_row}"
+    widths=[10,18,18,20,14,18,16,48,12,16,14,24,24,12,12,18,18,18,22,22]
     for i,w in enumerate(widths,1):ws.column_dimensions[get_column_letter(i)].width=w
     bio=io.BytesIO();wb.save(bio);bio.seek(0);return send_file(bio,as_attachment=True,download_name=f"BOM_{b.product_code}_{b.revision}_MULTINIVEL.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
@@ -37755,3 +37757,20 @@ def _v167_wrap_new_bom(endpoint):
 for _ep in ("engineering_bom_clone_api", "engineering_bom_save_api"):
     _v167_wrap_new_bom(_ep)
 # =================== fim REV67.1 ===================
+
+
+# =================== V88.0 REV68 — Engenharia › BOM: status de cotação por item ===================
+from v168_bom_cotacao import install_bom_cotacao, LABEL as _V168_LABEL
+from v160_bom_revisao import fmt_br as _v168_fmt_br
+
+
+def _v168_bom_item_get(bi):
+    x = db.session.get(EngineeringBomItem, bi)
+    b = db.session.get(EngineeringBom, x.bom_id) if x else None
+    return (x, b) if x and b else None
+
+
+_v168_status_map = install_bom_cotacao(app, {"login_required": login_required, "can": _has_access, "engine": lambda: db.engine, "text": text,
+                                             "bom_item_get": _v168_bom_item_get, "user_name": _v160_user_name, "audit": _v160_audit,
+                                             "fmt_br": _v168_fmt_br})
+# =================== fim REV68 ===================

@@ -53,6 +53,9 @@
     if(busy){inp.checked=!inp.checked;return}
     var want=inp.checked;
     if(!want && !confirm('Desmarcar esta revisão? O nome e a data da revisão anterior ficam no histórico.')){inp.checked=true;return}
+    if(want && inp.dataset.area==='valores' && typeof window.__v168Pendentes==='function' && $('engBomSelect') && $('engBomSelect').value==String(bid)){
+      var pend=window.__v168Pendentes(); if(pend && !confirm('Ainda há '+pend+' item(ns) desta BOM sem o status "Cotado". Marcar os valores como revisados mesmo assim?')){inp.checked=false;return}
+    }
     busy=true; host.querySelectorAll('input[data-area]').forEach(function(x){x.dataset.was=x.disabled; x.disabled=true});
     try{
       var r=await fetch('/api/engineering/boms/'+bid+'/revisoes',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',
