@@ -3072,7 +3072,8 @@ ACCESS_GROUPS = {
     )),
     "engineering": ("Engenharia", (
         "engineering.items.view","engineering.items.manage","engineering.bom.view","engineering.bom.manage","engineering.bom.delete","engineering.import","engineering.pricing.view","engineering.pricing.manage","engineering.stock.view","engineering.stock.create","engineering.stock.move","engineering.stock.classify","engineering.stock.locations","engineering.stock.export",
-        "engineering.tags.view","engineering.tags.import","engineering.tags.edit","engineering.tags.bulk","engineering.tags.issues","engineering.tags.export","engineering.tags.audit"
+        "engineering.tags.view","engineering.tags.import","engineering.tags.edit","engineering.tags.bulk","engineering.tags.issues","engineering.tags.export","engineering.tags.audit",
+        "engineering.review.mechanical","engineering.review.hardware","engineering.review.stock","engineering.review.prices"
     )),
     "portal": ("Portal do Cliente", ("portal.appointments","portal.receive","portal.manage","portal.driver")),
     "tasks": ("Gestão de Tarefas", ("tasks.view","tasks.create","tasks.edit","tasks.transfer","tasks.manage")),
@@ -3095,6 +3096,7 @@ ACCESS_LABELS = {
  "engineering.items.view":"Visualizar cadastro de itens","engineering.items.manage":"Cadastrar / editar itens","engineering.bom.view":"Visualizar estruturas BOM","engineering.bom.manage":"Criar / revisar BOM","engineering.bom.delete":"Excluir estruturas BOM","engineering.import":"Importar planilhas de Engenharia","engineering.pricing.view":"Visualizar formação de preço","engineering.pricing.manage":"Criar / editar estudos de preço",
  "engineering.stock.view":"Visualizar Estoque Central","engineering.stock.create":"Cadastrar material provisório","engineering.stock.move":"Inventariar / movimentar estoque","engineering.stock.classify":"Classificar materiais","engineering.stock.locations":"Administrar localidades de estoque","engineering.stock.export":"Exportar Estoque Central",
  "engineering.tags.view":"Visualizar Controle de TAGs e Produtos","engineering.tags.import":"Cadastrar / importar TAGs","engineering.tags.edit":"Editar TAGs","engineering.tags.bulk":"Atualizar TAGs em massa","engineering.tags.issues":"Tratar divergências de TAGs","engineering.tags.export":"Exportar TAGs","engineering.tags.audit":"Visualizar auditoria de TAGs",
+ "engineering.review.mechanical":"Revisar BOM — Engenharia Mecânica","engineering.review.hardware":"Revisar BOM — Engenharia de Hardware","engineering.review.stock":"Revisar BOM — Estoque","engineering.review.prices":"Revisar valores da BOM — Estoque / Compras",
  "portal.appointments":"Criar / consultar agendamentos","portal.receive":"Receber agendamentos","portal.manage":"Administrar Portal do Cliente","portal.driver":"Motorista Leva e Traz (vê só o que está na programação ou a devolver; marque também Receber agendamentos)",
  "arrow.view":"Visualizar Arrow","arrow.manage":"Gerenciar Arrow / alocações","arrow.edit":"Editar atividade Arrow","arrow.delete":"Excluir atividade Arrow","arrow.dashboard":"Dashboard Arrow","arrow.remote":"TeamViewer / Atendimento Remoto","arrow.create_field":"Criar imprevisto Arrow em campo","arrow.change_status":"Alterar status de atividade Arrow",
  "about.versions":"Histórico / Versões",
@@ -37647,3 +37649,31 @@ def _v120_os_rows(company_ids, serial_key=None):  # noqa: F811
         app.logger.exception("REV66: falha ao juntar OS do GestãoClick")
     return rows
 # =================== fim REV66 ===================
+
+
+# =================== V88.0 REV67 — Engenharia › BOM: selos de revisão (Mecânica, Hardware, Estoque e valores) ===================
+from v160_bom_revisao import install_bom_revisao
+
+
+def _v160_user_name():
+    uid = session.get("user_id")
+    try:
+        u = db.session.get(User, uid) if uid else None
+        return str((u.name if u else None) or session.get("name") or uid or "")
+    except Exception:
+        db.session.rollback()
+        return str(session.get("name") or uid or "")
+
+
+def _v160_audit(event, entity_id, detail):
+    try:
+        db.session.add(AuditEvent(user_id=session.get("user_id"), event_type=event, entity_type="engineering_bom", entity_id=entity_id, detail=str(detail)[:500]))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+
+install_bom_revisao(app, {"login_required": login_required, "can": _has_access, "engine": lambda: db.engine, "text": text,
+                          "bom_get": lambda bid: db.session.get(EngineeringBom, bid), "bom_json": _eng_bom_json,
+                          "user_id": lambda: session.get("user_id"), "user_name": _v160_user_name, "audit": _v160_audit})
+# =================== fim REV67 ===================

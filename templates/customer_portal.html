@@ -269,9 +269,11 @@ if(!INTERNAL){const h=(location.hash||'').replace('#','');if(h==='new'||h==='his
 (()=>{const box=document.getElementById('eqs');if(!box)return;const esc2=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  async function check(inp){const card=inp.closest('.eq');if(!card)return;card.querySelector('.eqReinc')?.remove();const v=(inp.value||'').trim();if(v.length<4)return;
   try{const d=await fetch('/api/assistencia/reincidencia?serie='+encodeURIComponent(v)).then(r=>r.json());if((inp.value||'').trim()!==v||!d.reincidente)return;
-   const dt=(d.data||'').split('-').reverse().join('/');
+   card.querySelector('.eqReinc')?.remove();const dt=(d.data||'').split('-').reverse().join('/');
    card.querySelector('.eqTop').insertAdjacentHTML('afterend',`<div class="eqReinc" role="alert" style="background:#fff7ed;border:2px solid #c2410c;border-radius:12px;padding:12px;margin:8px 0;color:#431407"><b style="color:#9a3412;font-size:15px">⚠ Reincidência: este equipamento voltou em menos de 3 meses</b><br>A última manutenção foi há <b>${d.dias} dias</b> (${esc2(d.ref)}, ${dt}${d.falha?' · falha: '+esc2(d.falha):''}).${d.vezes>1?`<br>Até hoje (${(d.consulta||'').split('-').reverse().join('/')}), este equipamento <b>já veio ${d.vezes} vezes</b> para manutenção${d.vezes_periodo>1?` — <b>${d.vezes_periodo} delas nos últimos 3 meses</b>`:''}.`:''}<br><b>Este equipamento será priorizado no atendimento.</b></div>`)}catch(e){}}
  box.addEventListener('change',e=>{if(e.target.matches('[data-k="serial"]'))check(e.target)});
+ // REV67: confere também enquanto digita (0,8 s depois da última tecla), sem esperar sair do campo
+ const tmr=new WeakMap();box.addEventListener('input',e=>{const i=e.target;if(!i.matches('[data-k="serial"]'))return;clearTimeout(tmr.get(i));tmr.set(i,setTimeout(()=>check(i),800))});
  // equipamentos escolhidos na lista "já agendados" são preenchidos por script: confere também
  if(typeof window.fillEq==='function'){const f0=window.fillEq;window.fillEq=function(card,k,o){const r=f0.apply(this,arguments);const i=card&&card.querySelector('[data-k="serial"]');if(i)check(i);return r}}
 })();
